@@ -314,9 +314,15 @@ func (s *Store) RecordLoginAttempts(attempts []LoginAttempt, retainSince time.Ti
 func (s *Store) FailedLoginCount(key string, since time.Time) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	latestSuccess := since
+	for _, item := range s.data.LoginAttempts {
+		if item.Key == key && item.Success && item.OccurredAt.After(latestSuccess) {
+			latestSuccess = item.OccurredAt
+		}
+	}
 	count := 0
 	for _, item := range s.data.LoginAttempts {
-		if item.Key == key && !item.Success && item.OccurredAt.After(since) {
+		if item.Key == key && !item.Success && item.OccurredAt.After(latestSuccess) {
 			count++
 		}
 	}

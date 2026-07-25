@@ -1,0 +1,28 @@
+#!/bin/sh
+case "${1:-}:${2:-}" in
+	group:kejilion-panel)
+		if [ "${KP_GROUP_MEMBER:-0}" = 1 ]; then
+			echo 'kejilion-panel:x:29999:alice'
+			exit 0
+		fi
+		if [ "${KP_GROUP_EXISTS:-0}" = 1 ]; then
+			echo 'kejilion-panel:x:29999:'
+			exit 0
+		fi
+		exit 2
+		;;
+	passwd:)
+		if [ "${KP_PASSWD_FAIL:-0}" = 1 ]; then
+			exit 2
+		fi
+		if [ "${KP_PRIMARY_USER:-0}" = 1 ]; then
+			echo 'alice:x:2000:29999::/home/alice:/bin/sh'
+			exit 0
+		fi
+		echo 'root:x:0:0:root:/root:/bin/sh'
+		exit 0
+		;;
+	*)
+		exit 2
+		;;
+esac

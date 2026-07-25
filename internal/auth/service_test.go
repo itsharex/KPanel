@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -107,6 +108,46 @@ func TestLoginRateLimit(t *testing.T) {
 	}
 	if _, err := service.Login("192.0.2.1", "admin", "a-strong-password"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected rate limit, got %v", err)
+	}
+	if _, err := service.Login("192.0.2.2", "admin", "a-strong-password"); err != nil {
+		t.Fatalf("a different IP could not use valid credentials after one IP was limited: %v", err)
+	}
+}
+
+func TestLoginAppliesHigherDistributedAccountLimit(t *testing.T) {
+	directory := t.TempDir()
+	storage, err := store.Open(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	service, err := NewService(storage, testHasher(t), Config{
+		BootstrapTokenPath: filepath.Join(directory, "bootstrap.token"),
+		SessionTTL:         time.Hour,
+		LoginWindow:        time.Minute,
+		MaxLoginFailures:   2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.EnsureBootstrapToken(); err != nil {
+		t.Fatal(err)
+	}
+	token, err := os.ReadFile(filepath.Join(directory, "bootstrap.token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Bootstrap(string(token), "admin", "a-strong-password"); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := range 2 * accountFailureLimitMultiplier {
+		ip := fmt.Sprintf("192.0.2.%d", attempt+1)
+		if _, err := service.Login(ip, "admin", "wrong"); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("attempt %d: expected invalid credentials, got %v", attempt, err)
+		}
+	}
+	if _, err := service.Login("198.51.100.1", "admin", "a-strong-password"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("expected distributed account rate limit, got %v", err)
 	}
 }
 

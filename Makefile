@@ -3,18 +3,21 @@ NPM ?= npm
 VERSION := $(shell tr -d '\r\n' < VERSION)
 LDFLAGS := -s -w -X github.com/kejilion/kejilion-panel/internal/version.Version=$(VERSION)
 
-.PHONY: fmt test test-go test-web build build-web build-linux clean
+.PHONY: fmt test test-go test-web test-deploy build build-web build-linux clean
 
 fmt:
 	$(GO) fmt ./...
 
-test: test-go test-web
+test: test-go test-web test-deploy
 
 test-go:
 	$(GO) test ./...
 
 test-web:
 	cd web && $(NPM) run typecheck && $(NPM) test
+
+test-deploy:
+	sh deploy/tests/install-safety.sh
 
 build: build-web
 	mkdir -p dist
@@ -36,4 +39,3 @@ build-linux: build-web
 
 clean:
 	rm -rf dist web/dist coverage.out
-

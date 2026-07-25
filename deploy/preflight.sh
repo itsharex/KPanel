@@ -1,15 +1,22 @@
 #!/bin/sh
 set -eu
 
+LC_ALL=C
+export LC_ALL
+
 PORT=18443
 PUBLIC_URL=
+NETWORK_SUBNET=172.29.255.240/28
 FAILURES=0
 WARNINGS=0
 
 usage() {
 	cat <<'EOF'
 Usage:
-  ./deploy/preflight.sh --public-url https://panel.example.com [--port 18443]
+  ./deploy/preflight.sh \
+    --public-url https://panel.example.com \
+    [--port 18443] \
+    [--network-subnet 172.29.255.240/28]
 
 This command is read-only. It does not connect to the Docker socket, start a
 service, create a directory, or change kejilion.sh and /home/web.
@@ -30,6 +37,59 @@ fail() {
 	printf '[FAIL] %s\n' "$*" >&2
 }
 
+validate_private_subnet() {
+	subnet=$1
+	case "$subnet" in
+		*/*)
+			address=${subnet%/*}
+			prefix=${subnet#*/}
+			;;
+		*)
+			return 1
+			;;
+	esac
+	[ "$prefix" = 28 ] || return 1
+	printf '%s' "$address" |
+		grep -Eq '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' ||
+		return 1
+	old_ifs=$IFS
+	IFS=.
+	set -- $address
+	IFS=$old_ifs
+	[ "$#" -eq 4 ] || return 1
+	for octet in "$@"; do
+		case "$octet" in
+			0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;;
+			*) return 1 ;;
+		esac
+		[ "$octet" -le 255 ] || return 1
+	done
+	first=$1
+	second=$2
+	fourth=$4
+	case "$first:$second" in
+		10:*) ;;
+		172:*)
+			[ "$second" -ge 16 ] && [ "$second" -le 31 ] || return 1
+			;;
+		192:168) ;;
+		*) return 1 ;;
+	esac
+	[ $((fourth % 16)) -eq 0 ] || return 1
+}
+
+network_routes() {
+	matched_routes=$(ip -4 route show match "$NETWORK_SUBNET" 2>/dev/null) || return 1
+	rooted_routes=$(ip -4 route show root "$NETWORK_SUBNET" 2>/dev/null) || return 1
+	printf '%s\n%s\n' "$matched_routes" "$rooted_routes" |
+		while IFS= read -r route; do
+			case "$route" in
+				''|default\ *) ;;
+				*) printf '%s\n' "$route" ;;
+			esac
+		done
+}
+
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--public-url)
@@ -46,6 +106,14 @@ while [ "$#" -gt 0 ]; do
 				break
 			}
 			PORT=$2
+			shift 2
+			;;
+		--network-subnet)
+			[ "$#" -ge 2 ] || {
+				fail "--network-subnet requires a value"
+				break
+			}
+			NETWORK_SUBNET=$2
 			shift 2
 			;;
 		-h|--help)
@@ -91,7 +159,15 @@ else
 	fail "--public-url must be an HTTPS origin without a path, query, or fragment"
 fi
 
-for command_name in docker systemctl getent groupadd install openssl sha256sum; do
+if validate_private_subnet "$NETWORK_SUBNET"; then
+	ok "private Docker subnet is valid: $NETWORK_SUBNET"
+else
+	fail "--network-subnet must be an aligned RFC1918 IPv4 /28"
+fi
+
+for command_name in \
+	awk cat curl dirname docker getent grep groupadd id install ip mkdir mktemp \
+	openssl rm rmdir sed sha256sum sleep ss stat systemctl systemd-analyze tr; do
 	if command -v "$command_name" >/dev/null 2>&1; then
 		ok "command available: $command_name"
 	else
@@ -100,7 +176,7 @@ for command_name in docker systemctl getent groupadd install openssl sha256sum; 
 done
 
 if command -v docker >/dev/null 2>&1; then
-	if docker compose version >/dev/null 2>&1; then
+	if docker --host unix:///var/run/docker.sock compose version >/dev/null 2>&1; then
 		ok "Docker Compose v2 is available"
 	else
 		fail "Docker Compose v2 is required"
@@ -112,10 +188,33 @@ fi
 if [ -S /var/run/docker.sock ]; then
 	ok "Docker Unix socket exists"
 else
-	warn "Docker Unix socket is absent; Docker views will degrade until Docker is running"
+	fail "Docker Unix socket is absent"
+fi
+if systemctl is-active --quiet docker.service; then
+	ok "Docker service is already active"
+else
+	fail "Docker service is not active; assess existing containers before starting it manually"
 fi
 
-for web_path in /home/web /home/web/conf.d /home/web/html /home/web/certs; do
+if validate_private_subnet "$NETWORK_SUBNET" && command -v ip >/dev/null 2>&1; then
+	if NETWORK_ROUTES=$(network_routes); then
+		if [ -z "$NETWORK_ROUTES" ]; then
+			ok "Docker subnet does not overlap an existing host route"
+		else
+			fail "Docker subnet overlaps an existing host route: $NETWORK_ROUTES"
+		fi
+	else
+		fail "cannot inspect host routes for Docker subnet safety"
+	fi
+fi
+
+if [ -d /home/web ] && [ -r /home/web ]; then
+	ok "Kejilion Web root is available: /home/web"
+else
+	fail "Kejilion Web root must be a readable directory: /home/web"
+fi
+
+for web_path in /home/web/conf.d /home/web/html /home/web/certs; do
 	if [ -d "$web_path" ] && [ -r "$web_path" ]; then
 		ok "Kejilion path is readable: $web_path"
 	else
@@ -131,19 +230,69 @@ if command -v ss >/dev/null 2>&1; then
 		ok "TCP port $PORT is not currently listening"
 	fi
 else
-	warn "ss is unavailable; local port occupancy was not checked"
+	fail "ss is unavailable; local port occupancy cannot be checked"
 fi
 
 for managed_path in \
 	/etc/kejilion-panel \
 	/opt/kejilion-panel \
 	/var/lib/kejilion-panel \
+	/run/kejilion-panel \
 	/usr/local/libexec/kejilion-agent \
-	/etc/systemd/system/kejilion-agent.service; do
-	if [ -e "$managed_path" ]; then
-		warn "existing Panel resource found (installer will treat this as an upgrade): $managed_path"
+	/etc/systemd/system/kejilion-agent.service \
+	/etc/systemd/system/kejilion-agent.service.d \
+	/run/systemd/system/kejilion-agent.service \
+	/run/systemd/system/kejilion-agent.service.d \
+	/usr/lib/systemd/system/kejilion-agent.service \
+	/usr/lib/systemd/system/kejilion-agent.service.d \
+	/lib/systemd/system/kejilion-agent.service \
+	/lib/systemd/system/kejilion-agent.service.d; do
+	if [ -e "$managed_path" ] || [ -L "$managed_path" ]; then
+		fail "existing Panel resource found; v0.1.0 installer only supports a fresh install: $managed_path"
 	fi
 done
+
+if command -v systemctl >/dev/null 2>&1; then
+	if UNIT_LOAD_STATE=$(systemctl show \
+		--property=LoadState --value kejilion-agent.service 2>/dev/null) &&
+		UNIT_FRAGMENT_PATH=$(systemctl show \
+			--property=FragmentPath --value kejilion-agent.service 2>/dev/null) &&
+		UNIT_DROP_INS=$(systemctl show \
+			--property=DropInPaths --value kejilion-agent.service 2>/dev/null); then
+		if [ "$UNIT_LOAD_STATE" = "not-found" ] &&
+			[ -z "$UNIT_FRAGMENT_PATH" ] &&
+			[ -z "$UNIT_DROP_INS" ]; then
+			ok "no existing or loaded kejilion-agent.service was found"
+		else
+			fail "an existing or loaded kejilion-agent.service was found"
+		fi
+	else
+		fail "cannot query systemd for an existing kejilion-agent.service"
+	fi
+fi
+
+if getent group kejilion-panel >/dev/null 2>&1; then
+	PANEL_GROUP_ENTRY=$(getent group kejilion-panel)
+	PANEL_GID=$(printf '%s\n' "$PANEL_GROUP_ENTRY" | awk -F: '$1 == "kejilion-panel" {print $3; exit}')
+	PANEL_MEMBERS=$(printf '%s\n' "$PANEL_GROUP_ENTRY" | awk -F: '$1 == "kejilion-panel" {print $4; exit}')
+	if [ -z "$PANEL_GID" ]; then
+		fail "cannot resolve kejilion-panel gid"
+	elif [ -n "$PANEL_MEMBERS" ]; then
+		fail "kejilion-panel group has supplemental members"
+	else
+		if ! PASSWD_ENTRIES=$(getent passwd) || [ -z "$PASSWD_ENTRIES" ]; then
+			fail "cannot enumerate host users for the Agent group boundary"
+		else
+			PRIMARY_GROUP_USERS=$(printf '%s\n' "$PASSWD_ENTRIES" |
+				awk -F: -v gid="$PANEL_GID" '$4 == gid {print $1}')
+			if [ -n "$PRIMARY_GROUP_USERS" ]; then
+				fail "kejilion-panel gid is a primary group for host users: $PRIMARY_GROUP_USERS"
+			else
+				ok "existing kejilion-panel group has no host members"
+			fi
+		fi
+	fi
+fi
 
 if [ "$FAILURES" -ne 0 ]; then
 	printf '\nPreflight failed: %s failure(s), %s warning(s).\n' "$FAILURES" "$WARNINGS" >&2

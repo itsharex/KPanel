@@ -22,6 +22,14 @@
 - Panel 不修改、执行或 `source` `kejilion.sh`；宿主机真实产物始终是事实来源。
 - 脚本侧或人工修改会在下一次发现时呈现；Web 侧仅写入脚本既有路径和命名约定。
 
+### Security
+
+- 安装器仅允许全新安装，并固定使用本机 Docker Socket；dry-run 不连接 Docker daemon，也不启动服务。
+- 安装前校验 Agent 版本、镜像 digest/用户/健康检查/版本标签、专用权限组、systemd/Compose 归属、监听端口、`/home/web` 和 Docker 子网冲突。
+- 正式安装要求 Agent、Panel、Panel→Agent 及宿主回环端口全部健康；失败时尝试停止本次新进程并复核状态，无法确认则发出 `CRITICAL`，同时保留日志供恢复。
+- 单 IP 与账户采用分级登录限速；成功登录按发生时间重置此前失败，避免少量匿名请求锁死管理员。
+- Dockerfile frontend、构建镜像、BuildKit 与发布 Actions 均固定版本或摘要；发布前执行镜像运行时安全合约检查。
+
 ### Known limitations
 
 - 首版不提供网站、证书、数据库、目录或 Docker 资源删除。

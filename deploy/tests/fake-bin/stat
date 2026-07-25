@@ -1,0 +1,19 @@
+#!/bin/sh
+case "$*" in
+	"-L -c %F /home/web")
+		if [ "${KP_WEB_ROOT_FAIL:-0}" = 1 ]; then
+			exit 1
+		fi
+		printf '%s\n' "${KP_WEB_ROOT_KIND:-directory}"
+		exit 0
+		;;
+	"-L -c %F /var/run/docker.sock")
+		if [ "${KP_DOCKER_SOCKET_FAIL:-0}" = 1 ]; then
+			exit 1
+		fi
+		printf '%s\n' "${KP_DOCKER_SOCKET_KIND:-socket}"
+		exit 0
+		;;
+esac
+echo "unexpected stat invocation: $*" >&2
+exit 92

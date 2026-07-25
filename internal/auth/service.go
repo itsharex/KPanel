@@ -31,6 +31,8 @@ var (
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$`)
 
+const accountFailureLimitMultiplier = 10
+
 type Config struct {
 	BootstrapTokenPath  string
 	SessionTTL          time.Duration
@@ -273,10 +275,12 @@ func (s *Service) Login(ip, username, password string) (Credentials, error) {
 func (s *Service) reserveLogin(ipKey, accountKey string, since time.Time) bool {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
-	for _, key := range []string{ipKey, accountKey} {
-		if s.store.FailedLoginCount(key, since)+s.pending[key] >= s.config.MaxLoginFailures {
-			return false
-		}
+	if s.store.FailedLoginCount(ipKey, since)+s.pending[ipKey] >= s.config.MaxLoginFailures {
+		return false
+	}
+	accountLimit := s.config.MaxLoginFailures * accountFailureLimitMultiplier
+	if s.store.FailedLoginCount(accountKey, since)+s.pending[accountKey] >= accountLimit {
+		return false
 	}
 	s.pending[ipKey]++
 	s.pending[accountKey]++

@@ -9,8 +9,14 @@ Kejilion Panel 使用两个独立进程：
 
 安装器只管理 `/etc/kejilion-panel`、`/opt/kejilion-panel`、
 `/var/lib/kejilion-panel`、`/run/kejilion-panel`、
-`/usr/local/libexec/kejilion-agent` 和对应 systemd unit。安装器不会执行或
-修改 `kejilion.sh`，也不会改动 `/home/web`、现有 Nginx 配置、防火墙和站点。
+`/usr/local/libexec/kejilion-agent`、对应 systemd unit、专用
+`kejilion-panel` 容器与 `kejilion-panel-internal` 网络。安装器还会把固定
+digest 的 Panel 镜像拉入本机缓存。安装器不会执行或修改 `kejilion.sh`，也不会
+改动 `/home/web`、现有 Nginx 配置、防火墙和站点。
+
+v0.1.0 安装器只支持全新安装。发现任何既有 Panel 文件、同名容器或同名网络时
+会拒绝继续，不会把未知资源当作可升级对象。后续版本必须在具备事务化升级和自动
+回滚后再开放原地升级。
 
 ## 发布产物
 
@@ -72,11 +78,16 @@ docker buildx imagetools inspect "$IMAGE:$VERSION"
 ```sh
 ./deploy/preflight.sh \
   --public-url https://panel.example.com \
-  --port 18443
+  --port 18443 \
+  --network-subnet 172.29.255.240/28
 ```
 
-预检告警不一定阻止部署。目标机尚无 `/home/web/certs` 时，安全登录和主机监控仍可工作；
-为避免把目录故障误报为空列表，网站发现会保持不可用，目录恢复后自动恢复。失败项必须处理后再部署。
+预检不会调用 `docker info`、不会连接 Docker Socket，也不会启动 Docker。
+Docker 服务必须由运维人员在评估现有容器后提前启动。预检会拒绝已占用端口、
+重叠路由、非专用 Agent 组、既有 Panel 资源，以及缺失或不可读的 `/home/web`
+根目录。目标机尚无 `/home/web/certs` 等子目录时，安全登录和主机监控仍可
+工作；为避免把目录故障误报为空列表，相关网站发现能力会保持不可用，目录恢复
+后自动恢复。失败项必须处理后再部署。
 
 ## 安装
 
@@ -91,10 +102,17 @@ sudo ./deploy/install.sh \
   --image docker.io/<owner>/kejilion-panel@sha256:<manifest-digest> \
   --public-url https://panel.example.com \
   --port 18443 \
+  --network-subnet 172.29.255.240/28 \
   --dry-run
 ```
 
-确认 dry-run 后去掉 `--dry-run`。安装成功后，一次性初始化 Token 仅保存在：
+`--network-subnet` 只接受对齐的 RFC1918 IPv4 `/28`。安装器会用同一 CIDR
+自动生成可信代理范围，不提供可独立放宽的参数。`--dry-run` 会在连接 Docker
+Socket 前返回；确认后去掉 `--dry-run`。正式安装只连接
+`unix:///var/run/docker.sock`，并拒绝继承 `DOCKER_HOST` 或
+`DOCKER_CONTEXT`。
+
+安装成功后，一次性初始化 Token 仅保存在：
 
 ```text
 /var/lib/kejilion-panel/panel/bootstrap.token
@@ -105,14 +123,14 @@ Token 不会写入日志或安装器输出。首次初始化成功后文件会�
 ## HTTPS 入口
 
 Panel 容器只监听回环地址。需要在现有 HTTPS 入口中把 Panel 域名反向代理到
-`http://127.0.0.1:18443`，并透传 `Host`、`X-Real-IP` 和
-`X-Forwarded-Proto`。反向代理来源必须显式加入 Panel 的可信代理 CIDR；不要
-信任整个公网或所有私网。
+`http://127.0.0.1:18443`，并设置 `Host`、`X-Real-IP` 和
+`X-Forwarded-Proto`。反向代理必须覆盖设置 `X-Real-IP`，不能沿用客户端提交
+的同名请求头。反向代理来源必须显式加入 Panel 的可信代理 CIDR；不要信任整个
+公网或所有私网。
 
 默认 Compose 使用专用内部网段 `172.29.255.240/28`，并只信任 loopback 与
-该网段。如果它与目标机已有网段冲突，应在首次启动前同时修改
-`KEJILION_PANEL_NETWORK_SUBNET` 和
-`KEJILION_PANEL_TRUSTED_PROXY_CIDRS`，保持两者一致。
+该网段。如果预检发现冲突，通过 `--network-subnet` 选择另一个对齐的私网
+`/28`；安装器会同时写入网络和可信代理 CIDR，不能在安装后手工改其中一项。
 
 反向代理配置属于目标机业务配置，安装器不会自动写入。上线时应单独备份、新增
 独立域名配置、执行 `nginx -t`，成功后才 reload；验证失败时不得 reload。
@@ -121,8 +139,16 @@ Panel 容器只监听回环地址。需要在现有 HTTPS 入口中把 Panel 域
 
 ```sh
 systemctl is-active kejilion-agent
-docker compose --env-file /opt/kejilion-panel/.env \
+sudo /usr/local/libexec/kejilion-agent healthcheck
+docker --host unix:///var/run/docker.sock compose \
+  --project-name kejilion-panel \
+  --env-file /opt/kejilion-panel/.env \
   -f /opt/kejilion-panel/compose.yml ps
+docker --host unix:///var/run/docker.sock compose \
+  --project-name kejilion-panel \
+  --env-file /opt/kejilion-panel/.env \
+  -f /opt/kejilion-panel/compose.yml \
+  exec -T panel /paneld agent-healthcheck
 curl --fail --silent http://127.0.0.1:18443/api/v1/health
 curl --fail --silent --show-error https://panel.example.com/api/v1/health
 ```
@@ -138,7 +164,41 @@ curl --fail --silent --show-error https://panel.example.com/api/v1/health
 
 ## 回滚
 
-安装器会把被替换的 Panel 文件备份到
-`/var/backups/kejilion-panel/<UTC 时间>`。回滚只恢复 Panel 自身二进制、
-unit、Compose 和 `.env`，然后重启 Agent 与 Panel 容器；不得回滚或覆盖
-`/home/web`、`kejilion.sh`、站点、数据库、证书和其他容器。
+v0.1.0 不执行原地升级，因此没有“恢复旧版 Panel”的路径。全新安装在启动阶段
+失败时，安装器会尝试停止并禁用本次 Agent，并只在 Compose project/service
+标签同时匹配时停止 Panel 容器；随后复核容器运行态、Agent `ActiveState` 和
+`UnitFileState`。无法确认时会输出 `CRITICAL`，此时不得重试或启动相关服务。
+安装器不会自动删除数据、日志或镜像。先保留现场并检查：
+
+```sh
+journalctl -u kejilion-agent --no-pager
+docker --host unix:///var/run/docker.sock logs kejilion-panel
+systemctl show kejilion-agent.service -p LoadState -p FragmentPath -p DropInPaths
+docker --host unix:///var/run/docker.sock inspect kejilion-panel \
+  --format '{{json .Config.Labels}}'
+```
+
+只有确认 unit 的 `FragmentPath` 是
+`/etc/systemd/system/kejilion-agent.service`，且容器标签同时包含
+`com.docker.compose.project=kejilion-panel` 与
+`com.docker.compose.service=panel` 后，才可执行以下全新安装恢复步骤：
+
+```sh
+docker --host unix:///var/run/docker.sock compose \
+  --project-name kejilion-panel \
+  --env-file /opt/kejilion-panel/.env \
+  -f /opt/kejilion-panel/compose.yml down
+systemctl disable --now kejilion-agent.service
+rm -f -- /etc/systemd/system/kejilion-agent.service \
+  /usr/local/libexec/kejilion-agent
+rm -rf -- /etc/kejilion-panel /opt/kejilion-panel /var/lib/kejilion-panel
+systemctl daemon-reload
+```
+
+`kejilion-panel` 组默认保留；只有能证明它由本次失败安装创建、没有显式成员且
+没有用户以其为主 GID 时，才可单独删除。恢复完成后重新执行只读 preflight，
+不得绕过 fresh-install 检查直接重试。
+
+任何回滚都不得删除、恢复或覆盖 `/home/web`、`kejilion.sh`、站点、数据库、
+证书和其他容器。生产部署前应记录 `kejilion.sh` 相关文件哈希和现有 Docker
+资源清单，回滚后再次比对，证明现有业务未变化。

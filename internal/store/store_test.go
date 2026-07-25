@@ -98,6 +98,48 @@ func TestStoreAllowsOnlyOneWriter(t *testing.T) {
 	}
 }
 
+func TestSuccessfulLoginResetsEarlierFailureCount(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	now := time.Now().UTC()
+	key := "account:admin"
+	if err := storage.RecordLoginAttempts([]LoginAttempt{
+		{Key: key, OccurredAt: now.Add(-3 * time.Minute), Success: false},
+		{Key: key, OccurredAt: now.Add(-2 * time.Minute), Success: true},
+		{Key: key, OccurredAt: now.Add(-time.Minute), Success: false},
+	}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if count := storage.FailedLoginCount(key, now.Add(-time.Hour)); count != 1 {
+		t.Fatalf("expected one failure after the latest success, got %d", count)
+	}
+}
+
+func TestSuccessfulLoginResetUsesAttemptTimeNotAppendOrder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	now := time.Now().UTC()
+	key := "account:admin"
+	if err := storage.RecordLoginAttempts([]LoginAttempt{
+		{Key: key, OccurredAt: now.Add(-time.Minute), Success: false},
+		{Key: key, OccurredAt: now.Add(-3 * time.Minute), Success: false},
+		{Key: key, OccurredAt: now.Add(-2 * time.Minute), Success: true},
+	}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if count := storage.FailedLoginCount(key, now.Add(-time.Hour)); count != 1 {
+		t.Fatalf("expected only the failure newer than the latest success, got %d", count)
+	}
+}
+
 func TestDirectorySyncFailureDoesNotTurnACommittedWriteIntoFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	storage, err := Open(path)

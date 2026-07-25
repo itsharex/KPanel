@@ -1,0 +1,33 @@
+#!/bin/sh
+case "$*" in
+	"show --property=LoadState --value kejilion-agent.service")
+		printf '%s\n' "${KP_UNIT_LOAD_STATE:-not-found}"
+		exit 0
+		;;
+	"show --property=FragmentPath --value kejilion-agent.service")
+		printf '%s\n' "${KP_UNIT_FRAGMENT_PATH:-}"
+		exit 0
+		;;
+	"show --property=DropInPaths --value kejilion-agent.service")
+		printf '%s\n' "${KP_UNIT_DROP_INS:-}"
+		exit 0
+		;;
+	"show --property=ActiveState --value kejilion-agent.service")
+		printf '%s\n' "${KP_AGENT_ACTIVE_STATE:-inactive}"
+		exit 0
+		;;
+	"show --property=UnitFileState --value kejilion-agent.service")
+		printf '%s\n' "${KP_AGENT_UNIT_FILE_STATE:-disabled}"
+		exit 0
+		;;
+	"is-active --quiet docker.service")
+		exit 0
+		;;
+	"stop kejilion-agent.service"|"disable kejilion-agent.service")
+		exit 0
+		;;
+	*)
+		echo "unexpected systemctl invocation: $*" >&2
+		exit 92
+		;;
+esac

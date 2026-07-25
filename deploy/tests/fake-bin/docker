@@ -1,0 +1,11 @@
+#!/bin/sh
+printf '%s\n' "$*" >>"${KP_DOCKER_LOG:?}"
+case "$*" in
+	"--host unix:///var/run/docker.sock compose version")
+		exit 0
+		;;
+	*)
+		echo "unexpected Docker invocation during dry-run: $*" >&2
+		exit 91
+		;;
+esac

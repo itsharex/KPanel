@@ -91,6 +91,7 @@ jobs:
           )
           go test ./...
           go vet ./...
+          sh deploy/tests/install-safety.sh
 
       - name: Build Agent release binaries
         shell: bash
@@ -106,8 +107,9 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
             go build -trimpath -ldflags "$ldflags" \
             -o release/kejilion-agent-linux-arm64 ./cmd/kejilion-agent
-          tar -czf "release/kejilion-panel-deploy-$VERSION.tar.gz" \
-            deploy docs README.md CHANGELOG.md VERSION
+          git archive --format=tar HEAD \
+            deploy docs README.md CHANGELOG.md VERSION |
+            gzip -n > "release/kejilion-panel-deploy-$VERSION.tar.gz"
           (
             cd release
             sha256sum \
@@ -116,11 +118,93 @@ jobs:
               "kejilion-panel-deploy-$VERSION.tar.gz" > SHA256SUMS
           )
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          version: v0.34.1
+          driver-opts: image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+
+      - name: Build native image for runtime validation
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: kejilion-panel:release-check
+          build-args: VERSION=${{ steps.release.outputs.version }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+
+      - name: Verify runtime image contract
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect --format '{{.Config.User}}' kejilion-panel:release-check)" = "65532:65532"
+          test "$(docker image inspect --format '{{join .Config.Healthcheck.Test " "}}' kejilion-panel:release-check)" = "CMD /paneld healthcheck"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' kejilion-panel:release-check)" = "$VERSION"
+          container_id="$(
+            docker run --detach --rm \
+              --network none \
+              --read-only \
+              --cap-drop ALL \
+              --security-opt no-new-privileges \
+              --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777 \
+              --tmpfs /var/lib/kejilion-panel:rw,noexec,nosuid,size=16m,uid=65532,gid=65532,mode=0700 \
+              kejilion-panel:release-check
+          )"
+          cleanup() {
+            docker container rm --force "$container_id" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          healthy=false
+          for _ in {1..20}; do
+            if docker exec "$container_id" /paneld healthcheck >/dev/null 2>&1; then
+              healthy=true
+              break
+            fi
+            sleep 1
+          done
+          test "$healthy" = true
+
+      - name: Prepare draft GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          printf 'Docker image publication is still in progress.\n' > release/DRAFT_NOTES.md
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            draft="$(
+              gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
+                --jq '.draft'
+            )"
+            test "$draft" = true || {
+              echo "Refusing to replace an already-published release" >&2
+              exit 1
+            }
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "Kejilion Panel $VERSION" \
+              --notes-file release/DRAFT_NOTES.md
+            gh release upload "$GITHUB_REF_NAME" --clobber \
+              release/kejilion-agent-linux-amd64 \
+              release/kejilion-agent-linux-arm64 \
+              "release/kejilion-panel-deploy-$VERSION.tar.gz" \
+              release/SHA256SUMS
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --draft \
+              --title "Kejilion Panel $VERSION" \
+              --notes-file release/DRAFT_NOTES.md \
+              release/kejilion-agent-linux-amd64 \
+              release/kejilion-agent-linux-arm64 \
+              "release/kejilion-panel-deploy-$VERSION.tar.gz" \
+              release/SHA256SUMS
+          fi
 
       - name: Log in to Docker Hub
         uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
@@ -161,11 +245,7 @@ jobs:
             echo
             echo "Agent binaries must be verified with the attached \`SHA256SUMS\` before installation."
           } > release/RELEASE_NOTES.md
-          gh release create "$GITHUB_REF_NAME" \
-            --verify-tag \
+          gh release edit "$GITHUB_REF_NAME" \
+            --draft=false \
             --title "Kejilion Panel $VERSION" \
-            --notes-file release/RELEASE_NOTES.md \
-            release/kejilion-agent-linux-amd64 \
-            release/kejilion-agent-linux-arm64 \
-            "release/kejilion-panel-deploy-$VERSION.tar.gz" \
-            release/SHA256SUMS
+            --notes-file release/RELEASE_NOTES.md

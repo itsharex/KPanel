@@ -1,0 +1,8 @@
+#!/bin/sh
+if [ "${KP_ROUTE_CONFLICT:-0}" = 1 ]; then
+	case "$*" in
+		"-4 route show match "*)
+			echo "172.29.0.0/16 dev conflict0"
+			;;
+	esac
+fi

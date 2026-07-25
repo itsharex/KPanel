@@ -13,7 +13,9 @@
 - 密码使用 Argon2id；Session 随机生成并只保存摘要。
 - Cookie 为 `HttpOnly`、`SameSite=Strict`，公开环境强制 `Secure`。
 - 所有状态变更要求 CSRF Token，并校验 `Origin` 与配置的公开地址。
-- 登录失败按来源和账户限速，认证及管理操作写入脱敏审计日志。
+- 登录失败按来源和账户分别限速：单 IP 使用配置阈值，账户阈值为其 10 倍，
+  避免少量匿名请求锁死唯一管理员；正确登录会重置该来源和账户的既往失败计数。
+  认证及管理操作写入脱敏审计日志。
 - Agent 请求使用独立 Bearer Token，通过文件权限和 Unix Socket 组权限双重限制。
 - 公共 API 不接受 Shell、命令行、绝对目标路径、Docker Exec 或原始 Nginx 配置。
 - Docker 资源默认只读；只有归属证据充分的 Kejilion 资源允许生命周期操作。
