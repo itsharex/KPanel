@@ -7,6 +7,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
 AGENT_BINARY=
+AGENT_SHA256=
 IMAGE=
 PUBLIC_URL=
 PORT=18443
@@ -17,7 +18,8 @@ usage() {
 Usage:
   sudo ./deploy/install.sh \
     --agent-binary ./dist/linux-amd64/kejilion-agent \
-    --image docker.io/OWNER/kejilion-panel:v0.1.0 \
+    --agent-sha256 <64-character-sha256> \
+    --image docker.io/OWNER/kejilion-panel@sha256:<64-character-digest> \
     --public-url https://panel.example.com \
     [--port 18443] [--dry-run]
 
@@ -41,6 +43,11 @@ while [ "$#" -gt 0 ]; do
 		--image)
 			[ "$#" -ge 2 ] || fail "--image requires a value"
 			IMAGE=$2
+			shift 2
+			;;
+		--agent-sha256)
+			[ "$#" -ge 2 ] || fail "--agent-sha256 requires a value"
+			AGENT_SHA256=$2
 			shift 2
 			;;
 		--public-url)
@@ -71,21 +78,17 @@ done
 [ -n "$AGENT_BINARY" ] || fail "--agent-binary is required"
 [ -f "$AGENT_BINARY" ] || fail "agent binary not found: $AGENT_BINARY"
 [ -x "$AGENT_BINARY" ] || fail "agent binary is not executable: $AGENT_BINARY"
+[ -n "$AGENT_SHA256" ] || fail "--agent-sha256 is required"
+printf '%s' "$AGENT_SHA256" | grep -Eq '^[A-Fa-f0-9]{64}$' || fail "invalid agent SHA-256"
 [ -n "$IMAGE" ] || fail "--image is required"
 printf '%s' "$IMAGE" | grep -Eq '^[A-Za-z0-9._/@:+-]+$' || fail "invalid image reference"
-case "$IMAGE" in
-	*:latest|latest)
-		fail "a versioned image tag or digest is required"
-		;;
-esac
-case "$PUBLIC_URL" in
-	https://*)
-		;;
-	*)
-		fail "--public-url must use https://"
-		;;
-esac
-printf '%s' "$PUBLIC_URL" | grep -Eq '^https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$' || fail "invalid public URL"
+printf '%s' "$IMAGE" | grep -Eq '@sha256:[a-f0-9]{64}$' || fail "image must be pinned by sha256 digest"
+printf '%s' "$PUBLIC_URL" | grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)(:[0-9]{1,5})?$' ||
+	fail "--public-url must be an https origin without path, userinfo, query, or fragment"
+PUBLIC_PORT=$(printf '%s' "$PUBLIC_URL" | sed -n 's#^https://[^:]*:\([0-9][0-9]*\)$#\1#p')
+if [ -n "$PUBLIC_PORT" ]; then
+	[ "$PUBLIC_PORT" -ge 1 ] && [ "$PUBLIC_PORT" -le 65535 ] || fail "public URL port is invalid"
+fi
 case "$PORT" in
 	''|*[!0-9]*)
 		fail "--port must be numeric"
@@ -93,11 +96,13 @@ case "$PORT" in
 esac
 [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || fail "--port must be between 1024 and 65535"
 
-for command_name in docker systemctl getent groupadd install openssl mktemp; do
+for command_name in docker systemctl getent groupadd install openssl mktemp sha256sum; do
 	command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: $command_name"
 done
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
 docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable"
+printf '%s  %s\n' "$AGENT_SHA256" "$AGENT_BINARY" | sha256sum --check --status ||
+	fail "agent binary SHA-256 mismatch"
 
 if [ "$DRY_RUN" = true ]; then
 	printf 'Preflight passed.\n'
@@ -212,8 +217,6 @@ printf '\nKejilion Panel is running on 127.0.0.1:%s.\n' "$PORT"
 printf 'Public URL: %s\n' "$PUBLIC_URL"
 printf 'Backup: %s\n' "$BACKUP_DIR"
 if [ -s "$DATA_DIR/bootstrap.token" ]; then
-	printf 'One-time setup token: '
-	cat "$DATA_DIR/bootstrap.token"
-	printf '\n'
+	printf 'Read the one-time setup token as root from: %s\n' "$DATA_DIR/bootstrap.token"
 fi
 printf 'No kejilion.sh, /home/web, Nginx, firewall, or existing site file was changed.\n'

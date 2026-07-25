@@ -1,13 +1,14 @@
 # syntax=docker/dockerfile:1.8
 
-FROM node:24.17.0-alpine AS web-build
+FROM node:24.17.0-alpine@sha256:156b55f92e98ccd5ef49578a8cea0df4679826564bad1c9d4ef04462b9f0ded6 AS web-build
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
-COPY web/ ./
+COPY web/index.html web/tsconfig.json web/vite.config.ts ./
+COPY web/src/ ./src/
 RUN npm run build
 
-FROM golang:1.26.5-alpine AS go-build
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS go-build
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG VERSION=dev

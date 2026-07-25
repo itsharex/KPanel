@@ -1,6 +1,16 @@
 .git
 .github
 .codex-tmp
+**/.env
+**/.env.*
+**/*.crt
+**/*.key
+**/*.p12
+**/*.pem
+**/*.pfx
+**/*token*
+**/secret
+**/secrets
 dist
 web/dist
 web/node_modules
