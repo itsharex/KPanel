@@ -7,7 +7,7 @@
 ### Fixed
 
 - 保留 Docker `internal` 网络隔离，同时为 Panel 分配确定的私网地址并取消无效的宿主端口发布；宿主健康检查和 Kejilion Nginx 直接访问该私网端点。
-- 发布构建通过 BuildKit secret 注入可选代理，避免把构建基础设施地址写入镜像 Provenance。
+- 发布构建通过 BuildKit secret 注入可选代理，避免把构建基础设施地址写入镜像 Provenance；镜像记录源提交 revision，并在验收版本 digest 后才更新 `latest`。
 
 ## [0.1.1] - 2026-07-25
 

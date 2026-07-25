@@ -56,13 +56,10 @@ jobs:
           {
             echo "version=$version"
             echo "image=docker.io/$DOCKERHUB_IMAGE"
-            echo "tags<<EOF"
-            echo "docker.io/$DOCKERHUB_IMAGE:$version"
             case "$version" in
-              *-*) ;;
-              *) echo "docker.io/$DOCKERHUB_IMAGE:latest" ;;
+              *-*) echo "stable=false" ;;
+              *) echo "stable=true" ;;
             esac
-            echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
@@ -131,7 +128,9 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: kejilion-panel:release-check
-          build-args: VERSION=${{ steps.release.outputs.version }}
+          build-args: |
+            VERSION=${{ steps.release.outputs.version }}
+            REVISION=${{ github.sha }}
           provenance: false
           sbom: false
           cache-from: type=gha
@@ -139,12 +138,14 @@ jobs:
       - name: Verify runtime image contract
         shell: bash
         env:
+          REVISION: ${{ github.sha }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
           test "$(docker image inspect --format '{{.Config.User}}' kejilion-panel:release-check)" = "65532:65532"
           test "$(docker image inspect --format '{{join .Config.Healthcheck.Test " "}}' kejilion-panel:release-check)" = "CMD /paneld healthcheck"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' kejilion-panel:release-check)" = "$VERSION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' kejilion-panel:release-check)" = "$REVISION"
           container_id="$(
             docker run --detach --rm \
               --network none \
@@ -220,12 +221,38 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.release.outputs.tags }}
-          build-args: VERSION=${{ steps.release.outputs.version }}
+          tags: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.version }}
+          build-args: |
+            VERSION=${{ steps.release.outputs.version }}
+            REVISION=${{ github.sha }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Promote stable image to latest
+        if: steps.release.outputs.stable == 'true'
+        shell: bash
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          version_digest="$(
+            docker buildx imagetools inspect "$IMAGE:$VERSION" \
+              --format '{{json .Manifest}}' | jq -r '.digest'
+          )"
+          test "$version_digest" = "$IMAGE_DIGEST"
+          docker buildx imagetools inspect "$IMAGE@$IMAGE_DIGEST" >/dev/null
+          docker buildx imagetools create \
+            --tag "$IMAGE:latest" \
+            "$IMAGE@$IMAGE_DIGEST"
+          latest_digest="$(
+            docker buildx imagetools inspect "$IMAGE:latest" \
+              --format '{{json .Manifest}}' | jq -r '.digest'
+          )"
+          test "$latest_digest" = "$IMAGE_DIGEST"
 
       - name: Publish GitHub release
         shell: bash

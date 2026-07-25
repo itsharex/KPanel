@@ -31,10 +31,12 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM scratch
 ARG VERSION=dev
+ARG REVISION=unknown
 LABEL org.opencontainers.image.title="KPanel" \
       org.opencontainers.image.description="Safe web management plane for kejilion.sh hosts" \
       org.opencontainers.image.source="https://github.com/kejilion/kejilion-panel" \
-      org.opencontainers.image.version="${VERSION}"
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
 COPY --from=go-build /out/paneld /paneld
 COPY --from=web-build /src/web/dist /app/web
 USER 65532:65532
