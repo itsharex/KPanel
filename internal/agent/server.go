@@ -31,6 +31,7 @@ type Config struct {
 	WebRoot         string
 	System          *systeminfo.Collector
 	Sites           *sites.Discoverer
+	SitesManager    *sites.Manager
 	Docker          *dockerx.Client
 	Now             func() time.Time
 }
@@ -42,6 +43,7 @@ type Server struct {
 	webRoot         string
 	system          *systeminfo.Collector
 	sites           *sites.Discoverer
+	sitesManager    *sites.Manager
 	docker          *dockerx.Client
 	now             func() time.Time
 }
@@ -65,6 +67,9 @@ func NewServer(config Config) (*Server, error) {
 	if config.Docker == nil {
 		return nil, errors.New("Docker client is required")
 	}
+	if config.SitesManager == nil {
+		config.SitesManager = sites.NewManager(config.WebRoot, config.Sites, config.Docker)
+	}
 	return &Server{
 		tokenHash:       sha256.Sum256(config.Token),
 		version:         config.Version,
@@ -72,6 +77,7 @@ func NewServer(config Config) (*Server, error) {
 		webRoot:         config.WebRoot,
 		system:          config.System,
 		sites:           config.Sites,
+		sitesManager:    config.SitesManager,
 		docker:          config.Docker,
 		now:             config.Now,
 	}, nil
@@ -97,7 +103,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/v1/system/summary":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemSummary)
 	case r.URL.Path == "/v1/sites":
-		s.requireMethod(w, r, requestID, http.MethodGet, s.siteList)
+		s.siteCollection(w, r, requestID)
+	case strings.HasPrefix(r.URL.Path, "/v1/sites/"):
+		s.siteOperation(w, r, requestID)
 	case r.URL.Path == "/v1/docker/summary":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerSummary)
 	case r.URL.Path == "/v1/docker/containers":
@@ -162,13 +170,16 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	dockerAvailable := s.docker.Ping(ctx) == nil
 	_, siteErr := os.Stat(s.webRoot)
+	writeContext, writeCancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer writeCancel()
+	siteWriteErr := s.sitesManager.Writable(writeContext)
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
 		{ID: "sites.read", Enabled: siteErr == nil, Reason: reasonIf(siteErr, "Kejilion Web 根目录不可用"), Methods: []string{"GET"}},
 		{ID: "docker.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "docker.logs", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "docker.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅安全识别的 Kejilion 容器可操作"), Methods: []string{"POST"}},
-		{ID: "sites.write", Enabled: false, Reason: "首版 Agent 暂不写入站点", Methods: []string{"POST", "PUT"}},
+		{ID: "sites.write", Enabled: siteWriteErr == nil, Reason: reasonIf(siteWriteErr, "安全写入条件不满足"), Methods: []string{"POST", "PATCH"}},
 	}
 	writeJSON(w, http.StatusOK, contract.PageResult[contract.Capability]{Items: items})
 }
@@ -189,6 +200,91 @@ func (s *Server) siteList(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, contract.PageResult[contract.SiteSummary]{Items: items})
+}
+
+func (s *Server) siteCollection(w http.ResponseWriter, r *http.Request, requestID string) {
+	switch r.Method {
+	case http.MethodGet:
+		s.siteList(w, r)
+	case http.MethodPost:
+		if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_site_request", "网站写入 URL 无效", "")
+			return
+		}
+		var input sites.SiteInput
+		if err := decodeJSON(w, r, &input); err != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+			return
+		}
+		result, err := s.sitesManager.Create(r.Context(), input)
+		if err != nil {
+			s.writeSiteError(w, requestID, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	default:
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+	}
+}
+
+func (s *Server) siteOperation(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method == http.MethodPatch && (r.URL.RawPath != "" || r.URL.RawQuery != "") {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_site_request", "网站写入 URL 无效", "")
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/v1/sites/")
+	if !validSiteID(id) {
+		writeProblem(w, requestID, http.StatusNotFound, "not_found", "资源不存在", "")
+		return
+	}
+	if r.Method != http.MethodPatch {
+		w.Header().Set("Allow", http.MethodPatch)
+		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+		return
+	}
+	var input sites.SiteInput
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+		return
+	}
+	result, err := s.sitesManager.Update(r.Context(), id, input)
+	if err != nil {
+		s.writeSiteError(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) writeSiteError(w http.ResponseWriter, requestID string, err error) {
+	status, code, title := http.StatusServiceUnavailable, "sites_unavailable", "网站写入暂不可用"
+	switch {
+	case errors.Is(err, sites.ErrInvalidInput):
+		status, code, title = http.StatusBadRequest, "invalid_site_request", "网站请求无效"
+	case errors.Is(err, sites.ErrForbidden):
+		status, code, title = http.StatusForbidden, "site_read_only", "该网站只能查看"
+	case errors.Is(err, sites.ErrConflict):
+		status, code, title = http.StatusConflict, "resource_conflict", "网站资源发生冲突"
+	case errors.Is(err, sites.ErrUnprocessable):
+		status, code, title = http.StatusUnprocessableEntity, "site_validation_failed", "网站配置验证失败"
+	case errors.Is(err, sites.ErrNeedsAttention):
+		status, code, title = http.StatusServiceUnavailable, "site_needs_attention", "网站操作需要人工检查"
+	case errors.Is(err, sites.ErrUnavailable):
+		status, code, title = http.StatusServiceUnavailable, "sites_unavailable", "网站写入暂不可用"
+	}
+	writeProblem(w, requestID, status, code, title, safeDetail(err))
+}
+
+func validSiteID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) dockerSummary(w http.ResponseWriter, r *http.Request) {

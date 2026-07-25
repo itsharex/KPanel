@@ -1,0 +1,119 @@
+{
+  "Id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "Name": "/nginx",
+  "Created": "2026-07-25T00:00:00Z",
+  "Path": "/docker-entrypoint.sh",
+  "Args": [
+    "nginx",
+    "-g",
+    "daemon off;"
+  ],
+  "RestartCount": 0,
+  "Config": {
+    "Image": "nginx:alpine",
+    "Labels": {
+      "com.docker.compose.project": "web",
+      "com.docker.compose.project.working_dir": "/home/web",
+      "com.docker.compose.service": "nginx"
+    },
+    "Tty": false
+  },
+  "State": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "ExitCode": 0,
+    "StartedAt": "2026-07-25T00:00:01Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "HostConfig": {
+    "Binds": [
+      "/home/web/nginx.conf:/etc/nginx/nginx.conf:rw",
+      "/home/web/conf.d:/etc/nginx/conf.d:rw",
+      "/home/web/stream.d:/etc/nginx/stream.d:rw",
+      "/home/web/certs:/etc/nginx/certs:rw",
+      "/home/web/html:/var/www/html:rw",
+      "/home/web/letsencrypt:/var/www/letsencrypt:rw",
+      "/home/web/log/nginx:/var/log/nginx:rw"
+    ],
+    "CapAdd": null,
+    "Devices": null,
+    "Privileged": false,
+    "NetworkMode": "host",
+    "PidMode": "",
+    "IpcMode": "private",
+    "UTSMode": "",
+    "UsernsMode": "",
+    "SecurityOpt": null
+  },
+  "Mounts": [
+    {
+      "Type": "bind",
+      "Name": "",
+      "Source": "/home/web/nginx.conf",
+      "Destination": "/etc/nginx/nginx.conf",
+      "RW": true
+    },
+    {
+      "Type": "bind",
+      "Name": "",
+      "Source": "/home/web/conf.d",
+      "Destination": "/etc/nginx/conf.d",
+      "RW": true
+    },
+    {
+      "Type": "bind",
+      "Name": "",
+      "Source": "/home/web/stream.d",
+      "Destination": "/etc/nginx/stream.d",
+      "RW": true
+    },
+    {
+      "Type": "bind",
+      "Name": "",
+      "Source": "/home/web/certs",
+      "Destination": "/etc/nginx/certs",
+      "RW": true
+    },
+    {
+      "Type": "bind",
+      "Name": "",
+      "Source": "/home/web/html",
+      "Destination": "/var/www/html",
+      "RW": true
+    },
+    {
+      "Type": "bind",
+      "Name": "",
+      "Source": "/home/web/letsencrypt",
+      "Destination": "/var/www/letsencrypt",
+      "RW": true
+    },
+    {
+      "Type": "bind",
+      "Name": "",
+      "Source": "/home/web/log/nginx",
+      "Destination": "/var/log/nginx",
+      "RW": true
+    },
+    {
+      "Type": "volume",
+      "Name": "web_php-socket-php",
+      "Source": "/var/lib/docker/volumes/web_php-socket-php/_data",
+      "Destination": "/run/php",
+      "RW": true
+    },
+    {
+      "Type": "volume",
+      "Name": "web_php-socket-php74",
+      "Source": "/var/lib/docker/volumes/web_php-socket-php74/_data",
+      "Destination": "/run/php74",
+      "RW": true
+    }
+  ],
+  "NetworkSettings": {
+    "Networks": {},
+    "Ports": {}
+  }
+}

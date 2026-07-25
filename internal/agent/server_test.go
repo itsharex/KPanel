@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
@@ -41,6 +44,98 @@ func TestSitesPageEndpoint(t *testing.T) {
 	server.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"items"`) {
 		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestSiteWriteErrorStatusMapping(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{"invalid request", sites.ErrInvalidInput, http.StatusBadRequest, "invalid_site_request"},
+		{"read only", sites.ErrForbidden, http.StatusForbidden, "site_read_only"},
+		{"conflict", sites.ErrConflict, http.StatusConflict, "resource_conflict"},
+		{"validation", sites.ErrUnprocessable, http.StatusUnprocessableEntity, "site_validation_failed"},
+		{"needs attention", sites.ErrNeedsAttention, http.StatusServiceUnavailable, "site_needs_attention"},
+		{"unavailable", sites.ErrUnavailable, http.StatusServiceUnavailable, "sites_unavailable"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			(&Server{}).writeSiteError(
+				response,
+				"request-id",
+				fmt.Errorf("wrapped: %w", test.err),
+			)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, test.wantStatus)
+			}
+			var problem contract.Problem
+			if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+				t.Fatal(err)
+			}
+			if problem.Code != test.wantCode || problem.Status != test.wantStatus {
+				t.Fatalf("problem = %#v, want code=%q status=%d", problem, test.wantCode, test.wantStatus)
+			}
+			if problem.Retryable != (test.wantStatus >= 500) {
+				t.Fatalf("retryable = %v for status %d", problem.Retryable, test.wantStatus)
+			}
+		})
+	}
+}
+
+func TestSiteWriteRoutesRejectMalformedRequests(t *testing.T) {
+	server := testServer(t)
+	token := "Bearer " + strings.Repeat("x", 32)
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		wantStatus int
+	}{
+		{
+			name: "unknown create field", method: http.MethodPost, path: "/v1/sites",
+			body:       `{"primaryDomain":"example.com","type":"static","unknown":true}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "create query", method: http.MethodPost, path: "/v1/sites?mode=unsafe",
+			body:       `{"primaryDomain":"example.com","type":"static"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "encoded update path", method: http.MethodPatch,
+			path: "/v1/sites/" + strings.Repeat("%61", 32), body: `{}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "update query", method: http.MethodPatch,
+			path: "/v1/sites/" + strings.Repeat("a", 32) + "?force=true", body: `{}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "invalid update id", method: http.MethodPatch,
+			path: "/v1/sites/" + strings.Repeat("A", 32), body: `{}`,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "unsupported collection method", method: http.MethodDelete,
+			path: "/v1/sites", wantStatus: http.StatusMethodNotAllowed,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			request.Header.Set("Authorization", token)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, test.wantStatus, response.Body.String())
+			}
+		})
 	}
 }
 

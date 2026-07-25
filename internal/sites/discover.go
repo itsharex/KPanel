@@ -148,7 +148,7 @@ func (d *Discoverer) fromConfig(path string, now time.Time) (contract.SiteSummar
 	}
 	versionInput := append([]byte("config:"+configHash+"\n"), certBytes...)
 	versionInput = append(versionInput, []byte("\nkind:"+string(kind)+"\ntarget:"+target+"\nroot:"+documentRoot)...)
-	return contract.SiteSummary{
+	site := contract.SiteSummary{
 		ID:              stableID("site", primary, path),
 		PrimaryDomain:   primary,
 		Domains:         domains,
@@ -165,7 +165,9 @@ func (d *Discoverer) fromConfig(path string, now time.Time) (contract.SiteSummar
 		Artifacts:       artifacts,
 		Warnings:        uniqueStrings(warnings),
 		ReconciledAt:    now,
-	}, nil
+	}
+	d.markManagedSite(&site, data, path)
+	return site, nil
 }
 
 func (d *Discoverer) classify(clean string, directives map[string][]string) (contract.SiteKind, string, string, []string) {
@@ -494,14 +496,16 @@ func sanitizeTarget(raw string) string {
 }
 
 func validDomains(values []string) []string {
-	var result []string
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
-		if validDomain(value) {
+		if validDomain(value) && !seen[value] {
+			seen[value] = true
 			result = append(result, value)
 		}
 	}
-	return uniqueStrings(result)
+	return result
 }
 
 func validDomain(value string) bool {
