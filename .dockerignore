@@ -8,7 +8,9 @@
 **/*.p12
 **/*.pem
 **/*.pfx
-**/*token*
+**/*.token
+**/agent.token
+**/bootstrap.token
 **/secret
 **/secrets
 dist
