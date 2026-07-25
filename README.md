@@ -23,4 +23,4 @@ Kejilion Panel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全
 
 任意 Shell、Docker Exec、系统重装、磁盘格式化、应用市场远程脚本、站点硬删除等高风险能力不进入首版。
 
-详细设计见 [架构说明](docs/architecture.md)、[安全模型](docs/security-model.md) 和 [v0.1 范围](docs/scope-v0.1.md)。
+详细设计见 [架构说明](docs/architecture.md)、[兼容基线](docs/compatibility.md)、[安全模型](docs/security-model.md) 和 [v0.1 范围](docs/scope-v0.1.md)。
