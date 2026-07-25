@@ -22,8 +22,8 @@ services:
       KEJILION_PANEL_PUBLIC_URL: ${KEJILION_PANEL_PUBLIC_URL:-}
       KEJILION_PANEL_SECURE_COOKIE: ${KEJILION_PANEL_SECURE_COOKIE:-true}
     volumes:
-      - panel-data:/var/lib/kejilion-panel
-      - /run/kejilion-panel:/run/kejilion-panel
+      - ${KEJILION_PANEL_DATA_DIR_HOST:-/var/lib/kejilion-panel/panel}:/var/lib/kejilion-panel
+      - /run/kejilion-panel:/run/kejilion-panel:ro
       - /etc/kejilion-panel/agent.token:/run/secrets/agent-token:ro
     ports:
       - "127.0.0.1:${KEJILION_PANEL_PORT:-18443}:8080"
@@ -33,8 +33,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-volumes:
-  panel-data:
-    name: kejilion-panel-data
-
