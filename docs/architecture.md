@@ -1,5 +1,20 @@
 # 架构说明
 
+## 技术选型
+
+- 后端与宿主机 Agent：Go。编译为无 CGO 的单文件 Linux 二进制，内存占用低，
+  类型化接口便于限制高权限操作，也减少生产运行时依赖。
+- 前端：Vue 3 + TypeScript + Vite。构建后为静态文件，由 `paneld` 直接提供，
+  不在生产机运行 Node.js。
+- 面板状态：首版使用带进程锁和原子落盘的 JSON Store，仅保存认证与审计；
+  宿主机资源始终从实际文件系统和 Docker Engine 读取。
+- 部署：无特权 `paneld` Docker 容器 + 受 systemd 限制的宿主机 Agent。
+  这种拆分让 Web 进程不接触 Docker Socket、宿主机根目录或任意 Shell。
+
+该组合优先满足首版“轻量、快速、稳定、安全、可打包为多架构 Docker
+镜像”的目标。资源量或审计查询规模增长后，可以在不改变 Agent 安全边界的
+前提下把面板 Store 迁移到 SQLite/PostgreSQL。
+
 ## 进程边界
 
 ```text
