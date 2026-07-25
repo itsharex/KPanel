@@ -1,0 +1,305 @@
+package store
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+var (
+	ErrAlreadyInitialized = errors.New("store already initialized")
+	ErrNotFound           = errors.New("record not found")
+)
+
+type User struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"passwordHash"`
+	Role         string    `json:"role"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+type Session struct {
+	TokenHash string    `json:"tokenHash"`
+	CSRFHash  string    `json:"csrfHash"`
+	UserID    string    `json:"userId"`
+	CreatedAt time.Time `json:"createdAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+type AuditEvent struct {
+	ID         string         `json:"id"`
+	OccurredAt time.Time      `json:"occurredAt"`
+	ActorType  string         `json:"actorType"`
+	ActorID    string         `json:"actorId,omitempty"`
+	SourceIP   string         `json:"sourceIp,omitempty"`
+	Action     string         `json:"action"`
+	TargetKind string         `json:"targetKind,omitempty"`
+	TargetID   string         `json:"targetId,omitempty"`
+	Result     string         `json:"result"`
+	RequestID  string         `json:"requestId"`
+	Change     map[string]any `json:"change,omitempty"`
+}
+
+type LoginAttempt struct {
+	Key        string    `json:"key"`
+	OccurredAt time.Time `json:"occurredAt"`
+	Success    bool      `json:"success"`
+}
+
+type diskState struct {
+	SchemaVersion int            `json:"schemaVersion"`
+	Users         []User         `json:"users"`
+	Sessions      []Session      `json:"sessions"`
+	Audit         []AuditEvent   `json:"audit"`
+	LoginAttempts []LoginAttempt `json:"loginAttempts"`
+}
+
+// Store is a small, single-node persistence layer. It deliberately stores only
+// panel identity/session/audit data; host resources remain owned by the Agent.
+type Store struct {
+	mu   sync.RWMutex
+	path string
+	data diskState
+}
+
+func Open(path string) (*Store, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("store path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create store directory: %w", err)
+	}
+
+	s := &Store{
+		path: path,
+		data: diskState{SchemaVersion: 1},
+	}
+	content, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if len(content) == 0 {
+			return nil, errors.New("store file is empty")
+		}
+		if err := json.Unmarshal(content, &s.data); err != nil {
+			return nil, fmt.Errorf("decode store: %w", err)
+		}
+		if s.data.SchemaVersion != 1 {
+			return nil, fmt.Errorf("unsupported store schema version %d", s.data.SchemaVersion)
+		}
+	case errors.Is(err, os.ErrNotExist):
+		if err := s.persistLocked(); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("read store: %w", err)
+	}
+
+	return s, nil
+}
+
+func (s *Store) IsInitialized() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.data.Users) > 0
+}
+
+func (s *Store) CreateInitialAdmin(user User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.data.Users) != 0 {
+		return ErrAlreadyInitialized
+	}
+	s.data.Users = append(s.data.Users, user)
+	return s.persistLocked()
+}
+
+func (s *Store) UserByUsername(username string) (User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, user := range s.data.Users {
+		if strings.EqualFold(user.Username, username) {
+			return user, nil
+		}
+	}
+	return User{}, ErrNotFound
+}
+
+func (s *Store) UserByID(id string) (User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, user := range s.data.Users {
+		if user.ID == id {
+			return user, nil
+		}
+	}
+	return User{}, ErrNotFound
+}
+
+func (s *Store) PutSession(session Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.data.Sessions[:0]
+	for _, item := range s.data.Sessions {
+		if item.TokenHash != session.TokenHash && item.ExpiresAt.After(time.Now().UTC()) {
+			filtered = append(filtered, item)
+		}
+	}
+	s.data.Sessions = append(filtered, session)
+	return s.persistLocked()
+}
+
+func (s *Store) SessionByTokenHash(tokenHash string, now time.Time) (Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, session := range s.data.Sessions {
+		if session.TokenHash == tokenHash && session.ExpiresAt.After(now) {
+			return session, nil
+		}
+	}
+	return Session{}, ErrNotFound
+}
+
+func (s *Store) DeleteSession(tokenHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.data.Sessions[:0]
+	found := false
+	for _, session := range s.data.Sessions {
+		if session.TokenHash == tokenHash {
+			found = true
+			continue
+		}
+		filtered = append(filtered, session)
+	}
+	s.data.Sessions = filtered
+	if !found {
+		return nil
+	}
+	return s.persistLocked()
+}
+
+func (s *Store) AppendAudit(event AuditEvent, maxEntries int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.Audit = append(s.data.Audit, event)
+	if maxEntries > 0 && len(s.data.Audit) > maxEntries {
+		s.data.Audit = append([]AuditEvent(nil), s.data.Audit[len(s.data.Audit)-maxEntries:]...)
+	}
+	return s.persistLocked()
+}
+
+// ListAudit returns newest-first records. Cursor is the last event ID received.
+func (s *Store) ListAudit(limit int, cursor string) ([]AuditEvent, string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+
+	items := append([]AuditEvent(nil), s.data.Audit...)
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].OccurredAt.After(items[j].OccurredAt)
+	})
+
+	start := 0
+	if cursor != "" {
+		for i, event := range items {
+			if event.ID == cursor {
+				start = i + 1
+				break
+			}
+		}
+	}
+	if start >= len(items) {
+		return []AuditEvent{}, ""
+	}
+	end := min(start+limit, len(items))
+	next := ""
+	if end < len(items) {
+		next = items[end-1].ID
+	}
+	return items[start:end], next
+}
+
+func (s *Store) RecordLoginAttempt(attempt LoginAttempt, retainSince time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.data.LoginAttempts[:0]
+	for _, item := range s.data.LoginAttempts {
+		if item.OccurredAt.After(retainSince) {
+			filtered = append(filtered, item)
+		}
+	}
+	s.data.LoginAttempts = append(filtered, attempt)
+	return s.persistLocked()
+}
+
+func (s *Store) FailedLoginCount(key string, since time.Time) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, item := range s.data.LoginAttempts {
+		if item.Key == key && !item.Success && item.OccurredAt.After(since) {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Store) persistLocked() error {
+	content, err := json.MarshalIndent(s.data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode store: %w", err)
+	}
+	content = append(content, '\n')
+
+	dir := filepath.Dir(s.path)
+	temp, err := os.CreateTemp(dir, ".panel-store-*")
+	if err != nil {
+		return fmt.Errorf("create temporary store: %w", err)
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+
+	if err := temp.Chmod(0o600); err != nil {
+		temp.Close()
+		return fmt.Errorf("protect temporary store: %w", err)
+	}
+	if _, err := temp.Write(content); err != nil {
+		temp.Close()
+		return fmt.Errorf("write temporary store: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return fmt.Errorf("sync temporary store: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close temporary store: %w", err)
+	}
+
+	// os.Rename atomically replaces the target on Linux, which is the production
+	// platform. The backup fallback keeps local Windows development functional.
+	if err := os.Rename(tempPath, s.path); err == nil {
+		return nil
+	}
+
+	backupPath := s.path + ".previous"
+	_ = os.Remove(backupPath)
+	if err := os.Rename(s.path, backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("prepare store replacement: %w", err)
+	}
+	if err := os.Rename(tempPath, s.path); err != nil {
+		_ = os.Rename(backupPath, s.path)
+		return fmt.Errorf("replace store: %w", err)
+	}
+	_ = os.Remove(backupPath)
+	return nil
+}

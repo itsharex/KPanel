@@ -1,0 +1,519 @@
+package panel
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/kejilion/kejilion-panel/internal/auth"
+	"github.com/kejilion/kejilion-panel/internal/contract"
+	"github.com/kejilion/kejilion-panel/internal/store"
+	"github.com/kejilion/kejilion-panel/internal/version"
+)
+
+type contextKey string
+
+const requestIDKey contextKey = "request-id"
+
+var containerIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
+
+type Server struct {
+	config Config
+	auth   *auth.Service
+	store  *store.Store
+	agent  *AgentClient
+}
+
+type authResponse struct {
+	User      auth.PublicUser `json:"user"`
+	CSRFToken string          `json:"csrfToken"`
+	ExpiresAt time.Time       `json:"expiresAt"`
+}
+
+func NewServer(config Config, authService *auth.Service, storage *store.Store, agent *AgentClient) (*Server, error) {
+	if authService == nil {
+		return nil, errors.New("auth service is required")
+	}
+	if storage == nil {
+		return nil, errors.New("store is required")
+	}
+	if agent == nil {
+		return nil, errors.New("agent client is required")
+	}
+	return &Server{config: config, auth: authService, store: storage, agent: agent}, nil
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.setSecurityHeaders(w)
+	requestID := newRequestID()
+	w.Header().Set("X-Request-ID", requestID)
+	r = r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
+	defer func() {
+		if recover() != nil {
+			s.writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal server error", "")
+		}
+	}()
+
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		w.Header().Set("Cache-Control", "no-store")
+		s.serveAPI(w, r)
+		return
+	}
+	s.serveSPA(w, r)
+}
+
+func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/health":
+		s.writeJSON(w, http.StatusOK, map[string]any{
+			"status":          "ok",
+			"version":         version.Version,
+			"protocolVersion": version.ProtocolVersion,
+			"initialized":     s.auth.IsInitialized(),
+			"checkedAt":       time.Now().UTC(),
+		})
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/bootstrap":
+		s.writeJSON(w, http.StatusOK, map[string]bool{"required": !s.auth.IsInitialized()})
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/bootstrap":
+		s.handleBootstrap(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login":
+		s.handleLogin(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/session":
+		s.handleSession(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/logout":
+		s.handleLogout(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit":
+		s.handleAudit(w, r)
+	case r.Method == http.MethodGet:
+		s.handleAgentProxy(w, r)
+	default:
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+	}
+}
+
+func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	var input struct {
+		Token    string `json:"token"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		s.audit(r, "", "auth.bootstrap", "authentication", "", "failure", nil)
+		return
+	}
+	credentials, err := s.auth.Bootstrap(input.Token, input.Username, input.Password)
+	if err != nil {
+		s.audit(r, "", "auth.bootstrap", "authentication", "", "failure", nil)
+		switch {
+		case errors.Is(err, auth.ErrBootstrapUnavailable):
+			s.writeProblem(w, r, http.StatusConflict, "bootstrap_unavailable", "Bootstrap unavailable", "")
+		case errors.Is(err, auth.ErrInvalidBootstrapToken):
+			s.writeProblem(w, r, http.StatusUnauthorized, "invalid_bootstrap_token", "Invalid bootstrap token", "")
+		case errors.Is(err, auth.ErrInvalidUsername):
+			s.writeValidationProblem(w, r, "username", err.Error())
+		case errors.Is(err, auth.ErrWeakPassword):
+			s.writeValidationProblem(w, r, "password", err.Error())
+		default:
+			s.writeProblem(w, r, http.StatusInternalServerError, "bootstrap_failed", "Bootstrap failed", "")
+		}
+		return
+	}
+	s.setAuthCookies(w, credentials)
+	s.audit(r, credentials.User.ID, "auth.bootstrap", "user", credentials.User.ID, "success", nil)
+	s.writeJSON(w, http.StatusCreated, authResponse{
+		User: credentials.User, CSRFToken: credentials.CSRFToken, ExpiresAt: credentials.ExpiresAt,
+	})
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	var input struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		s.audit(r, "", "auth.login", "authentication", "", "failure", nil)
+		return
+	}
+	credentials, err := s.auth.Login(remoteIP(r), input.Username, input.Password)
+	if err != nil {
+		s.audit(r, "", "auth.login", "authentication", "", "failure", nil)
+		var rateError *auth.RateLimitError
+		switch {
+		case errors.As(err, &rateError):
+			seconds := max(int(rateError.RetryAfter.Seconds()), 1)
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			s.writeProblem(w, r, http.StatusTooManyRequests, "login_rate_limited", "Too many login attempts", "")
+		case errors.Is(err, auth.ErrInvalidCredentials):
+			s.writeProblem(w, r, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials", "")
+		default:
+			s.writeProblem(w, r, http.StatusInternalServerError, "login_failed", "Login failed", "")
+		}
+		return
+	}
+	s.setAuthCookies(w, credentials)
+	s.audit(r, credentials.User.ID, "auth.login", "session", "", "success", nil)
+	s.writeJSON(w, http.StatusOK, authResponse{
+		User: credentials.User, CSRFToken: credentials.CSRFToken, ExpiresAt: credentials.ExpiresAt,
+	})
+}
+
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	sessionToken, session, ok := s.requireSession(w, r)
+	_ = sessionToken
+	if !ok {
+		return
+	}
+	csrfToken := s.csrfCookieValue(r)
+	if err := s.auth.ValidateCSRF(session, csrfToken); err != nil {
+		// A stale/missing readable CSRF cookie does not invalidate the session,
+		// but the caller must log in again before any write operation.
+		csrfToken = ""
+	}
+	s.writeJSON(w, http.StatusOK, authResponse{
+		User: session.User, CSRFToken: csrfToken, ExpiresAt: session.ExpiresAt,
+	})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	sessionToken, session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !s.checkCSRF(w, r, session) {
+		return
+	}
+	if err := s.auth.Logout(sessionToken); err != nil {
+		s.writeProblem(w, r, http.StatusInternalServerError, "logout_failed", "Logout failed", "")
+		return
+	}
+	s.clearAuthCookies(w)
+	s.audit(r, session.User.ID, "auth.logout", "session", "", "success", nil)
+	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	_, _, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 200 {
+			s.writeValidationProblem(w, r, "limit", "limit must be between 1 and 200")
+			return
+		}
+		limit = parsed
+	}
+	events, next := s.store.ListAudit(limit, r.URL.Query().Get("cursor"))
+	result := contract.PageResult[contract.AuditEvent]{
+		Items: make([]contract.AuditEvent, 0, len(events)),
+	}
+	result.NextCursor = next
+	for _, event := range events {
+		result.Items = append(result.Items, contract.AuditEvent{
+			ID: event.ID, OccurredAt: event.OccurredAt, ActorType: event.ActorType,
+			ActorID: event.ActorID, SourceIP: event.SourceIP, Action: event.Action,
+			TargetKind: event.TargetKind, TargetID: event.TargetID, Result: event.Result,
+			RequestID: event.RequestID, Change: event.Change,
+		})
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleAgentProxy(w http.ResponseWriter, r *http.Request) {
+	_, _, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	agentPath, allowed := allowedAgentPath(r.URL.Path)
+	if !allowed {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	response, err := s.agent.Get(r.Context(), agentPath, r.URL.RawQuery, requestID(r))
+	if err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	w.Header().Set("Content-Type", response.ContentType)
+	w.WriteHeader(response.StatusCode)
+	_, _ = w.Write(response.Body)
+}
+
+func allowedAgentPath(publicPath string) (string, bool) {
+	exact := map[string]string{
+		"/api/v1/agent/health":      "/v1/health",
+		"/api/v1/capabilities":      "/v1/capabilities",
+		"/api/v1/system/summary":    "/v1/system/summary",
+		"/api/v1/sites":             "/v1/sites",
+		"/api/v1/docker/summary":    "/v1/docker/summary",
+		"/api/v1/docker/containers": "/v1/docker/containers",
+		"/api/v1/docker/images":     "/v1/docker/images",
+		"/api/v1/docker/networks":   "/v1/docker/networks",
+		"/api/v1/docker/volumes":    "/v1/docker/volumes",
+	}
+	if path, ok := exact[publicPath]; ok {
+		return path, true
+	}
+	const prefix = "/api/v1/docker/containers/"
+	const suffix = "/logs"
+	if strings.HasPrefix(publicPath, prefix) && strings.HasSuffix(publicPath, suffix) {
+		id := strings.TrimSuffix(strings.TrimPrefix(publicPath, prefix), suffix)
+		if containerIDPattern.MatchString(id) {
+			return "/v1/docker/containers/" + url.PathEscape(id) + "/logs", true
+		}
+	}
+	return "", false
+}
+
+func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (string, auth.Session, bool) {
+	cookie, err := r.Cookie(s.config.CookieName)
+	if err != nil || cookie.Value == "" {
+		s.writeProblem(w, r, http.StatusUnauthorized, "authentication_required", "Authentication required", "")
+		return "", auth.Session{}, false
+	}
+	session, err := s.auth.Authenticate(cookie.Value)
+	if err != nil {
+		s.clearAuthCookies(w)
+		s.writeProblem(w, r, http.StatusUnauthorized, "session_expired", "Session expired", "")
+		return "", auth.Session{}, false
+	}
+	return cookie.Value, session, true
+}
+
+func (s *Server) checkCSRF(w http.ResponseWriter, r *http.Request, session auth.Session) bool {
+	headerToken := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
+	cookieToken := s.csrfCookieValue(r)
+	if !secureStringEqual(headerToken, cookieToken) || s.auth.ValidateCSRF(session, headerToken) != nil {
+		s.writeProblem(w, r, http.StatusForbidden, "csrf_validation_failed", "CSRF validation failed", "")
+		return false
+	}
+	return true
+}
+
+func (s *Server) checkOrigin(w http.ResponseWriter, r *http.Request) bool {
+	origin := strings.TrimRight(strings.TrimSpace(r.Header.Get("Origin")), "/")
+	if origin == "" {
+		if fetchSite := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); fetchSite != "" && fetchSite != "same-origin" && fetchSite != "none" {
+			s.writeProblem(w, r, http.StatusForbidden, "origin_validation_failed", "Origin validation failed", "")
+			return false
+		}
+		return true
+	}
+	expected := s.config.PublicURL
+	if expected == "" {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		expected = scheme + "://" + r.Host
+	}
+	if !secureStringEqual(strings.ToLower(origin), strings.ToLower(expected)) {
+		s.writeProblem(w, r, http.StatusForbidden, "origin_validation_failed", "Origin validation failed", "")
+		return false
+	}
+	return true
+}
+
+func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
+	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
+		s.writeProblem(w, r, http.StatusUnsupportedMediaType, "json_required", "JSON request body required", "")
+		return errors.New("invalid content type")
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.config.MaxRequestBytes)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		s.writeProblem(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON", "")
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		s.writeProblem(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON", "")
+		return errors.New("multiple JSON values")
+	}
+	return nil
+}
+
+func (s *Server) setAuthCookies(w http.ResponseWriter, credentials auth.Credentials) {
+	maxAge := max(int(time.Until(credentials.ExpiresAt).Seconds()), 1)
+	http.SetCookie(w, &http.Cookie{
+		Name: s.config.CookieName, Value: credentials.Token, Path: "/",
+		MaxAge: maxAge, Expires: credentials.ExpiresAt, HttpOnly: true,
+		Secure: s.config.SecureCookie, SameSite: http.SameSiteStrictMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name: s.csrfCookieName(), Value: credentials.CSRFToken, Path: "/",
+		MaxAge: maxAge, Expires: credentials.ExpiresAt, HttpOnly: false,
+		Secure: s.config.SecureCookie, SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (s *Server) clearAuthCookies(w http.ResponseWriter) {
+	for _, cookie := range []*http.Cookie{
+		{Name: s.config.CookieName, HttpOnly: true},
+		{Name: s.csrfCookieName(), HttpOnly: false},
+	} {
+		cookie.Value = ""
+		cookie.Path = "/"
+		cookie.MaxAge = -1
+		cookie.Expires = time.Unix(1, 0)
+		cookie.Secure = s.config.SecureCookie
+		cookie.SameSite = http.SameSiteStrictMode
+		http.SetCookie(w, cookie)
+	}
+}
+
+func (s *Server) csrfCookieName() string {
+	if s.config.SecureCookie {
+		return "__Host-kejilion_csrf"
+	}
+	return "kejilion_csrf"
+}
+
+func (s *Server) csrfCookieValue(r *http.Request) string {
+	cookie, err := r.Cookie(s.csrfCookieName())
+	if err != nil {
+		return ""
+	}
+	return cookie.Value
+}
+
+func (s *Server) audit(r *http.Request, actorID, action, targetKind, targetID, result string, change map[string]any) {
+	_ = s.store.AppendAudit(store.AuditEvent{
+		ID: newRequestID(), OccurredAt: time.Now().UTC(), ActorType: actorType(actorID),
+		ActorID: actorID, SourceIP: remoteIP(r), Action: action, TargetKind: targetKind,
+		TargetID: targetID, Result: result, RequestID: requestID(r), Change: change,
+	}, 10_000)
+}
+
+func actorType(actorID string) string {
+	if actorID == "" {
+		return "anonymous"
+	}
+	return "user"
+}
+
+func (s *Server) writeValidationProblem(w http.ResponseWriter, r *http.Request, field, detail string) {
+	problem := contract.Problem{
+		Type: "about:blank", Title: "Validation failed", Status: http.StatusUnprocessableEntity,
+		Code: "validation_failed", RequestID: requestID(r), Retryable: false,
+		FieldErrors: map[string]string{field: detail},
+	}
+	writeProblemJSON(w, problem)
+}
+
+func (s *Server) writeProblem(w http.ResponseWriter, r *http.Request, status int, code, title, detail string) {
+	writeProblemJSON(w, contract.Problem{
+		Type: "about:blank", Title: title, Status: status, Code: code,
+		Detail: detail, RequestID: requestID(r), Retryable: status >= 500,
+	})
+}
+
+func writeProblemJSON(w http.ResponseWriter, problem contract.Problem) {
+	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
+	w.WriteHeader(problem.Status)
+	_ = json.NewEncoder(w).Encode(problem)
+}
+
+func (s *Server) writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func (s *Server) setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+}
+
+func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	root, err := filepath.Abs(s.config.WebRoot)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	requestPath := filepath.FromSlash(strings.TrimPrefix(filepath.Clean("/"+r.URL.Path), "/"))
+	candidate := filepath.Join(root, requestPath)
+	relative, err := filepath.Rel(root, candidate)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		http.NotFound(w, r)
+		return
+	}
+	if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
+		if filepath.Base(candidate) == "index.html" {
+			w.Header().Set("Cache-Control", "no-cache")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+		}
+		http.ServeFile(w, r, candidate)
+		return
+	}
+	index := filepath.Join(root, "index.html")
+	if _, err := os.Stat(index); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeFile(w, r, index)
+}
+
+func remoteIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func requestID(r *http.Request) string {
+	value, _ := r.Context().Value(requestIDKey).(string)
+	return value
+}
+
+func newRequestID() string {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(value)
+}
+
+func secureStringEqual(left, right string) bool {
+	leftSum := sha256.Sum256([]byte(left))
+	rightSum := sha256.Sum256([]byte(right))
+	return subtle.ConstantTimeCompare(leftSum[:], rightSum[:]) == 1
+}
