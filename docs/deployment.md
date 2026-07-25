@@ -20,9 +20,20 @@ Kejilion Panel 使用两个独立进程：
   多架构镜像；
 - `kejilion-agent-linux-amd64`；
 - `kejilion-agent-linux-arm64`；
-- 所有二进制文件的 `SHA256SUMS`；
+- `kejilion-panel-deploy-<version>.tar.gz`；
+- 上述文件的 `SHA256SUMS`；
 - 镜像 manifest digest。生产部署只使用
   `docker.io/<owner>/kejilion-panel@sha256:<digest>`，不使用可漂移标签。
+
+仓库的 `Release` 工作流仅接受精确的 `v<semver>` 标签。启用前配置：
+
+- Repository variable `DOCKERHUB_IMAGE`：`owner/repository`；
+- Repository variable `DOCKERHUB_USERNAME`：Docker Hub 用户名；
+- Repository secret `DOCKERHUB_TOKEN`：仅具备目标仓库写权限的访问令牌。
+
+工作流会先执行前后端验证，再构建双架构 Agent、带 SBOM/Provenance 的双架构
+镜像，并把固定镜像 digest 写入 GitHub Release。生产部署使用 Release 中的
+digest 与校验和，不直接使用 `latest`。
 
 本地验证和交叉编译：
 
