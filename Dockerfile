@@ -24,10 +24,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
-    go build -trimpath \
-      -ldflags="-s -w -X github.com/kejilion/kejilion-panel/internal/version.Version=${VERSION}" \
-      -o /out/paneld ./cmd/paneld
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=secret,id=https_proxy,required=false \
+    sh -eu -c 'if [ -f /run/secrets/https_proxy ]; then export HTTPS_PROXY="$(cat /run/secrets/https_proxy)"; fi; \
+      CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+      go build -trimpath \
+        -ldflags="-s -w -X github.com/kejilion/kejilion-panel/internal/version.Version=${VERSION}" \
+        -o /out/paneld ./cmd/paneld'
 
 FROM scratch
 ARG VERSION=dev
