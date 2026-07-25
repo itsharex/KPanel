@@ -253,7 +253,9 @@ async function request<T>(
   }
 
   const payload = await parsePayload(response)
-  pickCsrfToken(response.headers, payload)
+  if (path === '/auth/bootstrap' || path === '/auth/login' || path === '/auth/session') {
+    pickCsrfToken(response.headers, payload)
+  }
 
   if (!response.ok) {
     const envelope = payload && typeof payload === 'object' ? (payload as ApiEnvelope<unknown>) : undefined

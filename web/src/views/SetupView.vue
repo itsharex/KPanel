@@ -59,7 +59,7 @@ async function submit(): Promise<void> {
       </div>
     </div>
     <p class="auth-card__intro">
-      输入安装完成时显示的一次性初始化凭据。提交成功后该凭据立即失效，不会修改现有
+      按安装完成提示，从仅 root 可读的文件取得一次性初始化凭据。提交成功后该凭据立即失效，不会修改现有
       <code>kejilion.sh</code>。
     </p>
 

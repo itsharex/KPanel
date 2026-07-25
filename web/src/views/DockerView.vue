@@ -425,7 +425,7 @@ onBeforeUnmount(() => {
     <ModalDialog
       :open="logsOpen"
       :title="`${selectedContainer?.name || '容器'} 日志`"
-      description="只显示最近 200 行，敏感环境变量不会出现在此处。"
+      description="只显示最近 200 行；应用日志可能包含敏感信息，请谨慎查看和复制。"
       size="large"
       @close="closeLogs"
     >
