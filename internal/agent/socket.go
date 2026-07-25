@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/user"
@@ -86,13 +87,22 @@ func PrepareTokenFile(path, groupName string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse Agent token group id: %w", err)
 	}
-	if err := os.Chown(path, 0, gid); err != nil {
-		return nil, fmt.Errorf("set Agent token owner: %w", err)
+	if err := validateTokenMetadata(info, gid); err != nil {
+		return nil, err
 	}
-	if err := os.Chmod(path, 0o640); err != nil {
-		return nil, fmt.Errorf("set Agent token permissions: %w", err)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open Agent token: %w", err)
 	}
-	data, err := os.ReadFile(path)
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("inspect opened Agent token: %w", err)
+	}
+	if !os.SameFile(info, openedInfo) {
+		return nil, errors.New("Agent token changed while opening")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 4097))
 	if err != nil {
 		return nil, fmt.Errorf("read Agent token: %w", err)
 	}

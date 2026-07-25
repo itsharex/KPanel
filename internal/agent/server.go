@@ -253,6 +253,10 @@ func (s *Server) containerOperation(w http.ResponseWriter, r *http.Request, requ
 		tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
 		logs, err := s.docker.ContainerLogs(r.Context(), id, tail)
 		if err != nil {
+			if errors.Is(err, dockerx.ErrReadOnlyContainer) {
+				writeProblem(w, requestID, http.StatusForbidden, "container_logs_forbidden", "该容器日志不可查看", "")
+				return
+			}
 			writeProblem(w, requestID, http.StatusBadGateway, "docker_logs_failed", "容器日志不可用", safeDetail(err))
 			return
 		}

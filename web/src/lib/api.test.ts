@@ -80,6 +80,31 @@ describe('API client', () => {
     })
   })
 
+  it('sends the observed resource version with Docker lifecycle actions', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ required: false }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          user: { id: 'user-1', username: 'admin', role: 'admin' },
+          csrfToken: 'csrf-secret',
+          expiresAt: '2026-07-25T12:00:00Z',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ containerId: 'abc123def456', action: 'restart', status: 'completed' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.auth.status()
+    await api.docker.action('abc123def456', 'restart', `sha256:${'a'.repeat(64)}`)
+
+    const actionInit = fetchMock.mock.calls[2]?.[1] as RequestInit
+    expect(actionInit.method).toBe('POST')
+    expect(new Headers(actionInit.headers).get('x-csrf-token')).toBe('csrf-secret')
+    expect(JSON.parse(String(actionInit.body))).toEqual({
+      resourceVersion: `sha256:${'a'.repeat(64)}`,
+    })
+  })
+
   it('normalizes list responses without a total field', () => {
     expect(normalizeList({ items: ['a', 'b'] } as { items: string[]; total: number })).toEqual({
       items: ['a', 'b'],

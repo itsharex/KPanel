@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/store"
@@ -31,18 +32,23 @@ var (
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$`)
 
 type Config struct {
-	BootstrapTokenPath string
-	SessionTTL         time.Duration
-	LoginWindow        time.Duration
-	MaxLoginFailures   int
+	BootstrapTokenPath  string
+	SessionTTL          time.Duration
+	LoginWindow         time.Duration
+	MaxLoginFailures    int
+	MaxConcurrentHashes int
 }
 
 type Service struct {
-	store     *store.Store
-	hasher    PasswordHasher
-	config    Config
-	now       func() time.Time
-	dummyHash string
+	store       *store.Store
+	hasher      PasswordHasher
+	config      Config
+	now         func() time.Time
+	dummyHash   string
+	bootstrapMu sync.Mutex
+	loginMu     sync.Mutex
+	pending     map[string]int
+	hashSlots   chan struct{}
 }
 
 type PublicUser struct {
@@ -96,6 +102,12 @@ func NewService(storage *store.Store, hasher PasswordHasher, config Config) (*Se
 	if config.MaxLoginFailures <= 0 {
 		config.MaxLoginFailures = 5
 	}
+	if config.MaxConcurrentHashes <= 0 {
+		config.MaxConcurrentHashes = 2
+	}
+	if config.MaxConcurrentHashes > 8 {
+		return nil, errors.New("max concurrent password hashes must not exceed 8")
+	}
 
 	dummyHash, err := hasher.Hash("kejilion-panel-invalid-password")
 	if err != nil {
@@ -107,6 +119,8 @@ func NewService(storage *store.Store, hasher PasswordHasher, config Config) (*Se
 		config:    config,
 		now:       func() time.Time { return time.Now().UTC() },
 		dummyHash: dummyHash,
+		pending:   make(map[string]int),
+		hashSlots: make(chan struct{}, config.MaxConcurrentHashes),
 	}, nil
 }
 
@@ -165,6 +179,9 @@ func (s *Service) EnsureBootstrapToken() error {
 }
 
 func (s *Service) Bootstrap(token, username, password string) (Credentials, error) {
+	s.bootstrapMu.Lock()
+	defer s.bootstrapMu.Unlock()
+
 	if s.store.IsInitialized() {
 		return Credentials{}, ErrBootstrapUnavailable
 	}
@@ -185,6 +202,8 @@ func (s *Service) Bootstrap(token, username, password string) (Credentials, erro
 		return Credentials{}, err
 	}
 
+	s.hashSlots <- struct{}{}
+	defer func() { <-s.hashSlots }()
 	passwordHash, err := s.hasher.Hash(password)
 	if err != nil {
 		return Credentials{}, fmt.Errorf("hash password: %w", err)
@@ -216,9 +235,15 @@ func (s *Service) Login(ip, username, password string) (Credentials, error) {
 	now := s.now()
 	ipKey, accountKey := loginKeys(ip, username)
 	since := now.Add(-s.config.LoginWindow)
-	if s.store.FailedLoginCount(ipKey, since) >= s.config.MaxLoginFailures ||
-		s.store.FailedLoginCount(accountKey, since) >= s.config.MaxLoginFailures {
+	if !s.reserveLogin(ipKey, accountKey, since) {
 		return Credentials{}, &RateLimitError{RetryAfter: s.config.LoginWindow}
+	}
+	defer s.releaseLogin(ipKey, accountKey)
+	select {
+	case s.hashSlots <- struct{}{}:
+		defer func() { <-s.hashSlots }()
+	default:
+		return Credentials{}, &RateLimitError{RetryAfter: time.Second}
 	}
 
 	user, userErr := s.store.UserByUsername(username)
@@ -243,6 +268,31 @@ func (s *Service) Login(ip, username, password string) (Credentials, error) {
 		return Credentials{}, err
 	}
 	return s.createSession(user)
+}
+
+func (s *Service) reserveLogin(ipKey, accountKey string, since time.Time) bool {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	for _, key := range []string{ipKey, accountKey} {
+		if s.store.FailedLoginCount(key, since)+s.pending[key] >= s.config.MaxLoginFailures {
+			return false
+		}
+	}
+	s.pending[ipKey]++
+	s.pending[accountKey]++
+	return true
+}
+
+func (s *Service) releaseLogin(ipKey, accountKey string) {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	for _, key := range []string{ipKey, accountKey} {
+		if s.pending[key] <= 1 {
+			delete(s.pending, key)
+		} else {
+			s.pending[key]--
+		}
+	}
 }
 
 func (s *Service) Authenticate(token string) (Session, error) {
@@ -310,16 +360,10 @@ func (s *Service) createSession(user store.User) (Credentials, error) {
 
 func (s *Service) recordLoginAttempt(ipKey, accountKey string, now time.Time, success bool) error {
 	retainSince := now.Add(-24 * time.Hour)
-	for _, key := range []string{ipKey, accountKey} {
-		if err := s.store.RecordLoginAttempt(store.LoginAttempt{
-			Key:        key,
-			OccurredAt: now,
-			Success:    success,
-		}, retainSince); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.store.RecordLoginAttempts([]store.LoginAttempt{
+		{Key: ipKey, OccurredAt: now, Success: success},
+		{Key: accountKey, OccurredAt: now, Success: success},
+	}, retainSince)
 }
 
 func (s *Service) consumeBootstrapToken() {

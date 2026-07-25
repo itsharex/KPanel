@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/auth"
@@ -31,13 +32,20 @@ type contextKey string
 
 const requestIDKey contextKey = "request-id"
 
-var containerIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
+var (
+	containerIDPattern     = regexp.MustCompile(`^[a-fA-F0-9]{12,64}$`)
+	resourceVersionPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+)
 
 type Server struct {
-	config Config
-	auth   *auth.Service
-	store  *store.Store
-	agent  *AgentClient
+	config              Config
+	auth                *auth.Service
+	store               *store.Store
+	agent               *AgentClient
+	trustedProxies      []*net.IPNet
+	auditMu             sync.Mutex
+	lastAuthAudit       map[string]time.Time
+	lastGlobalAuthAudit time.Time
 }
 
 type authResponse struct {
@@ -47,6 +55,9 @@ type authResponse struct {
 }
 
 func NewServer(config Config, authService *auth.Service, storage *store.Store, agent *AgentClient) (*Server, error) {
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("validate server config: %w", err)
+	}
 	if authService == nil {
 		return nil, errors.New("auth service is required")
 	}
@@ -56,7 +67,15 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 	if agent == nil {
 		return nil, errors.New("agent client is required")
 	}
-	return &Server{config: config, auth: authService, store: storage, agent: agent}, nil
+	trustedProxies, err := parseTrustedProxyCIDRs(config.TrustedProxyCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{
+		config: config, auth: authService, store: storage, agent: agent,
+		trustedProxies: trustedProxies,
+		lastAuthAudit:  make(map[string]time.Time),
+	}, nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +89,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	if r.URL.Path != "/api/v1/health" && !s.checkHost(w, r) {
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		w.Header().Set("Cache-Control", "no-store")
 		s.serveAPI(w, r)
@@ -100,11 +122,61 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleLogout(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit":
 		s.handleAudit(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/"):
+		s.handleDockerAction(w, r)
 	case r.Method == http.MethodGet:
 		s.handleAgentProxy(w, r)
 	default:
 		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
 	}
+}
+
+func (s *Server) handleDockerAction(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	agentPath, containerID, action, allowed := allowedDockerActionPath(r.URL.Path)
+	if !allowed {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	var input struct {
+		ResourceVersion string `json:"resourceVersion"`
+	}
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		_ = s.audit(r, session.User.ID, "docker."+action, "container", containerID, "failure", nil)
+		return
+	}
+	if !resourceVersionPattern.MatchString(input.ResourceVersion) {
+		s.writeValidationProblem(w, r, "resourceVersion", "a valid resourceVersion is required")
+		return
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
+		return
+	}
+	change := map[string]any{"resourceVersion": input.ResourceVersion}
+	if err := s.audit(r, session.User.ID, "docker."+action, "container", containerID, "intent", change); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	response, err := s.agent.Do(r.Context(), http.MethodPost, agentPath, "", requestID(r), body)
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "docker."+action, "container", containerID, "failure", change)
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	result := "failure"
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+		result = "success"
+	}
+	_ = s.audit(r, session.User.ID, "docker."+action, "container", containerID, result, change)
+	s.writeAgentResponse(w, response)
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
@@ -117,12 +189,12 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := s.decodeJSON(w, r, &input); err != nil {
-		s.audit(r, "", "auth.bootstrap", "authentication", "", "failure", nil)
+		s.auditAuthFailure(r, "auth.bootstrap")
 		return
 	}
 	credentials, err := s.auth.Bootstrap(input.Token, input.Username, input.Password)
 	if err != nil {
-		s.audit(r, "", "auth.bootstrap", "authentication", "", "failure", nil)
+		s.auditAuthFailure(r, "auth.bootstrap")
 		switch {
 		case errors.Is(err, auth.ErrBootstrapUnavailable):
 			s.writeProblem(w, r, http.StatusConflict, "bootstrap_unavailable", "Bootstrap unavailable", "")
@@ -138,7 +210,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setAuthCookies(w, credentials)
-	s.audit(r, credentials.User.ID, "auth.bootstrap", "user", credentials.User.ID, "success", nil)
+	_ = s.audit(r, credentials.User.ID, "auth.bootstrap", "user", credentials.User.ID, "success", nil)
 	s.writeJSON(w, http.StatusCreated, authResponse{
 		User: credentials.User, CSRFToken: credentials.CSRFToken, ExpiresAt: credentials.ExpiresAt,
 	})
@@ -153,12 +225,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := s.decodeJSON(w, r, &input); err != nil {
-		s.audit(r, "", "auth.login", "authentication", "", "failure", nil)
+		s.auditAuthFailure(r, "auth.login")
 		return
 	}
-	credentials, err := s.auth.Login(remoteIP(r), input.Username, input.Password)
+	credentials, err := s.auth.Login(s.remoteIP(r), input.Username, input.Password)
 	if err != nil {
-		s.audit(r, "", "auth.login", "authentication", "", "failure", nil)
 		var rateError *auth.RateLimitError
 		switch {
 		case errors.As(err, &rateError):
@@ -166,17 +237,47 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Retry-After", strconv.Itoa(seconds))
 			s.writeProblem(w, r, http.StatusTooManyRequests, "login_rate_limited", "Too many login attempts", "")
 		case errors.Is(err, auth.ErrInvalidCredentials):
+			s.auditAuthFailure(r, "auth.login")
 			s.writeProblem(w, r, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials", "")
 		default:
+			s.auditAuthFailure(r, "auth.login")
 			s.writeProblem(w, r, http.StatusInternalServerError, "login_failed", "Login failed", "")
 		}
 		return
 	}
 	s.setAuthCookies(w, credentials)
-	s.audit(r, credentials.User.ID, "auth.login", "session", "", "success", nil)
+	_ = s.audit(r, credentials.User.ID, "auth.login", "session", "", "success", nil)
 	s.writeJSON(w, http.StatusOK, authResponse{
 		User: credentials.User, CSRFToken: credentials.CSRFToken, ExpiresAt: credentials.ExpiresAt,
 	})
+}
+
+func (s *Server) auditAuthFailure(r *http.Request, action string) {
+	now := time.Now().UTC()
+	key := action + "\x00" + s.remoteIP(r)
+	s.auditMu.Lock()
+	if now.Sub(s.lastGlobalAuthAudit) < 5*time.Second || now.Sub(s.lastAuthAudit[key]) < time.Minute {
+		s.auditMu.Unlock()
+		return
+	}
+	s.lastGlobalAuthAudit = now
+	s.lastAuthAudit[key] = now
+	if len(s.lastAuthAudit) > 4096 {
+		cutoff := now.Add(-time.Hour)
+		for item, seenAt := range s.lastAuthAudit {
+			if seenAt.Before(cutoff) {
+				delete(s.lastAuthAudit, item)
+			}
+		}
+		for item := range s.lastAuthAudit {
+			if len(s.lastAuthAudit) <= 4096 {
+				break
+			}
+			delete(s.lastAuthAudit, item)
+		}
+	}
+	s.auditMu.Unlock()
+	_ = s.audit(r, "", action, "authentication", "", "failure", nil)
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -212,7 +313,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearAuthCookies(w)
-	s.audit(r, session.User.ID, "auth.logout", "session", "", "success", nil)
+	_ = s.audit(r, session.User.ID, "auth.logout", "session", "", "success", nil)
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -261,9 +362,31 @@ func (s *Server) handleAgentProxy(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
 		return
 	}
+	s.writeAgentResponse(w, response)
+}
+
+func (s *Server) writeAgentResponse(w http.ResponseWriter, response AgentResponse) {
 	w.Header().Set("Content-Type", response.ContentType)
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(response.Body)
+}
+
+func allowedDockerActionPath(publicPath string) (agentPath, containerID, action string, allowed bool) {
+	const prefix = "/api/v1/docker/containers/"
+	rest := strings.TrimPrefix(publicPath, prefix)
+	if rest == publicPath {
+		return "", "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || !containerIDPattern.MatchString(parts[0]) {
+		return "", "", "", false
+	}
+	switch parts[1] {
+	case "start", "stop", "restart":
+		return "/v1/docker/containers/" + parts[0] + "/" + parts[1], parts[0], parts[1], true
+	default:
+		return "", "", "", false
+	}
 }
 
 func allowedAgentPath(publicPath string) (string, bool) {
@@ -320,6 +443,10 @@ func (s *Server) checkCSRF(w http.ResponseWriter, r *http.Request, session auth.
 func (s *Server) checkOrigin(w http.ResponseWriter, r *http.Request) bool {
 	origin := strings.TrimRight(strings.TrimSpace(r.Header.Get("Origin")), "/")
 	if origin == "" {
+		if s.config.PublicURL != "" {
+			s.writeProblem(w, r, http.StatusForbidden, "origin_validation_failed", "Origin validation failed", "")
+			return false
+		}
 		if fetchSite := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); fetchSite != "" && fetchSite != "same-origin" && fetchSite != "none" {
 			s.writeProblem(w, r, http.StatusForbidden, "origin_validation_failed", "Origin validation failed", "")
 			return false
@@ -336,6 +463,18 @@ func (s *Server) checkOrigin(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if !secureStringEqual(strings.ToLower(origin), strings.ToLower(expected)) {
 		s.writeProblem(w, r, http.StatusForbidden, "origin_validation_failed", "Origin validation failed", "")
+		return false
+	}
+	return true
+}
+
+func (s *Server) checkHost(w http.ResponseWriter, r *http.Request) bool {
+	if s.config.PublicURL == "" {
+		return true
+	}
+	publicURL, err := url.Parse(s.config.PublicURL)
+	if err != nil || !secureStringEqual(strings.ToLower(strings.TrimSpace(r.Host)), strings.ToLower(publicURL.Host)) {
+		s.writeProblem(w, r, http.StatusMisdirectedRequest, "host_validation_failed", "Host validation failed", "")
 		return false
 	}
 	return true
@@ -405,10 +544,10 @@ func (s *Server) csrfCookieValue(r *http.Request) string {
 	return cookie.Value
 }
 
-func (s *Server) audit(r *http.Request, actorID, action, targetKind, targetID, result string, change map[string]any) {
-	_ = s.store.AppendAudit(store.AuditEvent{
+func (s *Server) audit(r *http.Request, actorID, action, targetKind, targetID, result string, change map[string]any) error {
+	return s.store.AppendAudit(store.AuditEvent{
 		ID: newRequestID(), OccurredAt: time.Now().UTC(), ActorType: actorType(actorID),
-		ActorID: actorID, SourceIP: remoteIP(r), Action: action, TargetKind: targetKind,
+		ActorID: actorID, SourceIP: s.remoteIP(r), Action: action, TargetKind: targetKind,
 		TargetID: targetID, Result: result, RequestID: requestID(r), Change: change,
 	}, 10_000)
 }
@@ -473,7 +612,12 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
+	regular, err := staticRegularFile(root, candidate)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if regular {
 		if filepath.Base(candidate) == "index.html" {
 			w.Header().Set("Cache-Control", "no-cache")
 		} else {
@@ -483,7 +627,8 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	index := filepath.Join(root, "index.html")
-	if _, err := os.Stat(index); err != nil {
+	regular, err = staticRegularFile(root, index)
+	if err != nil || !regular {
 		http.NotFound(w, r)
 		return
 	}
@@ -491,12 +636,84 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, index)
 }
 
-func remoteIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
+func staticRegularFile(root, candidate string) (bool, error) {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false, err
 	}
-	return r.RemoteAddr
+	if !samePath(root, resolvedRoot) {
+		return false, errors.New("web root contains a symbolic link")
+	}
+	relative, err := filepath.Rel(root, candidate)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return false, errors.New("static path escapes web root")
+	}
+
+	current := root
+	parts := []string{}
+	if relative != "." {
+		parts = strings.Split(relative, string(filepath.Separator))
+	}
+	for index := -1; index < len(parts); index++ {
+		if index >= 0 {
+			current = filepath.Join(current, parts[index])
+		}
+		info, statErr := os.Lstat(current)
+		if statErr != nil {
+			if errors.Is(statErr, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return false, errors.New("static path contains a symbolic link")
+		}
+		if index < len(parts)-1 && !info.IsDir() {
+			return false, errors.New("static path component is not a directory")
+		}
+		if index == len(parts)-1 {
+			return info.Mode().IsRegular(), nil
+		}
+	}
+	return false, nil
+}
+
+func parseTrustedProxyCIDRs(values []string) ([]*net.IPNet, error) {
+	result := make([]*net.IPNet, 0, len(values))
+	for _, value := range values {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(value))
+		if err != nil {
+			return nil, fmt.Errorf("parse trusted proxy CIDR %q: %w", value, err)
+		}
+		result = append(result, network)
+	}
+	return result, nil
+}
+
+func (s *Server) remoteIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(strings.TrimSpace(host))
+	if peer != nil && ipInNetworks(peer, s.trustedProxies) {
+		if forwarded := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); forwarded != nil {
+			return forwarded.String()
+		}
+	}
+	if peer != nil {
+		return peer.String()
+	}
+	return strings.TrimSpace(host)
+}
+
+func ipInNetworks(ip net.IP, networks []*net.IPNet) bool {
+	for _, network := range networks {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func requestID(r *http.Request) string {

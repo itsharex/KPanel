@@ -44,6 +44,21 @@ func TestSitesPageEndpoint(t *testing.T) {
 	}
 }
 
+func TestExternalContainerLogsAreForbidden(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("Unix Socket integration test")
+	}
+	server := testServer(t)
+	id := strings.Repeat("a", 64)
+	request := httptest.NewRequest(http.MethodGet, "/v1/docker/containers/"+id+"/logs", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("external logs status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	root := t.TempDir()
@@ -54,6 +69,7 @@ func testServer(t *testing.T) *Server {
 	}
 	socket := fakeDockerSocket(t)
 	docker := dockerx.New(socket, root, t.TempDir())
+	docker.ConfigureDaemonAccess("", true)
 	server, err := NewServer(Config{
 		Token: []byte(strings.Repeat("x", 32)), Version: "test", ProtocolVersion: "test",
 		WebRoot: root, System: systeminfo.NewCollector(),
@@ -80,8 +96,12 @@ func fakeDockerSocket(t *testing.T) string {
 	t.Cleanup(func() { _ = listener.Close() })
 	go func() {
 		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/_ping" {
+			switch {
+			case r.URL.Path == "/_ping":
 				_, _ = w.Write([]byte("OK"))
+				return
+			case strings.HasSuffix(r.URL.Path, "/json"):
+				_, _ = w.Write([]byte(`{"Id":"` + strings.Repeat("a", 64) + `","Config":{"Labels":{}},"State":{"Status":"running"}}`))
 				return
 			}
 			http.NotFound(w, r)

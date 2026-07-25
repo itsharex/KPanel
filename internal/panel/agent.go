@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -48,17 +49,28 @@ func NewAgentClient(socketPath, tokenFile string, maxBytes int64) *AgentClient {
 }
 
 func (c *AgentClient) Get(ctx context.Context, path, rawQuery, requestID string) (AgentResponse, error) {
+	return c.Do(ctx, http.MethodGet, path, rawQuery, requestID, nil)
+}
+
+func (c *AgentClient) Do(ctx context.Context, method, path, rawQuery, requestID string, body []byte) (AgentResponse, error) {
 	token, err := readSmallSecret(c.tokenFile)
 	if err != nil {
 		return AgentResponse{}, fmt.Errorf("read agent credential: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
+	var requestBody io.Reader = http.NoBody
+	if len(body) > 0 {
+		requestBody = bytes.NewReader(body)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, requestBody)
 	if err != nil {
 		return AgentResponse{}, fmt.Errorf("create agent request: %w", err)
 	}
 	request.URL.RawQuery = rawQuery
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", "Bearer "+token)
+	if len(body) > 0 {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	if requestID != "" {
 		request.Header.Set("X-Request-ID", requestID)
 	}
@@ -68,11 +80,11 @@ func (c *AgentClient) Get(ctx context.Context, path, rawQuery, requestID string)
 		return AgentResponse{}, fmt.Errorf("call agent: %w", err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, c.maxBytes+1))
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, c.maxBytes+1))
 	if err != nil {
 		return AgentResponse{}, fmt.Errorf("read agent response: %w", err)
 	}
-	if int64(len(body)) > c.maxBytes {
+	if int64(len(responseBody)) > c.maxBytes {
 		return AgentResponse{}, errors.New("agent response exceeds configured limit")
 	}
 	contentType := response.Header.Get("Content-Type")
@@ -82,7 +94,7 @@ func (c *AgentClient) Get(ctx context.Context, path, rawQuery, requestID string)
 	return AgentResponse{
 		StatusCode:  response.StatusCode,
 		ContentType: contentType,
-		Body:        body,
+		Body:        responseBody,
 	}, nil
 }
 

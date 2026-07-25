@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -34,12 +35,15 @@ const (
 var containerIDPattern = regexp.MustCompile(`^[a-fA-F0-9]{12,64}$`)
 
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
-	webRoot    string
-	appRoot    string
-	stateRoot  string
-	now        func() time.Time
+	httpClient            *http.Client
+	baseURL               string
+	webRoot               string
+	appRoot               string
+	stateRoot             string
+	now                   func() time.Time
+	lifecycle             sync.Mutex
+	pidFile               string
+	allowSocketActivation bool
 }
 
 type ImageSummary struct {
@@ -90,23 +94,36 @@ type ActionResult struct {
 
 func New(socketPath, webRoot, stateRoot string) *Client {
 	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
+	client := &Client{
+		baseURL:   "http://docker",
+		webRoot:   cleanLinuxPath(webRoot, "/home/web"),
+		appRoot:   "/home/docker",
+		stateRoot: cleanLinuxPath(stateRoot, "/var/lib/kejilion-panel"),
+		now:       time.Now,
+		pidFile:   "/run/docker.pid",
+	}
 	transport := &http.Transport{
 		DisableCompression: true,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			if !client.allowSocketActivation && !daemonProcessRunning(client.pidFile) {
+				return nil, ErrDockerNotRunning
+			}
 			return dialer.DialContext(ctx, "unix", socketPath)
 		},
 		MaxIdleConns:        10,
 		IdleConnTimeout:     30 * time.Second,
 		TLSHandshakeTimeout: 3 * time.Second,
 	}
-	return &Client{
-		httpClient: &http.Client{Transport: transport, Timeout: 15 * time.Second},
-		baseURL:    "http://docker",
-		webRoot:    cleanLinuxPath(webRoot, "/home/web"),
-		appRoot:    "/home/docker",
-		stateRoot:  cleanLinuxPath(stateRoot, "/var/lib/kejilion-panel"),
-		now:        time.Now,
-	}
+	client.httpClient = &http.Client{Transport: transport, Timeout: 15 * time.Second}
+	return client
+}
+
+// ConfigureDaemonAccess keeps observation side-effect free by default. When
+// socket activation is disabled, a live dockerd process matching pidFile must
+// be present before a Unix Socket connection is attempted.
+func (c *Client) ConfigureDaemonAccess(pidFile string, allowSocketActivation bool) {
+	c.pidFile = cleanLinuxPath(pidFile, "/run/docker.pid")
+	c.allowSocketActivation = allowSocketActivation
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -245,6 +262,13 @@ func (c *Client) ContainerLogs(ctx context.Context, id string, tail int) (Logs, 
 	if !containerIDPattern.MatchString(id) {
 		return Logs{}, errors.New("invalid container id")
 	}
+	inspect, err := c.inspect(ctx, id)
+	if err != nil {
+		return Logs{}, err
+	}
+	if summary := c.summaryFromInspect(inspect); summary.Ownership != "kejilion" {
+		return Logs{}, ErrReadOnlyContainer
+	}
 	if tail <= 0 {
 		tail = 200
 	}
@@ -281,6 +305,8 @@ func (c *Client) Lifecycle(ctx context.Context, id, action, expectedVersion stri
 	if expectedVersion == "" {
 		return ActionResult{}, ErrVersionRequired
 	}
+	c.lifecycle.Lock()
+	defer c.lifecycle.Unlock()
 	inspect, err := c.inspect(ctx, id)
 	if err != nil {
 		return ActionResult{}, err
@@ -316,6 +342,7 @@ var (
 	ErrReadOnlyContainer     = errors.New("container ownership is not safely established")
 	ErrUnsafeOrInvalidAction = errors.New("container configuration or state does not allow this action")
 	ErrResourceConflict      = errors.New("container resourceVersion changed")
+	ErrDockerNotRunning      = errors.New("Docker daemon is not already running; socket activation is disabled")
 )
 
 type containerListItem struct {
@@ -341,22 +368,26 @@ type containerListItem struct {
 }
 
 type containerInspect struct {
-	ID      string   `json:"Id"`
-	Name    string   `json:"Name"`
-	Created string   `json:"Created"`
-	Path    string   `json:"Path"`
-	Args    []string `json:"Args"`
-	Config  struct {
+	ID           string   `json:"Id"`
+	Name         string   `json:"Name"`
+	Created      string   `json:"Created"`
+	Path         string   `json:"Path"`
+	Args         []string `json:"Args"`
+	RestartCount int      `json:"RestartCount"`
+	Config       struct {
 		Image  string            `json:"Image"`
 		Labels map[string]string `json:"Labels"`
 		Tty    bool              `json:"Tty"`
 	} `json:"Config"`
 	State struct {
-		Status   string `json:"Status"`
-		Running  bool   `json:"Running"`
-		Paused   bool   `json:"Paused"`
-		ExitCode int    `json:"ExitCode"`
-		Health   *struct {
+		Status     string `json:"Status"`
+		Running    bool   `json:"Running"`
+		Paused     bool   `json:"Paused"`
+		Restarting bool   `json:"Restarting"`
+		ExitCode   int    `json:"ExitCode"`
+		StartedAt  string `json:"StartedAt"`
+		FinishedAt string `json:"FinishedAt"`
+		Health     *struct {
 			Status string `json:"Status"`
 		} `json:"Health"`
 	} `json:"State"`
@@ -454,11 +485,17 @@ func (c *Client) summaryFromInspect(raw containerInspect) contract.ContainerSumm
 		health = raw.State.Health.Status
 	}
 	version := resourceHash(struct {
-		ID, Name, Created, Image, State string
-		Labels                          map[string]string
-		HostConfig                      interface{}
-		Mounts                          []dockerMount
-	}{raw.ID, raw.Name, raw.Created, raw.Config.Image, raw.State.Status, raw.Config.Labels, raw.HostConfig, raw.Mounts})
+		ID, Name, Created, Image, State, StartedAt, FinishedAt string
+		RestartCount                                           int
+		Restarting                                             bool
+		Labels                                                 map[string]string
+		HostConfig                                             interface{}
+		Mounts                                                 []dockerMount
+	}{
+		raw.ID, raw.Name, raw.Created, raw.Config.Image, raw.State.Status,
+		raw.State.StartedAt, raw.State.FinishedAt, raw.RestartCount, raw.State.Restarting,
+		raw.Config.Labels, raw.HostConfig, raw.Mounts,
+	})
 	allowed := []string{}
 	if ownership == "kejilion" {
 		if reason := c.unsafeReason(raw); reason == "" {
@@ -661,9 +698,10 @@ func demuxDockerStream(data []byte) []byte {
 }
 
 var (
-	secretAssignment = regexp.MustCompile(`(?i)\b(password|passwd|pwd|token|secret|api[_-]?key|authorization|cookie)\b(\s*[:=]\s*)([^\s,;]+)`)
-	bearerSecret     = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
-	urlCredentials   = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@`)
+	jsonSecretAssignment = regexp.MustCompile(`(?i)("(?:[^"\\]|\\.)*(?:password|passwd|pwd|token|secret|api[_-]?key|authorization|cookie)(?:[^"\\]|\\.)*"\s*:\s*)("(?:\\.|[^"\\])*"|[^,\s}\]]+)`)
+	secretAssignment     = regexp.MustCompile(`(?i)(\b[A-Za-z0-9_.-]*(?:password|passwd|pwd|token|secret|api[_-]?key|authorization|cookie)[A-Za-z0-9_.-]*\b)(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'[^']*'|[^\s,;]+)`)
+	bearerSecret         = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
+	urlCredentials       = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@`)
 )
 
 func redactLines(data []byte, limit int) []string {
@@ -695,6 +733,7 @@ func redactLines(data []byte, limit int) []string {
 }
 
 func redactText(value string) string {
+	value = jsonSecretAssignment.ReplaceAllString(value, `${1}"[REDACTED]"`)
 	value = secretAssignment.ReplaceAllString(value, "${1}${2}[REDACTED]")
 	value = bearerSecret.ReplaceAllString(value, "Bearer [REDACTED]")
 	value = urlCredentials.ReplaceAllString(value, "${1}[REDACTED]@")

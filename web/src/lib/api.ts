@@ -5,6 +5,7 @@ import type {
   AuthSession,
   AuthStatus,
   DockerInventory,
+  DockerActionResult,
   Job,
   JobAccepted,
   LoginRequest,
@@ -553,9 +554,10 @@ export const api = {
         volumes: normalizeList(volumesResult).items,
       }
     },
-    action: (id: string, action: 'start' | 'stop' | 'restart') =>
-      request<JobAccepted>(`/docker/containers/${encodeURIComponent(id)}/${action}`, {
+    action: (id: string, action: 'start' | 'stop' | 'restart', resourceVersion: string) =>
+      request<DockerActionResult>(`/docker/containers/${encodeURIComponent(id)}/${action}`, {
         method: 'POST',
+        body: { resourceVersion },
       }),
     logs: (id: string, tail = 200, signal?: AbortSignal) =>
       request<{ lines: string[]; truncated?: boolean }>(`/docker/containers/${encodeURIComponent(id)}/logs`, {

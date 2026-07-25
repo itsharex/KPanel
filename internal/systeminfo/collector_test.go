@@ -21,7 +21,7 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	if got.OS != "Fixture Linux 1" || got.Kernel != "6.8.0-fixture" {
 		t.Fatalf("unexpected OS data: %#v", got)
 	}
-	if got.CPU.Cores != 2 || got.CPU.UsagePercent != 20 {
+	if got.CPU.Cores != 2 || got.CPU.UsagePercent != 0 {
 		t.Fatalf("unexpected CPU: %#v", got.CPU)
 	}
 	if got.Memory.TotalBytes != 8*1024*1024 || got.Memory.UsedBytes != 6*1024*1024 {
@@ -32,5 +32,13 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	}
 	if got.UptimeSeconds != 12345 {
 		t.Fatalf("unexpected uptime: %d", got.UptimeSeconds)
+	}
+}
+
+func TestCPUUsagePercentUsesIntervalDelta(t *testing.T) {
+	before := cpuTimes{total: 1_000, idle: 800}
+	after := cpuTimes{total: 1_200, idle: 900}
+	if got := cpuUsagePercent(before, after); got != 50 {
+		t.Fatalf("cpuUsagePercent() = %v, want 50", got)
 	}
 }

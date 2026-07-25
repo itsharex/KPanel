@@ -1,8 +1,7 @@
 [Unit]
 Description=Kejilion Panel Host Agent
 Documentation=https://github.com/kejilion/kejilion-panel
-After=local-fs.target docker.socket
-Wants=docker.socket
+After=local-fs.target
 
 [Service]
 Type=simple

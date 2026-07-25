@@ -6,16 +6,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
+const maxStoreBytes int64 = 32 << 20
+
 var (
 	ErrAlreadyInitialized = errors.New("store already initialized")
 	ErrNotFound           = errors.New("record not found")
+	ErrStoreLocked        = errors.New("store is already open by another process")
 )
+
+type processLock interface {
+	Close() error
+}
 
 type User struct {
 	ID           string    `json:"id"`
@@ -65,9 +73,11 @@ type diskState struct {
 // Store is a small, single-node persistence layer. It deliberately stores only
 // panel identity/session/audit data; host resources remain owned by the Agent.
 type Store struct {
-	mu   sync.RWMutex
-	path string
-	data diskState
+	mu            sync.RWMutex
+	path          string
+	data          diskState
+	processLock   processLock
+	syncDirectory func(string) error
 }
 
 func Open(path string) (*Store, error) {
@@ -77,10 +87,25 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create store directory: %w", err)
 	}
+	lock, err := acquireProcessLock(path + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	opened := false
+	defer func() {
+		if !opened {
+			_ = lock.Close()
+		}
+	}()
 
 	s := &Store{
-		path: path,
-		data: diskState{SchemaVersion: 1},
+		path:          path,
+		data:          diskState{SchemaVersion: 1},
+		processLock:   lock,
+		syncDirectory: syncDirectory,
+	}
+	if info, err := os.Stat(path); err == nil && info.Size() > maxStoreBytes {
+		return nil, fmt.Errorf("store file exceeds %d bytes", maxStoreBytes)
 	}
 	content, err := os.ReadFile(path)
 	switch {
@@ -101,8 +126,23 @@ func Open(path string) (*Store, error) {
 	default:
 		return nil, fmt.Errorf("read store: %w", err)
 	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, fmt.Errorf("protect store: %w", err)
+	}
 
+	opened = true
 	return s, nil
+}
+
+func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.processLock == nil {
+		return nil
+	}
+	err := s.processLock.Close()
+	s.processLock = nil
+	return err
 }
 
 func (s *Store) IsInitialized() bool {
@@ -117,8 +157,13 @@ func (s *Store) CreateInitialAdmin(user User) error {
 	if len(s.data.Users) != 0 {
 		return ErrAlreadyInitialized
 	}
+	previous := cloneDiskState(s.data)
 	s.data.Users = append(s.data.Users, user)
-	return s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
 }
 
 func (s *Store) UserByUsername(username string) (User, error) {
@@ -146,6 +191,7 @@ func (s *Store) UserByID(id string) (User, error) {
 func (s *Store) PutSession(session Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previous := cloneDiskState(s.data)
 	filtered := s.data.Sessions[:0]
 	for _, item := range s.data.Sessions {
 		if item.TokenHash != session.TokenHash && item.ExpiresAt.After(time.Now().UTC()) {
@@ -153,7 +199,11 @@ func (s *Store) PutSession(session Session) error {
 		}
 	}
 	s.data.Sessions = append(filtered, session)
-	return s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
 }
 
 func (s *Store) SessionByTokenHash(tokenHash string, now time.Time) (Session, error) {
@@ -170,6 +220,7 @@ func (s *Store) SessionByTokenHash(tokenHash string, now time.Time) (Session, er
 func (s *Store) DeleteSession(tokenHash string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previous := cloneDiskState(s.data)
 	filtered := s.data.Sessions[:0]
 	found := false
 	for _, session := range s.data.Sessions {
@@ -183,17 +234,26 @@ func (s *Store) DeleteSession(tokenHash string) error {
 	if !found {
 		return nil
 	}
-	return s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
 }
 
 func (s *Store) AppendAudit(event AuditEvent, maxEntries int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previous := cloneDiskState(s.data)
 	s.data.Audit = append(s.data.Audit, event)
 	if maxEntries > 0 && len(s.data.Audit) > maxEntries {
 		s.data.Audit = append([]AuditEvent(nil), s.data.Audit[len(s.data.Audit)-maxEntries:]...)
 	}
-	return s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
 }
 
 // ListAudit returns newest-first records. Cursor is the last event ID received.
@@ -230,16 +290,25 @@ func (s *Store) ListAudit(limit int, cursor string) ([]AuditEvent, string) {
 }
 
 func (s *Store) RecordLoginAttempt(attempt LoginAttempt, retainSince time.Time) error {
+	return s.RecordLoginAttempts([]LoginAttempt{attempt}, retainSince)
+}
+
+func (s *Store) RecordLoginAttempts(attempts []LoginAttempt, retainSince time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previous := cloneDiskState(s.data)
 	filtered := s.data.LoginAttempts[:0]
 	for _, item := range s.data.LoginAttempts {
 		if item.OccurredAt.After(retainSince) {
 			filtered = append(filtered, item)
 		}
 	}
-	s.data.LoginAttempts = append(filtered, attempt)
-	return s.persistLocked()
+	s.data.LoginAttempts = append(filtered, attempts...)
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
 }
 
 func (s *Store) FailedLoginCount(key string, since time.Time) int {
@@ -260,6 +329,9 @@ func (s *Store) persistLocked() error {
 		return fmt.Errorf("encode store: %w", err)
 	}
 	content = append(content, '\n')
+	if int64(len(content)) > maxStoreBytes {
+		return fmt.Errorf("encoded store exceeds %d bytes", maxStoreBytes)
+	}
 
 	dir := filepath.Dir(s.path)
 	temp, err := os.CreateTemp(dir, ".panel-store-*")
@@ -288,6 +360,10 @@ func (s *Store) persistLocked() error {
 	// os.Rename atomically replaces the target on Linux, which is the production
 	// platform. The backup fallback keeps local Windows development functional.
 	if err := os.Rename(tempPath, s.path); err == nil {
+		// The rename is the logical commit point. A directory fsync strengthens
+		// crash durability, but failure must not make callers retry an operation
+		// that is already visible in memory and on disk.
+		_ = s.syncDirectory(dir)
 		return nil
 	}
 
@@ -301,5 +377,31 @@ func (s *Store) persistLocked() error {
 		return fmt.Errorf("replace store: %w", err)
 	}
 	_ = os.Remove(backupPath)
+	_ = s.syncDirectory(dir)
+	return nil
+}
+
+func cloneDiskState(source diskState) diskState {
+	return diskState{
+		SchemaVersion: source.SchemaVersion,
+		Users:         append([]User(nil), source.Users...),
+		Sessions:      append([]Session(nil), source.Sessions...),
+		Audit:         append([]AuditEvent(nil), source.Audit...),
+		LoginAttempts: append([]LoginAttempt(nil), source.LoginAttempts...),
+	}
+}
+
+func syncDirectory(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	directory, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open store directory: %w", err)
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("sync store directory: %w", err)
+	}
 	return nil
 }

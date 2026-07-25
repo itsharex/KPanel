@@ -7,9 +7,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -22,9 +24,10 @@ import (
 const maxConfigBytes = 2 << 20
 
 var (
-	directivePattern = regexp.MustCompile(`(?m)^[\t ]*([A-Za-z_]+)[\t ]+([^;{}]+);`)
-	upstreamPattern  = regexp.MustCompile(`(?s)(?:^|\s)upstream[\t ]+([A-Za-z0-9_-]+)[\t ]*\{(.*?)\}`)
-	domainPattern    = regexp.MustCompile(`^(?:\*\.)?(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+	directivePattern       = regexp.MustCompile(`(?m)^[\t ]*([A-Za-z_]+)[\t ]+([^;{}]+);`)
+	upstreamPattern        = regexp.MustCompile(`(?s)(?:^|\s)upstream[\t ]+([A-Za-z0-9_-]+)[\t ]*\{(.*?)\}`)
+	domainPattern          = regexp.MustCompile(`^(?:\*\.)?(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+	certificateNamePattern = regexp.MustCompile(`^[A-Za-z0-9._*-]+$`)
 )
 
 type Discoverer struct {
@@ -46,7 +49,7 @@ func (d *Discoverer) Discover() ([]contract.SiteSummary, error) {
 	now := d.Now().UTC()
 	confRoot := filepath.Join(d.WebRoot, "conf.d")
 	entries, err := os.ReadDir(confRoot)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
 		return nil, fmt.Errorf("read site configs: %w", err)
 	}
 
@@ -88,8 +91,16 @@ func (d *Discoverer) Discover() ([]contract.SiteSummary, error) {
 		}
 	}
 
-	result = append(result, d.orphanHTML(represented, now)...)
-	result = append(result, d.orphanCertificates(represented, now)...)
+	htmlOrphans, err := d.orphanHTML(represented, now)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, htmlOrphans...)
+	certificateOrphans, err := d.orphanCertificates(represented, now)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, certificateOrphans...)
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].PrimaryDomain < result[j].PrimaryDomain
 	})
@@ -97,17 +108,7 @@ func (d *Discoverer) Discover() ([]contract.SiteSummary, error) {
 }
 
 func (d *Discoverer) fromConfig(path string, now time.Time) (contract.SiteSummary, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return contract.SiteSummary{}, err
-	}
-	if !info.Mode().IsRegular() {
-		return contract.SiteSummary{}, errors.New("config is not a regular file")
-	}
-	if info.Size() > maxConfigBytes {
-		return contract.SiteSummary{}, fmt.Errorf("config exceeds %d bytes", maxConfigBytes)
-	}
-	data, err := os.ReadFile(path)
+	data, err := readRegularFile(path, maxConfigBytes)
 	if err != nil {
 		return contract.SiteSummary{}, err
 	}
@@ -227,33 +228,57 @@ func (d *Discoverer) discoverTLS(directives map[string][]string, primary string)
 	}
 	tls.Enabled = true
 	tls.Status = "missing"
-	certPath := strings.Trim(certificates[0], `"'`)
-	if strings.HasPrefix(certPath, "/etc/nginx/certs/") {
-		certPath = filepath.Join(d.WebRoot, "certs", filepath.Base(certPath))
-	} else if !filepath.IsAbs(certPath) && primary != "" {
-		certPath = filepath.Join(d.WebRoot, "certs", primary+"_cert.pem")
+	certPath, ok := d.certificateHostPath(certificates[0])
+	if !ok {
+		tls.Status = "untrusted_path"
+		return tls, nil, []byte("untrusted_certificate_path")
 	}
-	info, err := os.Lstat(certPath)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 1<<20 {
-		return tls, &contract.Artifact{Kind: "certificate", Path: certPath}, nil
-	}
-	data, err := os.ReadFile(certPath)
+	artifact := &contract.Artifact{Kind: "certificate", Path: certPath}
+	data, err := readRegularFile(certPath, 1<<20)
 	if err != nil {
-		return tls, &contract.Artifact{Kind: "certificate", Path: certPath}, nil
+		return tls, artifact, []byte("certificate_unavailable:" + certPath)
 	}
+	artifact.Hash = hashBytes(data)
+	versionMaterial := append([]byte(nil), data...)
 	block, _ := pem.Decode(data)
 	if block == nil || block.Type != "CERTIFICATE" {
 		tls.Status = "invalid"
-		return tls, &contract.Artifact{Kind: "certificate", Path: certPath, Hash: hashBytes(data)}, data
+		return tls, artifact, versionMaterial
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		tls.Status = "invalid"
-		return tls, &contract.Artifact{Kind: "certificate", Path: certPath, Hash: hashBytes(data)}, data
+		return tls, artifact, versionMaterial
 	}
 	expires := cert.NotAfter.UTC()
 	tls.ExpiresAt = &expires
 	tls.Source = "filesystem"
+	hostname := strings.TrimPrefix(primary, "*.")
+	if strings.HasPrefix(primary, "*.") {
+		hostname = "wildcard-check." + hostname
+	}
+	if hostname == "" || cert.VerifyHostname(hostname) != nil {
+		tls.Status = "hostname_mismatch"
+		return tls, artifact, append(versionMaterial, []byte("\nhostname_mismatch")...)
+	}
+	keys := directives["ssl_certificate_key"]
+	if len(keys) == 0 {
+		tls.Status = "key_missing"
+		return tls, artifact, append(versionMaterial, []byte("\nkey_missing")...)
+	}
+	keyPath, ok := d.certificateHostPath(keys[0])
+	if !ok {
+		tls.Status = "untrusted_path"
+		return tls, artifact, append(versionMaterial, []byte("\nuntrusted_key_path")...)
+	}
+	keyInfo, err := os.Lstat(keyPath)
+	if err != nil || !keyInfo.Mode().IsRegular() || keyInfo.Mode()&os.ModeSymlink != 0 || keyInfo.Size() > 1<<20 {
+		tls.Status = "key_missing"
+		return tls, artifact, append(versionMaterial, []byte("\nkey_missing:"+keyPath)...)
+	}
+	versionMaterial = append(versionMaterial, []byte(fmt.Sprintf(
+		"\nkey:%s:%d:%d", keyPath, keyInfo.Size(), keyInfo.ModTime().UnixNano(),
+	))...)
 	switch {
 	case expires.Before(d.Now()):
 		tls.Status = "expired"
@@ -262,7 +287,52 @@ func (d *Discoverer) discoverTLS(directives map[string][]string, primary string)
 	default:
 		tls.Status = "valid"
 	}
-	return tls, &contract.Artifact{Kind: "certificate", Path: certPath, Hash: hashBytes(data)}, data
+	return tls, artifact, versionMaterial
+}
+
+func (d *Discoverer) certificateHostPath(raw string) (string, bool) {
+	raw = strings.TrimSpace(strings.Trim(raw, `"'`))
+	if raw == "" {
+		return "", false
+	}
+	certRoot := filepath.Clean(filepath.Join(d.WebRoot, "certs"))
+	webInfo, webErr := os.Lstat(filepath.Clean(d.WebRoot))
+	rootInfo, rootErr := os.Lstat(certRoot)
+	if webErr != nil || rootErr != nil || !webInfo.IsDir() || !rootInfo.IsDir() ||
+		webInfo.Mode()&os.ModeSymlink != 0 || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return "", false
+	}
+	slashed := filepath.ToSlash(raw)
+	var name string
+	switch {
+	case strings.HasPrefix(slashed, "/etc/nginx/certs/"):
+		clean := pathpkg.Clean(slashed)
+		if !strings.HasPrefix(clean, "/etc/nginx/certs/") {
+			return "", false
+		}
+		name = strings.TrimPrefix(clean, "/etc/nginx/certs/")
+	case filepath.IsAbs(raw):
+		clean := filepath.Clean(raw)
+		if filepath.Dir(clean) != certRoot {
+			return "", false
+		}
+		name = filepath.Base(clean)
+	default:
+		clean := pathpkg.Clean(slashed)
+		if strings.HasPrefix(slashed, "certs/") {
+			if !strings.HasPrefix(clean, "certs/") {
+				return "", false
+			}
+			name = strings.TrimPrefix(clean, "certs/")
+		} else {
+			name = clean
+		}
+	}
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) ||
+		len(name) > 255 || !certificateNamePattern.MatchString(name) {
+		return "", false
+	}
+	return filepath.Join(certRoot, name), true
 }
 
 func (d *Discoverer) unreadableConfig(path string, cause error, now time.Time) contract.SiteSummary {
@@ -285,9 +355,12 @@ func (d *Discoverer) unreadableConfig(path string, cause error, now time.Time) c
 	}
 }
 
-func (d *Discoverer) orphanHTML(represented map[string]bool, now time.Time) []contract.SiteSummary {
+func (d *Discoverer) orphanHTML(represented map[string]bool, now time.Time) ([]contract.SiteSummary, error) {
 	root := filepath.Join(d.WebRoot, "html")
-	entries, _ := os.ReadDir(root)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("read site document roots: %w", err)
+	}
 	var result []contract.SiteSummary
 	for _, entry := range entries {
 		name := entry.Name()
@@ -298,12 +371,15 @@ func (d *Discoverer) orphanHTML(represented map[string]bool, now time.Time) []co
 		result = append(result, orphanSite(name, "orphan_html", path, now))
 		represented[name] = true
 	}
-	return result
+	return result, nil
 }
 
-func (d *Discoverer) orphanCertificates(represented map[string]bool, now time.Time) []contract.SiteSummary {
+func (d *Discoverer) orphanCertificates(represented map[string]bool, now time.Time) ([]contract.SiteSummary, error) {
 	root := filepath.Join(d.WebRoot, "certs")
-	entries, _ := os.ReadDir(root)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("read site certificates: %w", err)
+	}
 	var result []contract.SiteSummary
 	for _, entry := range entries {
 		name := entry.Name()
@@ -317,7 +393,7 @@ func (d *Discoverer) orphanCertificates(represented map[string]bool, now time.Ti
 		result = append(result, orphanSite(domain, "orphan_certificate", filepath.Join(root, name), now))
 		represented[domain] = true
 	}
-	return result
+	return result, nil
 }
 
 func orphanSite(domain, kind, path string, now time.Time) contract.SiteSummary {
@@ -460,6 +536,39 @@ func uniqueStrings(values []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func readRegularFile(path string, maxBytes int64) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("file is not a regular non-symlink file")
+	}
+	if info.Size() > maxBytes {
+		return nil, fmt.Errorf("file exceeds %d bytes", maxBytes)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return nil, errors.New("file changed while opening")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("file exceeds %d bytes", maxBytes)
+	}
+	return data, nil
 }
 
 func hashBytes(data []byte) string {

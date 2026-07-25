@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -33,6 +34,12 @@ func run() error {
 	stateDir := flag.String("state-dir", env("KEJILION_AGENT_STATE_DIR", "/var/lib/kejilion-panel"), "Agent state directory")
 	webRoot := flag.String("web-root", env("KEJILION_WEB_ROOT", "/home/web"), "Kejilion Web root")
 	dockerSocket := flag.String("docker-socket", env("KEJILION_DOCKER_SOCKET", "/var/run/docker.sock"), "Docker Engine Unix Socket")
+	dockerPIDFile := flag.String("docker-pid-file", env("KEJILION_DOCKER_PID_FILE", "/run/docker.pid"), "Docker daemon PID file")
+	allowDockerSocketActivation := flag.Bool(
+		"allow-docker-socket-activation",
+		envBool("KEJILION_DOCKER_ALLOW_SOCKET_ACTIVATION", false),
+		"allow connecting to Docker Socket when no running dockerd PID can be verified",
+	)
 	flag.Parse()
 
 	token, err := agent.PrepareTokenFile(*tokenFile, *socketGroup)
@@ -40,6 +47,7 @@ func run() error {
 		return err
 	}
 	dockerClient := dockerx.New(*dockerSocket, *webRoot, *stateDir)
+	dockerClient.ConfigureDaemonAccess(*dockerPIDFile, *allowDockerSocketActivation)
 	handler, err := agent.NewServer(agent.Config{
 		Token: token, Version: version.Version, ProtocolVersion: version.ProtocolVersion,
 		WebRoot: *webRoot, System: systeminfo.NewCollector(),
@@ -90,6 +98,18 @@ func env(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envBool(name string, fallback bool) bool {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func clear(value []byte) {

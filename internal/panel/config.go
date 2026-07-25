@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+var cookieNamePattern = regexp.MustCompile(`^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$`)
 
 type Config struct {
 	Listen             string        `json:"listen"`
@@ -31,23 +35,25 @@ type Config struct {
 	MaxLoginFailures   int           `json:"maxLoginFailures"`
 	MaxRequestBytes    int64         `json:"maxRequestBytes"`
 	MaxAgentBytes      int64         `json:"maxAgentBytes"`
+	TrustedProxyCIDRs  []string      `json:"trustedProxyCidrs"`
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Listen:           ":8080",
-		DataDir:          "/var/lib/kejilion-panel",
-		AgentSocket:      "/run/kejilion-panel/agent.sock",
-		AgentTokenFile:   "/run/secrets/agent-token",
-		WebRoot:          "/app/web",
-		SecureCookie:     true,
-		SessionTTL:       12 * time.Hour,
-		SessionTTLText:   "12h",
-		LoginWindow:      15 * time.Minute,
-		LoginWindowText:  "15m",
-		MaxLoginFailures: 5,
-		MaxRequestBytes:  1 << 20,
-		MaxAgentBytes:    8 << 20,
+		Listen:            ":8080",
+		DataDir:           "/var/lib/kejilion-panel",
+		AgentSocket:       "/run/kejilion-panel/agent.sock",
+		AgentTokenFile:    "/run/secrets/agent-token",
+		WebRoot:           "/app/web",
+		SecureCookie:      true,
+		SessionTTL:        12 * time.Hour,
+		SessionTTLText:    "12h",
+		LoginWindow:       15 * time.Minute,
+		LoginWindowText:   "15m",
+		MaxLoginFailures:  5,
+		MaxRequestBytes:   1 << 20,
+		MaxAgentBytes:     8 << 20,
+		TrustedProxyCIDRs: []string{"127.0.0.0/8", "::1/128"},
 	}
 }
 
@@ -84,6 +90,9 @@ func LoadConfig(path string) (Config, error) {
 	applyStringEnv("KEJILION_PANEL_COOKIE_NAME", &config.CookieName)
 	applyStringEnv("KEJILION_PANEL_SESSION_TTL", &config.SessionTTLText)
 	applyStringEnv("KEJILION_PANEL_LOGIN_WINDOW", &config.LoginWindowText)
+	if value := strings.TrimSpace(os.Getenv("KEJILION_PANEL_TRUSTED_PROXY_CIDRS")); value != "" {
+		config.TrustedProxyCIDRs = splitCommaSeparated(value)
+	}
 
 	if value := strings.TrimSpace(os.Getenv("KEJILION_PANEL_SECURE_COOKIE")); value != "" {
 		parsed, err := strconv.ParseBool(value)
@@ -145,6 +154,8 @@ func (c Config) Validate() error {
 		return errors.New("agentSocket must be absolute")
 	case strings.TrimSpace(c.AgentTokenFile) == "" || !filepath.IsAbs(c.AgentTokenFile):
 		return errors.New("agentTokenFile must be absolute")
+	case strings.TrimSpace(c.WebRoot) == "" || !filepath.IsAbs(c.WebRoot):
+		return errors.New("webRoot must be absolute")
 	case c.SessionTTL < 5*time.Minute || c.SessionTTL > 7*24*time.Hour:
 		return errors.New("sessionTtl must be between 5 minutes and 7 days")
 	case c.LoginWindow < time.Minute || c.LoginWindow > 24*time.Hour:
@@ -156,19 +167,63 @@ func (c Config) Validate() error {
 	case c.MaxAgentBytes < 1024 || c.MaxAgentBytes > 64<<20:
 		return errors.New("maxAgentBytes must be between 1 KiB and 64 MiB")
 	}
+	for label, protectedPath := range map[string]string{
+		"dataDir":            c.DataDir,
+		"storePath":          c.StorePath,
+		"bootstrapTokenPath": c.BootstrapTokenPath,
+		"agentTokenFile":     c.AgentTokenFile,
+	} {
+		if pathsOverlap(c.WebRoot, protectedPath) {
+			return fmt.Errorf("webRoot must not overlap %s", label)
+		}
+	}
+	if samePath(c.StorePath, c.BootstrapTokenPath) ||
+		samePath(c.StorePath, c.AgentTokenFile) ||
+		samePath(c.BootstrapTokenPath, c.AgentTokenFile) {
+		return errors.New("store and secret paths must be distinct")
+	}
+	if !cookieNamePattern.MatchString(c.CookieName) {
+		return errors.New("cookieName is invalid")
+	}
 	if c.SecureCookie && !strings.HasPrefix(c.CookieName, "__Host-") {
 		return errors.New("secure cookie name must use the __Host- prefix")
 	}
 	if !c.SecureCookie && strings.HasPrefix(c.CookieName, "__Host-") {
 		return errors.New("__Host- cookies require secureCookie=true")
 	}
+	csrfCookieName := "kejilion_csrf"
+	if c.SecureCookie {
+		csrfCookieName = "__Host-kejilion_csrf"
+	}
+	if c.CookieName == csrfCookieName {
+		return errors.New("session and CSRF cookie names must be distinct")
+	}
+	for _, cidr := range c.TrustedProxyCIDRs {
+		if strings.TrimSpace(cidr) == "" {
+			return errors.New("trustedProxyCidrs must not contain empty entries")
+		}
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("invalid trusted proxy CIDR %q", cidr)
+		}
+	}
 	if c.PublicURL != "" {
 		parsed, err := url.Parse(c.PublicURL)
-		if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		if err != nil || parsed.Host == "" || parsed.Hostname() == "" ||
+			(parsed.Scheme != "https" && parsed.Scheme != "http") {
 			return errors.New("publicUrl must be an absolute HTTP(S) URL")
 		}
-		if parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" {
-			return errors.New("publicUrl must not contain a path, query, or fragment")
+		if parsed.User != nil || parsed.Opaque != "" || parsed.RawQuery != "" ||
+			parsed.Fragment != "" || parsed.Path != "" || parsed.RawPath != "" || parsed.ForceQuery {
+			return errors.New("publicUrl must be an origin without userinfo, path, query, or fragment")
+		}
+		if strings.ContainsAny(parsed.Host, "\r\n\t ") {
+			return errors.New("publicUrl contains invalid host characters")
+		}
+		if port := parsed.Port(); port != "" {
+			number, err := strconv.Atoi(port)
+			if err != nil || number < 1 || number > 65535 {
+				return errors.New("publicUrl port is invalid")
+			}
 		}
 		if c.SecureCookie && parsed.Scheme != "https" {
 			return errors.New("secure cookies require an HTTPS publicUrl")
@@ -181,4 +236,31 @@ func applyStringEnv(name string, target *string) {
 	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 		*target = value
 	}
+}
+
+func splitCommaSeparated(value string) []string {
+	items := strings.Split(value, ",")
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		result = append(result, strings.TrimSpace(item))
+	}
+	return result
+}
+
+func samePath(left, right string) bool {
+	relative, err := filepath.Rel(filepath.Clean(left), filepath.Clean(right))
+	return err == nil && relative == "."
+}
+
+func pathsOverlap(left, right string) bool {
+	return pathWithin(left, right) || pathWithin(right, left)
+}
+
+func pathWithin(root, candidate string) bool {
+	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(candidate))
+	if err != nil {
+		return false
+	}
+	return relative == "." ||
+		(relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
 }

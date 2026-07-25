@@ -102,6 +102,7 @@ function formatPorts(container: DockerContainer): string {
 
 function permits(container: DockerContainer, action: ContainerAction): boolean {
   return Boolean(
+    container.resourceVersion &&
     container.allowedActions?.some(
       (allowed) => allowed === action || allowed.endsWith(`.${action}`) || allowed.endsWith(`/${action}`),
     ),
@@ -132,13 +133,20 @@ function askAction(container: DockerContainer, action: ContainerAction): void {
 }
 
 async function runAction(): Promise<void> {
-  if (!selectedContainer.value || !pendingAction.value) return
+  if (!selectedContainer.value || !pendingAction.value || !selectedContainer.value.resourceVersion) return
   actionRunning.value = true
 
   try {
     const action = pendingAction.value
-    const result = await api.docker.action(selectedContainer.value.id, action)
-    toast.success('容器操作已进入任务队列', `${selectedContainer.value.name} · ${shortId(result.jobId)}`)
+    const result = await api.docker.action(
+      selectedContainer.value.id,
+      action,
+      selectedContainer.value.resourceVersion,
+    )
+    toast.success(
+      result.jobId ? '容器操作已进入任务队列' : '容器操作已完成',
+      result.jobId ? `${selectedContainer.value.name} · ${shortId(result.jobId)}` : selectedContainer.value.name,
+    )
     selectedContainer.value = undefined
     pendingAction.value = undefined
     await load(true)

@@ -17,16 +17,20 @@ import (
 
 // Collector reads Linux kernel pseudo-files directly. It never invokes a shell.
 type Collector struct {
-	ProcRoot string
-	EtcRoot  string
-	Now      func() time.Time
+	ProcRoot          string
+	EtcRoot           string
+	Now               func() time.Time
+	CPUSampleInterval time.Duration
 }
 
 func NewCollector() *Collector {
-	return &Collector{ProcRoot: "/proc", EtcRoot: "/etc", Now: time.Now}
+	return &Collector{
+		ProcRoot: "/proc", EtcRoot: "/etc", Now: time.Now,
+		CPUSampleInterval: 150 * time.Millisecond,
+	}
 }
 
-func (c *Collector) Collect(_ context.Context) (contract.SystemSummary, error) {
+func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error) {
 	if c.ProcRoot == "" {
 		c.ProcRoot = "/proc"
 	}
@@ -49,7 +53,7 @@ func (c *Collector) Collect(_ context.Context) (contract.SystemSummary, error) {
 	if err := c.readLoad(&result.Load); err != nil {
 		errs = append(errs, err)
 	}
-	if err := c.readCPU(&result.CPU); err != nil {
+	if err := c.readCPU(ctx, &result.CPU); err != nil {
 		errs = append(errs, err)
 	}
 	if err := c.readMemory(&result.Memory); err != nil {
@@ -99,32 +103,30 @@ func (c *Collector) readLoad(out *contract.LoadSummary) error {
 	return nil
 }
 
-func (c *Collector) readCPU(out *contract.CPUSummary) error {
-	stat := c.readOptional("stat")
-	first, _, _ := strings.Cut(stat, "\n")
-	fields := strings.Fields(first)
-	if len(fields) < 5 || fields[0] != "cpu" {
-		return errors.New("read cpu: invalid or unavailable /proc/stat")
+type cpuTimes struct {
+	total uint64
+	idle  uint64
+}
+
+func (c *Collector) readCPU(ctx context.Context, out *contract.CPUSummary) error {
+	before, err := c.readCPUTimes()
+	if err != nil {
+		return err
 	}
-	var values []uint64
-	for _, field := range fields[1:] {
-		n, err := strconv.ParseUint(field, 10, 64)
-		if err != nil {
-			return fmt.Errorf("read cpu: %w", err)
+	if c.CPUSampleInterval > 0 {
+		timer := time.NewTimer(c.CPUSampleInterval)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("sample cpu: %w", ctx.Err())
+		case <-timer.C:
 		}
-		values = append(values, n)
 	}
-	var total uint64
-	for _, n := range values {
-		total += n
+	after, err := c.readCPUTimes()
+	if err != nil {
+		return err
 	}
-	idle := values[3]
-	if len(values) > 4 {
-		idle += values[4]
-	}
-	if total > 0 {
-		out.UsagePercent = roundPercent(float64(total-idle) * 100 / float64(total))
-	}
+	out.UsagePercent = cpuUsagePercent(before, after)
 
 	cpuInfo := c.readOptional("cpuinfo")
 	for _, line := range strings.Split(cpuInfo, "\n") {
@@ -145,6 +147,48 @@ func (c *Collector) readCPU(out *contract.CPUSummary) error {
 		out.Cores = runtime.NumCPU()
 	}
 	return nil
+}
+
+func (c *Collector) readCPUTimes() (cpuTimes, error) {
+	first, _, _ := strings.Cut(c.readOptional("stat"), "\n")
+	fields := strings.Fields(first)
+	if len(fields) < 5 || fields[0] != "cpu" {
+		return cpuTimes{}, errors.New("read cpu: invalid or unavailable /proc/stat")
+	}
+	var values []uint64
+	for _, field := range fields[1:] {
+		n, err := strconv.ParseUint(field, 10, 64)
+		if err != nil {
+			return cpuTimes{}, fmt.Errorf("read cpu: %w", err)
+		}
+		values = append(values, n)
+	}
+	var total uint64
+	// Linux user/nice already include guest/guest_nice. Summing those final
+	// fields again would double count virtual CPU time.
+	for i, n := range values {
+		if i >= 8 {
+			break
+		}
+		total += n
+	}
+	idle := values[3]
+	if len(values) > 4 {
+		idle += values[4]
+	}
+	return cpuTimes{total: total, idle: idle}, nil
+}
+
+func cpuUsagePercent(before, after cpuTimes) float64 {
+	if after.total <= before.total || after.idle < before.idle {
+		return 0
+	}
+	totalDelta := after.total - before.total
+	idleDelta := after.idle - before.idle
+	if idleDelta >= totalDelta {
+		return 0
+	}
+	return roundPercent(float64(totalDelta-idleDelta) * 100 / float64(totalDelta))
 }
 
 func (c *Collector) readMemory(out *contract.MemorySummary) error {

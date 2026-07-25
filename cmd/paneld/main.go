@@ -49,6 +49,7 @@ func run(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	defer storage.Close()
 	hasher, err := auth.NewArgon2idHasher(auth.DefaultArgon2idParams())
 	if err != nil {
 		return err

@@ -1,0 +1,91 @@
+package panel
+
+import "testing"
+
+func TestConfigRejectsNonOriginPublicURLs(t *testing.T) {
+	t.Parallel()
+	for _, publicURL := range []string{
+		"https://user@panel.example.com",
+		"https://panel.example.com/path",
+		"https://panel.example.com?query=1",
+		"https://panel.example.com#fragment",
+		"https://panel.example.com:65536",
+	} {
+		config := validTestConfig()
+		config.PublicURL = publicURL
+		if err := config.Validate(); err == nil {
+			t.Errorf("Validate accepted %q", publicURL)
+		}
+	}
+}
+
+func TestConfigAcceptsHTTPSOrigin(t *testing.T) {
+	t.Parallel()
+	config := validTestConfig()
+	config.PublicURL = "https://panel.example.com:8443"
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate rejected HTTPS origin: %v", err)
+	}
+}
+
+func TestConfigRejectsWebRootSecretOverlap(t *testing.T) {
+	t.Parallel()
+	for name, mutate := range map[string]func(*Config){
+		"relative": func(config *Config) {
+			config.WebRoot = "relative/web"
+		},
+		"data child": func(config *Config) {
+			config.WebRoot = "/var/lib/kejilion-panel/web"
+		},
+		"data parent": func(config *Config) {
+			config.WebRoot = "/var/lib"
+		},
+		"agent token parent": func(config *Config) {
+			config.WebRoot = "/run"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := validTestConfig()
+			mutate(&config)
+			if err := config.Validate(); err == nil {
+				t.Fatal("Validate accepted an unsafe webRoot")
+			}
+		})
+	}
+}
+
+func TestConfigRejectsUnsafeCookieNames(t *testing.T) {
+	t.Parallel()
+	for _, cookieName := range []string{
+		"__Host-invalid cookie",
+		"__Host-kejilion_csrf",
+		"__Host-invalid;cookie",
+	} {
+		config := validTestConfig()
+		config.CookieName = cookieName
+		if err := config.Validate(); err == nil {
+			t.Errorf("Validate accepted cookie name %q", cookieName)
+		}
+	}
+}
+
+func TestConfigValidatesTrustedProxyCIDRs(t *testing.T) {
+	t.Parallel()
+	config := validTestConfig()
+	config.TrustedProxyCIDRs = []string{"127.0.0.0/8", "172.17.0.0/16", "::1/128"}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate rejected trusted proxy CIDRs: %v", err)
+	}
+	config.TrustedProxyCIDRs = []string{"not-a-cidr"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("Validate accepted an invalid trusted proxy CIDR")
+	}
+}
+
+func validTestConfig() Config {
+	config := DefaultConfig()
+	config.StorePath = "/var/lib/kejilion-panel/panel-state.json"
+	config.BootstrapTokenPath = "/var/lib/kejilion-panel/bootstrap.token"
+	config.CookieName = "__Host-kejilion_session"
+	return config
+}
