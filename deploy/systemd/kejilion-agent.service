@@ -7,7 +7,7 @@ Wants=docker.socket
 [Service]
 Type=simple
 User=root
-Group=root
+Group=kejilion-panel
 EnvironmentFile=-/etc/kejilion-panel/agent.env
 ExecStart=/usr/local/libexec/kejilion-agent
 Restart=on-failure
@@ -39,4 +39,3 @@ SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
-
