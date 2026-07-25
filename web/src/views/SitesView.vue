@@ -49,22 +49,14 @@ const form = reactive({
   upstream: '',
 })
 
-const canCreate = computed(() =>
-  capabilities.value.some(
-    (capability) =>
-      capability.enabled &&
-      (['site.create', 'sites.create', 'sites.write'].includes(capability.id) ||
-        (capability.id.includes('site') && capability.methods?.includes('POST'))),
-  ),
-)
-
-const canReconcile = computed(() =>
-  capabilities.value.some(
-    (capability) =>
-      capability.enabled &&
-      (['site.reconcile', 'sites.reconcile'].includes(capability.id) ||
-        (capability.id.includes('site') && capability.id.includes('reconcile'))),
-  ),
+const siteWriteCapability = computed(() => capabilities.value.find((capability) => capability.id === 'sites.write'))
+const canCreate = computed(() => siteWriteCapability.value?.enabled === true)
+const siteWriteReason = computed(
+  () =>
+    siteWriteCapability.value?.reason?.trim() ||
+    (siteWriteCapability.value
+      ? 'Agent 当前未开放网站安全写入能力。'
+      : '未从 Agent 获取网站写入能力状态，请检查 Agent 连接与版本。'),
 )
 
 const filteredSites = computed(() => {
@@ -182,33 +174,20 @@ async function submitSite(): Promise<void> {
   }
 
   try {
-    const result = editingSite.value
+    const wasEditing = Boolean(editingSite.value)
+    const savedSite = editingSite.value
       ? await api.sites.update(editingSite.value.id, input)
       : await api.sites.create(input)
     editorOpen.value = false
-    if ('jobId' in result) {
-      toast.success('操作已进入任务队列', `任务 ${shortId(result.jobId)} 正在安全执行。`)
-    } else {
-      toast.success(editingSite.value ? '网站已更新' : '网站已创建')
-    }
+    toast.success(
+      wasEditing ? '网站已安全更新' : '网站已安全创建',
+      `${savedSite.primaryDomain} 已通过 nginx -t 校验并完成同步应用。`,
+    )
     await load(true)
   } catch (reason) {
     formError.value = reason instanceof ApiError ? reason.message : '操作失败，请稍后重试。'
   } finally {
     submitting.value = false
-  }
-}
-
-async function reconcile(): Promise<void> {
-  refreshing.value = true
-  try {
-    const result = await api.sites.reconcile()
-    toast.success('已开始重新对账', `任务 ${shortId(result.jobId)} 将检查实际配置产物。`)
-    await load(true)
-  } catch (reason) {
-    toast.danger('对账启动失败', reason instanceof ApiError ? reason.message : '请稍后重试。')
-  } finally {
-    refreshing.value = false
   }
 }
 
@@ -222,22 +201,16 @@ onBeforeUnmount(() => controller?.abort())
 
 <template>
   <div class="page">
-    <PageHeader title="网站管理" description="从 Nginx 配置、站点目录与证书实际产物中发现，不接管未知资源。">
+    <PageHeader
+      title="网站管理"
+      description="从 Nginx 配置、站点目录与证书实际产物中发现；安全写入同步执行，不接管未知资源。"
+    >
       <template #actions>
-        <button
-          v-if="canReconcile"
-          class="button button--secondary"
-          type="button"
-          :disabled="refreshing || panel.isReadOnly.value"
-          @click="reconcile"
-        >
-          <RefreshCw :size="16" :class="{ spin: refreshing }" /> 重新对账
-        </button>
         <button
           class="button button--primary"
           type="button"
           :disabled="!canCreate || panel.isReadOnly.value"
-          :title="!canCreate ? '当前 Agent 未开放网站创建能力' : ''"
+          :title="!canCreate ? siteWriteReason : ''"
           @click="openCreate"
         >
           <Plus :size="17" /> 新建网站
@@ -247,7 +220,7 @@ onBeforeUnmount(() => controller?.abort())
 
     <div v-if="!canCreate && !loading" class="inline-alert inline-alert--info" role="status">
       <ShieldCheck :size="17" />
-      当前版本以安全发现与查看为主；Agent 开放类型化网站写能力后，创建入口会自动启用。
+      <span><strong>网站写入当前不可用</strong><br />{{ siteWriteReason }}</span>
     </div>
 
     <section class="toolbar-card">
@@ -346,7 +319,8 @@ onBeforeUnmount(() => controller?.abort())
                   v-if="site.allowedActions?.includes('update')"
                   class="button button--secondary button--small"
                   type="button"
-                  :disabled="panel.isReadOnly.value"
+                  :disabled="panel.isReadOnly.value || !canCreate"
+                  :title="!canCreate ? siteWriteReason : ''"
                   @click="openEdit(site)"
                 >
                   设置
@@ -433,7 +407,8 @@ onBeforeUnmount(() => controller?.abort())
           v-if="selectedSite?.allowedActions?.includes('update')"
           class="button button--primary"
           type="button"
-          :disabled="panel.isReadOnly.value"
+          :disabled="panel.isReadOnly.value || !canCreate"
+          :title="!canCreate ? siteWriteReason : ''"
           @click="openEdit(selectedSite)"
         >
           编辑设置
@@ -444,7 +419,7 @@ onBeforeUnmount(() => controller?.abort())
     <ModalDialog
       :open="editorOpen"
       :title="editingSite ? '编辑网站设置' : '新建网站'"
-      description="仅接受类型化参数；保存前由 Agent 校验并生成可回滚任务。"
+      description="提交后同步执行安全事务：校验资源版本与 nginx -t，失败自动回滚，成功后 reload。"
       @close="editorOpen = false"
     >
       <form id="site-form" class="form-stack" @submit.prevent="submitSite">
@@ -479,7 +454,7 @@ onBeforeUnmount(() => controller?.abort())
         </label>
         <div class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          只更新由 Panel 固定模板创建且未被外部修改的网站；脚本或人工配置保持只读。首版不删除网站、目录、数据库或证书。
+          Agent 会锁定资源并原子写入；仅更新由 Panel 固定模板创建且未被外部修改的网站。脚本或人工配置保持只读，首版不删除网站、目录、数据库或证书。
         </div>
       </form>
       <template #footer>

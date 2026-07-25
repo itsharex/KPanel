@@ -16,9 +16,7 @@ type JobFilter = 'all' | 'active' | 'succeeded' | 'failed'
 const jobs = ref<Job[]>([])
 const loading = ref(true)
 const refreshing = ref(false)
-const loadingMore = ref(false)
 const error = ref('')
-const nextCursor = ref('')
 const search = ref('')
 const filter = ref<JobFilter>('all')
 const selectedJob = ref<Job>()
@@ -56,10 +54,9 @@ function actionLabel(action: string): string {
   const labels: Record<string, string> = {
     'site.create': '创建网站',
     'site.update': '更新网站',
-    'site.reconcile': '网站对账',
-    'container.start': '启动容器',
-    'container.stop': '停止容器',
-    'container.restart': '重启容器',
+    'docker.start': '启动容器',
+    'docker.stop': '停止容器',
+    'docker.restart': '重启容器',
   }
   return labels[action] || action
 }
@@ -68,23 +65,16 @@ function sourceLabel(source?: Job['source']): string {
   return { web: 'Web', cli: 'CLI', reconcile: '自动对账', system: '系统' }[source || 'system']
 }
 
-async function load(options: { silent?: boolean; append?: boolean } = {}): Promise<void> {
-  if (!options.append) {
-    controller?.abort()
-    controller = new AbortController()
-  }
-  if (options.append) loadingMore.value = true
-  else if (options.silent) refreshing.value = true
+async function load(options: { silent?: boolean } = {}): Promise<void> {
+  controller?.abort()
+  controller = new AbortController()
+  if (options.silent) refreshing.value = true
   else loading.value = true
   error.value = ''
 
   try {
-    const result = await api.jobs.list(
-      { cursor: options.append ? nextCursor.value : undefined },
-      controller?.signal,
-    )
-    jobs.value = options.append ? [...jobs.value, ...result.items] : result.items
-    nextCursor.value = result.nextCursor || ''
+    const result = await api.jobs.list({ limit: 50 }, controller.signal)
+    jobs.value = result.items
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
     if (reason instanceof ApiError && reason.status === 404) {
@@ -95,7 +85,6 @@ async function load(options: { silent?: boolean; append?: boolean } = {}): Promi
   } finally {
     loading.value = false
     refreshing.value = false
-    loadingMore.value = false
   }
 }
 
@@ -179,11 +168,6 @@ onBeforeUnmount(() => {
           <span v-else-if="job.errorMessage" class="job-item__error">{{ job.errorMessage }}</span>
         </span>
         <code>{{ shortId(job.id) }}</code>
-      </button>
-
-      <button v-if="nextCursor" class="button button--secondary load-more" type="button" :disabled="loadingMore" @click="load({ append: true })">
-        <LoaderCircle v-if="loadingMore" class="spin" :size="16" />
-        {{ loadingMore ? '正在加载…' : '加载更多' }}
       </button>
     </section>
 

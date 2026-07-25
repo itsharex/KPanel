@@ -271,10 +271,6 @@ export interface PanelSettings {
   telemetryEnabled?: boolean
 }
 
-export interface JobAccepted {
-  jobId: string
-}
-
 export interface DockerActionResult {
   jobId?: string
   containerId?: string

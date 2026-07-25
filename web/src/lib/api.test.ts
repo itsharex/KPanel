@@ -80,6 +80,136 @@ describe('API client', () => {
     })
   })
 
+  it('normalizes site create and update responses from the Agent contract', async () => {
+    const createdRaw = {
+      id: 'a'.repeat(32),
+      primaryDomain: 'example.com',
+      domains: ['example.com', 'www.example.com'],
+      kind: 'reverse_proxy',
+      enabled: true,
+      health: 'healthy',
+      tls: {
+        enabled: true,
+        status: 'valid',
+        expiresAt: '2026-12-31T00:00:00Z',
+        source: 'acme',
+      },
+      target: 'http://127.0.0.1:3000',
+      origin: 'web',
+      consistency: 'in_sync',
+      resourceVersion: `sha256:${'b'.repeat(64)}`,
+      allowedActions: ['update'],
+      artifacts: [{ kind: 'nginx', path: '/etc/nginx/conf.d/example.com.conf', hash: 'abc' }],
+      warnings: [],
+      reconciledAt: '2026-07-25T10:00:00Z',
+    }
+    const updatedRaw = {
+      ...createdRaw,
+      domains: ['example.com'],
+      target: 'http://127.0.0.1:4000',
+      resourceVersion: `sha256:${'c'.repeat(64)}`,
+      reconciledAt: '2026-07-25T10:05:00Z',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(createdRaw))
+      .mockResolvedValueOnce(jsonResponse(updatedRaw))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const created = await api.sites.create({
+      primaryDomain: 'example.com',
+      aliases: ['www.example.com'],
+      type: 'proxy',
+      upstream: 'http://127.0.0.1:3000',
+      enabled: true,
+    })
+    const updated = await api.sites.update(createdRaw.id, {
+      primaryDomain: 'example.com',
+      aliases: [],
+      type: 'proxy',
+      upstream: 'http://127.0.0.1:4000',
+      enabled: true,
+      expectedResourceVersion: createdRaw.resourceVersion,
+    })
+
+    expect(created).toMatchObject({
+      id: createdRaw.id,
+      type: 'proxy',
+      upstream: createdRaw.target,
+      consistency: 'synced',
+      access: 'managed',
+      source: 'panel',
+      certificate: {
+        status: 'valid',
+        issuer: 'acme',
+        expiresAt: '2026-12-31T00:00:00Z',
+      },
+    })
+    expect(updated).toMatchObject({
+      domains: ['example.com'],
+      upstream: updatedRaw.target,
+      resourceVersion: updatedRaw.resourceVersion,
+      observedAt: updatedRaw.reconciledAt,
+    })
+
+    const createInit = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/sites')
+    expect(createInit.method).toBe('POST')
+    expect(JSON.parse(String(createInit.body))).not.toHaveProperty('expectedResourceVersion')
+
+    const updateInit = fetchMock.mock.calls[1]?.[1] as RequestInit
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/v1/sites/${createdRaw.id}`)
+    expect(updateInit.method).toBe('PATCH')
+    expect(JSON.parse(String(updateInit.body))).toMatchObject({
+      upstream: 'http://127.0.0.1:4000',
+      expectedResourceVersion: createdRaw.resourceVersion,
+    })
+  })
+
+  it('uses only the supported jobs limit query and normalizes job records', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        items: [
+          {
+            id: 'req-123',
+            action: 'docker.restart',
+            origin: 'web',
+            state: 'succeeded',
+            progress: 100,
+            stage: 'completed',
+            targetKind: 'container',
+            targetId: 'abc123',
+            targetLabel: 'nginx',
+            createdAt: '2026-07-25T10:00:00Z',
+            startedAt: '2026-07-25T10:00:01Z',
+            finishedAt: '2026-07-25T10:00:02Z',
+          },
+        ],
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await api.jobs.list({ limit: 3 })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/jobs?limit=3')
+    expect(result).toMatchObject({
+      total: 1,
+      items: [
+        {
+          id: 'req-123',
+          action: 'docker.restart',
+          resourceType: 'container',
+          resourceName: 'nginx',
+          status: 'succeeded',
+          progress: 100,
+          actor: 'web',
+          source: 'web',
+          stages: [{ name: 'completed', status: 'succeeded' }],
+        },
+      ],
+    })
+  })
+
   it('sends the observed resource version with Docker lifecycle actions', async () => {
     const fetchMock = vi
       .fn()

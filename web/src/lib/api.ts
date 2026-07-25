@@ -7,7 +7,6 @@ import type {
   DockerInventory,
   DockerActionResult,
   Job,
-  JobAccepted,
   LoginRequest,
   PanelSettings,
   SetupRequest,
@@ -590,10 +589,10 @@ export const api = {
       const result = normalizeList(await request<ApiList<RawSite> | RawSite[]>('/sites', { query, signal }))
       return { ...result, items: result.items.map(normalizeSite) }
     },
-    create: (body: SiteInput) => request<JobAccepted | Site>('/sites', { method: 'POST', body }),
-    update: (id: string, body: SiteInput) =>
-      request<JobAccepted | Site>(`/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
-    reconcile: () => request<JobAccepted>('/sites/reconcile', { method: 'POST' }),
+    create: async (body: SiteInput): Promise<Site> =>
+      normalizeSite(await request<RawSite>('/sites', { method: 'POST', body })),
+    update: async (id: string, body: SiteInput): Promise<Site> =>
+      normalizeSite(await request<RawSite>(`/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body })),
   },
   docker: {
     inventory: async (signal?: AbortSignal): Promise<DockerInventory> => {
@@ -626,11 +625,10 @@ export const api = {
       }),
   },
   jobs: {
-    list: async (query?: { status?: string; cursor?: string }, signal?: AbortSignal): Promise<ApiList<Job>> => {
+    list: async (query?: { limit?: number }, signal?: AbortSignal): Promise<ApiList<Job>> => {
       const result = normalizeList(await request<ApiList<RawJob> | RawJob[]>('/jobs', { query, signal }))
       return { ...result, items: result.items.map(normalizeJob) }
     },
-    get: async (id: string, signal?: AbortSignal) => normalizeJob(await request<RawJob>(`/jobs/${encodeURIComponent(id)}`, { signal })),
   },
   audit: {
     list: async (
