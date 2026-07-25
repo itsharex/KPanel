@@ -41,11 +41,16 @@ type Server struct {
 	config              Config
 	auth                *auth.Service
 	store               *store.Store
-	agent               *AgentClient
+	agent               agentAPI
 	trustedProxies      []*net.IPNet
 	auditMu             sync.Mutex
 	lastAuthAudit       map[string]time.Time
 	lastGlobalAuthAudit time.Time
+}
+
+type agentAPI interface {
+	Get(context.Context, string, string, string) (AgentResponse, error)
+	Do(context.Context, string, string, string, string, []byte) (AgentResponse, error)
 }
 
 type authResponse struct {
@@ -122,6 +127,12 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleLogout(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit":
 		s.handleAudit(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs":
+		s.handleJobs(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sites":
+		s.handleSiteCreate(w, r)
+	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/sites/"):
+		s.handleSiteUpdate(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/"):
 		s.handleDockerAction(w, r)
 	case r.Method == http.MethodGet:
