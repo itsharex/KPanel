@@ -13,8 +13,8 @@ Restart=on-failure
 RestartSec=3s
 RuntimeDirectory=kejilion-panel
 RuntimeDirectoryMode=0750
-StateDirectory=kejilion-panel
-StateDirectoryMode=0700
+# The Panel data directory is owned by the container UID/GID. Do not declare
+# its parent as StateDirectory: systemd would recursively change that ownership.
 UMask=0077
 
 NoNewPrivileges=true
@@ -28,10 +28,12 @@ ProtectHostname=true
 ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
-ProtectProc=invisible
+# Docker socket activation guard verifies /run/docker.pid against /proc/<pid>/comm.
+ProtectProc=default
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/run/kejilion-panel /var/lib/kejilion-panel -/home/web/conf.d -/home/web/html
+ReadOnlyPaths=/var/lib/kejilion-panel
+ReadWritePaths=/run/kejilion-panel -/home/web/conf.d -/home/web/html
 RestrictAddressFamilies=AF_UNIX
 RestrictNamespaces=true
 RestrictRealtime=true

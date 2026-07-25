@@ -54,7 +54,7 @@ if KP_AGENT_VERSION=0.0.1 run_installer >"$TEST_DIR/version.out" 2>&1; then
 	echo "installer accepted a mismatched Agent version" >&2
 	exit 1
 fi
-grep -F 'does not match 0.1.0 v1alpha1' "$TEST_DIR/version.out" >/dev/null
+grep -F 'does not match 0.1.1 v1alpha1' "$TEST_DIR/version.out" >/dev/null
 
 if PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
 	sh "$PROJECT_DIR/deploy/install.sh" \
@@ -145,6 +145,35 @@ grep -F '/run/kejilion-panel \' "$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F '/run/kejilion-panel \' "$PROJECT_DIR/deploy/preflight.sh" >/dev/null
 grep -F 'CRITICAL: automatic failure cleanup could not be fully verified.' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
+grep -Fx 'ProtectProc=default' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
+if grep -Eq '^ProtectProc=(invisible|ptraceable|noaccess)$' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service"; then
+	echo "Agent unit hides the dockerd process required by the socket activation guard" >&2
+	exit 1
+fi
+if grep -Eq '^StateDirectory=kejilion-panel(/.*)?$' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service"; then
+	echo "Agent unit can take ownership of the Panel container data tree" >&2
+	exit 1
+fi
+grep -Fx 'ReadOnlyPaths=/var/lib/kejilion-panel' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
+if grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
+	grep -F '/var/lib/kejilion-panel' >/dev/null; then
+	echo "Agent unit can write the Panel authentication and audit data tree" >&2
+	exit 1
+fi
+grep -F 'expected 65532:65532:700' "$PROJECT_DIR/deploy/install.sh" >/dev/null
+test "$(grep -c '^assert_panel_data_dir \"after ' "$PROJECT_DIR/deploy/install.sh")" = 3
+AGENT_DATA_GATE_LINE=$(grep -n '^assert_panel_data_dir "after Agent start"$' \
+	"$PROJECT_DIR/deploy/install.sh" | cut -d: -f1)
+PANEL_START_ATTEMPT_LINE=$(grep -n '^PANEL_START_ATTEMPTED=true$' \
+	"$PROJECT_DIR/deploy/install.sh" | cut -d: -f1)
+[ "$AGENT_DATA_GATE_LINE" -lt "$PANEL_START_ATTEMPT_LINE" ] || {
+	echo "Panel can start before the post-Agent data ownership gate" >&2
+	exit 1
+}
 
 : >"$DOCKER_LOG"
 PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \

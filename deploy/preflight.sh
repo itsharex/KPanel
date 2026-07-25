@@ -248,7 +248,7 @@ for managed_path in \
 	/lib/systemd/system/kejilion-agent.service \
 	/lib/systemd/system/kejilion-agent.service.d; do
 	if [ -e "$managed_path" ] || [ -L "$managed_path" ]; then
-		fail "existing Panel resource found; v0.1.0 installer only supports a fresh install: $managed_path"
+		fail "existing Panel resource found; the v0.1 installer only supports a fresh install: $managed_path"
 	fi
 done
 

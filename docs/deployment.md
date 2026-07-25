@@ -14,7 +14,7 @@ KPanel 使用两个独立进程：
 digest 的 Panel 镜像拉入本机缓存。安装器不会执行或修改 `kejilion.sh`，也不会
 改动 `/home/web`、现有 Nginx 配置、防火墙和站点。
 
-v0.1.0 安装器只支持全新安装。发现任何既有 Panel 文件、同名容器或同名网络时
+v0.1 安装器只支持全新安装。发现任何既有 Panel 文件、同名容器或同名网络时
 会拒绝继续，不会把未知资源当作可升级对象。后续版本必须在具备事务化升级和自动
 回滚后再开放原地升级。
 
@@ -52,7 +52,7 @@ sha256sum dist/linux-amd64/kejilion-agent dist/linux-arm64/kejilion-agent
 推送 Docker Hub：
 
 ```sh
-VERSION=0.1.0
+VERSION=0.1.1
 IMAGE=docker.io/<owner>/kejilion-panel
 
 docker login
@@ -164,7 +164,7 @@ curl --fail --silent --show-error https://panel.example.com/api/v1/health
 
 ## 回滚
 
-v0.1.0 不执行原地升级，因此没有“恢复旧版 Panel”的路径。全新安装在启动阶段
+v0.1 不执行原地升级，因此没有“恢复旧版 Panel”的路径。全新安装在启动阶段
 失败时，安装器会尝试停止并禁用本次 Agent，并只在 Compose project/service
 标签同时匹配时停止 Panel 容器；随后复核容器运行态、Agent `ActiveState` 和
 `UnitFileState`。无法确认时会输出 `CRITICAL`，此时不得重试或启动相关服务。

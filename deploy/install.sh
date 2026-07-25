@@ -134,6 +134,20 @@ inspect_systemd_unit_absence() {
 		fail "an existing or loaded kejilion-agent.service was found"
 }
 
+assert_panel_data_dir() {
+	phase=$1
+	[ ! -L "$DATA_DIR" ] ||
+		fail "Panel data directory became a symlink $phase: $DATA_DIR"
+	DATA_DIR_KIND=$(stat -c %F -- "$DATA_DIR" 2>/dev/null) ||
+		fail "cannot inspect Panel data directory $phase: $DATA_DIR"
+	[ "$DATA_DIR_KIND" = "directory" ] ||
+		fail "Panel data path is not a directory $phase: $DATA_DIR_KIND"
+	DATA_DIR_METADATA=$(stat -c '%u:%g:%a' -- "$DATA_DIR" 2>/dev/null) ||
+		fail "cannot inspect Panel data directory metadata $phase"
+	[ "$DATA_DIR_METADATA" = "65532:65532:700" ] ||
+		fail "Panel data directory metadata changed $phase: expected 65532:65532:700, got $DATA_DIR_METADATA"
+}
+
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--agent-binary)
@@ -250,7 +264,7 @@ for managed_path in \
 	{
 		[ ! -e "$managed_path" ] && [ ! -L "$managed_path" ]
 	} ||
-		fail "existing Panel resource found; v0.1.0 installer only supports a fresh install: $managed_path"
+		fail "existing Panel resource found; the v0.1 installer only supports a fresh install: $managed_path"
 done
 inspect_systemd_unit_absence
 
@@ -442,7 +456,9 @@ TOKEN_TARGET=$ETC_DIR/agent.token
 
 install -d -o root -g "$PANEL_GROUP" -m 0750 "$ETC_DIR"
 install -d -o root -g root -m 0755 "$OPT_DIR"
+install -d -o root -g root -m 0755 "$(dirname "$DATA_DIR")"
 install -d -o 65532 -g 65532 -m 0700 "$DATA_DIR"
+assert_panel_data_dir "after creation"
 install -d -o root -g root -m 0755 "$(dirname "$AGENT_TARGET")"
 
 TEMP_TOKEN=$(mktemp "$ETC_DIR/.agent.token.XXXXXX")
@@ -483,6 +499,7 @@ AGENT_START_ATTEMPTED=true
 systemctl restart kejilion-agent.service
 systemctl is-active --quiet kejilion-agent.service ||
 	fail "Agent service did not become active"
+assert_panel_data_dir "after Agent start"
 
 socket_ready=false
 attempt=0
@@ -530,6 +547,7 @@ if [ "$healthy" != true ]; then
 		"http://127.0.0.1:$PORT/api/v1/health" >/dev/null || true
 	fail "panel or Panel-to-Agent health check failed; inspect the retained resources before retrying"
 fi
+assert_panel_data_dir "after Panel start"
 INSTALL_SUCCEEDED=true
 
 printf '\nKPanel is running on 127.0.0.1:%s.\n' "$PORT"

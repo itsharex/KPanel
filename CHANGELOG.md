@@ -2,6 +2,13 @@
 
 本项目遵循语义化版本。所有日期均使用 `YYYY-MM-DD`。
 
+## [0.1.1] - 2026-07-25
+
+### Fixed
+
+- 修复 systemd `ProtectProc=invisible` 隐藏 dockerd 进程，导致 Agent 的 Docker socket 防激活检查误判 `docker_unavailable`；改为显式 `ProtectProc=default`，其余沙箱限制保持不变。
+- 防止 systemd 接管非 root Panel 数据目录的属主，并在 Agent、Panel 启动前后增加目录属主与权限门禁。
+
 ## [0.1.0] - 2026-07-25
 
 首个可部署版本。
