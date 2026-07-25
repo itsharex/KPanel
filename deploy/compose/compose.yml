@@ -1,0 +1,40 @@
+services:
+  panel:
+    image: ${KEJILION_PANEL_IMAGE:?Set KEJILION_PANEL_IMAGE to a versioned image}
+    container_name: kejilion-panel
+    restart: unless-stopped
+    user: "65532:65532"
+    group_add:
+      - "${KEJILION_PANEL_GID:?Set KEJILION_PANEL_GID to the host kejilion-panel group id}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    environment:
+      KEJILION_PANEL_LISTEN: ":8080"
+      KEJILION_PANEL_DATA_DIR: /var/lib/kejilion-panel
+      KEJILION_PANEL_AGENT_SOCKET: /run/kejilion-panel/agent.sock
+      KEJILION_PANEL_AGENT_TOKEN_FILE: /run/secrets/agent-token
+      KEJILION_PANEL_WEB_ROOT: /app/web
+      KEJILION_PANEL_PUBLIC_URL: ${KEJILION_PANEL_PUBLIC_URL:-}
+      KEJILION_PANEL_SECURE_COOKIE: ${KEJILION_PANEL_SECURE_COOKIE:-true}
+    volumes:
+      - panel-data:/var/lib/kejilion-panel
+      - /run/kejilion-panel:/run/kejilion-panel
+      - /etc/kejilion-panel/agent.token:/run/secrets/agent-token:ro
+    ports:
+      - "127.0.0.1:${KEJILION_PANEL_PORT:-18443}:8080"
+    healthcheck:
+      test: ["CMD", "/paneld", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  panel-data:
+    name: kejilion-panel-data
+

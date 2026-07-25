@@ -1,0 +1,42 @@
+[Unit]
+Description=Kejilion Panel Host Agent
+Documentation=https://github.com/kejilion/kejilion-panel
+After=local-fs.target docker.socket
+Wants=docker.socket
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=-/etc/kejilion-panel/agent.env
+ExecStart=/usr/local/libexec/kejilion-agent
+Restart=on-failure
+RestartSec=3s
+RuntimeDirectory=kejilion-panel
+RuntimeDirectoryMode=0750
+StateDirectory=kejilion-panel
+StateDirectoryMode=0700
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/kejilion-panel /var/lib/kejilion-panel
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
+
