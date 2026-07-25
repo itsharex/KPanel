@@ -187,7 +187,7 @@ jobs:
               exit 1
             }
             gh release edit "$GITHUB_REF_NAME" \
-              --title "Kejilion Panel $VERSION" \
+              --title "KPanel $VERSION" \
               --notes-file release/DRAFT_NOTES.md
             gh release upload "$GITHUB_REF_NAME" --clobber \
               release/kejilion-agent-linux-amd64 \
@@ -198,7 +198,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --verify-tag \
               --draft \
-              --title "Kejilion Panel $VERSION" \
+              --title "KPanel $VERSION" \
               --notes-file release/DRAFT_NOTES.md \
               release/kejilion-agent-linux-amd64 \
               release/kejilion-agent-linux-arm64 \
@@ -237,7 +237,7 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "## Kejilion Panel $VERSION"
+            echo "## KPanel $VERSION"
             echo
             echo "Production image:"
             echo
@@ -247,5 +247,5 @@ jobs:
           } > release/RELEASE_NOTES.md
           gh release edit "$GITHUB_REF_NAME" \
             --draft=false \
-            --title "Kejilion Panel $VERSION" \
+            --title "KPanel $VERSION" \
             --notes-file release/RELEASE_NOTES.md

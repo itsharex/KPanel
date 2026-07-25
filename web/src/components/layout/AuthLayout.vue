@@ -9,7 +9,7 @@ import LogoMark from '@/components/common/LogoMark.vue'
       <LogoMark />
       <div class="auth-layout__message">
         <span class="eyebrow"><ShieldCheck :size="16" /> 安全的宿主机管理边界</span>
-        <h1>让 Kejilion 的日常管理，更直观、更安心。</h1>
+        <h1>让服务器日常管理，更直观、更安心。</h1>
         <p>读取真实系统状态，所有变更经过白名单 Agent 校验，不执行任意 Shell。</p>
         <ul>
           <li><CheckCircle2 :size="17" /> 不修改现有 kejilion.sh</li>
@@ -17,7 +17,7 @@ import LogoMark from '@/components/common/LogoMark.vue'
           <li><CheckCircle2 :size="17" /> 每项变更均有记录与审计追踪</li>
         </ul>
       </div>
-      <p class="auth-layout__footnote">Kejilion Panel · Linux 管理面板</p>
+      <p class="auth-layout__footnote">KPanel · Linux 管理面板</p>
     </section>
     <section class="auth-layout__form">
       <div class="auth-card">

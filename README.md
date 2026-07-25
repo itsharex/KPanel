@@ -1,6 +1,6 @@
-# Kejilion Panel
+# KPanel
 
-Kejilion Panel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录、主机监控、现有网站发现、Docker 查看与受控生命周期管理。
+KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录、主机监控、现有网站发现、Docker 查看与受控生命周期管理。
 
 ## 核心原则
 

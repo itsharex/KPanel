@@ -1,5 +1,5 @@
 [Unit]
-Description=Kejilion Panel Host Agent
+Description=KPanel Host Agent
 Documentation=https://github.com/kejilion/kejilion-panel
 After=local-fs.target
 

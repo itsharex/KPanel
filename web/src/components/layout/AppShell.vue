@@ -48,7 +48,7 @@ const toast = useToast()
 const menuOpen = ref(false)
 const signingOut = ref(false)
 
-const pageTitle = computed(() => String(route.meta.title || 'Kejilion Panel'))
+const pageTitle = computed(() => String(route.meta.title || 'KPanel'))
 const agentStatus = computed(() => {
   const agent = panel.state.agent
   if (!agent?.connected) return { status: 'offline', label: 'Agent 离线' }

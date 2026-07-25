@@ -28,7 +28,7 @@ Usage:
     [--network-subnet 172.29.255.240/28] \
     [--dry-run]
 
-The installer only creates Kejilion Panel files and services. It does not edit
+The installer only creates KPanel files and services. It does not edit
 kejilion.sh, /home/web, Nginx configuration, firewall rules, or existing sites.
 EOF
 }
@@ -532,7 +532,7 @@ if [ "$healthy" != true ]; then
 fi
 INSTALL_SUCCEEDED=true
 
-printf '\nKejilion Panel is running on 127.0.0.1:%s.\n' "$PORT"
+printf '\nKPanel is running on 127.0.0.1:%s.\n' "$PORT"
 printf 'Public URL: %s\n' "$PUBLIC_URL"
 if [ -s "$DATA_DIR/bootstrap.token" ]; then
 	printf 'Read the one-time setup token as root from: %s\n' "$DATA_DIR/bootstrap.token"

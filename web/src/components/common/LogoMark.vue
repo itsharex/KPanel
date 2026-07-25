@@ -13,8 +13,7 @@ withDefaults(
   <div class="brand" :class="{ 'brand--compact': compact }">
     <span class="brand__mark" aria-hidden="true"><span>K</span></span>
     <span v-if="!compact" class="brand__text">
-      <strong>Kejilion</strong>
-      <small>Panel</small>
+      <strong>KPanel</strong>
     </span>
   </div>
 </template>

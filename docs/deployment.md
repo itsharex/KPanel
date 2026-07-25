@@ -2,7 +2,7 @@
 
 ## 部署边界
 
-Kejilion Panel 使用两个独立进程：
+KPanel 使用两个独立进程：
 
 - `paneld` 以非 root Docker 容器运行，只绑定 `127.0.0.1:18443`。
 - `kejilion-agent` 以受限 systemd 服务运行，只接受本机 Unix Socket 上的类型化请求。

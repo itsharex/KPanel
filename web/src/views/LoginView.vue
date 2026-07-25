@@ -53,7 +53,7 @@ async function submit(): Promise<void> {
       <span class="auth-card__icon"><LockKeyhole :size="21" /></span>
       <div>
         <span class="eyebrow">欢迎回来</span>
-        <h2>登录 Kejilion Panel</h2>
+        <h2>登录 KPanel</h2>
       </div>
     </div>
     <p class="auth-card__intro">使用本机管理账户继续。连续失败会触发安全限速。</p>

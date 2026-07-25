@@ -1,6 +1,6 @@
-# Kejilion Panel Web
+# KPanel Web
 
-Vue 3 + TypeScript + Vite 实现的 Kejilion Panel 前端。所有数据均来自同源 `/api/v1`，不包含 mock 数据，也不会直接执行 Shell 或访问 Docker Socket。
+Vue 3 + TypeScript + Vite 实现的 KPanel 前端。所有数据均来自同源 `/api/v1`，不包含 mock 数据，也不会直接执行 Shell 或访问 Docker Socket。
 
 ## 本地开发
 

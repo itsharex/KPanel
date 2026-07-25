@@ -8,6 +8,7 @@
 
 ### Added
 
+- 用户可见产品名称确定为 KPanel；为保持兼容，内部路径、服务、容器、网络及环境变量继续使用既有 `kejilion-panel` 标识。
 - 一次性初始化、安全登录、Argon2id 密码哈希、服务端 Session、CSRF/Origin/Host 校验和登录限速。
 - 通过受限 Unix Socket Agent 读取 Linux 主机状态、`/home/web` 网站产物和 Docker 资源。
 - 现有静态站、反向代理站、证书及未知 Nginx 配置的只读发现与资源版本展示。

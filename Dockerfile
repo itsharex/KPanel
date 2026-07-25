@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM scratch
 ARG VERSION=dev
-LABEL org.opencontainers.image.title="Kejilion Panel" \
+LABEL org.opencontainers.image.title="KPanel" \
       org.opencontainers.image.description="Safe web management plane for kejilion.sh hosts" \
       org.opencontainers.image.source="https://github.com/kejilion/kejilion-panel" \
       org.opencontainers.image.version="${VERSION}"
