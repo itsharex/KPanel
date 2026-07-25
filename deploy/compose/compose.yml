@@ -7,6 +7,9 @@ services:
     group_add:
       - "${KEJILION_PANEL_GID:?Set KEJILION_PANEL_GID to the host kejilion-panel group id}"
     read_only: true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1.0
     cap_drop:
       - ALL
     security_opt:
@@ -33,3 +36,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
