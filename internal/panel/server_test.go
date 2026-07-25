@@ -145,6 +145,215 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestPasswordChangeGuardsAndValidation(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	validBody, err := json.Marshal(map[string]string{
+		"currentPassword": "a-strong-password",
+		"newPassword":     "a-new-strong-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missingOrigin := authenticatedRequest(
+		server, http.MethodPut, "/api/v1/settings/password", validBody,
+		sessionCookie, csrfCookie, map[string]string{
+			"Content-Type": "application/json",
+			"X-CSRF-Token": csrfCookie.Value,
+		},
+	)
+	if missingOrigin.Code != http.StatusForbidden ||
+		!strings.Contains(missingOrigin.Body.String(), "origin_validation_failed") {
+		t.Fatalf("missing Origin returned %d %s", missingOrigin.Code, missingOrigin.Body.String())
+	}
+
+	missingCSRF := authenticatedRequest(
+		server, http.MethodPut, "/api/v1/settings/password", validBody,
+		sessionCookie, csrfCookie, map[string]string{
+			"Content-Type": "application/json",
+			"Origin":       "http://panel.test",
+		},
+	)
+	if missingCSRF.Code != http.StatusForbidden ||
+		!strings.Contains(missingCSRF.Body.String(), "csrf_validation_failed") {
+		t.Fatalf("missing CSRF token returned %d %s", missingCSRF.Code, missingCSRF.Body.String())
+	}
+
+	tests := []struct {
+		name          string
+		current       string
+		next          string
+		expectedField string
+	}{
+		{
+			name: "incorrect current password", current: "incorrect-password",
+			next: "a-new-strong-password", expectedField: "currentPassword",
+		},
+		{
+			name: "weak new password", current: "a-strong-password",
+			next: "too-short", expectedField: "newPassword",
+		},
+		{
+			name: "unchanged password", current: "a-strong-password",
+			next: "a-strong-password", expectedField: "newPassword",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body, marshalErr := json.Marshal(map[string]string{
+				"currentPassword": test.current,
+				"newPassword":     test.next,
+			})
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			response := authenticatedRequest(
+				server, http.MethodPut, "/api/v1/settings/password", body,
+				sessionCookie, csrfCookie, map[string]string{
+					"Content-Type": "application/json",
+					"Origin":       "http://panel.test",
+					"X-CSRF-Token": csrfCookie.Value,
+				},
+			)
+			if response.Code != http.StatusUnprocessableEntity ||
+				!strings.Contains(response.Body.String(), `"`+test.expectedField+`"`) {
+				t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+
+	oldLogin := loginRequest(server, "a-strong-password")
+	if oldLogin.Code != http.StatusOK {
+		t.Fatalf("validation failure changed the password: %d %s", oldLogin.Code, oldLogin.Body.String())
+	}
+	events, _ := server.store.ListAudit(50, "")
+	passwordEvents := 0
+	for _, event := range events {
+		if event.Action != "auth.password.change" {
+			continue
+		}
+		passwordEvents++
+		if event.Change != nil {
+			t.Fatalf("password audit event contains change data: %#v", event.Change)
+		}
+	}
+	if passwordEvents != 6 {
+		t.Fatalf("expected three intent/failure audit pairs, got %d events", passwordEvents)
+	}
+}
+
+func TestPasswordChangeInvalidatesSessionsAndCredentials(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	firstSession, firstCSRF := bootstrapCookies(t, server, tokenPath)
+	secondLogin := loginRequest(server, "a-strong-password")
+	if secondLogin.Code != http.StatusOK {
+		t.Fatalf("second login failed: %d %s", secondLogin.Code, secondLogin.Body.String())
+	}
+	secondSession, secondCSRF := authCookies(t, secondLogin)
+
+	body, err := json.Marshal(map[string]string{
+		"currentPassword": "a-strong-password",
+		"newPassword":     "a-new-strong-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := authenticatedRequest(
+		server, http.MethodPut, "/api/v1/settings/password", body,
+		firstSession, firstCSRF, map[string]string{
+			"Content-Type": "application/json",
+			"Origin":       "http://panel.test",
+			"X-CSRF-Token": firstCSRF.Value,
+		},
+	)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"ok":true`) {
+		t.Fatalf("password change failed: %d %s", response.Code, response.Body.String())
+	}
+	cleared := map[string]bool{}
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Value == "" && cookie.MaxAge < 0 {
+			cleared[cookie.Name] = true
+		}
+	}
+	if !cleared["kejilion_session"] || !cleared["kejilion_csrf"] {
+		t.Fatalf("authentication cookies were not cleared: %#v", response.Result().Cookies())
+	}
+
+	for name, cookies := range map[string][]*http.Cookie{
+		"changing session": {firstSession, firstCSRF},
+		"second session":   {secondSession, secondCSRF},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+		request.Host = "panel.test"
+		for _, cookie := range cookies {
+			request.AddCookie(cookie)
+		}
+		sessionResponse := httptest.NewRecorder()
+		server.ServeHTTP(sessionResponse, request)
+		if sessionResponse.Code != http.StatusUnauthorized {
+			t.Fatalf("%s remained valid: %d %s", name, sessionResponse.Code, sessionResponse.Body.String())
+		}
+	}
+
+	oldLogin := loginRequest(server, "a-strong-password")
+	if oldLogin.Code != http.StatusUnauthorized {
+		t.Fatalf("old password remained valid: %d %s", oldLogin.Code, oldLogin.Body.String())
+	}
+	newLogin := loginRequest(server, "a-new-strong-password")
+	if newLogin.Code != http.StatusOK {
+		t.Fatalf("new password login failed: %d %s", newLogin.Code, newLogin.Body.String())
+	}
+
+	events, _ := server.store.ListAudit(50, "")
+	successes := 0
+	for _, event := range events {
+		if event.Action == "auth.password.change" && event.Result == "success" {
+			successes++
+			if event.Change != nil {
+				t.Fatalf("successful password audit contains change data: %#v", event.Change)
+			}
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("expected one successful password audit event, got %d", successes)
+	}
+}
+
+func TestPasswordChangeRequestBodyBound(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	server.config.MaxRequestBytes = 1024
+	body, err := json.Marshal(map[string]string{
+		"currentPassword": strings.Repeat("x", 2048),
+		"newPassword":     "a-new-strong-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := authenticatedRequest(
+		server, http.MethodPut, "/api/v1/settings/password", body,
+		sessionCookie, csrfCookie, map[string]string{
+			"Content-Type": "application/json",
+			"Origin":       "http://panel.test",
+			"X-CSRF-Token": csrfCookie.Value,
+		},
+	)
+	if response.Code != http.StatusRequestEntityTooLarge ||
+		!strings.Contains(response.Body.String(), "request_too_large") {
+		t.Fatalf("oversized body returned %d %s", response.Code, response.Body.String())
+	}
+	sessionRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+	sessionRequest.Host = "panel.test"
+	sessionRequest.AddCookie(sessionCookie)
+	sessionRequest.AddCookie(csrfCookie)
+	sessionResponse := httptest.NewRecorder()
+	server.ServeHTTP(sessionResponse, sessionRequest)
+	if sessionResponse.Code != http.StatusOK {
+		t.Fatalf("oversized request changed the session: %d %s", sessionResponse.Code, sessionResponse.Body.String())
+	}
+}
+
 func TestRejectsCrossOriginBootstrap(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	token, err := os.ReadFile(tokenPath)
@@ -311,6 +520,11 @@ func bootstrapCookies(t *testing.T, server *Server, tokenPath string) (*http.Coo
 	if response.Code != http.StatusCreated {
 		t.Fatalf("bootstrap failed: %d %s", response.Code, response.Body.String())
 	}
+	return authCookies(t, response)
+}
+
+func authCookies(t *testing.T, response *httptest.ResponseRecorder) (*http.Cookie, *http.Cookie) {
+	t.Helper()
 	var sessionCookie, csrfCookie *http.Cookie
 	for _, cookie := range response.Result().Cookies() {
 		switch cookie.Name {
@@ -324,6 +538,33 @@ func bootstrapCookies(t *testing.T, server *Server, tokenPath string) (*http.Coo
 		t.Fatalf("authentication cookies missing: %#v", response.Result().Cookies())
 	}
 	return sessionCookie, csrfCookie
+}
+
+func loginRequest(server *Server, password string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": password})
+	return performRequest(server, http.MethodPost, "/api/v1/auth/login", body, map[string]string{
+		"Content-Type": "application/json",
+		"Origin":       "http://panel.test",
+	})
+}
+
+func authenticatedRequest(
+	handler http.Handler,
+	method, path string,
+	body []byte,
+	sessionCookie, csrfCookie *http.Cookie,
+	headers map[string]string,
+) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, path, bytes.NewReader(body))
+	request.Host = "panel.test"
+	for name, value := range headers {
+		request.Header.Set(name, value)
+	}
+	request.AddCookie(sessionCookie)
+	request.AddCookie(csrfCookie)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
 }
 
 func performRequest(handler http.Handler, method, path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {

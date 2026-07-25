@@ -19,14 +19,16 @@ import (
 )
 
 var (
-	ErrBootstrapUnavailable  = errors.New("bootstrap is unavailable")
-	ErrInvalidBootstrapToken = errors.New("invalid bootstrap token")
-	ErrInvalidCredentials    = errors.New("invalid credentials")
-	ErrInvalidSession        = errors.New("invalid session")
-	ErrInvalidCSRFToken      = errors.New("invalid csrf token")
-	ErrRateLimited           = errors.New("too many login attempts")
-	ErrInvalidUsername       = errors.New("username must contain 3-32 letters, numbers, dots, underscores, or hyphens")
-	ErrWeakPassword          = errors.New("password must contain 12-256 bytes")
+	ErrBootstrapUnavailable   = errors.New("bootstrap is unavailable")
+	ErrInvalidBootstrapToken  = errors.New("invalid bootstrap token")
+	ErrInvalidCredentials     = errors.New("invalid credentials")
+	ErrInvalidSession         = errors.New("invalid session")
+	ErrInvalidCSRFToken       = errors.New("invalid csrf token")
+	ErrRateLimited            = errors.New("too many login attempts")
+	ErrInvalidUsername        = errors.New("username must contain 3-32 letters, numbers, dots, underscores, or hyphens")
+	ErrWeakPassword           = errors.New("password must contain 12-256 bytes")
+	ErrInvalidCurrentPassword = errors.New("current password is invalid")
+	ErrPasswordUnchanged      = errors.New("new password must differ from current password")
 )
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$`)
@@ -42,15 +44,16 @@ type Config struct {
 }
 
 type Service struct {
-	store       *store.Store
-	hasher      PasswordHasher
-	config      Config
-	now         func() time.Time
-	dummyHash   string
-	bootstrapMu sync.Mutex
-	loginMu     sync.Mutex
-	pending     map[string]int
-	hashSlots   chan struct{}
+	store        *store.Store
+	hasher       PasswordHasher
+	config       Config
+	now          func() time.Time
+	dummyHash    string
+	bootstrapMu  sync.Mutex
+	credentialMu sync.RWMutex
+	loginMu      sync.Mutex
+	pending      map[string]int
+	hashSlots    chan struct{}
 }
 
 type PublicUser struct {
@@ -247,6 +250,8 @@ func (s *Service) Login(ip, username, password string) (Credentials, error) {
 	default:
 		return Credentials{}, &RateLimitError{RetryAfter: time.Second}
 	}
+	s.credentialMu.RLock()
+	defer s.credentialMu.RUnlock()
 
 	user, userErr := s.store.UserByUsername(username)
 	hash := s.dummyHash
@@ -332,6 +337,55 @@ func (s *Service) Logout(sessionToken string) error {
 		return nil
 	}
 	return s.store.DeleteSession(hashSecret(sessionToken))
+}
+
+// ChangePassword verifies and replaces a user's password while preventing an
+// in-flight login with the old password from creating a session after the
+// replacement. The store performs the hash update and session revocation as one
+// persisted state transition.
+func (s *Service) ChangePassword(userID, currentPassword, newPassword string) error {
+	if len(currentPassword) < 1 || len(currentPassword) > 256 {
+		return ErrInvalidCurrentPassword
+	}
+	if err := validatePassword(newPassword); err != nil {
+		return err
+	}
+
+	select {
+	case s.hashSlots <- struct{}{}:
+		defer func() { <-s.hashSlots }()
+	default:
+		return &RateLimitError{RetryAfter: time.Second}
+	}
+
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+
+	user, err := s.store.UserByID(userID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrInvalidCurrentPassword
+		}
+		return fmt.Errorf("read user for password change: %w", err)
+	}
+	valid, err := s.hasher.Verify(currentPassword, user.PasswordHash)
+	if err != nil || !valid {
+		return ErrInvalidCurrentPassword
+	}
+	if secureEqual(currentPassword, newPassword) {
+		return ErrPasswordUnchanged
+	}
+	newHash, err := s.hasher.Hash(newPassword)
+	if err != nil {
+		return fmt.Errorf("hash new password: %w", err)
+	}
+	if err := s.store.ReplaceUserPassword(user.ID, user.PasswordHash, newHash, s.now()); err != nil {
+		if errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrNotFound) {
+			return ErrInvalidCurrentPassword
+		}
+		return fmt.Errorf("replace password: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) createSession(user store.User) (Credentials, error) {

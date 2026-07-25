@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -171,5 +172,208 @@ func TestDirectorySyncFailureDoesNotTurnACommittedWriteIntoFailure(t *testing.T)
 	defer reopened.Close()
 	if !reopened.IsInitialized() {
 		t.Fatal("committed on-disk state was lost")
+	}
+}
+
+func TestReplaceUserPasswordPersistsHashAndRevokesOnlyUserSessions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	updatedAt := now.Add(time.Minute)
+	user := User{
+		ID: "user-1", Username: "admin", PasswordHash: "old-hash", Role: "admin",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := storage.CreateInitialAdmin(user); err != nil {
+		t.Fatal(err)
+	}
+
+	storage.mu.Lock()
+	storage.data.Users = append(storage.data.Users, User{
+		ID: "user-2", Username: "operator", PasswordHash: "other-hash", Role: "admin",
+		CreatedAt: now, UpdatedAt: now,
+	})
+	err = storage.persistLocked()
+	storage.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, session := range []Session{
+		{TokenHash: "user-token-1", CSRFHash: "csrf-1", UserID: user.ID, CreatedAt: now, ExpiresAt: now.Add(time.Hour)},
+		{TokenHash: "user-token-2", CSRFHash: "csrf-2", UserID: user.ID, CreatedAt: now, ExpiresAt: now.Add(time.Hour)},
+		{TokenHash: "other-token", CSRFHash: "csrf-3", UserID: "user-2", CreatedAt: now, ExpiresAt: now.Add(time.Hour)},
+	} {
+		if err := storage.PutSession(session); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := storage.ReplaceUserPassword(user.ID, "old-hash", "new-hash", updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	gotUser, err := storage.UserByID(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotUser.PasswordHash != "new-hash" || !gotUser.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("password metadata was not replaced: %#v", gotUser)
+	}
+	for _, tokenHash := range []string{"user-token-1", "user-token-2"} {
+		if _, err := storage.SessionByTokenHash(tokenHash, now); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("session %q was not revoked: %v", tokenHash, err)
+		}
+	}
+	if _, err := storage.SessionByTokenHash("other-token", now); err != nil {
+		t.Fatalf("another user's session was revoked: %v", err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	gotUser, err = reopened.UserByID(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotUser.PasswordHash != "new-hash" || !gotUser.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("password replacement was not persisted: %#v", gotUser)
+	}
+	if _, err := reopened.SessionByTokenHash("user-token-1", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("revoked session reappeared after reopen: %v", err)
+	}
+	if _, err := reopened.SessionByTokenHash("other-token", now); err != nil {
+		t.Fatalf("preserved session was lost after reopen: %v", err)
+	}
+}
+
+func TestReplaceUserPasswordConflictLeavesStateUnchanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	now := time.Now().UTC()
+	user := User{
+		ID: "user-1", Username: "admin", PasswordHash: "current-hash", Role: "admin",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := storage.CreateInitialAdmin(user); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.PutSession(Session{
+		TokenHash: "token-hash", CSRFHash: "csrf-hash", UserID: user.ID,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = storage.ReplaceUserPassword(user.ID, "stale-hash", "new-hash", now.Add(time.Minute))
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected conflict, got %v", err)
+	}
+	gotUser, err := storage.UserByID(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotUser.PasswordHash != user.PasswordHash || !gotUser.UpdatedAt.Equal(user.UpdatedAt) {
+		t.Fatalf("conflict changed the user: %#v", gotUser)
+	}
+	if _, err := storage.SessionByTokenHash("token-hash", now); err != nil {
+		t.Fatalf("conflict revoked the session: %v", err)
+	}
+}
+
+func TestReplaceUserPasswordPersistenceFailureRollsBackMemory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	now := time.Now().UTC()
+	user := User{
+		ID: "user-1", Username: "admin", PasswordHash: "old-hash", Role: "admin",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := storage.CreateInitialAdmin(user); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.PutSession(Session{
+		TokenHash: "token-hash", CSRFHash: "csrf-hash", UserID: user.ID,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	originalPath := storage.path
+	storage.path = filepath.Join(t.TempDir(), "missing", "state.json")
+	err = storage.ReplaceUserPassword(user.ID, "old-hash", "new-hash", now.Add(time.Minute))
+	storage.path = originalPath
+	if err == nil {
+		t.Fatal("expected persistence failure")
+	}
+	gotUser, readErr := storage.UserByID(user.ID)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if gotUser.PasswordHash != user.PasswordHash || !gotUser.UpdatedAt.Equal(user.UpdatedAt) {
+		t.Fatalf("failed replacement changed in-memory user: %#v", gotUser)
+	}
+	if _, err := storage.SessionByTokenHash("token-hash", now); err != nil {
+		t.Fatalf("failed replacement revoked in-memory session: %v", err)
+	}
+}
+
+func TestConcurrentReplaceUserPasswordUsesCompareAndSwap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	now := time.Now().UTC()
+	if err := storage.CreateInitialAdmin(User{
+		ID: "user-1", Username: "admin", PasswordHash: "old-hash", Role: "admin",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for _, hash := range []string{"first-hash", "second-hash"} {
+		go func(newHash string) {
+			ready.Done()
+			<-start
+			results <- storage.ReplaceUserPassword("user-1", "old-hash", newHash, now.Add(time.Minute))
+		}(hash)
+	}
+	ready.Wait()
+	close(start)
+
+	var successes, conflicts int
+	for range 2 {
+		switch err := <-results; {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected replacement result: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("got %d successes and %d conflicts", successes, conflicts)
 	}
 }

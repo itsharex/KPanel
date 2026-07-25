@@ -256,6 +256,309 @@ func TestBootstrapSerializesPasswordHashing(t *testing.T) {
 	}
 }
 
+func TestChangePasswordRevokesSessionsAndReplacesCredentials(t *testing.T) {
+	directory := t.TempDir()
+	storage, err := store.Open(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	hasher := testHasher(t)
+	service, err := NewService(storage, hasher, Config{
+		BootstrapTokenPath: filepath.Join(directory, "bootstrap.token"),
+		SessionTTL:         time.Hour,
+		LoginWindow:        time.Minute,
+		MaxLoginFailures:   5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.EnsureBootstrapToken(); err != nil {
+		t.Fatal(err)
+	}
+	token, err := os.ReadFile(filepath.Join(directory, "bootstrap.token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSession, err := service.Bootstrap(string(token), "admin", "a-strong-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSession, err := service.Login("192.0.2.1", "admin", "a-strong-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.ChangePassword(firstSession.User.ID, "wrong-current", "an-even-stronger-password"); !errors.Is(err, ErrInvalidCurrentPassword) {
+		t.Fatalf("expected invalid current password, got %v", err)
+	}
+	if _, err := service.Authenticate(firstSession.Token); err != nil {
+		t.Fatalf("failed change revoked a session: %v", err)
+	}
+	if err := service.ChangePassword(firstSession.User.ID, "a-strong-password", "short"); !errors.Is(err, ErrWeakPassword) {
+		t.Fatalf("expected weak password rejection, got %v", err)
+	}
+	if err := service.ChangePassword(firstSession.User.ID, "a-strong-password", "a-strong-password"); !errors.Is(err, ErrPasswordUnchanged) {
+		t.Fatalf("expected unchanged password rejection, got %v", err)
+	}
+
+	before, err := storage.UserByID(firstSession.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.now = func() time.Time { return before.UpdatedAt.Add(time.Minute) }
+	if err := service.ChangePassword(firstSession.User.ID, "a-strong-password", "an-even-stronger-password"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := storage.UserByID(firstSession.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PasswordHash == before.PasswordHash {
+		t.Fatal("password hash did not change")
+	}
+	if !after.UpdatedAt.Equal(before.UpdatedAt.Add(time.Minute)) {
+		t.Fatalf("unexpected password update time: %v", after.UpdatedAt)
+	}
+	for _, credentials := range []Credentials{firstSession, secondSession} {
+		if _, err := service.Authenticate(credentials.Token); !errors.Is(err, ErrInvalidSession) {
+			t.Fatalf("old session remained valid: %v", err)
+		}
+	}
+	if _, err := service.Login("192.0.2.2", "admin", "a-strong-password"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("old password remained valid: %v", err)
+	}
+	newSession, err := service.Login("192.0.2.2", "admin", "an-even-stronger-password")
+	if err != nil {
+		t.Fatalf("new password was rejected: %v", err)
+	}
+	if _, err := service.Authenticate(newSession.Token); err != nil {
+		t.Fatalf("new session was invalid: %v", err)
+	}
+}
+
+func TestChangePasswordRejectsInvalidInputs(t *testing.T) {
+	directory := t.TempDir()
+	storage, err := store.Open(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	now := time.Now().UTC()
+	hasher := testHasher(t)
+	passwordHash, err := hasher.Hash("a-strong-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.CreateInitialAdmin(store.User{
+		ID: "user-1", Username: "admin", PasswordHash: passwordHash,
+		Role: "admin", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(storage, hasher, Config{
+		BootstrapTokenPath: filepath.Join(directory, "bootstrap.token"),
+		MaxLoginFailures:   5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.ChangePassword("user-1", "", "an-even-stronger-password"); !errors.Is(err, ErrInvalidCurrentPassword) {
+		t.Fatalf("empty current password returned %v", err)
+	}
+	if err := service.ChangePassword("user-1", "a-strong-password", string(make([]byte, 257))); !errors.Is(err, ErrWeakPassword) {
+		t.Fatalf("oversized new password returned %v", err)
+	}
+	if err := service.ChangePassword("missing-user", "a-strong-password", "an-even-stronger-password"); !errors.Is(err, ErrInvalidCurrentPassword) {
+		t.Fatalf("missing user returned %v", err)
+	}
+}
+
+func TestConcurrentPasswordChangesDoNotOverwriteWinner(t *testing.T) {
+	directory := t.TempDir()
+	storage, err := store.Open(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	now := time.Now().UTC()
+	hasher := testHasher(t)
+	oldHash, err := hasher.Hash("a-strong-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.CreateInitialAdmin(store.User{
+		ID: "user-1", Username: "admin", PasswordHash: oldHash,
+		Role: "admin", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(storage, hasher, Config{
+		BootstrapTokenPath:  filepath.Join(directory, "bootstrap.token"),
+		MaxLoginFailures:    5,
+		MaxConcurrentHashes: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type result struct {
+		password string
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for _, password := range []string{"first-new-password", "second-new-password"} {
+		go func(newPassword string) {
+			<-start
+			results <- result{
+				password: newPassword,
+				err:      service.ChangePassword("user-1", "a-strong-password", newPassword),
+			}
+		}(password)
+	}
+	close(start)
+
+	var winningPassword string
+	var successes, rejected int
+	for range 2 {
+		item := <-results
+		switch {
+		case item.err == nil:
+			successes++
+			winningPassword = item.password
+		case errors.Is(item.err, ErrInvalidCurrentPassword):
+			rejected++
+		default:
+			t.Fatalf("unexpected password change result: %v", item.err)
+		}
+	}
+	if successes != 1 || rejected != 1 {
+		t.Fatalf("got %d successes and %d rejected changes", successes, rejected)
+	}
+	user, err := storage.UserByID("user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := hasher.Verify(winningPassword, user.PasswordHash)
+	if err != nil || !valid {
+		t.Fatalf("winning password was not stored: valid=%v err=%v", valid, err)
+	}
+}
+
+func TestPasswordChangeRevokesSessionCreatedByInflightOldPasswordLogin(t *testing.T) {
+	directory := t.TempDir()
+	storage, err := store.Open(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	now := time.Now().UTC()
+	if err := storage.CreateInitialAdmin(store.User{
+		ID: "user-1", Username: "admin", PasswordHash: "hash:a-strong-password",
+		Role: "admin", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hasher := &inflightLoginHasher{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer hasher.unblock()
+	service, err := NewService(storage, hasher, Config{
+		BootstrapTokenPath:  filepath.Join(directory, "bootstrap.token"),
+		SessionTTL:          time.Hour,
+		LoginWindow:         time.Minute,
+		MaxLoginFailures:    5,
+		MaxConcurrentHashes: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loginResult := make(chan struct {
+		credentials Credentials
+		err         error
+	}, 1)
+	go func() {
+		credentials, loginErr := service.Login("192.0.2.1", "admin", "a-strong-password")
+		loginResult <- struct {
+			credentials Credentials
+			err         error
+		}{credentials: credentials, err: loginErr}
+	}()
+	select {
+	case <-hasher.started:
+	case <-time.After(time.Second):
+		t.Fatal("old-password login verification did not start")
+	}
+
+	changeResult := make(chan error, 1)
+	go func() {
+		changeResult <- service.ChangePassword("user-1", "a-strong-password", "an-even-stronger-password")
+	}()
+	select {
+	case err := <-changeResult:
+		t.Fatalf("password change passed the in-flight login: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	hasher.unblock()
+
+	login := <-loginResult
+	if login.err != nil {
+		t.Fatalf("in-flight login failed unexpectedly: %v", login.err)
+	}
+	if err := <-changeResult; err != nil {
+		t.Fatalf("password change failed: %v", err)
+	}
+	if _, err := service.Authenticate(login.credentials.Token); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("in-flight old-password login left a valid session: %v", err)
+	}
+}
+
+func TestChangePasswordBoundsConcurrentPasswordHashes(t *testing.T) {
+	directory := t.TempDir()
+	storage, err := store.Open(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	now := time.Now().UTC()
+	if err := storage.CreateInitialAdmin(store.User{
+		ID: "user-1", Username: "admin", PasswordHash: "stored",
+		Role: "admin", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hasher := &gatedHasher{started: make(chan struct{}, 1), release: make(chan struct{})}
+	service, err := NewService(storage, hasher, Config{
+		BootstrapTokenPath:  filepath.Join(directory, "bootstrap.token"),
+		MaxLoginFailures:    5,
+		MaxConcurrentHashes: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstResult := make(chan error, 1)
+	go func() {
+		firstResult <- service.ChangePassword("user-1", "a-strong-password", "an-even-stronger-password")
+	}()
+	select {
+	case <-hasher.started:
+	case <-time.After(time.Second):
+		t.Fatal("first password verification did not start")
+	}
+	if err := service.ChangePassword("user-1", "a-strong-password", "another-strong-password"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("expected concurrent hash limit, got %v", err)
+	}
+	close(hasher.release)
+	if err := <-firstResult; !errors.Is(err, ErrInvalidCurrentPassword) {
+		t.Fatalf("unexpected first password change result: %v", err)
+	}
+}
+
 type gatedHasher struct {
 	started chan struct{}
 	release chan struct{}
@@ -309,5 +612,35 @@ func (h *bootstrapGatedHasher) calls() int {
 }
 
 func (h *bootstrapGatedHasher) unblock() {
+	h.releaseOnce.Do(func() { close(h.release) })
+}
+
+type inflightLoginHasher struct {
+	mu          sync.Mutex
+	verifyCalls int
+	releaseOnce sync.Once
+	started     chan struct{}
+	release     chan struct{}
+}
+
+func (h *inflightLoginHasher) Hash(password string) (string, error) {
+	return "hash:" + password, nil
+}
+
+func (h *inflightLoginHasher) Verify(password, encoded string) (bool, error) {
+	if encoded == "hash:a-strong-password" {
+		h.mu.Lock()
+		h.verifyCalls++
+		call := h.verifyCalls
+		h.mu.Unlock()
+		if call == 1 {
+			close(h.started)
+			<-h.release
+		}
+	}
+	return encoded == "hash:"+password, nil
+}
+
+func (h *inflightLoginHasher) unblock() {
 	h.releaseOnce.Do(func() { close(h.release) })
 }

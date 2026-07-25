@@ -1,21 +1,56 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Check, Clock3, KeyRound, Monitor, Moon, RefreshCw, Server, ShieldCheck, Sun } from '@lucide/vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import {
+  Check,
+  Clock3,
+  KeyRound,
+  LoaderCircle,
+  Monitor,
+  Moon,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+  Sun,
+} from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
-import { ApiError, api } from '@/lib/api'
+import { ApiError, api, resetApiSecurityState } from '@/lib/api'
 import { formatDateTime, relativeTime } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
 import { useSession } from '@/stores/session'
 import { useTheme, type ThemePreference } from '@/stores/theme'
 import { useToast } from '@/stores/toast'
 
+const router = useRouter()
 const session = useSession()
 const panel = usePanelState()
 const theme = useTheme()
 const toast = useToast()
 const refreshing = ref(false)
+const changingPassword = ref(false)
+const passwordSubmitted = ref(false)
+const passwordForm = reactive({
+  currentPassword: '',
+  newPassword: '',
+  confirmPassword: '',
+})
 const capabilities = ref<Array<{ id: string; enabled: boolean; reason?: string }>>([])
+
+const passwordChecks = computed(() => [
+  { label: '至少 12 个字符', valid: passwordForm.newPassword.length >= 12 },
+  {
+    label: '包含字母和数字',
+    valid: /[A-Za-z]/.test(passwordForm.newPassword) && /\d/.test(passwordForm.newPassword),
+  },
+])
+
+const canChangePassword = computed(
+  () =>
+    passwordForm.currentPassword.length > 0 &&
+    passwordChecks.value.every((item) => item.valid) &&
+    passwordForm.newPassword === passwordForm.confirmPassword,
+)
 
 const agentState = computed(() => {
   const agent = panel.state.agent
@@ -44,6 +79,35 @@ async function refreshAgent(): Promise<void> {
   } finally {
     refreshing.value = false
   }
+}
+
+async function changePassword(): Promise<void> {
+  passwordSubmitted.value = true
+  if (!canChangePassword.value || changingPassword.value) return
+
+  changingPassword.value = true
+  try {
+    await api.settings.changePassword(passwordForm.currentPassword, passwordForm.newPassword)
+  } catch (reason) {
+    toast.danger('密码修改失败', reason instanceof ApiError ? reason.message : '请确认当前密码后重试。')
+    changingPassword.value = false
+    return
+  }
+
+  passwordForm.currentPassword = ''
+  passwordForm.newPassword = ''
+  passwordForm.confirmPassword = ''
+  passwordSubmitted.value = false
+  changingPassword.value = false
+
+  resetApiSecurityState()
+  session.state.authenticated = false
+  session.state.user = undefined
+  session.state.expiresAt = undefined
+  session.state.agent = undefined
+
+  toast.success('密码已修改', '请使用新密码重新登录。')
+  await router.replace({ name: 'login' })
 }
 
 onMounted(async () => {
@@ -88,7 +152,69 @@ onMounted(async () => {
           <dd>{{ session.state.user?.totpEnabled ? '已启用 TOTP' : '密码登录' }}</dd>
         </div>
       </dl>
-      <p class="settings-note">密码修改与 TOTP 配置将在安全接口开放后显示；前端不会绕过能力白名单。</p>
+      <p class="settings-note">TOTP 配置将在安全接口开放后显示；前端不会绕过能力白名单。</p>
+    </section>
+
+    <section class="settings-section panel-card">
+      <header class="settings-section__header">
+        <span><KeyRound :size="19" /></span>
+        <div><h2>修改密码</h2><p>更新当前管理员账户的登录凭据</p></div>
+      </header>
+      <form class="form-stack password-form" novalidate @submit.prevent="changePassword">
+        <label class="field">
+          <span>当前密码</span>
+          <input
+            v-model="passwordForm.currentPassword"
+            type="password"
+            name="current-password"
+            autocomplete="current-password"
+            :aria-invalid="passwordSubmitted && passwordForm.currentPassword.length === 0"
+            required
+          />
+          <small v-if="passwordSubmitted && passwordForm.currentPassword.length === 0">请输入当前密码。</small>
+        </label>
+
+        <label class="field">
+          <span>新密码</span>
+          <input
+            v-model="passwordForm.newPassword"
+            type="password"
+            name="new-password"
+            autocomplete="new-password"
+            minlength="12"
+            :aria-invalid="passwordSubmitted && !passwordChecks.every((item) => item.valid)"
+            required
+          />
+        </label>
+
+        <div class="password-checks" aria-label="新密码要求">
+          <span v-for="check in passwordChecks" :key="check.label" :class="{ 'is-valid': check.valid }">
+            <i aria-hidden="true" /> {{ check.label }}
+          </span>
+        </div>
+
+        <label class="field">
+          <span>确认新密码</span>
+          <input
+            v-model="passwordForm.confirmPassword"
+            type="password"
+            name="confirm-password"
+            autocomplete="new-password"
+            minlength="12"
+            :aria-invalid="passwordSubmitted && passwordForm.newPassword !== passwordForm.confirmPassword"
+            required
+          />
+          <small v-if="passwordSubmitted && passwordForm.newPassword !== passwordForm.confirmPassword">
+            两次输入的密码不一致。
+          </small>
+        </label>
+
+        <button class="button button--primary" type="submit" :disabled="changingPassword">
+          <LoaderCircle v-if="changingPassword" class="spin" :size="17" />
+          {{ changingPassword ? '正在修改…' : '修改密码' }}
+        </button>
+      </form>
+      <p class="settings-note">修改成功后当前会话将立即失效，需要使用新密码重新登录。</p>
     </section>
 
     <section class="settings-section panel-card">
@@ -143,3 +269,25 @@ onMounted(async () => {
     </section>
   </div>
 </template>
+
+<style scoped>
+.password-form {
+  max-width: 560px;
+  padding: 18px;
+}
+
+.password-form > .button {
+  justify-self: start;
+  min-width: 132px;
+}
+
+@media (max-width: 640px) {
+  .password-form {
+    max-width: none;
+  }
+
+  .password-form > .button {
+    width: 100%;
+  }
+}
+</style>

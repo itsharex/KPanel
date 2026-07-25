@@ -125,6 +125,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSession(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/logout":
 		s.handleLogout(w, r)
+	case r.Method == http.MethodPut && r.URL.Path == "/api/v1/settings/password":
+		s.handlePasswordChange(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit":
 		s.handleAudit(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs":
@@ -328,6 +330,50 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	var input struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+
+	const action = "auth.password.change"
+	if err := s.audit(r, session.User.ID, action, "user", session.User.ID, "intent", nil); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	if err := s.auth.ChangePassword(session.User.ID, input.CurrentPassword, input.NewPassword); err != nil {
+		_ = s.audit(r, session.User.ID, action, "user", session.User.ID, "failure", nil)
+		var rateError *auth.RateLimitError
+		switch {
+		case errors.As(err, &rateError):
+			seconds := max(int(rateError.RetryAfter.Seconds()), 1)
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			s.writeProblem(w, r, http.StatusTooManyRequests, "password_change_rate_limited", "Password change rate limited", "")
+		case errors.Is(err, auth.ErrInvalidCurrentPassword):
+			s.writeValidationProblem(w, r, "currentPassword", err.Error())
+		case errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrPasswordUnchanged):
+			s.writeValidationProblem(w, r, "newPassword", err.Error())
+		default:
+			s.writeProblem(w, r, http.StatusInternalServerError, "password_change_failed", "Password change failed", "")
+		}
+		return
+	}
+
+	s.clearAuthCookies(w)
+	_ = s.audit(r, session.User.ID, action, "user", session.User.ID, "success", nil)
+	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	_, _, ok := s.requireSession(w, r)
 	if !ok {
@@ -500,11 +546,21 @@ func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target any) 
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.writeProblem(w, r, http.StatusRequestEntityTooLarge, "request_too_large", "Request body too large", "")
+			return err
+		}
 		s.writeProblem(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON", "")
 		return err
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.writeProblem(w, r, http.StatusRequestEntityTooLarge, "request_too_large", "Request body too large", "")
+			return err
+		}
 		s.writeProblem(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON", "")
 		return errors.New("multiple JSON values")
 	}

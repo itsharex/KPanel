@@ -17,6 +17,7 @@ const maxStoreBytes int64 = 32 << 20
 
 var (
 	ErrAlreadyInitialized = errors.New("store already initialized")
+	ErrConflict           = errors.New("record changed")
 	ErrNotFound           = errors.New("record not found")
 	ErrStoreLocked        = errors.New("store is already open by another process")
 )
@@ -186,6 +187,44 @@ func (s *Store) UserByID(id string) (User, error) {
 		}
 	}
 	return User{}, ErrNotFound
+}
+
+// ReplaceUserPassword atomically updates a user's password hash and revokes all
+// of their sessions. expectedHash prevents concurrent password changes from
+// overwriting one another.
+func (s *Store) ReplaceUserPassword(userID, expectedHash, newHash string, updatedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	userIndex := -1
+	for index := range s.data.Users {
+		if s.data.Users[index].ID == userID {
+			userIndex = index
+			break
+		}
+	}
+	if userIndex < 0 {
+		return ErrNotFound
+	}
+	if s.data.Users[userIndex].PasswordHash != expectedHash {
+		return ErrConflict
+	}
+
+	previous := cloneDiskState(s.data)
+	s.data.Users[userIndex].PasswordHash = newHash
+	s.data.Users[userIndex].UpdatedAt = updatedAt
+	sessions := make([]Session, 0, len(s.data.Sessions))
+	for _, session := range s.data.Sessions {
+		if session.UserID != userID {
+			sessions = append(sessions, session)
+		}
+	}
+	s.data.Sessions = sessions
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
 }
 
 func (s *Store) PutSession(session Session) error {
