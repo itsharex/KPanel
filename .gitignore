@@ -1,0 +1,35 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+
+# Go
+/bin/
+/dist/
+coverage.out
+*.test
+
+# Frontend
+/web/node_modules/
+/web/dist/
+/web/.vite/
+*.tsbuildinfo
+
+# Runtime state
+/data/
+/run/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
