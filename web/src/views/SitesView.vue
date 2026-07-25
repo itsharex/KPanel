@@ -451,15 +451,22 @@ onBeforeUnmount(() => controller?.abort())
         <div v-if="formError" class="inline-alert inline-alert--danger" role="alert">{{ formError }}</div>
         <label class="field">
           <span>主域名</span>
-          <input v-model.trim="form.primaryDomain" placeholder="example.com" autocomplete="off" required />
-          <small>不要包含协议、路径或端口。</small>
+          <input
+            v-model.trim="form.primaryDomain"
+            placeholder="example.com"
+            autocomplete="off"
+            required
+            :disabled="Boolean(editingSite)"
+          />
+          <small>{{ editingSite ? '首版更新不重命名主域名或移动网站目录。' : '不要包含协议、路径或端口。' }}</small>
         </label>
         <label class="field">
           <span>网站类型</span>
-          <select v-model="form.type">
+          <select v-model="form.type" :disabled="Boolean(editingSite)">
             <option value="static">静态网站</option>
             <option value="proxy">反向代理</option>
           </select>
+          <small v-if="editingSite">首版不在静态站与反向代理之间转换，避免遗留或删除业务文件。</small>
         </label>
         <label v-if="form.type === 'proxy'" class="field">
           <span>上游地址</span>
@@ -472,7 +479,7 @@ onBeforeUnmount(() => controller?.abort())
         </label>
         <div class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          首版不提供网站、目录、数据库或证书删除操作。
+          只更新由 Panel 固定模板创建且未被外部修改的网站；脚本或人工配置保持只读。首版不删除网站、目录、数据库或证书。
         </div>
       </form>
       <template #footer>

@@ -181,6 +181,33 @@ export class ApiError extends Error {
 }
 
 let csrfToken = ''
+let previousNetworkSample:
+  | { receivedBytes: number; sentBytes: number; collectedAtMs: number }
+  | undefined
+
+function networkRates(system: RawSystemSummary): { receive: number; transmit: number } {
+  const current = {
+    receivedBytes: system.network.receivedBytes,
+    sentBytes: system.network.sentBytes,
+    collectedAtMs: Date.parse(system.collectedAt),
+  }
+  const previous = previousNetworkSample
+  previousNetworkSample = current
+  if (
+    !previous ||
+    !Number.isFinite(current.collectedAtMs) ||
+    current.collectedAtMs <= previous.collectedAtMs ||
+    current.receivedBytes < previous.receivedBytes ||
+    current.sentBytes < previous.sentBytes
+  ) {
+    return { receive: 0, transmit: 0 }
+  }
+  const elapsedSeconds = (current.collectedAtMs - previous.collectedAtMs) / 1_000
+  return {
+    receive: (current.receivedBytes - previous.receivedBytes) / elapsedSeconds,
+    transmit: (current.sentBytes - previous.sentBytes) / elapsedSeconds,
+  }
+}
 
 function buildUrl(path: string, query?: Record<string, QueryValue>): string {
   const base = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/+$/, '')
@@ -477,14 +504,47 @@ export const api = {
   },
   overview: {
     get: async (signal?: AbortSignal): Promise<SystemOverview> => {
-      const [system, agent, sitesResult, dockerResult] = await Promise.all([
+      const [system, agent, sitesResult, dockerResult, containersResult] = await Promise.all([
         request<RawSystemSummary>('/system/summary', { signal }),
         request<RawAgentHealth>('/agent/health', { signal }),
         request<ApiList<RawSite> | RawSite[]>('/sites', { signal }).catch(() => []),
         request<RawDockerSummary>('/docker/summary', { signal }).catch(() => undefined),
+        request<ApiList<RawContainer> | RawContainer[]>('/docker/containers', { signal }).catch(() => []),
       ])
       const rootDisk = system.disks.find((disk) => disk.mountPoint === '/') || system.disks[0]
       const sites = normalizeList(sitesResult).items.map(normalizeSite)
+      const containers = normalizeList(containersResult).items
+      const rates = networkRates(system)
+      const knownServices = [
+        { id: 'nginx', name: 'Nginx' },
+        { id: 'mysql', name: 'MySQL' },
+        { id: 'php', name: 'PHP' },
+        { id: 'php74', name: 'PHP 7.4' },
+        { id: 'redis', name: 'Redis' },
+      ]
+      const services: SystemOverview['services'] = dockerResult
+        ? [
+            {
+              id: 'docker',
+              name: 'Docker Engine',
+              state: dockerResult.available ? 'running' : 'stopped',
+              version: dockerResult.serverVersion,
+            },
+            ...knownServices.flatMap((known) => {
+              const container = containers.find((item) => item.name.replace(/^\/+/, '') === known.id)
+              if (!container) return []
+              const state: SystemOverview['services'][number]['state'] =
+                container.state === 'running'
+                  ? 'running'
+                  : container.state === 'paused' || container.state === 'restarting'
+                    ? 'degraded'
+                    : ['exited', 'dead', 'created'].includes(container.state)
+                      ? 'stopped'
+                      : 'unknown'
+              return [{ id: known.id, name: known.name, state, detail: container.image }]
+            }),
+          ]
+        : []
       return {
         hostname: system.hostname,
         os: system.os,
@@ -507,12 +567,12 @@ export const api = {
         },
         load: { value: system.load.one, unit: String(system.cpu.cores) },
         network: {
-          receiveBytesPerSecond: 0,
-          transmitBytesPerSecond: 0,
+          receiveBytesPerSecond: rates.receive,
+          transmitBytesPerSecond: rates.transmit,
           totalReceivedBytes: system.network.receivedBytes,
           totalTransmittedBytes: system.network.sentBytes,
         },
-        services: [],
+        services,
         agent: normalizeAgent(agent),
         sites: {
           total: sites.length,
@@ -613,4 +673,5 @@ export const api = {
 
 export function resetApiSecurityState(): void {
   csrfToken = ''
+  previousNetworkSample = undefined
 }

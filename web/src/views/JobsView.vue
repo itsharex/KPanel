@@ -114,7 +114,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
-    <PageHeader title="任务中心" description="安全写操作异步执行；阶段、结果与回滚状态会完整保留。">
+    <PageHeader title="变更记录" description="集中查看网站与容器管理操作的执行结果；未完成的审计意图会标记为进行中。">
       <template #actions>
         <button class="button button--secondary" type="button" :disabled="refreshing" @click="load({ silent: true })">
           <RefreshCw :size="16" :class="{ spin: refreshing }" /> 刷新
@@ -151,8 +151,8 @@ onBeforeUnmount(() => {
     <ErrorState v-else-if="error && !jobs.length" :message="error" @retry="load()" />
     <EmptyState
       v-else-if="!filteredJobs.length"
-      :title="jobs.length ? '没有符合条件的任务' : '暂无任务记录'"
-      description="当网站或容器发生安全变更时，任务会显示在这里。"
+      :title="jobs.length ? '没有符合条件的记录' : '暂无变更记录'"
+      description="当网站或容器发生受控变更时，执行结果会显示在这里。"
     />
 
     <section v-else class="job-list">
