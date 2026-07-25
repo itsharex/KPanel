@@ -107,7 +107,7 @@ jobs:
             go build -trimpath -ldflags "$ldflags" \
             -o release/kejilion-agent-linux-arm64 ./cmd/kejilion-agent
           tar -czf "release/kejilion-panel-deploy-$VERSION.tar.gz" \
-            deploy README.md VERSION
+            deploy docs README.md CHANGELOG.md VERSION
           (
             cd release
             sha256sum \
