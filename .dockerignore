@@ -1,0 +1,10 @@
+.git
+.github
+.codex-tmp
+dist
+web/dist
+web/node_modules
+*.log
+coverage.out
+deploy
+docs
