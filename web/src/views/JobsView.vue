@@ -114,9 +114,9 @@ onBeforeUnmount(() => {
     <section class="toolbar-card">
       <div class="search-field">
         <Search :size="17" />
-        <input v-model="search" type="search" placeholder="搜索任务、资源或任务 ID" aria-label="搜索任务" />
+        <input v-model="search" type="search" placeholder="搜索变更、资源或记录 ID" aria-label="搜索变更记录" />
       </div>
-      <div class="filter-tabs" role="tablist" aria-label="任务筛选">
+      <div class="filter-tabs" role="tablist" aria-label="变更记录筛选">
         <button
           v-for="item in [
             { key: 'all', label: '全部' },

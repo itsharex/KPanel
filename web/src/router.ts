@@ -53,7 +53,7 @@ export const router = createRouter({
           path: 'jobs',
           name: 'jobs',
           component: () => import('@/views/JobsView.vue'),
-          meta: { title: '任务' },
+          meta: { title: '变更记录' },
         },
         {
           path: 'audit',

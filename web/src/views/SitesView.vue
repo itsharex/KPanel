@@ -117,12 +117,13 @@ async function load(silent = false): Promise<void> {
   error.value = ''
 
   try {
-    const [siteResult, capabilityResult] = await Promise.all([
+    const [siteResult, capabilityResult] = await Promise.allSettled([
       api.sites.list(undefined, controller.signal),
-      api.agent.capabilities(controller.signal).catch(() => []),
+      api.agent.capabilities(controller.signal),
     ])
-    sites.value = siteResult.items
-    capabilities.value = capabilityResult
+    capabilities.value = capabilityResult.status === 'fulfilled' ? capabilityResult.value : []
+    if (siteResult.status === 'rejected') throw siteResult.reason
+    sites.value = siteResult.value.items
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
     error.value = reason instanceof ApiError ? reason.message : '无法读取网站列表。'

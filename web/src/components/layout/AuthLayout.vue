@@ -14,7 +14,7 @@ import LogoMark from '@/components/common/LogoMark.vue'
         <ul>
           <li><CheckCircle2 :size="17" /> 不修改现有 kejilion.sh</li>
           <li><CheckCircle2 :size="17" /> Agent 离线自动降级只读</li>
-          <li><CheckCircle2 :size="17" /> 每项操作均有任务与审计记录</li>
+          <li><CheckCircle2 :size="17" /> 每项变更均有记录与审计追踪</li>
         </ul>
       </div>
       <p class="auth-layout__footnote">Kejilion Panel · Linux 管理面板</p>

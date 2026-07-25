@@ -34,7 +34,7 @@ const navigation: NavigationItem[] = [
   { label: '概览', to: '/overview', icon: LayoutDashboard },
   { label: '网站', to: '/sites', icon: Boxes },
   { label: 'Docker', to: '/docker', icon: Container },
-  { label: '任务', to: '/jobs', icon: ClipboardList },
+  { label: '变更', to: '/jobs', icon: ClipboardList },
   { label: '审计', to: '/audit', icon: FileClock },
   { label: '设置', to: '/settings', icon: Settings },
 ]
