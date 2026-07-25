@@ -12,7 +12,6 @@ AGENT_BINARY=
 AGENT_SHA256=
 IMAGE=
 PUBLIC_URL=
-PORT=18443
 NETWORK_SUBNET=172.29.255.240/28
 DRY_RUN=false
 
@@ -24,7 +23,6 @@ Usage:
     --agent-sha256 <64-character-sha256> \
     --image docker.io/OWNER/kejilion-panel@sha256:<64-character-digest> \
     --public-url https://panel.example.com \
-    [--port 18443] \
     [--network-subnet 172.29.255.240/28] \
     [--dry-run]
 
@@ -77,6 +75,14 @@ validate_private_subnet() {
 		*) return 1 ;;
 	esac
 	[ $((fourth % 16)) -eq 0 ] || return 1
+}
+
+derive_network_addresses() {
+	address=${NETWORK_SUBNET%/*}
+	prefix=${address%.*}
+	base=${address##*.}
+	PANEL_GATEWAY=$prefix.$((base + 1))
+	PANEL_IPV4=$prefix.$((base + 2))
 }
 
 network_routes() {
@@ -170,11 +176,6 @@ while [ "$#" -gt 0 ]; do
 			PUBLIC_URL=$2
 			shift 2
 			;;
-		--port)
-			[ "$#" -ge 2 ] || fail "--port requires a value"
-			PORT=$2
-			shift 2
-			;;
 		--network-subnet)
 			[ "$#" -ge 2 ] || fail "--network-subnet requires a value"
 			NETWORK_SUBNET=$2
@@ -209,14 +210,9 @@ PUBLIC_PORT=$(printf '%s' "$PUBLIC_URL" | sed -n 's#^https://[^:]*:\([0-9][0-9]*
 if [ -n "$PUBLIC_PORT" ]; then
 	[ "$PUBLIC_PORT" -ge 1 ] && [ "$PUBLIC_PORT" -le 65535 ] || fail "public URL port is invalid"
 fi
-case "$PORT" in
-	''|*[!0-9]*)
-		fail "--port must be numeric"
-		;;
-esac
-[ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || fail "--port must be between 1024 and 65535"
 validate_private_subnet "$NETWORK_SUBNET" ||
 	fail "--network-subnet must be an aligned RFC1918 IPv4 /28"
+derive_network_addresses
 
 if [ -n "${DOCKER_HOST:-}" ] || [ -n "${DOCKER_CONTEXT:-}" ]; then
 	fail "DOCKER_HOST and DOCKER_CONTEXT must be unset; installation is restricted to the local Docker socket"
@@ -225,7 +221,7 @@ unset DOCKER_HOST DOCKER_CONTEXT
 
 for command_name in \
 	awk cat curl dirname docker getent grep groupadd id install ip mkdir \
-	mktemp openssl rm rmdir sed sha256sum sleep ss stat systemctl systemd-analyze tr uname; do
+	mktemp openssl rm rmdir sed sha256sum sleep stat systemctl systemd-analyze tr uname; do
 	command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: $command_name"
 done
 [ "$(uname -s)" = "Linux" ] || fail "production deployment requires Linux"
@@ -279,10 +275,6 @@ DOCKER_SOCKET_KIND=$(stat -L -c %F /var/run/docker.sock 2>/dev/null) ||
 systemctl is-active --quiet docker.service ||
 	fail "Docker service is not already active; assess existing containers before starting it manually"
 
-if ss -H -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)$PORT$"; then
-	fail "TCP port $PORT is already listening"
-fi
-
 PANEL_GROUP=kejilion-panel
 PANEL_GROUP_PRESENT=false
 if inspect_panel_group; then
@@ -291,8 +283,8 @@ fi
 
 if [ "$DRY_RUN" = true ]; then
 	printf 'Preflight passed.\n'
-	printf 'Agent: %s\nImage: %s\nPublic URL: %s\nLocal port: %s\nNetwork subnet: %s\n' \
-		"$AGENT_BINARY" "$IMAGE" "$PUBLIC_URL" "$PORT" "$NETWORK_SUBNET"
+	printf 'Agent: %s\nImage: %s\nPublic URL: %s\nPrivate Panel endpoint: http://%s:8080\nNetwork subnet: %s\n' \
+		"$AGENT_BINARY" "$IMAGE" "$PUBLIC_URL" "$PANEL_IPV4" "$NETWORK_SUBNET"
 	printf 'Docker daemon was not queried and no host state was changed.\n'
 	exit 0
 fi
@@ -480,7 +472,8 @@ TEMP_ENV=$(mktemp "$OPT_DIR/.env.XXXXXX")
 	printf 'KEJILION_PANEL_IMAGE=%s\n' "$IMAGE"
 	printf 'KEJILION_PANEL_GID=%s\n' "$PANEL_GID"
 	printf 'KEJILION_PANEL_DATA_DIR_HOST=%s\n' "$DATA_DIR"
-	printf 'KEJILION_PANEL_PORT=%s\n' "$PORT"
+	printf 'KEJILION_PANEL_GATEWAY=%s\n' "$PANEL_GATEWAY"
+	printf 'KEJILION_PANEL_IPV4=%s\n' "$PANEL_IPV4"
 	printf 'KEJILION_PANEL_PUBLIC_URL=%s\n' "$PUBLIC_URL"
 	printf 'KEJILION_PANEL_SECURE_COOKIE=true\n'
 	printf 'KEJILION_PANEL_NETWORK_SUBNET=%s\n' "$NETWORK_SUBNET"
@@ -519,17 +512,41 @@ PANEL_START_ATTEMPTED=true
 docker_local compose --project-name kejilion-panel \
 	--env-file "$ENV_TARGET" -f "$COMPOSE_TARGET" up -d --pull never
 
+[ "$(docker_local network inspect \
+	--format '{{.Internal}}' kejilion-panel-internal)" = "true" ] ||
+	fail "Panel Docker network is not internal"
+[ "$(docker_local network inspect \
+	--format '{{(index .IPAM.Config 0).Subnet}}' \
+	kejilion-panel-internal)" = "$NETWORK_SUBNET" ] ||
+	fail "Panel Docker network subnet does not match $NETWORK_SUBNET"
+[ "$(docker_local network inspect \
+	--format '{{(index .IPAM.Config 0).Gateway}}' \
+	kejilion-panel-internal)" = "$PANEL_GATEWAY" ] ||
+	fail "Panel Docker network gateway does not match $PANEL_GATEWAY"
+[ "$(docker_local container inspect \
+	--format '{{len .HostConfig.PortBindings}}' kejilion-panel)" = "0" ] ||
+	fail "Panel container unexpectedly publishes a host port"
+ACTUAL_PANEL_IPV4=$(docker_local container inspect \
+	--format '{{with index .NetworkSettings.Networks "kejilion-panel-internal"}}{{.IPAddress}}{{end}}' \
+	kejilion-panel) ||
+	fail "cannot inspect the Panel private IPv4 address"
+[ "$ACTUAL_PANEL_IPV4" = "$PANEL_IPV4" ] ||
+	fail "Panel private IPv4 mismatch: expected $PANEL_IPV4, got $ACTUAL_PANEL_IPV4"
+
 healthy=false
 attempt=0
 while [ "$attempt" -lt 30 ]; do
-	if docker_local compose --project-name kejilion-panel \
+	if [ "$(docker_local container inspect \
+			--format '{{.State.Health.Status}}' \
+			kejilion-panel 2>/dev/null)" = "healthy" ] &&
+		docker_local compose --project-name kejilion-panel \
 		--env-file "$ENV_TARGET" -f "$COMPOSE_TARGET" \
 		exec -T panel /paneld healthcheck >/dev/null 2>&1 &&
 		docker_local compose --project-name kejilion-panel \
 			--env-file "$ENV_TARGET" -f "$COMPOSE_TARGET" \
 			exec -T panel /paneld agent-healthcheck >/dev/null 2>&1 &&
 		curl --noproxy '*' --fail --silent --show-error --max-time 4 \
-			"http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1; then
+			"http://$PANEL_IPV4:8080/api/v1/health" >/dev/null 2>&1; then
 		healthy=true
 		break
 	fi
@@ -544,14 +561,15 @@ if [ "$healthy" != true ]; then
 		--env-file "$ENV_TARGET" -f "$COMPOSE_TARGET" \
 		exec -T panel /paneld agent-healthcheck || true
 	curl --noproxy '*' --fail --silent --show-error --max-time 4 \
-		"http://127.0.0.1:$PORT/api/v1/health" >/dev/null || true
+		"http://$PANEL_IPV4:8080/api/v1/health" >/dev/null || true
 	fail "panel or Panel-to-Agent health check failed; inspect the retained resources before retrying"
 fi
 assert_panel_data_dir "after Panel start"
 INSTALL_SUCCEEDED=true
 
-printf '\nKPanel is running on 127.0.0.1:%s.\n' "$PORT"
+printf '\nKPanel is healthy on the private Docker endpoint http://%s:8080.\n' "$PANEL_IPV4"
 printf 'Public URL: %s\n' "$PUBLIC_URL"
+printf 'Point the host Nginx reverse proxy at http://%s:8080; no host port is published.\n' "$PANEL_IPV4"
 if [ -s "$DATA_DIR/bootstrap.token" ]; then
 	printf 'Read the one-time setup token as root from: %s\n' "$DATA_DIR/bootstrap.token"
 fi

@@ -4,7 +4,6 @@ set -eu
 LC_ALL=C
 export LC_ALL
 
-PORT=18443
 PUBLIC_URL=
 NETWORK_SUBNET=172.29.255.240/28
 FAILURES=0
@@ -15,7 +14,6 @@ usage() {
 Usage:
   ./deploy/preflight.sh \
     --public-url https://panel.example.com \
-    [--port 18443] \
     [--network-subnet 172.29.255.240/28]
 
 This command is read-only. It does not connect to the Docker socket, start a
@@ -78,6 +76,14 @@ validate_private_subnet() {
 	[ $((fourth % 16)) -eq 0 ] || return 1
 }
 
+derive_network_addresses() {
+	address=${NETWORK_SUBNET%/*}
+	prefix=${address%.*}
+	base=${address##*.}
+	PANEL_GATEWAY=$prefix.$((base + 1))
+	PANEL_IPV4=$prefix.$((base + 2))
+}
+
 network_routes() {
 	matched_routes=$(ip -4 route show match "$NETWORK_SUBNET" 2>/dev/null) || return 1
 	rooted_routes=$(ip -4 route show root "$NETWORK_SUBNET" 2>/dev/null) || return 1
@@ -98,14 +104,6 @@ while [ "$#" -gt 0 ]; do
 				break
 			}
 			PUBLIC_URL=$2
-			shift 2
-			;;
-		--port)
-			[ "$#" -ge 2 ] || {
-				fail "--port requires a value"
-				break
-			}
-			PORT=$2
 			shift 2
 			;;
 		--network-subnet)
@@ -139,19 +137,6 @@ else
 	warn "run the installer with sudo after this preflight"
 fi
 
-case "$PORT" in
-	''|*[!0-9]*)
-		fail "--port must be numeric"
-		;;
-	*)
-		if [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ]; then
-			ok "local panel port is valid: $PORT"
-		else
-			fail "--port must be between 1024 and 65535"
-		fi
-		;;
-esac
-
 if printf '%s' "$PUBLIC_URL" |
 	grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)(:[0-9]{1,5})?$'; then
 	ok "public URL is an HTTPS origin: $PUBLIC_URL"
@@ -161,13 +146,15 @@ fi
 
 if validate_private_subnet "$NETWORK_SUBNET"; then
 	ok "private Docker subnet is valid: $NETWORK_SUBNET"
+	derive_network_addresses
+	ok "private Panel endpoint is reserved: http://$PANEL_IPV4:8080 (gateway $PANEL_GATEWAY)"
 else
 	fail "--network-subnet must be an aligned RFC1918 IPv4 /28"
 fi
 
 for command_name in \
 	awk cat curl dirname docker getent grep groupadd id install ip mkdir mktemp \
-	openssl rm rmdir sed sha256sum sleep ss stat systemctl systemd-analyze tr; do
+	openssl rm rmdir sed sha256sum sleep stat systemctl systemd-analyze tr; do
 	if command -v "$command_name" >/dev/null 2>&1; then
 		ok "command available: $command_name"
 	else
@@ -221,17 +208,6 @@ for web_path in /home/web/conf.d /home/web/html /home/web/certs; do
 		warn "Kejilion path is unavailable: $web_path"
 	fi
 done
-
-if command -v ss >/dev/null 2>&1; then
-	if ss -H -ltn 2>/dev/null | awk '{print $4}' |
-		grep -Eq "(^|:)$PORT$"; then
-		fail "TCP port $PORT is already listening"
-	else
-		ok "TCP port $PORT is not currently listening"
-	fi
-else
-	fail "ss is unavailable; local port occupancy cannot be checked"
-fi
 
 for managed_path in \
 	/etc/kejilion-panel \

@@ -29,10 +29,9 @@ services:
       - ${KEJILION_PANEL_DATA_DIR_HOST:-/var/lib/kejilion-panel/panel}:/var/lib/kejilion-panel
       - /run/kejilion-panel:/run/kejilion-panel:ro
       - /etc/kejilion-panel/agent.token:/run/secrets/agent-token:ro
-    ports:
-      - "127.0.0.1:${KEJILION_PANEL_PORT:-18443}:8080"
     networks:
-      - panel-internal
+      panel-internal:
+        ipv4_address: ${KEJILION_PANEL_IPV4:?Set KEJILION_PANEL_IPV4 to the reserved private address}
     healthcheck:
       test: ["CMD", "/paneld", "healthcheck"]
       interval: 30s
@@ -52,3 +51,4 @@ networks:
     ipam:
       config:
         - subnet: ${KEJILION_PANEL_NETWORK_SUBNET:-172.29.255.240/28}
+          gateway: ${KEJILION_PANEL_GATEWAY:-172.29.255.241}

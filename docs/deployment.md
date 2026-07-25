@@ -4,7 +4,7 @@
 
 KPanel 使用两个独立进程：
 
-- `paneld` 以非 root Docker 容器运行，只绑定 `127.0.0.1:18443`。
+- `paneld` 以非 root Docker 容器运行，只接入专用 `internal` 网络，不发布宿主端口。
 - `kejilion-agent` 以受限 systemd 服务运行，只接受本机 Unix Socket 上的类型化请求。
 
 安装器只管理 `/etc/kejilion-panel`、`/opt/kejilion-panel`、
@@ -52,7 +52,7 @@ sha256sum dist/linux-amd64/kejilion-agent dist/linux-arm64/kejilion-agent
 推送 Docker Hub：
 
 ```sh
-VERSION=0.1.1
+VERSION=0.1.2
 IMAGE=docker.io/<owner>/kejilion-panel
 
 docker login
@@ -78,13 +78,12 @@ docker buildx imagetools inspect "$IMAGE:$VERSION"
 ```sh
 ./deploy/preflight.sh \
   --public-url https://panel.example.com \
-  --port 18443 \
   --network-subnet 172.29.255.240/28
 ```
 
 预检不会调用 `docker info`、不会连接 Docker Socket，也不会启动 Docker。
-Docker 服务必须由运维人员在评估现有容器后提前启动。预检会拒绝已占用端口、
-重叠路由、非专用 Agent 组、既有 Panel 资源，以及缺失或不可读的 `/home/web`
+Docker 服务必须由运维人员在评估现有容器后提前启动。预检会拒绝重叠路由、
+非专用 Agent 组、既有 Panel 资源，以及缺失或不可读的 `/home/web`
 根目录。目标机尚无 `/home/web/certs` 等子目录时，安全登录和主机监控仍可
 工作；为避免把目录故障误报为空列表，相关网站发现能力会保持不可用，目录恢复
 后自动恢复。失败项必须处理后再部署。
@@ -101,14 +100,14 @@ sudo ./deploy/install.sh \
   --agent-sha256 <agent-sha256> \
   --image docker.io/<owner>/kejilion-panel@sha256:<manifest-digest> \
   --public-url https://panel.example.com \
-  --port 18443 \
   --network-subnet 172.29.255.240/28 \
   --dry-run
 ```
 
 `--network-subnet` 只接受对齐的 RFC1918 IPv4 `/28`。安装器会用同一 CIDR
-自动生成可信代理范围，不提供可独立放宽的参数。`--dry-run` 会在连接 Docker
-Socket 前返回；确认后去掉 `--dry-run`。正式安装只连接
+自动生成网关（网段基址加 1）、Panel 私网地址（网段基址加 2）和可信代理范围，
+不提供可独立放宽的参数。`--dry-run` 会在连接 Docker Socket 前返回；确认后
+去掉 `--dry-run`。正式安装只连接
 `unix:///var/run/docker.sock`，并拒绝继承 `DOCKER_HOST` 或
 `DOCKER_CONTEXT`。
 
@@ -122,15 +121,18 @@ Token 不会写入日志或安装器输出。首次初始化成功后文件会�
 
 ## HTTPS 入口
 
-Panel 容器只监听回环地址。需要在现有 HTTPS 入口中把 Panel 域名反向代理到
-`http://127.0.0.1:18443`，并设置 `Host`、`X-Real-IP` 和
+Panel 容器不发布宿主端口。需要在宿主机或 host-network Nginx 中把 Panel
+域名反向代理到固定私网地址，例如默认网段对应
+`http://172.29.255.242:8080`，并设置 `Host`、`X-Real-IP` 和
 `X-Forwarded-Proto`。反向代理必须覆盖设置 `X-Real-IP`，不能沿用客户端提交
 的同名请求头。反向代理来源必须显式加入 Panel 的可信代理 CIDR；不要信任整个
 公网或所有私网。
 
 默认 Compose 使用专用内部网段 `172.29.255.240/28`，并只信任 loopback 与
 该网段。如果预检发现冲突，通过 `--network-subnet` 选择另一个对齐的私网
-`/28`；安装器会同时写入网络和可信代理 CIDR，不能在安装后手工改其中一项。
+`/28`；安装器会同时写入网络、网关、Panel 私网地址和可信代理 CIDR，不能在
+安装后手工改其中一项。Nginx 必须与 Panel 同处一台宿主机或能安全路由到该
+内部网段；不要把 Panel 私网地址暴露到公网路由。
 
 反向代理配置属于目标机业务配置，安装器不会自动写入。上线时应单独备份、新增
 独立域名配置、执行 `nginx -t`，成功后才 reload；验证失败时不得 reload。
@@ -149,7 +151,7 @@ docker --host unix:///var/run/docker.sock compose \
   --env-file /opt/kejilion-panel/.env \
   -f /opt/kejilion-panel/compose.yml \
   exec -T panel /paneld agent-healthcheck
-curl --fail --silent http://127.0.0.1:18443/api/v1/health
+curl --noproxy '*' --fail --silent http://172.29.255.242:8080/api/v1/health
 curl --fail --silent --show-error https://panel.example.com/api/v1/health
 ```
 
