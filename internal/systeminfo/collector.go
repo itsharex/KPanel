@@ -19,13 +19,17 @@ import (
 type Collector struct {
 	ProcRoot          string
 	EtcRoot           string
+	SwapPath          string
+	LegacySwapPath    string
 	Now               func() time.Time
 	CPUSampleInterval time.Duration
 }
 
 func NewCollector() *Collector {
 	return &Collector{
-		ProcRoot: "/proc", EtcRoot: "/etc", Now: time.Now,
+		ProcRoot: "/proc", EtcRoot: "/etc",
+		SwapPath: "/swapfile", LegacySwapPath: "/var/lib/kejilion-panel/system/swapfile",
+		Now:               time.Now,
 		CPUSampleInterval: 150 * time.Millisecond,
 	}
 }
@@ -36,6 +40,12 @@ func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error)
 	}
 	if c.EtcRoot == "" {
 		c.EtcRoot = "/etc"
+	}
+	if c.SwapPath == "" {
+		c.SwapPath = "/swapfile"
+	}
+	if c.LegacySwapPath == "" {
+		c.LegacySwapPath = "/var/lib/kejilion-panel/system/swapfile"
 	}
 	if c.Now == nil {
 		c.Now = time.Now

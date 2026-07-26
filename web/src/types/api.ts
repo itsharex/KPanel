@@ -104,6 +104,17 @@ export interface SystemManagement {
     totalBytes: number
     usedBytes: number
     activeDevices: number
+    path: string
+    fileExists: boolean
+    fileActive: boolean
+    fileSizeBytes: number
+    fileUsedBytes: number
+    legacyExists: boolean
+    legacyActive: boolean
+    legacySizeBytes: number
+    otherActiveDevices: number
+    otherSwapTotalBytes: number
+    otherSwapUsedBytes: number
   }
   packageManager?: string
   packageSources: string[]

@@ -82,7 +82,20 @@ interface RawSystemSummary {
     ssh?: { ports?: number[]; source?: string }
     dns?: { servers?: string[]; manager?: string }
     timezone?: string
-    swap?: { activeDevices?: number }
+    swap?: {
+      activeDevices?: number
+      path?: string
+      fileExists?: boolean
+      fileActive?: boolean
+      fileSizeBytes?: number
+      fileUsedBytes?: number
+      legacyExists?: boolean
+      legacyActive?: boolean
+      legacySizeBytes?: number
+      otherActiveDevices?: number
+      otherSwapTotalBytes?: number
+      otherSwapUsedBytes?: number
+    }
     packageManager?: string
     packageSources?: string[]
     maintenance?: {
@@ -631,6 +644,17 @@ export const api = {
             totalBytes: system.memory.swapTotalBytes || 0,
             usedBytes: system.memory.swapUsedBytes || 0,
             activeDevices: system.management?.swap?.activeDevices || 0,
+            path: system.management?.swap?.path || '/swapfile',
+            fileExists: Boolean(system.management?.swap?.fileExists),
+            fileActive: Boolean(system.management?.swap?.fileActive),
+            fileSizeBytes: system.management?.swap?.fileSizeBytes || 0,
+            fileUsedBytes: system.management?.swap?.fileUsedBytes || 0,
+            legacyExists: Boolean(system.management?.swap?.legacyExists),
+            legacyActive: Boolean(system.management?.swap?.legacyActive),
+            legacySizeBytes: system.management?.swap?.legacySizeBytes || 0,
+            otherActiveDevices: system.management?.swap?.otherActiveDevices || 0,
+            otherSwapTotalBytes: system.management?.swap?.otherSwapTotalBytes || 0,
+            otherSwapUsedBytes: system.management?.swap?.otherSwapUsedBytes || 0,
           },
           packageManager: system.management?.packageManager,
           packageSources: system.management?.packageSources || [],

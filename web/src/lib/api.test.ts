@@ -258,12 +258,94 @@ describe('API client', () => {
     expect(overview.management).toMatchObject({
       ssh: { ports: [], source: 'unknown' },
       dns: { servers: [], manager: 'unknown' },
-      swap: { totalBytes: 256, usedBytes: 64, activeDevices: 0 },
+      swap: {
+        totalBytes: 256,
+        usedBytes: 64,
+        activeDevices: 0,
+        path: '/swapfile',
+        fileExists: false,
+        fileActive: false,
+        legacyExists: false,
+        legacyActive: false,
+        otherActiveDevices: 0,
+      },
       packageSources: [],
       maintenance: { state: 'idle', progress: 0, rebootRequired: false },
       ipPreference: 'unknown',
       bbr: { supported: false, enabled: false, available: [] },
       capabilities: { 'system.read': { enabled: true } },
+    })
+  })
+
+  it('normalizes kejilion.sh and legacy swap artifacts separately', async () => {
+    const collectedAt = '2026-07-26T05:00:00Z'
+    const system = {
+      hostname: 'swap-host',
+      os: 'Debian 13',
+      architecture: 'amd64',
+      uptimeSeconds: 120,
+      load: { one: 0.2, five: 0.1, fifteen: 0.1 },
+      cpu: { cores: 2, usagePercent: 5 },
+      memory: {
+        totalBytes: 8 * 1024 ** 3,
+        availableBytes: 6 * 1024 ** 3,
+        usedBytes: 2 * 1024 ** 3,
+        usagePercent: 25,
+        swapTotalBytes: 3 * 1024 ** 3,
+        swapUsedBytes: 128 * 1024,
+      },
+      disks: [],
+      network: { receivedBytes: 100, sentBytes: 200 },
+      management: {
+        swap: {
+          activeDevices: 3,
+          path: '/swapfile',
+          fileExists: true,
+          fileActive: true,
+          fileSizeBytes: 1024 ** 3,
+          fileUsedBytes: 128 * 1024,
+          legacyExists: true,
+          legacyActive: true,
+          legacySizeBytes: 2 * 1024 ** 3,
+          otherActiveDevices: 1,
+          otherSwapTotalBytes: 512 * 1024 ** 2,
+          otherSwapUsedBytes: 0,
+        },
+      },
+      collectedAt,
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(system))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status: 'ok',
+          version: '0.5.1',
+          protocolVersion: 'v1alpha1',
+          readOnly: false,
+          checkedAt: collectedAt,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'system.swap.write', enabled: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ available: false, containers: 0, running: 0, stopped: 0, images: 0, collectedAt }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const overview = await api.overview.get()
+
+    expect(overview.management.swap).toMatchObject({
+      totalBytes: 3 * 1024 ** 3,
+      activeDevices: 3,
+      path: '/swapfile',
+      fileExists: true,
+      fileActive: true,
+      fileSizeBytes: 1024 ** 3,
+      legacyExists: true,
+      legacyActive: true,
+      legacySizeBytes: 2 * 1024 ** 3,
+      otherActiveDevices: 1,
+      otherSwapTotalBytes: 512 * 1024 ** 2,
     })
   })
 

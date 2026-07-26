@@ -2,6 +2,25 @@
 
 本项目遵循语义化版本。所有日期均使用 `YYYY-MM-DD`。
 
+## [0.5.1] - 2026-07-26
+
+### Changed
+
+- 虚拟内存改为识别并管理 `kejilion.sh` 使用的 `/swapfile`，脚本端和
+  Web 端不再生成两套互不相认的 Swap。
+- 支持直接创建、扩容、缩容和停用 `/swapfile`；页面提供脚本一致的
+  1/2/4 GiB 选项以及 256–65536 MiB 自定义大小。
+- 调整时自动合并旧版 `/var/lib/kejilion-panel/system/swapfile`，但保留
+  Swap 分区和第三方 swapfile。
+
+### Security
+
+- Swap 变更通过固定参数的 systemd 一次性事务执行；不向 Web 暴露命令或
+  路径，并拒绝符号链接等异常产物。
+- `swapoff` 前校验受管 Swap 已用空间与可用内存；创建、`fstab` 更新或
+  激活失败时恢复原文件、原启动项和原活动状态。
+- 不复用 `kejilion.sh` 中 `wipefs`、重建 Swap 分区的高风险行为。
+
 ## [0.5.0] - 2026-07-26
 
 ### Added

@@ -21,7 +21,7 @@ KPanel 的系统管理业务以 `kejilion.sh` 为功能基准，但不把整个 
 | SSH 端口 | `sshd_config` 与片段 | 首版只安全新增端口；`sshd -t`、防火墙放行、reload、监听探测并保留旧端口 |
 | DNS | `resolv.conf` 与管理器 | 首版只接管 systemd-resolved drop-in，不替换或锁定 `resolv.conf` |
 | 时区 | `/etc/timezone` 或 `localtime` | IANA 名称白名单、回读 |
-| 虚拟内存 | `/proc/meminfo`、`/proc/swaps` | 仅管理 KPanel 专属 swapfile，不清除现有分区 |
+| 虚拟内存 | `/proc/meminfo`、`/proc/swaps`、`/swapfile` | 与 `kejilion.sh` 共用 `/swapfile`；合并旧版 KPanel Swap，不清除现有分区或第三方 swapfile |
 | 系统镜像源 | APT/DNF/APK 源地址 | 首版支持 Debian/Ubuntu 官方源与阿里云源；第三方源不修改，`apt-get update` 失败回滚 |
 | V4/V6 优先 | `gai.conf` | 维护 `kejilion.sh` 同一 precedence 规则并保留其他用户配置 |
 | 内核优化 | Kejilion sysctl 产物 | 固定参数白名单、应用校验、版本化回滚；外部脚本配置不覆盖 |
@@ -36,8 +36,8 @@ Agent 根据宿主机命令、配置管理器和 root/sandbox 条件动态返回
 满足条件时，登录管理员可在页面填写固定字段并二次确认；不满足条件时只展示
 真实状态和明确原因。
 
-已开放：主机名、安全新增 SSH 端口、systemd-resolved DNS、时区、KPanel
-专属 Swap、Debian/Ubuntu APT 镜像预设、地址优先级、KPanel 内核调优预设和
+已开放：主机名、安全新增 SSH 端口、systemd-resolved DNS、时区、脚本兼容
+`/swapfile`、Debian/Ubuntu APT 镜像预设、地址优先级、KPanel 内核调优预设和
 BBR。重装系统继续锁定；SSH 旧端口删除、静态 `resolv.conf` 接管、任意软件源
 URL、任意 sysctl 和任意 Shell 均不开放。
 
@@ -59,3 +59,20 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 
 系统备份保存在 `/var/lib/kejilion-panel/system/backups`。Panel 数据、
 `kejilion.sh` 文件、现有网站、其他容器和其他 Swap 不进入系统操作事务。
+
+## v0.5.1 虚拟内存事务
+
+- 状态读取同时区分 `/swapfile`、旧版 KPanel Swap 和其他活动 Swap，页面
+  的总量仍以 `/proc/meminfo` 为准。
+- 设置入口提供 `kejilion.sh` 相同的 1/2/4 GiB 常用值，并允许
+  256–65536 MiB 自定义值；脚本默认值为 1 GiB。
+- 创建或调整前先检查受管 Swap 已用空间能否安全回收到内存，再在同一文件
+  系统分配临时 swapfile。内存安全门或空间分配不通过时不触碰现状。
+- 事务只会 `swapoff` `/swapfile` 和旧版 KPanel 路径；不会执行 `wipefs`，
+  不会停用 Swap 分区或第三方 swapfile。
+- 新文件、`fstab` 和 `swapon` 任一步失败时，恢复原文件、原 `fstab` 和原
+  活动状态。成功后启动项使用脚本同款
+  `/swapfile swap swap defaults 0 0`，脚本与 Web 可双向识别。
+- 文件系统写入由固定参数的 root systemd transient service 完成。常驻
+  Agent 仍受原 systemd 沙箱限制，Web 不能传入路径或任意命令。浏览器请求
+  中断不会杀死已经启动的事务，事务仍会完成或执行自身回滚。

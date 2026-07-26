@@ -19,7 +19,7 @@ func (c *Collector) readManagement(out *contract.SystemManagementSummary) {
 	out.SSH = c.readSSHConfiguration()
 	out.DNS = c.readDNSConfiguration()
 	out.Timezone = c.readTimezone()
-	out.Swap.ActiveDevices = c.readSwapDeviceCount()
+	out.Swap = c.readSwapConfiguration()
 	out.PackageManager, out.PackageSources = c.readPackageSources()
 	out.IPPreference = c.readIPPreference()
 	out.KernelOptimization = c.readKernelOptimization()
@@ -125,18 +125,69 @@ func (c *Collector) readTimezone() string {
 	return ""
 }
 
-func (c *Collector) readSwapDeviceCount() int {
-	lines := strings.Split(strings.TrimSpace(c.readOptional("swaps")), "\n")
-	if len(lines) <= 1 {
-		return 0
+func (c *Collector) readSwapConfiguration() contract.SwapConfiguration {
+	out := contract.SwapConfiguration{Path: c.SwapPath}
+	if info, err := os.Lstat(c.SwapPath); err == nil && info.Mode().IsRegular() {
+		out.FileExists = true
+		out.FileSizeBytes = uint64(info.Size())
 	}
-	count := 0
-	for _, line := range lines[1:] {
-		if len(strings.Fields(line)) >= 5 {
-			count++
+	if info, err := os.Lstat(c.LegacySwapPath); err == nil && info.Mode().IsRegular() {
+		out.LegacyExists = true
+		out.LegacySizeBytes = uint64(info.Size())
+	}
+	lines := strings.Split(strings.TrimSpace(c.readOptional("swaps")), "\n")
+	if len(lines) > 1 {
+		for _, line := range lines[1:] {
+			fields := strings.Fields(line)
+			if len(fields) < 5 {
+				continue
+			}
+			sizeKiB, sizeErr := strconv.ParseUint(fields[2], 10, 64)
+			usedKiB, usedErr := strconv.ParseUint(fields[3], 10, 64)
+			if sizeErr != nil || usedErr != nil {
+				continue
+			}
+			sizeBytes := sizeKiB * 1024
+			usedBytes := usedKiB * 1024
+			out.ActiveDevices++
+			switch fields[0] {
+			case c.SwapPath:
+				primaryMatch := out.FileExists &&
+					swapFileMatchesActiveSize(out.FileSizeBytes, sizeBytes)
+				legacyMatch := out.LegacyExists &&
+					swapFileMatchesActiveSize(out.LegacySizeBytes, sizeBytes)
+				if legacyMatch && (!primaryMatch || out.FileActive) {
+					out.LegacyActive = true
+				} else {
+					out.FileExists = true
+					out.FileActive = true
+					if out.FileSizeBytes == 0 {
+						out.FileSizeBytes = sizeBytes
+					}
+					out.FileUsedBytes += usedBytes
+				}
+			case c.LegacySwapPath:
+				out.LegacyExists = true
+				out.LegacyActive = true
+				if out.LegacySizeBytes == 0 {
+					out.LegacySizeBytes = sizeBytes
+				}
+			default:
+				out.OtherActiveDevices++
+				out.OtherSwapTotalBytes += sizeBytes
+				out.OtherSwapUsedBytes += usedBytes
+			}
 		}
 	}
-	return count
+	return out
+}
+
+func swapFileMatchesActiveSize(fileSize, activeSize uint64) bool {
+	if fileSize < activeSize {
+		return false
+	}
+	const swapMetadataAllowance = 8 * 1024 * 1024
+	return fileSize-activeSize <= swapMetadataAllowance
 }
 
 func (c *Collector) readPackageSources() (string, []string) {

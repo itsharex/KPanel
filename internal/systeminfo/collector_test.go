@@ -2,6 +2,7 @@ package systeminfo
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -47,7 +48,11 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 		got.Management.PackageSources[0] != "mirrors.example.test" {
 		t.Fatalf("unexpected package sources: %#v", got.Management)
 	}
-	if got.Management.Swap.ActiveDevices != 1 {
+	if got.Management.Swap.ActiveDevices != 1 ||
+		!got.Management.Swap.FileExists ||
+		!got.Management.Swap.FileActive ||
+		got.Management.Swap.FileSizeBytes == 0 ||
+		got.Management.Swap.OtherActiveDevices != 0 {
 		t.Fatalf("unexpected swap state: %#v", got.Management.Swap)
 	}
 	if !got.Management.KernelOptimization.Enabled ||
@@ -57,6 +62,51 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	if !got.Management.BBR.Enabled || !got.Management.BBR.Supported ||
 		got.Management.BBR.DefaultQDisc != "fq" {
 		t.Fatalf("unexpected BBR state: %#v", got.Management.BBR)
+	}
+}
+
+func TestReadSwapConfigurationSeparatesKejilionLegacyAndExternalSwap(t *testing.T) {
+	root := t.TempDir()
+	procRoot := filepath.Join(root, "proc")
+	primaryPath := filepath.Join(root, "swapfile")
+	legacyPath := filepath.Join(root, "legacy-swapfile")
+	if err := os.MkdirAll(procRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, size := range map[string]int64{
+		primaryPath: 1024 * 1024 * 1024,
+		legacyPath:  2 * 1024 * 1024 * 1024,
+	} {
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Truncate(size); err != nil {
+			_ = file.Close()
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	swaps := "Filename Type Size Used Priority\n" +
+		primaryPath + " file 1048572 128 -2\n" +
+		primaryPath + " file 2097148 0 -3\n" +
+		"/dev/vda2 partition 524284 32 -4\n"
+	if err := os.WriteFile(filepath.Join(procRoot, "swaps"), []byte(swaps), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	collector := &Collector{
+		ProcRoot: procRoot, SwapPath: primaryPath, LegacySwapPath: legacyPath,
+	}
+
+	got := collector.readSwapConfiguration()
+	if got.Path != primaryPath || !got.FileExists || !got.FileActive ||
+		!got.LegacyExists || !got.LegacyActive ||
+		got.ActiveDevices != 3 || got.OtherActiveDevices != 1 ||
+		got.FileUsedBytes != 128*1024 ||
+		got.OtherSwapTotalBytes != 524284*1024 {
+		t.Fatalf("unexpected swap configuration: %#v", got)
 	}
 }
 

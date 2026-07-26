@@ -19,7 +19,7 @@ KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录�
 - 固定模板的静态站及反向代理站点创建与安全更新。
 - Docker 容器、镜像、网络、卷查看。
 - 已识别 Kejilion 容器的启动、停止、重启和有界日志。
-- 主机名、SSH 新端口、DNS、时区、专属 Swap、APT 镜像、IP 优先级、
+- 主机名、SSH 新端口、DNS、时区、与 `kejilion.sh` 共用的 `/swapfile`、APT 镜像、IP 优先级、
   内核预设和 BBR 的类型化、可回滚管理。
 - Debian/Ubuntu 系统更新，以及不触碰 Docker、网站和备份的安全系统清理。
 - 管理变更记录、审计、资源版本冲突检测和只读降级。

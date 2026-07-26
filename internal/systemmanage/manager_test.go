@@ -46,8 +46,9 @@ func testManager(t *testing.T, runner Runner) (*Manager, string, string, string)
 	}
 	manager := NewManager(Config{
 		Enabled: true, EtcRoot: etcRoot, ProcRoot: procRoot, RunRoot: runRoot,
-		StateDir: stateDir, Executable: "/usr/local/libexec/kejilion-agent",
-		Runner: runner, Now: func() time.Time { return time.Date(2026, 7, 26, 3, 0, 0, 0, time.UTC) },
+		StateDir: stateDir, SwapPath: filepath.Join(root, "swapfile"),
+		Executable: "/usr/local/libexec/kejilion-agent",
+		Runner:     runner, Now: func() time.Time { return time.Date(2026, 7, 26, 3, 0, 0, 0, time.UTC) },
 	})
 	return manager, etcRoot, procRoot, stateDir
 }
@@ -153,7 +154,7 @@ func TestRewriteAPTSourceLeavesThirdPartyRepositoriesUntouched(t *testing.T) {
 
 func TestSetSwapOnlyManagesKPanelSwap(t *testing.T) {
 	runner := &fakeRunner{}
-	manager, etcRoot, procRoot, stateDir := testManager(t, runner)
+	manager, etcRoot, procRoot, _ := testManager(t, runner)
 	mustWrite(t, filepath.Join(etcRoot, "fstab"), "/dev/vda2 none swap sw 0 0\n")
 	mustWrite(t, filepath.Join(procRoot, "swaps"), "Filename Type Size Used Priority\n/dev/vda2 partition 1 0 -2\n")
 	runner.run = func(_ context.Context, name string, arguments ...string) ([]byte, error) {
@@ -168,8 +169,14 @@ func TestSetSwapOnlyManagesKPanelSwap(t *testing.T) {
 			closeErr := file.Close()
 			return nil, errors.Join(err, closeErr)
 		case "swapon":
+			info, err := os.Stat(arguments[0])
+			if err != nil {
+				return nil, err
+			}
+			sizeKiB := info.Size()/1024 - 4
 			mustWrite(t, filepath.Join(procRoot, "swaps"),
-				"Filename Type Size Used Priority\n/dev/vda2 partition 1 0 -2\n"+arguments[0]+" file 1 0 -2\n")
+				"Filename Type Size Used Priority\n/dev/vda2 partition 1 0 -2\n"+
+					arguments[0]+" file "+strconv.FormatInt(sizeKiB, 10)+" 0 -2\n")
 		case "swapoff":
 			mustWrite(t, filepath.Join(procRoot, "swaps"), "Filename Type Size Used Priority\n/dev/vda2 partition 1 0 -2\n")
 		}
@@ -180,7 +187,7 @@ func TestSetSwapOnlyManagesKPanelSwap(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("enable swap: changed=%v err=%v", changed, err)
 	}
-	swapPath := filepath.Join(stateDir, "swapfile")
+	swapPath := manager.swapPath
 	fstab := readLimited(filepath.Join(etcRoot, "fstab"))
 	if !strings.Contains(fstab, "/dev/vda2 none swap") || !strings.Contains(fstab, swapPath) {
 		t.Fatalf("fstab does not preserve external swap: %q", fstab)
@@ -192,6 +199,241 @@ func TestSetSwapOnlyManagesKPanelSwap(t *testing.T) {
 	fstab = readLimited(filepath.Join(etcRoot, "fstab"))
 	if !strings.Contains(fstab, "/dev/vda2 none swap") || strings.Contains(fstab, swapPath) {
 		t.Fatalf("disable touched external swap or retained managed swap: %q", fstab)
+	}
+}
+
+func TestSetSwapResizesKejilionFileAndMigratesLegacySwap(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, procRoot, stateDir := testManager(t, runner)
+	primaryPath := manager.swapPath
+	legacyPath := filepath.Join(stateDir, "swapfile")
+	externalPath := "/dev/vda2"
+	mustSizedFile(t, primaryPath, 1024)
+	mustSizedFile(t, legacyPath, 2048)
+	mustWrite(t, filepath.Join(etcRoot, "fstab"),
+		externalPath+" none swap sw 0 0\n"+
+			primaryPath+" swap swap defaults 0 0\n"+
+			kpanelSwapMarker+"\n"+
+			legacyPath+" none swap sw 0 0\n")
+	mustWrite(t, filepath.Join(procRoot, "meminfo"), "MemAvailable: 4194304 kB\n")
+	active := map[string]bool{externalPath: true, primaryPath: true, legacyPath: true}
+	writeSwapFixture(t, procRoot, active)
+	runner.run = swapTestRunner(t, procRoot, active)
+
+	changed, _, message, err := manager.setSwap(context.Background(), 4096)
+	if err != nil || !changed {
+		t.Fatalf("resize swap: changed=%v message=%q err=%v", changed, message, err)
+	}
+	if !strings.Contains(message, "合并旧版 KPanel Swap") {
+		t.Fatalf("migration was not reported: %q", message)
+	}
+	info, err := os.Stat(primaryPath)
+	if err != nil || !sizeWithinMiB(info.Size(), 4096) {
+		t.Fatalf("primary swap size was not changed: info=%v err=%v", info, err)
+	}
+	if _, err := os.Lstat(legacyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy swap remains after migration: %v", err)
+	}
+	if !active[primaryPath] || !active[externalPath] || active[legacyPath] {
+		t.Fatalf("unexpected active swap set: %#v", active)
+	}
+	fstab := readLimited(filepath.Join(etcRoot, "fstab"))
+	if strings.Count(fstab, primaryPath+" swap swap defaults 0 0") != 1 ||
+		strings.Contains(fstab, legacyPath) ||
+		strings.Contains(fstab, kpanelSwapMarker) ||
+		!strings.Contains(fstab, externalPath+" none swap") {
+		t.Fatalf("unexpected migrated fstab: %q", fstab)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "swapoff "+externalPath) ||
+			strings.Contains(command, "wipefs") {
+			t.Fatalf("external swap was modified: %#v", runner.commands)
+		}
+	}
+}
+
+func TestSetSwapRejectsSymlinkArtifact(t *testing.T) {
+	manager, _, _, _ := testManager(t, &fakeRunner{})
+	target := manager.swapPath + ".target"
+	mustWrite(t, target, "not swap")
+	if err := os.Symlink(target, manager.swapPath); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := manager.setSwap(context.Background(), 1024)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected symlink conflict, got %v", err)
+	}
+}
+
+func TestSwapActiveRecognizesLegacyNamespaceAliasBySize(t *testing.T) {
+	manager, _, procRoot, stateDir := testManager(t, &fakeRunner{})
+	legacyPath := filepath.Join(stateDir, "swapfile")
+	mustSizedFile(t, manager.swapPath, 1024)
+	mustSizedFile(t, legacyPath, 2048)
+	mustWrite(t, filepath.Join(procRoot, "swaps"),
+		"Filename Type Size Used Priority\n"+
+			manager.swapPath+" file 1048572 128 -2\n"+
+			manager.swapPath+" file 2097148 0 -3\n")
+
+	if !manager.swapActive(manager.swapPath) {
+		t.Fatal("primary /swapfile was not recognized")
+	}
+	if !manager.swapActive(legacyPath) {
+		t.Fatal("legacy swap namespace alias was not recognized by size")
+	}
+}
+
+func TestSetSwapRefusesUnsafeSwapoffWhenMemoryIsLow(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, procRoot, _ := testManager(t, runner)
+	mustSizedFile(t, manager.swapPath, 1024)
+	mustWrite(t, filepath.Join(etcRoot, "fstab"), manager.swapPath+" swap swap defaults 0 0\n")
+	mustWrite(t, filepath.Join(procRoot, "swaps"),
+		"Filename Type Size Used Priority\n"+manager.swapPath+" file 1048572 262144 -2\n")
+	mustWrite(t, filepath.Join(procRoot, "meminfo"), "MemAvailable: 327680 kB\n")
+
+	_, _, _, err := manager.setSwap(context.Background(), 2048)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected low-memory conflict, got %v", err)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands ran before memory safety gate: %#v", runner.commands)
+	}
+}
+
+func TestSetSwapRollsBackOriginalFileWhenActivationFails(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, procRoot, _ := testManager(t, runner)
+	oldFstab := manager.swapPath + " swap swap defaults 0 0\n"
+	mustSizedFile(t, manager.swapPath, 1024)
+	mustWrite(t, filepath.Join(etcRoot, "fstab"), oldFstab)
+	mustWrite(t, filepath.Join(procRoot, "meminfo"), "MemAvailable: 4194304 kB\n")
+	active := map[string]bool{manager.swapPath: true}
+	writeSwapFixture(t, procRoot, active)
+	swaponCalls := 0
+	baseRunner := swapTestRunner(t, procRoot, active)
+	runner.run = func(ctx context.Context, name string, arguments ...string) ([]byte, error) {
+		if name == "swapon" {
+			swaponCalls++
+			if swaponCalls == 1 {
+				return nil, errors.New("simulated activation failure")
+			}
+		}
+		return baseRunner(ctx, name, arguments...)
+	}
+
+	_, _, _, err := manager.setSwap(context.Background(), 2048)
+	if !errors.Is(err, ErrRolledBack) {
+		t.Fatalf("expected rollback error, got %v", err)
+	}
+	info, statErr := os.Stat(manager.swapPath)
+	if statErr != nil || !sizeWithinMiB(info.Size(), 1024) {
+		t.Fatalf("original swapfile was not restored: info=%v err=%v", info, statErr)
+	}
+	if got := readLimited(filepath.Join(etcRoot, "fstab")); got != oldFstab {
+		t.Fatalf("fstab was not restored: %q", got)
+	}
+	if !active[manager.swapPath] {
+		t.Fatalf("original swap was not re-enabled: %#v", active)
+	}
+	if leftovers, _ := filepath.Glob(manager.swapPath + ".kpanel-previous-*"); len(leftovers) != 0 {
+		t.Fatalf("rollback files remain: %#v", leftovers)
+	}
+}
+
+func TestRunSwapViaSystemdUsesFixedHelper(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, _, _, stateDir := testManager(t, runner)
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	runner.run = func(ctx context.Context, name string, _ ...string) ([]byte, error) {
+		if name != "systemd-run" {
+			t.Fatalf("unexpected command %q", name)
+		}
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("host transaction inherited caller cancellation: %v", err)
+		}
+		return []byte(`{"changed":true,"backupPath":"/backup","message":"ok"}`), nil
+	}
+
+	changed, backup, message, err := manager.runSwapViaSystemd(requestContext, 2048)
+	if err != nil || !changed || backup != "/backup" || message != "ok" {
+		t.Fatalf("unexpected helper result: changed=%v backup=%q message=%q err=%v", changed, backup, message, err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("commands = %#v", runner.commands)
+	}
+	command := runner.commands[0]
+	for _, expected := range []string{
+		"systemd-run",
+		"--wait",
+		"--pipe",
+		manager.executable + " swap-run --state-dir " + stateDir,
+		"--swap-path " + manager.swapPath,
+		"--size-mib 2048",
+	} {
+		if !strings.Contains(command, expected) {
+			t.Fatalf("swap launcher missing %q: %q", expected, command)
+		}
+	}
+	if strings.Contains(command, "sh -c") || strings.Contains(command, "bash -c") ||
+		strings.Contains(command, "wipefs") {
+		t.Fatalf("swap launcher used an unsafe command: %q", command)
+	}
+}
+
+func mustSizedFile(t *testing.T, path string, sizeMiB int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(int64(sizeMiB) * 1024 * 1024); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeSwapFixture(t *testing.T, procRoot string, active map[string]bool) {
+	t.Helper()
+	data := "Filename Type Size Used Priority\n"
+	for path, enabled := range active {
+		if enabled {
+			sizeKiB := int64(1048572)
+			if info, err := os.Stat(path); err == nil && info.Size() >= 4*1024 {
+				sizeKiB = info.Size()/1024 - 4
+			}
+			data += path + " file " + strconv.FormatInt(sizeKiB, 10) + " 0 -2\n"
+		}
+	}
+	mustWrite(t, filepath.Join(procRoot, "swaps"), data)
+}
+
+func swapTestRunner(
+	t *testing.T,
+	procRoot string,
+	active map[string]bool,
+) func(context.Context, string, ...string) ([]byte, error) {
+	t.Helper()
+	return func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+		switch name {
+		case "fallocate":
+			size, _ := strconv.Atoi(strings.TrimSuffix(arguments[1], "M"))
+			mustSizedFile(t, arguments[2], size)
+		case "swapon":
+			active[arguments[0]] = true
+			writeSwapFixture(t, procRoot, active)
+		case "swapoff":
+			delete(active, arguments[0])
+			writeSwapFixture(t, procRoot, active)
+		}
+		return nil, nil
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -44,6 +45,9 @@ func run(arguments []string) error {
 	}
 	if len(arguments) > 0 && arguments[0] == "maintenance-run" {
 		return runMaintenance(arguments[1:])
+	}
+	if len(arguments) > 0 && arguments[0] == "swap-run" {
+		return runSwap(arguments[1:])
 	}
 
 	flags := flag.NewFlagSet("kejilion-agent", flag.ContinueOnError)
@@ -150,6 +154,36 @@ func runMaintenance(arguments []string) error {
 		StateDir: *stateDir,
 	})
 	return manager.RunMaintenance(ctx, flags.Arg(0))
+}
+
+func runSwap(arguments []string) error {
+	flags := flag.NewFlagSet("kejilion-agent swap-run", flag.ContinueOnError)
+	stateDir := flags.String(
+		"state-dir",
+		env("KEJILION_AGENT_STATE_DIR", "/var/lib/kejilion-panel/system"),
+		"system state directory",
+	)
+	swapPath := flags.String("swap-path", "/swapfile", "kejilion.sh-compatible swapfile path")
+	sizeMiB := flags.Int("size-mib", -1, "target swap size in MiB; zero disables it")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("swap-run does not accept positional arguments")
+	}
+	if os.Geteuid() != 0 {
+		return errors.New("swap-run requires root")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	manager := systemmanage.NewManager(systemmanage.Config{
+		Enabled: true, StateDir: *stateDir, SwapPath: *swapPath,
+	})
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
+	return encoder.Encode(manager.RunSwapTransaction(ctx, *sizeMiB))
 }
 
 func runHealthcheck(arguments []string) error {

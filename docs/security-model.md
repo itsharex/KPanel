@@ -26,6 +26,9 @@
 - 系统更新与清理只接受固定策略枚举，由独立 systemd transient service
   执行固定 APT/journalctl 参数。API 不接受包名、命令、路径或 Shell；
   维护任务拥有软件包升级所需的宿主机写权限，因此与普通 Agent 沙箱分离。
+- `/swapfile` 调整同样由固定参数的一次性 systemd 事务执行；输入仅为
+  0 或 256–65536 MiB 整数。事务拒绝符号链接，只接管 `/swapfile` 与旧版
+  KPanel Swap，内存安全门和失败恢复通过后才报告成功。
 
 ## 与 kejilion.sh 并存
 

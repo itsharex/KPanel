@@ -80,6 +80,7 @@ type Config struct {
 	ProcRoot   string
 	RunRoot    string
 	StateDir   string
+	SwapPath   string
 	Executable string
 	Now        func() time.Time
 	Runner     Runner
@@ -91,6 +92,7 @@ type Manager struct {
 	procRoot   string
 	runRoot    string
 	stateDir   string
+	swapPath   string
 	executable string
 	now        func() time.Time
 	runner     Runner
@@ -110,6 +112,9 @@ func NewManager(config Config) *Manager {
 	if config.StateDir == "" {
 		config.StateDir = "/var/lib/kejilion-panel/system"
 	}
+	if config.SwapPath == "" {
+		config.SwapPath = "/swapfile"
+	}
 	if config.Executable == "" {
 		config.Executable = "/usr/local/libexec/kejilion-agent"
 	}
@@ -122,8 +127,9 @@ func NewManager(config Config) *Manager {
 	return &Manager{
 		enabled: config.Enabled, etcRoot: filepath.Clean(config.EtcRoot),
 		procRoot: filepath.Clean(config.ProcRoot), runRoot: filepath.Clean(config.RunRoot),
-		stateDir: filepath.Clean(config.StateDir), executable: filepath.Clean(config.Executable),
-		now: config.Now, runner: config.Runner,
+		stateDir: filepath.Clean(config.StateDir), swapPath: filepath.Clean(config.SwapPath),
+		executable: filepath.Clean(config.Executable),
+		now:        config.Now, runner: config.Runner,
 	}
 }
 
@@ -169,7 +175,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 		capability("system.ssh-port.write", sshdErr == nil && ssErr == nil && systemctlErr == nil && sshConfig, "OpenSSH 服务或配置不可用"),
 		capability("system.dns.write", resolved && systemctlErr == nil, "当前仅安全接管 systemd-resolved"),
 		capability("system.timezone.write", timedatectlErr == nil, "timedatectl 不可用"),
-		capability("system.swap.write", mkswapErr == nil && swaponErr == nil && swapoffErr == nil && fallocateErr == nil, "Swap 工具不完整"),
+		capability("system.swap.write", mkswapErr == nil && swaponErr == nil && swapoffErr == nil && fallocateErr == nil && systemdRunErr == nil, "Swap 工具或 systemd 事务执行器不完整"),
 		capability("system.mirror.write", aptErr == nil && aptSources, "当前仅支持 Debian/Ubuntu APT 软件源"),
 		capability("system.ip-preference.write", true, ""),
 		capability("system.kernel-tuning.write", sysctlErr == nil, "sysctl 不可用"),
@@ -204,7 +210,7 @@ func (m *Manager) Execute(ctx context.Context, input contract.SystemActionReques
 	case "timezone":
 		result.Changed, result.Message, err = m.setTimezone(ctx, input.Timezone)
 	case "swap":
-		result.Changed, result.BackupPath, result.Message, err = m.setSwap(ctx, input.SwapSizeMiB)
+		result.Changed, result.BackupPath, result.Message, err = m.runSwapViaSystemd(ctx, input.SwapSizeMiB)
 	case "mirror":
 		result.Changed, result.BackupPath, result.Message, err = m.setMirror(ctx, input.MirrorPreset)
 	case "ip-preference":
@@ -466,117 +472,7 @@ func (m *Manager) setIPPreference(preference string) (bool, string, string, erro
 }
 
 func (m *Manager) setSwap(ctx context.Context, sizeMiB int) (bool, string, string, error) {
-	if sizeMiB != 0 && (sizeMiB < 256 || sizeMiB > 65536) {
-		return false, "", "", fmt.Errorf("%w: swapSizeMiB must be 0 or between 256 and 65536", ErrInvalidInput)
-	}
-	swapPath := filepath.Join(m.stateDir, "swapfile")
-	fstabPath := filepath.Join(m.etcRoot, "fstab")
-	active := m.swapActive(swapPath)
-	if sizeMiB == 0 {
-		if !active && !regularFile(swapPath) {
-			return false, "", "KPanel 专属 Swap 已经停用", nil
-		}
-		backup, err := m.createBackup("swap-disable", fstabPath)
-		if err != nil {
-			return false, "", "", err
-		}
-		oldFstab, existed, mode, err := snapshotFile(fstabPath)
-		if err != nil {
-			return false, backup, "", err
-		}
-		newFstab := updateFstabSwap(oldFstab, swapPath, false)
-		if err := writeAtomic(fstabPath, newFstab, fileModeOr(mode, 0o644)); err != nil {
-			return false, backup, "", err
-		}
-		if active {
-			if _, err := m.runner.Run(ctx, "swapoff", swapPath); err != nil {
-				_ = restoreFile(fstabPath, oldFstab, existed, mode)
-				return false, backup, "", fmt.Errorf("%w: swapoff: %v", ErrRolledBack, err)
-			}
-		}
-		if err := os.Remove(swapPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			_ = restoreFile(fstabPath, oldFstab, existed, mode)
-			if active {
-				_, _ = m.runner.Run(ctx, "swapon", swapPath)
-			}
-			return false, backup, "", fmt.Errorf("%w: remove managed swapfile: %v", ErrNeedsAttention, err)
-		}
-		return true, backup, "KPanel 专属 Swap 已停用；其他 Swap 未受影响", nil
-	}
-
-	if active {
-		info, err := os.Stat(swapPath)
-		if err == nil && sizeWithinMiB(info.Size(), sizeMiB) {
-			return false, "", "KPanel 专属 Swap 大小没有变化", nil
-		}
-		return false, "", "", fmt.Errorf("%w: disable the existing KPanel swap before resizing", ErrConflict)
-	}
-	if err := os.MkdirAll(m.stateDir, 0o700); err != nil {
-		return false, "", "", fmt.Errorf("%w: create system state directory: %v", ErrUnsupported, err)
-	}
-	backup, err := m.createBackup("swap-enable", fstabPath)
-	if err != nil {
-		return false, "", "", err
-	}
-	oldFstab, fstabExisted, fstabMode, err := snapshotFile(fstabPath)
-	if err != nil {
-		return false, backup, "", err
-	}
-	stalePath := ""
-	if regularFile(swapPath) {
-		stalePath = swapPath + ".previous"
-		_ = os.Remove(stalePath)
-		if err := os.Rename(swapPath, stalePath); err != nil {
-			return false, backup, "", fmt.Errorf("%w: preserve stale managed swapfile: %v", ErrConflict, err)
-		}
-	}
-	tempPath := swapPath + ".new"
-	_ = os.Remove(tempPath)
-	cleanup := func() {
-		_ = os.Remove(tempPath)
-		if stalePath != "" && !regularFile(swapPath) {
-			_ = os.Rename(stalePath, swapPath)
-		}
-	}
-	if _, err := m.runner.Run(ctx, "fallocate", "-l", strconv.Itoa(sizeMiB)+"M", tempPath); err != nil {
-		cleanup()
-		return false, backup, "", fmt.Errorf("%w: allocate swapfile: %v", ErrRolledBack, err)
-	}
-	if err := os.Chmod(tempPath, 0o600); err != nil {
-		cleanup()
-		return false, backup, "", fmt.Errorf("%w: protect swapfile: %v", ErrRolledBack, err)
-	}
-	if _, err := m.runner.Run(ctx, "mkswap", tempPath); err != nil {
-		cleanup()
-		return false, backup, "", fmt.Errorf("%w: mkswap: %v", ErrRolledBack, err)
-	}
-	if err := os.Rename(tempPath, swapPath); err != nil {
-		cleanup()
-		return false, backup, "", fmt.Errorf("%w: publish swapfile: %v", ErrRolledBack, err)
-	}
-	newFstab := updateFstabSwap(oldFstab, swapPath, true)
-	if err := writeAtomic(fstabPath, newFstab, fileModeOr(fstabMode, 0o644)); err != nil {
-		_ = os.Remove(swapPath)
-		cleanup()
-		return false, backup, "", fmt.Errorf("%w: update fstab: %v", ErrRolledBack, err)
-	}
-	if _, err := m.runner.Run(ctx, "swapon", swapPath); err != nil {
-		_ = restoreFile(fstabPath, oldFstab, fstabExisted, fstabMode)
-		_ = os.Remove(swapPath)
-		cleanup()
-		return false, backup, "", fmt.Errorf("%w: swapon: %v", ErrRolledBack, err)
-	}
-	if !m.swapActive(swapPath) {
-		_, _ = m.runner.Run(ctx, "swapoff", swapPath)
-		_ = restoreFile(fstabPath, oldFstab, fstabExisted, fstabMode)
-		_ = os.Remove(swapPath)
-		cleanup()
-		return false, backup, "", fmt.Errorf("%w: swap activation could not be verified", ErrRolledBack)
-	}
-	if stalePath != "" {
-		_ = os.Remove(stalePath)
-	}
-	return true, backup, fmt.Sprintf("已启用 %d MiB KPanel 专属 Swap，未修改现有 Swap", sizeMiB), nil
+	return m.applySwap(ctx, sizeMiB)
 }
 
 func (m *Manager) setMirror(ctx context.Context, preset string) (bool, string, string, error) {
@@ -951,9 +847,23 @@ func (m *Manager) aptSourceFiles() []string {
 }
 
 func (m *Manager) swapActive(path string) bool {
+	info, statErr := os.Lstat(path)
 	for _, line := range strings.Split(m.procValue("swaps"), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) >= 1 && fields[0] == path {
+		if len(fields) < 3 {
+			continue
+		}
+		exactPath := fields[0] == path
+		legacyAlias := path == filepath.Join(m.stateDir, "swapfile") &&
+			fields[0] == m.swapPath
+		if !exactPath && !legacyAlias {
+			continue
+		}
+		if statErr != nil || !info.Mode().IsRegular() {
+			return exactPath
+		}
+		sizeKiB, err := strconv.ParseUint(fields[2], 10, 64)
+		if err == nil && swapSizeMatches(info.Size(), sizeKiB*1024) {
 			return true
 		}
 	}
@@ -1037,12 +947,15 @@ func updateIPPreference(data []byte, preference string) []byte {
 	return []byte(result + "\n")
 }
 
-func updateFstabSwap(data []byte, path string, enabled bool) []byte {
+func updateFstabSwap(data []byte, path, legacyPath string, enabled bool) []byte {
 	var lines []string
 	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
 		trimmed := strings.TrimSpace(line)
 		fields := strings.Fields(trimmed)
-		if trimmed == kpanelSwapMarker || (len(fields) >= 3 && fields[0] == path && fields[2] == "swap") {
+		managedPath := len(fields) >= 3 &&
+			(fields[0] == path || (legacyPath != "" && fields[0] == legacyPath)) &&
+			fields[2] == "swap"
+		if trimmed == kpanelSwapMarker || managedPath {
 			continue
 		}
 		lines = append(lines, line)
@@ -1052,7 +965,7 @@ func updateFstabSwap(data []byte, path string, enabled bool) []byte {
 		if result != "" {
 			result += "\n"
 		}
-		result += kpanelSwapMarker + "\n" + path + " none swap sw 0 0"
+		result += path + " swap swap defaults 0 0"
 	}
 	if result == "" {
 		return nil
@@ -1211,6 +1124,14 @@ func fileModeOr(value, fallback os.FileMode) os.FileMode {
 
 func sizeWithinMiB(size int64, wanted int) bool {
 	return size >= int64(wanted)*1024*1024 && size < int64(wanted+1)*1024*1024
+}
+
+func swapSizeMatches(fileSize int64, activeSizeBytes uint64) bool {
+	if fileSize < 0 || uint64(fileSize) < activeSizeBytes {
+		return false
+	}
+	const swapMetadataAllowance = 8 * 1024 * 1024
+	return uint64(fileSize)-activeSizeBytes <= swapMetadataAllowance
 }
 
 func safeName(value string) string {

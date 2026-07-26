@@ -89,7 +89,18 @@ type DNSConfiguration struct {
 }
 
 type SwapConfiguration struct {
-	ActiveDevices int `json:"activeDevices"`
+	ActiveDevices       int    `json:"activeDevices"`
+	Path                string `json:"path"`
+	FileExists          bool   `json:"fileExists"`
+	FileActive          bool   `json:"fileActive"`
+	FileSizeBytes       uint64 `json:"fileSizeBytes"`
+	FileUsedBytes       uint64 `json:"fileUsedBytes"`
+	LegacyExists        bool   `json:"legacyExists"`
+	LegacyActive        bool   `json:"legacyActive"`
+	LegacySizeBytes     uint64 `json:"legacySizeBytes"`
+	OtherActiveDevices  int    `json:"otherActiveDevices"`
+	OtherSwapTotalBytes uint64 `json:"otherSwapTotalBytes"`
+	OtherSwapUsedBytes  uint64 `json:"otherSwapUsedBytes"`
 }
 
 type KernelOptimizationSummary struct {

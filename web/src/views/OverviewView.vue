@@ -72,7 +72,8 @@ const actionForm = reactive({
   dnsPreset: customPreset,
   timezone: 'Asia/Shanghai',
   timezonePreset: 'Asia/Shanghai',
-  swapSizeMiB: 2048,
+  swapPreset: '1024' as '0' | '1024' | '2048' | '4096' | 'custom',
+  swapSizeMiB: 1024,
   mirrorPreset: 'official' as 'official' | 'aliyun',
   preference: 'ipv4' as 'ipv4' | 'system_default',
   profile: 'balanced' as 'balanced' | 'web' | 'off',
@@ -156,6 +157,19 @@ const systemTools = computed<ManagementTool[]>(() => {
   const swapPercent = management.swap.totalBytes
     ? (management.swap.usedBytes / management.swap.totalBytes) * 100
     : 0
+  const swapDetails = [
+    management.swap.fileActive
+      ? `/swapfile ${formatBytes(management.swap.fileSizeBytes)} 已启用`
+      : management.swap.fileExists
+        ? `/swapfile ${formatBytes(management.swap.fileSizeBytes)} 未启用`
+        : '/swapfile 尚未创建',
+  ]
+  if (management.swap.legacyExists || management.swap.legacyActive) {
+    swapDetails.push(`待合并旧版 KPanel Swap ${formatBytes(management.swap.legacySizeBytes)}`)
+  }
+  if (management.swap.otherActiveDevices) {
+    swapDetails.push(`保留 ${management.swap.otherActiveDevices} 个其他 Swap`)
+  }
   return [
     {
       id: 'swap',
@@ -164,10 +178,11 @@ const systemTools = computed<ManagementTool[]>(() => {
       value: management.swap.totalBytes
         ? `${formatBytes(management.swap.totalBytes)} · 已用 ${formatPercent(swapPercent)}`
         : '未启用',
-      detail: `${management.swap.activeDevices} 个活动 Swap`,
+      detail: swapDetails.join(' · '),
       capability: 'system.swap.write',
-      safety: '仅管理 KPanel 专属 swapfile，不清除已有 Swap 分区或第三方 swapfile。',
+      safety: '与 kejilion.sh 统一管理 /swapfile；调整时自动合并旧版 KPanel Swap，不清除 Swap 分区或第三方 swapfile。',
       icon: MemoryStick,
+      tone: management.swap.legacyExists || management.swap.legacyActive ? 'amber' : undefined,
     },
     {
       id: 'mirror',
@@ -294,9 +309,13 @@ function openTool(tool: ManagementTool): void {
   actionForm.timezonePreset = timezonePresets.some((preset) => preset.value === actionForm.timezone)
     ? actionForm.timezone
     : customPreset
-  actionForm.swapSizeMiB = management?.swap.totalBytes
-    ? Math.max(256, Math.round(management.swap.totalBytes / 1024 / 1024))
-    : 2048
+  const preferredSwapBytes = management?.swap.legacySizeBytes || management?.swap.fileSizeBytes || 0
+  actionForm.swapSizeMiB = preferredSwapBytes
+    ? Math.max(256, Math.round(preferredSwapBytes / 1024 / 1024))
+    : 1024
+  actionForm.swapPreset = [1024, 2048, 4096].includes(actionForm.swapSizeMiB)
+    ? String(actionForm.swapSizeMiB) as '1024' | '2048' | '4096'
+    : 'custom'
   actionForm.mirrorPreset = management?.packageSources.some((source) => source.includes('aliyun')) ? 'aliyun' : 'official'
   actionForm.preference = management?.ipPreference === 'ipv4' ? 'ipv4' : 'system_default'
   actionForm.profile = management?.kernelOptimization.enabled
@@ -324,6 +343,12 @@ function applyDNSPreset(): void {
 
 function applyTimezonePreset(): void {
   if (actionForm.timezonePreset !== customPreset) actionForm.timezone = actionForm.timezonePreset
+}
+
+function applySwapPreset(): void {
+  if (actionForm.swapPreset !== 'custom') {
+    actionForm.swapSizeMiB = Number(actionForm.swapPreset)
+  }
 }
 
 function closeTool(): void {
@@ -820,18 +845,38 @@ onBeforeUnmount(() => {
               <small>必须是服务器 `/usr/share/zoneinfo` 中存在的时区名称。</small>
             </label>
           </div>
-          <label v-else-if="selectedTool.id === 'swap'" class="field">
-            <span>KPanel 专属 Swap</span>
-            <select v-model.number="actionForm.swapSizeMiB">
-              <option :value="0">停用专属 Swap</option>
-              <option :value="512">512 MiB</option>
-              <option :value="1024">1 GiB</option>
-              <option :value="2048">2 GiB</option>
-              <option :value="4096">4 GiB</option>
-              <option :value="8192">8 GiB</option>
-            </select>
-            <small>不会停用或删除由 kejilion.sh、云厂商或用户创建的其他 Swap。</small>
-          </label>
+          <div v-else-if="selectedTool.id === 'swap'" class="form-stack compact">
+            <label class="field">
+              <span>虚拟内存方案</span>
+              <select v-model="actionForm.swapPreset" @change="applySwapPreset">
+                <option value="1024">1 GiB（kejilion.sh 默认）</option>
+                <option value="2048">2 GiB</option>
+                <option value="4096">4 GiB</option>
+                <option value="custom">自定义大小…</option>
+                <option value="0">停用 /swapfile</option>
+              </select>
+              <small>直接创建或调整 `/swapfile`，脚本端和 Web 端会读取同一份产物。</small>
+            </label>
+            <label v-if="actionForm.swapPreset === 'custom'" class="field">
+              <span>自定义大小（MiB）</span>
+              <input
+                v-model.number="actionForm.swapSizeMiB"
+                type="number"
+                min="256"
+                max="65536"
+                step="1"
+                inputmode="numeric"
+              />
+              <small>允许 256–65536 MiB；执行前会检查可用内存，避免危险的 swapoff。</small>
+            </label>
+            <div
+              v-if="data?.management.swap.legacyExists || data?.management.swap.legacyActive"
+              class="inline-alert inline-alert--warning"
+            >
+              检测到旧版 KPanel Swap。执行后会移除旧文件，并由所选大小的 `/swapfile`
+              替代，不会把两者容量相加，也不会改动其他 Swap。
+            </div>
+          </div>
           <label v-else-if="selectedTool.id === 'mirror'" class="field">
             <span>APT 软件源线路</span>
             <select v-model="actionForm.mirrorPreset">
@@ -883,6 +928,9 @@ onBeforeUnmount(() => {
             <input v-model="actionConfirmed" type="checkbox" />
             <span v-if="selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup'">
               我确认启动系统维护任务；软件包更新和清理不可自动回滚。
+            </span>
+            <span v-else-if="selectedTool.id === 'swap'">
+              我确认调整 `/swapfile`；执行期间会短暂停用受管 Swap，失败时恢复原状态。
             </span>
             <span v-else>我确认执行此项变更；失败时 KPanel 将自动恢复已备份的配置。</span>
           </label>
