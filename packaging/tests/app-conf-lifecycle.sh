@@ -11,7 +11,7 @@ PROJECT_DIR=${1:-/src}
 TEST_DIR=$(mktemp -d /tmp/kpanel-app-conf-test.XXXXXX)
 FAKE_BIN="$TEST_DIR/bin"
 MOCK_STATE="$TEST_DIR/state"
-mkdir -p "$FAKE_BIN" "$MOCK_STATE" /run/systemd/system /home/docker
+mkdir -p "$FAKE_BIN" "$MOCK_STATE" /run/systemd/system /etc/systemd/system /home/docker
 
 cleanup() {
 	case "$TEST_DIR" in
@@ -93,7 +93,11 @@ EOF
 cat >"$FAKE_BIN/systemctl" <<'EOF'
 #!/bin/sh
 case "$1" in
-	link|daemon-reload|enable|start|stop|disable) exit 0 ;;
+	link)
+		ln -sf "$2" /etc/systemd/system/kejilion-agent.service
+		exit 0
+		;;
+	daemon-reload|enable|start|stop|disable) exit 0 ;;
 esac
 echo "unexpected systemctl invocation: $*" >&2
 exit 2
@@ -146,6 +150,7 @@ run_lifecycle() {
 	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 1
 	grep -F 'ExecStart=/home/docker/kpanel/bin/kejilion-agent' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	test -f /home/docker/kpanel/.managed-by-kejilion-app
 
 	docker_app_update
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = '0.14.0 v1alpha1'
@@ -175,6 +180,30 @@ run_failed_install() {
 	[ ! -e "$MOCK_STATE/network" ]
 }
 
+run_unmanaged_guard() {
+	local manual_unit="/tmp/manual-kejilion-agent.service"
+
+	docker_app_plus() {
+		:
+	}
+	# shellcheck source=/dev/null
+	. "$PROJECT_DIR/packaging/kejilion-app/kpanel.conf"
+	mkdir -p /home/docker/kpanel
+	: >/home/docker/kpanel/docker-compose.yml
+	: >"$manual_unit"
+	ln -sf "$manual_unit" /etc/systemd/system/kejilion-agent.service
+
+	if docker_app_update || docker_app_uninstall; then
+		echo "unmanaged KPanel instance was accepted" >&2
+		return 1
+	fi
+	test -f /home/docker/kpanel/docker-compose.yml
+	test "$(readlink -f /etc/systemd/system/kejilion-agent.service)" = "$manual_unit"
+	rm -f /etc/systemd/system/kejilion-agent.service "$manual_unit"
+	rm -rf /home/docker/kpanel
+}
+
 PATH="$FAKE_BIN:$PATH" KPANEL_MOCK_STATE="$MOCK_STATE" run_lifecycle
 PATH="$FAKE_BIN:$PATH" KPANEL_MOCK_STATE="$MOCK_STATE" run_failed_install
+PATH="$FAKE_BIN:$PATH" KPANEL_MOCK_STATE="$MOCK_STATE" run_unmanaged_guard
 printf '%s\n' "app_conf_lifecycle=pass"
