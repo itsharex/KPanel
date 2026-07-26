@@ -76,6 +76,24 @@ func (c *Collector) readDNSConfiguration() contract.DNSConfiguration {
 		manager = "static"
 	}
 
+	// KPanel writes a native systemd-resolved drop-in instead of replacing or
+	// locking resolv.conf. Prefer its configured upstreams over the local
+	// 127.0.0.53 stub so the UI presents the actual setting it controls.
+	if manager == "systemd-resolved" {
+		kpanelResolved := readFileLimited(filepath.Join(c.EtcRoot, "systemd", "resolved.conf.d", "90-kpanel.conf"))
+		for _, line := range configurationLines(kpanelResolved) {
+			key, value, ok := strings.Cut(line, "=")
+			if !ok || !strings.EqualFold(strings.TrimSpace(key), "DNS") {
+				continue
+			}
+			servers := strings.Fields(value)
+			if len(servers) > 4 {
+				servers = servers[:4]
+			}
+			return contract.DNSConfiguration{Servers: servers, Manager: manager}
+		}
+	}
+
 	var servers []string
 	seen := make(map[string]bool)
 	for _, line := range configurationLines(data) {

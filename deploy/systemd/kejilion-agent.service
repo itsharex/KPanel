@@ -18,30 +18,32 @@ RuntimeDirectoryMode=0750
 UMask=0077
 
 NoNewPrivileges=true
-CapabilityBoundingSet=
-AmbientCapabilities=
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE
 PrivateTmp=true
 PrivateDevices=true
 ProtectClock=true
 ProtectControlGroups=true
-ProtectHostname=true
+ProtectHostname=false
 ProtectKernelLogs=true
-ProtectKernelModules=true
-ProtectKernelTunables=true
+ProtectKernelModules=false
+ProtectKernelTunables=false
 # Docker socket activation guard verifies /run/docker.pid against /proc/<pid>/comm.
 ProtectProc=default
 ProtectSystem=strict
 ProtectHome=read-only
-ReadOnlyPaths=/var/lib/kejilion-panel
-ReadWritePaths=/run/kejilion-panel -/home/web/conf.d -/home/web/html
-RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/var/lib/kejilion-panel/panel
+# System actions need atomic rename transactions below /etc. Access is broad at
+# the filesystem layer, but the Agent exposes only fixed typed operations.
+ReadWritePaths=/run/kejilion-panel /var/lib/kejilion-panel/system -/home/web/conf.d -/home/web/html /etc
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
-SystemCallFilter=@system-service
+SystemCallFilter=@system-service @module @swap sethostname
 SystemCallErrorNumber=EPERM
 
 [Install]

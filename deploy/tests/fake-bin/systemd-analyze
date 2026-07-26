@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+	verify)
+		exit 0
+		;;
+	*)
+		echo "unexpected systemd-analyze arguments: $*" >&2
+		exit 1
+		;;
+esac

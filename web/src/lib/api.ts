@@ -12,6 +12,8 @@ import type {
   SetupRequest,
   Site,
   SiteInput,
+  SystemActionInput,
+  SystemActionResult,
   SystemOverview,
 } from '@/types/api'
 
@@ -650,6 +652,10 @@ export const api = {
           : undefined,
       }
     },
+  },
+  system: {
+    action: (body: SystemActionInput): Promise<SystemActionResult> =>
+      request<SystemActionResult>('/system/actions', { method: 'POST', body }),
   },
   sites: {
     list: async (query?: { search?: string; cursor?: string }, signal?: AbortSignal): Promise<ApiList<Site>> => {

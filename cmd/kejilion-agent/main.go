@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
+	"github.com/kejilion/kejilion-panel/internal/systemmanage"
 	"github.com/kejilion/kejilion-panel/internal/version"
 )
 
@@ -54,6 +56,11 @@ func run(arguments []string) error {
 		envBool("KEJILION_DOCKER_ALLOW_SOCKET_ACTIVATION", false),
 		"allow connecting to Docker Socket when no running dockerd PID can be verified",
 	)
+	enableSystemWrites := flags.Bool(
+		"enable-system-writes",
+		envBool("KEJILION_SYSTEM_WRITES_ENABLED", true),
+		"enable typed, audited host system mutations",
+	)
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -70,6 +77,9 @@ func run(arguments []string) error {
 	handler, err := agent.NewServer(agent.Config{
 		Token: token, Version: version.Version, ProtocolVersion: version.ProtocolVersion,
 		WebRoot: *webRoot, System: systeminfo.NewCollector(),
+		SystemManager: systemmanage.NewManager(systemmanage.Config{
+			Enabled: *enableSystemWrites, StateDir: filepath.Join(*stateDir, "system"),
+		}),
 		Sites: sites.NewDiscoverer(*webRoot), Docker: dockerClient,
 	})
 	clear(token)
@@ -86,7 +96,7 @@ func run(arguments []string) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}

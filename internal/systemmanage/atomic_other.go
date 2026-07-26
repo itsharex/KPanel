@@ -1,0 +1,15 @@
+//go:build !linux
+
+package systemmanage
+
+import (
+	"errors"
+	"os"
+)
+
+func renameReplace(source, target string) error {
+	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.Rename(source, target)
+}

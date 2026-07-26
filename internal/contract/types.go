@@ -92,6 +92,31 @@ type BBRSummary struct {
 	Available         []string `json:"available,omitempty"`
 }
 
+// SystemActionRequest is the only mutation envelope accepted by the Agent.
+// The Action value selects exactly one typed field set; unknown JSON fields are
+// rejected by the HTTP decoder and arbitrary commands are never accepted.
+type SystemActionRequest struct {
+	Action       string   `json:"action"`
+	Hostname     string   `json:"hostname,omitempty"`
+	Port         uint16   `json:"port,omitempty"`
+	Servers      []string `json:"servers,omitempty"`
+	Timezone     string   `json:"timezone,omitempty"`
+	SwapSizeMiB  int      `json:"swapSizeMiB,omitempty"`
+	MirrorPreset string   `json:"mirrorPreset,omitempty"`
+	Preference   string   `json:"preference,omitempty"`
+	Profile      string   `json:"profile,omitempty"`
+	Enabled      *bool    `json:"enabled,omitempty"`
+}
+
+type SystemActionResult struct {
+	Action     string    `json:"action"`
+	Status     string    `json:"status"`
+	Changed    bool      `json:"changed"`
+	Message    string    `json:"message"`
+	BackupPath string    `json:"backupPath,omitempty"`
+	AppliedAt  time.Time `json:"appliedAt"`
+}
+
 type LoadSummary struct {
 	One     float64 `json:"one"`
 	Five    float64 `json:"five"`

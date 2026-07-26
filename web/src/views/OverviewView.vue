@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, type Component } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, type Component } from 'vue'
 import {
   Activity,
   ArrowLeftRight,
@@ -37,13 +37,15 @@ import MetricCard from '@/components/overview/MetricCard.vue'
 import { ApiError, api } from '@/lib/api'
 import { clampPercent, formatBytes, formatDateTime, formatDuration, formatPercent } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
-import type { SystemOverview } from '@/types/api'
+import { useToast } from '@/stores/toast'
+import type { SystemActionInput, SystemOverview } from '@/types/api'
 
 const data = ref<SystemOverview>()
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
 const panel = usePanelState()
+const toast = useToast()
 let controller: AbortController | undefined
 let refreshTimer: number | undefined
 
@@ -60,6 +62,19 @@ interface ManagementTool {
 }
 
 const selectedTool = ref<ManagementTool>()
+const actionRunning = ref(false)
+const actionConfirmed = ref(false)
+const actionForm = reactive({
+  hostname: '',
+  port: 2222,
+  dns: '',
+  timezone: 'Asia/Shanghai',
+  swapSizeMiB: 2048,
+  mirrorPreset: 'official' as 'official' | 'aliyun',
+  preference: 'ipv4' as 'ipv4' | 'system_default',
+  profile: 'balanced' as 'balanced' | 'web' | 'off',
+  bbrEnabled: true,
+})
 
 const loadPercent = computed(() => {
   const cores = Number(data.value?.load.unit || 1)
@@ -217,7 +232,106 @@ function capabilityState(id: string): { enabled: boolean; reason: string } {
 }
 
 function openTool(tool: ManagementTool): void {
+  const management = data.value?.management
+  actionForm.hostname = data.value?.hostname || ''
+  actionForm.port = nextSSHPort(management?.ssh.ports || [])
+  actionForm.dns = (management?.dns.servers || []).filter((server) => server !== '127.0.0.53').join('\n')
+  actionForm.timezone = management?.timezone || 'Asia/Shanghai'
+  actionForm.swapSizeMiB = management?.swap.totalBytes
+    ? Math.max(256, Math.round(management.swap.totalBytes / 1024 / 1024))
+    : 2048
+  actionForm.mirrorPreset = management?.packageSources.some((source) => source.includes('aliyun')) ? 'aliyun' : 'official'
+  actionForm.preference = management?.ipPreference === 'ipv4' ? 'ipv4' : 'system_default'
+  actionForm.profile = management?.kernelOptimization.enabled
+    ? management.kernelOptimization.profile?.includes('网站')
+      ? 'web'
+      : 'balanced'
+    : 'off'
+  actionForm.bbrEnabled = !management?.bbr.enabled
+  actionConfirmed.value = false
   selectedTool.value = tool
+}
+
+function nextSSHPort(ports: number[]): number {
+  for (const candidate of [2222, 22022, 2022, 22222]) {
+    if (!ports.includes(candidate)) return candidate
+  }
+  return 2222
+}
+
+function closeTool(): void {
+  if (actionRunning.value) return
+  selectedTool.value = undefined
+  actionConfirmed.value = false
+}
+
+const actionInput = computed<SystemActionInput | undefined>(() => {
+  const id = selectedTool.value?.id
+  switch (id) {
+    case 'hostname':
+      return { action: 'hostname', hostname: actionForm.hostname.trim().toLowerCase() }
+    case 'ssh-port':
+      return { action: 'ssh-port', port: Number(actionForm.port) }
+    case 'dns':
+      return {
+        action: 'dns',
+        servers: actionForm.dns
+          .split(/[\s,，;；]+/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+      }
+    case 'timezone':
+      return { action: 'timezone', timezone: actionForm.timezone.trim() }
+    case 'swap':
+      return { action: 'swap', swapSizeMiB: Number(actionForm.swapSizeMiB) }
+    case 'mirror':
+      return { action: 'mirror', mirrorPreset: actionForm.mirrorPreset }
+    case 'ip-preference':
+      return { action: 'ip-preference', preference: actionForm.preference }
+    case 'kernel':
+      return { action: 'kernel-tuning', profile: actionForm.profile }
+    case 'bbr':
+      return { action: 'bbr', enabled: actionForm.bbrEnabled }
+    default:
+      return undefined
+  }
+})
+
+const actionValid = computed(() => {
+  const input = actionInput.value
+  if (!input || !selectedTool.value || !capabilityState(selectedTool.value.capability).enabled) return false
+  switch (input.action) {
+    case 'hostname':
+      return Boolean(input.hostname && /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(input.hostname))
+    case 'ssh-port':
+      return Number.isInteger(input.port) && Number(input.port) >= 1 && Number(input.port) <= 65535
+    case 'dns':
+      return Boolean(input.servers?.length && input.servers.length <= 4)
+    case 'timezone':
+      return Boolean(input.timezone && !input.timezone.includes('..'))
+    case 'swap':
+      return input.swapSizeMiB === 0 || Boolean(input.swapSizeMiB && input.swapSizeMiB >= 256 && input.swapSizeMiB <= 65536)
+    default:
+      return true
+  }
+})
+
+async function executeAction(): Promise<void> {
+  const tool = selectedTool.value
+  const input = actionInput.value
+  if (!tool || !input || !actionValid.value || !actionConfirmed.value || actionRunning.value) return
+  actionRunning.value = true
+  try {
+    const result = await api.system.action(input)
+    toast.success(result.changed ? `${tool.title}已更新` : `${tool.title}无需变更`, result.message)
+    await load(true)
+    selectedTool.value = undefined
+    actionConfirmed.value = false
+  } catch (reason) {
+    toast.danger(`${tool.title}执行失败`, reason instanceof ApiError ? reason.message : 'Agent 未能完成该操作。')
+  } finally {
+    actionRunning.value = false
+  }
 }
 
 async function load(silent = false): Promise<void> {
@@ -403,7 +517,7 @@ onBeforeUnmount(() => {
                 <p>与 kejilion.sh 当前系统配置双向识别</p>
               </div>
             </div>
-            <span class="management-read-state"><ShieldCheck :size="14" /> 只读识别</span>
+            <span class="management-read-state"><ShieldCheck :size="14" /> 状态实时同步</span>
           </header>
 
           <div class="configuration-list">
@@ -454,7 +568,7 @@ onBeforeUnmount(() => {
                   <component :is="tool.icon" :size="19" />
                 </span>
                 <span class="system-tool__state">
-                  {{ capabilityState(tool.capability).enabled ? '可配置' : '只读' }}
+                  {{ capabilityState(tool.capability).enabled ? '可配置' : '受保护' }}
                 </span>
               </span>
               <strong>{{ tool.title }}</strong>
@@ -503,7 +617,7 @@ onBeforeUnmount(() => {
       :open="Boolean(selectedTool)"
       :title="selectedTool?.title || '系统工具'"
       :description="selectedTool?.description"
-      @close="selectedTool = undefined"
+      @close="closeTool"
     >
       <div v-if="selectedTool" class="management-dialog">
         <div class="management-dialog__current" :class="{ 'is-danger': selectedTool.tone === 'danger' }">
@@ -520,19 +634,108 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="inline-alert inline-alert--warning">
+        <div v-if="capabilityState(selectedTool.capability).enabled" class="management-form">
+          <label v-if="selectedTool.id === 'hostname'" class="field">
+            <span>新主机名</span>
+            <input v-model.trim="actionForm.hostname" maxlength="253" autocomplete="off" placeholder="server.example" />
+            <small>仅允许小写字母、数字、连字符和点。</small>
+          </label>
+          <label v-else-if="selectedTool.id === 'ssh-port'" class="field">
+            <span>新增 SSH 端口</span>
+            <input v-model.number="actionForm.port" type="number" min="1" max="65535" inputmode="numeric" />
+            <small>新端口监听成功前不会移除任何现有端口。</small>
+          </label>
+          <label v-else-if="selectedTool.id === 'dns'" class="field">
+            <span>DNS 服务器</span>
+            <textarea v-model.trim="actionForm.dns" rows="4" placeholder="1.1.1.1&#10;8.8.8.8"></textarea>
+            <small>每行一个 IP，最多 4 个；通过 systemd-resolved 原生配置应用。</small>
+          </label>
+          <label v-else-if="selectedTool.id === 'timezone'" class="field">
+            <span>IANA 时区</span>
+            <input v-model.trim="actionForm.timezone" list="kpanel-timezones" maxlength="128" autocomplete="off" />
+            <datalist id="kpanel-timezones">
+              <option value="Asia/Shanghai" />
+              <option value="Asia/Hong_Kong" />
+              <option value="Asia/Tokyo" />
+              <option value="Europe/London" />
+              <option value="America/New_York" />
+              <option value="Etc/UTC" />
+            </datalist>
+          </label>
+          <label v-else-if="selectedTool.id === 'swap'" class="field">
+            <span>KPanel 专属 Swap</span>
+            <select v-model.number="actionForm.swapSizeMiB">
+              <option :value="0">停用专属 Swap</option>
+              <option :value="512">512 MiB</option>
+              <option :value="1024">1 GiB</option>
+              <option :value="2048">2 GiB</option>
+              <option :value="4096">4 GiB</option>
+              <option :value="8192">8 GiB</option>
+            </select>
+            <small>不会停用或删除由 kejilion.sh、云厂商或用户创建的其他 Swap。</small>
+          </label>
+          <label v-else-if="selectedTool.id === 'mirror'" class="field">
+            <span>APT 软件源线路</span>
+            <select v-model="actionForm.mirrorPreset">
+              <option value="official">Debian / Ubuntu 官方源</option>
+              <option value="aliyun">阿里云镜像源</option>
+            </select>
+            <small>只改发行版源；Docker、NodeSource 等第三方源保持不变。</small>
+          </label>
+          <label v-else-if="selectedTool.id === 'ip-preference'" class="field">
+            <span>地址选择优先级</span>
+            <select v-model="actionForm.preference">
+              <option value="ipv4">IPv4 优先</option>
+              <option value="system_default">系统默认（通常 IPv6 优先）</option>
+            </select>
+          </label>
+          <label v-else-if="selectedTool.id === 'kernel'" class="field">
+            <span>安全调优配置</span>
+            <select v-model="actionForm.profile">
+              <option value="balanced">均衡优化</option>
+              <option value="web">网站服务器优化</option>
+              <option value="off">停用 KPanel 优化</option>
+            </select>
+            <small>使用固定参数白名单；检测到脚本外部管理的同名配置时拒绝覆盖。</small>
+          </label>
+          <label v-else-if="selectedTool.id === 'bbr'" class="field">
+            <span>目标状态</span>
+            <select v-model="actionForm.bbrEnabled">
+              <option :value="true">启用 BBR + fq</option>
+              <option :value="false">停用并恢复 cubic + fq_codel</option>
+            </select>
+          </label>
+
+          <label class="confirmation-check">
+            <input v-model="actionConfirmed" type="checkbox" />
+            <span>我确认执行此项变更；失败时 KPanel 将自动恢复已备份的配置。</span>
+          </label>
+        </div>
+
+        <div
+          class="inline-alert"
+          :class="capabilityState(selectedTool.capability).enabled ? 'inline-alert--info' : 'inline-alert--warning'"
+        >
           <CircleAlert :size="17" />
           <span>
-            当前版本只读取并呈现宿主机真实状态，不发送变更命令。
-            {{ capabilityState(selectedTool.capability).reason }}
+            {{
+              capabilityState(selectedTool.capability).enabled
+                ? '该操作使用固定参数执行器，并在完成后回读宿主机真实状态。'
+                : capabilityState(selectedTool.capability).reason
+            }}
           </span>
         </div>
       </div>
       <template #footer>
-        <button class="button button--secondary" type="button" @click="selectedTool = undefined">关闭</button>
-        <button class="button button--primary" type="button" disabled>
+        <button class="button button--secondary" type="button" :disabled="actionRunning" @click="closeTool">关闭</button>
+        <button
+          class="button button--primary"
+          type="button"
+          :disabled="!actionValid || !actionConfirmed || actionRunning"
+          @click="executeAction"
+        >
           <ShieldCheck :size="16" />
-          安全执行器未启用
+          {{ actionRunning ? '正在执行并验证…' : capabilityState(selectedTool?.capability || '').enabled ? '确认执行' : '当前不可执行' }}
         </button>
       </template>
     </ModalDialog>

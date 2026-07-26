@@ -54,7 +54,7 @@ if KP_AGENT_VERSION=0.0.1 run_installer >"$TEST_DIR/version.out" 2>&1; then
 	echo "installer accepted a mismatched Agent version" >&2
 	exit 1
 fi
-grep -F 'does not match 0.2.0 v1alpha1' "$TEST_DIR/version.out" >/dev/null
+grep -F 'does not match 0.3.0 v1alpha1' "$TEST_DIR/version.out" >/dev/null
 
 if PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
 	sh "$PROJECT_DIR/deploy/install.sh" \
@@ -157,13 +157,17 @@ if grep -Eq '^StateDirectory=kejilion-panel(/.*)?$' \
 	echo "Agent unit can take ownership of the Panel container data tree" >&2
 	exit 1
 fi
-grep -Fx 'ReadOnlyPaths=/var/lib/kejilion-panel' \
+grep -Fx 'ReadOnlyPaths=/var/lib/kejilion-panel/panel' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
 if grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
-	grep -F '/var/lib/kejilion-panel' >/dev/null; then
+	grep -F '/var/lib/kejilion-panel/panel' >/dev/null; then
 	echo "Agent unit can write the Panel authentication and audit data tree" >&2
 	exit 1
 fi
+grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
+	grep -F '/var/lib/kejilion-panel/system' >/dev/null
+grep -F 'SYSTEM_STATE_DIR=/var/lib/kejilion-panel/system' \
+	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'expected 65532:65532:700' "$PROJECT_DIR/deploy/install.sh" >/dev/null
 test "$(grep -c '^assert_panel_data_dir \"after ' "$PROJECT_DIR/deploy/install.sh")" = 3
 AGENT_DATA_GATE_LINE=$(grep -n '^assert_panel_data_dir "after Agent start"$' \

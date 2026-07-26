@@ -18,26 +18,26 @@ KPanel 的系统管理业务以 `kejilion.sh` 为功能基准，但不把整个 
 | 业务 | 脚本产物识别 | Web 写入开放条件 |
 | --- | --- | --- |
 | 主机名 | kernel hostname | hostname 规则校验、原子更新、回读 |
-| SSH 端口 | `sshd_config` 与片段 | `sshd -t`、新端口探测、保留旧会话、可回滚 |
-| DNS | `resolv.conf` 与管理器 | 按 resolved/resolvconf/静态模式处理、连通性回读 |
+| SSH 端口 | `sshd_config` 与片段 | 首版只安全新增端口；`sshd -t`、防火墙放行、reload、监听探测并保留旧端口 |
+| DNS | `resolv.conf` 与管理器 | 首版只接管 systemd-resolved drop-in，不替换或锁定 `resolv.conf` |
 | 时区 | `/etc/timezone` 或 `localtime` | IANA 名称白名单、回读 |
 | 虚拟内存 | `/proc/meminfo`、`/proc/swaps` | 仅管理 KPanel 专属 swapfile，不清除现有分区 |
-| 系统镜像源 | APT/DNF/APK 源地址 | 备份、语法检查、连通性测试、失败回滚 |
-| V4/V6 优先 | `gai.conf` | 仅维护带 KPanel 标识的规则，不删除用户配置 |
-| 内核优化 | Kejilion sysctl 产物 | 参数白名单、独立文件、应用校验、版本化回滚 |
+| 系统镜像源 | APT/DNF/APK 源地址 | 首版支持 Debian/Ubuntu 官方源与阿里云源；第三方源不修改，`apt-get update` 失败回滚 |
+| V4/V6 优先 | `gai.conf` | 维护 `kejilion.sh` 同一 precedence 规则并保留其他用户配置 |
+| 内核优化 | Kejilion sysctl 产物 | 固定参数白名单、应用校验、版本化回滚；外部脚本配置不覆盖 |
 | BBR | 当前/可用拥塞算法与 qdisc | 内核能力检查、独立 sysctl 文件、回读 |
 | 重装系统 | 不适用 | 带外控制台、备份证明、一次性恢复凭证、二次确认 |
 
-## 当前阶段
+## v0.3 写入范围
 
-当前实现开放真实状态读取和能力门控。所有写能力由 Agent 明确返回
-`enabled: false` 及原因，页面可查看状态和安全要求，但不会发送修改命令。
-这保证页面设计可以先稳定上线，同时不改变现有 `kejilion.sh` 业务和宿主机配置。
+Agent 根据宿主机命令、配置管理器和 root/sandbox 条件动态返回 capability。
+满足条件时，登录管理员可在页面填写固定字段并二次确认；不满足条件时只展示
+真实状态和明确原因。
 
-后续每开放一个写能力，都必须同时交付：
+已开放：主机名、安全新增 SSH 端口、systemd-resolved DNS、时区、KPanel
+专属 Swap、Debian/Ubuntu APT 镜像预设、地址优先级、KPanel 内核调优预设和
+BBR。重装系统继续锁定；SSH 旧端口删除、静态 `resolv.conf` 接管、任意软件源
+URL、任意 sysctl 和任意 Shell 均不开放。
 
-1. 类型化请求和输入验证；
-2. 变更前快照及回滚；
-3. 变更后回读验证；
-4. Panel CSRF/Origin 防护和审计记录；
-5. 脚本修改、Web 修改和外部修改三种一致性测试。
+系统备份保存在 `/var/lib/kejilion-panel/system/backups`。Panel 数据、
+`kejilion.sh` 文件、现有网站、其他容器和其他 Swap 不进入系统操作事务。

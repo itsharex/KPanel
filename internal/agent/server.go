@@ -20,6 +20,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
+	"github.com/kejilion/kejilion-panel/internal/systemmanage"
 )
 
 const maxAgentRequestBytes = 64 << 10
@@ -30,6 +31,7 @@ type Config struct {
 	ProtocolVersion string
 	WebRoot         string
 	System          *systeminfo.Collector
+	SystemManager   *systemmanage.Manager
 	Sites           *sites.Discoverer
 	SitesManager    *sites.Manager
 	Docker          *dockerx.Client
@@ -42,6 +44,7 @@ type Server struct {
 	protocolVersion string
 	webRoot         string
 	system          *systeminfo.Collector
+	systemManager   *systemmanage.Manager
 	sites           *sites.Discoverer
 	sitesManager    *sites.Manager
 	docker          *dockerx.Client
@@ -61,6 +64,9 @@ func NewServer(config Config) (*Server, error) {
 	if config.System == nil {
 		config.System = systeminfo.NewCollector()
 	}
+	if config.SystemManager == nil {
+		config.SystemManager = systemmanage.NewManager(systemmanage.Config{Enabled: false})
+	}
 	if config.Sites == nil {
 		config.Sites = sites.NewDiscoverer(config.WebRoot)
 	}
@@ -76,6 +82,7 @@ func NewServer(config Config) (*Server, error) {
 		protocolVersion: config.ProtocolVersion,
 		webRoot:         config.WebRoot,
 		system:          config.System,
+		systemManager:   config.SystemManager,
 		sites:           config.Sites,
 		sitesManager:    config.SitesManager,
 		docker:          config.Docker,
@@ -102,6 +109,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.capabilities)
 	case r.URL.Path == "/v1/system/summary":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemSummary)
+	case r.URL.Path == "/v1/system/actions":
+		s.requireMethod(w, r, requestID, http.MethodPost, s.systemAction)
 	case r.URL.Path == "/v1/sites":
 		s.siteCollection(w, r, requestID)
 	case strings.HasPrefix(r.URL.Path, "/v1/sites/"):
@@ -175,22 +184,13 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	siteWriteErr := s.sitesManager.Writable(writeContext)
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
-		{ID: "system.hostname.write", Enabled: false, Reason: "安全执行器尚未启用"},
-		{ID: "system.ssh-port.write", Enabled: false, Reason: "需要防失联与回滚机制"},
-		{ID: "system.dns.write", Enabled: false, Reason: "需要按解析器类型安全接管"},
-		{ID: "system.timezone.write", Enabled: false, Reason: "安全执行器尚未启用"},
-		{ID: "system.swap.write", Enabled: false, Reason: "仅允许管理 KPanel 专属 swapfile"},
-		{ID: "system.mirror.write", Enabled: false, Reason: "需要软件源校验与自动回滚"},
-		{ID: "system.ip-preference.write", Enabled: false, Reason: "安全执行器尚未启用"},
-		{ID: "system.kernel-tuning.write", Enabled: false, Reason: "需要参数白名单与回滚"},
-		{ID: "system.bbr.write", Enabled: false, Reason: "需要内核兼容检查与回滚"},
-		{ID: "system.reinstall", Enabled: false, Reason: "Web 端重装需带外恢复通道"},
 		{ID: "sites.read", Enabled: siteErr == nil, Reason: reasonIf(siteErr, "Kejilion Web 根目录不可用"), Methods: []string{"GET"}},
 		{ID: "docker.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "docker.logs", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "docker.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅安全识别的 Kejilion 容器可操作"), Methods: []string{"POST"}},
 		{ID: "sites.write", Enabled: siteWriteErr == nil, Reason: reasonIf(siteWriteErr, "安全写入条件不满足"), Methods: []string{"POST", "PATCH"}},
 	}
+	items = append(items, s.systemManager.Capabilities()...)
 	writeJSON(w, http.StatusOK, contract.PageResult[contract.Capability]{Items: items})
 }
 
@@ -201,6 +201,40 @@ func (s *Server) systemSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *Server) systemAction(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_system_action", "系统操作 URL 无效", "")
+		return
+	}
+	var input contract.SystemActionRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	result, err := s.systemManager.Execute(ctx, input)
+	if err != nil {
+		status, code, title := http.StatusServiceUnavailable, "system_action_failed", "系统操作失败"
+		switch {
+		case errors.Is(err, systemmanage.ErrInvalidInput):
+			status, code, title = http.StatusUnprocessableEntity, "invalid_system_action", "系统操作参数无效"
+		case errors.Is(err, systemmanage.ErrDisabled), errors.Is(err, systemmanage.ErrUnsupported):
+			status, code, title = http.StatusForbidden, "system_action_unavailable", "系统操作不可用"
+		case errors.Is(err, systemmanage.ErrConflict):
+			status, code, title = http.StatusConflict, "system_action_conflict", "系统配置发生冲突"
+		case errors.Is(err, systemmanage.ErrRolledBack):
+			status, code, title = http.StatusUnprocessableEntity, "system_action_rolled_back", "系统操作失败并已回滚"
+		case errors.Is(err, systemmanage.ErrNeedsAttention):
+			status, code, title = http.StatusServiceUnavailable, "system_action_needs_attention", "系统操作需要人工检查"
+		}
+		writeProblem(w, requestID, status, code, title, safeDetail(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) siteList(w http.ResponseWriter, _ *http.Request) {

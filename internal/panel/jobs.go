@@ -141,7 +141,9 @@ func jobsFromAudit(events []store.AuditEvent, limit int) []contract.Job {
 }
 
 func managementAuditAction(action string) bool {
-	return strings.HasPrefix(action, "docker.") || strings.HasPrefix(action, "site.")
+	return strings.HasPrefix(action, "docker.") ||
+		strings.HasPrefix(action, "site.") ||
+		strings.HasPrefix(action, "system.")
 }
 
 func jobAuditResult(result string) bool {

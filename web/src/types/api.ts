@@ -150,6 +150,37 @@ export interface SystemOverview {
   }
 }
 
+export interface SystemActionInput {
+  action:
+    | 'hostname'
+    | 'ssh-port'
+    | 'dns'
+    | 'timezone'
+    | 'swap'
+    | 'mirror'
+    | 'ip-preference'
+    | 'kernel-tuning'
+    | 'bbr'
+  hostname?: string
+  port?: number
+  servers?: string[]
+  timezone?: string
+  swapSizeMiB?: number
+  mirrorPreset?: 'official' | 'aliyun'
+  preference?: 'ipv4' | 'system_default'
+  profile?: 'balanced' | 'web' | 'off'
+  enabled?: boolean
+}
+
+export interface SystemActionResult {
+  action: string
+  status: string
+  changed: boolean
+  message: string
+  backupPath?: string
+  appliedAt: string
+}
+
 export interface CertificateSummary {
   status: 'valid' | 'expiring' | 'expired' | 'missing' | 'unknown'
   issuer?: string

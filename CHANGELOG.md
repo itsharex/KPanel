@@ -2,6 +2,26 @@
 
 本项目遵循语义化版本。所有日期均使用 `YYYY-MM-DD`。
 
+## [0.3.0] - 2026-07-26
+
+### Added
+
+- 系统管理页开放主机名、安全新增 SSH 端口、systemd-resolved DNS、时区、
+  KPanel 专属 Swap、Debian/Ubuntu APT 镜像源、V4/V6 优先级、内核优化
+  预设和 BBR 的类型化写入。
+- 每次系统变更均记录意图与结果审计，并在宿主机保存变更前配置快照；执行失败
+  自动回滚，成功后重新读取真实状态。
+- SSH 新端口在 `sshd -t`、防火墙放行、reload 和监听探测全部成功前不会完成，
+  且首版保留所有旧端口，避免远程失联。
+
+### Security
+
+- Web 与 Agent 均只接受固定 action 和字段，不接受命令名、Shell、脚本内容或
+  任意目标路径；所有写请求继续强制登录、同源、CSRF 和审计。
+- Swap 只管理 `/var/lib/kejilion-panel/system/swapfile`，不会停用现有 Swap；
+  APT 切换不修改 Docker、NodeSource 等第三方仓库。
+- 检测到外部 `kejilion.sh` 内核调优配置时拒绝覆盖；系统重装仍保持锁定。
+
 ## [0.2.0] - 2026-07-26
 
 ### Added

@@ -166,6 +166,31 @@ describe('API client', () => {
     })
   })
 
+  it('sends only the typed system action payload through the protected mutation path', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        action: 'dns',
+        status: 'succeeded',
+        changed: true,
+        message: 'DNS 已更新',
+        appliedAt: '2026-07-26T03:00:00Z',
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.system.action({ action: 'dns', servers: ['1.1.1.1', '8.8.8.8'] })).resolves.toMatchObject({
+      action: 'dns',
+      changed: true,
+    })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/system/actions')
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({
+      action: 'dns',
+      servers: ['1.1.1.1', '8.8.8.8'],
+    })
+  })
+
   it('keeps the overview compatible with an older Agent without management fields', async () => {
     const collectedAt = '2026-07-25T10:00:00Z'
     const system = {
