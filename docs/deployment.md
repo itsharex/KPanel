@@ -56,7 +56,7 @@ sha256sum dist/linux-amd64/kejilion-agent dist/linux-arm64/kejilion-agent
 推送 Docker Hub：
 
 ```sh
-VERSION=0.13.0
+VERSION=0.13.1
 IMAGE=docker.io/<owner>/kejilion-panel
 
 docker login
@@ -159,7 +159,8 @@ docker --host unix:///var/run/docker.sock compose \
 ```
 
 `KEJILION_PANEL_PUBLIC_URL` 必须与浏览器访问的来源完全一致。直接 HTTP 会禁用
-Secure Cookie，仅建议用于受控测试环境；正式公网环境仍建议使用 HTTPS。
+Secure Cookie，仅建议用于受控测试环境。覆盖文件会为 Panel 增加一个独立的
+`kejilion-panel-public` 发布网络；原来的 Agent 内部网络继续保留。正式公网环境仍建议使用 HTTPS。
 
 ## 验收
 

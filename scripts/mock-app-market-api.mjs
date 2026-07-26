@@ -201,7 +201,7 @@ createServer((request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/v1/agent/health') {
     send(response, 200, {
       status: 'ok',
-      version: '0.13.0',
+      version: '0.13.1',
       protocolVersion: 'v1',
       readOnly: false,
       checkedAt: new Date().toISOString(),

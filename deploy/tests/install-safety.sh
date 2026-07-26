@@ -54,7 +54,7 @@ if KP_AGENT_VERSION=0.0.1 run_installer >"$TEST_DIR/version.out" 2>&1; then
 	echo "installer accepted a mismatched Agent version" >&2
 	exit 1
 fi
-grep -F 'does not match 0.13.0 v1alpha1' "$TEST_DIR/version.out" >/dev/null
+grep -F 'does not match 0.13.1 v1alpha1' "$TEST_DIR/version.out" >/dev/null
 
 if PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
 	sh "$PROJECT_DIR/deploy/install.sh" \
@@ -187,6 +187,9 @@ if grep -Eq '^[[:space:]]*ports:' "$PROJECT_DIR/deploy/compose/compose.yml"; the
 	echo "internal Panel network still declares an unreachable host port" >&2
 	exit 1
 fi
+grep -F 'ports:' "$PROJECT_DIR/deploy/compose/direct-port.yml" >/dev/null
+grep -F 'panel-public: {}' "$PROJECT_DIR/deploy/compose/direct-port.yml" >/dev/null
+grep -F 'name: kejilion-panel-public' "$PROJECT_DIR/deploy/compose/direct-port.yml" >/dev/null
 grep -F "{{len .HostConfig.PortBindings}}" "$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F "{{(index .IPAM.Config 0).Subnet}}" "$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F "{{.State.Health.Status}}" "$PROJECT_DIR/deploy/install.sh" >/dev/null
