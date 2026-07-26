@@ -31,6 +31,7 @@ var (
 	appJobIDPattern    = regexp.MustCompile(`^[a-f0-9]{32}$`)
 	appSelectorPattern = regexp.MustCompile(`^(?:[1-9][0-9]{0,2}|[A-Za-z0-9][A-Za-z0-9_-]{0,63})$`)
 	appProgressPattern = regexp.MustCompile(`^KPANEL_PROGRESS ([0-9]{1,3}) (.+)$`)
+	appLicensePattern  = regexp.MustCompile(`(?m)^permission_granted="true"\r?$`)
 )
 
 type AppJob struct {
@@ -410,7 +411,7 @@ func isKPanelCompatibleScript(content []byte) bool {
 	value := string(content)
 	return strings.Contains(value, "KJ_APP_NONINTERACTIVE") &&
 		strings.Contains(value, "kpanel_run_docker_app_install") &&
-		strings.Contains(value, `permission_granted="true"`)
+		appLicensePattern.MatchString(value)
 }
 
 func RunAppJob(ctx context.Context, stateDir, id string) error {

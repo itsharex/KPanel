@@ -145,10 +145,15 @@ func TestKejilionStandardAppsBecomeDirectlyInstallable(t *testing.T) {
 
 func TestKejilionScriptCompatibilityRequiresExplicitLicenseAcceptance(t *testing.T) {
 	base := []byte("KJ_APP_NONINTERACTIVE\nkpanel_run_docker_app_install\n")
-	if isKPanelCompatibleScript(append(base, []byte(`permission_granted="false"`)...)) {
+	unaccepted := append(
+		append([]byte{}, base...),
+		[]byte("permission_granted=\"false\"\nsed -i 's/permission_granted=\"false\"/permission_granted=\"true\"/' /usr/local/bin/k\n")...,
+	)
+	if isKPanelCompatibleScript(unaccepted) {
 		t.Fatal("unaccepted user license enabled background script execution")
 	}
-	if !isKPanelCompatibleScript(append(base, []byte(`permission_granted="true"`)...)) {
+	accepted := append(append([]byte{}, base...), []byte("permission_granted=\"true\"\n")...)
+	if !isKPanelCompatibleScript(accepted) {
 		t.Fatal("accepted compatible script was rejected")
 	}
 }
