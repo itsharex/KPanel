@@ -380,7 +380,7 @@ func TestRewriteAPTSourceLeavesThirdPartyRepositoriesUntouched(t *testing.T) {
 			"deb https://deb.debian.org/debian-security bookworm-security main\n" +
 			"deb https://download.docker.com/linux/debian bookworm stable\n",
 	)
-	aliyun := string(rewriteAPTSource(input, "debian", "aliyun"))
+	aliyun := string(rewriteAPTSource(input, "debian", "cn-default"))
 	if strings.Count(aliyun, "https://mirrors.aliyun.com/") != 2 {
 		t.Fatalf("distribution repositories were not rewritten: %q", aliyun)
 	}
@@ -388,8 +388,123 @@ func TestRewriteAPTSourceLeavesThirdPartyRepositoriesUntouched(t *testing.T) {
 		t.Fatalf("third-party repository changed: %q", aliyun)
 	}
 	official := string(rewriteAPTSource([]byte(aliyun), "debian", "official"))
-	if strings.Count(official, "https://deb.debian.org/") != 2 {
+	if !strings.Contains(official, "https://deb.debian.org/debian") ||
+		!strings.Contains(official, "https://security.debian.org/debian-security") {
 		t.Fatalf("official repositories were not restored: %q", official)
+	}
+}
+
+func TestRewriteAPTSourceRecognizesKejilionLinuxMirrorsOutput(t *testing.T) {
+	input := []byte(
+		"Types: deb\n" +
+			"URIs: https://download.nus.edu.sg/mirror/debian/\n" +
+			"Suites: bookworm bookworm-updates\n" +
+			"Components: main\n",
+	)
+	got := string(rewriteAPTSource(input, "debian", "cn-edu"))
+	if !strings.Contains(got, "URIs: https://mirrors.pku.edu.cn/debian/") {
+		t.Fatalf("LinuxMirrors URL with a path prefix was not normalized: %q", got)
+	}
+}
+
+func TestSetMirrorMatchesKejilionSmartRouting(t *testing.T) {
+	tests := []struct {
+		name    string
+		country string
+		host    string
+	}{
+		{name: "mainland uses Huawei", country: "CN", host: "mirrors.huaweicloud.com"},
+		{name: "overseas uses official", country: "US", host: "deb.debian.org"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &fakeRunner{}
+			manager, etcRoot, _, _ := testManager(t, runner)
+			mustWrite(
+				t,
+				filepath.Join(etcRoot, "apt", "sources.list"),
+				"deb https://mirrors.aliyun.com/debian stable main\n",
+			)
+			manager.country = func(context.Context) (string, error) {
+				return test.country, nil
+			}
+
+			changed, backup, message, err := manager.setMirror(context.Background(), "smart")
+			if err != nil || !changed || backup == "" {
+				t.Fatalf("setMirror() changed=%v backup=%q message=%q err=%v", changed, backup, message, err)
+			}
+			source := readLimited(filepath.Join(etcRoot, "apt", "sources.list"))
+			if !strings.Contains(source, "https://"+test.host+"/debian") {
+				t.Fatalf("smart route source = %q, want host %s", source, test.host)
+			}
+			if !strings.Contains(message, "未升级软件、未清缓存") {
+				t.Fatalf("result does not state kejilion.sh maintenance semantics: %q", message)
+			}
+			if !slices.ContainsFunc(runner.commands, func(command string) bool {
+				return strings.HasPrefix(command, "apt-get ") &&
+					strings.Contains(command, "Dir::State::Lists=") &&
+					strings.HasSuffix(command, " update")
+			}) {
+				t.Fatalf("isolated apt validation was not executed: %#v", runner.commands)
+			}
+		})
+	}
+}
+
+func TestSetMirrorFallsBackToOfficialWhenCountryLookupFails(t *testing.T) {
+	manager, etcRoot, _, _ := testManager(t, &fakeRunner{})
+	mustWrite(
+		t,
+		filepath.Join(etcRoot, "apt", "sources.list"),
+		"deb https://mirrors.huaweicloud.com/debian stable main\n",
+	)
+	manager.country = func(context.Context) (string, error) {
+		return "", errors.New("network unavailable")
+	}
+	changed, _, message, err := manager.setMirror(context.Background(), "smart")
+	if err != nil || !changed {
+		t.Fatalf("setMirror() changed=%v message=%q err=%v", changed, message, err)
+	}
+	if source := readLimited(filepath.Join(etcRoot, "apt", "sources.list")); !strings.Contains(source, "deb.debian.org") {
+		t.Fatalf("smart fallback source = %q", source)
+	}
+	if !strings.Contains(message, "地区识别失败") {
+		t.Fatalf("fallback was not reported: %q", message)
+	}
+}
+
+func TestSetMirrorRollsBackWhenAPTValidationFails(t *testing.T) {
+	runner := &fakeRunner{
+		run: func(_ context.Context, name string, _ ...string) ([]byte, error) {
+			if name == "apt-get" {
+				return nil, errors.New("repository unavailable")
+			}
+			return nil, nil
+		},
+	}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	sourcePath := filepath.Join(etcRoot, "apt", "sources.list")
+	original := readLimited(sourcePath)
+	_, backup, _, err := manager.setMirror(context.Background(), "cn-default")
+	if !errors.Is(err, ErrRolledBack) || backup == "" {
+		t.Fatalf("expected rollback with backup, backup=%q err=%v", backup, err)
+	}
+	if restored := readLimited(sourcePath); restored != original {
+		t.Fatalf("source was not rolled back: got %q want %q", restored, original)
+	}
+}
+
+func TestSetMirrorRefusesUnrecognizedCustomDistributionSource(t *testing.T) {
+	manager, etcRoot, _, _ := testManager(t, &fakeRunner{})
+	sourcePath := filepath.Join(etcRoot, "apt", "sources.list")
+	original := "deb https://packages.example.test/debian stable main\n"
+	mustWrite(t, sourcePath, original)
+	_, backup, _, err := manager.setMirror(context.Background(), "cn-default")
+	if !errors.Is(err, ErrConflict) || backup != "" {
+		t.Fatalf("expected conflict without backup, backup=%q err=%v", backup, err)
+	}
+	if got := readLimited(sourcePath); got != original {
+		t.Fatalf("custom distribution source changed: %q", got)
 	}
 }
 
@@ -918,7 +1033,7 @@ func TestRunMaintenanceRejectsAlpineAndUnknownDistributions(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesEnableMaintenanceButNotMirrorForRocky(t *testing.T) {
+func TestCapabilitiesEnableMaintenanceButKeepMirrorReadOnlyForRocky(t *testing.T) {
 	manager, etcRoot, _, _ := testManager(t, &fakeRunner{})
 	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=rocky\nID_LIKE=\"rhel centos fedora\"\n")
 	mustWrite(

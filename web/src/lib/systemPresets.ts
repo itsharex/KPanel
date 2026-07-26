@@ -1,4 +1,5 @@
 export const customPreset = '__custom__'
+export type MirrorPreset = 'cn-default' | 'cn-edu' | 'abroad' | 'smart'
 
 export const dnsPresets = [
   { value: 'cloudflare', label: 'Cloudflare（全球）', servers: ['1.1.1.1', '1.0.0.1'] },
@@ -41,4 +42,66 @@ export function parseDNSServers(value: string): string[] {
 export function detectDNSPreset(value: string): string {
   const servers = parseDNSServers(value)
   return dnsPresets.find((preset) => preset.servers.join('\n') === servers.join('\n'))?.value || customPreset
+}
+
+const educationMirrorHosts = [
+  'pku.edu.cn',
+  'bjtu.edu.cn',
+  'bfsu.edu.cn',
+  'bupt.edu.cn',
+  'cqu.edu.cn',
+  'cqupt.edu.cn',
+  'uestc.cn',
+  'scau.edu.cn',
+  'hust.edu.cn',
+  'jlu.edu.cn',
+  'nju.edu.cn',
+  'njtech.edu.cn',
+  'njupt.edu.cn',
+  'sustech.edu.cn',
+  'tuna.tsinghua.edu.cn',
+  'sdu.edu.cn',
+  'shanghaitech.edu.cn',
+  'sjtu.edu.cn',
+  'xjtu.edu.cn',
+  'nwafu.edu.cn',
+  'zju.edu.cn',
+  'ustc.edu.cn',
+]
+
+const abroadMirrorHosts = [
+  'xtom.',
+  '.hk',
+  '.sg',
+  '.tw',
+  '.jp',
+  '.de',
+  '.nl',
+  '.ee',
+  '.uk',
+  '.au',
+  'kernel.org',
+  'osuosl.org',
+  'princeton.edu',
+  'nus.edu.sg',
+]
+
+export function detectMirrorPreset(sources: string[]): MirrorPreset {
+  if (sources.some((source) => source.includes('huaweicloud.com'))) return 'smart'
+  if (sources.some((source) => educationMirrorHosts.some((host) => source.includes(host)))) return 'cn-edu'
+  if (
+    sources.some((source) =>
+      abroadMirrorHosts.some((host) => host.endsWith('.') ? source.includes(host) : source.endsWith(host)),
+    )
+  ) {
+    return 'abroad'
+  }
+  if (
+    sources.some((source) =>
+      ['aliyun.com', 'tencent.com', '163.com', 'ctyun.cn', 'volces.com'].some((host) => source.includes(host)),
+    )
+  ) {
+    return 'cn-default'
+  }
+  return 'smart'
 }

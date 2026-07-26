@@ -44,7 +44,7 @@ IPinfo IPv4/IPv6 HTTPS 端点，成功结果缓存 30 分钟；外部查询超�
 | DNS | `resolv.conf` 与管理器 | 首版只接管 systemd-resolved drop-in，不替换或锁定 `resolv.conf` |
 | 时区 | `/etc/timezone` 或 `localtime` | IANA 名称白名单、回读 |
 | 虚拟内存 | `/proc/meminfo`、`/proc/swaps`、`/swapfile` | 与 `kejilion.sh` 共用 `/swapfile`；合并旧版 KPanel Swap，不清除现有分区或第三方 swapfile |
-| 系统镜像源 | APT/RPM/APK/Pacman/Zypper 源地址 | 首版支持 Debian/Ubuntu 官方源与阿里云源；第三方源不修改，`apt-get update` 失败回滚 |
+| 系统镜像源 | APT/RPM/APK/Pacman/Zypper 源地址 | Debian/Ubuntu 对齐脚本四种区域模式；第三方源不修改，隔离 `apt-get update` 失败回滚 |
 | V4/V6 优先 | `gai.conf` | 维护 `kejilion.sh` 同一 precedence 规则并保留其他用户配置 |
 | 内核优化 | Kejilion sysctl 产物 | 五种固定预设、内存自适应、逐项应用和版本化回滚；合法脚本产物可接管 |
 | BBR | 当前/可用拥塞算法与 qdisc | 内核能力检查、独立 sysctl 文件、回读 |
@@ -60,7 +60,7 @@ Agent 根据宿主机命令、配置管理器和 root/sandbox 条件动态返回
 真实状态和明确原因。
 
 已开放：主机名、安全新增 SSH 端口、systemd-resolved DNS、时区、脚本兼容
-`/swapfile`、Debian/Ubuntu APT 镜像预设、地址优先级、KPanel 内核调优预设和
+`/swapfile`、Debian/Ubuntu APT 四种区域镜像预设、地址优先级、KPanel 内核调优预设和
 BBR，以及要求双重确认的服务器重启。重装系统继续锁定；SSH 旧端口删除、静态 `resolv.conf` 接管、任意软件源
 URL、任意 sysctl 和任意 Shell 均不开放。
 
@@ -85,6 +85,26 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 
 系统备份保存在 `/var/lib/kejilion-panel/system/backups`。Panel 数据、
 `kejilion.sh` 文件、现有网站、其他容器和其他 Swap 不进入系统操作事务。
+
+## v0.12 系统更新源切换
+
+- 页面入口与 `kejilion.sh` 系统工具第 19 项一致：中国大陆【默认】、中国大陆【教育网】、
+  海外地区、智能切换更新源。
+- 为适应无交互 Web，前三个区域固定使用 LinuxMirrors 当前对应列表的首选线路：
+  阿里云、北京大学和 xTom 香港。智能模式按脚本逻辑执行：
+  `CN → mirrors.huaweicloud.com`，Debian/Ubuntu 海外主机回到发行版官方源。
+- 智能地区识别仅访问固定的 IPinfo HTTPS 国家端点，4 秒超时；查询失败时不猜测中国线路，
+  明确回退官方源。该查询只在管理员确认执行智能换源时发起。
+- Agent 识别 LinuxMirrors 当前默认、教育网和海外列表中的主机名，并从 URL 中定位
+  `debian`、`debian-security`、`ubuntu` 或 `ubuntu-ports` 仓库路径。因此脚本先换源、
+  Web 后换源，或 Web 先换源、脚本后换源，首页都以宿主机实际源地址为准。
+- Web 不接受镜像 URL，不下载或执行远程 `main.sh`。修改前备份所有实际变化的 APT 文件，
+  然后在 `/var/lib/kejilion-panel/system/apt-validation` 独立 lists/cache 中执行短超时
+  `apt-get update`；任何文件写入或索引验证失败都会恢复原文件。
+- 换源动作与脚本的 `upgrade_software=false`、`clean_cache=false` 一致：不升级软件包、
+  不清理缓存。Docker、NodeSource 等第三方源保持不变。
+- KPanel 的系统维护读取范围已覆盖 RPM、Pacman 和 Zypper，但本版换源写入仍只开放
+  Debian/Ubuntu。其他发行版继续显示真实源和禁用原因，不伪装为已支持。
 
 ## v0.11 服务器重启
 

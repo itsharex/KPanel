@@ -215,7 +215,7 @@ export interface SystemActionInput {
   servers?: string[]
   timezone?: string
   swapSizeMiB?: number
-  mirrorPreset?: 'official' | 'aliyun'
+  mirrorPreset?: 'cn-default' | 'cn-edu' | 'abroad' | 'smart'
   preference?: 'ipv4' | 'system_default'
   profile?: 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
   maintenancePolicy?: 'full' | 'cache' | 'standard'

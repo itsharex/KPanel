@@ -95,8 +95,10 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 			return "swapSizeMiB", "swapSizeMiB must be 0 or between 256 and 65536"
 		}
 	case "mirror":
-		if input.MirrorPreset != "official" && input.MirrorPreset != "aliyun" {
-			return "mirrorPreset", "mirrorPreset must be official or aliyun"
+		switch input.MirrorPreset {
+		case "cn-default", "cn-edu", "abroad", "smart":
+		default:
+			return "mirrorPreset", "mirrorPreset must be cn-default, cn-edu, abroad, or smart"
 		}
 	case "ip-preference":
 		if input.Preference != "ipv4" && input.Preference != "system_default" {

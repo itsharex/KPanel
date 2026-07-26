@@ -37,7 +37,15 @@ import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import MetricCard from '@/components/overview/MetricCard.vue'
 import { ApiError, api } from '@/lib/api'
 import { clampPercent, formatBytes, formatDateTime, formatDuration, formatHostDateTime, formatPercent } from '@/lib/format'
-import { customPreset, detectDNSPreset, dnsPresets, parseDNSServers, timezonePresets } from '@/lib/systemPresets'
+import {
+  customPreset,
+  detectDNSPreset,
+  detectMirrorPreset,
+  dnsPresets,
+  parseDNSServers,
+  timezonePresets,
+  type MirrorPreset,
+} from '@/lib/systemPresets'
 import { usePanelState } from '@/stores/panel'
 import { useToast } from '@/stores/toast'
 import type { SystemActionInput, SystemOverview } from '@/types/api'
@@ -65,6 +73,38 @@ interface ManagementTool {
 
 type KernelProfile = 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
 
+const mirrorPresets: Array<{
+  value: MirrorPreset
+  title: string
+  route: string
+  description: string
+}> = [
+  {
+    value: 'cn-default',
+    title: '中国大陆',
+    route: '阿里云',
+    description: '对应脚本“中国大陆【默认】”，选择 LinuxMirrors 默认列表首选线路。',
+  },
+  {
+    value: 'cn-edu',
+    title: '中国教育网',
+    route: '北京大学',
+    description: '对应脚本“中国大陆【教育网】”，适合教育网或校园网络。',
+  },
+  {
+    value: 'abroad',
+    title: '海外地区',
+    route: 'xTom 香港',
+    description: '对应脚本“海外地区”，使用 LinuxMirrors 海外线路。',
+  },
+  {
+    value: 'smart',
+    title: '智能切换',
+    route: '自动判断',
+    description: 'CN 使用华为云；其他地区使用发行版官方源，与 kejilion.sh 智能逻辑一致。',
+  },
+]
+
 const selectedTool = ref<ManagementTool>()
 const actionRunning = ref(false)
 const actionConfirmed = ref(false)
@@ -77,7 +117,7 @@ const actionForm = reactive({
   timezonePreset: 'Asia/Shanghai',
   swapPreset: '1024' as '0' | '1024' | '2048' | '4096' | 'custom',
   swapSizeMiB: 1024,
-  mirrorPreset: 'official' as 'official' | 'aliyun',
+  mirrorPreset: 'smart' as MirrorPreset,
   preference: 'ipv4' as 'ipv4' | 'system_default',
   profile: 'balanced' as KernelProfile,
   bbrEnabled: true,
@@ -352,7 +392,7 @@ function openTool(tool: ManagementTool): void {
   actionForm.swapPreset = [1024, 2048, 4096].includes(actionForm.swapSizeMiB)
     ? String(actionForm.swapSizeMiB) as '1024' | '2048' | '4096'
     : 'custom'
-  actionForm.mirrorPreset = management?.packageSources.some((source) => source.includes('aliyun')) ? 'aliyun' : 'official'
+  actionForm.mirrorPreset = detectMirrorPreset(management?.packageSources || [])
   actionForm.preference = management?.ipPreference === 'ipv4' ? 'ipv4' : 'system_default'
   actionForm.profile = detectKernelProfile(
     management?.kernelOptimization.enabled,
@@ -1013,14 +1053,29 @@ onBeforeUnmount(() => {
               替代，不会把两者容量相加，也不会改动其他 Swap。
             </div>
           </div>
-          <label v-else-if="selectedTool.id === 'mirror'" class="field">
-            <span>APT 软件源线路</span>
-            <select v-model="actionForm.mirrorPreset">
-              <option value="official">Debian / Ubuntu 官方源</option>
-              <option value="aliyun">阿里云镜像源</option>
-            </select>
-            <small>只改发行版源；Docker、NodeSource 等第三方源保持不变。</small>
-          </label>
+          <fieldset v-else-if="selectedTool.id === 'mirror'" class="mirror-route-field">
+            <legend>选择更新源区域</legend>
+            <div class="mirror-route-grid">
+              <label
+                v-for="preset in mirrorPresets"
+                :key="preset.value"
+                class="mirror-route-card"
+                :class="{ 'is-selected': actionForm.mirrorPreset === preset.value }"
+              >
+                <input v-model="actionForm.mirrorPreset" type="radio" :value="preset.value" />
+                <span class="mirror-route-card__body">
+                  <strong>{{ preset.title }}</strong>
+                  <small>{{ preset.route }}</small>
+                  <p>{{ preset.description }}</p>
+                </span>
+                <span class="mirror-route-card__check" aria-hidden="true"></span>
+              </label>
+            </div>
+            <small class="mirror-route-field__note">
+              只修改已识别的 Debian / Ubuntu 发行版源；Docker、NodeSource 等第三方源保持不变。
+              执行过程不升级软件、不清缓存。
+            </small>
+          </fieldset>
           <label v-else-if="selectedTool.id === 'ip-preference'" class="field">
             <span>地址选择优先级</span>
             <select v-model="actionForm.preference">

@@ -44,6 +44,8 @@ type Runner interface {
 	LookPath(string) (string, error)
 }
 
+type CountryResolver func(context.Context) (string, error)
+
 type commandRunner struct{}
 
 func (commandRunner) Run(ctx context.Context, name string, arguments ...string) ([]byte, error) {
@@ -85,6 +87,7 @@ type Config struct {
 	Executable string
 	Now        func() time.Time
 	Runner     Runner
+	Country    CountryResolver
 }
 
 type Manager struct {
@@ -98,6 +101,7 @@ type Manager struct {
 	executable      string
 	now             func() time.Time
 	runner          Runner
+	country         CountryResolver
 	rebootScheduled bool
 	mu              sync.Mutex
 }
@@ -130,13 +134,16 @@ func NewManager(config Config) *Manager {
 	if config.Runner == nil {
 		config.Runner = commandRunner{}
 	}
+	if config.Country == nil {
+		config.Country = resolvePublicCountry
+	}
 	return &Manager{
 		enabled: config.Enabled, etcRoot: filepath.Clean(config.EtcRoot),
 		procRoot: filepath.Clean(config.ProcRoot), sysRoot: filepath.Clean(config.SysRoot),
 		runRoot:  filepath.Clean(config.RunRoot),
 		stateDir: filepath.Clean(config.StateDir), swapPath: filepath.Clean(config.SwapPath),
 		executable: filepath.Clean(config.Executable),
-		now:        config.Now, runner: config.Runner,
+		now:        config.Now, runner: config.Runner, country: config.Country,
 	}
 }
 
@@ -194,7 +201,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 	aptMirrorSupported := packageManager.kind == packageManagerAPT &&
 		(packageManager.osID == "debian" || packageManager.osID == "ubuntu") &&
 		packageSources
-	mirrorReason := "当前仅支持 Debian/Ubuntu APT 软件源切换"
+	mirrorReason := "当前安全换源适配器支持 Debian/Ubuntu；其他发行版继续保持只读，避免损坏系统仓库"
 	if (packageManager.osID == "debian" || packageManager.osID == "ubuntu") && !packageSources {
 		mirrorReason = "未发现可安全修改的 APT 软件源"
 	}
@@ -507,91 +514,6 @@ func (m *Manager) setIPPreference(preference string) (bool, string, string, erro
 
 func (m *Manager) setSwap(ctx context.Context, sizeMiB int) (bool, string, string, error) {
 	return m.applySwap(ctx, sizeMiB)
-}
-
-func (m *Manager) setMirror(ctx context.Context, preset string) (bool, string, string, error) {
-	if preset != "official" && preset != "aliyun" {
-		return false, "", "", fmt.Errorf("%w: mirrorPreset must be official or aliyun", ErrInvalidInput)
-	}
-	osID := strings.ToLower(osReleaseValue(filepath.Join(m.etcRoot, "os-release"), "ID"))
-	if osID != "debian" && osID != "ubuntu" {
-		return false, "", "", fmt.Errorf("%w: only Debian and Ubuntu are supported", ErrUnsupported)
-	}
-	files := m.aptSourceFiles()
-	if len(files) == 0 {
-		return false, "", "", fmt.Errorf("%w: no APT source files were found", ErrUnsupported)
-	}
-	type sourceChange struct {
-		path    string
-		old     []byte
-		new     []byte
-		mode    os.FileMode
-		existed bool
-	}
-	var changes []sourceChange
-	for _, path := range files {
-		old, existed, mode, err := snapshotFile(path)
-		if err != nil {
-			return false, "", "", err
-		}
-		rewritten := rewriteAPTSource(old, osID, preset)
-		if !bytes.Equal(old, rewritten) {
-			changes = append(changes, sourceChange{path: path, old: old, new: rewritten, mode: mode, existed: existed})
-		}
-	}
-	if len(changes) == 0 {
-		return false, "", "软件源已经使用所选线路", nil
-	}
-	paths := make([]string, 0, len(changes))
-	for _, change := range changes {
-		paths = append(paths, change.path)
-	}
-	backup, err := m.createBackup("mirror-"+preset, paths...)
-	if err != nil {
-		return false, "", "", err
-	}
-	restore := func() error {
-		var restoreErrors []error
-		for _, change := range changes {
-			if err := restoreFile(change.path, change.old, change.existed, change.mode); err != nil {
-				restoreErrors = append(restoreErrors, err)
-			}
-		}
-		return errors.Join(restoreErrors...)
-	}
-	for _, change := range changes {
-		if err := writeAtomic(change.path, change.new, fileModeOr(change.mode, 0o644)); err != nil {
-			_ = restore()
-			return false, backup, "", fmt.Errorf("%w: write APT source: %v", ErrRolledBack, err)
-		}
-	}
-	aptState := filepath.Join(m.stateDir, "apt-validation")
-	aptLists := filepath.Join(aptState, "lists")
-	aptCache := filepath.Join(aptState, "cache")
-	for _, path := range []string{filepath.Join(aptLists, "partial"), filepath.Join(aptCache, "archives", "partial")} {
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			_ = restore()
-			return false, backup, "", fmt.Errorf("%w: prepare isolated APT validation state: %v", ErrRolledBack, err)
-		}
-	}
-	if _, err := m.runner.Run(
-		ctx, "apt-get", "-o", "Acquire::Retries=1",
-		"-o", "Acquire::http::Timeout=12", "-o", "Acquire::https::Timeout=12",
-		"-o", "Dir::State::Lists="+aptLists,
-		"-o", "Dir::Cache="+aptCache,
-		"-o", "APT::Get::List-Cleanup=1",
-		"update",
-	); err != nil {
-		if rollbackErr := restore(); rollbackErr != nil {
-			return false, backup, "", fmt.Errorf("%w: APT validation failed and rollback failed: %v", ErrNeedsAttention, rollbackErr)
-		}
-		return false, backup, "", fmt.Errorf("%w: APT validation failed: %v", ErrRolledBack, err)
-	}
-	label := "发行版官方源"
-	if preset == "aliyun" {
-		label = "阿里云镜像源"
-	}
-	return true, backup, "已切换为" + label + "并通过 apt-get update 验证；第三方源未修改", nil
 }
 
 func (m *Manager) setBBR(ctx context.Context, enabled bool) (bool, string, string, error) {
@@ -932,51 +854,6 @@ func updateFstabSwap(data []byte, path, legacyPath string, enabled bool) []byte 
 		return nil
 	}
 	return []byte(result + "\n")
-}
-
-var aptURLPattern = regexp.MustCompile(`https?://[A-Za-z0-9.-]+/(?:debian-security|debian|ubuntu-ports|ubuntu)(?:/[^ \t\r\n]*)?`)
-
-func rewriteAPTSource(data []byte, osID, preset string) []byte {
-	return aptURLPattern.ReplaceAllFunc(data, func(raw []byte) []byte {
-		value := string(raw)
-		parsedHostStart := strings.Index(value, "://")
-		if parsedHostStart < 0 {
-			return raw
-		}
-		hostStart := parsedHostStart + 3
-		slash := strings.Index(value[hostStart:], "/")
-		if slash < 0 {
-			return raw
-		}
-		slash += hostStart
-		host := strings.ToLower(value[hostStart:slash])
-		path := value[slash:]
-		allowedHosts := map[string]bool{
-			"deb.debian.org": true, "security.debian.org": true, "ftp.debian.org": true,
-			"archive.ubuntu.com": true, "security.ubuntu.com": true, "ports.ubuntu.com": true,
-			"mirrors.aliyun.com": true, "mirrors.cloud.tencent.com": true,
-		}
-		if !allowedHosts[host] {
-			return raw
-		}
-		if osID == "debian" && !strings.HasPrefix(path, "/debian") {
-			return raw
-		}
-		if osID == "ubuntu" && !strings.HasPrefix(path, "/ubuntu") {
-			return raw
-		}
-		targetHost := "mirrors.aliyun.com"
-		if preset == "official" {
-			if osID == "debian" {
-				targetHost = "deb.debian.org"
-			} else if strings.HasPrefix(path, "/ubuntu-ports") {
-				targetHost = "ports.ubuntu.com"
-			} else {
-				targetHost = "archive.ubuntu.com"
-			}
-		}
-		return []byte("https://" + targetHost + path)
-	})
 }
 
 func osReleaseValue(path, key string) string {
