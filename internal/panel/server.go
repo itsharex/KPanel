@@ -228,7 +228,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	s.setAuthCookies(w, credentials)
+	s.setAuthCookies(w, r, credentials)
 	_ = s.audit(r, credentials.User.ID, "auth.bootstrap", "user", credentials.User.ID, "success", nil)
 	s.writeJSON(w, http.StatusCreated, authResponse{
 		User: credentials.User, CSRFToken: credentials.CSRFToken, ExpiresAt: credentials.ExpiresAt,
@@ -264,7 +264,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	s.setAuthCookies(w, credentials)
+	s.setAuthCookies(w, r, credentials)
 	_ = s.audit(r, credentials.User.ID, "auth.login", "session", "", "success", nil)
 	s.writeJSON(w, http.StatusOK, authResponse{
 		User: credentials.User, CSRFToken: credentials.CSRFToken, ExpiresAt: credentials.ExpiresAt,
@@ -331,7 +331,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusInternalServerError, "logout_failed", "Logout failed", "")
 		return
 	}
-	s.clearAuthCookies(w)
+	s.clearAuthCookies(w, r)
 	_ = s.audit(r, session.User.ID, "auth.logout", "session", "", "success", nil)
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -375,7 +375,7 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.clearAuthCookies(w)
+	s.clearAuthCookies(w, r)
 	_ = s.audit(r, session.User.ID, action, "user", session.User.ID, "success", nil)
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -487,7 +487,7 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (string,
 	}
 	session, err := s.auth.Authenticate(cookie.Value)
 	if err != nil {
-		s.clearAuthCookies(w)
+		s.clearAuthCookies(w, r)
 		s.writeProblem(w, r, http.StatusUnauthorized, "session_expired", "Session expired", "")
 		return "", auth.Session{}, false
 	}
@@ -517,7 +517,10 @@ func (s *Server) checkOrigin(w http.ResponseWriter, r *http.Request) bool {
 		}
 		return true
 	}
-	expected := s.config.PublicURL
+	expected, trustedProxyOrigin := s.trustedProxyHTTPSOrigin(r)
+	if !trustedProxyOrigin {
+		expected = s.config.PublicURL
+	}
 	if expected == "" {
 		scheme := "http"
 		if r.TLS != nil {
@@ -537,11 +540,36 @@ func (s *Server) checkHost(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	publicURL, err := url.Parse(s.config.PublicURL)
-	if err != nil || !secureStringEqual(strings.ToLower(strings.TrimSpace(r.Host)), strings.ToLower(publicURL.Host)) {
+	hostMatchesPublicURL := err == nil &&
+		secureStringEqual(strings.ToLower(strings.TrimSpace(r.Host)), strings.ToLower(publicURL.Host))
+	_, trustedProxyOrigin := s.trustedProxyHTTPSOrigin(r)
+	if !hostMatchesPublicURL && !trustedProxyOrigin {
 		s.writeProblem(w, r, http.StatusMisdirectedRequest, "host_validation_failed", "Host validation failed", "")
 		return false
 	}
 	return true
+}
+
+// trustedProxyHTTPSOrigin returns the browser-facing origin only when the
+// immediate peer is explicitly trusted and has forwarded a single HTTPS
+// scheme. This lets kejilion.sh's k fd proxy a direct-port installation
+// without allowing public clients to spoof Host or X-Forwarded-Proto.
+func (s *Server) trustedProxyHTTPSOrigin(r *http.Request) (string, bool) {
+	if !s.isTrustedProxyPeer(r) ||
+		!secureStringEqual(strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))), "https") {
+		return "", false
+	}
+	host := strings.TrimSpace(r.Host)
+	if host == "" || strings.ContainsAny(host, "/\\?#@,;%") {
+		return "", false
+	}
+	origin := "https://" + host
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "https" || parsed.Host != host || parsed.Hostname() == "" ||
+		parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	return origin, true
 }
 
 func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
@@ -574,21 +602,23 @@ func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target any) 
 	return nil
 }
 
-func (s *Server) setAuthCookies(w http.ResponseWriter, credentials auth.Credentials) {
+func (s *Server) setAuthCookies(w http.ResponseWriter, r *http.Request, credentials auth.Credentials) {
 	maxAge := max(int(time.Until(credentials.ExpiresAt).Seconds()), 1)
+	secure := s.requestUsesHTTPS(r)
 	http.SetCookie(w, &http.Cookie{
 		Name: s.config.CookieName, Value: credentials.Token, Path: "/",
 		MaxAge: maxAge, Expires: credentials.ExpiresAt, HttpOnly: true,
-		Secure: s.config.SecureCookie, SameSite: http.SameSiteStrictMode,
+		Secure: secure, SameSite: http.SameSiteStrictMode,
 	})
 	http.SetCookie(w, &http.Cookie{
 		Name: s.csrfCookieName(), Value: credentials.CSRFToken, Path: "/",
 		MaxAge: maxAge, Expires: credentials.ExpiresAt, HttpOnly: false,
-		Secure: s.config.SecureCookie, SameSite: http.SameSiteStrictMode,
+		Secure: secure, SameSite: http.SameSiteStrictMode,
 	})
 }
 
-func (s *Server) clearAuthCookies(w http.ResponseWriter) {
+func (s *Server) clearAuthCookies(w http.ResponseWriter, r *http.Request) {
+	secure := s.requestUsesHTTPS(r)
 	for _, cookie := range []*http.Cookie{
 		{Name: s.config.CookieName, HttpOnly: true},
 		{Name: s.csrfCookieName(), HttpOnly: false},
@@ -597,10 +627,18 @@ func (s *Server) clearAuthCookies(w http.ResponseWriter) {
 		cookie.Path = "/"
 		cookie.MaxAge = -1
 		cookie.Expires = time.Unix(1, 0)
-		cookie.Secure = s.config.SecureCookie
+		cookie.Secure = secure
 		cookie.SameSite = http.SameSiteStrictMode
 		http.SetCookie(w, cookie)
 	}
+}
+
+func (s *Server) requestUsesHTTPS(r *http.Request) bool {
+	if s.config.SecureCookie || r.TLS != nil {
+		return true
+	}
+	_, trustedProxyOrigin := s.trustedProxyHTTPSOrigin(r)
+	return trustedProxyOrigin
 }
 
 func (s *Server) csrfCookieName() string {
@@ -765,20 +803,47 @@ func parseTrustedProxyCIDRs(values []string) ([]*net.IPNet, error) {
 }
 
 func (s *Server) remoteIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	peer := net.ParseIP(strings.TrimSpace(host))
+	peer, host := requestPeerIP(r)
 	if peer != nil && ipInNetworks(peer, s.trustedProxies) {
 		if forwarded := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); forwarded != nil {
 			return forwarded.String()
+		}
+		var rightmost net.IP
+		values := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+		for index := len(values) - 1; index >= 0; index-- {
+			forwarded := net.ParseIP(strings.TrimSpace(values[index]))
+			if forwarded == nil {
+				continue
+			}
+			if rightmost == nil {
+				rightmost = forwarded
+			}
+			if !ipInNetworks(forwarded, s.trustedProxies) {
+				return forwarded.String()
+			}
+		}
+		if rightmost != nil {
+			return rightmost.String()
 		}
 	}
 	if peer != nil {
 		return peer.String()
 	}
 	return strings.TrimSpace(host)
+}
+
+func (s *Server) isTrustedProxyPeer(r *http.Request) bool {
+	peer, _ := requestPeerIP(r)
+	return peer != nil && ipInNetworks(peer, s.trustedProxies)
+}
+
+func requestPeerIP(r *http.Request) (net.IP, string) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	host = strings.TrimSpace(host)
+	return net.ParseIP(host), host
 }
 
 func ipInNetworks(ip net.IP, networks []*net.IPNet) bool {

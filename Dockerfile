@@ -31,7 +31,11 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
       go build -trimpath \
         -ldflags="-s -w -X github.com/kejilion/kejilion-panel/internal/version.Version=${VERSION}" \
-        -o /out/paneld ./cmd/paneld'
+        -o /out/paneld ./cmd/paneld; \
+      CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+      go build -trimpath \
+        -ldflags="-s -w -X github.com/kejilion/kejilion-panel/internal/version.Version=${VERSION}" \
+        -o /out/kejilion-agent ./cmd/kejilion-agent'
 
 FROM scratch
 ARG VERSION=dev
@@ -42,7 +46,14 @@ LABEL org.opencontainers.image.title="KPanel" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"
 COPY --from=go-build /out/paneld /paneld
+COPY --from=go-build /out/kejilion-agent /release/kejilion-agent
 COPY --from=web-build /src/web/dist /app/web
+COPY VERSION /release/VERSION
+COPY deploy/compose/compose.yml /release/compose.yml
+COPY deploy/compose/direct-port.yml /release/direct-port.yml
+COPY deploy/compose/.env.example /release/panel.env.example
+COPY deploy/systemd/kejilion-agent.service /release/kejilion-agent.service
+COPY deploy/systemd/agent.env.example /release/agent.env.example
 USER 65532:65532
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/paneld", "healthcheck"]

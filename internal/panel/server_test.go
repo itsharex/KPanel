@@ -397,6 +397,72 @@ func TestRejectsMissingOriginAndUnexpectedHost(t *testing.T) {
 	}
 }
 
+func TestTrustedHTTPSProxyAllowsKFDOriginAndSecureCookies(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	token, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]string{
+		"token": string(token), "username": "admin", "password": "a-strong-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap", bytes.NewReader(body))
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Host = "panel.example.com"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://panel.example.com")
+	request.Header.Set("X-Forwarded-Proto", "https")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("trusted HTTPS proxy was rejected: %d %s", response.Code, response.Body.String())
+	}
+	for _, cookie := range response.Result().Cookies() {
+		if !cookie.Secure {
+			t.Fatalf("proxy HTTPS cookie is not Secure: %#v", cookie)
+		}
+	}
+}
+
+func TestForwardedOriginRequiresTrustedPeerAndCleanHTTPSHeaders(t *testing.T) {
+	tests := []struct {
+		name           string
+		remoteAddr     string
+		host           string
+		forwardedProto string
+	}{
+		{
+			name: "untrusted peer", remoteAddr: "192.0.2.10:12345",
+			host: "panel.example.com", forwardedProto: "https",
+		},
+		{
+			name: "multiple forwarded schemes", remoteAddr: "127.0.0.1:12345",
+			host: "panel.example.com", forwardedProto: "https, http",
+		},
+		{
+			name: "host with user info", remoteAddr: "127.0.0.1:12345",
+			host: "panel.example.com@evil.example", forwardedProto: "https",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server, _ := newTestServer(t)
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/bootstrap", nil)
+			request.RemoteAddr = test.remoteAddr
+			request.Host = test.host
+			request.Header.Set("X-Forwarded-Proto", test.forwardedProto)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusMisdirectedRequest {
+				t.Fatalf("unsafe forwarded origin returned %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestSPAFallback(t *testing.T) {
 	server, _ := newTestServer(t)
 	response := performRequest(server, http.MethodGet, "/sites/example", nil, nil)
@@ -439,6 +505,27 @@ func TestRemoteIPTrustsOnlyConfiguredProxies(t *testing.T) {
 	untrusted.Header.Set("X-Real-IP", "198.51.100.25")
 	if got := server.remoteIP(untrusted); got != "192.0.2.10" {
 		t.Fatalf("untrusted proxy spoofed client address: %q", got)
+	}
+
+	forwarded := httptest.NewRequest(http.MethodGet, "/", nil)
+	forwarded.RemoteAddr = "127.0.0.1:12345"
+	forwarded.Header.Set("X-Forwarded-For", "203.0.113.9, 198.51.100.25")
+	if got := server.remoteIP(forwarded); got != "198.51.100.25" {
+		t.Fatalf("trusted proxy did not select the rightmost client address: %q", got)
+	}
+
+	trustedChain := httptest.NewRequest(http.MethodGet, "/", nil)
+	trustedChain.RemoteAddr = "127.0.0.1:12345"
+	trustedChain.Header.Set("X-Forwarded-For", "198.51.100.25, 127.0.0.2")
+	if got := server.remoteIP(trustedChain); got != "198.51.100.25" {
+		t.Fatalf("trusted proxy chain did not skip trusted hops: %q", got)
+	}
+
+	untrustedForwarded := httptest.NewRequest(http.MethodGet, "/", nil)
+	untrustedForwarded.RemoteAddr = "192.0.2.10:12345"
+	untrustedForwarded.Header.Set("X-Forwarded-For", "198.51.100.25")
+	if got := server.remoteIP(untrustedForwarded); got != "192.0.2.10" {
+		t.Fatalf("untrusted peer spoofed X-Forwarded-For: %q", got)
 	}
 }
 

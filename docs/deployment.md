@@ -56,7 +56,7 @@ sha256sum dist/linux-amd64/kejilion-agent dist/linux-arm64/kejilion-agent
 推送 Docker Hub：
 
 ```sh
-VERSION=0.13.1
+VERSION=0.14.0
 IMAGE=docker.io/<owner>/kejilion-panel
 
 docker login
@@ -159,8 +159,20 @@ docker --host unix:///var/run/docker.sock compose \
 ```
 
 `KEJILION_PANEL_PUBLIC_URL` 必须与浏览器访问的来源完全一致。直接 HTTP 会禁用
-Secure Cookie，仅建议用于受控测试环境。覆盖文件会为 Panel 增加一个独立的
-`kejilion-panel-public` 发布网络；原来的 Agent 内部网络继续保留。正式公网环境仍建议使用 HTTPS。
+Secure Cookie，仅建议用于受控测试环境。覆盖文件会把原来的专用 Panel 网络改为
+可发布端口的普通 bridge；Panel 仍只加入这一张网络，避免 `kejilion.sh` 的端口访问
+策略读取到多个容器 IP。正式公网环境仍建议使用 HTTPS。
+
+直接端口部署完成后，可以使用 `kejilion.sh` 的标准反代入口：
+
+```sh
+k fd panel.example.com 127.0.0.1 8080
+```
+
+来自显式可信代理 CIDR 的请求可以使用代理传递的 HTTPS `Host` 和
+`X-Forwarded-Proto`，无需把 `KEJILION_PANEL_PUBLIC_URL` 从直连地址改成域名。
+该路径会自动启用 Secure Cookie，并从 `X-Real-IP` 或安全解析后的
+`X-Forwarded-For` 恢复客户端地址；非可信来源不能利用这些请求头绕过 Host/Origin 校验。
 
 ## 验收
 

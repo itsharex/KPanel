@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.14.0] - 2026-07-26
+
+### Added
+
+- 官方容器镜像同时携带同架构 `kejilion-agent`、systemd unit、Compose 与环境变量模板，
+  可由 `kejilion/apps` 配置完成一站式安装。
+- 支持在 IP + 端口部署后直接使用 `k fd <domain> 127.0.0.1 <port>` 添加 HTTPS 域名。
+
+### Changed
+
+- 直连端口覆盖改为单一 bridge 网络，确保 `kejilion.sh` 的容器端口访问策略能取得
+  唯一、有效的容器 IP。
+
+### Security
+
+- 仅可信代理 CIDR 可提供动态 HTTPS Host/Origin；代理 HTTPS 自动启用 Secure Cookie。
+- 当 `k fd` 模板未保留 `X-Real-IP` 时，从右向左验证 `X-Forwarded-For`，避免客户端
+  伪造地址影响登录限速和审计。
+
 ## [0.13.1] - 2026-07-26
 
 ### Fixed
