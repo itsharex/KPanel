@@ -398,14 +398,19 @@ func findKejilionScript() (string, error) {
 			continue
 		}
 		content, err := os.ReadFile(resolved)
-		if err != nil ||
-			!strings.Contains(string(content), "KJ_APP_NONINTERACTIVE") ||
-			!strings.Contains(string(content), "kpanel_run_docker_app_install") {
+		if err != nil || !isKPanelCompatibleScript(content) {
 			continue
 		}
 		return resolved, nil
 	}
 	return "", errors.New("a KPanel-compatible kejilion.sh was not found")
+}
+
+func isKPanelCompatibleScript(content []byte) bool {
+	value := string(content)
+	return strings.Contains(value, "KJ_APP_NONINTERACTIVE") &&
+		strings.Contains(value, "kpanel_run_docker_app_install") &&
+		strings.Contains(value, `permission_granted="true"`)
 }
 
 func RunAppJob(ctx context.Context, stateDir, id string) error {

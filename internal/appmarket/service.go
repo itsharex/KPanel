@@ -294,7 +294,7 @@ func defaultCapabilities(
 		(app.Source == "thirdparty" || legacy.UsesDockerApp) {
 		install = Capability{Enabled: true}
 	} else if app.Source == "thirdparty" || legacy.UsesDockerApp {
-		install = Capability{Reason: "请先更新 kejilion.sh，再使用后台安装"}
+		install = Capability{Reason: "请先更新 kejilion.sh，并在终端运行一次 k 接受许可协议"}
 	}
 	return map[string]Capability{
 		"install":       install,

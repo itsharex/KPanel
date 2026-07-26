@@ -88,7 +88,8 @@ KPanel 安装成功后原子更新：
 动作固定为 `install`，可选端口限制为 `1-65535` 并在安装前检查占用。它通过
 `KJ_APP_NONINTERACTIVE=1 KJ_APP_ACTION=install` 调用本机 `kejilion.sh app <selector>`，
 直接复用脚本的 Docker/Compose、数据目录、默认凭据和兼容标记业务，不模拟终端输入。脚本未更新、
-文件可被非 root 用户修改、系统没有 systemd，或应用仍要求专属交互配置时，安装能力保持禁用。
+文件可被非 root 用户修改、用户尚未在终端运行 `k` 接受许可协议、系统没有 systemd，或应用仍要求
+专属交互配置时，安装能力保持禁用。KPanel 不会代表用户自动接受脚本许可协议。
 
 后台任务状态文件和日志权限为 `0600`；Web 容器没有 Docker Socket，也不能直接执行脚本。
 

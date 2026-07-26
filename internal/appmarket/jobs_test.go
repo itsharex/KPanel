@@ -142,3 +142,13 @@ func TestKejilionStandardAppsBecomeDirectlyInstallable(t *testing.T) {
 		t.Fatalf("interrupted background job was not recovered: %#v", recovered)
 	}
 }
+
+func TestKejilionScriptCompatibilityRequiresExplicitLicenseAcceptance(t *testing.T) {
+	base := []byte("KJ_APP_NONINTERACTIVE\nkpanel_run_docker_app_install\n")
+	if isKPanelCompatibleScript(append(base, []byte(`permission_granted="false"`)...)) {
+		t.Fatal("unaccepted user license enabled background script execution")
+	}
+	if !isKPanelCompatibleScript(append(base, []byte(`permission_granted="true"`)...)) {
+		t.Fatal("accepted compatible script was rejected")
+	}
+}
