@@ -44,6 +44,12 @@ export const router = createRouter({
           meta: { title: '网站' },
         },
         {
+          path: 'apps',
+          name: 'apps',
+          component: () => import('@/views/AppsView.vue'),
+          meta: { title: '应用市场' },
+        },
+        {
           path: 'docker',
           name: 'docker',
           component: () => import('@/views/DockerView.vue'),

@@ -174,6 +174,46 @@ func TestCreateAllSupportedSiteServices(t *testing.T) {
 	}
 }
 
+func TestDeleteManagedProxyRemovesOnlyCanonicalConfig(t *testing.T) {
+	manager, nginx, root := newTestManager(t)
+	created, err := manager.Create(context.Background(), SiteInput{
+		PrimaryDomain: "app.example.com", Type: "proxy", Upstream: "http://127.0.0.1:8064",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := manager.Delete(context.Background(), created.ID, created.ResourceVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "deleted" || result.PrimaryDomain != created.PrimaryDomain {
+		t.Fatalf("unexpected delete result: %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, "conf.d", "app.example.com.conf")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("proxy config still exists: %v", err)
+	}
+	if nginx.tests != 4 || nginx.reloads != 2 {
+		t.Fatalf("nginx calls tests=%d reloads=%d, want 4/2", nginx.tests, nginx.reloads)
+	}
+}
+
+func TestDeleteRejectsManagedStaticSite(t *testing.T) {
+	manager, _, root := newTestManager(t)
+	created, err := manager.Create(context.Background(), SiteInput{
+		PrimaryDomain: "static-delete.example.com", Type: "static",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.Delete(context.Background(), created.ID, created.ResourceVersion)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Delete() error = %v, want ErrForbidden", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "conf.d", "static-delete.example.com.conf")); err != nil {
+		t.Fatalf("static config changed: %v", err)
+	}
+}
+
 func TestUpdateMigratesCanonicalV1SiteWithoutChangingDocumentRoot(t *testing.T) {
 	manager, _, root := newTestManager(t)
 	spec := managedSpec{Primary: "legacy.example.com", Kind: contract.SiteStatic}

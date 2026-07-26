@@ -21,13 +21,16 @@ KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录�
   负载均衡和域名重定向创建与安全更新；Web 使用直观卡片选择服务。
 - Docker 容器、镜像、网络、卷查看。
 - 已识别 Kejilion 容器的启动、停止、重启和有界日志。
+- 与 `app.kejilion.sh` 对齐的 146 个应用目录、本地图标、脚本安装状态、容器状态、镜像更新检查、
+  域名绑定/解绑和访问策略；已审计应用支持声明式安装、更新、卸载与失败回滚。
 - 主机名、SSH 新端口、DNS、时区、与 `kejilion.sh` 共用的 `/swapfile`、APT 镜像、IP 优先级、
   五种内存自适应内核预设和 BBR 的类型化、可回滚管理。
 - Debian/Ubuntu、RHEL/Fedora、Arch/Manjaro 和 openSUSE/SLES 的系统更新，
   以及不触碰 Docker、网站和备份的安全系统清理。
 - 管理变更记录、审计、资源版本冲突检测和只读降级。
 
-任意 Shell、Docker Exec、系统重装、磁盘格式化、应用市场远程脚本、站点硬删除等高风险能力不进入首版。
+任意 Shell、Docker Exec、系统重装、磁盘格式化、应用市场远程脚本、第三方 Compose 和数据目录硬删除
+等高风险能力不进入首版。
 
 ## 文档
 
@@ -36,6 +39,7 @@ KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录�
 - [安全边界](docs/security-model.md)
 - [kejilion.sh 兼容基线](docs/compatibility.md)
 - [kejilion.sh 网站业务分析](docs/legacy-site-contract.md)
+- [应用市场对齐与安全边界](docs/application-market.md)
 - [构建、发布与部署](docs/deployment.md)
 - [宿主机系统兼容矩阵](docs/platform-support.md)
 - [版本变更记录](CHANGELOG.md)

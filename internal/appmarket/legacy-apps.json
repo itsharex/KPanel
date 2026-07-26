@@ -1,0 +1,926 @@
+{
+  "schemaVersion": 1,
+  "scriptSha256": "e45fb51e08e6536c9ecc890fe131d3e116d07103bfc8f2281ff0913299e598d3",
+  "apps": [
+    {
+      "num": 1,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": true
+    },
+    {
+      "num": 2,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": true
+    },
+    {
+      "num": 3,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": true
+    },
+    {
+      "num": 4,
+      "container": "npm",
+      "image": "jc21/nginx-proxy-manager:latest",
+      "defaultPort": 81,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 5,
+      "container": "openlist",
+      "image": "openlistteam/openlist:latest-aria2",
+      "defaultPort": 5244,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 6,
+      "container": "webtop-ubuntu",
+      "image": "lscr.io/linuxserver/webtop:ubuntu-kde",
+      "defaultPort": 3006,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 7,
+      "container": "nezha-dashboard",
+      "image": "",
+      "defaultPort": 8008,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 8,
+      "container": "qbittorrent",
+      "image": "lscr.io/linuxserver/qbittorrent:latest",
+      "defaultPort": 8081,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 9,
+      "container": "mailserver",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 10,
+      "container": "rocketchat",
+      "image": "",
+      "defaultPort": 3897,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 11,
+      "container": "zentao-server",
+      "image": "idoop/zentao:latest",
+      "defaultPort": 82,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 12,
+      "container": "qinglong",
+      "image": "whyour/qinglong:latest",
+      "defaultPort": 5700,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 13,
+      "container": "cloudreve",
+      "image": "",
+      "defaultPort": 5212,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 14,
+      "container": "easyimage",
+      "image": "ddsderek/easyimage:latest",
+      "defaultPort": 8014,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 15,
+      "container": "emby",
+      "image": "linuxserver/emby:latest",
+      "defaultPort": 8015,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 16,
+      "container": "looking-glass",
+      "image": "wikihostinc/looking-glass-server",
+      "defaultPort": 8016,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 17,
+      "container": "adguardhome",
+      "image": "adguard/adguardhome",
+      "defaultPort": 8017,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 18,
+      "container": "onlyoffice",
+      "image": "onlyoffice/documentserver",
+      "defaultPort": 8018,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 19,
+      "container": "safeline-mgt",
+      "image": "",
+      "defaultPort": 9443,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 20,
+      "container": "portainer",
+      "image": "portainer/portainer",
+      "defaultPort": 8020,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 21,
+      "container": "vscode-web",
+      "image": "codercom/code-server",
+      "defaultPort": 8021,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 22,
+      "container": "uptime-kuma",
+      "image": "louislam/uptime-kuma:latest",
+      "defaultPort": 8022,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 23,
+      "container": "memos",
+      "image": "neosmemo/memos:stable",
+      "defaultPort": 8023,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 24,
+      "container": "webtop",
+      "image": "lscr.io/linuxserver/webtop:latest",
+      "defaultPort": 8024,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 25,
+      "container": "nextcloud",
+      "image": "nextcloud:latest",
+      "defaultPort": 8025,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 26,
+      "container": "qd",
+      "image": "qdtoday/qd:latest",
+      "defaultPort": 8026,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 27,
+      "container": "dockge",
+      "image": "louislam/dockge:latest",
+      "defaultPort": 8027,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 28,
+      "container": "speedtest",
+      "image": "ghcr.io/librespeed/speedtest",
+      "defaultPort": 8028,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 29,
+      "container": "searxng",
+      "image": "searxng/searxng",
+      "defaultPort": 8029,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 30,
+      "container": "photoprism",
+      "image": "photoprism/photoprism:latest",
+      "defaultPort": 8030,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 31,
+      "container": "s-pdf",
+      "image": "frooodle/s-pdf:latest",
+      "defaultPort": 8031,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 32,
+      "container": "drawio",
+      "image": "jgraph/drawio",
+      "defaultPort": 8032,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 33,
+      "container": "sun-panel",
+      "image": "hslr/sun-panel",
+      "defaultPort": 8033,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 34,
+      "container": "pingvin-share",
+      "image": "stonith404/pingvin-share",
+      "defaultPort": 8034,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 35,
+      "container": "moments",
+      "image": "kingwrcy/moments:latest",
+      "defaultPort": 8035,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 36,
+      "container": "lobe-chat",
+      "image": "lobehub/lobe-chat:latest",
+      "defaultPort": 8036,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 37,
+      "container": "myip",
+      "image": "jason5ng32/myip:latest",
+      "defaultPort": 8037,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 38,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 39,
+      "container": "bililive-go",
+      "image": "chigusa/bililive-go",
+      "defaultPort": 8039,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 40,
+      "container": "webssh",
+      "image": "jrohy/webssh",
+      "defaultPort": 8040,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 41,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": true
+    },
+    {
+      "num": 42,
+      "container": "nexterm",
+      "image": "germannewsmaker/nexterm:latest",
+      "defaultPort": 8042,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 43,
+      "container": "hbbs",
+      "image": "rustdesk/rustdesk-server",
+      "defaultPort": 0,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 44,
+      "container": "hbbr",
+      "image": "rustdesk/rustdesk-server",
+      "defaultPort": 0,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 45,
+      "container": "registry",
+      "image": "registry:2",
+      "defaultPort": 8045,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 46,
+      "container": "ghproxy",
+      "image": "wjqserver/ghproxy:latest",
+      "defaultPort": 8046,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 47,
+      "container": "grafana",
+      "image": "",
+      "defaultPort": 8047,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 48,
+      "container": "node-exporter",
+      "image": "prom/node-exporter",
+      "defaultPort": 8048,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 49,
+      "container": "cadvisor",
+      "image": "gcr.io/cadvisor/cadvisor:latest",
+      "defaultPort": 8049,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 50,
+      "container": "changedetection",
+      "image": "dgtlmoon/changedetection.io:latest",
+      "defaultPort": 8050,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 51,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 52,
+      "container": "dpanel",
+      "image": "dpanel/dpanel:lite",
+      "defaultPort": 8052,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 53,
+      "container": "ollama",
+      "image": "ghcr.io/open-webui/open-webui:ollama",
+      "defaultPort": 8053,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 54,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": true
+    },
+    {
+      "num": 55,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 56,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 57,
+      "container": "ollama",
+      "image": "ghcr.io/open-webui/open-webui:ollama",
+      "defaultPort": 8053,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 58,
+      "container": "docker-nginx-1",
+      "image": "",
+      "defaultPort": 8058,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 59,
+      "container": "new-api",
+      "image": "",
+      "defaultPort": 8059,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 60,
+      "container": "jms_web",
+      "image": "",
+      "defaultPort": 80,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 61,
+      "container": "libretranslate",
+      "image": "libretranslate/libretranslate:latest",
+      "defaultPort": 8061,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 62,
+      "container": "ragflow-server",
+      "image": "",
+      "defaultPort": 8062,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 63,
+      "container": "open-webui",
+      "image": "ghcr.io/open-webui/open-webui:main",
+      "defaultPort": 8063,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 64,
+      "container": "it-tools",
+      "image": "corentinth/it-tools:latest",
+      "defaultPort": 8064,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 65,
+      "container": "n8n",
+      "image": "docker.n8n.io/n8nio/n8n",
+      "defaultPort": 8065,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 66,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 67,
+      "container": "ddns-go",
+      "image": "jeessy/ddns-go",
+      "defaultPort": 8067,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 68,
+      "container": "allinssl",
+      "image": "allinssl/allinssl:latest",
+      "defaultPort": 8068,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 69,
+      "container": "sftpgo",
+      "image": "drakkan/sftpgo:latest",
+      "defaultPort": 8069,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 70,
+      "container": "astrbot",
+      "image": "soulter/astrbot:latest",
+      "defaultPort": 8070,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 71,
+      "container": "navidrome",
+      "image": "deluan/navidrome:latest",
+      "defaultPort": 8071,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 72,
+      "container": "bitwarden",
+      "image": "vaultwarden/server",
+      "defaultPort": 8072,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 73,
+      "container": "libretv",
+      "image": "bestzwei/libretv:latest",
+      "defaultPort": 8073,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 74,
+      "container": "moontv-core",
+      "image": "",
+      "defaultPort": 8074,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 75,
+      "container": "melody",
+      "image": "foamzou/melody:latest",
+      "defaultPort": 8075,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 76,
+      "container": "dosgame",
+      "image": "oldiy/dosgame-web-docker:latest",
+      "defaultPort": 8076,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 77,
+      "container": "xunlei",
+      "image": "cnk3x/xunlei",
+      "defaultPort": 8077,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 78,
+      "container": "panda-wiki-nginx",
+      "image": "",
+      "defaultPort": 2443,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 79,
+      "container": "beszel",
+      "image": "henrygd/beszel",
+      "defaultPort": 8079,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 80,
+      "container": "linkwarden-linkwarden-1",
+      "image": "",
+      "defaultPort": 8080,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 81,
+      "container": "jitsi",
+      "image": "",
+      "defaultPort": 8081,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 82,
+      "container": "gpt-load",
+      "image": "tbphp/gpt-load:latest",
+      "defaultPort": 8082,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 83,
+      "container": "komari",
+      "image": "ghcr.io/komari-monitor/komari:latest",
+      "defaultPort": 8083,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 84,
+      "container": "wallos",
+      "image": "bellamy/wallos:latest",
+      "defaultPort": 8084,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 85,
+      "container": "immich_server",
+      "image": "",
+      "defaultPort": 8085,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 86,
+      "container": "jellyfin",
+      "image": "jellyfin/jellyfin",
+      "defaultPort": 8086,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 87,
+      "container": "synctv",
+      "image": "synctvorg/synctv",
+      "defaultPort": 8087,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 88,
+      "container": "owncast",
+      "image": "owncast/owncast:latest",
+      "defaultPort": 8088,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 89,
+      "container": "file-code-box",
+      "image": "lanol/filecodebox:latest",
+      "defaultPort": 8089,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 90,
+      "container": "matrix",
+      "image": "matrixdotorg/synapse:latest",
+      "defaultPort": 8090,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 91,
+      "container": "gitea",
+      "image": "",
+      "defaultPort": 8091,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 92,
+      "container": "filebrowser",
+      "image": "hurlenko/filebrowser",
+      "defaultPort": 8092,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 93,
+      "container": "dufs",
+      "image": "sigoden/dufs",
+      "defaultPort": 8093,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 94,
+      "container": "gopeed",
+      "image": "liwei2633/gopeed",
+      "defaultPort": 8094,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 95,
+      "container": "paperless-webserver-1",
+      "image": "",
+      "defaultPort": 8095,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 96,
+      "container": "2fauth",
+      "image": "",
+      "defaultPort": 8096,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 97,
+      "container": "wireguard",
+      "image": "lscr.io/linuxserver/wireguard:latest",
+      "defaultPort": 8097,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 98,
+      "container": "wireguardc",
+      "image": "kjlion/wireguard:alpine",
+      "defaultPort": 51820,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 99,
+      "container": "dsm",
+      "image": "",
+      "defaultPort": 8099,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 100,
+      "container": "syncthing",
+      "image": "syncthing/syncthing:latest",
+      "defaultPort": 8100,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 101,
+      "container": "moneyprinterturbo",
+      "image": "",
+      "defaultPort": 8101,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 102,
+      "container": "vocechat-server",
+      "image": "privoce/vocechat-server:latest",
+      "defaultPort": 8102,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 103,
+      "container": "umami-umami-1",
+      "image": "",
+      "defaultPort": 8103,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 104,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 105,
+      "container": "siyuan",
+      "image": "b3log/siyuan",
+      "defaultPort": 8105,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 106,
+      "container": "drawnix",
+      "image": "pubuzhixing/drawnix",
+      "defaultPort": 8106,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 107,
+      "container": "pansou",
+      "image": "ghcr.io/fish2018/pansou-web",
+      "defaultPort": 8107,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 108,
+      "container": "langbot_plugin_runtime",
+      "image": "",
+      "defaultPort": 8108,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 109,
+      "container": "zfile",
+      "image": "zhaojun1998/zfile:latest",
+      "defaultPort": 8109,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 110,
+      "container": "docker-web-1",
+      "image": "",
+      "defaultPort": 8110,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 111,
+      "container": "convertx",
+      "image": "ghcr.io/c4illin/convertx:latest",
+      "defaultPort": 8111,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 112,
+      "container": "lucky",
+      "image": "gdy666/lucky:v2",
+      "defaultPort": 8112,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 113,
+      "container": "firefox",
+      "image": "jlesage/firefox:latest",
+      "defaultPort": 8113,
+      "usesDockerApp": true,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 114,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    },
+    {
+      "num": 115,
+      "container": "",
+      "image": "",
+      "defaultPort": 0,
+      "usesDockerApp": false,
+      "usesPanelInstaller": false
+    }
+  ]
+}

@@ -369,15 +369,17 @@ type containerListItem struct {
 
 type containerInspect struct {
 	ID           string   `json:"Id"`
+	Image        string   `json:"Image"`
 	Name         string   `json:"Name"`
 	Created      string   `json:"Created"`
 	Path         string   `json:"Path"`
 	Args         []string `json:"Args"`
 	RestartCount int      `json:"RestartCount"`
 	Config       struct {
-		Image  string            `json:"Image"`
-		Labels map[string]string `json:"Labels"`
-		Tty    bool              `json:"Tty"`
+		Image        string                 `json:"Image"`
+		Labels       map[string]string      `json:"Labels"`
+		ExposedPorts map[string]interface{} `json:"ExposedPorts"`
+		Tty          bool                   `json:"Tty"`
 	} `json:"Config"`
 	State struct {
 		Status     string `json:"Status"`
@@ -397,13 +399,17 @@ type containerInspect struct {
 		Devices []struct {
 			PathOnHost string `json:"PathOnHost"`
 		} `json:"Devices"`
-		Privileged  bool     `json:"Privileged"`
-		NetworkMode string   `json:"NetworkMode"`
-		PidMode     string   `json:"PidMode"`
-		IpcMode     string   `json:"IpcMode"`
-		UTSMode     string   `json:"UTSMode"`
-		UsernsMode  string   `json:"UsernsMode"`
-		SecurityOpt []string `json:"SecurityOpt"`
+		Privileged    bool     `json:"Privileged"`
+		NetworkMode   string   `json:"NetworkMode"`
+		PidMode       string   `json:"PidMode"`
+		IpcMode       string   `json:"IpcMode"`
+		UTSMode       string   `json:"UTSMode"`
+		UsernsMode    string   `json:"UsernsMode"`
+		SecurityOpt   []string `json:"SecurityOpt"`
+		RestartPolicy struct {
+			Name              string `json:"Name"`
+			MaximumRetryCount int    `json:"MaximumRetryCount"`
+		} `json:"RestartPolicy"`
 	} `json:"HostConfig"`
 	Mounts          []dockerMount `json:"Mounts"`
 	NetworkSettings struct {
@@ -669,7 +675,21 @@ func dockerError(status int, data []byte) error {
 	if value.Message == "" {
 		value.Message = http.StatusText(status)
 	}
-	return fmt.Errorf("Docker API %d: %s", status, redactText(value.Message))
+	return &APIError{Status: status, Message: redactText(value.Message)}
+}
+
+type APIError struct {
+	Status  int
+	Message string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("Docker API %d: %s", e.Status, e.Message)
+}
+
+func isDockerStatus(err error, status int) bool {
+	var apiError *APIError
+	return errors.As(err, &apiError) && apiError.Status == status
 }
 
 func resourceHash(value interface{}) string {

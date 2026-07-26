@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kejilion/kejilion-panel/internal/appmarket"
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/sites"
@@ -35,6 +36,7 @@ type Config struct {
 	Sites           *sites.Discoverer
 	SitesManager    *sites.Manager
 	Docker          *dockerx.Client
+	AppMarket       *appmarket.Service
 	Now             func() time.Time
 }
 
@@ -48,6 +50,7 @@ type Server struct {
 	sites           *sites.Discoverer
 	sitesManager    *sites.Manager
 	docker          *dockerx.Client
+	appMarket       *appmarket.Service
 	now             func() time.Time
 }
 
@@ -76,6 +79,13 @@ func NewServer(config Config) (*Server, error) {
 	if config.SitesManager == nil {
 		config.SitesManager = sites.NewManager(config.WebRoot, config.Sites, config.Docker)
 	}
+	if config.AppMarket == nil {
+		var err error
+		config.AppMarket, err = appmarket.New(config.Docker, "/home/docker")
+		if err != nil {
+			return nil, fmt.Errorf("initialize application market: %w", err)
+		}
+	}
 	return &Server{
 		tokenHash:       sha256.Sum256(config.Token),
 		version:         config.Version,
@@ -86,6 +96,7 @@ func NewServer(config Config) (*Server, error) {
 		sites:           config.Sites,
 		sitesManager:    config.SitesManager,
 		docker:          config.Docker,
+		appMarket:       config.AppMarket,
 		now:             config.Now,
 	}, nil
 }
@@ -115,6 +126,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.siteCollection(w, r, requestID)
 	case strings.HasPrefix(r.URL.Path, "/v1/sites/"):
 		s.siteOperation(w, r, requestID)
+	case r.URL.Path == "/v1/apps":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.appList)
+	case strings.HasPrefix(r.URL.Path, "/v1/apps/"):
+		s.appOperation(w, r, requestID)
 	case r.URL.Path == "/v1/docker/summary":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerSummary)
 	case r.URL.Path == "/v1/docker/containers":
@@ -184,6 +199,9 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	siteWriteErr := s.sitesManager.Writable(writeContext)
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
+		{ID: "apps.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
+		{ID: "apps.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅经过安全核验的应用可操作"), Methods: []string{"POST"}},
+		{ID: "apps.install", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅声明式安全适配器可安装"), Methods: []string{"POST"}},
 		{ID: "sites.read", Enabled: siteErr == nil, Reason: reasonIf(siteErr, "Kejilion Web 根目录不可用"), Methods: []string{"GET"}},
 		{ID: "docker.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "docker.logs", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
@@ -274,7 +292,8 @@ func (s *Server) siteCollection(w http.ResponseWriter, r *http.Request, requestI
 }
 
 func (s *Server) siteOperation(w http.ResponseWriter, r *http.Request, requestID string) {
-	if r.Method == http.MethodPatch && (r.URL.RawPath != "" || r.URL.RawQuery != "") {
+	if (r.Method == http.MethodPatch || r.Method == http.MethodDelete) &&
+		(r.URL.RawPath != "" || r.URL.RawQuery != "") {
 		writeProblem(w, requestID, http.StatusBadRequest, "invalid_site_request", "网站写入 URL 无效", "")
 		return
 	}
@@ -283,9 +302,25 @@ func (s *Server) siteOperation(w http.ResponseWriter, r *http.Request, requestID
 		writeProblem(w, requestID, http.StatusNotFound, "not_found", "资源不存在", "")
 		return
 	}
-	if r.Method != http.MethodPatch {
-		w.Header().Set("Allow", http.MethodPatch)
+	if r.Method != http.MethodPatch && r.Method != http.MethodDelete {
+		w.Header().Set("Allow", http.MethodPatch+", "+http.MethodDelete)
 		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+		return
+	}
+	if r.Method == http.MethodDelete {
+		var input struct {
+			ExpectedResourceVersion string `json:"expectedResourceVersion"`
+		}
+		if err := decodeJSON(w, r, &input); err != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+			return
+		}
+		result, err := s.sitesManager.Delete(r.Context(), id, input.ExpectedResourceVersion)
+		if err != nil {
+			s.writeSiteError(w, requestID, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 	var input sites.SiteInput
@@ -330,6 +365,109 @@ func validSiteID(value string) bool {
 		}
 	}
 	return true
+}
+
+func (s *Server) appList(w http.ResponseWriter, r *http.Request) {
+	inventory, err := s.appMarket.Inventory(r.Context())
+	if err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "apps_unavailable", "应用市场状态不可用", safeDetail(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, inventory)
+}
+
+func (s *Server) appOperation(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+		return
+	}
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_app_request", "应用操作 URL 无效", "")
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/apps/")
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		writeProblem(w, requestID, http.StatusNotFound, "not_found", "资源不存在", "")
+		return
+	}
+	id, action := parts[0], parts[1]
+	timeout := 2 * time.Minute
+	if action == "install" || action == "update" {
+		timeout = 12 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	if action == "install" {
+		var input appmarket.InstallInput
+		if err := decodeJSON(w, r, &input); err != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+			return
+		}
+		result, err := s.appMarket.Install(ctx, id, input)
+		if err != nil {
+			s.writeAppError(w, requestID, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+		return
+	}
+
+	var input appmarket.MutationInput
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+		return
+	}
+	if action == "start" || action == "stop" || action == "restart" {
+		result, err := s.appMarket.Lifecycle(ctx, id, action, input.ResourceVersion)
+		if err != nil {
+			s.writeAppError(w, requestID, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	if action == "check_update" {
+		result, err := s.appMarket.CheckUpdate(ctx, id, input.ResourceVersion)
+		if err != nil {
+			s.writeAppError(w, requestID, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	if action != "update" && action != "uninstall" && action != "direct_access" {
+		writeProblem(w, requestID, http.StatusNotFound, "not_found", "资源不存在", "")
+		return
+	}
+	result, err := s.appMarket.Mutate(ctx, id, action, input)
+	if err != nil {
+		s.writeAppError(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) writeAppError(w http.ResponseWriter, requestID string, err error) {
+	status, code, title := http.StatusServiceUnavailable, "app_action_failed", "应用操作失败"
+	switch {
+	case errors.Is(err, appmarket.ErrNotFound):
+		status, code, title = http.StatusNotFound, "app_not_found", "应用不存在"
+	case errors.Is(err, appmarket.ErrForbidden), errors.Is(err, appmarket.ErrUnsupported),
+		errors.Is(err, dockerx.ErrReadOnlyContainer), errors.Is(err, dockerx.ErrUnsafeOrInvalidAction):
+		status, code, title = http.StatusForbidden, "app_action_forbidden", "该应用操作不允许"
+	case errors.Is(err, dockerx.ErrVersionRequired):
+		status, code, title = http.StatusBadRequest, "resource_version_required", "必须提供资源版本"
+	case errors.Is(err, dockerx.ErrResourceConflict), errors.Is(err, dockerx.ErrAppConflict):
+		status, code, title = http.StatusConflict, "resource_conflict", "应用资源已发生变化"
+	case errors.Is(err, appmarket.ErrRolledBack), errors.Is(err, dockerx.ErrAppRolledBack):
+		status, code, title = http.StatusUnprocessableEntity, "app_action_rolled_back", "应用操作失败并已回滚"
+	case errors.Is(err, appmarket.ErrNeedsAttention), errors.Is(err, dockerx.ErrAppNeedsAttention):
+		status, code, title = http.StatusServiceUnavailable, "app_needs_attention", "应用操作需要人工检查"
+	}
+	writeProblem(w, requestID, status, code, title, safeDetail(err))
 }
 
 func (s *Server) dockerSummary(w http.ResponseWriter, r *http.Request) {

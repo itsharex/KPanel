@@ -12,6 +12,7 @@ import {
   Menu,
   Moon,
   Settings,
+  Store,
   Sun,
   X,
 } from '@lucide/vue'
@@ -33,6 +34,7 @@ interface NavigationItem {
 const navigation: NavigationItem[] = [
   { label: '概览', to: '/overview', icon: LayoutDashboard },
   { label: '网站', to: '/sites', icon: Boxes },
+  { label: '应用市场', to: '/apps', icon: Store },
   { label: 'Docker', to: '/docker', icon: Container },
   { label: '变更', to: '/jobs', icon: ClipboardList },
   { label: '审计', to: '/audit', icon: FileClock },

@@ -230,6 +230,86 @@ export interface SystemActionResult {
   appliedAt: string
 }
 
+export interface AppMarketCategory {
+  key: string
+  zh: string
+  en: string
+}
+
+export interface AppActionCapability {
+  enabled: boolean
+  reason?: string
+}
+
+export interface AppMarketRuntime {
+  installed: boolean
+  state: string
+  status?: string
+  containerId?: string
+  containerName?: string
+  image?: string
+  ports: Array<{
+    privatePort: number
+    publicPort?: number
+    ip?: string
+    type: string
+  }>
+  accessMode: 'direct' | 'domain_only' | 'unknown' | 'not_applicable'
+  updateStatus: 'available' | 'current' | 'check_required' | 'unknown' | 'not_installed'
+  resourceVersion?: string
+  detectedBy: string[]
+  warning?: string
+}
+
+export interface AppMarketItem {
+  id: string
+  num?: number
+  source: 'builtin' | 'thirdparty'
+  token: string
+  name_zh: string
+  name_en: string
+  desc_zh: string
+  desc_en: string
+  cat: string
+  url?: string
+  icon: string
+  iconSha256: string
+  slug: string
+  defaultPort?: number
+  runtime: AppMarketRuntime
+  capabilities: Record<string, AppActionCapability>
+}
+
+export interface AppMarketInventory {
+  schemaVersion: number
+  source: string
+  scriptSha256: string
+  categories: AppMarketCategory[]
+  items: AppMarketItem[]
+  installed: number
+  running: number
+  updateAvailable: number
+  collectedAt: string
+}
+
+export interface AppMutationResult {
+  containerId?: string
+  action: string
+  status: string
+  resourceVersion?: string
+}
+
+export interface AppImageUpdateResult {
+  containerId: string
+  image: string
+  status: 'available' | 'current'
+  updateAvailable: boolean
+  localDigest?: string
+  remoteDigest?: string
+  resourceVersion: string
+  checkedAt: string
+}
+
 export interface CertificateSummary {
   status: 'valid' | 'expiring' | 'expired' | 'missing' | 'unknown'
   issuer?: string

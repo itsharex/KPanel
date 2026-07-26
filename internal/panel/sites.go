@@ -135,6 +135,57 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 	s.handleSiteWrite(w, r, http.MethodPatch, agentPath, siteID, false)
 }
 
+func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
+	agentPath, siteID, ok := allowedSiteUpdatePath(r.URL.Path)
+	if !ok || r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	var input struct {
+		ExpectedResourceVersion optionalString `json:"expectedResourceVersion"`
+	}
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	if !input.ExpectedResourceVersion.Set ||
+		!resourceVersionPattern.MatchString(input.ExpectedResourceVersion.Value) {
+		s.writeValidationProblem(w, r, "expectedResourceVersion", "a valid expectedResourceVersion is required")
+		return
+	}
+	payload := struct {
+		ExpectedResourceVersion string `json:"expectedResourceVersion"`
+	}{ExpectedResourceVersion: input.ExpectedResourceVersion.Value}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
+		return
+	}
+	change := map[string]any{"resourceVersion": input.ExpectedResourceVersion.Value}
+	if err := s.audit(r, session.User.ID, "site.delete", "site", siteID, "intent", change); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	response, err := s.agent.Do(r.Context(), http.MethodDelete, agentPath, "", requestID(r), body)
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "site.delete", "site", siteID, "failure", change)
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	result := "failure"
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+		result = "success"
+	}
+	_ = s.audit(r, session.User.ID, "site.delete", "site", siteID, result, change)
+	s.writeAgentResponse(w, response)
+}
+
 func (s *Server) handleSiteWrite(
 	w http.ResponseWriter,
 	r *http.Request,

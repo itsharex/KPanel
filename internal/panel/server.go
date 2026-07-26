@@ -135,6 +135,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSiteCreate(w, r)
 	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/sites/"):
 		s.handleSiteUpdate(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/sites/"):
+		s.handleSiteDelete(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/apps/"):
+		s.handleAppAction(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/"):
 		s.handleDockerAction(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/actions":
@@ -454,6 +458,7 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		"/api/v1/capabilities":      "/v1/capabilities",
 		"/api/v1/system/summary":    "/v1/system/summary",
 		"/api/v1/sites":             "/v1/sites",
+		"/api/v1/apps":              "/v1/apps",
 		"/api/v1/docker/summary":    "/v1/docker/summary",
 		"/api/v1/docker/containers": "/v1/docker/containers",
 		"/api/v1/docker/images":     "/v1/docker/images",

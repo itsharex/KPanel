@@ -311,6 +311,131 @@ func (m *Manager) Update(ctx context.Context, id string, input SiteInput) (contr
 	return m.discoverManaged(spec.Primary)
 }
 
+type DeleteResult struct {
+	ID              string `json:"id"`
+	PrimaryDomain   string `json:"primaryDomain"`
+	Status          string `json:"status"`
+	ResourceVersion string `json:"resourceVersion"`
+}
+
+func (m *Manager) Delete(ctx context.Context, id, expectedVersion string) (DeleteResult, error) {
+	if expectedVersion == "" {
+		return DeleteResult{}, fmt.Errorf("%w: expectedResourceVersion is required", ErrInvalidInput)
+	}
+	siteWriteMutex.Lock()
+	defer siteWriteMutex.Unlock()
+	if err := m.Writable(ctx); err != nil {
+		return DeleteResult{}, err
+	}
+	current, err := m.findManagedByID(id)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+	if current.Kind != contract.SiteReverseProxy {
+		return DeleteResult{}, fmt.Errorf("%w: only a Panel-managed reverse proxy can be deleted", ErrForbidden)
+	}
+	if current.ResourceVersion != expectedVersion {
+		return DeleteResult{}, fmt.Errorf("%w: resource version changed", ErrConflict)
+	}
+	spec, err := managedSpecFromSummary(current)
+	if err != nil {
+		return DeleteResult{}, fmt.Errorf("%w: current site is no longer canonical", ErrForbidden)
+	}
+	config := renderManagedConfig(spec)
+	configPath := filepath.Join(m.webRoot, "conf.d", spec.Primary+".conf")
+	configInfo, err := os.Lstat(configPath)
+	if err == nil && !fileMatches(configPath, configInfo, config) {
+		legacyConfig := renderManagedConfigV1(spec)
+		if fileMatches(configPath, configInfo, legacyConfig) {
+			config = legacyConfig
+		}
+	}
+	if err != nil || !fileMatches(configPath, configInfo, config) {
+		return DeleteResult{}, fmt.Errorf("%w: current configuration is no longer canonical", ErrForbidden)
+	}
+	backup, err := os.CreateTemp(filepath.Dir(configPath), "."+spec.Primary+".kp-delete-*.tmp")
+	if err != nil {
+		return DeleteResult{}, fmt.Errorf("%w: stage delete backup: %v", ErrUnavailable, err)
+	}
+	backupPath := backup.Name()
+	if closeErr := backup.Close(); closeErr != nil {
+		_ = os.Remove(backupPath)
+		return DeleteResult{}, fmt.Errorf("%w: close delete backup: %v", ErrUnavailable, closeErr)
+	}
+	if err := os.Remove(backupPath); err != nil {
+		return DeleteResult{}, fmt.Errorf("%w: prepare delete backup: %v", ErrUnavailable, err)
+	}
+	keepBackup := false
+	defer func() {
+		if !keepBackup {
+			_ = os.Remove(backupPath)
+		}
+	}()
+	if err := os.Rename(configPath, backupPath); err != nil {
+		return DeleteResult{}, fmt.Errorf("%w: atomically withdraw configuration: %v", ErrUnavailable, err)
+	}
+	backupInfo, _ := os.Lstat(backupPath)
+	if !fileMatches(backupPath, backupInfo, config) {
+		keepBackup = true
+		return DeleteResult{}, fmt.Errorf("%w: delete backup changed unexpectedly at %s", ErrNeedsAttention, backupPath)
+	}
+	if err := syncDirectory(filepath.Dir(configPath)); err != nil {
+		if restoreErr := restoreDeletedConfig(configPath, backupPath, backupInfo, config); restoreErr != nil {
+			keepBackup = true
+			return DeleteResult{}, restoreErr
+		}
+		return DeleteResult{}, fmt.Errorf("%w: sync delete transaction; configuration restored: %v", ErrUnavailable, err)
+	}
+	if err := m.nginx.NginxTest(ctx); err != nil {
+		if restoreErr := restoreDeletedConfig(configPath, backupPath, backupInfo, config); restoreErr != nil {
+			keepBackup = true
+			return DeleteResult{}, restoreErr
+		}
+		return DeleteResult{}, fmt.Errorf("%w: delete candidate failed nginx -t: %v", ErrUnprocessable, err)
+	}
+	if err := m.nginx.NginxReload(ctx); err != nil {
+		if restoreErr := restoreDeletedConfig(configPath, backupPath, backupInfo, config); restoreErr != nil {
+			keepBackup = true
+			return DeleteResult{}, restoreErr
+		}
+		if recoveryErr := m.validateAndReloadPrevious(ctx); recoveryErr != nil {
+			return DeleteResult{}, recoveryErr
+		}
+		return DeleteResult{}, fmt.Errorf("%w: Nginx reload failed and the configuration was restored: %v", ErrUnavailable, err)
+	}
+	if _, err := os.Lstat(configPath); !errors.Is(err, os.ErrNotExist) {
+		keepBackup = true
+		return DeleteResult{}, fmt.Errorf("%w: configuration path was recreated during deletion; backup retained at %s", ErrNeedsAttention, backupPath)
+	}
+	if err := os.Remove(backupPath); err != nil {
+		keepBackup = true
+		return DeleteResult{}, fmt.Errorf("%w: proxy was deleted but backup cleanup failed at %s: %v", ErrNeedsAttention, backupPath, err)
+	}
+	if err := syncDirectory(filepath.Dir(configPath)); err != nil {
+		return DeleteResult{}, fmt.Errorf("%w: proxy was deleted but directory cleanup could not be synced: %v", ErrNeedsAttention, err)
+	}
+	return DeleteResult{
+		ID: current.ID, PrimaryDomain: current.PrimaryDomain,
+		Status: "deleted", ResourceVersion: current.ResourceVersion,
+	}, nil
+}
+
+func restoreDeletedConfig(configPath, backupPath string, backupInfo os.FileInfo, config []byte) error {
+	if !fileMatches(backupPath, backupInfo, config) {
+		return fmt.Errorf("%w: delete backup changed; retained at %s", ErrNeedsAttention, backupPath)
+	}
+	if _, err := os.Lstat(configPath); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: configuration path is occupied; backup retained at %s", ErrNeedsAttention, backupPath)
+	}
+	if err := os.Rename(backupPath, configPath); err != nil {
+		return fmt.Errorf("%w: restore deleted configuration from %s: %v", ErrNeedsAttention, backupPath, err)
+	}
+	if err := syncDirectory(filepath.Dir(configPath)); err != nil {
+		return fmt.Errorf("%w: sync restored configuration: %v", ErrNeedsAttention, err)
+	}
+	return nil
+}
+
 func (m *Manager) checkCollisions(spec managedSpec, excludeID string) error {
 	items, err := m.discoverer.Discover()
 	if err != nil {

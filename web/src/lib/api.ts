@@ -1,6 +1,9 @@
 import type {
   ApiList,
   AgentStatus,
+  AppMarketInventory,
+  AppImageUpdateResult,
+  AppMutationResult,
   AuditEvent,
   AuthSession,
   AuthStatus,
@@ -765,6 +768,31 @@ export const api = {
       normalizeSite(await request<RawSite>('/sites', { method: 'POST', body })),
     update: async (id: string, body: SiteInput): Promise<Site> =>
       normalizeSite(await request<RawSite>(`/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body })),
+    remove: (id: string, expectedResourceVersion: string) =>
+      request<{ id: string; primaryDomain: string; status: string; resourceVersion: string }>(
+        `/sites/${encodeURIComponent(id)}`,
+        { method: 'DELETE', body: { expectedResourceVersion } },
+      ),
+  },
+  apps: {
+    inventory: (signal?: AbortSignal): Promise<AppMarketInventory> =>
+      request<AppMarketInventory>('/apps', { signal }),
+    install: (
+      id: string,
+      body: { hostPort?: number; accessMode?: 'direct' | 'domain_only' },
+    ): Promise<AppMutationResult> =>
+      request<AppMutationResult>(`/apps/${encodeURIComponent(id)}/install`, { method: 'POST', body }),
+    action: (
+      id: string,
+      action: 'start' | 'stop' | 'restart' | 'update' | 'uninstall' | 'direct_access',
+      body: { resourceVersion: string; accessMode?: 'direct' | 'domain_only' },
+    ): Promise<AppMutationResult> =>
+      request<AppMutationResult>(`/apps/${encodeURIComponent(id)}/${action}`, { method: 'POST', body }),
+    checkUpdate: (id: string, resourceVersion: string): Promise<AppImageUpdateResult> =>
+      request<AppImageUpdateResult>(`/apps/${encodeURIComponent(id)}/check_update`, {
+        method: 'POST',
+        body: { resourceVersion },
+      }),
   },
   docker: {
     inventory: async (signal?: AbortSignal): Promise<DockerInventory> => {
