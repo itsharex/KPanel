@@ -78,6 +78,7 @@ type Config struct {
 	Enabled    bool
 	EtcRoot    string
 	ProcRoot   string
+	SysRoot    string
 	RunRoot    string
 	StateDir   string
 	SwapPath   string
@@ -90,6 +91,7 @@ type Manager struct {
 	enabled    bool
 	etcRoot    string
 	procRoot   string
+	sysRoot    string
 	runRoot    string
 	stateDir   string
 	swapPath   string
@@ -105,6 +107,9 @@ func NewManager(config Config) *Manager {
 	}
 	if config.ProcRoot == "" {
 		config.ProcRoot = "/proc"
+	}
+	if config.SysRoot == "" {
+		config.SysRoot = "/sys"
 	}
 	if config.RunRoot == "" {
 		config.RunRoot = "/var/run"
@@ -126,7 +131,8 @@ func NewManager(config Config) *Manager {
 	}
 	return &Manager{
 		enabled: config.Enabled, etcRoot: filepath.Clean(config.EtcRoot),
-		procRoot: filepath.Clean(config.ProcRoot), runRoot: filepath.Clean(config.RunRoot),
+		procRoot: filepath.Clean(config.ProcRoot), sysRoot: filepath.Clean(config.SysRoot),
+		runRoot:  filepath.Clean(config.RunRoot),
 		stateDir: filepath.Clean(config.StateDir), swapPath: filepath.Clean(config.SwapPath),
 		executable: filepath.Clean(config.Executable),
 		now:        config.Now, runner: config.Runner,
@@ -558,79 +564,6 @@ func (m *Manager) setMirror(ctx context.Context, preset string) (bool, string, s
 		label = "阿里云镜像源"
 	}
 	return true, backup, "已切换为" + label + "并通过 apt-get update 验证；第三方源未修改", nil
-}
-
-func (m *Manager) setKernelTuning(ctx context.Context, profile string) (bool, string, string, error) {
-	if profile != "balanced" && profile != "web" && profile != "off" {
-		return false, "", "", fmt.Errorf("%w: profile must be balanced, web, or off", ErrInvalidInput)
-	}
-	path := filepath.Join(m.etcRoot, "sysctl.d", "99-kejilion-optimize.conf")
-	old, existed, mode, err := snapshotFile(path)
-	if err != nil {
-		return false, "", "", err
-	}
-	if existed && !bytes.Contains(old, []byte(kpanelKernelMarker)) {
-		return false, "", "", fmt.Errorf("%w: existing kejilion.sh tuning is externally managed; restore it from the script before replacing it", ErrConflict)
-	}
-	if profile == "off" && !existed {
-		return false, "", "KPanel 内核优化已经停用", nil
-	}
-	var config []byte
-	switch profile {
-	case "balanced":
-		config = []byte(kpanelKernelMarker + "\n# 模式: 均衡优化模式 | 场景: balanced\n" +
-			"net.core.somaxconn = 4096\n" +
-			"net.ipv4.tcp_max_syn_backlog = 4096\n" +
-			"net.ipv4.tcp_fastopen = 3\n" +
-			"net.ipv4.tcp_fin_timeout = 30\n" +
-			"net.ipv4.tcp_keepalive_time = 600\n" +
-			"net.ipv4.tcp_syncookies = 1\n" +
-			"vm.swappiness = 10\n" +
-			"fs.file-max = 1048576\n")
-	case "web":
-		config = []byte(kpanelKernelMarker + "\n# 模式: 网站搭建优化模式 | 场景: web\n" +
-			"net.core.somaxconn = 16384\n" +
-			"net.core.netdev_max_backlog = 16384\n" +
-			"net.ipv4.tcp_max_syn_backlog = 8192\n" +
-			"net.ipv4.tcp_fastopen = 3\n" +
-			"net.ipv4.tcp_tw_reuse = 1\n" +
-			"net.ipv4.tcp_fin_timeout = 20\n" +
-			"net.ipv4.tcp_keepalive_time = 300\n" +
-			"net.ipv4.tcp_syncookies = 1\n" +
-			"vm.swappiness = 10\n" +
-			"fs.file-max = 1048576\n")
-	}
-	if profile != "off" && bytes.Equal(bytes.TrimSpace(old), bytes.TrimSpace(config)) {
-		return false, "", "内核优化配置没有变化", nil
-	}
-	backup, err := m.createBackup("kernel-"+profile, path)
-	if err != nil {
-		return false, "", "", err
-	}
-	if profile == "off" {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return false, backup, "", err
-		}
-		if _, err := m.runner.Run(ctx, "sysctl", "--system"); err != nil {
-			_ = restoreFile(path, old, existed, mode)
-			_, _ = m.runner.Run(ctx, "sysctl", "-p", path)
-			return false, backup, "", fmt.Errorf("%w: restore system sysctl defaults: %v", ErrRolledBack, err)
-		}
-		return true, backup, "KPanel 内核优化已停用并重新加载系统参数", nil
-	}
-	if err := writeAtomic(path, config, 0o644); err != nil {
-		return false, backup, "", err
-	}
-	if _, err := m.runner.Run(ctx, "sysctl", "-p", path); err != nil {
-		_ = restoreFile(path, old, existed, mode)
-		if existed {
-			_, _ = m.runner.Run(ctx, "sysctl", "-p", path)
-		} else {
-			_, _ = m.runner.Run(ctx, "sysctl", "--system")
-		}
-		return false, backup, "", fmt.Errorf("%w: apply kernel profile: %v", ErrRolledBack, err)
-	}
-	return true, backup, "内核优化配置已写入 kejilion.sh 同一识别路径并生效", nil
 }
 
 func (m *Manager) setBBR(ctx context.Context, enabled bool) (bool, string, string, error) {

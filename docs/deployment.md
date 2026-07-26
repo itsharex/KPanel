@@ -52,7 +52,7 @@ sha256sum dist/linux-amd64/kejilion-agent dist/linux-arm64/kejilion-agent
 推送 Docker Hub：
 
 ```sh
-VERSION=0.5.1
+VERSION=0.6.0
 IMAGE=docker.io/<owner>/kejilion-panel
 
 docker login

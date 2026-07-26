@@ -103,8 +103,10 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 			return "preference", "preference must be ipv4 or system_default"
 		}
 	case "kernel-tuning":
-		if input.Profile != "balanced" && input.Profile != "web" && input.Profile != "off" {
-			return "profile", "profile must be balanced, web, or off"
+		switch input.Profile {
+		case "high", "balanced", "web", "stream", "game", "off":
+		default:
+			return "profile", "profile must be high, balanced, web, stream, game, or off"
 		}
 	case "bbr":
 		if input.Enabled == nil {

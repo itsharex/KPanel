@@ -24,7 +24,7 @@ KPanel 的系统管理业务以 `kejilion.sh` 为功能基准，但不把整个 
 | 虚拟内存 | `/proc/meminfo`、`/proc/swaps`、`/swapfile` | 与 `kejilion.sh` 共用 `/swapfile`；合并旧版 KPanel Swap，不清除现有分区或第三方 swapfile |
 | 系统镜像源 | APT/DNF/APK 源地址 | 首版支持 Debian/Ubuntu 官方源与阿里云源；第三方源不修改，`apt-get update` 失败回滚 |
 | V4/V6 优先 | `gai.conf` | 维护 `kejilion.sh` 同一 precedence 规则并保留其他用户配置 |
-| 内核优化 | Kejilion sysctl 产物 | 固定参数白名单、应用校验、版本化回滚；外部脚本配置不覆盖 |
+| 内核优化 | Kejilion sysctl 产物 | 五种固定预设、内存自适应、逐项应用和版本化回滚；合法脚本产物可接管 |
 | BBR | 当前/可用拥塞算法与 qdisc | 内核能力检查、独立 sysctl 文件、回读 |
 | 系统更新 | APT 源与后台任务状态 | `dpkg --force-confold --configure -a`、`apt-get update`、`full-upgrade` 固定序列；不杀死软件包进程、不删除锁、不自动重启 |
 | 系统清理 | APT 与 journal 后台任务状态 | 缓存模式或标准安全模式；不清空日志目录、临时目录、Docker、网站和备份 |
@@ -76,3 +76,22 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 - 文件系统写入由固定参数的 root systemd transient service 完成。常驻
   Agent 仍受原 systemd 沙箱限制，Web 不能传入路径或任意命令。浏览器请求
   中断不会杀死已经启动的事务，事务仍会完成或执行自身回滚。
+
+## v0.6 内核优化
+
+- Web 提供与当前 `kejilion.sh` 一致的高性能、均衡、网站、直播和游戏服五种
+  本地预设，以及还原默认设置；API 只接受这些枚举值。
+- 预设参数与脚本的 `_kernel_optimize_core` 保持一致，并按 `/proc/meminfo`
+  的 `MemTotal` 使用 `<1 GiB`、`1–4 GiB`、`4–16 GiB`、`≥16 GiB` 四档
+  自适应规则。
+- 产物写入脚本相同的
+  `/etc/sysctl.d/99-kejilion-optimize.conf`，保留 `# 模式:` 与 `# 场景:`
+  标识。脚本执行后 Web 可读取；Web 切换后脚本菜单也可识别当前模式。
+- 已识别的脚本手动预设允许由 Web 切换；`99-network-optimize.conf` 自动调优
+  结果可读取并在用户选择其他模式或还原时清理。未知结构的同名文件仍返回冲突。
+- 参数使用固定列表逐项 `sysctl -w`，兼容内核缺少可选参数的情况；若全部参数
+  都无法应用，则恢复 sysctl、limits、modules 和 BBR 冲突文件并重新加载。
+- BBR 可用时与脚本一样使用 `bbr + fq`，否则使用 `cubic + fq_codel`；同时
+  管理透明大页、nofile 限制和 `tcp_bbr` 模块持久化。
+- 脚本中的“自动调优”需要实时测速并在线获取 `network-optimize.sh`。首版 Web
+  不执行远程脚本；已有自动调优产物仍会被状态接口正确识别。

@@ -193,7 +193,7 @@ export interface SystemActionInput {
   swapSizeMiB?: number
   mirrorPreset?: 'official' | 'aliyun'
   preference?: 'ipv4' | 'system_default'
-  profile?: 'balanced' | 'web' | 'off'
+  profile?: 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
   maintenancePolicy?: 'full' | 'cache' | 'standard'
   enabled?: boolean
 }

@@ -62,6 +62,8 @@ interface ManagementTool {
   tone?: 'blue' | 'violet' | 'amber' | 'danger'
 }
 
+type KernelProfile = 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
+
 const selectedTool = ref<ManagementTool>()
 const actionRunning = ref(false)
 const actionConfirmed = ref(false)
@@ -76,7 +78,7 @@ const actionForm = reactive({
   swapSizeMiB: 1024,
   mirrorPreset: 'official' as 'official' | 'aliyun',
   preference: 'ipv4' as 'ipv4' | 'system_default',
-  profile: 'balanced' as 'balanced' | 'web' | 'off',
+  profile: 'balanced' as KernelProfile,
   bbrEnabled: true,
   maintenancePolicy: 'full' as 'full' | 'cache' | 'standard',
 })
@@ -215,7 +217,7 @@ const systemTools = computed<ManagementTool[]>(() => {
         : '未启用',
       detail: management.kernelOptimization.source === 'kejilion' ? '已识别 Kejilion 产物' : '系统默认参数',
       capability: 'system.kernel-tuning.write',
-      safety: '使用参数白名单和独立 sysctl 文件，应用前校验，失败时恢复上一版本。',
+      safety: '五种预设与 kejilion.sh 共用产物，并按宿主机内存自适应；固定参数逐项应用，失败时恢复上一版本。',
       icon: Settings2,
       tone: 'amber',
     },
@@ -318,11 +320,10 @@ function openTool(tool: ManagementTool): void {
     : 'custom'
   actionForm.mirrorPreset = management?.packageSources.some((source) => source.includes('aliyun')) ? 'aliyun' : 'official'
   actionForm.preference = management?.ipPreference === 'ipv4' ? 'ipv4' : 'system_default'
-  actionForm.profile = management?.kernelOptimization.enabled
-    ? management.kernelOptimization.profile?.includes('网站')
-      ? 'web'
-      : 'balanced'
-    : 'off'
+  actionForm.profile = detectKernelProfile(
+    management?.kernelOptimization.enabled,
+    management?.kernelOptimization.profile,
+  )
   actionForm.bbrEnabled = !management?.bbr.enabled
   actionForm.maintenancePolicy = tool.id === 'system-cleanup' ? 'standard' : 'full'
   actionConfirmed.value = false
@@ -334,6 +335,15 @@ function nextSSHPort(ports: number[]): number {
     if (!ports.includes(candidate)) return candidate
   }
   return 2222
+}
+
+function detectKernelProfile(enabled = false, label = ''): KernelProfile {
+  if (!enabled) return 'off'
+  if (label.includes('高性能')) return 'high'
+  if (label.includes('网站')) return 'web'
+  if (label.includes('直播')) return 'stream'
+  if (label.includes('游戏')) return 'game'
+  return 'balanced'
 }
 
 function applyDNSPreset(): void {
@@ -893,13 +903,19 @@ onBeforeUnmount(() => {
             </select>
           </label>
           <label v-else-if="selectedTool.id === 'kernel'" class="field">
-            <span>安全调优配置</span>
+            <span>Kejilion 内核调优模式</span>
             <select v-model="actionForm.profile">
+              <option value="high">高性能优化：激进内存与网络参数</option>
               <option value="balanced">均衡优化</option>
-              <option value="web">网站服务器优化</option>
-              <option value="off">停用 KPanel 优化</option>
+              <option value="web">网站优化：超高并发连接队列</option>
+              <option value="stream">直播优化：大 UDP 缓冲区</option>
+              <option value="game">游戏服优化：低延迟优先</option>
+              <option value="off">还原默认设置</option>
             </select>
-            <small>使用固定参数白名单；检测到脚本外部管理的同名配置时拒绝覆盖。</small>
+            <small>
+              与 kejilion.sh 共用 `/etc/sysctl.d/99-kejilion-optimize.conf`，并根据服务器内存自动调整。
+              在线测速型“自动调优”仍请在脚本中执行，Web 不下载或执行远程 Shell。
+            </small>
           </label>
           <label v-else-if="selectedTool.id === 'bbr'" class="field">
             <span>目标状态</span>

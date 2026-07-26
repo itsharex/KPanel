@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,15 +38,16 @@ func testManager(t *testing.T, runner Runner) (*Manager, string, string, string)
 	root := t.TempDir()
 	etcRoot := filepath.Join(root, "etc")
 	procRoot := filepath.Join(root, "proc")
+	sysRoot := filepath.Join(root, "sys")
 	runRoot := filepath.Join(root, "run")
 	stateDir := filepath.Join(root, "state")
-	for _, path := range []string{etcRoot, procRoot, runRoot, stateDir} {
+	for _, path := range []string{etcRoot, procRoot, sysRoot, runRoot, stateDir} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	manager := NewManager(Config{
-		Enabled: true, EtcRoot: etcRoot, ProcRoot: procRoot, RunRoot: runRoot,
+		Enabled: true, EtcRoot: etcRoot, ProcRoot: procRoot, SysRoot: sysRoot, RunRoot: runRoot,
 		StateDir: stateDir, SwapPath: filepath.Join(root, "swapfile"),
 		Executable: "/usr/local/libexec/kejilion-agent",
 		Runner:     runner, Now: func() time.Time { return time.Date(2026, 7, 26, 3, 0, 0, 0, time.UTC) },
@@ -130,6 +132,237 @@ func TestIPPreferencePreservesUnrelatedConfiguration(t *testing.T) {
 	if !strings.Contains(restored, "# user setting") ||
 		strings.Contains(restored, "::ffff:0:0/96") {
 		t.Fatalf("unrelated gai.conf content was not preserved: %q", restored)
+	}
+}
+
+func TestSetKernelTuningMatchesKejilionStreamProfileAndAcceptsScriptArtifact(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, procRoot, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(procRoot, "meminfo"), "MemTotal:        8388608 kB\n")
+	mustWrite(
+		t,
+		filepath.Join(procRoot, "sys", "net", "ipv4", "tcp_available_congestion_control"),
+		"reno cubic bbr\n",
+	)
+	mustWrite(t, filepath.Join(procRoot, "sys", "kernel", "numa_balancing"), "1\n")
+	mustWrite(t, filepath.Join(procRoot, "sys", "net", "netfilter", "nf_conntrack_max"), "262144\n")
+	thpPath := filepath.Join(manager.sysRoot, "kernel", "mm", "transparent_hugepage", "enabled")
+	mustWrite(t, thpPath, "[always] madvise never\n")
+
+	manualPath := filepath.Join(etcRoot, "sysctl.d", "99-kejilion-optimize.conf")
+	autoPath := filepath.Join(etcRoot, "sysctl.d", "99-network-optimize.conf")
+	limitsPath := filepath.Join(etcRoot, "security", "limits.conf")
+	modulesPath := filepath.Join(etcRoot, "modules-load.d", "bbr.conf")
+	systemSysctlPath := filepath.Join(etcRoot, "sysctl.conf")
+	kpanelBBRPath := filepath.Join(etcRoot, "sysctl.d", "99-kejilion-bbr.conf")
+	mustWrite(
+		t,
+		manualPath,
+		kejilionKernelConfigMarker+"\n# 模式: 均衡优化模式 | 场景: balanced\nvm.swappiness = 30\n",
+	)
+	mustWrite(t, autoPath, kejilionAutoKernelMarker+"\nnet.core.somaxconn = 2048\n")
+	mustWrite(
+		t,
+		limitsPath,
+		"# user limit\nuser soft nofile 4096\n\n"+
+			networkLimitsMarker+"\n* soft nofile 1048576\n* hard nofile 1048576\n"+
+			"root soft nofile 1048576\nroot hard nofile 1048576\n",
+	)
+	mustWrite(t, modulesPath, "tcp_bbr\n")
+	mustWrite(
+		t,
+		systemSysctlPath,
+		"# keep me\nnet.ipv4.tcp_congestion_control = cubic\nvm.max_map_count = 262144\n",
+	)
+	mustWrite(
+		t,
+		kpanelBBRPath,
+		kpanelBBRMarker+"\nnet.core.default_qdisc=fq_codel\nnet.ipv4.tcp_congestion_control=cubic\n",
+	)
+
+	changed, backup, message, err := manager.setKernelTuning(context.Background(), "stream")
+	if err != nil || !changed || backup == "" {
+		t.Fatalf("set stream profile: changed=%v backup=%q message=%q err=%v", changed, backup, message, err)
+	}
+	if !strings.Contains(message, "直播优化模式") || !strings.Contains(message, "内存 8192 MiB") ||
+		!strings.Contains(message, "拥塞算法 bbr") {
+		t.Fatalf("unexpected result message: %q", message)
+	}
+	config := readLimited(manualPath)
+	for _, expected := range []string{
+		kejilionKernelConfigMarker,
+		kpanelKernelMarker,
+		"# 模式: 直播优化模式 | 场景: stream",
+		"net.core.default_qdisc = fq",
+		"net.ipv4.tcp_congestion_control = bbr",
+		"net.core.rmem_max = 67108864",
+		"net.core.netdev_max_backlog = 250000",
+		"net.ipv4.tcp_mem = 1048576 2097152 4194304",
+		"vm.min_free_kbytes = 65536",
+		"net.netfilter.nf_conntrack_max = 262144",
+		"net.ipv4.udp_rmem_min = 16384",
+	} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("generated profile missing %q:\n%s", expected, config)
+		}
+	}
+	if regularFile(autoPath) || regularFile(kpanelBBRPath) {
+		t.Fatal("conflicting automatic or standalone KPanel BBR profile remains")
+	}
+	if got := readLimited(limitsPath); !strings.Contains(got, "# user limit") ||
+		!strings.Contains(got, kejilionLimitsMarker) ||
+		strings.Contains(got, networkLimitsMarker) {
+		t.Fatalf("unexpected limits configuration: %q", got)
+	}
+	if got := readLimited(systemSysctlPath); !strings.Contains(got, "vm.max_map_count") ||
+		strings.Contains(got, "tcp_congestion_control") {
+		t.Fatalf("unexpected sysctl.conf: %q", got)
+	}
+	if got := strings.TrimSpace(readLimited(modulesPath)); got != "tcp_bbr" {
+		t.Fatalf("unexpected BBR module configuration: %q", got)
+	}
+	if got := strings.TrimSpace(readLimited(thpPath)); got != "never" {
+		t.Fatalf("transparent hugepage mode = %q", got)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	if !strings.Contains(commands, "modprobe tcp_bbr") ||
+		!strings.Contains(commands, "sysctl -w net.ipv4.udp_rmem_min=16384") {
+		t.Fatalf("expected typed kernel commands were not run:\n%s", commands)
+	}
+	if strings.Contains(commands, "sh -c") || strings.Contains(commands, "bash -c") {
+		t.Fatalf("kernel tuning invoked a shell:\n%s", commands)
+	}
+	manager.now = func() time.Time { return time.Date(2026, 7, 27, 3, 0, 0, 0, time.UTC) }
+	changed, backup, _, err = manager.setKernelTuning(context.Background(), "stream")
+	if err != nil || changed || backup != "" {
+		t.Fatalf("identical profile was not idempotent: changed=%v backup=%q err=%v", changed, backup, err)
+	}
+}
+
+func TestKernelProfileUsesKejilionMemoryAdaptationAndSceneExtras(t *testing.T) {
+	manager, _, _, _ := testManager(t, &fakeRunner{missing: map[string]bool{"modprobe": true}})
+
+	game := manager.buildKernelProfile(context.Background(), "game", 768)
+	settings := manager.kernelSettings(game, 768)
+	config := string(renderKernelConfig(game, 768, settings, manager.now()))
+	for _, expected := range []string{
+		"# 模式: 游戏服优化模式 | 场景: game",
+		"net.core.rmem_max = 4194304",
+		"net.core.somaxconn = 1024",
+		"net.core.netdev_max_backlog = 1000",
+		"vm.swappiness = 30",
+		"vm.overcommit_memory = 0",
+		"vm.min_free_kbytes = 16384",
+		"net.ipv4.tcp_slow_start_after_idle = 0",
+		"net.ipv4.tcp_congestion_control = cubic",
+	} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("small-memory game profile missing %q:\n%s", expected, config)
+		}
+	}
+
+	high := manager.buildKernelProfile(context.Background(), "high", 16384)
+	if high.swappiness != 5 || high.minFreeKiB != 131072 {
+		t.Fatalf("large-memory high profile was not adapted: %#v", high)
+	}
+	balanced := manager.buildKernelProfile(context.Background(), "balanced", 4096)
+	if balanced.swappiness != 30 || balanced.overcommit != 0 ||
+		balanced.backlog != 5000 || balanced.thpMode != "always" {
+		t.Fatalf("balanced profile differs from kejilion.sh: %#v", balanced)
+	}
+}
+
+func TestSetKernelTuningRejectsUnknownArtifactWithoutMutation(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, procRoot, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(procRoot, "meminfo"), "MemTotal: 4194304 kB\n")
+	path := filepath.Join(etcRoot, "sysctl.d", "99-kejilion-optimize.conf")
+	original := "# unrelated administrator configuration\nvm.swappiness = 5\n"
+	mustWrite(t, path, original)
+
+	_, _, _, err := manager.setKernelTuning(context.Background(), "web")
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected conflict, got %v", err)
+	}
+	if got := readLimited(path); got != original {
+		t.Fatalf("unknown artifact changed: %q", got)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands ran before conflict gate: %#v", runner.commands)
+	}
+}
+
+func TestSetKernelTuningRollsBackWhenAllSysctlSettingsFail(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, procRoot, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(procRoot, "meminfo"), "MemTotal: 4194304 kB\n")
+	path := filepath.Join(etcRoot, "sysctl.d", "99-kejilion-optimize.conf")
+	original := kejilionKernelConfigMarker +
+		"\n# 模式: 均衡优化模式 | 场景: balanced\nvm.swappiness = 30\n"
+	mustWrite(t, path, original)
+	runner.run = func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+		if name == "sysctl" && len(arguments) > 0 && arguments[0] == "-w" {
+			return nil, errors.New("permission denied")
+		}
+		return nil, nil
+	}
+
+	_, backup, _, err := manager.setKernelTuning(context.Background(), "web")
+	if !errors.Is(err, ErrRolledBack) {
+		t.Fatalf("expected rollback error, got %v", err)
+	}
+	if backup == "" {
+		t.Fatal("rollback did not create a backup")
+	}
+	if got := readLimited(path); got != original {
+		t.Fatalf("kernel profile was not restored: %q", got)
+	}
+}
+
+func TestSetKernelTuningOffRestoresKejilionArtifactsAndPreservesStandaloneBBR(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	manualPath := filepath.Join(etcRoot, "sysctl.d", "99-kejilion-optimize.conf")
+	autoPath := filepath.Join(etcRoot, "sysctl.d", "99-network-optimize.conf")
+	limitsPath := filepath.Join(etcRoot, "security", "limits.conf")
+	modulesPath := filepath.Join(etcRoot, "modules-load.d", "bbr.conf")
+	kpanelBBRPath := filepath.Join(etcRoot, "sysctl.d", "99-kejilion-bbr.conf")
+	thpPath := filepath.Join(manager.sysRoot, "kernel", "mm", "transparent_hugepage", "enabled")
+	mustWrite(
+		t,
+		manualPath,
+		kejilionKernelConfigMarker+"\n# 模式: 网站搭建优化模式 | 场景: web\nvm.swappiness = 10\n",
+	)
+	mustWrite(t, autoPath, kejilionAutoKernelMarker+"\nnet.core.somaxconn = 2048\n")
+	mustWrite(
+		t,
+		limitsPath,
+		"# keep\n"+kejilionLimitsMarker+"\n* soft nofile 1048576\n* hard nofile 1048576\n"+
+			"root soft nofile 1048576\nroot hard nofile 1048576\n",
+	)
+	mustWrite(t, modulesPath, "tcp_bbr\n")
+	mustWrite(t, kpanelBBRPath, kpanelBBRMarker+"\nnet.ipv4.tcp_congestion_control=bbr\n")
+	mustWrite(t, thpPath, "always madvise [never]\n")
+
+	changed, _, message, err := manager.setKernelTuning(context.Background(), "off")
+	if err != nil || !changed || !strings.Contains(message, "已还原") {
+		t.Fatalf("restore defaults: changed=%v message=%q err=%v", changed, message, err)
+	}
+	if regularFile(manualPath) || regularFile(autoPath) || regularFile(modulesPath) {
+		t.Fatal("Kejilion optimization artifacts remain after restore")
+	}
+	if !regularFile(kpanelBBRPath) {
+		t.Fatal("independently managed KPanel BBR profile was removed")
+	}
+	if got := readLimited(limitsPath); !strings.Contains(got, "# keep") ||
+		strings.Contains(got, kejilionLimitsMarker) {
+		t.Fatalf("unexpected restored limits: %q", got)
+	}
+	if got := strings.TrimSpace(readLimited(thpPath)); got != "always" {
+		t.Fatalf("transparent hugepage mode was not restored: %q", got)
+	}
+	if !slices.Contains(runner.commands, "sysctl --system") {
+		t.Fatalf("system sysctl defaults were not reloaded: %#v", runner.commands)
 	}
 }
 
