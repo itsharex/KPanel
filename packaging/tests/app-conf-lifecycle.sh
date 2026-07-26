@@ -20,6 +20,7 @@ cleanup() {
 			;;
 	esac
 	rm -rf -- /home/docker/kpanel
+	rm -f /bin/systemctl
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -34,7 +35,7 @@ require_state() {
 	}
 }
 case "$1 ${2:-}" in
-	"compose version"|"pull docker.io/kjlion/kejilion-panel:0.15.0")
+	"compose version"|"pull docker.io/kjlion/kejilion-panel:0.15.1")
 		exit 0
 		;;
 	"ps -a")
@@ -60,8 +61,12 @@ case "$1 ${2:-}" in
 		cat >"$destination" <<'AGENT'
 #!/bin/sh
 case "${1:-}" in
-	version) printf '%s\n' '0.15.0 v1alpha1' ;;
-	healthcheck) exit 0 ;;
+	version) printf '%s\n' '0.15.1 v1alpha1' ;;
+	healthcheck)
+		[ -f "${KEJILION_AGENT_TOKEN_FILE:?}" ]
+		[ "$(stat -c '%a' "$KEJILION_AGENT_TOKEN_FILE")" = 640 ]
+		[ "$(tr -d '\r\n' <"$KEJILION_AGENT_TOKEN_FILE" | wc -c)" = 64 ]
+		;;
 	*) exit 0 ;;
 esac
 AGENT
@@ -101,6 +106,11 @@ EOF
 
 cat >"$FAKE_BIN/systemctl" <<'EOF'
 #!/bin/sh
+printf '%s|%s\n' "$#" "$*" >>"${KPANEL_MOCK_SYSTEMCTL_LOG:?}"
+if [ "$1" = "--version" ]; then
+	printf '%s\n' 'systemd 255 (mock)'
+	exit 0
+fi
 case "$1" in
 	link)
 		ln -sf "$2" /etc/systemd/system/kejilion-agent.service
@@ -133,10 +143,20 @@ cat >"$FAKE_BIN/sleep" <<'EOF'
 exit 0
 EOF
 chmod 755 "$FAKE_BIN"/*
+[ ! -e /bin/systemctl ] || {
+	echo "disposable app-conf test image unexpectedly provides /bin/systemctl" >&2
+	exit 1
+}
+ln -s "$FAKE_BIN/systemctl" /bin/systemctl
 
 run_lifecycle() {
 	local ipv4_address="198.51.100.25"
 
+	systemctl() {
+		local COMMAND="$1"
+		local SERVICE_NAME="${2:-}"
+		/bin/systemctl "$COMMAND" "$SERVICE_NAME"
+	}
 	docker_app_plus() {
 		:
 	}
@@ -149,7 +169,7 @@ run_lifecycle() {
 	docker_port="18080"
 	docker_app_install
 
-	grep -F 'image: docker.io/kjlion/kejilion-panel:0.15.0' \
+	grep -F 'image: docker.io/kjlion/kejilion-panel:0.15.1' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx 'KPANEL_PUBLIC_URL=http://198.51.100.25:18080' \
@@ -159,10 +179,16 @@ run_lifecycle() {
 	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 1
 	grep -F 'ExecStart=/home/docker/kpanel/bin/kejilion-agent' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	grep -F -- '-/home/web/certs -/home/web/letsencrypt' \
+		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	test -f /home/docker/kpanel/secrets/agent.token
+	test "$(stat -c '%a' /home/docker/kpanel/secrets/agent.token)" = 640
+	test "$(stat -c '%u:%g' /home/docker/kpanel/secrets/agent.token)" = 0:987
+	test "$(tr -d '\r\n' </home/docker/kpanel/secrets/agent.token | wc -c)" = 64
 	test -f /home/docker/kpanel/.managed-by-kejilion-app
 
 	docker_app_update
-	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = '0.15.0 v1alpha1'
+	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = '0.15.1 v1alpha1'
 
 	docker_app_uninstall
 	[ ! -e /home/docker/kpanel ]
@@ -171,6 +197,11 @@ run_lifecycle() {
 run_failed_install() {
 	local ipv4_address="198.51.100.25"
 
+	systemctl() {
+		local COMMAND="$1"
+		local SERVICE_NAME="${2:-}"
+		/bin/systemctl "$COMMAND" "$SERVICE_NAME"
+	}
 	docker_app_plus() {
 		:
 	}
@@ -192,6 +223,11 @@ run_failed_install() {
 run_unmanaged_guard() {
 	local manual_unit="/tmp/manual-kejilion-agent.service"
 
+	systemctl() {
+		local COMMAND="$1"
+		local SERVICE_NAME="${2:-}"
+		/bin/systemctl "$COMMAND" "$SERVICE_NAME"
+	}
 	docker_app_plus() {
 		:
 	}
@@ -214,7 +250,15 @@ run_unmanaged_guard() {
 
 export PATH="$FAKE_BIN:$PATH"
 export KPANEL_MOCK_STATE="$MOCK_STATE"
+export KPANEL_MOCK_SYSTEMCTL_LOG="$TEST_DIR/systemctl.log"
 run_lifecycle
+grep -Fx '1|daemon-reload' "$KPANEL_MOCK_SYSTEMCTL_LOG" >/dev/null
+grep -Fx '3|enable --now kejilion-agent.service' "$KPANEL_MOCK_SYSTEMCTL_LOG" >/dev/null
+grep -Fx '3|disable --now kejilion-agent.service' "$KPANEL_MOCK_SYSTEMCTL_LOG" >/dev/null
+if grep -F 'daemon-reload ' "$KPANEL_MOCK_SYSTEMCTL_LOG" >/dev/null; then
+	echo "daemon-reload received the empty service argument from kejilion.sh's systemctl wrapper" >&2
+	exit 1
+fi
 run_failed_install
 run_unmanaged_guard
 printf '%s\n' "app_conf_lifecycle=pass"

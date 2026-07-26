@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.15.1] - 2026-07-26
+
+### 修复
+
+- 应用市场安装、更新、卸载不再调用 `kejilion.sh` 覆盖的
+  `systemctl()` 包装函数，改为校验并调用绝对路径的 systemd 客户端，
+  修复创建 unit 链接后报 `Too many arguments.` 并中断的问题。
+- 应用市场安装现在从 `/dev/urandom` 原子生成独立的 256-bit Agent
+  Token，并以 `root:kejilion-panel 0640` 保存；更新保留既有 Token，
+  解决真实 Agent 因令牌文件缺失而拒绝启动的问题。
+- Agent systemd 写入白名单补齐 `/home/web/certs` 与
+  `/home/web/letsencrypt`，确保 WordPress 一键搭建能够发布证书，并保持
+  其余 `/home` 路径只读。
+- 应用配置生命周期测试现在在与 `kejilion.sh` 相同的 `systemctl()`
+  函数覆盖环境中运行，避免同类集成缺陷再次遗漏。
+
 ## [0.15.0] - 2026-07-26
 
 ### Added
