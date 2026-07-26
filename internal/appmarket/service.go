@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -58,15 +59,18 @@ type Summary struct {
 }
 
 type Inventory struct {
-	SchemaVersion   int        `json:"schemaVersion"`
-	Source          string     `json:"source"`
-	ScriptSHA256    string     `json:"scriptSha256"`
-	Categories      []Category `json:"categories"`
-	Items           []Summary  `json:"items"`
-	Installed       int        `json:"installed"`
-	Running         int        `json:"running"`
-	UpdateAvailable int        `json:"updateAvailable"`
-	CollectedAt     time.Time  `json:"collectedAt"`
+	SchemaVersion      int        `json:"schemaVersion"`
+	Source             string     `json:"source"`
+	ScriptSHA256       string     `json:"scriptSha256"`
+	CatalogMode        string     `json:"catalogMode"`
+	CatalogWarning     string     `json:"catalogWarning,omitempty"`
+	CatalogRefreshedAt *time.Time `json:"catalogRefreshedAt,omitempty"`
+	Categories         []Category `json:"categories"`
+	Items              []Summary  `json:"items"`
+	Installed          int        `json:"installed"`
+	Running            int        `json:"running"`
+	UpdateAvailable    int        `json:"updateAvailable"`
+	CollectedAt        time.Time  `json:"collectedAt"`
 }
 
 type declarativeSpec struct {
@@ -93,16 +97,30 @@ var declarativeSpecs = map[string]declarativeSpec{
 }
 
 type Service struct {
-	catalog      Catalog
-	legacy       map[int]LegacyApp
-	scriptSHA256 string
-	docker       Docker
-	appRoot      string
-	now          func() time.Time
-	actions      sync.Mutex
+	catalog            Catalog
+	legacy             map[int]LegacyApp
+	scriptSHA256       string
+	docker             Docker
+	appRoot            string
+	now                func() time.Time
+	fetchCatalog       catalogFetcher
+	catalogMu          sync.Mutex
+	liveCatalog        *Catalog
+	catalogExpiry      time.Time
+	catalogRefreshedAt time.Time
+	catalogWarning     string
+	actions            sync.Mutex
 }
 
 func New(docker Docker, appRoot string) (*Service, error) {
+	return newService(docker, appRoot, nil)
+}
+
+func NewWithOfficialCatalog(docker Docker, appRoot string) (*Service, error) {
+	return newService(docker, appRoot, newOfficialCatalogFetcher())
+}
+
+func newService(docker Docker, appRoot string, fetcher catalogFetcher) (*Service, error) {
 	if docker == nil {
 		return nil, errors.New("Docker client is required")
 	}
@@ -116,10 +134,12 @@ func New(docker Docker, appRoot string) (*Service, error) {
 	return &Service{
 		catalog: catalog, legacy: legacy, scriptSHA256: scriptSHA256,
 		docker: docker, appRoot: filepath.Clean(appRoot), now: time.Now,
+		fetchCatalog: fetcher,
 	}, nil
 }
 
 func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
+	catalogState := s.currentCatalog(ctx)
 	containers, err := s.docker.Containers(ctx)
 	if err != nil {
 		return Inventory{}, err
@@ -131,11 +151,16 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 	}
 
 	result := Inventory{
-		SchemaVersion: 1, Source: s.catalog.Source, ScriptSHA256: s.scriptSHA256,
-		Categories: append([]Category(nil), s.catalog.Categories...),
-		Items:      make([]Summary, 0, len(s.catalog.Apps)), CollectedAt: s.now().UTC(),
+		SchemaVersion: 1, Source: catalogState.Catalog.Source, ScriptSHA256: s.scriptSHA256,
+		CatalogMode: catalogState.Mode, CatalogWarning: catalogState.Warning,
+		Categories: append([]Category(nil), catalogState.Catalog.Categories...),
+		Items:      make([]Summary, 0, len(catalogState.Catalog.Apps)), CollectedAt: s.now().UTC(),
 	}
-	for _, app := range s.catalog.Apps {
+	if !catalogState.RefreshedAt.IsZero() {
+		refreshedAt := catalogState.RefreshedAt
+		result.CatalogRefreshedAt = &refreshedAt
+	}
+	for _, app := range catalogState.Catalog.Apps {
 		legacy := s.legacy[app.Num]
 		item := Summary{
 			App:         app,
@@ -178,6 +203,42 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 		result.Items = append(result.Items, item)
 	}
 	return result, nil
+}
+
+func (s *Service) currentCatalog(ctx context.Context) catalogSnapshot {
+	if s.fetchCatalog == nil {
+		return catalogSnapshot{Catalog: s.catalog, Mode: "embedded"}
+	}
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+	now := s.now().UTC()
+	if s.liveCatalog != nil && now.Before(s.catalogExpiry) {
+		return catalogSnapshot{
+			Catalog: *s.liveCatalog, Mode: "live", Warning: s.catalogWarning,
+			RefreshedAt: s.catalogRefreshedAt,
+		}
+	}
+	remote, err := s.fetchCatalog(ctx)
+	if err == nil {
+		merged := mergeRemoteThirdParty(s.catalog, remote)
+		s.liveCatalog = &merged
+		s.catalogExpiry = now.Add(remoteCatalogTTL)
+		s.catalogRefreshedAt = now
+		s.catalogWarning = ""
+		return catalogSnapshot{Catalog: merged, Mode: "live", RefreshedAt: now}
+	}
+	slog.Warn("application catalog refresh failed", "error", err)
+	s.catalogWarning = "动态目录暂不可用，已使用最近一次安全目录。"
+	s.catalogExpiry = now.Add(time.Minute)
+	if s.liveCatalog != nil {
+		return catalogSnapshot{
+			Catalog: *s.liveCatalog, Mode: "cached", Warning: s.catalogWarning,
+			RefreshedAt: s.catalogRefreshedAt,
+		}
+	}
+	return catalogSnapshot{
+		Catalog: s.catalog, Mode: "embedded", Warning: s.catalogWarning,
+	}
 }
 
 func runtimeFromContainer(container contract.ContainerSummary) Runtime {

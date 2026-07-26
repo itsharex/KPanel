@@ -17,6 +17,7 @@ import (
 
 	"github.com/kejilion/kejilion-panel/internal/agent"
 	"github.com/kejilion/kejilion-panel/internal/agentclient"
+	"github.com/kejilion/kejilion-panel/internal/appmarket"
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/sites"
@@ -86,6 +87,10 @@ func run(arguments []string) error {
 	}
 	dockerClient := dockerx.New(*dockerSocket, *webRoot, *stateDir)
 	dockerClient.ConfigureDaemonAccess(*dockerPIDFile, *allowDockerSocketActivation)
+	appMarket, err := appmarket.NewWithOfficialCatalog(dockerClient, "/home/docker")
+	if err != nil {
+		return fmt.Errorf("initialize application market: %w", err)
+	}
 	systemCollector := systeminfo.NewCollector()
 	systemCollector.PublicNetworkLookupEnabled = *enablePublicNetworkLookup
 	handler, err := agent.NewServer(agent.Config{
@@ -94,7 +99,7 @@ func run(arguments []string) error {
 		SystemManager: systemmanage.NewManager(systemmanage.Config{
 			Enabled: *enableSystemWrites, StateDir: filepath.Join(*stateDir, "system"),
 		}),
-		Sites: sites.NewDiscoverer(*webRoot), Docker: dockerClient,
+		Sites: sites.NewDiscoverer(*webRoot), Docker: dockerClient, AppMarket: appMarket,
 	})
 	clear(token)
 	if err != nil {

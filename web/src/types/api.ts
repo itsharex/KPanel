@@ -286,6 +286,9 @@ export interface AppMarketInventory {
   schemaVersion: number
   source: string
   scriptSha256: string
+  catalogMode: 'live' | 'cached' | 'embedded'
+  catalogWarning?: string
+  catalogRefreshedAt?: string
   categories: AppMarketCategory[]
   items: AppMarketItem[]
   installed: number

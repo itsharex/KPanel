@@ -337,6 +337,10 @@ onBeforeUnmount(() => controller?.abort())
       </div>
     </section>
 
+    <div v-if="inventory?.catalogWarning" class="inline-alert inline-alert--warning">
+      {{ inventory.catalogWarning }}
+    </div>
+
     <section v-if="inventory" class="market-toolbar">
       <label class="market-search">
         <Search :size="18" />
@@ -450,7 +454,11 @@ onBeforeUnmount(() => controller?.abort())
 
     <footer v-if="inventory && filteredApps.length" class="market-result">
       已显示 {{ filteredApps.length }} / {{ inventory.items.length }} 个应用
-      <span>目录来源 app.kejilion.sh · 状态来源宿主机</span>
+      <span>
+        目录来源 app.kejilion.sh ·
+        {{ inventory.catalogMode === 'live' ? '动态同步' : inventory.catalogMode === 'cached' ? '安全缓存' : '内置快照' }}
+        · 状态来源宿主机
+      </span>
     </footer>
 
     <ModalDialog

@@ -10,6 +10,7 @@ secrets/
 # Go
 /bin/
 /dist/
+/.codex-tmp/
 coverage.out
 *.test
 
@@ -32,4 +33,3 @@ coverage.out
 .vscode/
 .DS_Store
 Thumbs.db
-

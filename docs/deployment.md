@@ -56,7 +56,7 @@ sha256sum dist/linux-amd64/kejilion-agent dist/linux-arm64/kejilion-agent
 推送 Docker Hub：
 
 ```sh
-VERSION=0.12.0
+VERSION=0.13.0
 IMAGE=docker.io/<owner>/kejilion-panel
 
 docker login
@@ -140,6 +140,26 @@ Panel 容器不发布宿主端口。需要在宿主机或 host-network Nginx 中
 
 反向代理配置属于目标机业务配置，安装器不会自动写入。上线时应单独备份、新增
 独立域名配置、执行 `nginx -t`，成功后才 reload；验证失败时不得 reload。
+
+## 直接 IP + 端口
+
+测试主机可以不依赖 Nginx，使用附加 Compose 文件直接发布端口：
+
+```sh
+KEJILION_PANEL_PUBLIC_URL=http://154.36.153.9:8080
+KEJILION_PANEL_SECURE_COOKIE=false
+KEJILION_PANEL_BIND_ADDRESS=0.0.0.0
+KEJILION_PANEL_PORT=8080
+
+docker --host unix:///var/run/docker.sock compose \
+  --project-name kejilion-panel \
+  --env-file /opt/kejilion-panel/.env \
+  -f /opt/kejilion-panel/compose.yml \
+  -f /opt/kejilion-panel/direct-port.yml up -d
+```
+
+`KEJILION_PANEL_PUBLIC_URL` 必须与浏览器访问的来源完全一致。直接 HTTP 会禁用
+Secure Cookie，仅建议用于受控测试环境；正式公网环境仍建议使用 HTTPS。
 
 ## 验收
 

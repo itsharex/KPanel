@@ -10,6 +10,7 @@ RUN --mount=type=cache,target=/root/.npm \
     sh -eu -c 'if [ -f /run/secrets/https_proxy ]; then export HTTPS_PROXY="$(cat /run/secrets/https_proxy)"; fi; npm ci'
 COPY web/index.html web/tsconfig.json web/vite.config.ts ./
 COPY web/src/ ./src/
+COPY web/public/ ./public/
 RUN npm run build
 
 FROM --platform=$BUILDPLATFORM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS go-build

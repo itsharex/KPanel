@@ -2,15 +2,20 @@
 
 ## 目录与事实来源
 
-- 展示目录来自 `https://app.kejilion.sh/` 的 `window.__APPS__` 数据快照。
-- 当前快照包含 146 个应用：115 个 `kejilion.sh` 内置应用、31 个第三方应用、7 个分类。
-- 图标同步到 `web/public/app-icons`，运行时不依赖远程热链；每个图标在目录中记录 SHA-256。
+- Agent 每五分钟从固定的 `https://app.kejilion.sh/` 读取并严格校验
+  `window.__APPS__`，只动态替换第三方展示目录；115 个脚本内置应用和执行适配器
+  始终来自随版本审计的本地快照。
+- 当前官方目录包含 146 个应用：115 个 `kejilion.sh` 内置应用、31 个第三方应用、7 个分类。
+- 上游不可用或字段、分类、数量、URL、ID、重复项校验失败时，使用最近一次安全目录；
+  Agent 重启后仍可回退随版本发布的内置快照，应用市场不会因断网不可用。
+- 已随版本发布的图标位于 `web/public/app-icons`，运行时不远程热链；新入驻但尚未随
+  KPanel 版本发布图标的应用使用本地通用图标。
 - `scripts/audit-kejilion-apps.mjs` 从指定的 `kejilion.sh` 提取 115 个内置应用的主容器、镜像、
   默认端口和管理类型，生成 `internal/appmarket/legacy-apps.json`。
 - Docker Engine 是安装与运行状态的事实来源；`/home/docker/appno.txt` 只作为脚本兼容标记。
   只有标记、没有容器时显示“待核对”，不会伪装成正常运行。
 
-同步目录：
+同步随版本发布的回退目录和本地图标：
 
 ```bash
 node scripts/sync-app-market.mjs
@@ -22,8 +27,9 @@ node scripts/sync-app-market.mjs
 node scripts/audit-kejilion-apps.mjs /path/to/kejilion.sh internal/appmarket/legacy-apps.json
 ```
 
-两条命令都有严格的数量、字段、URL、文件类型、大小和重复项校验。上游目录或分类结构发生变化时，
-同步会失败，必须先人工复核。
+两条命令都有严格的数量、字段、URL、文件类型、大小和重复项校验。上游内置应用或分类结构发生
+变化时，同步会失败，必须先人工复核。运行时远程目录只有展示权，不能创建安装适配器，也不能
+触发 Shell、Compose 或远程脚本执行。
 
 ## 功能矩阵
 

@@ -2,10 +2,13 @@ package appmarket
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
@@ -140,4 +143,103 @@ func TestInventoryCombinesDockerTruthAndScriptMarker(t *testing.T) {
 		itTools.Runtime.Warning == "" {
 		t.Fatalf("marker-only application was not degraded safely: %#v", itTools)
 	}
+}
+
+func TestRemoteCatalogDynamicallyReplacesThirdPartyEntries(t *testing.T) {
+	embedded, _, _, err := LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := remotePayloadFromCatalog(embedded)
+	removed := ""
+	apps := make([]App, 0, len(payload.Apps))
+	for _, app := range payload.Apps {
+		if app.Source == "thirdparty" && removed == "" {
+			removed = app.Token
+			continue
+		}
+		apps = append(apps, app)
+	}
+	apps = append(apps, App{
+		ID: "thirdparty-new-safe-app", Source: "thirdparty", Token: "new-safe-app",
+		NameZH: "新入驻应用", NameEN: "New Safe App", Description: "动态目录测试",
+		DescriptionEN: "Dynamic catalog test", Category: "commtools",
+		Website: "https://example.com", Icon: "icons/new-safe-app.webp", Slug: "new-safe-app",
+	})
+	payload.Apps = apps
+	payload.Meta.ThirdParty = len(apps) - payload.Meta.Builtin
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := decodeRemoteCatalog(
+		[]byte("<script>window.__APPS__ = " + string(encoded) + ";\n  </script>"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := mergeRemoteThirdParty(embedded, remote)
+	foundNew := false
+	foundRemoved := false
+	for _, app := range merged.Apps {
+		if app.Token == "new-safe-app" {
+			foundNew = app.Icon == genericThirdPartyIcon && app.IconSHA256 == ""
+		}
+		if app.Token == removed {
+			foundRemoved = true
+		}
+	}
+	if !foundNew || foundRemoved || len(merged.Apps) != len(embedded.Apps) {
+		t.Fatalf(
+			"dynamic merge failed: new=%v removedStillPresent=%v count=%d",
+			foundNew, foundRemoved, len(merged.Apps),
+		)
+	}
+}
+
+func TestRemoteCatalogFallsBackToLastKnownGood(t *testing.T) {
+	embedded, _, _, err := LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	fetcher := func(context.Context) (Catalog, error) {
+		calls++
+		if calls == 1 {
+			return embedded, nil
+		}
+		return Catalog{}, errors.New("upstream unavailable")
+	}
+	service, err := newService(&fakeDocker{}, t.TempDir(), fetcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	first := service.currentCatalog(context.Background())
+	if first.Mode != "live" || first.Warning != "" || calls != 1 {
+		t.Fatalf("unexpected live catalog state: %#v calls=%d", first, calls)
+	}
+	now = now.Add(remoteCatalogTTL + time.Second)
+	second := service.currentCatalog(context.Background())
+	if second.Mode != "cached" || second.Warning == "" || calls != 2 {
+		t.Fatalf("unexpected cached catalog state: %#v calls=%d", second, calls)
+	}
+}
+
+func remotePayloadFromCatalog(catalog Catalog) remoteCatalogPayload {
+	payload := remoteCatalogPayload{
+		Meta:       remoteCatalogMeta{Builtin: 115, Source: catalog.Upstream},
+		Categories: append([]Category(nil), catalog.Categories...),
+		Apps:       append([]App(nil), catalog.Apps...),
+	}
+	for index := range payload.Apps {
+		app := &payload.Apps[index]
+		app.Icon = "icons/" + app.Slug + ".webp"
+		app.IconSHA256 = ""
+		if app.Source == "thirdparty" {
+			payload.Meta.ThirdParty++
+		}
+	}
+	return payload
 }
