@@ -72,6 +72,7 @@ func TestSystemWriteCapabilitiesRemainExplicitlyDisabled(t *testing.T) {
 		"system.bbr.write",
 		"system.update.write",
 		"system.cleanup.write",
+		"system.reboot.write",
 		"system.reinstall",
 	} {
 		found := false

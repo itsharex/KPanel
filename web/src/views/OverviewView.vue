@@ -20,6 +20,7 @@ import {
   MemoryStick,
   Network,
   Pencil,
+  Power,
   RefreshCw,
   RefreshCcw,
   Server,
@@ -81,6 +82,7 @@ const actionForm = reactive({
   profile: 'balanced' as KernelProfile,
   bbrEnabled: true,
   maintenancePolicy: 'full' as 'full' | 'cache' | 'standard',
+  rebootConfirmation: '',
 })
 
 watch(
@@ -299,6 +301,17 @@ const maintenanceTools = computed<ManagementTool[]>(() => {
       icon: Database,
       tone: 'violet',
     },
+    {
+      id: 'system-reboot',
+      title: '重启服务器',
+      description: '安全安排宿主机重启，面板和当前连接会短暂离线。',
+      value: maintenance.rebootRequired ? '系统建议重启' : '受控延时重启',
+      detail: '确认后延迟约 15 秒执行，为审计记录和页面响应预留时间。',
+      capability: 'system.reboot.write',
+      safety: '只创建固定参数的 systemd 延时重启单元；维护任务运行期间禁止重启，不接受命令、时间或脚本参数。',
+      icon: Power,
+      tone: 'danger',
+    },
   ]
 })
 
@@ -347,8 +360,15 @@ function openTool(tool: ManagementTool): void {
   )
   actionForm.bbrEnabled = !management?.bbr.enabled
   actionForm.maintenancePolicy = tool.id === 'system-cleanup' ? 'standard' : 'full'
+  actionForm.rebootConfirmation = ''
   actionConfirmed.value = false
   selectedTool.value = tool
+}
+
+function maintenanceActionFor(toolID: string): 'update' | 'cleanup' | undefined {
+  if (toolID === 'system-update') return 'update'
+  if (toolID === 'system-cleanup') return 'cleanup'
+  return undefined
 }
 
 function nextSSHPort(ports: number[]): number {
@@ -416,6 +436,10 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
       return { action: 'update', maintenancePolicy: 'full' }
     case 'system-cleanup':
       return { action: 'cleanup', maintenancePolicy: actionForm.maintenancePolicy }
+    case 'system-reboot':
+      return actionForm.rebootConfirmation.trim() === 'REBOOT'
+        ? { action: 'reboot', confirmation: 'REBOOT' }
+        : { action: 'reboot', confirmation: undefined }
     default:
       return undefined
   }
@@ -424,7 +448,9 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
 const actionValid = computed(() => {
   const input = actionInput.value
   if (!input || !selectedTool.value || !capabilityState(selectedTool.value.capability).enabled) return false
-  if ((input.action === 'update' || input.action === 'cleanup') && maintenanceRunning.value) return false
+  if ((input.action === 'update' || input.action === 'cleanup' || input.action === 'reboot') && maintenanceRunning.value) {
+    return false
+  }
   switch (input.action) {
     case 'hostname':
       return Boolean(input.hostname && /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(input.hostname))
@@ -436,6 +462,8 @@ const actionValid = computed(() => {
       return Boolean(input.timezone && !input.timezone.includes('..'))
     case 'swap':
       return input.swapSizeMiB === 0 || Boolean(input.swapSizeMiB && input.swapSizeMiB >= 256 && input.swapSizeMiB <= 65536)
+    case 'reboot':
+      return input.confirmation === 'REBOOT'
     default:
       return true
   }
@@ -450,10 +478,12 @@ async function executeAction(): Promise<void> {
     const result = await api.system.action(input)
     if (input.action === 'update' || input.action === 'cleanup') {
       toast.success(`${tool.title}任务已提交`, result.message)
+    } else if (input.action === 'reboot') {
+      toast.success('服务器重启已安排', result.message)
     } else {
       toast.success(result.changed ? `${tool.title}已更新` : `${tool.title}无需变更`, result.message)
     }
-    await load(true)
+    if (input.action !== 'reboot') await load(true)
     selectedTool.value = undefined
     actionConfirmed.value = false
   } catch (reason) {
@@ -745,7 +775,7 @@ onBeforeUnmount(() => {
                 <span class="system-tool__state">
                   {{
                     maintenanceRunning
-                      ? data.management.maintenance.action === (tool.id === 'system-update' ? 'update' : 'cleanup')
+                      ? data.management.maintenance.action === maintenanceActionFor(tool.id)
                         ? `进行中 ${data.management.maintenance.progress}%`
                         : '任务占用'
                       : capabilityState(tool.capability).enabled
@@ -760,7 +790,7 @@ onBeforeUnmount(() => {
               <span
                 v-if="
                   maintenanceRunning &&
-                  data.management.maintenance.action === (tool.id === 'system-update' ? 'update' : 'cleanup')
+                  data.management.maintenance.action === maintenanceActionFor(tool.id)
                 "
                 class="maintenance-progress"
                 role="progressbar"
@@ -1035,10 +1065,31 @@ onBeforeUnmount(() => {
             </select>
             <small>不会清理 Docker、网站文件、数据库、`/tmp` 或 KPanel 配置备份。</small>
           </label>
+          <div v-else-if="selectedTool.id === 'system-reboot'" class="form-stack compact">
+            <div class="inline-alert inline-alert--danger">
+              <CircleAlert :size="17" />
+              <span>重启会立即中断 SSH、网站请求和面板连接。请先确认没有正在执行的业务任务。</span>
+            </div>
+            <label class="field">
+              <span>输入 REBOOT 确认</span>
+              <input
+                v-model.trim="actionForm.rebootConfirmation"
+                maxlength="6"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                placeholder="REBOOT"
+              />
+              <small>必须完整输入大写 REBOOT；执行时间固定，不能从 Web 传入命令或延迟参数。</small>
+            </label>
+          </div>
 
           <label class="confirmation-check">
             <input v-model="actionConfirmed" type="checkbox" />
-            <span v-if="selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup'">
+            <span v-if="selectedTool.id === 'system-reboot'">
+              我确认重启当前宿主机，并理解 KPanel、网站和 SSH 会短暂离线。
+            </span>
+            <span v-else-if="selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup'">
               我确认启动系统维护任务；软件包更新和清理不可自动回滚。
             </span>
             <span v-else-if="selectedTool.id === 'swap'">
@@ -1056,11 +1107,15 @@ onBeforeUnmount(() => {
           <span>
             {{
               maintenanceRunning &&
-              (selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup')
+              (selectedTool.id === 'system-update' ||
+                selectedTool.id === 'system-cleanup' ||
+                selectedTool.id === 'system-reboot')
                 ? '已有系统维护任务正在后台执行，请等待完成后再提交新任务。'
                 : capabilityState(selectedTool.capability).enabled
                   ? selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup'
                     ? '任务由独立 systemd 单元执行；关闭浏览器不会中断，页面将持续读取进度。'
+                    : selectedTool.id === 'system-reboot'
+                      ? '请求成功后，Agent 会创建固定的延时重启单元；约 15 秒后面板离线属于正常现象。'
                     : '该操作使用固定参数执行器，并在完成后回读宿主机真实状态。'
                 : capabilityState(selectedTool.capability).reason
             }}
@@ -1076,7 +1131,15 @@ onBeforeUnmount(() => {
           @click="executeAction"
         >
           <ShieldCheck :size="16" />
-          {{ actionRunning ? '正在执行并验证…' : capabilityState(selectedTool?.capability || '').enabled ? '确认执行' : '当前不可执行' }}
+          {{
+            actionRunning
+              ? selectedTool?.id === 'system-reboot'
+                ? '正在安排重启…'
+                : '正在执行并验证…'
+              : capabilityState(selectedTool?.capability || '').enabled
+                ? '确认执行'
+                : '当前不可执行'
+          }}
         </button>
       </template>
     </ModalDialog>

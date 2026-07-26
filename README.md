@@ -24,7 +24,7 @@ KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录�
 - 与 `app.kejilion.sh` 对齐的 146 个应用目录、本地图标、脚本安装状态、容器状态、镜像更新检查、
   域名绑定/解绑和访问策略；已审计应用支持声明式安装、更新、卸载与失败回滚。
 - 主机名、SSH 新端口、DNS、时区、与 `kejilion.sh` 共用的 `/swapfile`、APT 镜像、IP 优先级、
-  五种内存自适应内核预设和 BBR 的类型化、可回滚管理。
+  五种内存自适应内核预设、BBR 和确认式服务器重启的类型化管理。
 - Debian/Ubuntu、RHEL/Fedora、Arch/Manjaro 和 openSUSE/SLES 的系统更新，
   以及不触碰 Docker、网站和备份的安全系统清理。
 - 管理变更记录、审计、资源版本冲突检测和只读降级。

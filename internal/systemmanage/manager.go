@@ -88,17 +88,18 @@ type Config struct {
 }
 
 type Manager struct {
-	enabled    bool
-	etcRoot    string
-	procRoot   string
-	sysRoot    string
-	runRoot    string
-	stateDir   string
-	swapPath   string
-	executable string
-	now        func() time.Time
-	runner     Runner
-	mu         sync.Mutex
+	enabled         bool
+	etcRoot         string
+	procRoot        string
+	sysRoot         string
+	runRoot         string
+	stateDir        string
+	swapPath        string
+	executable      string
+	now             func() time.Time
+	runner          Runner
+	rebootScheduled bool
+	mu              sync.Mutex
 }
 
 func NewManager(config Config) *Manager {
@@ -209,6 +210,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 		capability("system.bbr.write", sysctlErr == nil && modprobeErr == nil, "内核调优工具不完整"),
 		capability("system.update.write", maintenanceSupported, maintenanceReason),
 		capability("system.cleanup.write", cleanupSupported, cleanupReason),
+		capability("system.reboot.write", systemctlErr == nil && systemdRunErr == nil, "systemctl 或 systemd-run 不可用"),
 		{ID: "system.reinstall", Enabled: false, Reason: "重装系统必须使用带外控制台，Web 端保持锁定"},
 	}
 }
@@ -257,6 +259,11 @@ func (m *Manager) Execute(ctx context.Context, input contract.SystemActionReques
 		}
 	case "cleanup":
 		result.Changed, result.Message, err = m.startMaintenance(ctx, input.Action, input.MaintenancePolicy)
+		if err == nil {
+			result.Status = "accepted"
+		}
+	case "reboot":
+		result.Changed, result.Message, err = m.scheduleReboot(ctx, input)
 		if err == nil {
 			result.Status = "accepted"
 		}

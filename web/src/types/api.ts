@@ -209,6 +209,7 @@ export interface SystemActionInput {
     | 'bbr'
     | 'update'
     | 'cleanup'
+    | 'reboot'
   hostname?: string
   port?: number
   servers?: string[]
@@ -218,6 +219,7 @@ export interface SystemActionInput {
   preference?: 'ipv4' | 'system_default'
   profile?: 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
   maintenancePolicy?: 'full' | 'cache' | 'standard'
+  confirmation?: 'REBOOT'
   enabled?: boolean
 }
 

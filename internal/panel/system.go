@@ -120,6 +120,16 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 		if input.MaintenancePolicy != "cache" && input.MaintenancePolicy != "standard" {
 			return "maintenancePolicy", "maintenancePolicy must be cache or standard"
 		}
+	case "reboot":
+		if input.Confirmation != "REBOOT" {
+			return "confirmation", "confirmation must be exactly REBOOT"
+		}
+		if input.Hostname != "" || input.Port != 0 || len(input.Servers) != 0 ||
+			input.Timezone != "" || input.SwapSizeMiB != 0 || input.MirrorPreset != "" ||
+			input.Preference != "" || input.Profile != "" || input.MaintenancePolicy != "" ||
+			input.Enabled != nil {
+			return "request", "only action and confirmation are allowed for reboot"
+		}
 	default:
 		return "action", "unsupported system action"
 	}
@@ -149,6 +159,8 @@ func systemActionAuditChange(input contract.SystemActionRequest) map[string]any 
 		change["enabled"] = input.Enabled != nil && *input.Enabled
 	case "update", "cleanup":
 		change["maintenancePolicy"] = input.MaintenancePolicy
+	case "reboot":
+		change["confirmed"] = input.Confirmation == "REBOOT"
 	}
 	return change
 }

@@ -84,6 +84,96 @@ const inventory = {
   collectedAt: new Date().toISOString(),
 }
 
+const systemSummary = {
+  hostname: 'kpanel-demo',
+  os: 'Debian GNU/Linux 13',
+  kernel: '6.12.0-amd64',
+  architecture: 'amd64',
+  uptimeSeconds: 864000,
+  load: { one: 0.38, five: 0.42, fifteen: 0.36 },
+  cpu: { model: 'AMD EPYC', cores: 4, frequencyMHz: 2445, usagePercent: 18.6 },
+  memory: {
+    totalBytes: 8 * 1024 ** 3,
+    availableBytes: 5.1 * 1024 ** 3,
+    usedBytes: 2.9 * 1024 ** 3,
+    usagePercent: 36.25,
+    swapTotalBytes: 2 * 1024 ** 3,
+    swapUsedBytes: 128 * 1024 ** 2,
+  },
+  disks: [
+    {
+      device: '/dev/vda1',
+      mountPoint: '/',
+      fileSystem: 'ext4',
+      totalBytes: 80 * 1024 ** 3,
+      usedBytes: 27 * 1024 ** 3,
+      usagePercent: 33.75,
+    },
+  ],
+  network: {
+    receivedBytes: 24 * 1024 ** 3,
+    sentBytes: 11 * 1024 ** 3,
+    tcpConnections: 96,
+    udpConnections: 18,
+  },
+  publicNetwork: {
+    ipv4: '203.0.113.10',
+    ipv6: '2001:db8::10',
+    isp: 'KPanel Visual Test',
+    country: 'China',
+    region: 'Shanghai',
+    city: 'Shanghai',
+    timezone: 'Asia/Shanghai',
+  },
+  management: {
+    ssh: { ports: [22, 2222], source: 'configured' },
+    dns: { servers: ['1.1.1.1', '2606:4700:4700::1111'], manager: 'systemd-resolved' },
+    timezone: 'Asia/Shanghai',
+    swap: {
+      activeDevices: 1,
+      path: '/swapfile',
+      fileExists: true,
+      fileActive: true,
+      fileSizeBytes: 2 * 1024 ** 3,
+      fileUsedBytes: 128 * 1024 ** 2,
+      legacyExists: false,
+      legacyActive: false,
+      legacySizeBytes: 0,
+      otherActiveDevices: 0,
+      otherSwapTotalBytes: 0,
+      otherSwapUsedBytes: 0,
+    },
+    packageManager: 'apt',
+    packageSources: ['https://deb.debian.org/debian'],
+    maintenance: { state: 'idle', progress: 0, rebootRequired: true },
+    ipPreference: 'ipv4',
+    kernelOptimization: { enabled: true, profile: '均衡优化模式', source: 'kejilion' },
+    bbr: {
+      supported: true,
+      enabled: true,
+      congestionControl: 'bbr',
+      defaultQDisc: 'fq',
+      available: ['reno', 'cubic', 'bbr'],
+    },
+  },
+  collectedAt: new Date().toISOString(),
+}
+
+const systemCapabilities = [
+  'hostname',
+  'ssh-port',
+  'dns',
+  'timezone',
+  'swap',
+  'mirror',
+  'ip-preference',
+  'kernel-tuning',
+  'bbr',
+  'update',
+  'cleanup',
+  'reboot',
+].map((action) => ({ id: `system.${action}.write`, enabled: true, methods: ['POST'] }))
+
 function send(response, status, body) {
   const data = JSON.stringify(body)
   response.writeHead(status, {
@@ -111,7 +201,7 @@ createServer((request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/v1/agent/health') {
     send(response, 200, {
       status: 'ok',
-      version: '0.10.0',
+      version: '0.11.0',
       protocolVersion: 'v1',
       readOnly: false,
       checkedAt: new Date().toISOString(),
@@ -120,6 +210,10 @@ createServer((request, response) => {
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/apps') {
     send(response, 200, inventory)
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/system/summary') {
+    send(response, 200, systemSummary)
     return
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/sites') {
@@ -143,7 +237,40 @@ createServer((request, response) => {
     return
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/capabilities') {
-    send(response, 200, { items: [{ id: 'apps.install', enabled: true, methods: ['POST'] }] })
+    send(response, 200, {
+      items: [
+        { id: 'apps.install', enabled: true, methods: ['POST'] },
+        ...systemCapabilities,
+        { id: 'system.reinstall', enabled: false, reason: '需要带外控制台' },
+      ],
+    })
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/docker/summary') {
+    send(response, 200, {
+      available: true,
+      serverVersion: '28.3.2',
+      containers: 5,
+      running: 4,
+      paused: 0,
+      stopped: 1,
+      images: 12,
+      collectedAt: new Date().toISOString(),
+    })
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/docker/containers') {
+    send(response, 200, { items: [] })
+    return
+  }
+  if (request.method === 'POST' && url.pathname === '/api/v1/system/actions') {
+    send(response, 200, {
+      action: 'reboot',
+      status: 'accepted',
+      changed: true,
+      message: '视觉测试：重启任务已模拟排队',
+      appliedAt: new Date().toISOString(),
+    })
     return
   }
   if (request.method === 'POST' || request.method === 'DELETE') {
@@ -156,5 +283,5 @@ createServer((request, response) => {
   }
   send(response, 404, { title: 'Not found', status: 404, code: 'not_found' })
 }).listen(8080, '127.0.0.1', () => {
-  process.stdout.write('KPanel application market mock API: http://127.0.0.1:8080\n')
+  process.stdout.write('KPanel visual mock API: http://127.0.0.1:8080\n')
 })

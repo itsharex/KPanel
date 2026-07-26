@@ -1894,6 +1894,12 @@ textarea:focus-visible,
   background: var(--amber-soft);
 }
 
+.configuration-row__icon.is-danger,
+.system-tool__icon.is-danger {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .configuration-row__body {
   display: grid;
   min-width: 0;
@@ -1945,6 +1951,14 @@ textarea:focus-visible,
 
 .system-tool-grid--maintenance .system-tool {
   min-height: 142px;
+}
+
+.system-tool-grid--maintenance {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.system-tool-grid--maintenance .system-tool:last-child:nth-child(odd) {
+  grid-column: auto;
 }
 
 .system-tool {

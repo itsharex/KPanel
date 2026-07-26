@@ -75,6 +75,9 @@ func TestValidateSystemAction(t *testing.T) {
 		{"cache cleanup", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "cache"}, true},
 		{"standard cleanup", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "standard"}, true},
 		{"unknown cleanup policy", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "deep"}, false},
+		{"reboot", contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT"}, true},
+		{"reboot without confirmation", contract.SystemActionRequest{Action: "reboot"}, false},
+		{"reboot with unrelated field", contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT", Hostname: "ignored"}, false},
 		{"arbitrary command", contract.SystemActionRequest{Action: "shell"}, false},
 	}
 	for _, test := range tests {
@@ -84,6 +87,18 @@ func TestValidateSystemAction(t *testing.T) {
 				t.Fatalf("valid=%v, field=%q", test.valid, field)
 			}
 		})
+	}
+}
+
+func TestSystemActionAuditChangeRecordsRebootWithoutConfirmationText(t *testing.T) {
+	change := systemActionAuditChange(contract.SystemActionRequest{
+		Action: "reboot", Confirmation: "REBOOT",
+	})
+	if len(change) != 2 || change["action"] != "reboot" || change["confirmed"] != true {
+		t.Fatalf("unexpected reboot audit change: %#v", change)
+	}
+	if _, leaked := change["confirmation"]; leaked {
+		t.Fatal("audit change leaked confirmation text")
 	}
 }
 

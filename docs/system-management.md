@@ -50,6 +50,7 @@ IPinfo IPv4/IPv6 HTTPS 端点，成功结果缓存 30 分钟；外部查询超�
 | BBR | 当前/可用拥塞算法与 qdisc | 内核能力检查、独立 sysctl 文件、回读 |
 | 系统更新 | APT/DNF/YUM/Pacman/Zypper 源与后台任务状态 | 按发行版白名单选择固定命令序列；不杀死软件包进程、不删除锁、不自动重启 |
 | 系统清理 | 软件包管理器与 journal 后台任务状态 | 缓存模式或标准安全模式；不清空日志目录、临时目录、Docker、网站和备份 |
+| 重启服务器 | systemd 能力 | 输入 `REBOOT` 并二次确认；固定延迟 15 秒执行，维护任务运行期间拒绝 |
 | 重装系统 | 不适用 | 带外控制台、备份证明、一次性恢复凭证、二次确认 |
 
 ## v0.3 写入范围
@@ -60,7 +61,7 @@ Agent 根据宿主机命令、配置管理器和 root/sandbox 条件动态返回
 
 已开放：主机名、安全新增 SSH 端口、systemd-resolved DNS、时区、脚本兼容
 `/swapfile`、Debian/Ubuntu APT 镜像预设、地址优先级、KPanel 内核调优预设和
-BBR。重装系统继续锁定；SSH 旧端口删除、静态 `resolv.conf` 接管、任意软件源
+BBR，以及要求双重确认的服务器重启。重装系统继续锁定；SSH 旧端口删除、静态 `resolv.conf` 接管、任意软件源
 URL、任意 sysctl 和任意 Shell 均不开放。
 
 ## v0.5 后台系统维护
@@ -84,6 +85,17 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 
 系统备份保存在 `/var/lib/kejilion-panel/system/backups`。Panel 数据、
 `kejilion.sh` 文件、现有网站、其他容器和其他 Swap 不进入系统操作事务。
+
+## v0.11 服务器重启
+
+- 页面要求完整输入大写 `REBOOT` 并勾选确认；Panel 继续执行登录、Origin、CSRF 和审计校验。
+- Agent 只接受固定的 `reboot` 动作和确认值，不接受 Shell、命令参数、自定义延迟或计划时间。
+- 通过 `systemd-run` 创建一次性 transient timer，固定延迟约 15 秒调用系统
+  `systemctl --no-wall reboot`，让 Panel 有时间落盘成功审计并向浏览器返回结果。
+- 软件包更新或清理任务运行时拒绝重启；缺少 systemd 工具、Agent 写入开关关闭、非 Linux 或
+  Agent 非 root 时，页面显示明确的禁用原因。
+- 重启会短暂中断 KPanel、网站和 SSH。KPanel 不声称业务已安全停机，因此管理员仍需先确认
+  数据库迁移、备份、长连接和外部任务状态。
 
 ## v0.5.1 虚拟内存事务
 

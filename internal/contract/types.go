@@ -132,6 +132,7 @@ type SystemActionRequest struct {
 	Preference        string   `json:"preference,omitempty"`
 	Profile           string   `json:"profile,omitempty"`
 	MaintenancePolicy string   `json:"maintenancePolicy,omitempty"`
+	Confirmation      string   `json:"confirmation,omitempty"`
 	Enabled           *bool    `json:"enabled,omitempty"`
 }
 
