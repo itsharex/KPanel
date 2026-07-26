@@ -145,6 +145,44 @@ func TestInventoryCombinesDockerTruthAndScriptMarker(t *testing.T) {
 	}
 }
 
+func TestInventoryUsesDockerAppServiceAsMainContainer(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "appno.txt"), []byte("81\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	docker := &fakeDocker{containers: []contract.ContainerSummary{{
+		ID: strings.Repeat("c", 64), Name: "jitsi-web-1",
+		Image: "jitsi/web:latest", State: "running", Status: "Up",
+		Ports: []contract.PortBinding{{
+			PrivatePort: 80, PublicPort: 8081, IP: "0.0.0.0", Type: "tcp",
+		}},
+		ResourceVersion: "sha256:" + strings.Repeat("d", 64),
+		AllowedActions:  []string{"stop", "restart"},
+	}}}
+	service, err := New(docker, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeJobRunner{}
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		runner,
+	); err != nil {
+		t.Fatal(err)
+	}
+	service.scriptFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	service.scriptManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	item, err := service.Find(context.Background(), "builtin-81")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !item.Runtime.Installed || item.Runtime.ContainerName != "jitsi-web-1" ||
+		!item.Capabilities["update"].Enabled {
+		t.Fatalf("docker_app_service alias was not manageable: %#v", item)
+	}
+}
+
 func TestRemoteCatalogDynamicallyReplacesThirdPartyEntries(t *testing.T) {
 	embedded, _, _, err := LoadCatalog()
 	if err != nil {

@@ -834,8 +834,11 @@ export const api = {
       id: string,
       action: 'start' | 'stop' | 'restart' | 'update' | 'uninstall' | 'direct_access',
       body: { resourceVersion: string; accessMode?: 'direct' | 'domain_only' },
-    ): Promise<AppMutationResult> =>
-      request<AppMutationResult>(`/apps/${encodeURIComponent(id)}/${action}`, { method: 'POST', body }),
+    ): Promise<AppMutationResult | AppInstallJob> =>
+      request<AppMutationResult | AppInstallJob>(`/apps/${encodeURIComponent(id)}/${action}`, {
+        method: 'POST',
+        body,
+      }),
     checkUpdate: (id: string, resourceVersion: string): Promise<AppImageUpdateResult> =>
       request<AppImageUpdateResult>(`/apps/${encodeURIComponent(id)}/check_update`, {
         method: 'POST',

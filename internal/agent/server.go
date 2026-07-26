@@ -513,6 +513,15 @@ func (s *Server) appOperation(w http.ResponseWriter, r *http.Request, requestID 
 		writeProblem(w, requestID, http.StatusNotFound, "not_found", "资源不存在", "")
 		return
 	}
+	job, scriptBacked, err := s.appMarket.StartScriptMutation(ctx, id, action, input)
+	if scriptBacked {
+		if err != nil {
+			s.writeAppError(w, requestID, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, job)
+		return
+	}
 	result, err := s.appMarket.Mutate(ctx, id, action, input)
 	if err != nil {
 		s.writeAppError(w, requestID, err)

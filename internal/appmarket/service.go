@@ -103,6 +103,7 @@ type Service struct {
 	scriptSHA256       string
 	docker             Docker
 	appRoot            string
+	scriptAppRoot      string
 	now                func() time.Time
 	fetchCatalog       catalogFetcher
 	catalogMu          sync.Mutex
@@ -115,6 +116,8 @@ type Service struct {
 	jobExecutable      string
 	jobRunner          jobCommandRunner
 	scriptFinder       func() (string, error)
+	scriptManageFinder func() (string, error)
+	fileOwnerTrusted   func(os.FileInfo) bool
 }
 
 func New(docker Docker, appRoot string) (*Service, error) {
@@ -139,7 +142,9 @@ func newService(docker Docker, appRoot string, fetcher catalogFetcher) (*Service
 	return &Service{
 		catalog: catalog, legacy: legacy, scriptSHA256: scriptSHA256,
 		docker: docker, appRoot: filepath.Clean(appRoot), now: time.Now,
-		fetchCatalog: fetcher, scriptFinder: findKejilionScript,
+		scriptAppRoot: "/root/apps", fetchCatalog: fetcher,
+		scriptFinder: findKejilionScript, scriptManageFinder: findKejilionManageScript,
+		fileOwnerTrusted: trustedFileOwner,
 	}, nil
 }
 
@@ -166,6 +171,7 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 		result.CatalogRefreshedAt = &refreshedAt
 	}
 	scriptInstallAvailable := s.scriptInstallAvailable()
+	scriptManageAvailable := s.scriptManageAvailable()
 	for _, app := range catalogState.Catalog.Apps {
 		legacy := s.legacy[app.Num]
 		item := Summary{
@@ -178,21 +184,53 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 			},
 			Capabilities: defaultCapabilities(app, legacy, scriptInstallAvailable),
 		}
-		container, hasContainer := byName[legacy.Container]
 		marker := markers[strconv.Itoa(app.Num)] || markers[app.Token]
+		containerName := legacy.Container
+		storageName := legacy.Container
+		scriptBacked := legacy.UsesDockerApp
+		configVerified := false
+		if legacy.Service != "" {
+			containerName = legacy.Service
+		}
+		if app.Source == "thirdparty" && marker {
+			spec, configErr := s.readThirdPartyScriptSpec(app.Token)
+			if configErr == nil {
+				containerName = spec.runtimeContainer()
+				storageName = spec.Container
+				scriptBacked = true
+				configVerified = true
+			} else {
+				item.Runtime.Warning = "已发现 kejilion.sh 安装标记，但应用配置无法安全确认主容器"
+			}
+		}
+		container, hasContainer := byName[containerName]
 		if hasContainer {
 			item.Runtime = runtimeFromContainer(container)
 			item.Runtime.DetectedBy = append(item.Runtime.DetectedBy, "docker")
 			if marker {
 				item.Runtime.DetectedBy = append(item.Runtime.DetectedBy, "appno")
 			}
-			s.applyInstalledCapabilities(&item, container)
+			if configVerified {
+				item.Runtime.DetectedBy = append(item.Runtime.DetectedBy, "app_config")
+			}
+			if scriptBacked {
+				item.Runtime.AccessMode = "unknown"
+				if mode, ok := s.readScriptAccessMode(storageName); ok {
+					item.Runtime.AccessMode = mode
+					item.Runtime.DetectedBy = append(item.Runtime.DetectedBy, "access_state")
+				}
+			}
+			scriptManage := marker && scriptBacked && scriptManageAvailable &&
+				(app.Source != "thirdparty" || configVerified) && app.Token != "kpanel"
+			s.applyInstalledCapabilities(&item, container, scriptManage)
 		} else if marker {
 			item.Runtime.Installed = true
 			item.Runtime.State = "unknown"
 			item.Runtime.UpdateStatus = "unknown"
 			item.Runtime.DetectedBy = []string{"appno"}
-			item.Runtime.Warning = "kejilion.sh 安装标记存在，但未发现主容器"
+			if item.Runtime.Warning == "" {
+				item.Runtime.Warning = "kejilion.sh 安装标记存在，但未发现已核验的主容器"
+			}
 			disableInstalledCapabilities(&item, "未发现可安全确认的主容器")
 		}
 		if markerWarning != "" && item.Runtime.Warning == "" {
@@ -309,20 +347,24 @@ func defaultCapabilities(
 	}
 }
 
-func (s *Service) applyInstalledCapabilities(item *Summary, container contract.ContainerSummary) {
+func (s *Service) applyInstalledCapabilities(
+	item *Summary,
+	container contract.ContainerSummary,
+	scriptManage bool,
+) {
 	item.Capabilities["install"] = Capability{Reason: "应用已安装"}
 	for _, action := range container.AllowedActions {
 		if action == "start" || action == "stop" || action == "restart" {
 			item.Capabilities[action] = Capability{Enabled: true}
 		}
 	}
-	if item.Capabilities["start"].Reason == "" && !item.Capabilities["start"].Enabled {
+	if !item.Capabilities["start"].Enabled {
 		item.Capabilities["start"] = Capability{Reason: "当前状态不允许启动"}
 	}
-	if item.Capabilities["stop"].Reason == "" && !item.Capabilities["stop"].Enabled {
+	if !item.Capabilities["stop"].Enabled {
 		item.Capabilities["stop"] = Capability{Reason: "当前状态不允许停止"}
 	}
-	if item.Capabilities["restart"].Reason == "" && !item.Capabilities["restart"].Enabled {
+	if !item.Capabilities["restart"].Enabled {
 		item.Capabilities["restart"] = Capability{Reason: "当前状态不允许重启"}
 	}
 	canCheckUpdate := item.Runtime.Image != "" &&
@@ -346,9 +388,18 @@ func (s *Service) applyInstalledCapabilities(item *Summary, container contract.C
 		item.Capabilities["update"] = Capability{Enabled: true}
 		item.Capabilities["uninstall"] = Capability{Enabled: true}
 		item.Capabilities["direct_access"] = Capability{Enabled: true}
+	} else if scriptManage {
+		item.Capabilities["update"] = Capability{Enabled: true}
+		item.Capabilities["uninstall"] = Capability{Enabled: true}
+		item.Capabilities["direct_access"] = Capability{Enabled: true}
 	} else {
-		item.Capabilities["update"] = Capability{Reason: "只允许更新经过核验且配置完全匹配的声明式应用"}
-		item.Capabilities["uninstall"] = Capability{Reason: "现有应用由 kejilion.sh 管理，KPanel 不会擅自删除"}
+		reason := "请更新 kejilion.sh；只有安装标记、应用配置与主容器全部核验通过后才能管理"
+		if item.Token == "kpanel" {
+			reason = "KPanel 不允许在自身进程内更新、卸载或修改自身访问策略"
+		}
+		item.Capabilities["update"] = Capability{Reason: reason}
+		item.Capabilities["uninstall"] = Capability{Reason: reason}
+		item.Capabilities["direct_access"] = Capability{Reason: reason}
 	}
 }
 

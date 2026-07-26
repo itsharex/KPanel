@@ -174,6 +174,27 @@ function isActiveJob(job?: AppInstallJob): boolean {
   return job?.status === 'queued' || job?.status === 'running'
 }
 
+function isBackgroundJob(result: unknown): result is AppInstallJob {
+  return Boolean(
+    result &&
+      typeof result === 'object' &&
+      'id' in result &&
+      'appId' in result &&
+      'progress' in result &&
+      'stage' in result,
+  )
+}
+
+function jobActionLabel(action?: AppInstallJob['action']): string {
+  const labels: Record<AppInstallJob['action'], string> = {
+    install: '安装',
+    update: '更新',
+    uninstall: '卸载',
+    direct_access: '访问策略变更',
+  }
+  return action ? labels[action] : '操作'
+}
+
 function stopJobPolling(): void {
   if (jobTimer) window.clearInterval(jobTimer)
   jobTimer = undefined
@@ -193,10 +214,11 @@ async function refreshJob(id: string): Promise<void> {
     window.localStorage.removeItem(activeJobStorageKey)
     if (previousStatus === 'queued' || previousStatus === 'running') {
       if (job.status === 'succeeded') {
-        toast.success('后台安装完成', `${job.appName} 已完成安装与状态对账。`)
+        toast.success(`后台${jobActionLabel(job.action)}完成`, `${job.appName} 已完成状态对账。`)
+        if (job.action === 'uninstall' && selectedID.value === job.appId) selectedID.value = ''
         await load(true)
       } else {
-        toast.danger('后台安装失败', job.message || '请查看任务日志后重试。')
+        toast.danger(`后台${jobActionLabel(job.action)}失败`, job.message || '请查看任务日志后重试。')
       }
     }
   } catch (reason) {
@@ -301,7 +323,14 @@ async function confirmMutation(): Promise<void> {
   if (!item?.runtime.resourceVersion || !action || !capability(item, action)) return
   operation.value = action
   try {
-    await api.apps.action(item.id, action, { resourceVersion: item.runtime.resourceVersion })
+    const result = await api.apps.action(item.id, action, { resourceVersion: item.runtime.resourceVersion })
+    if (isBackgroundJob(result)) {
+      confirmAction.value = undefined
+      startJobPolling(result)
+      jobDetailsOpen.value = true
+      toast.success(`已转入后台${jobActionLabel(result.action)}`, `${item.name_zh} 处理期间可以继续使用面板。`)
+      return
+    }
     confirmAction.value = undefined
     toast.success(action === 'update' ? '应用更新完成' : '应用已卸载')
     if (action === 'uninstall') selectedID.value = ''
@@ -322,10 +351,16 @@ async function toggleAccess(): Promise<void> {
   const next = item.runtime.accessMode === 'domain_only' ? 'direct' : 'domain_only'
   operation.value = 'direct_access'
   try {
-    await api.apps.action(item.id, 'direct_access', {
+    const result = await api.apps.action(item.id, 'direct_access', {
       resourceVersion: item.runtime.resourceVersion,
       accessMode: next,
     })
+    if (isBackgroundJob(result)) {
+      startJobPolling(result)
+      jobDetailsOpen.value = true
+      toast.success('访问策略已转入后台', `${item.name_zh} 正在调用 kejilion.sh 原生防火墙规则。`)
+      return
+    }
     toast.success(next === 'domain_only' ? '已阻止 IP + 端口访问' : '已放行 IP + 端口访问')
     await load(true)
   } catch (reason) {
@@ -350,11 +385,21 @@ async function addDomain(): Promise<void> {
       upstream: `http://127.0.0.1:${port}`,
       enabled: true,
     })
-    if (capability(item, 'direct_access') && item.runtime.accessMode === 'direct' && item.runtime.resourceVersion) {
-      await api.apps.action(item.id, 'direct_access', {
+    if (
+      capability(item, 'direct_access') &&
+      item.runtime.accessMode !== 'domain_only' &&
+      item.runtime.resourceVersion
+    ) {
+      const result = await api.apps.action(item.id, 'direct_access', {
         resourceVersion: item.runtime.resourceVersion,
         accessMode: 'domain_only',
       })
+      if (isBackgroundJob(result)) {
+        startJobPolling(result)
+        toast.success('域名已绑定', `${hostname} 已生效，IP + 端口阻止规则正在后台应用。`)
+        domain.value = ''
+        return
+      }
     }
     domain.value = ''
     toast.success('域名已绑定', `${hostname} 已反向代理到 ${item.name_zh}。`)
@@ -823,7 +868,7 @@ onBeforeUnmount(() => {
           />
           <small>留空时沿用 kejilion.sh 默认端口；低位系统端口和已有服务发生冲突时请换用其他端口。</small>
         </label>
-        <fieldset v-if="selected?.installer === 'declarative'" class="access-options">
+        <fieldset v-if="selected?.installer !== 'guided'" class="access-options">
           <legend>初始访问方式</legend>
           <button
             type="button"
@@ -860,7 +905,7 @@ onBeforeUnmount(() => {
 
     <ModalDialog
       :open="jobDetailsOpen && Boolean(activeJob)"
-      :title="`${activeJob?.appName || ''} 安装进度`"
+      :title="`${activeJob?.appName || ''} ${jobActionLabel(activeJob?.action)}进度`"
       description="任务由宿主机后台执行，离开本页面不会中断。"
       size="large"
       @close="jobDetailsOpen = false"
@@ -873,7 +918,7 @@ onBeforeUnmount(() => {
             <Activity v-else :size="21" />
           </span>
           <div>
-            <strong>{{ activeJob.message || '正在执行安装任务' }}</strong>
+            <strong>{{ activeJob.message || `正在执行${jobActionLabel(activeJob.action)}任务` }}</strong>
             <small>阶段：{{ activeJob.stage }} · 任务 {{ activeJob.id }}</small>
           </div>
           <StatusBadge :status="activeJob.status" />
@@ -903,8 +948,12 @@ onBeforeUnmount(() => {
       :title="confirmAction === 'uninstall' ? '确认卸载应用？' : '确认更新应用？'"
       :description="
         confirmAction === 'uninstall'
-          ? '容器会停止并删除；共享镜像缓存不会删除。'
-          : 'KPanel 会先拉取新镜像，失败时恢复原容器。'
+          ? selected?.installer === 'kejilion'
+            ? '后台调用 kejilion.sh 原生卸载函数；仅在主容器 ID 与安装标记同时匹配时执行。'
+            : '容器会停止并删除；共享镜像缓存不会删除。'
+          : selected?.installer === 'kejilion'
+            ? '后台调用 kejilion.sh 原生更新函数，并在更新后恢复原访问策略。'
+            : 'KPanel 会先拉取新镜像，失败时恢复原容器。'
       "
       size="small"
       @close="confirmAction = undefined"

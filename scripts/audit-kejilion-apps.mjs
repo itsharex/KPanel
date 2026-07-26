@@ -24,9 +24,11 @@ for (let index = 0; index < headers.length; index += 1) {
     const match = block.match(new RegExp(`local ${name}=(?:"([^"]+)"|([^\\s\\r\\n]+))`))
     return match?.[1] || match?.[2] || ''
   }
+  const service = readLocal('docker_app_service').replace(/[“”]/g, '')
   result.push({
     num: Number(header[1]),
     container: readLocal('docker_name').replace(/[“”]/g, ''),
+    ...(service ? { service } : {}),
     image: readLocal('docker_img'),
     defaultPort: Number.parseInt(readLocal('docker_port'), 10) || 0,
     usesDockerApp: /\bdocker_app(?:_plus)?\b/.test(block),

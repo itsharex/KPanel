@@ -53,6 +53,7 @@ type Catalog struct {
 type LegacyApp struct {
 	Num                int    `json:"num"`
 	Container          string `json:"container"`
+	Service            string `json:"service,omitempty"`
 	Image              string `json:"image"`
 	DefaultPort        int    `json:"defaultPort"`
 	UsesDockerApp      bool   `json:"usesDockerApp"`

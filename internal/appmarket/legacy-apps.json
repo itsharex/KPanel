@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "scriptSha256": "1e434ea239703caba45ef88839491b07fda0649d7515e56833c372432f64becd",
+  "scriptSha256": "5b6dc11f31007d6a47ff117c91ecc323b7b17dea81c1d63d3bd12b541ccf53da",
   "apps": [
     {
       "num": 1,
@@ -645,6 +645,7 @@
     {
       "num": 81,
       "container": "jitsi",
+      "service": "jitsi-web-1",
       "image": "",
       "defaultPort": 8081,
       "usesDockerApp": true,

@@ -30,6 +30,7 @@ const (
 var (
 	appJobIDPattern    = regexp.MustCompile(`^[a-f0-9]{32}$`)
 	appSelectorPattern = regexp.MustCompile(`^(?:[1-9][0-9]{0,2}|[A-Za-z0-9][A-Za-z0-9_-]{0,63})$`)
+	containerIDPattern = regexp.MustCompile(`^[a-f0-9]{12,64}$`)
 	appProgressPattern = regexp.MustCompile(`^KPANEL_PROGRESS ([0-9]{1,3}) (.+)$`)
 	appLicensePattern  = regexp.MustCompile(`(?m)^permission_granted="true"\r?$`)
 )
@@ -51,10 +52,11 @@ type AppJob struct {
 
 type appJobRecord struct {
 	AppJob
-	Selector   string `json:"selector"`
-	HostPort   uint16 `json:"hostPort,omitempty"`
-	AccessMode string `json:"accessMode,omitempty"`
-	Adapter    string `json:"adapter"`
+	Selector            string `json:"selector"`
+	HostPort            uint16 `json:"hostPort,omitempty"`
+	AccessMode          string `json:"accessMode,omitempty"`
+	Adapter             string `json:"adapter"`
+	ExpectedContainerID string `json:"expectedContainerId,omitempty"`
 }
 
 type appJobRegistry struct {
@@ -153,7 +155,7 @@ func (s *Service) recoverInterruptedJobs() {
 		record.Status = "failed"
 		record.Stage = "interrupted"
 		record.Progress = 100
-		record.Message = "后台安装任务已被 Agent 或服务器重启中断，请核对应用状态后重试"
+		record.Message = "后台应用任务已被 Agent 或服务器重启中断，请核对应用状态后重试"
 		record.FinishedAt = &finished
 		_ = s.jobs.put(record)
 	}
@@ -205,7 +207,7 @@ func (s *Service) StartInstall(
 	if scriptBacked {
 		adapter = "kejilion"
 	}
-	record, err := newAppJobRecord(item, selector, adapter, input)
+	record, err := newAppJobRecord(item, selector, adapter, "install", input, "")
 	if err != nil {
 		return AppJob{}, err
 	}
@@ -233,8 +235,9 @@ func (s *Service) StartInstall(
 
 func newAppJobRecord(
 	item Summary,
-	selector, adapter string,
+	selector, adapter, action string,
 	input InstallInput,
+	expectedContainerID string,
 ) (appJobRecord, error) {
 	var idBytes [16]byte
 	if _, err := rand.Read(idBytes[:]); err != nil {
@@ -244,12 +247,77 @@ func newAppJobRecord(
 	return appJobRecord{
 		AppJob: AppJob{
 			ID: hex.EncodeToString(idBytes[:]), AppID: item.ID, AppName: item.NameZH,
-			Action: "install", Status: "queued", Stage: "queued", Progress: 0,
-			Message: "安装任务已进入后台队列", Logs: []string{}, CreatedAt: now,
+			Action: action, Status: "queued", Stage: "queued", Progress: 0,
+			Message: appActionLabel(action) + "任务已进入后台队列", Logs: []string{}, CreatedAt: now,
 		},
 		Selector: selector, HostPort: input.HostPort,
 		AccessMode: input.AccessMode, Adapter: adapter,
+		ExpectedContainerID: expectedContainerID,
 	}, nil
+}
+
+func (s *Service) StartScriptMutation(
+	ctx context.Context,
+	id, action string,
+	input MutationInput,
+) (AppJob, bool, error) {
+	if action != "update" && action != "uninstall" && action != "direct_access" {
+		return AppJob{}, false, ErrUnsupported
+	}
+	s.actions.Lock()
+	defer s.actions.Unlock()
+	item, err := s.Find(ctx, id)
+	if err != nil {
+		return AppJob{}, false, err
+	}
+	if _, declarative := declarativeSpecs[item.Token]; declarative {
+		return AppJob{}, false, nil
+	}
+	selector, scriptBacked := s.scriptSelectorFor(item)
+	if !scriptBacked {
+		return AppJob{}, false, nil
+	}
+	if s.jobs == nil {
+		return AppJob{}, true, fmt.Errorf("%w: background application jobs are unavailable", ErrUnsupported)
+	}
+	if !item.Capabilities[action].Enabled {
+		return AppJob{}, true, fmt.Errorf("%w: %s", ErrForbidden, item.Capabilities[action].Reason)
+	}
+	if input.ResourceVersion == "" || input.ResourceVersion != item.Runtime.ResourceVersion ||
+		!containerIDPattern.MatchString(item.Runtime.ContainerID) {
+		return AppJob{}, true, fmt.Errorf("%w: application state changed; refresh and retry", ErrConflict)
+	}
+	if action == "direct_access" && input.AccessMode != "direct" && input.AccessMode != "domain_only" {
+		return AppJob{}, true, fmt.Errorf("%w: invalid access mode", ErrForbidden)
+	}
+	if s.jobs.hasActive() {
+		return AppJob{}, true, fmt.Errorf("%w: another application task is already running", ErrConflict)
+	}
+	record, err := newAppJobRecord(
+		item,
+		selector,
+		"kejilion",
+		action,
+		InstallInput{AccessMode: input.AccessMode},
+		item.Runtime.ContainerID,
+	)
+	if err != nil {
+		return AppJob{}, true, err
+	}
+	if err := s.jobs.put(record); err != nil {
+		return AppJob{}, true, fmt.Errorf("%w: persist application job: %v", ErrNeedsAttention, err)
+	}
+	if err := s.launchScriptJob(ctx, record); err != nil {
+		finished := s.now().UTC()
+		record.Status = "failed"
+		record.Stage = "launch_failed"
+		record.Progress = 100
+		record.Message = safeAppJobMessage(err)
+		record.FinishedAt = &finished
+		_ = s.jobs.put(record)
+		return AppJob{}, true, fmt.Errorf("%w: launch background application task: %v", ErrNeedsAttention, err)
+	}
+	return s.jobs.public(record), true, nil
 }
 
 func (s *Service) runDeclarativeInstall(record appJobRecord, input InstallInput) {
@@ -348,10 +416,14 @@ func (s *Service) AppJobs() []AppJob {
 }
 
 func (s *Service) scriptSelector(item Summary) (string, bool) {
-	if _, declarative := declarativeSpecs[item.Token]; declarative {
+	if !s.scriptInstallAvailable() {
 		return "", false
 	}
-	if !s.scriptInstallAvailable() {
+	return s.scriptSelectorFor(item)
+}
+
+func (s *Service) scriptSelectorFor(item Summary) (string, bool) {
+	if _, declarative := declarativeSpecs[item.Token]; declarative {
 		return "", false
 	}
 	if item.Source == "thirdparty" {
@@ -375,7 +447,26 @@ func (s *Service) scriptInstallAvailable() bool {
 	return err == nil
 }
 
+func (s *Service) scriptManageAvailable() bool {
+	if s.jobs == nil || s.jobRunner == nil || s.jobExecutable == "" || s.scriptManageFinder == nil {
+		return false
+	}
+	if _, err := s.jobRunner.LookPath("systemd-run"); err != nil {
+		return false
+	}
+	_, err := s.scriptManageFinder()
+	return err == nil
+}
+
 func findKejilionScript() (string, error) {
+	return findKejilionScriptMatching(isKPanelCompatibleScript)
+}
+
+func findKejilionManageScript() (string, error) {
+	return findKejilionScriptMatching(isKPanelManageCompatibleScript)
+}
+
+func findKejilionScriptMatching(compatible func([]byte) bool) (string, error) {
 	candidates := []string{"/usr/local/bin/k", "/usr/bin/k", "/root/kejilion.sh"}
 	if path, err := exec.LookPath("k"); err == nil {
 		candidates = append([]string{path}, candidates...)
@@ -395,11 +486,12 @@ func findKejilionScript() (string, error) {
 		if err != nil || !info.Mode().IsRegular() || info.Size() < 1024 || info.Size() > 4<<20 {
 			continue
 		}
-		if runtime.GOOS == "linux" && info.Mode().Perm()&0o022 != 0 {
+		if runtime.GOOS == "linux" &&
+			(!trustedFileOwner(info) || info.Mode().Perm()&0o022 != 0) {
 			continue
 		}
 		content, err := os.ReadFile(resolved)
-		if err != nil || !isKPanelCompatibleScript(content) {
+		if err != nil || !compatible(content) {
 			continue
 		}
 		return resolved, nil
@@ -412,6 +504,13 @@ func isKPanelCompatibleScript(content []byte) bool {
 	return strings.Contains(value, "KJ_APP_NONINTERACTIVE") &&
 		strings.Contains(value, "kpanel_run_docker_app_install") &&
 		appLicensePattern.MatchString(value)
+}
+
+func isKPanelManageCompatibleScript(content []byte) bool {
+	value := string(content)
+	return isKPanelCompatibleScript(content) &&
+		strings.Contains(value, "kpanel_run_docker_app_action") &&
+		strings.Contains(value, "KJ_APP_EXPECTED_CONTAINER_ID")
 }
 
 func RunAppJob(ctx context.Context, stateDir, id string) error {
@@ -429,11 +528,22 @@ func RunAppJob(ctx context.Context, stateDir, id string) error {
 	if err != nil {
 		return err
 	}
-	if record.Adapter != "kejilion" || record.Action != "install" ||
+	if record.Adapter != "kejilion" || !supportedScriptJobAction(record.Action) ||
 		!appSelectorPattern.MatchString(record.Selector) {
 		return errors.New("application job contains an unsupported adapter request")
 	}
-	script, err := findKejilionScript()
+	if record.Action != "install" && !containerIDPattern.MatchString(record.ExpectedContainerID) {
+		return errors.New("application job contains an invalid expected container")
+	}
+	if record.Action == "direct_access" &&
+		record.AccessMode != "direct" && record.AccessMode != "domain_only" {
+		return errors.New("application job contains an invalid access policy")
+	}
+	scriptFinder := findKejilionScript
+	if record.Action != "install" {
+		scriptFinder = findKejilionManageScript
+	}
+	script, err := scriptFinder()
 	if err != nil {
 		return registry.fail(record, "script_unavailable", err)
 	}
@@ -442,7 +552,7 @@ func RunAppJob(ctx context.Context, stateDir, id string) error {
 	record.Status = "running"
 	record.Stage = "starting"
 	record.Progress = 1
-	record.Message = "正在启动 kejilion.sh 标准应用安装器"
+	record.Message = "正在启动 kejilion.sh 原生" + appActionLabel(record.Action) + "流程"
 	record.StartedAt = &started
 	record.FinishedAt = nil
 	if err := registry.put(record); err != nil {
@@ -453,12 +563,18 @@ func RunAppJob(ctx context.Context, stateDir, id string) error {
 	command.Env = append(
 		os.Environ(),
 		"KJ_APP_NONINTERACTIVE=1",
-		"KJ_APP_ACTION=install",
+		"KJ_APP_ACTION="+record.Action,
 		"LC_ALL=C.UTF-8",
 		"LANG=C.UTF-8",
 	)
 	if record.HostPort != 0 {
 		command.Env = append(command.Env, "KJ_APP_PORT="+strconv.Itoa(int(record.HostPort)))
+	}
+	if record.AccessMode != "" {
+		command.Env = append(command.Env, "KJ_APP_ACCESS_MODE="+record.AccessMode)
+	}
+	if record.ExpectedContainerID != "" {
+		command.Env = append(command.Env, "KJ_APP_EXPECTED_CONTAINER_ID="+record.ExpectedContainerID)
 	}
 	reader, writer := io.Pipe()
 	command.Stdout = writer
@@ -526,14 +642,34 @@ func RunAppJob(ctx context.Context, stateDir, id string) error {
 	if commandErr != nil {
 		record.Status = "failed"
 		record.Stage = "failed"
-		record.Message = "安装失败，请查看任务日志后修复并重试"
+		record.Message = appActionLabel(record.Action) + "失败，请查看任务日志后修复并重试"
 		_ = registry.put(record)
 		return commandErr
 	}
 	record.Status = "succeeded"
 	record.Stage = "completed"
-	record.Message = "应用安装完成，产物由 kejilion.sh 原生业务函数创建"
+	record.Message = "应用" + appActionLabel(record.Action) + "完成，产物已由 kejilion.sh 原生业务函数对账"
 	return registry.put(record)
+}
+
+func supportedScriptJobAction(action string) bool {
+	return action == "install" || action == "update" ||
+		action == "uninstall" || action == "direct_access"
+}
+
+func appActionLabel(action string) string {
+	switch action {
+	case "install":
+		return "安装"
+	case "update":
+		return "更新"
+	case "uninstall":
+		return "卸载"
+	case "direct_access":
+		return "访问策略变更"
+	default:
+		return "应用操作"
+	}
 }
 
 func appJobStage(progress int) string {
@@ -543,7 +679,7 @@ func appJobStage(progress int) string {
 	case progress < 30:
 		return "runtime"
 	case progress < 90:
-		return "installing"
+		return "executing"
 	case progress < 100:
 		return "reconciling"
 	default:

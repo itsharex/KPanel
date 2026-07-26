@@ -309,7 +309,7 @@ export interface AppInstallJob {
   id: string
   appId: string
   appName: string
-  action: 'install'
+  action: 'install' | 'update' | 'uninstall' | 'direct_access'
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   stage: string
   progress: number
