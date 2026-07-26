@@ -23,6 +23,9 @@
   对应 capability 降级为只读。
 - 系统写入只接受主机名、端口、IP、IANA 时区、大小和固定预设等类型化字段；
   变更前在 Agent 专属目录保存快照，失败时恢复配置并再次加载。
+- 系统更新与清理只接受固定策略枚举，由独立 systemd transient service
+  执行固定 APT/journalctl 参数。API 不接受包名、命令、路径或 Shell；
+  维护任务拥有软件包升级所需的宿主机写权限，因此与普通 Agent 沙箱分离。
 
 ## 与 kejilion.sh 并存
 
@@ -35,7 +38,9 @@
 
 ## 明确不支持
 
-- 任意终端、Docker Exec、容器/镜像删除、Prune、系统升级或重装。
+- 任意终端、Docker Exec、容器/镜像删除、Prune 或系统重装。
+- 任意包安装/卸载、非 Debian/Ubuntu 软件包升级、清空日志与临时目录、
+  Docker 清理，以及自定义更新/清理命令。
 - SSH 旧端口删除、任意 DNS/软件源 URL、任意 sysctl 参数和任意脚本执行。
 - 网站、数据库、证书和目录硬删除。
 - 在线编辑任意 Nginx 文本或 Docker Compose 文件。

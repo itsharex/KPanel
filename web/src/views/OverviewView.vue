@@ -77,6 +77,7 @@ const actionForm = reactive({
   preference: 'ipv4' as 'ipv4' | 'system_default',
   profile: 'balanced' as 'balanced' | 'web' | 'off',
   bbrEnabled: true,
+  maintenancePolicy: 'full' as 'full' | 'cache' | 'standard',
 })
 
 watch(
@@ -221,6 +222,48 @@ const systemTools = computed<ManagementTool[]>(() => {
   ]
 })
 
+const maintenanceRunning = computed(() => data.value?.management.maintenance.state === 'running')
+
+const maintenanceTools = computed<ManagementTool[]>(() => {
+  if (!data.value) return []
+  const management = data.value.management
+  const maintenance = management.maintenance
+  const valueFor = (action: 'update' | 'cleanup', idleValue: string): string => {
+    if (maintenance.action !== action || maintenance.state === 'idle') return idleValue
+    if (maintenance.state === 'running') return `进行中 · ${maintenance.progress}%`
+    if (maintenance.state === 'failed') return '上次执行失败'
+    return maintenance.rebootRequired ? '已完成 · 建议重启' : '上次执行成功'
+  }
+  const detailFor = (action: 'update' | 'cleanup', idleDetail: string): string => {
+    if (maintenance.action !== action || maintenance.state === 'idle') return idleDetail
+    return maintenance.message || idleDetail
+  }
+  return [
+    {
+      id: 'system-update',
+      title: '系统更新',
+      description: '对应 kejilion.sh 的“系统更新”，后台刷新软件包索引并完整升级系统。',
+      value: valueFor('update', `${(management.packageManager || 'apt').toUpperCase()} 完整更新`),
+      detail: detailFor('update', '等待软件包锁，不终止正在运行的 apt/dpkg；完成后提示是否需要重启。'),
+      capability: 'system.update.write',
+      safety: '使用独立 systemd 后台任务执行 apt update 与 full-upgrade；保留用户现有配置，不自动重启服务器。',
+      icon: RefreshCw,
+      tone: 'blue',
+    },
+    {
+      id: 'system-cleanup',
+      title: '系统清理',
+      description: '对应 kejilion.sh 的“系统清理”，提供缓存清理和标准安全清理。',
+      value: valueFor('cleanup', '缓存 · 无用依赖 · 旧日志'),
+      detail: detailFor('cleanup', '不执行 Docker prune，不清空 /var/log、/tmp、网站目录或 KPanel 备份。'),
+      capability: 'system.cleanup.write',
+      safety: '仅调用固定 APT 与 journalctl 参数；标准模式保留最近 7 天日志并限制 journal 最大 500 MiB。',
+      icon: Database,
+      tone: 'violet',
+    },
+  ]
+})
+
 const reinstallTool = computed<ManagementTool>(() => ({
   id: 'reinstall',
   title: '重装系统',
@@ -262,6 +305,7 @@ function openTool(tool: ManagementTool): void {
       : 'balanced'
     : 'off'
   actionForm.bbrEnabled = !management?.bbr.enabled
+  actionForm.maintenancePolicy = tool.id === 'system-cleanup' ? 'standard' : 'full'
   actionConfirmed.value = false
   selectedTool.value = tool
 }
@@ -312,6 +356,10 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
       return { action: 'kernel-tuning', profile: actionForm.profile }
     case 'bbr':
       return { action: 'bbr', enabled: actionForm.bbrEnabled }
+    case 'system-update':
+      return { action: 'update', maintenancePolicy: 'full' }
+    case 'system-cleanup':
+      return { action: 'cleanup', maintenancePolicy: actionForm.maintenancePolicy }
     default:
       return undefined
   }
@@ -320,6 +368,7 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
 const actionValid = computed(() => {
   const input = actionInput.value
   if (!input || !selectedTool.value || !capabilityState(selectedTool.value.capability).enabled) return false
+  if ((input.action === 'update' || input.action === 'cleanup') && maintenanceRunning.value) return false
   switch (input.action) {
     case 'hostname':
       return Boolean(input.hostname && /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(input.hostname))
@@ -343,7 +392,11 @@ async function executeAction(): Promise<void> {
   actionRunning.value = true
   try {
     const result = await api.system.action(input)
-    toast.success(result.changed ? `${tool.title}已更新` : `${tool.title}无需变更`, result.message)
+    if (input.action === 'update' || input.action === 'cleanup') {
+      toast.success(`${tool.title}任务已提交`, result.message)
+    } else {
+      toast.success(result.changed ? `${tool.title}已更新` : `${tool.title}无需变更`, result.message)
+    }
     await load(true)
     selectedTool.value = undefined
     actionConfirmed.value = false
@@ -528,6 +581,69 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="management-layout">
+        <section class="panel-card panel-card--wide">
+          <header class="panel-card__header">
+            <div>
+              <span class="panel-card__icon panel-card__icon--violet"><RefreshCw :size="18" /></span>
+              <div>
+                <h2>系统维护</h2>
+                <p>参考 kejilion.sh 更新与清理流程，使用独立后台任务安全执行</p>
+              </div>
+            </div>
+            <span v-if="maintenanceRunning" class="management-read-state">
+              <RefreshCw :size="14" class="spin" />
+              {{ data.management.maintenance.progress }}%
+            </span>
+            <span v-else-if="data.management.maintenance.rebootRequired" class="management-read-state is-warning">
+              <CircleAlert :size="14" /> 建议重启
+            </span>
+          </header>
+
+          <div class="system-tool-grid system-tool-grid--maintenance">
+            <button
+              v-for="tool in maintenanceTools"
+              :key="tool.id"
+              class="system-tool"
+              type="button"
+              @click="openTool(tool)"
+            >
+              <span class="system-tool__top">
+                <span class="system-tool__icon" :class="tool.tone ? `is-${tool.tone}` : ''">
+                  <component :is="tool.icon" :size="19" />
+                </span>
+                <span class="system-tool__state">
+                  {{
+                    maintenanceRunning
+                      ? data.management.maintenance.action === (tool.id === 'system-update' ? 'update' : 'cleanup')
+                        ? `进行中 ${data.management.maintenance.progress}%`
+                        : '任务占用'
+                      : capabilityState(tool.capability).enabled
+                        ? '可执行'
+                        : '受保护'
+                  }}
+                </span>
+              </span>
+              <strong>{{ tool.title }}</strong>
+              <span>{{ tool.value }}</span>
+              <small>{{ tool.detail }}</small>
+              <span
+                v-if="
+                  maintenanceRunning &&
+                  data.management.maintenance.action === (tool.id === 'system-update' ? 'update' : 'cleanup')
+                "
+                class="maintenance-progress"
+                role="progressbar"
+                aria-label="系统维护进度"
+                :aria-valuenow="data.management.maintenance.progress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <span :style="{ width: `${data.management.maintenance.progress}%` }"></span>
+              </span>
+            </button>
+          </div>
+        </section>
+
         <section class="panel-card">
           <header class="panel-card__header">
             <div>
@@ -747,10 +863,28 @@ onBeforeUnmount(() => {
               <option :value="false">停用并恢复 cubic + fq_codel</option>
             </select>
           </label>
+          <label v-else-if="selectedTool.id === 'system-update'" class="field">
+            <span>更新方式</span>
+            <select v-model="actionForm.maintenancePolicy">
+              <option value="full">完整更新：刷新索引并升级全部软件包</option>
+            </select>
+            <small>可能更新内核并重启部分系统服务，但不会自动重启服务器。</small>
+          </label>
+          <label v-else-if="selectedTool.id === 'system-cleanup'" class="field">
+            <span>清理范围</span>
+            <select v-model="actionForm.maintenancePolicy">
+              <option value="cache">仅清理 APT 软件包缓存</option>
+              <option value="standard">标准安全清理：无用依赖、缓存、7 天前旧日志</option>
+            </select>
+            <small>不会清理 Docker、网站文件、数据库、`/tmp` 或 KPanel 配置备份。</small>
+          </label>
 
           <label class="confirmation-check">
             <input v-model="actionConfirmed" type="checkbox" />
-            <span>我确认执行此项变更；失败时 KPanel 将自动恢复已备份的配置。</span>
+            <span v-if="selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup'">
+              我确认启动系统维护任务；软件包更新和清理不可自动回滚。
+            </span>
+            <span v-else>我确认执行此项变更；失败时 KPanel 将自动恢复已备份的配置。</span>
           </label>
         </div>
 
@@ -761,8 +895,13 @@ onBeforeUnmount(() => {
           <CircleAlert :size="17" />
           <span>
             {{
-              capabilityState(selectedTool.capability).enabled
-                ? '该操作使用固定参数执行器，并在完成后回读宿主机真实状态。'
+              maintenanceRunning &&
+              (selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup')
+                ? '已有系统维护任务正在后台执行，请等待完成后再提交新任务。'
+                : capabilityState(selectedTool.capability).enabled
+                  ? selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup'
+                    ? '任务由独立 systemd 单元执行；关闭浏览器不会中断，页面将持续读取进度。'
+                    : '该操作使用固定参数执行器，并在完成后回读宿主机真实状态。'
                 : capabilityState(selectedTool.capability).reason
             }}
           </span>

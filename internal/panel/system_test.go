@@ -66,6 +66,11 @@ func TestValidateSystemAction(t *testing.T) {
 		{"unknown mirror", contract.SystemActionRequest{Action: "mirror", MirrorPreset: "custom"}, false},
 		{"BBR", contract.SystemActionRequest{Action: "bbr", Enabled: &enabled}, true},
 		{"missing BBR state", contract.SystemActionRequest{Action: "bbr"}, false},
+		{"system update", contract.SystemActionRequest{Action: "update", MaintenancePolicy: "full"}, true},
+		{"unknown update policy", contract.SystemActionRequest{Action: "update", MaintenancePolicy: "security"}, false},
+		{"cache cleanup", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "cache"}, true},
+		{"standard cleanup", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "standard"}, true},
+		{"unknown cleanup policy", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "deep"}, false},
 		{"arbitrary command", contract.SystemActionRequest{Action: "shell"}, false},
 	}
 	for _, test := range tests {

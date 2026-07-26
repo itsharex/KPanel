@@ -107,6 +107,18 @@ export interface SystemManagement {
   }
   packageManager?: string
   packageSources: string[]
+  maintenance: {
+    id?: string
+    state: 'idle' | 'running' | 'succeeded' | 'failed'
+    action?: 'update' | 'cleanup'
+    policy?: 'full' | 'cache' | 'standard'
+    stage?: string
+    progress: number
+    message?: string
+    startedAt?: string
+    finishedAt?: string
+    rebootRequired: boolean
+  }
   ipPreference: 'ipv4' | 'system_default' | 'unknown'
   kernelOptimization: {
     enabled: boolean
@@ -161,6 +173,8 @@ export interface SystemActionInput {
     | 'ip-preference'
     | 'kernel-tuning'
     | 'bbr'
+    | 'update'
+    | 'cleanup'
   hostname?: string
   port?: number
   servers?: string[]
@@ -169,6 +183,7 @@ export interface SystemActionInput {
   mirrorPreset?: 'official' | 'aliyun'
   preference?: 'ipv4' | 'system_default'
   profile?: 'balanced' | 'web' | 'off'
+  maintenancePolicy?: 'full' | 'cache' | 'standard'
   enabled?: boolean
 }
 

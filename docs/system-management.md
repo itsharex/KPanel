@@ -26,6 +26,8 @@ KPanel 的系统管理业务以 `kejilion.sh` 为功能基准，但不把整个 
 | V4/V6 优先 | `gai.conf` | 维护 `kejilion.sh` 同一 precedence 规则并保留其他用户配置 |
 | 内核优化 | Kejilion sysctl 产物 | 固定参数白名单、应用校验、版本化回滚；外部脚本配置不覆盖 |
 | BBR | 当前/可用拥塞算法与 qdisc | 内核能力检查、独立 sysctl 文件、回读 |
+| 系统更新 | APT 源与后台任务状态 | `dpkg --force-confold --configure -a`、`apt-get update`、`full-upgrade` 固定序列；不杀死软件包进程、不删除锁、不自动重启 |
+| 系统清理 | APT 与 journal 后台任务状态 | 缓存模式或标准安全模式；不清空日志目录、临时目录、Docker、网站和备份 |
 | 重装系统 | 不适用 | 带外控制台、备份证明、一次性恢复凭证、二次确认 |
 
 ## v0.3 写入范围
@@ -38,6 +40,22 @@ Agent 根据宿主机命令、配置管理器和 root/sandbox 条件动态返回
 专属 Swap、Debian/Ubuntu APT 镜像预设、地址优先级、KPanel 内核调优预设和
 BBR。重装系统继续锁定；SSH 旧端口删除、静态 `resolv.conf` 接管、任意软件源
 URL、任意 sysctl 和任意 Shell 均不开放。
+
+## v0.5 后台系统维护
+
+“系统更新”和“系统清理”参考当前 `kejilion.sh` 的业务顺序，但由固定参数的
+systemd transient service 执行。Web 请求只能选择 `update/full`、
+`cleanup/cache` 或 `cleanup/standard`，不能传入命令、包名或文件路径。
+
+- 更新：等待 APT/dpkg 锁，完成中断的软件包配置，刷新索引并执行完整升级。
+- 缓存清理：只执行 APT `clean` 与 `autoclean`。
+- 标准清理：额外执行 `autoremove --purge`，轮转 journal，保留最近 7 天并
+  限制到 500 MiB。
+- 后台状态持久化在
+  `/var/lib/kejilion-panel/system/maintenance-state.json`；同一时间只允许
+  一个维护任务。
+- 更新和清理属于不可逆的软件包事务，KPanel 不宣称自动回滚；失败时保留
+  阶段和错误摘要供人工检查。任务不会自动重启宿主机。
 
 系统备份保存在 `/var/lib/kejilion-panel/system/backups`。Panel 数据、
 `kejilion.sh` 文件、现有网站、其他容器和其他 Swap 不进入系统操作事务。

@@ -70,6 +70,8 @@ func TestSystemWriteCapabilitiesRemainExplicitlyDisabled(t *testing.T) {
 		"system.ip-preference.write",
 		"system.kernel-tuning.write",
 		"system.bbr.write",
+		"system.update.write",
+		"system.cleanup.write",
 		"system.reinstall",
 	} {
 		found := false

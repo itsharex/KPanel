@@ -2,6 +2,22 @@
 
 本项目遵循语义化版本。所有日期均使用 `YYYY-MM-DD`。
 
+## [0.5.0] - 2026-07-26
+
+### Added
+
+- 系统监控与管理页增加“系统更新”和“系统清理”，对应 154 当前
+  `kejilion.sh` 的 `linux_update` 与 `linux_clean` 业务。
+- 系统维护通过固定参数的 systemd 后台任务运行，浏览器断开或 Panel 重启
+  不会中断 APT/dpkg，并持续返回阶段、进度、结果和重启提示。
+- 清理提供“仅缓存”和“标准安全清理”；标准模式移除无用依赖、清理 APT
+  缓存，并保留最近 7 天且限制最大 500 MiB 的 journal。
+
+### Security
+
+- 不复制脚本中的 `pkill -9 apt/dpkg`、删除 dpkg 锁、清空 `/var/log`、
+  清空 `/tmp` 或 Docker prune；Web API 仍不接受命令、路径或包名。
+
 ## [0.4.0] - 2026-07-26
 
 ### Added

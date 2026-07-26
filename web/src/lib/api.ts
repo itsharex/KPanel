@@ -85,6 +85,18 @@ interface RawSystemSummary {
     swap?: { activeDevices?: number }
     packageManager?: string
     packageSources?: string[]
+    maintenance?: {
+      id?: string
+      state?: string
+      action?: string
+      policy?: string
+      stage?: string
+      progress?: number
+      message?: string
+      startedAt?: string
+      finishedAt?: string
+      rebootRequired?: boolean
+    }
     ipPreference?: string
     kernelOptimization?: { enabled?: boolean; profile?: string; source?: string }
     bbr?: {
@@ -622,6 +634,29 @@ export const api = {
           },
           packageManager: system.management?.packageManager,
           packageSources: system.management?.packageSources || [],
+          maintenance: {
+            id: system.management?.maintenance?.id,
+            state: ['running', 'succeeded', 'failed'].includes(system.management?.maintenance?.state || '')
+              ? (system.management?.maintenance?.state as 'running' | 'succeeded' | 'failed')
+              : 'idle',
+            action:
+              system.management?.maintenance?.action === 'update' ||
+              system.management?.maintenance?.action === 'cleanup'
+                ? system.management.maintenance.action
+                : undefined,
+            policy:
+              system.management?.maintenance?.policy === 'full' ||
+              system.management?.maintenance?.policy === 'cache' ||
+              system.management?.maintenance?.policy === 'standard'
+                ? system.management.maintenance.policy
+                : undefined,
+            stage: system.management?.maintenance?.stage,
+            progress: system.management?.maintenance?.progress || 0,
+            message: system.management?.maintenance?.message,
+            startedAt: system.management?.maintenance?.startedAt,
+            finishedAt: system.management?.maintenance?.finishedAt,
+            rebootRequired: Boolean(system.management?.maintenance?.rebootRequired),
+          },
           ipPreference:
             system.management?.ipPreference === 'ipv4' || system.management?.ipPreference === 'system_default'
               ? system.management.ipPreference

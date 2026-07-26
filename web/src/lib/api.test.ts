@@ -191,6 +191,27 @@ describe('API client', () => {
     })
   })
 
+  it('submits only the selected system cleanup policy', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        action: 'cleanup',
+        status: 'succeeded',
+        changed: true,
+        message: 'queued',
+        appliedAt: '2026-07-26T03:00:00Z',
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.system.action({ action: 'cleanup', maintenancePolicy: 'standard' })
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(JSON.parse(String(init.body))).toEqual({
+      action: 'cleanup',
+      maintenancePolicy: 'standard',
+    })
+  })
+
   it('keeps the overview compatible with an older Agent without management fields', async () => {
     const collectedAt = '2026-07-25T10:00:00Z'
     const system = {
@@ -239,6 +260,7 @@ describe('API client', () => {
       dns: { servers: [], manager: 'unknown' },
       swap: { totalBytes: 256, usedBytes: 64, activeDevices: 0 },
       packageSources: [],
+      maintenance: { state: 'idle', progress: 0, rebootRequired: false },
       ipPreference: 'unknown',
       bbr: { supported: false, enabled: false, available: [] },
       capabilities: { 'system.read': { enabled: true } },

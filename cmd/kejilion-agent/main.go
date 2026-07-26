@@ -42,6 +42,9 @@ func run(arguments []string) error {
 	if len(arguments) > 0 && arguments[0] == "healthcheck" {
 		return runHealthcheck(arguments[1:])
 	}
+	if len(arguments) > 0 && arguments[0] == "maintenance-run" {
+		return runMaintenance(arguments[1:])
+	}
 
 	flags := flag.NewFlagSet("kejilion-agent", flag.ContinueOnError)
 	socketPath := flags.String("socket", env("KEJILION_AGENT_SOCKET", "/run/kejilion-panel/agent.sock"), "Unix Socket path")
@@ -120,6 +123,33 @@ func run(arguments []string) error {
 		}
 	}
 	return nil
+}
+
+func runMaintenance(arguments []string) error {
+	flags := flag.NewFlagSet("kejilion-agent maintenance-run", flag.ContinueOnError)
+	stateDir := flags.String(
+		"state-dir",
+		env("KEJILION_AGENT_STATE_DIR", "/var/lib/kejilion-panel/system"),
+		"system maintenance state directory",
+	)
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("maintenance-run requires exactly one fixed mode")
+	}
+	if os.Geteuid() != 0 {
+		return errors.New("maintenance-run requires root")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Minute)
+	defer cancel()
+	manager := systemmanage.NewManager(systemmanage.Config{
+		Enabled:  true,
+		StateDir: *stateDir,
+	})
+	return manager.RunMaintenance(ctx, flags.Arg(0))
 }
 
 func runHealthcheck(arguments []string) error {

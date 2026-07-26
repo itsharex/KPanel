@@ -59,9 +59,23 @@ type SystemManagementSummary struct {
 	Swap               SwapConfiguration         `json:"swap"`
 	PackageManager     string                    `json:"packageManager,omitempty"`
 	PackageSources     []string                  `json:"packageSources,omitempty"`
+	Maintenance        SystemMaintenanceSummary  `json:"maintenance"`
 	IPPreference       string                    `json:"ipPreference"`
 	KernelOptimization KernelOptimizationSummary `json:"kernelOptimization"`
 	BBR                BBRSummary                `json:"bbr"`
+}
+
+type SystemMaintenanceSummary struct {
+	ID             string     `json:"id,omitempty"`
+	State          string     `json:"state"`
+	Action         string     `json:"action,omitempty"`
+	Policy         string     `json:"policy,omitempty"`
+	Stage          string     `json:"stage,omitempty"`
+	Progress       int        `json:"progress"`
+	Message        string     `json:"message,omitempty"`
+	StartedAt      *time.Time `json:"startedAt,omitempty"`
+	FinishedAt     *time.Time `json:"finishedAt,omitempty"`
+	RebootRequired bool       `json:"rebootRequired"`
 }
 
 type SSHConfiguration struct {
@@ -96,16 +110,17 @@ type BBRSummary struct {
 // The Action value selects exactly one typed field set; unknown JSON fields are
 // rejected by the HTTP decoder and arbitrary commands are never accepted.
 type SystemActionRequest struct {
-	Action       string   `json:"action"`
-	Hostname     string   `json:"hostname,omitempty"`
-	Port         uint16   `json:"port,omitempty"`
-	Servers      []string `json:"servers,omitempty"`
-	Timezone     string   `json:"timezone,omitempty"`
-	SwapSizeMiB  int      `json:"swapSizeMiB,omitempty"`
-	MirrorPreset string   `json:"mirrorPreset,omitempty"`
-	Preference   string   `json:"preference,omitempty"`
-	Profile      string   `json:"profile,omitempty"`
-	Enabled      *bool    `json:"enabled,omitempty"`
+	Action            string   `json:"action"`
+	Hostname          string   `json:"hostname,omitempty"`
+	Port              uint16   `json:"port,omitempty"`
+	Servers           []string `json:"servers,omitempty"`
+	Timezone          string   `json:"timezone,omitempty"`
+	SwapSizeMiB       int      `json:"swapSizeMiB,omitempty"`
+	MirrorPreset      string   `json:"mirrorPreset,omitempty"`
+	Preference        string   `json:"preference,omitempty"`
+	Profile           string   `json:"profile,omitempty"`
+	MaintenancePolicy string   `json:"maintenancePolicy,omitempty"`
+	Enabled           *bool    `json:"enabled,omitempty"`
 }
 
 type SystemActionResult struct {

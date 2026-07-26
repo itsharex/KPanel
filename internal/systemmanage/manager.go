@@ -48,7 +48,14 @@ type commandRunner struct{}
 
 func (commandRunner) Run(ctx context.Context, name string, arguments ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, name, arguments...)
-	command.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
+	command.Env = append(
+		os.Environ(),
+		"LC_ALL=C",
+		"LANG=C",
+		"DEBIAN_FRONTEND=noninteractive",
+		"NEEDRESTART_MODE=a",
+		"APT_LISTCHANGES_FRONTEND=none",
+	)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		detail := strings.TrimSpace(string(output))
@@ -68,22 +75,26 @@ func (commandRunner) LookPath(name string) (string, error) {
 }
 
 type Config struct {
-	Enabled  bool
-	EtcRoot  string
-	ProcRoot string
-	StateDir string
-	Now      func() time.Time
-	Runner   Runner
+	Enabled    bool
+	EtcRoot    string
+	ProcRoot   string
+	RunRoot    string
+	StateDir   string
+	Executable string
+	Now        func() time.Time
+	Runner     Runner
 }
 
 type Manager struct {
-	enabled  bool
-	etcRoot  string
-	procRoot string
-	stateDir string
-	now      func() time.Time
-	runner   Runner
-	mu       sync.Mutex
+	enabled    bool
+	etcRoot    string
+	procRoot   string
+	runRoot    string
+	stateDir   string
+	executable string
+	now        func() time.Time
+	runner     Runner
+	mu         sync.Mutex
 }
 
 func NewManager(config Config) *Manager {
@@ -93,8 +104,14 @@ func NewManager(config Config) *Manager {
 	if config.ProcRoot == "" {
 		config.ProcRoot = "/proc"
 	}
+	if config.RunRoot == "" {
+		config.RunRoot = "/var/run"
+	}
 	if config.StateDir == "" {
 		config.StateDir = "/var/lib/kejilion-panel/system"
+	}
+	if config.Executable == "" {
+		config.Executable = "/usr/local/libexec/kejilion-agent"
 	}
 	if config.Now == nil {
 		config.Now = time.Now
@@ -104,7 +121,8 @@ func NewManager(config Config) *Manager {
 	}
 	return &Manager{
 		enabled: config.Enabled, etcRoot: filepath.Clean(config.EtcRoot),
-		procRoot: filepath.Clean(config.ProcRoot), stateDir: filepath.Clean(config.StateDir),
+		procRoot: filepath.Clean(config.ProcRoot), runRoot: filepath.Clean(config.RunRoot),
+		stateDir: filepath.Clean(config.StateDir), executable: filepath.Clean(config.Executable),
 		now: config.Now, runner: config.Runner,
 	}
 }
@@ -138,6 +156,9 @@ func (m *Manager) Capabilities() []contract.Capability {
 	_, fallocateErr := m.runner.LookPath("fallocate")
 	_, sysctlErr := m.runner.LookPath("sysctl")
 	_, aptErr := m.runner.LookPath("apt-get")
+	_, dpkgErr := m.runner.LookPath("dpkg")
+	_, journalctlErr := m.runner.LookPath("journalctl")
+	_, systemdRunErr := m.runner.LookPath("systemd-run")
 	_, modprobeErr := m.runner.LookPath("modprobe")
 
 	resolved := m.resolvedSupported()
@@ -153,6 +174,8 @@ func (m *Manager) Capabilities() []contract.Capability {
 		capability("system.ip-preference.write", true, ""),
 		capability("system.kernel-tuning.write", sysctlErr == nil, "sysctl 不可用"),
 		capability("system.bbr.write", sysctlErr == nil && modprobeErr == nil, "内核调优工具不完整"),
+		capability("system.update.write", aptErr == nil && dpkgErr == nil && systemdRunErr == nil && aptSources, "当前仅支持由 systemd 托管的 Debian/Ubuntu APT 更新"),
+		capability("system.cleanup.write", aptErr == nil && journalctlErr == nil && systemdRunErr == nil && aptSources, "当前仅支持由 systemd 托管的 Debian/Ubuntu APT 清理"),
 		{ID: "system.reinstall", Enabled: false, Reason: "重装系统必须使用带外控制台，Web 端保持锁定"},
 	}
 }
@@ -194,6 +217,16 @@ func (m *Manager) Execute(ctx context.Context, input contract.SystemActionReques
 			break
 		}
 		result.Changed, result.BackupPath, result.Message, err = m.setBBR(ctx, *input.Enabled)
+	case "update":
+		result.Changed, result.Message, err = m.startMaintenance(ctx, input.Action, input.MaintenancePolicy)
+		if err == nil {
+			result.Status = "accepted"
+		}
+	case "cleanup":
+		result.Changed, result.Message, err = m.startMaintenance(ctx, input.Action, input.MaintenancePolicy)
+		if err == nil {
+			result.Status = "accepted"
+		}
 	default:
 		err = fmt.Errorf("%w: unknown action", ErrInvalidInput)
 	}

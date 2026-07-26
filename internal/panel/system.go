@@ -110,6 +110,14 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 		if input.Enabled == nil {
 			return "enabled", "enabled is required"
 		}
+	case "update":
+		if input.MaintenancePolicy != "full" {
+			return "maintenancePolicy", "maintenancePolicy must be full"
+		}
+	case "cleanup":
+		if input.MaintenancePolicy != "cache" && input.MaintenancePolicy != "standard" {
+			return "maintenancePolicy", "maintenancePolicy must be cache or standard"
+		}
 	default:
 		return "action", "unsupported system action"
 	}
@@ -137,6 +145,8 @@ func systemActionAuditChange(input contract.SystemActionRequest) map[string]any 
 		change["profile"] = input.Profile
 	case "bbr":
 		change["enabled"] = input.Enabled != nil && *input.Enabled
+	case "update", "cleanup":
+		change["maintenancePolicy"] = input.MaintenancePolicy
 	}
 	return change
 }

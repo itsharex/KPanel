@@ -37,14 +37,16 @@ func testManager(t *testing.T, runner Runner) (*Manager, string, string, string)
 	root := t.TempDir()
 	etcRoot := filepath.Join(root, "etc")
 	procRoot := filepath.Join(root, "proc")
+	runRoot := filepath.Join(root, "run")
 	stateDir := filepath.Join(root, "state")
-	for _, path := range []string{etcRoot, procRoot, stateDir} {
+	for _, path := range []string{etcRoot, procRoot, runRoot, stateDir} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	manager := NewManager(Config{
-		Enabled: true, EtcRoot: etcRoot, ProcRoot: procRoot, StateDir: stateDir,
+		Enabled: true, EtcRoot: etcRoot, ProcRoot: procRoot, RunRoot: runRoot,
+		StateDir: stateDir, Executable: "/usr/local/libexec/kejilion-agent",
 		Runner: runner, Now: func() time.Time { return time.Date(2026, 7, 26, 3, 0, 0, 0, time.UTC) },
 	})
 	return manager, etcRoot, procRoot, stateDir
@@ -190,6 +192,117 @@ func TestSetSwapOnlyManagesKPanelSwap(t *testing.T) {
 	fstab = readLimited(filepath.Join(etcRoot, "fstab"))
 	if !strings.Contains(fstab, "/dev/vda2 none swap") || strings.Contains(fstab, swapPath) {
 		t.Fatalf("disable touched external swap or retained managed swap: %q", fstab)
+	}
+}
+
+func TestStartMaintenanceUsesFixedSystemdUnit(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, _, _, stateDir := testManager(t, runner)
+
+	changed, message, err := manager.startMaintenance(context.Background(), "update", "full")
+	if err != nil || !changed || message == "" {
+		t.Fatalf("start maintenance: changed=%v message=%q err=%v", changed, message, err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("commands = %#v", runner.commands)
+	}
+	command := runner.commands[0]
+	for _, expected := range []string{
+		"systemd-run",
+		"--unit=kejilion-panel-maintenance-",
+		manager.executable + " maintenance-run --state-dir " + stateDir + " update",
+	} {
+		if !strings.Contains(command, expected) {
+			t.Fatalf("maintenance launcher missing %q: %q", expected, command)
+		}
+	}
+	if strings.Contains(command, "sh -c") || strings.Contains(command, "bash -c") {
+		t.Fatalf("maintenance launcher used a shell: %q", command)
+	}
+	status := manager.MaintenanceStatus()
+	if status.State != "running" || status.Action != "update" || status.Policy != "full" {
+		t.Fatalf("unexpected maintenance state: %#v", status)
+	}
+	if _, _, err := manager.startMaintenance(context.Background(), "cleanup", "cache"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second maintenance task should conflict, got %v", err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("conflicting task reached runner: %#v", runner.commands)
+	}
+}
+
+func TestRunMaintenanceUpdateUsesSafeAPTSequence(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, _, _, _ := testManager(t, runner)
+	if err := manager.RunMaintenance(context.Background(), "update"); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	for _, expected := range []string{
+		"dpkg --force-confold --configure -a",
+		"apt-get -o Dpkg::Lock::Timeout=120 update",
+		"apt-get -o Dpkg::Lock::Timeout=120 -y -o Dpkg::Options::=--force-confold full-upgrade",
+	} {
+		if !strings.Contains(commands, expected) {
+			t.Fatalf("update sequence missing %q:\n%s", expected, commands)
+		}
+	}
+	for _, forbidden := range []string{"pkill", "rm -f", "/var/lib/dpkg/lock", "sh -c"} {
+		if strings.Contains(commands, forbidden) {
+			t.Fatalf("unsafe command %q found:\n%s", forbidden, commands)
+		}
+	}
+	status := manager.MaintenanceStatus()
+	if status.State != "succeeded" || status.Progress != 100 || status.Action != "update" {
+		t.Fatalf("unexpected final update state: %#v", status)
+	}
+}
+
+func TestRunMaintenanceStandardCleanupPreservesLogsAndDocker(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, _, _, _ := testManager(t, runner)
+	if err := manager.RunMaintenance(context.Background(), "cleanup-standard"); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	for _, expected := range []string{
+		"apt-get -o Dpkg::Lock::Timeout=120 -y autoremove --purge",
+		"apt-get -o Dpkg::Lock::Timeout=120 clean",
+		"journalctl --vacuum-time=7d",
+		"journalctl --vacuum-size=500M",
+	} {
+		if !strings.Contains(commands, expected) {
+			t.Fatalf("cleanup sequence missing %q:\n%s", expected, commands)
+		}
+	}
+	for _, forbidden := range []string{"--vacuum-time=1s", "docker", "rm -rf", "/var/log/*", "/tmp/*"} {
+		if strings.Contains(commands, forbidden) {
+			t.Fatalf("unsafe cleanup %q found:\n%s", forbidden, commands)
+		}
+	}
+	status := manager.MaintenanceStatus()
+	if status.State != "succeeded" || status.Policy != "standard" {
+		t.Fatalf("unexpected final cleanup state: %#v", status)
+	}
+}
+
+func TestRunMaintenanceFailureIsPersisted(t *testing.T) {
+	runner := &fakeRunner{
+		run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+			if name == "apt-get" && arguments[len(arguments)-1] == "update" {
+				return nil, errors.New("repository unavailable")
+			}
+			return nil, nil
+		},
+	}
+	manager, _, _, _ := testManager(t, runner)
+	if err := manager.RunMaintenance(context.Background(), "update"); err == nil {
+		t.Fatal("expected update failure")
+	}
+	status := manager.MaintenanceStatus()
+	if status.State != "failed" || status.FinishedAt == nil ||
+		!strings.Contains(status.Message, "repository unavailable") {
+		t.Fatalf("failure was not persisted: %#v", status)
 	}
 }
 
