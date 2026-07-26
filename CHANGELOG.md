@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `kejilion.sh` 应用市场安装 KPanel 成功后直接显示首次初始化 Token，并提示完成管理员账户初始化后 Token 自动失效，不再要求用户手动读取凭证文件。
+
 ## [0.16.0] - 2026-07-26
 
 ### Added

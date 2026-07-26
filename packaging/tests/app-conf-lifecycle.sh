@@ -93,7 +93,14 @@ AGENT
 		require_state
 		case "${4:-}" in
 			create) : >"$state/network" ;;
-			up) : ;;
+			up)
+				if [ "${KPANEL_MOCK_BOOTSTRAP_MISSING:-0}" != 1 ]; then
+					mkdir -p /home/docker/kpanel/data/panel
+					printf '%s\n' 'test-bootstrap-token' \
+						>/home/docker/kpanel/data/panel/bootstrap.token
+					chmod 600 /home/docker/kpanel/data/panel/bootstrap.token
+				fi
+				;;
 			down) rm -f "$state/network" ;;
 			*) exit 2 ;;
 		esac
@@ -167,7 +174,15 @@ run_lifecycle() {
 	# shellcheck source=/dev/null
 	. "$PROJECT_DIR/packaging/kejilion-app/kpanel.conf"
 	docker_port="18080"
-	docker_app_install
+	docker_app_install >"$TEST_DIR/install-output.txt"
+	grep -Fx '首次初始化 Token：test-bootstrap-token' \
+		"$TEST_DIR/install-output.txt" >/dev/null
+	grep -Fx '请复制此 Token 完成管理员账户初始化；初始化成功后 Token 自动失效。' \
+		"$TEST_DIR/install-output.txt" >/dev/null
+	if grep -F '首次初始化 Token 文件：' "$TEST_DIR/install-output.txt" >/dev/null; then
+		echo "install output still asks the user to read the token file" >&2
+		return 1
+	fi
 
 	grep -F 'image: docker.io/kjlion/kejilion-panel:0.16.0' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
@@ -220,6 +235,35 @@ run_failed_install() {
 	[ ! -e "$MOCK_STATE/network" ]
 }
 
+run_missing_bootstrap_token() {
+	local ipv4_address="198.51.100.25"
+
+	systemctl() {
+		local COMMAND="$1"
+		local SERVICE_NAME="${2:-}"
+		/bin/systemctl "$COMMAND" "$SERVICE_NAME"
+	}
+	docker_app_plus() {
+		:
+	}
+	check_docker_app_ip() {
+		:
+	}
+
+	# shellcheck source=/dev/null
+	. "$PROJECT_DIR/packaging/kejilion-app/kpanel.conf"
+	docker_port="18080"
+	if KPANEL_MOCK_BOOTSTRAP_MISSING=1 docker_app_install \
+		>"$TEST_DIR/missing-bootstrap-output.txt"; then
+		echo "install without a bootstrap token unexpectedly succeeded" >&2
+		return 1
+	fi
+	grep -Fx 'KPanel 初始化凭证读取失败，安装已停止。' \
+		"$TEST_DIR/missing-bootstrap-output.txt" >/dev/null
+	[ ! -e /home/docker/kpanel ]
+	[ ! -e "$MOCK_STATE/network" ]
+}
+
 run_unmanaged_guard() {
 	local manual_unit="/tmp/manual-kejilion-agent.service"
 
@@ -260,5 +304,6 @@ if grep -F 'daemon-reload ' "$KPANEL_MOCK_SYSTEMCTL_LOG" >/dev/null; then
 	exit 1
 fi
 run_failed_install
+run_missing_bootstrap_token
 run_unmanaged_guard
 printf '%s\n' "app_conf_lifecycle=pass"
