@@ -33,6 +33,31 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	if got.UptimeSeconds != 12345 {
 		t.Fatalf("unexpected uptime: %d", got.UptimeSeconds)
 	}
+	if len(got.Management.SSH.Ports) != 1 || got.Management.SSH.Ports[0] != 2222 {
+		t.Fatalf("unexpected SSH configuration: %#v", got.Management.SSH)
+	}
+	if len(got.Management.DNS.Servers) != 2 || got.Management.DNS.Servers[0] != "1.1.1.1" {
+		t.Fatalf("unexpected DNS configuration: %#v", got.Management.DNS)
+	}
+	if got.Management.Timezone != "Asia/Shanghai" || got.Management.IPPreference != "ipv4" {
+		t.Fatalf("unexpected regional configuration: %#v", got.Management)
+	}
+	if got.Management.PackageManager != "apt" ||
+		len(got.Management.PackageSources) != 1 ||
+		got.Management.PackageSources[0] != "mirrors.example.test" {
+		t.Fatalf("unexpected package sources: %#v", got.Management)
+	}
+	if got.Management.Swap.ActiveDevices != 1 {
+		t.Fatalf("unexpected swap state: %#v", got.Management.Swap)
+	}
+	if !got.Management.KernelOptimization.Enabled ||
+		got.Management.KernelOptimization.Profile != "网站优化模式" {
+		t.Fatalf("unexpected kernel optimization: %#v", got.Management.KernelOptimization)
+	}
+	if !got.Management.BBR.Enabled || !got.Management.BBR.Supported ||
+		got.Management.BBR.DefaultQDisc != "fq" {
+		t.Fatalf("unexpected BBR state: %#v", got.Management.BBR)
+	}
 }
 
 func TestCPUUsagePercentUsesIntervalDelta(t *testing.T) {

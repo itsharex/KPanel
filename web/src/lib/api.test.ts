@@ -166,6 +166,60 @@ describe('API client', () => {
     })
   })
 
+  it('keeps the overview compatible with an older Agent without management fields', async () => {
+    const collectedAt = '2026-07-25T10:00:00Z'
+    const system = {
+      hostname: 'legacy-host',
+      os: 'Debian 12',
+      kernel: '6.1.0',
+      architecture: 'amd64',
+      uptimeSeconds: 120,
+      load: { one: 0.2, five: 0.1, fifteen: 0.1 },
+      cpu: { cores: 2, usagePercent: 5 },
+      memory: {
+        totalBytes: 1024,
+        availableBytes: 512,
+        usedBytes: 512,
+        usagePercent: 50,
+        swapTotalBytes: 256,
+        swapUsedBytes: 64,
+      },
+      disks: [],
+      network: { receivedBytes: 100, sentBytes: 200 },
+      collectedAt,
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(system))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status: 'ok',
+          version: '0.1.3',
+          protocolVersion: 'v1',
+          readOnly: false,
+          checkedAt: collectedAt,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'system.read', enabled: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ available: false, containers: 0, running: 0, stopped: 0, images: 0, collectedAt }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const overview = await api.overview.get()
+
+    expect(overview.hostname).toBe('legacy-host')
+    expect(overview.management).toMatchObject({
+      ssh: { ports: [], source: 'unknown' },
+      dns: { servers: [], manager: 'unknown' },
+      swap: { totalBytes: 256, usedBytes: 64, activeDevices: 0 },
+      packageSources: [],
+      ipPreference: 'unknown',
+      bbr: { supported: false, enabled: false, available: [] },
+      capabilities: { 'system.read': { enabled: true } },
+    })
+  })
+
   it('uses only the supported jobs limit query and normalizes job records', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       jsonResponse({

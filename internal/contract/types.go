@@ -36,17 +36,60 @@ type Capability struct {
 }
 
 type SystemSummary struct {
-	Hostname      string         `json:"hostname"`
-	OS            string         `json:"os"`
-	Kernel        string         `json:"kernel"`
-	Architecture  string         `json:"architecture"`
-	UptimeSeconds uint64         `json:"uptimeSeconds"`
-	Load          LoadSummary    `json:"load"`
-	CPU           CPUSummary     `json:"cpu"`
-	Memory        MemorySummary  `json:"memory"`
-	Disks         []DiskSummary  `json:"disks"`
-	Network       NetworkSummary `json:"network"`
-	CollectedAt   time.Time      `json:"collectedAt"`
+	Hostname      string                  `json:"hostname"`
+	OS            string                  `json:"os"`
+	Kernel        string                  `json:"kernel"`
+	Architecture  string                  `json:"architecture"`
+	UptimeSeconds uint64                  `json:"uptimeSeconds"`
+	Load          LoadSummary             `json:"load"`
+	CPU           CPUSummary              `json:"cpu"`
+	Memory        MemorySummary           `json:"memory"`
+	Disks         []DiskSummary           `json:"disks"`
+	Network       NetworkSummary          `json:"network"`
+	Management    SystemManagementSummary `json:"management"`
+	CollectedAt   time.Time               `json:"collectedAt"`
+}
+
+// SystemManagementSummary describes configuration observed on the host. It is
+// deliberately read-only: mutations are exposed as separate typed capabilities.
+type SystemManagementSummary struct {
+	SSH                SSHConfiguration          `json:"ssh"`
+	DNS                DNSConfiguration          `json:"dns"`
+	Timezone           string                    `json:"timezone,omitempty"`
+	Swap               SwapConfiguration         `json:"swap"`
+	PackageManager     string                    `json:"packageManager,omitempty"`
+	PackageSources     []string                  `json:"packageSources,omitempty"`
+	IPPreference       string                    `json:"ipPreference"`
+	KernelOptimization KernelOptimizationSummary `json:"kernelOptimization"`
+	BBR                BBRSummary                `json:"bbr"`
+}
+
+type SSHConfiguration struct {
+	Ports  []uint16 `json:"ports"`
+	Source string   `json:"source"`
+}
+
+type DNSConfiguration struct {
+	Servers []string `json:"servers"`
+	Manager string   `json:"manager"`
+}
+
+type SwapConfiguration struct {
+	ActiveDevices int `json:"activeDevices"`
+}
+
+type KernelOptimizationSummary struct {
+	Enabled bool   `json:"enabled"`
+	Profile string `json:"profile,omitempty"`
+	Source  string `json:"source,omitempty"`
+}
+
+type BBRSummary struct {
+	Supported         bool     `json:"supported"`
+	Enabled           bool     `json:"enabled"`
+	CongestionControl string   `json:"congestionControl,omitempty"`
+	DefaultQDisc      string   `json:"defaultQDisc,omitempty"`
+	Available         []string `json:"available,omitempty"`
 }
 
 type LoadSummary struct {

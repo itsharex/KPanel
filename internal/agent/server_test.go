@@ -47,6 +47,47 @@ func TestSitesPageEndpoint(t *testing.T) {
 	}
 }
 
+func TestSystemWriteCapabilitiesRemainExplicitlyDisabled(t *testing.T) {
+	server := testServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var result contract.PageResult[contract.Capability]
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"system.hostname.write",
+		"system.ssh-port.write",
+		"system.dns.write",
+		"system.timezone.write",
+		"system.swap.write",
+		"system.mirror.write",
+		"system.ip-preference.write",
+		"system.kernel-tuning.write",
+		"system.bbr.write",
+		"system.reinstall",
+	} {
+		found := false
+		for _, capability := range result.Items {
+			if capability.ID != required {
+				continue
+			}
+			found = true
+			if capability.Enabled || capability.Reason == "" {
+				t.Fatalf("capability %q must be disabled with a reason: %#v", required, capability)
+			}
+		}
+		if !found {
+			t.Fatalf("capability %q not reported", required)
+		}
+	}
+}
+
 func TestSiteWriteErrorStatusMapping(t *testing.T) {
 	tests := []struct {
 		name       string

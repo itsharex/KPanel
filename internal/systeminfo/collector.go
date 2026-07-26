@@ -66,6 +66,7 @@ func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error)
 		errs = append(errs, err)
 	}
 	result.Disks = c.readDisks()
+	c.readManagement(&result.Management)
 	return result, errors.Join(errs...)
 }
 

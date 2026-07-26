@@ -84,6 +84,45 @@ export interface NetworkSummary {
   totalTransmittedBytes?: number
 }
 
+export interface CapabilityState {
+  enabled: boolean
+  reason?: string
+  methods?: string[]
+}
+
+export interface SystemManagement {
+  ssh: {
+    ports: number[]
+    source: 'configured' | 'default' | 'unknown'
+  }
+  dns: {
+    servers: string[]
+    manager: string
+  }
+  timezone?: string
+  swap: {
+    totalBytes: number
+    usedBytes: number
+    activeDevices: number
+  }
+  packageManager?: string
+  packageSources: string[]
+  ipPreference: 'ipv4' | 'system_default' | 'unknown'
+  kernelOptimization: {
+    enabled: boolean
+    profile?: string
+    source?: string
+  }
+  bbr: {
+    supported: boolean
+    enabled: boolean
+    congestionControl?: string
+    defaultQDisc?: string
+    available: string[]
+  }
+  capabilities: Record<string, CapabilityState>
+}
+
 export interface SystemOverview {
   hostname: string
   os: string
@@ -96,6 +135,7 @@ export interface SystemOverview {
   disk: MetricValue
   load: MetricValue
   network: NetworkSummary
+  management: SystemManagement
   services: ServiceStatus[]
   agent: AgentStatus
   sites?: {

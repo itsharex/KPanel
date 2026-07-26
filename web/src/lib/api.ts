@@ -76,6 +76,23 @@ interface RawSystemSummary {
     tcpConnections?: number
     udpConnections?: number
   }
+  management?: {
+    ssh?: { ports?: number[]; source?: string }
+    dns?: { servers?: string[]; manager?: string }
+    timezone?: string
+    swap?: { activeDevices?: number }
+    packageManager?: string
+    packageSources?: string[]
+    ipPreference?: string
+    kernelOptimization?: { enabled?: boolean; profile?: string; source?: string }
+    bbr?: {
+      supported?: boolean
+      enabled?: boolean
+      congestionControl?: string
+      defaultQDisc?: string
+      available?: string[]
+    }
+  }
   collectedAt: string
 }
 
@@ -503,9 +520,11 @@ export const api = {
   },
   overview: {
     get: async (signal?: AbortSignal): Promise<SystemOverview> => {
-      const [system, agent, sitesResult, dockerResult, containersResult] = await Promise.all([
+      type Capability = { id: string; enabled: boolean; reason?: string; methods?: string[] }
+      const [system, agent, capabilitiesResult, sitesResult, dockerResult, containersResult] = await Promise.all([
         request<RawSystemSummary>('/system/summary', { signal }),
         request<RawAgentHealth>('/agent/health', { signal }),
+        request<ApiList<Capability> | Capability[]>('/capabilities', { signal }).catch(() => []),
         request<ApiList<RawSite> | RawSite[]>('/sites', { signal }).catch(() => []),
         request<RawDockerSummary>('/docker/summary', { signal }).catch(() => undefined),
         request<ApiList<RawContainer> | RawContainer[]>('/docker/containers', { signal }).catch(() => []),
@@ -513,6 +532,16 @@ export const api = {
       const rootDisk = system.disks.find((disk) => disk.mountPoint === '/') || system.disks[0]
       const sites = normalizeList(sitesResult).items.map(normalizeSite)
       const containers = normalizeList(containersResult).items
+      const capabilities = Object.fromEntries(
+        normalizeList(capabilitiesResult).items.map((capability) => [
+          capability.id,
+          {
+            enabled: capability.enabled,
+            reason: capability.reason,
+            methods: capability.methods,
+          },
+        ]),
+      )
       const rates = networkRates(system)
       const knownServices = [
         { id: 'nginx', name: 'Nginx' },
@@ -570,6 +599,44 @@ export const api = {
           transmitBytesPerSecond: rates.transmit,
           totalReceivedBytes: system.network.receivedBytes,
           totalTransmittedBytes: system.network.sentBytes,
+        },
+        management: {
+          ssh: {
+            ports: system.management?.ssh?.ports || [],
+            source:
+              system.management?.ssh?.source === 'configured' || system.management?.ssh?.source === 'default'
+                ? system.management.ssh.source
+                : 'unknown',
+          },
+          dns: {
+            servers: system.management?.dns?.servers || [],
+            manager: system.management?.dns?.manager || 'unknown',
+          },
+          timezone: system.management?.timezone,
+          swap: {
+            totalBytes: system.memory.swapTotalBytes || 0,
+            usedBytes: system.memory.swapUsedBytes || 0,
+            activeDevices: system.management?.swap?.activeDevices || 0,
+          },
+          packageManager: system.management?.packageManager,
+          packageSources: system.management?.packageSources || [],
+          ipPreference:
+            system.management?.ipPreference === 'ipv4' || system.management?.ipPreference === 'system_default'
+              ? system.management.ipPreference
+              : 'unknown',
+          kernelOptimization: {
+            enabled: Boolean(system.management?.kernelOptimization?.enabled),
+            profile: system.management?.kernelOptimization?.profile,
+            source: system.management?.kernelOptimization?.source,
+          },
+          bbr: {
+            supported: Boolean(system.management?.bbr?.supported),
+            enabled: Boolean(system.management?.bbr?.enabled),
+            congestionControl: system.management?.bbr?.congestionControl,
+            defaultQDisc: system.management?.bbr?.defaultQDisc,
+            available: system.management?.bbr?.available || [],
+          },
+          capabilities,
         },
         services,
         agent: normalizeAgent(agent),

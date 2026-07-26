@@ -1,0 +1,3 @@
+# Fixture SSH configuration
+Port 2222
+PermitRootLogin no

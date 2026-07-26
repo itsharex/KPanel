@@ -175,6 +175,16 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	siteWriteErr := s.sitesManager.Writable(writeContext)
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
+		{ID: "system.hostname.write", Enabled: false, Reason: "安全执行器尚未启用"},
+		{ID: "system.ssh-port.write", Enabled: false, Reason: "需要防失联与回滚机制"},
+		{ID: "system.dns.write", Enabled: false, Reason: "需要按解析器类型安全接管"},
+		{ID: "system.timezone.write", Enabled: false, Reason: "安全执行器尚未启用"},
+		{ID: "system.swap.write", Enabled: false, Reason: "仅允许管理 KPanel 专属 swapfile"},
+		{ID: "system.mirror.write", Enabled: false, Reason: "需要软件源校验与自动回滚"},
+		{ID: "system.ip-preference.write", Enabled: false, Reason: "安全执行器尚未启用"},
+		{ID: "system.kernel-tuning.write", Enabled: false, Reason: "需要参数白名单与回滚"},
+		{ID: "system.bbr.write", Enabled: false, Reason: "需要内核兼容检查与回滚"},
+		{ID: "system.reinstall", Enabled: false, Reason: "Web 端重装需带外恢复通道"},
 		{ID: "sites.read", Enabled: siteErr == nil, Reason: reasonIf(siteErr, "Kejilion Web 根目录不可用"), Methods: []string{"GET"}},
 		{ID: "docker.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "docker.logs", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
