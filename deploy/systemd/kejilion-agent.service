@@ -1,6 +1,6 @@
 [Unit]
 Description=KPanel Host Agent
-Documentation=https://github.com/kejilion/kejilion-panel
+Documentation=https://hub.docker.com/r/kjlion/kejilion-panel
 After=local-fs.target
 
 [Service]
