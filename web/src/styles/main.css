@@ -622,6 +622,13 @@ textarea:focus-visible,
   font-weight: 650;
 }
 
+.site-service-field--featured legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--warning);
+}
+
 .site-service-field > small,
 .site-inline-options > small {
   color: var(--muted);
@@ -634,6 +641,17 @@ textarea:focus-visible,
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.site-service-field--featured .site-service-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.site-service-field--featured .site-service-card {
+  min-height: 124px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--brand) 7%, transparent), transparent 62%),
+    var(--surface);
 }
 
 .site-service-card {
@@ -692,6 +710,32 @@ textarea:focus-visible,
   display: grid;
   min-width: 0;
   gap: 3px;
+}
+
+.site-service-card__heading {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.site-service-card__badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 2px 6px;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.site-service-card__badge.is-hot {
+  color: #b54708;
+  background: #fff3e0;
 }
 
 .site-service-card__content strong {
@@ -3353,6 +3397,10 @@ div.resource-name {
   }
 
   .site-service-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .site-service-field--featured .site-service-grid {
     grid-template-columns: 1fr;
   }
 

@@ -19,10 +19,13 @@ type NginxController interface {
 }
 
 type Manager struct {
-	webRoot    string
-	discoverer *Discoverer
-	nginx      NginxController
-	testHook   func(stage, path string)
+	webRoot          string
+	discoverer       *Discoverer
+	nginx            NginxController
+	wordPressRuntime WordPressRuntime
+	archiveLoader    WordPressArchiveLoader
+	wordPressJobs    *wordPressJobRegistry
+	testHook         func(stage, path string)
 }
 
 var siteWriteMutex sync.Mutex
@@ -31,9 +34,15 @@ func NewManager(webRoot string, discoverer *Discoverer, nginx NginxController) *
 	if discoverer == nil {
 		discoverer = NewDiscoverer(webRoot)
 	}
-	return &Manager{
+	manager := &Manager{
 		webRoot: filepath.Clean(webRoot), discoverer: discoverer, nginx: nginx,
 	}
+	if runtime, ok := nginx.(WordPressRuntime); ok {
+		manager.wordPressRuntime = runtime
+	}
+	manager.archiveLoader = downloadKejilionWordPressArchive
+	manager.wordPressJobs = newWordPressJobRegistry("")
+	return manager
 }
 
 func (m *Manager) Writable(ctx context.Context) error {
@@ -66,6 +75,9 @@ func (m *Manager) Writable(ctx context.Context) error {
 }
 
 func (m *Manager) Create(ctx context.Context, input SiteInput) (contract.SiteSummary, error) {
+	if input.Type == "wordpress" {
+		return m.installWordPress(ctx, input)
+	}
 	spec, err := normalizeSiteInput(input)
 	if err != nil {
 		return contract.SiteSummary{}, err

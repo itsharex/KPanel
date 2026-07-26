@@ -350,7 +350,7 @@ export interface Site {
 export interface SiteInput {
   primaryDomain: string
   aliases?: string[]
-  type: 'static' | 'php' | 'proxy' | 'proxy_domain' | 'load_balance' | 'redirect'
+  type: 'wordpress' | 'static' | 'php' | 'proxy' | 'proxy_domain' | 'load_balance' | 'redirect'
   upstream?: string
   upstreams?: string[]
   redirectTarget?: string

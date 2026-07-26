@@ -299,7 +299,7 @@ func validateSiteWriteInput(input *siteWriteInput, create bool) (field, detail s
 		}
 	}
 	if input.Type.Set && !validPanelSiteType(input.Type.Value) {
-		return "type", "type must be static, php, proxy, proxy_domain, load_balance, or redirect"
+		return "type", "type must be wordpress, static, php, proxy, proxy_domain, load_balance, or redirect"
 	}
 	if input.Upstream.Set {
 		if len(input.Upstream.Value) > maxSiteUpstreamLength || hasControlCharacter(input.Upstream.Value) {
@@ -342,6 +342,15 @@ func validateSiteWriteInput(input *siteWriteInput, create bool) (field, detail s
 	}
 
 	switch input.Type.Value {
+	case "wordpress":
+		if !create {
+			return "type", "WordPress installer settings cannot be edited as a generic site"
+		}
+		if len(input.Aliases.Value) != 0 || input.Upstream.Value != "" ||
+			len(input.Upstreams.Value) != 0 || input.RedirectTarget.Value != "" ||
+			input.RedirectCode.Set || input.PHPVersion.Value != "" {
+			return "type", "WordPress accepts only one primary domain"
+		}
 	case "static":
 		if input.Upstream.Value != "" || len(input.Upstreams.Value) != 0 ||
 			input.RedirectTarget.Value != "" || input.RedirectCode.Set || input.PHPVersion.Value != "" {
@@ -428,7 +437,7 @@ func (input siteWriteInput) agentPayload() siteAgentPayload {
 
 func validPanelSiteType(value string) bool {
 	switch value {
-	case "static", "php", "proxy", "proxy_domain", "load_balance", "redirect":
+	case "wordpress", "static", "php", "proxy", "proxy_domain", "load_balance", "redirect":
 		return true
 	default:
 		return false

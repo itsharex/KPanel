@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.15.0] - 2026-07-26
+
+### Added
+
+- “新建网站”把 WordPress 与 IP + 端口反代置于最前，并增加“热门 / 一键成品”
+  标签；其余基础站点类型保持直观卡片选择。
+- WordPress 一键搭建对齐 `kejilion.sh` 的源码包、`<domain>/wordpress` 目录、
+  同名数据库、现有 MySQL 账号、Redis 配置、证书文件名和 Nginx 行为。
+- Agent 新增 `sites.wordpress.install` 能力探测；LDNMP、MySQL、目录或证书条件
+  不完整时入口明确禁用并给出原因。
+- WordPress 安装改为可持久化后台任务，Web 每 2 秒读取进度；避免证书、镜像或
+  源码下载超过反代超时后被误报为失败。
+- systemd 沙箱仅新增独立可写目录
+  `/var/lib/kejilion-panel/wordpress-jobs`，面板登录与审计数据目录继续只读隔离。
+
+### Changed
+
+- WordPress 使用 ACME Webroot 在现有 Nginx 在线时签发证书，不再照搬脚本停止
+  整个 Nginx 容器的实现；最终业务产物与脚本保持一致。
+- 安装过程中先发布仅服务 ACME 的临时配置，最终配置通过 `nginx -t` 后原子切换。
+- 已存在脚本标准 `/home/web/docker-compose.yml`、但 MySQL/PHP/Redis 当前停机
+  的主机，只启动这四个固定服务且使用 `--no-recreate`，不重建 Nginx。
+- Kejilion 应用市场安装配置、宿主 Agent 版本校验与 Docker 镜像引用同步更新
+  到 `0.15.0`。
+
+### Security
+
+- 固定 WordPress 源码包 SHA-256 与 Certbot 多架构镜像 digest；远端内容变化时
+  拒绝安装，避免未审计代码静默进入宿主机。
+- 同名域名、目录、配置、证书或数据库一律冲突拒绝，不执行脚本的“同名先删除”逻辑。
+- 数据库与 Certbot 只使用固定 Docker API 操作；失败时核对内容后回滚本次新建的
+  Nginx 配置、目录、数据库和复制证书，不删除任何既有业务产物。
+
 ## [0.14.0] - 2026-07-26
 
 ### Added

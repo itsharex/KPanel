@@ -221,6 +221,14 @@ interface RawAuditEvent {
   requestId?: string
 }
 
+interface RawWordPressInstallJob {
+  id: string
+  domain: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  message?: string
+  site?: RawSite
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
@@ -388,6 +396,37 @@ function normalizeAgent(raw: RawAgentHealth): AgentStatus {
   }
 }
 
+async function createSite(
+  body: SiteInput,
+  onProgress?: (status: string, message: string) => void,
+): Promise<Site> {
+  const result = await request<RawSite | RawWordPressInstallJob>('/sites', { method: 'POST', body })
+  if (body.type !== 'wordpress' || !('status' in result) || !('id' in result)) {
+    return normalizeSite(result as RawSite)
+  }
+  let job = result as RawWordPressInstallJob
+  for (let attempt = 0; attempt <= 900; attempt += 1) {
+    onProgress?.(job.status, job.message || 'WordPress 安装任务正在执行。')
+    if (job.status === 'succeeded') {
+      if (!job.site) throw new ApiError('WordPress 已完成，但网站对账结果缺失。', 503, 'wordpress_result_missing')
+      return normalizeSite(job.site)
+    }
+    if (job.status === 'failed') {
+      throw new ApiError(
+        job.message || 'WordPress 安装失败，已尝试回滚本次新建产物。',
+        422,
+        'wordpress_install_failed',
+      )
+    }
+    if (attempt === 900) break
+    await new Promise((resolve) => setTimeout(resolve, 2_000))
+    job = await request<RawWordPressInstallJob>(
+      `/site-installations/${encodeURIComponent(job.id)}`,
+    )
+  }
+  throw new ApiError('WordPress 安装状态等待超时，请在网站列表中核对实际产物。', 504, 'wordpress_install_timeout')
+}
+
 function normalizeSite(raw: RawSite): Site {
   const kindMap: Record<string, Site['type']> = {
     static: 'static',
@@ -426,7 +465,12 @@ function normalizeSite(raw: RawSite): Site {
       ? raw.health
       : 'unknown') as Site['health'],
     consistency: consistencyMap[raw.consistency || ''] || 'unknown',
-    access: actions.length > 0 ? 'managed' : raw.origin === 'external' ? 'unmanaged' : 'read-only',
+    access:
+      actions.length > 0 || (raw.origin === 'web' && raw.consistency === 'in_sync')
+        ? 'managed'
+        : raw.origin === 'external'
+          ? 'unmanaged'
+          : 'read-only',
     source: sourceMap[raw.origin || ''] || 'unknown',
     rootPath: raw.documentRoot,
     upstream: raw.target,
@@ -764,8 +808,7 @@ export const api = {
       const result = normalizeList(await request<ApiList<RawSite> | RawSite[]>('/sites', { query, signal }))
       return { ...result, items: result.items.map(normalizeSite) }
     },
-    create: async (body: SiteInput): Promise<Site> =>
-      normalizeSite(await request<RawSite>('/sites', { method: 'POST', body })),
+    create: createSite,
     update: async (id: string, body: SiteInput): Promise<Site> =>
       normalizeSite(await request<RawSite>(`/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body })),
     remove: (id: string, expectedResourceVersion: string) =>

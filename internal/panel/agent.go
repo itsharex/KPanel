@@ -40,7 +40,10 @@ func NewAgentClient(socketPath, tokenFile string, maxBytes int64) *AgentClient {
 		maxBytes:   maxBytes,
 		client: &http.Client{
 			Transport: transport,
-			Timeout:   2 * time.Minute,
+			// WordPress and declarative application installers may need to pull
+			// a pinned package or image. The inbound request context still
+			// cancels ordinary calls immediately.
+			Timeout: 12 * time.Minute,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},

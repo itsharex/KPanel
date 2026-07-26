@@ -379,6 +379,7 @@ type containerInspect struct {
 		Image        string                 `json:"Image"`
 		Labels       map[string]string      `json:"Labels"`
 		ExposedPorts map[string]interface{} `json:"ExposedPorts"`
+		Env          []string               `json:"Env"`
 		Tty          bool                   `json:"Tty"`
 	} `json:"Config"`
 	State struct {

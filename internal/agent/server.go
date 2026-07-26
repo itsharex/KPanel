@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ type Config struct {
 	Version         string
 	ProtocolVersion string
 	WebRoot         string
+	StateDir        string
 	System          *systeminfo.Collector
 	SystemManager   *systemmanage.Manager
 	Sites           *sites.Discoverer
@@ -78,6 +80,13 @@ func NewServer(config Config) (*Server, error) {
 	}
 	if config.SitesManager == nil {
 		config.SitesManager = sites.NewManager(config.WebRoot, config.Sites, config.Docker)
+		if config.StateDir != "" {
+			if err := config.SitesManager.ConfigureWordPressJobState(
+				filepath.Join(config.StateDir, "wordpress-jobs"),
+			); err != nil {
+				return nil, fmt.Errorf("initialize WordPress job state: %w", err)
+			}
+		}
 	}
 	if config.AppMarket == nil {
 		var err error
@@ -124,6 +133,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodPost, s.systemAction)
 	case r.URL.Path == "/v1/sites":
 		s.siteCollection(w, r, requestID)
+	case strings.HasPrefix(r.URL.Path, "/v1/site-installations/"):
+		s.siteInstallation(w, r, requestID)
 	case strings.HasPrefix(r.URL.Path, "/v1/sites/"):
 		s.siteOperation(w, r, requestID)
 	case r.URL.Path == "/v1/apps":
@@ -197,6 +208,9 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	writeContext, writeCancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer writeCancel()
 	siteWriteErr := s.sitesManager.Writable(writeContext)
+	wordPressContext, wordPressCancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer wordPressCancel()
+	wordPressWriteErr := s.sitesManager.WordPressWritable(wordPressContext)
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
 		{ID: "apps.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
@@ -207,6 +221,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		{ID: "docker.logs", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "docker.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅安全识别的 Kejilion 容器可操作"), Methods: []string{"POST"}},
 		{ID: "sites.write", Enabled: siteWriteErr == nil, Reason: reasonIf(siteWriteErr, "安全写入条件不满足"), Methods: []string{"POST", "PATCH"}},
+		{ID: "sites.wordpress.install", Enabled: wordPressWriteErr == nil, Reason: reasonIf(wordPressWriteErr, "WordPress 一键搭建条件不满足"), Methods: []string{"POST"}},
 	}
 	items = append(items, s.systemManager.Capabilities()...)
 	writeJSON(w, http.StatusOK, contract.PageResult[contract.Capability]{Items: items})
@@ -279,6 +294,15 @@ func (s *Server) siteCollection(w http.ResponseWriter, r *http.Request, requestI
 			writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
 			return
 		}
+		if input.Type == "wordpress" {
+			job, err := s.sitesManager.StartWordPress(r.Context(), input)
+			if err != nil {
+				s.writeSiteError(w, requestID, err)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, job)
+			return
+		}
 		result, err := s.sitesManager.Create(r.Context(), input)
 		if err != nil {
 			s.writeSiteError(w, requestID, err)
@@ -289,6 +313,25 @@ func (s *Server) siteCollection(w http.ResponseWriter, r *http.Request, requestI
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
 		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
 	}
+}
+
+func (s *Server) siteInstallation(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+		return
+	}
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_site_installation_request", "安装任务 URL 无效", "")
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/v1/site-installations/")
+	job, err := s.sitesManager.WordPressJob(id)
+	if err != nil {
+		writeProblem(w, requestID, http.StatusNotFound, "not_found", "安装任务不存在", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
 }
 
 func (s *Server) siteOperation(w http.ResponseWriter, r *http.Request, requestID string) {

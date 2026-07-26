@@ -107,6 +107,7 @@ reload 流程。
 
 | Web 选择 | `kejilion.sh` 对应业务 | Panel 产物与限制 |
 | --- | --- | --- |
+| WordPress | `ldnmp_wp` / `k wp <domain>` | 同款源码包、`html/<domain>/wordpress`、同名数据库、Redis、TLS 与 Nginx 产物；一键安装事务 |
 | 静态网站 | 自定义静态站点 | `<domain>.conf`、`html/<domain>/index.html` |
 | PHP 网站 | 自定义 PHP 网站 | `<domain>.conf`、`html/<domain>/index.php`；可选 `php` / `php74` Socket |
 | IP / 端口反代 | `ldnmp_Proxy` | 只允许本机、私网 IP 或单段 Docker DNS 名称 |
@@ -116,19 +117,23 @@ reload 流程。
 
 所有类型仍写入脚本可发现的 `/home/web/conf.d/<domain>.conf`；静态和 PHP
 目录映射保持 `/home/web/html/<domain>` → `/var/www/html/<domain>`。
-Panel v2 模板保留 ACME Webroot location，但创建站点不自动签发证书，也不停止
+Panel v2 基础模板保留 ACME Webroot location；普通基础站点不自动签发证书。
+WordPress 安装器会通过临时 ACME Webroot 配置在线签发证书，但不会停止现有
 Nginx。已由旧版 Panel 创建且仍完全匹配 v1 模板的站点可在下一次安全更新时
 原地迁移到 v2，站点目录内容不会被替换。
 
-以下入口不混入普通“新建网站”事务：
+WordPress 虽在“新建网站”窗口中优先呈现，后端仍是独立安装事务，不会被降级成
+普通 PHP 空站。安装任务会持久化到 Agent 状态目录；脚本标准 LDNMP 服务存在但
+处于停止状态时，只以 `docker compose up -d --no-recreate mysql redis php php74`
+启动固定依赖，不重建或停止 Nginx。以下入口尚未开放安全写入：
 
-- WordPress、Discuz、Kodbox、Typecho、Halo、Vaultwarden 等是应用安装器，
+- Discuz、Kodbox、Typecho、Halo、Vaultwarden 等是应用安装器，
   还涉及镜像/源码供应链、数据库凭据、持久卷与升级回滚。
 - Nginx Stream 是 TCP/UDP 四层代理，写入 `/home/web/stream.d` 并可能修改
   全局 `nginx.conf`，不是域名网站。
 - TLS 签发会改变线上监听状态，必须由独立证书事务实现。
 
-这些现有脚本产物会继续被保守发现和显示；在拥有固定版本、凭据生命周期、
+这些尚未适配的脚本产物会继续被保守发现和显示；在拥有固定版本、凭据生命周期、
 备份与回滚契约前，不伪装成普通站点创建能力。
 
 ## 固定模板摘要

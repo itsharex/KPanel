@@ -355,6 +355,45 @@ func renderManagedConfig(spec managedSpec) []byte {
 		body.WriteString("    }\n\n")
 		body.WriteString("    location ~ /\\. { deny all; }\n")
 		body.WriteString("    client_max_body_size 50m;\n")
+	case contract.SiteWordPress:
+		// Keep the same paths and Nginx behavior as kejilion.sh's
+		// wordpress.com.conf while retaining a canonical KPanel marker.
+		body.WriteString("    listen 443 ssl;\n")
+		body.WriteString("    listen [::]:443 ssl;\n")
+		body.WriteString("    listen 443 quic;\n")
+		body.WriteString("    listen [::]:443 quic;\n\n")
+		body.WriteString("    ssl_certificate /etc/nginx/certs/")
+		body.WriteString(spec.Primary)
+		body.WriteString("_cert.pem;\n")
+		body.WriteString("    ssl_certificate_key /etc/nginx/certs/")
+		body.WriteString(spec.Primary)
+		body.WriteString("_key.pem;\n\n")
+		body.WriteString("    if ($scheme = http) {\n")
+		body.WriteString("        return 301 https://$host$request_uri;\n")
+		body.WriteString("    }\n\n")
+		body.WriteString("    root /var/www/html/")
+		body.WriteString(spec.Primary)
+		body.WriteString("/wordpress;\n")
+		body.WriteString("    index index.php;\n\n")
+		body.WriteString("    location / {\n")
+		body.WriteString("        try_files $uri $uri/ /index.php?$args;\n")
+		body.WriteString("    }\n\n")
+		body.WriteString("    location ~ \\.php$ {\n")
+		body.WriteString("        fastcgi_pass unix:/run/php/php-fpm.sock;\n")
+		body.WriteString("        fastcgi_index index.php;\n")
+		body.WriteString("        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n")
+		body.WriteString("        include fastcgi_params;\n")
+		body.WriteString("        add_header Alt-Svc 'h3=\":443\"; ma=86400';\n")
+		body.WriteString("    }\n\n")
+		body.WriteString("    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|bmp|swf|eot|svg|ttf|woff|woff2|webp)$ {\n")
+		body.WriteString("        aio threads;\n")
+		body.WriteString("        add_header Cache-Control \"public, max-age=2592000\";\n")
+		body.WriteString("        add_header Alt-Svc 'h3=\":443\"; ma=86400';\n")
+		body.WriteString("        log_not_found off;\n")
+		body.WriteString("        access_log off;\n")
+		body.WriteString("    }\n\n")
+		body.WriteString("    location ~ /\\. { deny all; }\n")
+		body.WriteString("    client_max_body_size 50m;\n")
 	case contract.SiteRedirect:
 		body.WriteString("    location / {\n")
 		body.WriteString("        return ")
@@ -398,6 +437,25 @@ func renderManagedConfig(spec managedSpec) []byte {
 	}
 	body.WriteString("}\n")
 	return []byte(body.String())
+}
+
+// renderWordPressBootstrapConfig temporarily serves only ACME challenges while
+// the final certificate is issued. It never proxies PHP or exposes the staged
+// WordPress files.
+func renderWordPressBootstrapConfig(primary string) []byte {
+	return []byte(
+		"# managed-by: kejilion-panel/wordpress-bootstrap\n" +
+			"server {\n" +
+			"    listen 80;\n" +
+			"    listen [::]:80;\n" +
+			"    server_name " + primary + ";\n\n" +
+			"    location ^~ /.well-known/acme-challenge/ {\n" +
+			"        default_type \"text/plain\";\n" +
+			"        root /var/www/letsencrypt;\n" +
+			"    }\n\n" +
+			"    location / { return 503; }\n" +
+			"}\n",
+	)
 }
 
 func renderManagedConfigV1(spec managedSpec) []byte {
@@ -457,7 +515,7 @@ func renderDefaultPHP(domain string) []byte {
 }
 
 func siteNeedsDocumentRoot(kind contract.SiteKind) bool {
-	return kind == contract.SiteStatic || kind == contract.SitePHP
+	return kind == contract.SiteStatic || kind == contract.SitePHP || kind == contract.SiteWordPress
 }
 
 func managedDefaultDocument(spec managedSpec) (string, []byte) {
@@ -496,8 +554,11 @@ func (d *Discoverer) markManagedSite(site *contract.SiteSummary, data []byte, co
 		))
 		return
 	}
-	if spec.Kind == contract.SiteStatic || spec.Kind == contract.SitePHP {
+	if spec.Kind == contract.SiteStatic || spec.Kind == contract.SitePHP || spec.Kind == contract.SiteWordPress {
 		expectedRoot := filepath.Join(d.WebRoot, "html", spec.Primary)
+		if spec.Kind == contract.SiteWordPress {
+			expectedRoot = filepath.Join(expectedRoot, "wordpress")
+		}
 		if filepath.Clean(site.DocumentRoot) != filepath.Clean(expectedRoot) {
 			site.Consistency = contract.ConsistencyDrifted
 			site.AllowedActions = []string{}
@@ -505,7 +566,11 @@ func (d *Discoverer) markManagedSite(site *contract.SiteSummary, data []byte, co
 		}
 	}
 	site.Consistency = contract.ConsistencyInSync
-	site.AllowedActions = []string{"update"}
+	if spec.Kind == contract.SiteWordPress {
+		site.AllowedActions = []string{}
+	} else {
+		site.AllowedActions = []string{"update"}
+	}
 }
 
 func managedSpecFromSummary(site contract.SiteSummary) (managedSpec, error) {
@@ -538,6 +603,11 @@ func managedSpecFromSummary(site contract.SiteSummary) (managedSpec, error) {
 		default:
 			return managedSpec{}, errors.New("PHP managed site has an unknown runtime")
 		}
+	case contract.SiteWordPress:
+		if site.Target != "php" {
+			return managedSpec{}, errors.New("WordPress managed site has an unknown runtime")
+		}
+		spec.PHPVersion = "latest"
 	case contract.SiteReverseProxy:
 		spec.Upstream, err = normalizeUpstream(site.Target, upstreamPrivate)
 		if err != nil || spec.Upstream != site.Target {

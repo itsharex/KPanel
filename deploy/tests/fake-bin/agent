@@ -1,6 +1,6 @@
 #!/bin/sh
 if [ "$#" -eq 1 ] && [ "$1" = version ]; then
-	printf '%s v1alpha1\n' "${KP_AGENT_VERSION:-0.14.0}"
+	printf '%s v1alpha1\n' "${KP_AGENT_VERSION:-0.15.0}"
 	exit 0
 fi
 exit 94

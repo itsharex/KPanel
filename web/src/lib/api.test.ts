@@ -8,6 +8,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   resetApiSecurityState()
 })
@@ -164,6 +165,98 @@ describe('API client', () => {
       upstream: 'http://127.0.0.1:4000',
       expectedResourceVersion: createdRaw.resourceVersion,
     })
+  })
+
+  it('polls an asynchronous WordPress installation until the reconciled site is ready', async () => {
+    vi.useFakeTimers()
+    const jobID = 'd'.repeat(32)
+    const installedRaw = {
+      id: 'e'.repeat(32),
+      primaryDomain: 'blog.example.com',
+      domains: ['blog.example.com'],
+      kind: 'wordpress',
+      enabled: true,
+      health: 'healthy',
+      tls: {
+        enabled: true,
+        status: 'valid',
+        expiresAt: '2026-12-31T00:00:00Z',
+        source: 'acme',
+      },
+      target: 'php',
+      documentRoot: '/home/web/html/blog.example.com/wordpress',
+      origin: 'web',
+      consistency: 'in_sync',
+      resourceVersion: `sha256:${'f'.repeat(64)}`,
+      allowedActions: [],
+      artifacts: [],
+      warnings: [],
+      reconciledAt: '2026-07-26T10:00:00Z',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            id: jobID,
+            domain: 'blog.example.com',
+            status: 'queued',
+            message: 'queued',
+            createdAt: '2026-07-26T09:59:55Z',
+          },
+          { status: 202 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: jobID,
+          domain: 'blog.example.com',
+          status: 'running',
+          message: 'installing',
+          createdAt: '2026-07-26T09:59:55Z',
+          startedAt: '2026-07-26T09:59:56Z',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: jobID,
+          domain: 'blog.example.com',
+          status: 'succeeded',
+          message: 'completed',
+          site: installedRaw,
+          createdAt: '2026-07-26T09:59:55Z',
+          startedAt: '2026-07-26T09:59:56Z',
+          endedAt: '2026-07-26T10:00:00Z',
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const onProgress = vi.fn()
+
+    const created = api.sites.create(
+      {
+        primaryDomain: 'blog.example.com',
+        aliases: [],
+        type: 'wordpress',
+        enabled: true,
+      },
+      onProgress,
+    )
+    await vi.advanceTimersByTimeAsync(4_000)
+
+    await expect(created).resolves.toMatchObject({
+      primaryDomain: 'blog.example.com',
+      type: 'wordpress',
+      rootPath: '/home/web/html/blog.example.com/wordpress',
+      consistency: 'synced',
+      access: 'managed',
+      source: 'panel',
+    })
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/sites',
+      `/api/v1/site-installations/${jobID}`,
+      `/api/v1/site-installations/${jobID}`,
+    ])
+    expect(onProgress).toHaveBeenCalledWith('running', 'installing')
   })
 
   it('sends only the typed system action payload through the protected mutation path', async () => {

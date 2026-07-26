@@ -31,6 +31,9 @@
 
 ## 首版写入边界
 
-- 允许：固定模板的 HTTP/已有证书 HTTPS 静态站、反向代理站安全创建和更新。
+- 允许：固定模板的 HTTP/已有证书 HTTPS 静态站、反向代理站安全创建和更新；
+  WordPress 独立安装事务可创建脚本同款数据库、源码、证书与 Nginx 产物。
 - 允许：归属证据充分的 Kejilion 容器启动、停止、重启。
-- 禁止：网站/证书/数据库/目录删除，任意 Nginx 文本，任意 Shell，Docker Exec，Compose 在线编辑。
+- 禁止：既有网站/证书/数据库/目录删除，任意 Nginx 文本，任意 Shell、公共
+  Docker Exec、Compose 在线编辑。WordPress 事务内部仅允许固定 MySQL 命令，
+  且只能回滚本事务刚创建并仍可核验的产物。

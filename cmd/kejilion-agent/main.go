@@ -95,7 +95,7 @@ func run(arguments []string) error {
 	systemCollector.PublicNetworkLookupEnabled = *enablePublicNetworkLookup
 	handler, err := agent.NewServer(agent.Config{
 		Token: token, Version: version.Version, ProtocolVersion: version.ProtocolVersion,
-		WebRoot: *webRoot, System: systemCollector,
+		WebRoot: *webRoot, StateDir: *stateDir, System: systemCollector,
 		SystemManager: systemmanage.NewManager(systemmanage.Config{
 			Enabled: *enableSystemWrites, StateDir: filepath.Join(*stateDir, "system"),
 		}),

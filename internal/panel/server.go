@@ -468,6 +468,13 @@ func allowedAgentPath(publicPath string) (string, bool) {
 	if path, ok := exact[publicPath]; ok {
 		return path, true
 	}
+	const installationPrefix = "/api/v1/site-installations/"
+	if strings.HasPrefix(publicPath, installationPrefix) {
+		id := strings.TrimPrefix(publicPath, installationPrefix)
+		if siteIDPattern.MatchString(id) {
+			return "/v1/site-installations/" + id, true
+		}
+	}
 	const prefix = "/api/v1/docker/containers/"
 	const suffix = "/logs"
 	if strings.HasPrefix(publicPath, prefix) && strings.HasSuffix(publicPath, suffix) {

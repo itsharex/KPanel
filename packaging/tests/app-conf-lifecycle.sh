@@ -26,15 +26,22 @@ trap cleanup EXIT HUP INT TERM
 cat >"$FAKE_BIN/docker" <<'EOF'
 #!/bin/sh
 set -eu
-state=${KPANEL_MOCK_STATE:?}
+state=${KPANEL_MOCK_STATE:-}
+require_state() {
+	[ -n "$state" ] || {
+		echo "KPANEL_MOCK_STATE is required for lifecycle mutations" >&2
+		exit 2
+	}
+}
 case "$1 ${2:-}" in
-	"compose version"|"pull docker.io/kjlion/kejilion-panel:0.14.0")
+	"compose version"|"pull docker.io/kjlion/kejilion-panel:0.15.0")
 		exit 0
 		;;
 	"ps -a")
 		exit 0
 		;;
 	"network inspect")
+		require_state
 		if [ "${3:-}" = "--format" ]; then
 			printf '%s\n' '172.30.0.0/16'
 			exit 0
@@ -43,6 +50,7 @@ case "$1 ${2:-}" in
 		exit
 		;;
 	"create --name")
+		require_state
 		: >"$state/release-container"
 		printf '%s\n' mock-release-container
 		exit 0
@@ -52,7 +60,7 @@ case "$1 ${2:-}" in
 		cat >"$destination" <<'AGENT'
 #!/bin/sh
 case "${1:-}" in
-	version) printf '%s\n' '0.14.0 v1alpha1' ;;
+	version) printf '%s\n' '0.15.0 v1alpha1' ;;
 	healthcheck) exit 0 ;;
 	*) exit 0 ;;
 esac
@@ -77,6 +85,7 @@ AGENT
 		exit 0
 		;;
 	"compose --env-file")
+		require_state
 		case "${4:-}" in
 			create) : >"$state/network" ;;
 			up) : ;;
@@ -140,7 +149,7 @@ run_lifecycle() {
 	docker_port="18080"
 	docker_app_install
 
-	grep -F 'image: docker.io/kjlion/kejilion-panel:0.14.0' \
+	grep -F 'image: docker.io/kjlion/kejilion-panel:0.15.0' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx 'KPANEL_PUBLIC_URL=http://198.51.100.25:18080' \
@@ -153,7 +162,7 @@ run_lifecycle() {
 	test -f /home/docker/kpanel/.managed-by-kejilion-app
 
 	docker_app_update
-	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = '0.14.0 v1alpha1'
+	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = '0.15.0 v1alpha1'
 
 	docker_app_uninstall
 	[ ! -e /home/docker/kpanel ]
@@ -203,7 +212,9 @@ run_unmanaged_guard() {
 	rm -rf /home/docker/kpanel
 }
 
-PATH="$FAKE_BIN:$PATH" KPANEL_MOCK_STATE="$MOCK_STATE" run_lifecycle
-PATH="$FAKE_BIN:$PATH" KPANEL_MOCK_STATE="$MOCK_STATE" run_failed_install
-PATH="$FAKE_BIN:$PATH" KPANEL_MOCK_STATE="$MOCK_STATE" run_unmanaged_guard
+export PATH="$FAKE_BIN:$PATH"
+export KPANEL_MOCK_STATE="$MOCK_STATE"
+run_lifecycle
+run_failed_install
+run_unmanaged_guard
 printf '%s\n' "app_conf_lifecycle=pass"

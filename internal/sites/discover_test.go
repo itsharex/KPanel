@@ -68,6 +68,37 @@ server {
 	}
 }
 
+func TestClassifyKejilionWordPressProduct(t *testing.T) {
+	root := t.TempDir()
+	discoverer := NewDiscoverer(root)
+	clean := `
+server {
+    listen 80;
+    listen 443 ssl;
+    server_name blog.example.com;
+    root /var/www/html/blog.example.com/wordpress;
+    index index.php;
+    location / { try_files $uri $uri/ /index.php?$args; }
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php/php-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+}
+`
+	kind, target, documentRoot, warnings := discoverer.classify(clean, parseDirectives(clean))
+	if kind != contract.SiteWordPress || target != "php" ||
+		documentRoot != filepath.Join(root, "html", "blog.example.com", "wordpress") ||
+		len(warnings) != 0 {
+		t.Fatalf(
+			"unexpected kejilion.sh WordPress classification: kind=%s target=%q root=%q warnings=%#v",
+			kind,
+			target,
+			documentRoot,
+			warnings,
+		)
+	}
+}
+
 func TestConfigHashChangesResourceVersion(t *testing.T) {
 	root := t.TempDir()
 	copyFixtureTree(t, filepath.Join("testdata", "web"), root)

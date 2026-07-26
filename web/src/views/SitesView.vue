@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Braces,
   FileCode2,
+  Flame,
   Globe2,
   KeyRound,
   LoaderCircle,
@@ -44,24 +45,20 @@ const editorOpen = ref(false)
 const editingSite = ref<Site>()
 const submitting = ref(false)
 const formError = ref('')
+const installProgress = ref('')
 const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
 
 const serviceOptions = [
   {
-    type: 'static',
-    title: '静态网站',
-    summary: 'HTML、图片与前端构建产物',
-    detail: '创建独立站点目录与默认首页',
-    icon: FileCode2,
-  },
-  {
-    type: 'php',
-    title: 'PHP 网站',
-    summary: '动态网站与自建 PHP 程序',
-    detail: '使用 kejilion.sh 同款 PHP-FPM Socket',
-    icon: Braces,
+    type: 'wordpress',
+    title: 'WordPress',
+    summary: '博客、企业官网与内容站一键成型',
+    detail: '完整执行 kejilion.sh 同款建站流程',
+    icon: Globe2,
+    featured: true,
+    badges: ['热门', '一键成品'],
   },
   {
     type: 'proxy',
@@ -69,6 +66,26 @@ const serviceOptions = [
     summary: '代理本机、内网或 Docker 服务',
     detail: '例如 127.0.0.1:3000',
     icon: Server,
+    featured: true,
+    badges: ['热门'],
+  },
+  {
+    type: 'static',
+    title: '静态网站',
+    summary: 'HTML、图片与前端构建产物',
+    detail: '创建独立站点目录与默认首页',
+    icon: FileCode2,
+    featured: false,
+    badges: [],
+  },
+  {
+    type: 'php',
+    title: 'PHP 网站',
+    summary: '动态网站与自建 PHP 程序',
+    detail: '使用 kejilion.sh 同款 PHP-FPM Socket',
+    icon: Braces,
+    featured: false,
+    badges: [],
   },
   {
     type: 'proxy_domain',
@@ -76,6 +93,8 @@ const serviceOptions = [
     summary: '代理另一域名提供的 HTTPS 服务',
     detail: '自动配置上游 SNI',
     icon: Globe2,
+    featured: false,
+    badges: [],
   },
   {
     type: 'load_balance',
@@ -83,6 +102,8 @@ const serviceOptions = [
     summary: '将请求分配到多个后端节点',
     detail: '支持 2–8 个 HTTP 上游',
     icon: Waypoints,
+    featured: false,
+    badges: [],
   },
   {
     type: 'redirect',
@@ -90,6 +111,8 @@ const serviceOptions = [
     summary: '将访问跳转到另一个域名',
     detail: '支持 301、302、307、308',
     icon: ArrowRight,
+    featured: false,
+    badges: [],
   },
 ] as const satisfies ReadonlyArray<{
   type: SiteServiceType
@@ -97,12 +120,14 @@ const serviceOptions = [
   summary: string
   detail: string
   icon: typeof FileCode2
+  featured: boolean
+  badges: readonly string[]
 }>
 
 const form = reactive({
   primaryDomain: '',
   aliases: '',
-  type: 'static' as SiteServiceType,
+  type: 'wordpress' as SiteServiceType,
   upstream: '',
   upstreams: '',
   redirectTarget: '',
@@ -111,7 +136,14 @@ const form = reactive({
 })
 
 const siteWriteCapability = computed(() => capabilities.value.find((capability) => capability.id === 'sites.write'))
+const wordPressCapability = computed(() =>
+  capabilities.value.find((capability) => capability.id === 'sites.wordpress.install'),
+)
 const canCreate = computed(() => siteWriteCapability.value?.enabled === true)
+const canInstallWordPress = computed(() => wordPressCapability.value?.enabled === true)
+const wordPressReason = computed(
+  () => wordPressCapability.value?.reason?.trim() || 'WordPress 一键搭建条件尚未通过 Agent 安全检查。',
+)
 const siteWriteReason = computed(
   () =>
     siteWriteCapability.value?.reason?.trim() ||
@@ -145,6 +177,9 @@ const counts = computed(() => ({
 }))
 
 const selectedService = computed(() => serviceOptions.find((option) => option.type === form.type))
+const featuredServiceOptions = computed(() => serviceOptions.filter((option) => option.featured))
+const standardServiceOptions = computed(() => serviceOptions.filter((option) => !option.featured))
+const canSubmit = computed(() => formValid.value && (form.type !== 'wordpress' || canInstallWordPress.value))
 
 const formValid = computed(() => {
   const domain = form.primaryDomain.trim()
@@ -256,13 +291,14 @@ function openCreate(): void {
   editingSite.value = undefined
   form.primaryDomain = ''
   form.aliases = ''
-  form.type = 'static'
+  form.type = canInstallWordPress.value ? 'wordpress' : 'proxy'
   form.upstream = ''
   form.upstreams = ''
   form.redirectTarget = ''
   form.redirectCode = 301
   form.phpVersion = 'latest'
   formError.value = ''
+  installProgress.value = ''
   editorOpen.value = true
 }
 
@@ -279,6 +315,7 @@ function openEdit(site: Site): void {
   form.redirectTarget = redirectMatch?.[2] || ''
   form.phpVersion = site.type === 'php' && site.upstream === 'php74' ? '7.4' : 'latest'
   formError.value = ''
+  installProgress.value = ''
   selectedSite.value = undefined
   editorOpen.value = true
 }
@@ -289,11 +326,16 @@ async function submitSite(): Promise<void> {
     formError.value = '请检查域名和当前服务所需的配置。'
     return
   }
+  if (form.type === 'wordpress' && !canInstallWordPress.value) {
+    formError.value = wordPressReason.value
+    return
+  }
 
   submitting.value = true
+  installProgress.value = form.type === 'wordpress' ? '正在创建安全安装任务…' : ''
   const input: SiteInput = {
     primaryDomain: form.primaryDomain.trim().toLowerCase(),
-    aliases: form.aliases
+    aliases: form.type === 'wordpress' ? [] : form.aliases
       .split(/[\n,]/)
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
@@ -311,17 +353,22 @@ async function submitSite(): Promise<void> {
     const wasEditing = Boolean(editingSite.value)
     const savedSite = editingSite.value
       ? await api.sites.update(editingSite.value.id, input)
-      : await api.sites.create(input)
+      : await api.sites.create(input, (_status, message) => {
+          installProgress.value = message
+        })
     editorOpen.value = false
     toast.success(
-      wasEditing ? '网站已安全更新' : '网站已安全创建',
-      `${savedSite.primaryDomain} 已通过 nginx -t 校验并完成同步应用。`,
+      wasEditing ? '网站已安全更新' : form.type === 'wordpress' ? 'WordPress 已一键搭建完成' : '网站已安全创建',
+      form.type === 'wordpress'
+        ? `${savedSite.primaryDomain} 的源码、数据库、证书和 Nginx 产物已完成对账。`
+        : `${savedSite.primaryDomain} 已通过 nginx -t 校验并完成同步应用。`,
     )
     await load(true)
   } catch (reason) {
     formError.value = reason instanceof ApiError ? reason.message : '操作失败，请稍后重试。'
   } finally {
     submitting.value = false
+    installProgress.value = ''
   }
 }
 
@@ -441,7 +488,7 @@ onBeforeUnmount(() => controller?.abort())
               <td>
                 <div class="table-stack">
                   <span>{{ sourceLabel(site.source) }}</span>
-                  <small>{{ site.access === 'managed' ? '允许安全变更' : '仅查看' }}</small>
+                  <small>{{ site.access === 'managed' ? '面板已托管' : '仅查看' }}</small>
                 </div>
               </td>
               <td>
@@ -559,6 +606,10 @@ onBeforeUnmount(() => controller?.abort())
     >
       <form id="site-form" class="form-stack" @submit.prevent="submitSite">
         <div v-if="formError" class="inline-alert inline-alert--danger" role="alert">{{ formError }}</div>
+        <div v-if="submitting && form.type === 'wordpress'" class="inline-alert inline-alert--info" role="status">
+          <LoaderCircle class="spin" :size="17" />
+          <span>{{ installProgress || 'WordPress 安装任务正在执行…' }}</span>
+        </div>
         <label class="field">
           <span>主域名</span>
           <input
@@ -571,11 +622,46 @@ onBeforeUnmount(() => controller?.abort())
           <small>{{ editingSite ? '首版更新不重命名主域名或移动网站目录。' : '不要包含协议、路径或端口。' }}</small>
         </label>
 
-        <fieldset class="site-service-field">
-          <legend>选择站点服务</legend>
+        <fieldset v-if="!editingSite" class="site-service-field site-service-field--featured">
+          <legend><Flame :size="16" /> 热门搭建</legend>
           <div class="site-service-grid">
             <button
-              v-for="option in serviceOptions"
+              v-for="option in featuredServiceOptions"
+              :key="option.type"
+              class="site-service-card"
+              :class="{ 'is-active': form.type === option.type }"
+              type="button"
+              :disabled="option.type === 'wordpress' && !canInstallWordPress"
+              :aria-pressed="form.type === option.type"
+              :title="option.type === 'wordpress' && !canInstallWordPress ? wordPressReason : ''"
+              @click="form.type = option.type"
+            >
+              <span class="site-service-card__icon"><component :is="option.icon" :size="20" /></span>
+              <span class="site-service-card__content">
+                <span class="site-service-card__heading">
+                  <strong>{{ option.title }}</strong>
+                  <span
+                    v-for="badge in option.badges"
+                    :key="badge"
+                    class="site-service-card__badge"
+                    :class="{ 'is-hot': badge === '热门' }"
+                  >
+                    {{ badge }}
+                  </span>
+                </span>
+                <small>{{ option.summary }}</small>
+                <em>{{ option.detail }}</em>
+              </span>
+            </button>
+          </div>
+          <small>WordPress 对齐脚本完整产物；IP + 端口反代适合 Docker 与本机服务，是最常用的两个入口。</small>
+        </fieldset>
+
+        <fieldset class="site-service-field">
+          <legend>{{ editingSite ? '站点服务' : '更多建站方式' }}</legend>
+          <div class="site-service-grid">
+            <button
+              v-for="option in editingSite ? serviceOptions : standardServiceOptions"
               :key="option.type"
               class="site-service-card"
               :class="{ 'is-active': form.type === option.type }"
@@ -598,6 +684,15 @@ onBeforeUnmount(() => controller?.abort())
         <div v-if="selectedService" class="site-service-summary">
           <component :is="selectedService.icon" :size="18" />
           <span><strong>{{ selectedService.title }}</strong>{{ selectedService.summary }}</span>
+        </div>
+
+        <div v-if="form.type === 'wordpress'" class="inline-alert inline-alert--info">
+          <ShieldCheck :size="17" />
+          <span>
+            将创建 <code>/home/web/html/&lt;域名&gt;/wordpress</code>、同名数据库、脚本同款 Redis 配置与
+            TLS 证书，并生成可被 <code>k web</code> 正确识别的 Nginx 产物。整个过程先做冲突检查，
+            不覆盖任何现有网站。
+          </span>
         </div>
 
         <fieldset v-if="form.type === 'php'" class="field site-inline-options">
@@ -669,7 +764,7 @@ onBeforeUnmount(() => controller?.abort())
           </fieldset>
         </template>
 
-        <label class="field">
+        <label v-if="form.type !== 'wordpress'" class="field">
           <span>附加域名（可选）</span>
           <textarea v-model="form.aliases" rows="3" placeholder="www.example.com&#10;api.example.com" />
           <small>每行一个域名，最多 20 个；主域名不要重复填写。</small>
@@ -681,9 +776,19 @@ onBeforeUnmount(() => controller?.abort())
       </form>
       <template #footer>
         <button class="button button--secondary" type="button" @click="editorOpen = false">取消</button>
-        <button class="button button--primary" type="submit" form="site-form" :disabled="submitting || !formValid">
+        <button class="button button--primary" type="submit" form="site-form" :disabled="submitting || !canSubmit">
           <LoaderCircle v-if="submitting" class="spin" :size="16" />
-          {{ submitting ? '正在提交…' : editingSite ? '安全更新' : '创建网站' }}
+          {{
+            submitting
+              ? form.type === 'wordpress'
+                ? '正在搭建 WordPress…'
+                : '正在提交…'
+              : editingSite
+                ? '安全更新'
+                : form.type === 'wordpress'
+                  ? '一键搭建 WordPress'
+                  : '创建网站'
+          }}
         </button>
       </template>
     </ModalDialog>
