@@ -24,6 +24,7 @@ import (
 
 	"github.com/kejilion/kejilion-panel/internal/auth"
 	"github.com/kejilion/kejilion-panel/internal/contract"
+	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/store"
 	"github.com/kejilion/kejilion-panel/internal/version"
 )
@@ -141,6 +142,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleAppAction(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/"):
 		s.handleDockerAction(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/docker/tasks":
+		s.handleDockerTask(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/actions":
 		s.handleSystemAction(w, r)
 	case r.Method == http.MethodGet:
@@ -195,6 +198,38 @@ func (s *Server) handleDockerAction(w http.ResponseWriter, r *http.Request) {
 		result = "success"
 	}
 	_ = s.audit(r, session.User.ID, "docker."+action, "container", containerID, result, change)
+	s.writeAgentResponse(w, response)
+}
+
+func (s *Server) handleDockerTask(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	var input dockerx.MaintenanceInput
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		_ = s.audit(r, session.User.ID, "docker.task", "docker", input.Action, "failure", nil)
+		return
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
+		return
+	}
+	response, err := s.agent.Do(r.Context(), http.MethodPost, "/v1/docker/tasks", "", requestID(r), body)
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "docker."+input.Action, "docker", input.Target, "failure", nil)
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	outcome := "success"
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		outcome = "failure"
+	}
+	_ = s.audit(r, session.User.ID, "docker."+input.Action, "docker", input.Target, outcome, nil)
 	s.writeAgentResponse(w, response)
 }
 
@@ -445,7 +480,7 @@ func allowedDockerActionPath(publicPath string) (agentPath, containerID, action 
 		return "", "", "", false
 	}
 	switch parts[1] {
-	case "start", "stop", "restart":
+	case "start", "stop", "restart", "remove":
 		return "/v1/docker/containers/" + parts[0] + "/" + parts[1], parts[0], parts[1], true
 	default:
 		return "", "", "", false
@@ -466,6 +501,7 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		"/api/v1/docker/images":         "/v1/docker/images",
 		"/api/v1/docker/networks":       "/v1/docker/networks",
 		"/api/v1/docker/volumes":        "/v1/docker/volumes",
+		"/api/v1/docker/jobs":           "/v1/docker/jobs",
 	}
 	if path, ok := exact[publicPath]; ok {
 		return path, true
@@ -475,6 +511,13 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		id := strings.TrimPrefix(publicPath, appJobPrefix)
 		if siteIDPattern.MatchString(id) {
 			return "/v1/app-jobs/" + id, true
+		}
+	}
+	const dockerJobPrefix = "/api/v1/docker/jobs/"
+	if strings.HasPrefix(publicPath, dockerJobPrefix) {
+		id := strings.TrimPrefix(publicPath, dockerJobPrefix)
+		if siteIDPattern.MatchString(id) {
+			return "/v1/docker/jobs/" + id, true
 		}
 	}
 	const installationPrefix = "/api/v1/site-installations/"

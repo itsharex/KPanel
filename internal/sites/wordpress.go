@@ -79,7 +79,7 @@ func normalizeWordPressInput(input SiteInput) (managedSpec, error) {
 	}
 	if strings.TrimSpace(input.Upstream) != "" || len(input.Upstreams) != 0 ||
 		strings.TrimSpace(input.RedirectTarget) != "" || input.RedirectCode != 0 ||
-		strings.TrimSpace(input.PHPVersion) != "" {
+		strings.TrimSpace(input.PHPVersion) != "" || input.Recipe != "" {
 		return managedSpec{}, fmt.Errorf("%w: WordPress cannot define generic site settings", ErrUnprocessable)
 	}
 	return managedSpec{

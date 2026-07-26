@@ -6,7 +6,6 @@ import {
   Boxes,
   ClipboardList,
   Container,
-  FileClock,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -36,8 +35,7 @@ const navigation: NavigationItem[] = [
   { label: '网站', to: '/sites', icon: Boxes },
   { label: '应用市场', to: '/apps', icon: Store },
   { label: 'Docker', to: '/docker', icon: Container },
-  { label: '变更', to: '/jobs', icon: ClipboardList },
-  { label: '审计', to: '/audit', icon: FileClock },
+  { label: '活动记录', to: '/activity', icon: ClipboardList },
   { label: '设置', to: '/settings', icon: Settings },
 ]
 

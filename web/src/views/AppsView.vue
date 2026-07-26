@@ -265,13 +265,10 @@ async function load(silent = false): Promise<void> {
   else loading.value = true
   error.value = ''
   try {
-    const [appsResult, sitesResult] = await Promise.allSettled([
-      api.apps.inventory(controller.signal),
-      api.sites.list(undefined, controller.signal),
-    ])
-    if (appsResult.status === 'rejected') throw appsResult.reason
-    inventory.value = appsResult.value
-    sites.value = sitesResult.status === 'fulfilled' ? sitesResult.value.items : []
+    const sitesPromise = api.sites.list(undefined, controller.signal).catch(() => ({ items: [], total: 0 }))
+    inventory.value = await api.apps.inventory(controller.signal)
+    loading.value = false
+    sites.value = (await sitesPromise).items
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
     error.value = reason instanceof ApiError ? reason.message : '无法读取应用市场，请稍后重试。'

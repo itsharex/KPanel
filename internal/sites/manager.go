@@ -25,6 +25,7 @@ type Manager struct {
 	wordPressRuntime WordPressRuntime
 	archiveLoader    WordPressArchiveLoader
 	wordPressJobs    *wordPressJobRegistry
+	recipeJobs       *recipeJobRegistry
 	testHook         func(stage, path string)
 }
 
@@ -42,6 +43,7 @@ func NewManager(webRoot string, discoverer *Discoverer, nginx NginxController) *
 	}
 	manager.archiveLoader = downloadKejilionWordPressArchive
 	manager.wordPressJobs = newWordPressJobRegistry("")
+	manager.recipeJobs = newRecipeJobRegistry("")
 	return manager
 }
 
@@ -208,6 +210,9 @@ func (m *Manager) Update(ctx context.Context, id string, input SiteInput) (contr
 	}
 	if err := m.checkCollisions(spec, current.ID); err != nil {
 		return contract.SiteSummary{}, err
+	}
+	if current.Origin == contract.OriginCLI {
+		return m.updateCLIConfig(ctx, current, spec, input.ExpectedResourceVersion)
 	}
 	if siteNeedsDocumentRoot(spec.Kind) {
 		rootInfo, rootErr := os.Lstat(filepath.Join(m.webRoot, "html", spec.Primary))
@@ -499,8 +504,9 @@ func (m *Manager) findManagedByID(id string) (contract.SiteSummary, error) {
 	}
 	for _, site := range items {
 		if site.ID == id {
-			if site.Origin != contract.OriginWeb || !containsString(site.AllowedActions, "update") {
-				return contract.SiteSummary{}, fmt.Errorf("%w: only an unchanged canonical Panel site can be updated", ErrForbidden)
+			if (site.Origin != contract.OriginWeb && site.Origin != contract.OriginCLI) ||
+				!containsString(site.AllowedActions, "update") {
+				return contract.SiteSummary{}, fmt.Errorf("%w: only a recognized unchanged site can be updated", ErrForbidden)
 			}
 			return site, nil
 		}

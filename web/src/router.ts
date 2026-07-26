@@ -56,16 +56,18 @@ export const router = createRouter({
           meta: { title: 'Docker' },
         },
         {
+          path: 'activity',
+          name: 'activity',
+          component: () => import('@/views/ActivityView.vue'),
+          meta: { title: '活动记录' },
+        },
+        {
           path: 'jobs',
-          name: 'jobs',
-          component: () => import('@/views/JobsView.vue'),
-          meta: { title: '变更记录' },
+          redirect: { path: '/activity', query: { tab: 'jobs' } },
         },
         {
           path: 'audit',
-          name: 'audit',
-          component: () => import('@/views/AuditView.vue'),
-          meta: { title: '审计' },
+          redirect: { path: '/activity', query: { tab: 'audit' } },
         },
         {
           path: 'settings',

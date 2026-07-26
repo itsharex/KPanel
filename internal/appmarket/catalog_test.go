@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -240,10 +241,9 @@ func TestRemoteCatalogFallsBackToLastKnownGood(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
+	var calls atomic.Int32
 	fetcher := func(context.Context) (Catalog, error) {
-		calls++
-		if calls == 1 {
+		if calls.Add(1) == 1 {
 			return embedded, nil
 		}
 		return Catalog{}, errors.New("upstream unavailable")
@@ -255,14 +255,69 @@ func TestRemoteCatalogFallsBackToLastKnownGood(t *testing.T) {
 	now := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
 	first := service.currentCatalog(context.Background())
-	if first.Mode != "live" || first.Warning != "" || calls != 1 {
-		t.Fatalf("unexpected live catalog state: %#v calls=%d", first, calls)
+	if first.Mode != "embedded" || first.Warning != "" {
+		t.Fatalf("cold catalog should return embedded immediately: %#v", first)
+	}
+	first = waitForCatalogState(t, service, "live", "")
+	if calls.Load() != 1 {
+		t.Fatalf("unexpected first refresh calls=%d", calls.Load())
 	}
 	now = now.Add(remoteCatalogTTL + time.Second)
 	second := service.currentCatalog(context.Background())
-	if second.Mode != "cached" || second.Warning == "" || calls != 2 {
-		t.Fatalf("unexpected cached catalog state: %#v calls=%d", second, calls)
+	if second.Mode != "cached" {
+		t.Fatalf("stale catalog should remain immediately usable: %#v", second)
 	}
+	second = waitForCatalogState(t, service, "cached", "warning")
+	if second.Warning == "" || calls.Load() != 2 {
+		t.Fatalf("unexpected cached catalog state: %#v calls=%d", second, calls.Load())
+	}
+}
+
+func TestRemoteCatalogColdReadDoesNotWaitForNetwork(t *testing.T) {
+	embedded, _, _, err := LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	fetcher := func(context.Context) (Catalog, error) {
+		close(started)
+		<-release
+		return embedded, nil
+	}
+	service, err := newService(&fakeDocker{}, t.TempDir(), fetcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	snapshot := service.currentCatalog(context.Background())
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("cold catalog read blocked for %s", elapsed)
+	}
+	if snapshot.Mode != "embedded" {
+		t.Fatalf("cold catalog mode = %s", snapshot.Mode)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("catalog refresh did not start")
+	}
+	close(release)
+	_ = waitForCatalogState(t, service, "live", "")
+}
+
+func waitForCatalogState(t *testing.T, service *Service, mode, warning string) catalogSnapshot {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := service.currentCatalog(context.Background())
+		if snapshot.Mode == mode && (warning == "" || snapshot.Warning != "") {
+			return snapshot
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("catalog did not reach mode %s", mode)
+	return catalogSnapshot{}
 }
 
 func remotePayloadFromCatalog(catalog Catalog) remoteCatalogPayload {

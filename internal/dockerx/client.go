@@ -40,8 +40,11 @@ type Client struct {
 	webRoot               string
 	appRoot               string
 	stateRoot             string
+	daemonConfigPath      string
+	restartDocker         func(context.Context) error
 	now                   func() time.Time
 	lifecycle             sync.Mutex
+	jobs                  *dockerJobRegistry
 	pidFile               string
 	allowSocketActivation bool
 }
@@ -95,12 +98,14 @@ type ActionResult struct {
 func New(socketPath, webRoot, stateRoot string) *Client {
 	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
 	client := &Client{
-		baseURL:   "http://docker",
-		webRoot:   cleanLinuxPath(webRoot, "/home/web"),
-		appRoot:   "/home/docker",
-		stateRoot: cleanLinuxPath(stateRoot, "/var/lib/kejilion-panel"),
-		now:       time.Now,
-		pidFile:   "/run/docker.pid",
+		baseURL:          "http://docker",
+		webRoot:          cleanLinuxPath(webRoot, "/home/web"),
+		appRoot:          "/home/docker",
+		stateRoot:        cleanLinuxPath(stateRoot, "/var/lib/kejilion-panel"),
+		daemonConfigPath: "/etc/docker/daemon.json",
+		restartDocker:    restartDockerDaemon,
+		now:              time.Now,
+		pidFile:          "/run/docker.pid",
 	}
 	transport := &http.Transport{
 		DisableCompression: true,
@@ -299,7 +304,7 @@ func (c *Client) Lifecycle(ctx context.Context, id, action, expectedVersion stri
 	if !containerIDPattern.MatchString(id) {
 		return ActionResult{}, errors.New("invalid container id")
 	}
-	if action != "start" && action != "stop" && action != "restart" {
+	if action != "start" && action != "stop" && action != "restart" && action != "remove" {
 		return ActionResult{}, errors.New("unsupported lifecycle action")
 	}
 	if expectedVersion == "" {
@@ -322,14 +327,27 @@ func (c *Client) Lifecycle(ctx context.Context, id, action, expectedVersion stri
 		return ActionResult{}, ErrResourceConflict
 	}
 	endpoint := "/containers/" + id + "/" + action
+	method := http.MethodPost
+	if action == "remove" {
+		endpoint = "/containers/" + id + "?v=0&force=0"
+		method = http.MethodDelete
+	}
 	if action == "stop" || action == "restart" {
 		endpoint += "?t=10"
 	}
-	if err := c.post(ctx, endpoint); err != nil {
-		return ActionResult{}, err
+	var mutationErr error
+	if method == http.MethodDelete {
+		mutationErr = c.dockerMutation(ctx, method, endpoint, nil)
+	} else {
+		mutationErr = c.post(ctx, endpoint)
+	}
+	if mutationErr != nil {
+		return ActionResult{}, mutationErr
 	}
 	newVersion := summary.ResourceVersion
-	if updated, inspectErr := c.inspect(ctx, id); inspectErr == nil {
+	if action == "remove" {
+		newVersion = ""
+	} else if updated, inspectErr := c.inspect(ctx, id); inspectErr == nil {
 		newVersion = c.summaryFromInspect(updated).ResourceVersion
 	}
 	return ActionResult{
@@ -510,7 +528,10 @@ func (c *Client) summaryFromInspect(raw containerInspect) contract.ContainerSumm
 			case "running":
 				allowed = []string{"restart", "stop"}
 			case "created", "exited", "dead":
-				allowed = []string{"start"}
+				allowed = []string{"start", "remove"}
+			}
+			if strings.EqualFold(strings.TrimPrefix(raw.Name, "/"), "kejilion-panel") {
+				allowed = removeString(allowed, "remove")
 			}
 			evidence = append(evidence, "危险配置检查通过")
 		} else {
@@ -803,4 +824,14 @@ func contains(values []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func removeString(values []string, target string) []string {
+	result := values[:0]
+	for _, value := range values {
+		if value != target {
+			result = append(result, value)
+		}
+	}
+	return result
 }

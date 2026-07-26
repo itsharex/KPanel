@@ -111,6 +111,7 @@ type Service struct {
 	catalogExpiry      time.Time
 	catalogRefreshedAt time.Time
 	catalogWarning     string
+	catalogLoading     bool
 	actions            sync.Mutex
 	jobs               *appJobRegistry
 	jobExecutable      string
@@ -260,40 +261,63 @@ func installerKind(app App, legacy LegacyApp, scriptInstallAvailable bool) strin
 	return "guided"
 }
 
-func (s *Service) currentCatalog(ctx context.Context) catalogSnapshot {
+func (s *Service) currentCatalog(_ context.Context) catalogSnapshot {
 	if s.fetchCatalog == nil {
 		return catalogSnapshot{Catalog: s.catalog, Mode: "embedded"}
 	}
 	s.catalogMu.Lock()
-	defer s.catalogMu.Unlock()
 	now := s.now().UTC()
 	if s.liveCatalog != nil && now.Before(s.catalogExpiry) {
-		return catalogSnapshot{
-			Catalog: *s.liveCatalog, Mode: "live", Warning: s.catalogWarning,
+		mode := "live"
+		if s.catalogWarning != "" {
+			mode = "cached"
+		}
+		snapshot := catalogSnapshot{
+			Catalog: *s.liveCatalog, Mode: mode, Warning: s.catalogWarning,
+			RefreshedAt: s.catalogRefreshedAt,
+		}
+		s.catalogMu.Unlock()
+		return snapshot
+	}
+	if s.liveCatalog == nil && now.Before(s.catalogExpiry) && s.catalogWarning != "" {
+		snapshot := catalogSnapshot{Catalog: s.catalog, Mode: "embedded", Warning: s.catalogWarning}
+		s.catalogMu.Unlock()
+		return snapshot
+	}
+	snapshot := catalogSnapshot{Catalog: s.catalog, Mode: "embedded", Warning: s.catalogWarning}
+	if s.liveCatalog != nil {
+		snapshot = catalogSnapshot{
+			Catalog: *s.liveCatalog, Mode: "cached", Warning: s.catalogWarning,
 			RefreshedAt: s.catalogRefreshedAt,
 		}
 	}
+	if !s.catalogLoading {
+		s.catalogLoading = true
+		go s.refreshCatalog()
+	}
+	s.catalogMu.Unlock()
+	return snapshot
+}
+
+func (s *Service) refreshCatalog() {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
 	remote, err := s.fetchCatalog(ctx)
+	now := s.now().UTC()
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+	s.catalogLoading = false
 	if err == nil {
 		merged := mergeRemoteThirdParty(s.catalog, remote)
 		s.liveCatalog = &merged
 		s.catalogExpiry = now.Add(remoteCatalogTTL)
 		s.catalogRefreshedAt = now
 		s.catalogWarning = ""
-		return catalogSnapshot{Catalog: merged, Mode: "live", RefreshedAt: now}
+		return
 	}
 	slog.Warn("application catalog refresh failed", "error", err)
 	s.catalogWarning = "动态目录暂不可用，已使用最近一次安全目录。"
 	s.catalogExpiry = now.Add(time.Minute)
-	if s.liveCatalog != nil {
-		return catalogSnapshot{
-			Catalog: *s.liveCatalog, Mode: "cached", Warning: s.catalogWarning,
-			RefreshedAt: s.catalogRefreshedAt,
-		}
-	}
-	return catalogSnapshot{
-		Catalog: s.catalog, Mode: "embedded", Warning: s.catalogWarning,
-	}
 }
 
 func runtimeFromContainer(container contract.ContainerSummary) Runtime {

@@ -124,10 +124,28 @@ const serviceOptions = [
   badges: readonly string[]
 }>
 
+const recipeOptions = [
+  { recipe: 'discuz', title: 'Discuz 论坛', summary: '成熟中文社区论坛', detail: '脚本菜单 3', icon: Globe2 },
+  { recipe: 'kodbox', title: '可道云 Kodbox', summary: '私有云盘与在线桌面', detail: '脚本菜单 4', icon: FileCode2 },
+  { recipe: 'maccms', title: '苹果 CMS', summary: '影视内容管理系统', detail: '脚本菜单 5', icon: Globe2 },
+  { recipe: 'dujiaoka', title: '独角数卡', summary: '数字商品发卡商城', detail: '脚本菜单 6', icon: Braces },
+  { recipe: 'flarum', title: 'Flarum', summary: '现代轻量论坛', detail: '脚本菜单 7', icon: Globe2 },
+  { recipe: 'typecho', title: 'Typecho', summary: '轻量博客系统', detail: '脚本菜单 8', icon: Braces },
+  { recipe: 'linkstack', title: 'LinkStack', summary: '共享链接主页', detail: '脚本菜单 9', icon: Waypoints },
+  { recipe: 'ai-prompt', title: 'AI 提示词生成器', summary: '脚本原生静态成品站', detail: '脚本菜单 27', icon: FileCode2 },
+] as const satisfies ReadonlyArray<{
+  recipe: NonNullable<SiteInput['recipe']>
+  title: string
+  summary: string
+  detail: string
+  icon: typeof FileCode2
+}>
+
 const form = reactive({
   primaryDomain: '',
   aliases: '',
   type: 'wordpress' as SiteServiceType,
+  recipe: 'discuz' as NonNullable<SiteInput['recipe']>,
   upstream: '',
   upstreams: '',
   redirectTarget: '',
@@ -139,8 +157,13 @@ const siteWriteCapability = computed(() => capabilities.value.find((capability) 
 const wordPressCapability = computed(() =>
   capabilities.value.find((capability) => capability.id === 'sites.wordpress.install'),
 )
+const recipeCapability = computed(() =>
+  capabilities.value.find((capability) => capability.id === 'sites.recipes.install'),
+)
 const canCreate = computed(() => siteWriteCapability.value?.enabled === true)
 const canInstallWordPress = computed(() => wordPressCapability.value?.enabled === true)
+const canInstallRecipes = computed(() => recipeCapability.value?.enabled === true)
+const canCreateAny = computed(() => canCreate.value || canInstallWordPress.value || canInstallRecipes.value)
 const wordPressReason = computed(
   () => wordPressCapability.value?.reason?.trim() || 'WordPress 一键搭建条件尚未通过 Agent 安全检查。',
 )
@@ -177,9 +200,16 @@ const counts = computed(() => ({
 }))
 
 const selectedService = computed(() => serviceOptions.find((option) => option.type === form.type))
+const selectedRecipe = computed(() => recipeOptions.find((option) => option.recipe === form.recipe))
 const featuredServiceOptions = computed(() => serviceOptions.filter((option) => option.featured))
 const standardServiceOptions = computed(() => serviceOptions.filter((option) => !option.featured))
-const canSubmit = computed(() => formValid.value && (form.type !== 'wordpress' || canInstallWordPress.value))
+const canSubmit = computed(
+  () =>
+    formValid.value &&
+    (form.type !== 'wordpress' || canInstallWordPress.value) &&
+    (form.type !== 'recipe' || canInstallRecipes.value) &&
+    (form.type === 'wordpress' || form.type === 'recipe' || canCreate.value),
+)
 
 const formValid = computed(() => {
   const domain = form.primaryDomain.trim()
@@ -271,13 +301,10 @@ async function load(silent = false): Promise<void> {
   error.value = ''
 
   try {
-    const [siteResult, capabilityResult] = await Promise.allSettled([
-      api.sites.list(undefined, controller.signal),
-      api.agent.capabilities(controller.signal),
-    ])
-    capabilities.value = capabilityResult.status === 'fulfilled' ? capabilityResult.value : []
-    if (siteResult.status === 'rejected') throw siteResult.reason
-    sites.value = siteResult.value.items
+    const capabilityPromise = api.agent.capabilities(controller.signal).catch(() => [])
+    sites.value = (await api.sites.list(undefined, controller.signal)).items
+    loading.value = false
+    capabilities.value = await capabilityPromise
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
     error.value = reason instanceof ApiError ? reason.message : '无法读取网站列表。'
@@ -291,7 +318,8 @@ function openCreate(): void {
   editingSite.value = undefined
   form.primaryDomain = ''
   form.aliases = ''
-  form.type = canInstallWordPress.value ? 'wordpress' : 'proxy'
+  form.type = canInstallWordPress.value ? 'wordpress' : canCreate.value ? 'proxy' : 'recipe'
+  form.recipe = 'discuz'
   form.upstream = ''
   form.upstreams = ''
   form.redirectTarget = ''
@@ -308,6 +336,7 @@ function openEdit(site: Site): void {
   form.primaryDomain = site.primaryDomain
   form.aliases = site.domains.filter((domain) => domain !== site.primaryDomain).join('\n')
   form.type = site.type as SiteServiceType
+  form.recipe = 'discuz'
   form.upstream = site.type === 'proxy' || site.type === 'proxy_domain' ? site.upstream || '' : ''
   form.upstreams = site.type === 'load_balance' ? (site.upstream || '').split(',').join('\n') : ''
   const redirectMatch = site.type === 'redirect' ? (site.upstream || '').match(/^(301|302|307|308)\s+(.+)$/) : null
@@ -330,16 +359,22 @@ async function submitSite(): Promise<void> {
     formError.value = wordPressReason.value
     return
   }
+  if (form.type === 'recipe' && !canInstallRecipes.value) {
+    formError.value = recipeCapability.value?.reason || '当前 Agent 尚未启用 kejilion.sh 一键建站协议。'
+    return
+  }
 
   submitting.value = true
-  installProgress.value = form.type === 'wordpress' ? '正在创建安全安装任务…' : ''
+  installProgress.value =
+    form.type === 'wordpress' || form.type === 'recipe' ? '正在创建后台安装任务…' : ''
   const input: SiteInput = {
     primaryDomain: form.primaryDomain.trim().toLowerCase(),
-    aliases: form.type === 'wordpress' ? [] : form.aliases
+    aliases: form.type === 'wordpress' || form.type === 'recipe' ? [] : form.aliases
       .split(/[\n,]/)
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
     type: form.type,
+    recipe: form.type === 'recipe' ? form.recipe : undefined,
     upstream: form.type === 'proxy' || form.type === 'proxy_domain' ? form.upstream.trim() : undefined,
     upstreams: form.type === 'load_balance' ? splitUpstreams(form.upstreams) : undefined,
     redirectTarget: form.type === 'redirect' ? form.redirectTarget.trim() : undefined,
@@ -358,9 +393,13 @@ async function submitSite(): Promise<void> {
         })
     editorOpen.value = false
     toast.success(
-      wasEditing ? '网站已安全更新' : form.type === 'wordpress' ? 'WordPress 已一键搭建完成' : '网站已安全创建',
-      form.type === 'wordpress'
-        ? `${savedSite.primaryDomain} 的源码、数据库、证书和 Nginx 产物已完成对账。`
+      wasEditing
+        ? '网站已安全更新'
+        : form.type === 'wordpress' || form.type === 'recipe'
+          ? '一键建站已完成'
+          : '网站已安全创建',
+      form.type === 'wordpress' || form.type === 'recipe'
+        ? `${savedSite.primaryDomain} 的源码、数据库、证书和 Nginx 产物已与 kejilion.sh 完成对账。`
         : `${savedSite.primaryDomain} 已通过 nginx -t 校验并完成同步应用。`,
     )
     await load(true)
@@ -390,8 +429,8 @@ onBeforeUnmount(() => controller?.abort())
         <button
           class="button button--primary"
           type="button"
-          :disabled="!canCreate || panel.isReadOnly.value"
-          :title="!canCreate ? siteWriteReason : ''"
+          :disabled="!canCreateAny || panel.isReadOnly.value"
+          :title="!canCreateAny ? siteWriteReason : ''"
           @click="openCreate"
         >
           <Plus :size="17" /> 新建网站
@@ -399,7 +438,7 @@ onBeforeUnmount(() => controller?.abort())
       </template>
     </PageHeader>
 
-    <div v-if="!canCreate && !loading" class="inline-alert inline-alert--info" role="status">
+    <div v-if="!canCreateAny && !loading" class="inline-alert inline-alert--info" role="status">
       <ShieldCheck :size="17" />
       <span><strong>网站写入当前不可用</strong><br />{{ siteWriteReason }}</span>
     </div>
@@ -606,9 +645,13 @@ onBeforeUnmount(() => controller?.abort())
     >
       <form id="site-form" class="form-stack" @submit.prevent="submitSite">
         <div v-if="formError" class="inline-alert inline-alert--danger" role="alert">{{ formError }}</div>
-        <div v-if="submitting && form.type === 'wordpress'" class="inline-alert inline-alert--info" role="status">
+        <div
+          v-if="submitting && (form.type === 'wordpress' || form.type === 'recipe')"
+          class="inline-alert inline-alert--info"
+          role="status"
+        >
           <LoaderCircle class="spin" :size="17" />
-          <span>{{ installProgress || 'WordPress 安装任务正在执行…' }}</span>
+          <span>{{ installProgress || '一键建站任务正在执行…' }}</span>
         </div>
         <label class="field">
           <span>主域名</span>
@@ -657,6 +700,34 @@ onBeforeUnmount(() => controller?.abort())
           <small>WordPress 对齐脚本完整产物；IP + 端口反代适合 Docker 与本机服务，是最常用的两个入口。</small>
         </fieldset>
 
+        <fieldset v-if="!editingSite" class="site-service-field">
+          <legend><Globe2 :size="16" /> kejilion.sh 一键成品站</legend>
+          <div class="site-service-grid">
+            <button
+              v-for="option in recipeOptions"
+              :key="option.recipe"
+              class="site-service-card"
+              :class="{ 'is-active': form.type === 'recipe' && form.recipe === option.recipe }"
+              type="button"
+              :disabled="!canInstallRecipes"
+              :aria-pressed="form.type === 'recipe' && form.recipe === option.recipe"
+              :title="!canInstallRecipes ? recipeCapability?.reason : ''"
+              @click="form.type = 'recipe'; form.recipe = option.recipe"
+            >
+              <span class="site-service-card__icon"><component :is="option.icon" :size="20" /></span>
+              <span class="site-service-card__content">
+                <span class="site-service-card__heading">
+                  <strong>{{ option.title }}</strong>
+                  <span class="site-service-card__badge">一键成品</span>
+                </span>
+                <small>{{ option.summary }}</small>
+                <em>{{ option.detail }}</em>
+              </span>
+            </button>
+          </div>
+          <small>直接调用 kejilion.sh 固定编号的原生业务流程，Web 不复制另一套建站逻辑，因此脚本与面板共用同一份产物。</small>
+        </fieldset>
+
         <fieldset class="site-service-field">
           <legend>{{ editingSite ? '站点服务' : '更多建站方式' }}</legend>
           <div class="site-service-grid">
@@ -685,6 +756,10 @@ onBeforeUnmount(() => controller?.abort())
           <component :is="selectedService.icon" :size="18" />
           <span><strong>{{ selectedService.title }}</strong>{{ selectedService.summary }}</span>
         </div>
+        <div v-if="form.type === 'recipe' && selectedRecipe" class="site-service-summary">
+          <component :is="selectedRecipe.icon" :size="18" />
+          <span><strong>{{ selectedRecipe.title }}</strong>{{ selectedRecipe.summary }}</span>
+        </div>
 
         <div v-if="form.type === 'wordpress'" class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
@@ -692,6 +767,13 @@ onBeforeUnmount(() => controller?.abort())
             将创建 <code>/home/web/html/&lt;域名&gt;/wordpress</code>、同名数据库、脚本同款 Redis 配置与
             TLS 证书，并生成可被 <code>k web</code> 正确识别的 Nginx 产物。整个过程先做冲突检查，
             不覆盖任何现有网站。
+          </span>
+        </div>
+        <div v-if="form.type === 'recipe'" class="inline-alert inline-alert--info">
+          <ShieldCheck :size="17" />
+          <span>
+            任务由宿主机上的 <code>kejilion.sh</code> 原生菜单流程在后台执行，沿用其 LDNMP、数据库、证书、
+            Nginx 模板和目录结构。面板不会记录脚本输出中的数据库密码，也不会覆盖同域名现有产物。
           </span>
         </div>
 
@@ -764,14 +846,15 @@ onBeforeUnmount(() => controller?.abort())
           </fieldset>
         </template>
 
-        <label v-if="form.type !== 'wordpress'" class="field">
+        <label v-if="form.type !== 'wordpress' && form.type !== 'recipe'" class="field">
           <span>附加域名（可选）</span>
           <textarea v-model="form.aliases" rows="3" placeholder="www.example.com&#10;api.example.com" />
           <small>每行一个域名，最多 20 个；主域名不要重复填写。</small>
         </label>
         <div class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          Agent 会写入 /home/web 对应产物并原子提交；脚本或人工配置保持只读。创建不会删除目录、数据库或证书，也不会为签发证书停止现有 Nginx。
+          Agent 会直接对账 /home/web 实际产物；识别出的 kejilion.sh 站点可在原配置上安全修改域名、上游或 PHP 版本，
+          未识别或发生漂移的配置保持只读。
         </div>
       </form>
       <template #footer>
@@ -782,11 +865,15 @@ onBeforeUnmount(() => controller?.abort())
             submitting
               ? form.type === 'wordpress'
                 ? '正在搭建 WordPress…'
+                : form.type === 'recipe'
+                  ? 'kejilion.sh 正在后台搭建…'
                 : '正在提交…'
               : editingSite
                 ? '安全更新'
                 : form.type === 'wordpress'
                   ? '一键搭建 WordPress'
+                  : form.type === 'recipe'
+                    ? `一键搭建 ${selectedRecipe?.title || '成品站'}`
                   : '创建网站'
           }}
         </button>

@@ -166,6 +166,11 @@ func (d *Discoverer) fromConfig(path string, now time.Time) (contract.SiteSummar
 		Warnings:        uniqueStrings(warnings),
 		ReconciledAt:    now,
 	}
+	if site.Consistency == contract.ConsistencyInSync && site.Kind != contract.SiteUnknown &&
+		site.Kind != contract.SiteWordPress {
+		site.Origin = contract.OriginCLI
+		site.AllowedActions = []string{"update"}
+	}
 	d.markManagedSite(&site, data, path)
 	return site, nil
 }

@@ -366,7 +366,8 @@ export interface Site {
 export interface SiteInput {
   primaryDomain: string
   aliases?: string[]
-  type: 'wordpress' | 'static' | 'php' | 'proxy' | 'proxy_domain' | 'load_balance' | 'redirect'
+  type: 'wordpress' | 'recipe' | 'static' | 'php' | 'proxy' | 'proxy_domain' | 'load_balance' | 'redirect'
+  recipe?: 'discuz' | 'kodbox' | 'maccms' | 'dujiaoka' | 'flarum' | 'typecho' | 'linkstack' | 'ai-prompt'
   upstream?: string
   upstreams?: string[]
   redirectTarget?: string
@@ -407,9 +408,11 @@ export interface DockerContainer {
 export interface DockerImage {
   id: string
   tags: string[]
+  digests?: string[]
   sizeBytes: number
   createdAt?: string
   inUse: boolean
+  resourceVersion?: string
 }
 
 export interface DockerNetwork {
@@ -418,6 +421,7 @@ export interface DockerNetwork {
   driver: string
   scope?: string
   containers?: number
+  resourceVersion?: string
 }
 
 export interface DockerVolume {
@@ -425,6 +429,7 @@ export interface DockerVolume {
   driver: string
   mountpoint?: string
   inUse?: boolean
+  resourceVersion?: string
 }
 
 export interface DockerInventory {
@@ -437,6 +442,49 @@ export interface DockerInventory {
   volumes: DockerVolume[]
   loading?: Partial<Record<'images' | 'networks' | 'volumes', boolean>>
   errors?: Partial<Record<'images' | 'networks' | 'volumes', string>>
+}
+
+export type DockerMaintenanceAction =
+  | 'image_pull'
+  | 'image_remove'
+  | 'network_create'
+  | 'network_remove'
+  | 'network_connect'
+  | 'network_disconnect'
+  | 'volume_create'
+  | 'volume_remove'
+  | 'backup_create'
+  | 'daemon_mirror'
+  | 'daemon_ipv6'
+  | 'prune'
+
+export interface DockerMaintenanceInput {
+  action: DockerMaintenanceAction
+  image?: string
+  target?: string
+  name?: string
+  driver?: 'bridge' | 'local'
+  containerId?: string
+  containerResourceVersion?: string
+  expectedResourceVersion?: string
+  confirmation?: 'PRUNE'
+  preset?: 'cn' | 'official'
+  enabled?: boolean
+  ipv6Cidr?: string
+}
+
+export interface DockerMaintenanceJob {
+  id: string
+  action: DockerMaintenanceAction
+  target?: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  stage: string
+  progress: number
+  message?: string
+  resultPath?: string
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
 }
 
 export type JobStatus =

@@ -9,6 +9,8 @@ import type {
   AuthStatus,
   DockerInventory,
   DockerActionResult,
+  DockerMaintenanceInput,
+  DockerMaintenanceJob,
   Job,
   AppInstallJob,
   LoginRequest,
@@ -203,6 +205,33 @@ interface RawContainer {
   ownership?: string
   resourceVersion?: string
   allowedActions?: string[]
+  mounts?: Array<{ type?: string; name?: string; source?: string; destination?: string }>
+}
+
+interface RawDockerImage {
+  id: string
+  repoTags?: string[]
+  repoDigests?: string[]
+  createdAt?: number
+  sizeBytes: number
+  containers?: number
+  resourceVersion?: string
+}
+
+interface RawDockerNetwork {
+  id: string
+  name: string
+  driver: string
+  scope?: string
+  containerCount?: number
+  resourceVersion?: string
+}
+
+interface RawDockerVolume {
+  name: string
+  driver: string
+  mountpoint?: string
+  resourceVersion?: string
 }
 
 interface RawJob {
@@ -414,21 +443,21 @@ async function createSite(
   onProgress?: (status: string, message: string) => void,
 ): Promise<Site> {
   const result = await request<RawSite | RawWordPressInstallJob>('/sites', { method: 'POST', body })
-  if (body.type !== 'wordpress' || !('status' in result) || !('id' in result)) {
+  if ((body.type !== 'wordpress' && body.type !== 'recipe') || !('status' in result) || !('id' in result)) {
     return normalizeSite(result as RawSite)
   }
   let job = result as RawWordPressInstallJob
   for (let attempt = 0; attempt <= 900; attempt += 1) {
-    onProgress?.(job.status, job.message || 'WordPress 安装任务正在执行。')
+    onProgress?.(job.status, job.message || '一键建站任务正在执行。')
     if (job.status === 'succeeded') {
-      if (!job.site) throw new ApiError('WordPress 已完成，但网站对账结果缺失。', 503, 'wordpress_result_missing')
+      if (!job.site) throw new ApiError('一键建站已完成，但网站对账结果缺失。', 503, 'site_result_missing')
       return normalizeSite(job.site)
     }
     if (job.status === 'failed') {
       throw new ApiError(
-        job.message || 'WordPress 安装失败，已尝试回滚本次新建产物。',
+        job.message || '一键建站失败，请核对实际产物。',
         422,
-        'wordpress_install_failed',
+        'site_install_failed',
       )
     }
     if (attempt === 900) break
@@ -437,7 +466,7 @@ async function createSite(
       `/site-installations/${encodeURIComponent(job.id)}`,
     )
   }
-  throw new ApiError('WordPress 安装状态等待超时，请在网站列表中核对实际产物。', 504, 'wordpress_install_timeout')
+  throw new ApiError('一键建站状态等待超时，请在网站列表中核对实际产物。', 504, 'site_install_timeout')
 }
 
 function normalizeSite(raw: RawSite): Site {
@@ -927,8 +956,44 @@ export const api = {
         path: string,
       ): Promise<void> => {
         try {
-          const result = await request<ApiList<DockerInventory[K][number]> | DockerInventory[K]>(path, { signal })
-          ;(inventory[key] as DockerInventory[K]) = normalizeList(result).items as DockerInventory[K]
+          if (key === 'images') {
+            const result = await request<ApiList<RawDockerImage> | RawDockerImage[]>(path, { signal })
+            inventory.images = normalizeList(result).items.map((item) => ({
+              id: item.id,
+              tags: item.repoTags || [],
+              digests: item.repoDigests || [],
+              sizeBytes: item.sizeBytes,
+              createdAt: item.createdAt ? new Date(item.createdAt * 1_000).toISOString() : undefined,
+              inUse: Number(item.containers || 0) > 0,
+              resourceVersion: item.resourceVersion,
+            }))
+          } else if (key === 'networks') {
+            const result = await request<ApiList<RawDockerNetwork> | RawDockerNetwork[]>(path, { signal })
+            inventory.networks = normalizeList(result).items.map((item) => ({
+              id: item.id,
+              name: item.name,
+              driver: item.driver,
+              scope: item.scope,
+              containers: item.containerCount || 0,
+              resourceVersion: item.resourceVersion,
+            }))
+          } else {
+            const result = await request<ApiList<RawDockerVolume> | RawDockerVolume[]>(path, { signal })
+            const usedVolumes = new Set(
+              normalizeList(containersResult).items.flatMap((container) =>
+                (container.mounts || [])
+                  .filter((mount) => mount.type === 'volume' && mount.name)
+                  .map((mount) => String(mount.name)),
+              ),
+            )
+            inventory.volumes = normalizeList(result).items.map((item) => ({
+              name: item.name,
+              driver: item.driver,
+              mountpoint: item.mountpoint,
+              inUse: usedVolumes.has(item.name),
+              resourceVersion: item.resourceVersion,
+            }))
+          }
         } catch (reason) {
           if (reason instanceof DOMException && reason.name === 'AbortError') throw reason
           inventory.errors![key] = reason instanceof ApiError ? reason.message : `${key} 读取失败`
@@ -944,7 +1009,7 @@ export const api = {
       ])
       return inventory
     },
-    action: (id: string, action: 'start' | 'stop' | 'restart', resourceVersion: string) =>
+    action: (id: string, action: 'start' | 'stop' | 'restart' | 'remove', resourceVersion: string) =>
       request<DockerActionResult>(`/docker/containers/${encodeURIComponent(id)}/${action}`, {
         method: 'POST',
         body: { resourceVersion },
@@ -954,6 +1019,12 @@ export const api = {
         query: { tail },
         signal,
       }),
+    task: (body: DockerMaintenanceInput): Promise<DockerMaintenanceJob> =>
+      request<DockerMaintenanceJob>('/docker/tasks', { method: 'POST', body }),
+    job: (id: string, signal?: AbortSignal): Promise<DockerMaintenanceJob> =>
+      request<DockerMaintenanceJob>(`/docker/jobs/${encodeURIComponent(id)}`, { signal }),
+    jobs: async (signal?: AbortSignal): Promise<ApiList<DockerMaintenanceJob>> =>
+      normalizeList(await request<ApiList<DockerMaintenanceJob> | DockerMaintenanceJob[]>('/docker/jobs', { signal })),
   },
   jobs: {
     list: async (query?: { limit?: number }, signal?: AbortSignal): Promise<ApiList<Job>> => {

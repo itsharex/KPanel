@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/appmarket"
@@ -78,6 +79,11 @@ func NewServer(config Config) (*Server, error) {
 	if config.Docker == nil {
 		return nil, errors.New("Docker client is required")
 	}
+	if config.StateDir != "" {
+		if err := config.Docker.ConfigureJobs(filepath.Join(config.StateDir, "docker-jobs")); err != nil {
+			return nil, fmt.Errorf("initialize Docker job state: %w", err)
+		}
+	}
 	if config.SitesManager == nil {
 		config.SitesManager = sites.NewManager(config.WebRoot, config.Sites, config.Docker)
 		if config.StateDir != "" {
@@ -85,6 +91,11 @@ func NewServer(config Config) (*Server, error) {
 				filepath.Join(config.StateDir, "wordpress-jobs"),
 			); err != nil {
 				return nil, fmt.Errorf("initialize WordPress job state: %w", err)
+			}
+			if err := config.SitesManager.ConfigureRecipeJobState(
+				filepath.Join(config.StateDir, "site-recipe-jobs"),
+			); err != nil {
+				return nil, fmt.Errorf("initialize site recipe job state: %w", err)
 			}
 		}
 	}
@@ -157,6 +168,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.networkList)
 	case r.URL.Path == "/v1/docker/volumes":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.volumeList)
+	case r.URL.Path == "/v1/docker/jobs":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerJobList)
+	case strings.HasPrefix(r.URL.Path, "/v1/docker/jobs/"):
+		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerJob)
+	case r.URL.Path == "/v1/docker/tasks":
+		s.requireMethod(w, r, requestID, http.MethodPost, s.dockerTask)
 	case strings.HasPrefix(r.URL.Path, "/v1/docker/containers/"):
 		s.containerOperation(w, r, requestID)
 	default:
@@ -207,16 +224,40 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 800*time.Millisecond)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	dockerAvailable := s.docker.Ping(ctx) == nil
-	_, siteErr := os.Stat(s.webRoot)
-	writeContext, writeCancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer writeCancel()
-	siteWriteErr := s.sitesManager.Writable(writeContext)
-	wordPressContext, wordPressCancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer wordPressCancel()
-	wordPressWriteErr := s.sitesManager.WordPressWritable(wordPressContext)
+	var (
+		dockerAvailable   bool
+		siteErr           error
+		siteWriteErr      error
+		wordPressWriteErr error
+		recipeWriteErr    error
+	)
+	var checks sync.WaitGroup
+	checks.Add(5)
+	go func() {
+		defer checks.Done()
+		pingContext, pingCancel := context.WithTimeout(ctx, 800*time.Millisecond)
+		defer pingCancel()
+		dockerAvailable = s.docker.Ping(pingContext) == nil
+	}()
+	go func() {
+		defer checks.Done()
+		_, siteErr = os.Stat(s.webRoot)
+	}()
+	go func() {
+		defer checks.Done()
+		siteWriteErr = s.sitesManager.Writable(ctx)
+	}()
+	go func() {
+		defer checks.Done()
+		wordPressWriteErr = s.sitesManager.WordPressWritable(ctx)
+	}()
+	go func() {
+		defer checks.Done()
+		recipeWriteErr = s.sitesManager.RecipeWritable()
+	}()
+	checks.Wait()
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
 		{ID: "apps.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
@@ -228,6 +269,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		{ID: "docker.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅安全识别的 Kejilion 容器可操作"), Methods: []string{"POST"}},
 		{ID: "sites.write", Enabled: siteWriteErr == nil, Reason: reasonIf(siteWriteErr, "安全写入条件不满足"), Methods: []string{"POST", "PATCH"}},
 		{ID: "sites.wordpress.install", Enabled: wordPressWriteErr == nil, Reason: reasonIf(wordPressWriteErr, "WordPress 一键搭建条件不满足"), Methods: []string{"POST"}},
+		{ID: "sites.recipes.install", Enabled: recipeWriteErr == nil, Reason: reasonIf(recipeWriteErr, "kejilion.sh 一键建站协议不可用"), Methods: []string{"POST"}},
 	}
 	items = append(items, s.systemManager.Capabilities()...)
 	writeJSON(w, http.StatusOK, contract.PageResult[contract.Capability]{Items: items})
@@ -315,6 +357,15 @@ func (s *Server) siteCollection(w http.ResponseWriter, r *http.Request, requestI
 			writeJSON(w, http.StatusAccepted, job)
 			return
 		}
+		if input.Type == "recipe" {
+			job, err := s.sitesManager.StartRecipe(r.Context(), input)
+			if err != nil {
+				s.writeSiteError(w, requestID, err)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, job)
+			return
+		}
 		result, err := s.sitesManager.Create(r.Context(), input)
 		if err != nil {
 			s.writeSiteError(w, requestID, err)
@@ -338,7 +389,7 @@ func (s *Server) siteInstallation(w http.ResponseWriter, r *http.Request, reques
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/v1/site-installations/")
-	job, err := s.sitesManager.WordPressJob(id)
+	job, err := s.sitesManager.InstallationJob(id)
 	if err != nil {
 		writeProblem(w, requestID, http.StatusNotFound, "not_found", "安装任务不存在", "")
 		return
@@ -602,6 +653,47 @@ func (s *Server) volumeList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, contract.PageResult[dockerx.VolumeSummary]{Items: items})
+}
+
+func (s *Server) dockerJobList(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, contract.PageResult[dockerx.MaintenanceJob]{
+		Items: s.docker.MaintenanceJobs(),
+	})
+}
+
+func (s *Server) dockerJob(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/v1/docker/jobs/")
+	job, err := s.docker.MaintenanceJob(id)
+	if err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusNotFound, "docker_job_not_found", "Docker 任务不存在", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+func (s *Server) dockerTask(w http.ResponseWriter, r *http.Request) {
+	var input dockerx.MaintenanceInput
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+		return
+	}
+	job, err := s.docker.StartMaintenance(r.Context(), input)
+	if err != nil {
+		status, code, title := http.StatusUnprocessableEntity, "docker_task_invalid", "Docker 任务请求无效"
+		switch {
+		case errors.Is(err, dockerx.ErrDockerJobConflict):
+			status, code, title = http.StatusConflict, "docker_task_conflict", "已有 Docker 后台任务正在运行"
+		case errors.Is(err, dockerx.ErrResourceConflict):
+			status, code, title = http.StatusConflict, "resource_conflict", "Docker 资源已发生变化"
+		case errors.Is(err, dockerx.ErrProtectedDockerResource):
+			status, code, title = http.StatusForbidden, "docker_resource_protected", "该 Docker 资源受保护"
+		case errors.Is(err, dockerx.ErrDockerJobNotFound):
+			status, code, title = http.StatusNotFound, "docker_resource_not_found", "Docker 资源不存在"
+		}
+		writeProblem(w, requestIDFrom(w), status, code, title, safeDetail(err))
+		return
+	}
+	writeJSON(w, http.StatusAccepted, job)
 }
 
 func (s *Server) containerOperation(w http.ResponseWriter, r *http.Request, requestID string) {

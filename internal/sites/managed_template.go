@@ -34,6 +34,7 @@ type SiteInput struct {
 	PrimaryDomain           string   `json:"primaryDomain"`
 	Aliases                 []string `json:"aliases,omitempty"`
 	Type                    string   `json:"type"`
+	Recipe                  string   `json:"recipe,omitempty"`
 	Upstream                string   `json:"upstream,omitempty"`
 	Upstreams               []string `json:"upstreams,omitempty"`
 	RedirectTarget          string   `json:"redirectTarget,omitempty"`
@@ -141,6 +142,9 @@ func normalizeSiteInput(input SiteInput) (managedSpec, error) {
 }
 
 func rejectUnusedSiteFields(input SiteInput, kind string) error {
+	if input.Recipe != "" {
+		return fmt.Errorf("%w: %s sites cannot define a recipe", ErrUnprocessable, kind)
+	}
 	if kind != "proxy" && kind != "proxy_domain" && strings.TrimSpace(input.Upstream) != "" {
 		return fmt.Errorf("%w: %s sites cannot define upstream", ErrUnprocessable, kind)
 	}
