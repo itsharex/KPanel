@@ -47,7 +47,7 @@ docker run -d \
 	"$IMAGE" >/dev/null
 
 attempt=0
-until curl -fsS "http://127.0.0.1:$PORT/api/v1/health" >"$TEST_DIR/health.json" 2>/dev/null; do
+until curl --noproxy '*' -fsS "http://127.0.0.1:$PORT/api/v1/health" >"$TEST_DIR/health.json" 2>/dev/null; do
 	attempt=$((attempt + 1))
 	[ "$attempt" -lt 30 ] || {
 		docker logs "$CONTAINER"
@@ -57,22 +57,26 @@ until curl -fsS "http://127.0.0.1:$PORT/api/v1/health" >"$TEST_DIR/health.json" 
 done
 grep -F '"version":"0.16.1"' "$TEST_DIR/health.json" >/dev/null
 
-test "$(curl -sS -o /dev/null -w '%{http_code}' \
+test "$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' \
 	-H "Host: 127.0.0.1:$PORT" "http://127.0.0.1:$PORT/")" = 200
-test "$(curl -sS -o /dev/null -w '%{http_code}' \
+test "$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' \
 	-H 'Host: panel.e2e.invalid' \
 	-H 'X-Forwarded-Proto: https' \
 	"http://127.0.0.1:$PORT/")" = 200
 
 BOOTSTRAP_TOKEN=$(tr -d '\r\n' <"$TEST_DIR/data/bootstrap.token")
-curl -sS -D "$TEST_DIR/bootstrap.headers" -o "$TEST_DIR/bootstrap.json" \
+curl --noproxy '*' -sS -D "$TEST_DIR/bootstrap.headers" -o "$TEST_DIR/bootstrap.json" \
 	-H 'Host: panel.e2e.invalid' \
 	-H 'X-Forwarded-Proto: https' \
 	-H 'Origin: https://panel.e2e.invalid' \
 	-H 'Content-Type: application/json' \
 	--data "{\"token\":\"$BOOTSTRAP_TOKEN\",\"username\":\"admin\",\"password\":\"e2e-strong-password\"}" \
 	"http://127.0.0.1:$PORT/api/v1/auth/bootstrap"
-grep -F 'HTTP/1.1 201 Created' "$TEST_DIR/bootstrap.headers" >/dev/null
+grep -F 'HTTP/1.1 201 Created' "$TEST_DIR/bootstrap.headers" >/dev/null || {
+	cat "$TEST_DIR/bootstrap.headers" >&2
+	head -c 2048 "$TEST_DIR/bootstrap.json" >&2
+	exit 1
+}
 test "$(grep -ic '^Set-Cookie: .*; Secure;' "$TEST_DIR/bootstrap.headers")" = 2
 
 test "$(docker inspect --format '{{len .NetworkSettings.Networks}}' "$CONTAINER")" = 1
