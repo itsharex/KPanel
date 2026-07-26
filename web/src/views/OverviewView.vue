@@ -245,6 +245,7 @@ const maintenanceTools = computed<ManagementTool[]>(() => {
   if (!data.value) return []
   const management = data.value.management
   const maintenance = management.maintenance
+  const packageManager = (management.packageManager || 'apt').toUpperCase()
   const valueFor = (action: 'update' | 'cleanup', idleValue: string): string => {
     if (maintenance.action !== action || maintenance.state === 'idle') return idleValue
     if (maintenance.state === 'running') return `进行中 · ${maintenance.progress}%`
@@ -260,10 +261,10 @@ const maintenanceTools = computed<ManagementTool[]>(() => {
       id: 'system-update',
       title: '系统更新',
       description: '对应 kejilion.sh 的“系统更新”，后台刷新软件包索引并完整升级系统。',
-      value: valueFor('update', `${(management.packageManager || 'apt').toUpperCase()} 完整更新`),
-      detail: detailFor('update', '等待软件包锁，不终止正在运行的 apt/dpkg；完成后提示是否需要重启。'),
+      value: valueFor('update', `${packageManager} 完整更新`),
+      detail: detailFor('update', `使用 ${packageManager} 的原生锁与非交互模式；完成后提示是否需要重启。`),
       capability: 'system.update.write',
-      safety: '使用独立 systemd 后台任务执行 apt update 与 full-upgrade；保留用户现有配置，不自动重启服务器。',
+      safety: '使用独立 systemd 后台任务执行宿主机对应的软件包管理器固定序列；不接受包名或命令，不自动重启服务器。',
       icon: RefreshCw,
       tone: 'blue',
     },
@@ -274,7 +275,7 @@ const maintenanceTools = computed<ManagementTool[]>(() => {
       value: valueFor('cleanup', '缓存 · 无用依赖 · 旧日志'),
       detail: detailFor('cleanup', '不执行 Docker prune，不清空 /var/log、/tmp、网站目录或 KPanel 备份。'),
       capability: 'system.cleanup.write',
-      safety: '仅调用固定 APT 与 journalctl 参数；标准模式保留最近 7 天日志并限制 journal 最大 500 MiB。',
+      safety: `仅调用固定 ${packageManager} 与 journalctl 参数；标准模式保留最近 7 天日志并限制 journal 最大 500 MiB。`,
       icon: Database,
       tone: 'violet',
     },
@@ -934,7 +935,7 @@ onBeforeUnmount(() => {
           <label v-else-if="selectedTool.id === 'system-cleanup'" class="field">
             <span>清理范围</span>
             <select v-model="actionForm.maintenancePolicy">
-              <option value="cache">仅清理 APT 软件包缓存</option>
+              <option value="cache">仅清理软件包缓存</option>
               <option value="standard">标准安全清理：无用依赖、缓存、7 天前旧日志</option>
             </select>
             <small>不会清理 Docker、网站文件、数据库、`/tmp` 或 KPanel 配置备份。</small>

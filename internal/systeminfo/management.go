@@ -198,6 +198,7 @@ func (c *Collector) readPackageSources() (string, []string) {
 	files := []sourceFile{
 		{manager: "apt", path: filepath.Join(c.EtcRoot, "apt", "sources.list")},
 		{manager: "apk", path: filepath.Join(c.EtcRoot, "apk", "repositories")},
+		{manager: "pacman", path: filepath.Join(c.EtcRoot, "pacman.d", "mirrorlist")},
 	}
 	for _, pattern := range []struct {
 		manager string
@@ -205,7 +206,8 @@ func (c *Collector) readPackageSources() (string, []string) {
 	}{
 		{"apt", filepath.Join(c.EtcRoot, "apt", "sources.list.d", "*.list")},
 		{"apt", filepath.Join(c.EtcRoot, "apt", "sources.list.d", "*.sources")},
-		{"dnf", filepath.Join(c.EtcRoot, "yum.repos.d", "*.repo")},
+		{"rpm", filepath.Join(c.EtcRoot, "yum.repos.d", "*.repo")},
+		{"zypper", filepath.Join(c.EtcRoot, "zypp", "repos.d", "*.repo")},
 	} {
 		matches, _ := filepath.Glob(pattern.pattern)
 		sort.Strings(matches)

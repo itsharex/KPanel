@@ -117,3 +117,45 @@ func TestCPUUsagePercentUsesIntervalDelta(t *testing.T) {
 		t.Fatalf("cpuUsagePercent() = %v, want 50", got)
 	}
 }
+
+func TestReadPackageSourcesRecognizesMainstreamManagers(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		content string
+		manager string
+		host    string
+	}{
+		{
+			name: "dnf", path: "yum.repos.d/baseos.repo",
+			content: "[baseos]\nbaseurl=https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/\n",
+			manager: "rpm", host: "dl.rockylinux.org",
+		},
+		{
+			name: "pacman", path: "pacman.d/mirrorlist",
+			content: "Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch\n",
+			manager: "pacman", host: "geo.mirror.pkgbuild.com",
+		},
+		{
+			name: "zypper", path: "zypp/repos.d/repo-oss.repo",
+			content: "[repo-oss]\nbaseurl=https://download.opensuse.org/distribution/leap/15.6/repo/oss/\n",
+			manager: "zypper", host: "download.opensuse.org",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			etcRoot := t.TempDir()
+			path := filepath.Join(etcRoot, filepath.FromSlash(test.path))
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(test.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			manager, sources := (&Collector{EtcRoot: etcRoot}).readPackageSources()
+			if manager != test.manager || len(sources) != 1 || sources[0] != test.host {
+				t.Fatalf("readPackageSources() = manager %q sources %#v", manager, sources)
+			}
+		})
+	}
+}

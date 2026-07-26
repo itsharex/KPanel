@@ -2,6 +2,29 @@
 
 本项目遵循语义化版本。所有日期均使用 `YYYY-MM-DD`。
 
+## [0.7.0] - 2026-07-26
+
+### Added
+
+- 宿主机软件包维护新增 RHEL/Fedora 系 DNF/DNF5/YUM、Arch/Manjaro Pacman
+  和 openSUSE/SLES Zypper 固定命令序列。
+- 软件源状态发现新增 `/etc/pacman.d/mirrorlist` 与
+  `/etc/zypp/repos.d/*.repo`，并继续识别 RPM `.repo` 文件。
+- 增加宿主机系统兼容矩阵，区分已实机验证、已实现待准入和安全只读层级。
+
+### Changed
+
+- Agent 根据 `/etc/os-release` 的 `ID`、`ID_LIKE`、软件包工具和源文件动态
+  开放系统更新与清理；启动任务前即拒绝不满足条件的主机。
+- 系统维护页面改为显示宿主机实际软件包管理器，不再把说明固定为 APT。
+
+### Security
+
+- 多发行版维护仍只接受 `full`、`cache`、`standard` 枚举，不能由 Web 传入
+  命令、包名、仓库、路径或 Shell。
+- RPM、Pacman 和 Zypper 软件源首版只读取不改写；Alpine/OpenRC 与未知
+  发行版不开放宿主机写入。
+
 ## [0.6.0] - 2026-07-26
 
 ### Added

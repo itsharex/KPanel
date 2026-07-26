@@ -22,12 +22,12 @@ KPanel 的系统管理业务以 `kejilion.sh` 为功能基准，但不把整个 
 | DNS | `resolv.conf` 与管理器 | 首版只接管 systemd-resolved drop-in，不替换或锁定 `resolv.conf` |
 | 时区 | `/etc/timezone` 或 `localtime` | IANA 名称白名单、回读 |
 | 虚拟内存 | `/proc/meminfo`、`/proc/swaps`、`/swapfile` | 与 `kejilion.sh` 共用 `/swapfile`；合并旧版 KPanel Swap，不清除现有分区或第三方 swapfile |
-| 系统镜像源 | APT/DNF/APK 源地址 | 首版支持 Debian/Ubuntu 官方源与阿里云源；第三方源不修改，`apt-get update` 失败回滚 |
+| 系统镜像源 | APT/RPM/APK/Pacman/Zypper 源地址 | 首版支持 Debian/Ubuntu 官方源与阿里云源；第三方源不修改，`apt-get update` 失败回滚 |
 | V4/V6 优先 | `gai.conf` | 维护 `kejilion.sh` 同一 precedence 规则并保留其他用户配置 |
 | 内核优化 | Kejilion sysctl 产物 | 五种固定预设、内存自适应、逐项应用和版本化回滚；合法脚本产物可接管 |
 | BBR | 当前/可用拥塞算法与 qdisc | 内核能力检查、独立 sysctl 文件、回读 |
-| 系统更新 | APT 源与后台任务状态 | `dpkg --force-confold --configure -a`、`apt-get update`、`full-upgrade` 固定序列；不杀死软件包进程、不删除锁、不自动重启 |
-| 系统清理 | APT 与 journal 后台任务状态 | 缓存模式或标准安全模式；不清空日志目录、临时目录、Docker、网站和备份 |
+| 系统更新 | APT/DNF/YUM/Pacman/Zypper 源与后台任务状态 | 按发行版白名单选择固定命令序列；不杀死软件包进程、不删除锁、不自动重启 |
+| 系统清理 | 软件包管理器与 journal 后台任务状态 | 缓存模式或标准安全模式；不清空日志目录、临时目录、Docker、网站和备份 |
 | 重装系统 | 不适用 | 带外控制台、备份证明、一次性恢复凭证、二次确认 |
 
 ## v0.3 写入范围
@@ -47,9 +47,12 @@ URL、任意 sysctl 和任意 Shell 均不开放。
 systemd transient service 执行。Web 请求只能选择 `update/full`、
 `cleanup/cache` 或 `cleanup/standard`，不能传入命令、包名或文件路径。
 
-- 更新：等待 APT/dpkg 锁，完成中断的软件包配置，刷新索引并执行完整升级。
-- 缓存清理：只执行 APT `clean` 与 `autoclean`。
-- 标准清理：额外执行 `autoremove --purge`，轮转 journal，保留最近 7 天并
+- 更新：APT 执行 dpkg 恢复、刷新索引和 `full-upgrade`；RHEL 系执行
+  DNF/DNF5/YUM 缓存刷新与升级；Arch/Manjaro 执行 `pacman -Syu`；
+  openSUSE/SLES 执行 Zypper 刷新与升级。
+- 缓存清理：只调用对应软件包管理器的固定缓存清理参数。
+- 标准清理：APT、DNF/YUM 在自身支持时额外执行 `autoremove`；Pacman 和
+  Zypper 不根据动态包名删除软件包。所有系统轮转 journal，保留最近 7 天并
   限制到 500 MiB。
 - 后台状态持久化在
   `/var/lib/kejilion-panel/system/maintenance-state.json`；同一时间只允许
@@ -95,3 +98,19 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
   管理透明大页、nofile 限制和 `tcp_bbr` 模块持久化。
 - 脚本中的“自动调优”需要实时测速并在线获取 `network-optimize.sh`。首版 Web
   不执行远程脚本；已有自动调优产物仍会被状态接口正确识别。
+
+## v0.7 多发行版维护
+
+- 读取 `/etc/os-release` 的 `ID` 和 `ID_LIKE`，只允许 Debian/Ubuntu 系、
+  RHEL/Fedora 系、Arch/Manjaro 和 openSUSE/SLES 的已知软件包管理器。
+- 命令白名单为 APT/dpkg、DNF/DNF5/YUM、Pacman 和 Zypper；Web 仍只能提交
+  `full`、`cache` 或 `standard` 枚举，不能指定命令、包名、仓库或参数。
+- 启动后台任务前同时确认软件包管理器、发行版源文件和 `systemd-run`；
+  缺少任一条件时直接返回只读原因，不创建失败任务。
+- RHEL 系识别 `/etc/yum.repos.d/*.repo`，Arch 识别
+  `/etc/pacman.d/mirrorlist`，openSUSE/SLES 识别
+  `/etc/zypp/repos.d/*.repo`。
+- 软件源切换仍只开放 Debian/Ubuntu 的官方源和阿里云预设。RPM、Pacman、
+  Zypper 的源只读取不改写，避免破坏订阅、模块流、镜像排序或第三方仓库。
+- Alpine/OpenRC 尚不能运行当前 systemd Agent 安装方式，因此不开放宿主机
+  写入。未知发行版同样保持只读。

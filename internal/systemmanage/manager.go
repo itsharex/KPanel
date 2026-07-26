@@ -167,27 +167,48 @@ func (m *Manager) Capabilities() []contract.Capability {
 	_, swapoffErr := m.runner.LookPath("swapoff")
 	_, fallocateErr := m.runner.LookPath("fallocate")
 	_, sysctlErr := m.runner.LookPath("sysctl")
-	_, aptErr := m.runner.LookPath("apt-get")
-	_, dpkgErr := m.runner.LookPath("dpkg")
 	_, journalctlErr := m.runner.LookPath("journalctl")
 	_, systemdRunErr := m.runner.LookPath("systemd-run")
 	_, modprobeErr := m.runner.LookPath("modprobe")
 
 	resolved := m.resolvedSupported()
 	sshConfig := regularFile(filepath.Join(m.etcRoot, "ssh", "sshd_config"))
-	aptSources := len(m.aptSourceFiles()) > 0
+	packageManager := m.detectPackageManager()
+	packageSources := len(m.packageSourceFiles(packageManager.kind)) > 0
+	maintenanceSupported := packageManager.available() && packageSources && systemdRunErr == nil
+	maintenanceReason := packageManager.reason
+	if packageManager.available() && !packageSources {
+		maintenanceReason = packageManager.displayName() + " 软件源配置不可用"
+	} else if packageManager.available() && systemdRunErr != nil {
+		maintenanceReason = "systemd 后台任务执行器不可用"
+	}
+	if maintenanceReason == "" {
+		maintenanceReason = "当前发行版不支持安全系统维护"
+	}
+	cleanupSupported := maintenanceSupported && journalctlErr == nil
+	cleanupReason := maintenanceReason
+	if maintenanceSupported && journalctlErr != nil {
+		cleanupReason = "journalctl 不可用，无法执行标准安全清理"
+	}
+	aptMirrorSupported := packageManager.kind == packageManagerAPT &&
+		(packageManager.osID == "debian" || packageManager.osID == "ubuntu") &&
+		packageSources
+	mirrorReason := "当前仅支持 Debian/Ubuntu APT 软件源切换"
+	if (packageManager.osID == "debian" || packageManager.osID == "ubuntu") && !packageSources {
+		mirrorReason = "未发现可安全修改的 APT 软件源"
+	}
 	return []contract.Capability{
 		capability("system.hostname.write", hostnamectlErr == nil, "hostnamectl 不可用"),
 		capability("system.ssh-port.write", sshdErr == nil && ssErr == nil && systemctlErr == nil && sshConfig, "OpenSSH 服务或配置不可用"),
 		capability("system.dns.write", resolved && systemctlErr == nil, "当前仅安全接管 systemd-resolved"),
 		capability("system.timezone.write", timedatectlErr == nil, "timedatectl 不可用"),
 		capability("system.swap.write", mkswapErr == nil && swaponErr == nil && swapoffErr == nil && fallocateErr == nil && systemdRunErr == nil, "Swap 工具或 systemd 事务执行器不完整"),
-		capability("system.mirror.write", aptErr == nil && aptSources, "当前仅支持 Debian/Ubuntu APT 软件源"),
+		capability("system.mirror.write", aptMirrorSupported, mirrorReason),
 		capability("system.ip-preference.write", true, ""),
 		capability("system.kernel-tuning.write", sysctlErr == nil, "sysctl 不可用"),
 		capability("system.bbr.write", sysctlErr == nil && modprobeErr == nil, "内核调优工具不完整"),
-		capability("system.update.write", aptErr == nil && dpkgErr == nil && systemdRunErr == nil && aptSources, "当前仅支持由 systemd 托管的 Debian/Ubuntu APT 更新"),
-		capability("system.cleanup.write", aptErr == nil && journalctlErr == nil && systemdRunErr == nil && aptSources, "当前仅支持由 systemd 托管的 Debian/Ubuntu APT 清理"),
+		capability("system.update.write", maintenanceSupported, maintenanceReason),
+		capability("system.cleanup.write", cleanupSupported, cleanupReason),
 		{ID: "system.reinstall", Enabled: false, Reason: "重装系统必须使用带外控制台，Web 端保持锁定"},
 	}
 }

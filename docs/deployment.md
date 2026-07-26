@@ -7,6 +7,10 @@ KPanel 使用两个独立进程：
 - `paneld` 以非 root Docker 容器运行，只接入专用 `internal` 网络，不发布宿主端口。
 - `kejilion-agent` 以受限 systemd 服务运行，只接受本机 Unix Socket 上的类型化请求。
 
+宿主机必须使用 systemd。当前发行版代码路径覆盖 Debian/Ubuntu、
+RHEL/Fedora、Arch/Manjaro 和 openSUSE/SLES；具体实机验收层级见
+[宿主机系统兼容矩阵](platform-support.md)。Alpine/OpenRC 尚不属于正式部署目标。
+
 安装器只管理 `/etc/kejilion-panel`、`/opt/kejilion-panel`、
 `/var/lib/kejilion-panel`、`/run/kejilion-panel`、
 `/usr/local/libexec/kejilion-agent`、对应 systemd unit、专用
@@ -52,7 +56,7 @@ sha256sum dist/linux-amd64/kejilion-agent dist/linux-arm64/kejilion-agent
 推送 Docker Hub：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.7.0
 IMAGE=docker.io/<owner>/kejilion-panel
 
 docker login

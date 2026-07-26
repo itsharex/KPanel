@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kejilion/kejilion-panel/internal/contract"
 )
 
 type fakeRunner struct {
@@ -46,6 +48,12 @@ func testManager(t *testing.T, runner Runner) (*Manager, string, string, string)
 			t.Fatal(err)
 		}
 	}
+	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=debian\nID_LIKE=debian\n")
+	mustWrite(
+		t,
+		filepath.Join(etcRoot, "apt", "sources.list"),
+		"deb https://deb.debian.org/debian stable main\n",
+	)
 	manager := NewManager(Config{
 		Enabled: true, EtcRoot: etcRoot, ProcRoot: procRoot, SysRoot: sysRoot, RunRoot: runRoot,
 		StateDir: stateDir, SwapPath: filepath.Join(root, "swapfile"),
@@ -779,6 +787,165 @@ func TestRunMaintenanceFailureIsPersisted(t *testing.T) {
 		!strings.Contains(status.Message, "repository unavailable") {
 		t.Fatalf("failure was not persisted: %#v", status)
 	}
+}
+
+func TestDetectPackageManagerFamilies(t *testing.T) {
+	tests := []struct {
+		name        string
+		release     string
+		missing     map[string]bool
+		wantKind    packageManagerKind
+		wantCommand string
+	}{
+		{name: "ubuntu", release: "ID=ubuntu\nID_LIKE=debian\n", wantKind: packageManagerAPT, wantCommand: "apt-get"},
+		{name: "rocky", release: "ID=rocky\nID_LIKE=\"rhel centos fedora\"\n", wantKind: packageManagerDNF, wantCommand: "dnf"},
+		{
+			name: "centos yum fallback", release: "ID=centos\nID_LIKE=rhel\n",
+			missing:  map[string]bool{"dnf": true, "dnf5": true},
+			wantKind: packageManagerYUM, wantCommand: "yum",
+		},
+		{name: "arch", release: "ID=arch\n", wantKind: packageManagerPacman, wantCommand: "pacman"},
+		{name: "manjaro", release: "ID=manjaro\nID_LIKE=arch\n", wantKind: packageManagerPacman, wantCommand: "pacman"},
+		{name: "opensuse", release: "ID=opensuse-tumbleweed\nID_LIKE=\"suse opensuse\"\n", wantKind: packageManagerZypper, wantCommand: "zypper"},
+		{name: "alpine protected", release: "ID=alpine\n", wantKind: packageManagerUnknown},
+		{name: "unknown protected", release: "ID=customlinux\n", wantKind: packageManagerUnknown},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager, etcRoot, _, _ := testManager(t, &fakeRunner{missing: test.missing})
+			mustWrite(t, filepath.Join(etcRoot, "os-release"), test.release)
+			got := manager.detectPackageManager()
+			if got.kind != test.wantKind || got.command != test.wantCommand {
+				t.Fatalf(
+					"detectPackageManager() = kind %q command %q reason %q, want kind %q command %q",
+					got.kind,
+					got.command,
+					got.reason,
+					test.wantKind,
+					test.wantCommand,
+				)
+			}
+		})
+	}
+}
+
+func TestRunMaintenanceUpdateUsesSafeDNFSequence(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=rocky\nID_LIKE=\"rhel centos fedora\"\n")
+	mustWrite(
+		t,
+		filepath.Join(etcRoot, "yum.repos.d", "rocky.repo"),
+		"[baseos]\nbaseurl=https://dl.rockylinux.org/pub/rocky/$releasever/BaseOS/$basearch/os/\n",
+	)
+
+	if err := manager.RunMaintenance(context.Background(), "update"); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	for _, expected := range []string{
+		"dnf -y update",
+	} {
+		if !strings.Contains(commands, expected) {
+			t.Fatalf("DNF update sequence missing %q:\n%s", expected, commands)
+		}
+	}
+}
+
+func TestRunMaintenanceStandardCleanupUsesSafePacmanSequence(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=arch\n")
+	mustWrite(
+		t,
+		filepath.Join(etcRoot, "pacman.d", "mirrorlist"),
+		"Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch\n",
+	)
+
+	if err := manager.RunMaintenance(context.Background(), "cleanup-standard"); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	for _, expected := range []string{
+		"pacman -Scc --noconfirm",
+		"journalctl --vacuum-time=7d",
+		"journalctl --vacuum-size=500M",
+	} {
+		if !strings.Contains(commands, expected) {
+			t.Fatalf("Pacman cleanup sequence missing %q:\n%s", expected, commands)
+		}
+	}
+	for _, forbidden := range []string{"sh -c", "pacman -Rns", "rm -rf"} {
+		if strings.Contains(commands, forbidden) {
+			t.Fatalf("unsafe Pacman cleanup %q found:\n%s", forbidden, commands)
+		}
+	}
+}
+
+func TestRunMaintenanceUpdateUsesSafeZypperSequence(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=opensuse-leap\nID_LIKE=\"suse opensuse\"\n")
+	mustWrite(
+		t,
+		filepath.Join(etcRoot, "zypp", "repos.d", "repo-oss.repo"),
+		"[repo-oss]\nbaseurl=https://download.opensuse.org/distribution/leap/$releasever/repo/oss/\n",
+	)
+
+	if err := manager.RunMaintenance(context.Background(), "update"); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	for _, expected := range []string{
+		"zypper --non-interactive refresh",
+		"zypper --non-interactive update",
+	} {
+		if !strings.Contains(commands, expected) {
+			t.Fatalf("Zypper update sequence missing %q:\n%s", expected, commands)
+		}
+	}
+}
+
+func TestRunMaintenanceRejectsAlpineAndUnknownDistributions(t *testing.T) {
+	for _, release := range []string{"ID=alpine\n", "ID=customlinux\n"} {
+		t.Run(strings.TrimSpace(release), func(t *testing.T) {
+			manager, etcRoot, _, _ := testManager(t, &fakeRunner{})
+			mustWrite(t, filepath.Join(etcRoot, "os-release"), release)
+			if err := manager.RunMaintenance(context.Background(), "update"); !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("expected unsupported error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestCapabilitiesEnableMaintenanceButNotMirrorForRocky(t *testing.T) {
+	manager, etcRoot, _, _ := testManager(t, &fakeRunner{})
+	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=rocky\nID_LIKE=\"rhel centos fedora\"\n")
+	mustWrite(
+		t,
+		filepath.Join(etcRoot, "yum.repos.d", "rocky.repo"),
+		"[baseos]\nbaseurl=https://dl.rockylinux.org/pub/rocky/$releasever/BaseOS/$basearch/os/\n",
+	)
+	capabilities := manager.Capabilities()
+	for _, id := range []string{"system.update.write", "system.cleanup.write"} {
+		capability := findCapability(capabilities, id)
+		if !capability.Enabled {
+			t.Fatalf("%s unexpectedly disabled: %s", id, capability.Reason)
+		}
+	}
+	mirror := findCapability(capabilities, "system.mirror.write")
+	if mirror.Enabled || !strings.Contains(mirror.Reason, "Debian/Ubuntu") {
+		t.Fatalf("unexpected Rocky mirror capability: %#v", mirror)
+	}
+}
+
+func findCapability(capabilities []contract.Capability, id string) contract.Capability {
+	for _, capability := range capabilities {
+		if capability.ID == id {
+			return capability
+		}
+	}
+	return contract.Capability{}
 }
 
 func mustWrite(t *testing.T, path, value string) {

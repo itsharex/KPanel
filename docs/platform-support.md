@@ -1,0 +1,57 @@
+# 宿主机系统兼容矩阵
+
+KPanel 的 Panel 只维护一个 `linux/amd64`、`linux/arm64` 多架构 Docker
+镜像。发行版差异由宿主机 `kejilion-agent` 处理，不为 Debian、Ubuntu、
+Rocky 等系统分别制作 Panel 镜像。
+
+## 支持层级
+
+| 层级 | 宿主机 | 当前状态 |
+| --- | --- | --- |
+| 已实机验证 | Debian 13 `amd64` | 154 测试机持续运行；监控、网站、Docker 和系统管理已验收 |
+| 已实现，待实机准入 | Debian 12、Ubuntu 22.04/24.04 | APT/dpkg 与 systemd 路径已实现 |
+| 已实现，待实机准入 | Rocky、AlmaLinux、CentOS Stream、RHEL、Oracle Linux、Fedora | DNF/DNF5/YUM 与 systemd 路径已实现 |
+| 已实现，待实机准入 | Arch Linux、Manjaro | Pacman 与 systemd 路径已实现 |
+| 已实现，待实机准入 | openSUSE Leap/Tumbleweed、SLES | Zypper 与 systemd 路径已实现 |
+| 暂不支持正式安装 | Alpine Linux | 宿主机使用 OpenRC，当前 Agent 安装和事务执行依赖 systemd |
+| 安全降级 | 其他或无法识别的 Linux | 只返回明确的不可写原因，不猜测软件包命令 |
+
+“已实现”表示代码路径和固定命令矩阵通过自动化测试，不等于已经完成对应发行版
+的真实服务器验收。进入正式支持层级前，必须在干净实例上完成安装、更新、清理、
+重启恢复和回滚演练。
+
+## 功能差异
+
+| 功能 | systemd Linux 通用情况 | 发行版限制 |
+| --- | --- | --- |
+| CPU、内存、负载、磁盘、网络、系统版本 | 读取宿主机 `/proc`、挂载点和系统文件 | 基本不依赖发行版 |
+| 网站与 Docker | 读取宿主机 Docker Engine、`/home/web`、`/home/docker` | 依赖 Kejilion 产物布局，不依赖包管理器 |
+| 主机名、时区、Swap、IP 优先级、内核优化、BBR | 按命令和内核能力动态开放 | 缺少工具时自动只读 |
+| SSH 新端口 | 支持 `ssh.service`、`sshd.service`，兼容 UFW、Firewalld、iptables | 必须存在 OpenSSH 配置和安全重载能力 |
+| DNS 写入 | systemd-resolved drop-in | NetworkManager、resolvconf、静态 resolv.conf 暂时只读 |
+| 软件源读取 | APT、DNF/YUM、APK、Pacman、Zypper | 页面展示实际源主机 |
+| 软件源切换 | Debian/Ubuntu APT | 其他系统只读，避免覆盖订阅和第三方仓库 |
+| 系统更新/清理 | APT、DNF/DNF5/YUM、Pacman、Zypper | 固定命令；不接受包名、命令或 Shell |
+| 重装系统 | 全部锁定 | 必须先具备带外控制台和恢复链路 |
+
+## 部署前置条件
+
+- Linux `amd64` 或 `arm64`。
+- systemd，以及 `systemctl`、`systemd-run`、`journalctl`。
+- Docker Engine 与 Docker Compose v2。
+- 本机 Docker Socket；安装器拒绝远程 `DOCKER_HOST` 或其他 Docker Context。
+- 能运行对应架构的无 CGO Agent 二进制。
+- 网站功能需要 Kejilion 标准 `/home/web` 布局；当前生产预检要求
+  `/home/web` 根目录存在，缺失的子目录会让对应网站能力保持只读。
+
+## 发行版维护命令
+
+| 系列 | 更新 | 缓存清理 | 标准安全清理 |
+| --- | --- | --- | --- |
+| Debian/Ubuntu | dpkg 恢复、APT update、full-upgrade | APT clean/autoclean | APT autoremove + 缓存 + journal |
+| RHEL/Fedora | DNF/DNF5/YUM update | clean all | autoremove + 缓存重建 + journal |
+| Arch/Manjaro | `pacman -Syu --noconfirm` | `pacman -Scc --noconfirm` | 缓存 + journal，不根据动态包名删除软件包 |
+| openSUSE/SLES | Zypper refresh、update | Zypper clean | 缓存刷新 + journal |
+
+所有维护任务均由固定参数的一次性 systemd 服务执行，不自动重启宿主机，不清理
+Docker、网站目录、KPanel 备份、`/tmp` 或完整日志目录。
