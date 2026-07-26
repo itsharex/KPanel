@@ -153,18 +153,21 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 - 脚本中的“自动调优”需要实时测速并在线获取 `network-optimize.sh`。首版 Web
   不执行远程脚本；已有自动调优产物仍会被状态接口正确识别。
 
-## v0.7 多发行版维护
+## 多发行版维护
 
-- 读取 `/etc/os-release` 的 `ID` 和 `ID_LIKE`，只允许 Debian/Ubuntu 系、
-  RHEL/Fedora 系、Arch/Manjaro 和 openSUSE/SLES 的已知软件包管理器。
-- 命令白名单为 APT/dpkg、DNF/DNF5/YUM、Pacman 和 Zypper；Web 仍只能提交
+- 优先读取 `/etc/os-release` 的 `ID` 和 `ID_LIKE` 匹配 Debian/Ubuntu、
+  RHEL/Fedora、Alpine、Arch/Manjaro 和 openSUSE/SLES；未知发行版仅在本机
+  存在受支持原生工具时按工具能力安全降级。
+- 命令白名单为 APT/dpkg、DNF/DNF5/YUM、APK、Pacman 和 Zypper；Web 仍只能提交
   `full`、`cache` 或 `standard` 枚举，不能指定命令、包名、仓库或参数。
-- 启动后台任务前同时确认软件包管理器、发行版源文件和 `systemd-run`；
-  缺少任一条件时直接返回只读原因，不创建失败任务。
+- 启动后台任务前确认当前 Agent 绝对路径、软件包管理器、固定步骤命令和
+  `systemd-run`；软件源可位于发行版自定义目录，由原生包管理器进行最终校验。
+- `journalctl` 是标准清理的可选步骤；缺失时继续完成无用依赖和软件包缓存清理，
+  不会让整个清理能力失效。
 - RHEL 系识别 `/etc/yum.repos.d/*.repo`，Arch 识别
   `/etc/pacman.d/mirrorlist`，openSUSE/SLES 识别
   `/etc/zypp/repos.d/*.repo`。
 - 软件源切换仍只开放 Debian/Ubuntu 的官方源和阿里云预设。RPM、Pacman、
   Zypper 的源只读取不改写，避免破坏订阅、模块流、镜像排序或第三方仓库。
-- Alpine/OpenRC 尚不能运行当前 systemd Agent 安装方式，因此不开放宿主机
-  写入。未知发行版同样保持只读。
+- APK 更新与缓存清理已有固定命令实现，但标准 Alpine/OpenRC 尚不能运行当前
+  systemd Agent 安装方式，因此不属于正式部署目标。

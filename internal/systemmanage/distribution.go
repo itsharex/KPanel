@@ -13,6 +13,7 @@ const (
 	packageManagerAPT     packageManagerKind = "apt"
 	packageManagerDNF     packageManagerKind = "dnf"
 	packageManagerYUM     packageManagerKind = "yum"
+	packageManagerAPK     packageManagerKind = "apk"
 	packageManagerPacman  packageManagerKind = "pacman"
 	packageManagerZypper  packageManagerKind = "zypper"
 	packageManagerUnknown packageManagerKind = ""
@@ -37,6 +38,8 @@ func (support packageManagerSupport) displayName() string {
 		return "DNF"
 	case packageManagerYUM:
 		return "YUM"
+	case packageManagerAPK:
+		return "APK"
 	case packageManagerPacman:
 		return "Pacman"
 	case packageManagerZypper:
@@ -62,6 +65,27 @@ func (m *Manager) detectPackageManager() packageManagerSupport {
 			}
 		}
 		return ""
+	}
+	detectByTools := func() packageManagerSupport {
+		if find("apt-get") != "" && find("dpkg") != "" {
+			return packageManagerSupport{kind: packageManagerAPT, command: "apt-get", osID: osID}
+		}
+		switch command := find("dnf", "dnf5", "yum"); command {
+		case "dnf", "dnf5":
+			return packageManagerSupport{kind: packageManagerDNF, command: command, osID: osID}
+		case "yum":
+			return packageManagerSupport{kind: packageManagerYUM, command: command, osID: osID}
+		}
+		if command := find("apk"); command != "" {
+			return packageManagerSupport{kind: packageManagerAPK, command: command, osID: osID}
+		}
+		if command := find("pacman"); command != "" {
+			return packageManagerSupport{kind: packageManagerPacman, command: command, osID: osID}
+		}
+		if command := find("zypper"); command != "" {
+			return packageManagerSupport{kind: packageManagerZypper, command: command, osID: osID}
+		}
+		return packageManagerSupport{osID: osID}
 	}
 
 	switch {
@@ -93,13 +117,21 @@ func (m *Manager) detectPackageManager() packageManagerSupport {
 		}
 		return packageManagerSupport{osID: osID, reason: "Zypper 工具不可用"}
 	case matches("alpine"):
-		return packageManagerSupport{
-			osID:   osID,
-			reason: "Alpine/OpenRC 暂不支持宿主机写入；当前 Agent 需要 systemd",
+		if command := find("apk"); command != "" {
+			return packageManagerSupport{kind: packageManagerAPK, command: command, osID: osID}
 		}
+		return packageManagerSupport{osID: osID, reason: "APK 工具不可用"}
 	case osID == "":
-		return packageManagerSupport{reason: "无法识别宿主机发行版"}
+		support := detectByTools()
+		if support.available() {
+			return support
+		}
+		return packageManagerSupport{reason: "无法识别宿主机发行版或软件包管理器"}
 	default:
+		support := detectByTools()
+		if support.available() {
+			return support
+		}
 		return packageManagerSupport{
 			osID:   osID,
 			reason: fmt.Sprintf("发行版 %s 尚未加入安全维护白名单", osID),
@@ -114,6 +146,8 @@ func (m *Manager) packageSourceFiles(kind packageManagerKind) []string {
 		return m.aptSourceFiles()
 	case packageManagerDNF, packageManagerYUM:
 		patterns = []string{filepath.Join(m.etcRoot, "yum.repos.d", "*.repo")}
+	case packageManagerAPK:
+		patterns = []string{filepath.Join(m.etcRoot, "apk", "repositories")}
 	case packageManagerPacman:
 		patterns = []string{filepath.Join(m.etcRoot, "pacman.d", "mirrorlist")}
 	case packageManagerZypper:

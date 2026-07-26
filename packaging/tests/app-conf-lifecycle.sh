@@ -35,7 +35,7 @@ require_state() {
 	}
 }
 case "$1 ${2:-}" in
-	"compose version"|"pull docker.io/kjlion/kejilion-panel:0.16.1")
+	"compose version"|"pull docker.io/kjlion/kejilion-panel:0.16.2")
 		exit 0
 		;;
 	"ps -a")
@@ -61,7 +61,7 @@ case "$1 ${2:-}" in
 		cat >"$destination" <<'AGENT'
 #!/bin/sh
 case "${1:-}" in
-	version) printf '%s\n' '0.16.1 v1alpha1' ;;
+	version) printf '%s\n' '0.16.2 v1alpha1' ;;
 	healthcheck)
 		[ -f "${KEJILION_AGENT_TOKEN_FILE:?}" ]
 		[ "$(stat -c '%a' "$KEJILION_AGENT_TOKEN_FILE")" = 640 ]
@@ -184,7 +184,7 @@ run_lifecycle() {
 		return 1
 	fi
 
-	grep -F 'image: docker.io/kjlion/kejilion-panel:0.16.1' \
+	grep -F 'image: docker.io/kjlion/kejilion-panel:0.16.2' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx 'KPANEL_PUBLIC_URL=http://198.51.100.25:18080' \
@@ -203,7 +203,7 @@ run_lifecycle() {
 	test -f /home/docker/kpanel/.managed-by-kejilion-app
 
 	docker_app_update
-	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = '0.16.1 v1alpha1'
+	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = '0.16.2 v1alpha1'
 
 	docker_app_uninstall
 	[ ! -e /home/docker/kpanel ]

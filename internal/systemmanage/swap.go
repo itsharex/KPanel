@@ -56,8 +56,9 @@ func (m *Manager) runSwapViaSystemd(
 	if err := validateSwapSize(sizeMiB); err != nil {
 		return false, "", "", err
 	}
-	if m.executable == "" || m.executable == "." {
-		return false, "", "", fmt.Errorf("%w: Agent executable path is unavailable", ErrUnsupported)
+	executable, err := m.backgroundExecutable()
+	if err != nil {
+		return false, "", "", err
 	}
 
 	arguments := []string{
@@ -82,7 +83,7 @@ func (m *Manager) runSwapViaSystemd(
 		"--property=IOWeight=20",
 		"--property=SyslogIdentifier=kpanel-swap",
 		"--",
-		m.executable,
+		executable,
 		"swap-run",
 		"--state-dir",
 		m.stateDir,

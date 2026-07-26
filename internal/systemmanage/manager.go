@@ -147,6 +147,29 @@ func NewManager(config Config) *Manager {
 	}
 }
 
+func (m *Manager) backgroundExecutable() (string, error) {
+	path := filepath.Clean(m.executable)
+	if path == "." || !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%w: Agent executable path is unavailable", ErrUnsupported)
+	}
+	if _, err := m.runner.LookPath(path); err != nil {
+		return "", fmt.Errorf(
+			"%w: Agent executable does not exist or is not executable at %s",
+			ErrUnsupported,
+			path,
+		)
+	}
+	return path, nil
+}
+
+func capabilityReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	value := strings.TrimSpace(err.Error())
+	return strings.TrimPrefix(value, ErrUnsupported.Error()+": ")
+}
+
 func (m *Manager) Capabilities() []contract.Capability {
 	disabledReason := ""
 	if !m.enabled {
@@ -175,28 +198,40 @@ func (m *Manager) Capabilities() []contract.Capability {
 	_, swapoffErr := m.runner.LookPath("swapoff")
 	_, fallocateErr := m.runner.LookPath("fallocate")
 	_, sysctlErr := m.runner.LookPath("sysctl")
-	_, journalctlErr := m.runner.LookPath("journalctl")
 	_, systemdRunErr := m.runner.LookPath("systemd-run")
 	_, modprobeErr := m.runner.LookPath("modprobe")
+	_, helperErr := m.backgroundExecutable()
 
 	resolved := m.resolvedSupported()
 	sshConfig := regularFile(filepath.Join(m.etcRoot, "ssh", "sshd_config"))
 	packageManager := m.detectPackageManager()
 	packageSources := len(m.packageSourceFiles(packageManager.kind)) > 0
-	maintenanceSupported := packageManager.available() && packageSources && systemdRunErr == nil
-	maintenanceReason := packageManager.reason
-	if packageManager.available() && !packageSources {
-		maintenanceReason = packageManager.displayName() + " 软件源配置不可用"
-	} else if packageManager.available() && systemdRunErr != nil {
-		maintenanceReason = "systemd 后台任务执行器不可用"
+	_, _, _, updatePlanErr := m.maintenanceSteps("update")
+	_, _, _, cacheCleanupPlanErr := m.maintenanceSteps("cleanup-cache")
+	_, _, _, standardCleanupPlanErr := m.maintenanceSteps("cleanup-standard")
+	maintenanceExecutorAvailable := systemdRunErr == nil && helperErr == nil
+	updateSupported := maintenanceExecutorAvailable && updatePlanErr == nil
+	cleanupSupported := maintenanceExecutorAvailable &&
+		(cacheCleanupPlanErr == nil || standardCleanupPlanErr == nil)
+	executorReason := ""
+	if systemdRunErr != nil {
+		executorReason = "systemd 后台任务执行器不可用"
+	} else if helperErr != nil {
+		executorReason = "Agent 后台执行程序不可用，请更新或重新安装 KPanel"
 	}
-	if maintenanceReason == "" {
-		maintenanceReason = "当前发行版不支持安全系统维护"
+	updateReason := executorReason
+	if updateReason == "" {
+		updateReason = capabilityReason(updatePlanErr)
 	}
-	cleanupSupported := maintenanceSupported && journalctlErr == nil
-	cleanupReason := maintenanceReason
-	if maintenanceSupported && journalctlErr != nil {
-		cleanupReason = "journalctl 不可用，无法执行标准安全清理"
+	cleanupReason := executorReason
+	if cleanupReason == "" && cacheCleanupPlanErr != nil && standardCleanupPlanErr != nil {
+		cleanupReason = capabilityReason(cacheCleanupPlanErr)
+	}
+	if updateReason == "" {
+		updateReason = "当前发行版不支持安全系统维护"
+	}
+	if cleanupReason == "" {
+		cleanupReason = "当前发行版不支持安全系统清理"
 	}
 	aptMirrorSupported := packageManager.kind == packageManagerAPT &&
 		(packageManager.osID == "debian" || packageManager.osID == "ubuntu") &&
@@ -210,12 +245,12 @@ func (m *Manager) Capabilities() []contract.Capability {
 		capability("system.ssh-port.write", sshdErr == nil && ssErr == nil && systemctlErr == nil && sshConfig, "OpenSSH 服务或配置不可用"),
 		capability("system.dns.write", resolved && systemctlErr == nil, "当前仅安全接管 systemd-resolved"),
 		capability("system.timezone.write", timedatectlErr == nil, "timedatectl 不可用"),
-		capability("system.swap.write", mkswapErr == nil && swaponErr == nil && swapoffErr == nil && fallocateErr == nil && systemdRunErr == nil, "Swap 工具或 systemd 事务执行器不完整"),
+		capability("system.swap.write", mkswapErr == nil && swaponErr == nil && swapoffErr == nil && fallocateErr == nil && systemdRunErr == nil && helperErr == nil, "Swap 工具、Agent 后台执行程序或 systemd 事务执行器不完整"),
 		capability("system.mirror.write", aptMirrorSupported, mirrorReason),
 		capability("system.ip-preference.write", true, ""),
 		capability("system.kernel-tuning.write", sysctlErr == nil, "sysctl 不可用"),
 		capability("system.bbr.write", sysctlErr == nil && modprobeErr == nil, "内核调优工具不完整"),
-		capability("system.update.write", maintenanceSupported, maintenanceReason),
+		capability("system.update.write", updateSupported, updateReason),
 		capability("system.cleanup.write", cleanupSupported, cleanupReason),
 		capability("system.reboot.write", systemctlErr == nil && systemdRunErr == nil, "systemctl 或 systemd-run 不可用"),
 		{ID: "system.reinstall", Enabled: false, Reason: "重装系统必须使用带外控制台，Web 端保持锁定"},

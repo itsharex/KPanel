@@ -32,6 +32,9 @@ func (runner *fakeRunner) LookPath(name string) (string, error) {
 	if runner.missing[name] {
 		return "", errors.New("missing")
 	}
+	if filepath.IsAbs(name) {
+		return name, nil
+	}
 	return "/usr/bin/" + name, nil
 }
 
@@ -829,6 +832,56 @@ func TestStartMaintenanceUsesFixedSystemdUnit(t *testing.T) {
 	}
 }
 
+func TestStartMaintenanceUsesManagedAppAgentPath(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, _, _, stateDir := testManager(t, runner)
+	manager.executable = "/home/docker/kpanel/bin/kejilion-agent"
+
+	changed, _, err := manager.startMaintenance(context.Background(), "update", "full")
+	if err != nil || !changed {
+		t.Fatalf("start maintenance: changed=%v err=%v", changed, err)
+	}
+	command := strings.Join(runner.commands, "\n")
+	expected := "/home/docker/kpanel/bin/kejilion-agent maintenance-run --state-dir " +
+		stateDir + " update"
+	if !strings.Contains(command, expected) {
+		t.Fatalf("managed-app Agent path was not preserved:\n%s", command)
+	}
+	if strings.Contains(command, "/usr/local/libexec/kejilion-agent") {
+		t.Fatalf("launcher fell back to the FHS-only path:\n%s", command)
+	}
+}
+
+func TestMaintenanceAndSwapRejectMissingAgentExecutableBeforeSystemdRun(t *testing.T) {
+	executable := "/home/docker/kpanel/bin/kejilion-agent"
+	runner := &fakeRunner{missing: map[string]bool{executable: true}}
+	manager, _, _, _ := testManager(t, runner)
+	manager.executable = executable
+
+	if _, _, err := manager.startMaintenance(
+		context.Background(),
+		"update",
+		"full",
+	); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("maintenance missing executable error = %v", err)
+	}
+	if _, _, _, err := manager.runSwapViaSystemd(
+		context.Background(),
+		2048,
+	); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("swap missing executable error = %v", err)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("missing executable reached systemd-run: %#v", runner.commands)
+	}
+	for _, id := range []string{"system.update.write", "system.cleanup.write", "system.swap.write"} {
+		capability := findCapability(manager.Capabilities(), id)
+		if capability.Enabled || !strings.Contains(capability.Reason, "Agent") {
+			t.Fatalf("unexpected %s capability: %#v", id, capability)
+		}
+	}
+}
+
 func TestRunMaintenanceUpdateUsesSafeAPTSequence(t *testing.T) {
 	runner := &fakeRunner{}
 	manager, _, _, _ := testManager(t, runner)
@@ -884,6 +937,38 @@ func TestRunMaintenanceStandardCleanupPreservesLogsAndDocker(t *testing.T) {
 	}
 }
 
+func TestMaintenanceWorksWithoutConventionalSourcesOrJournalctl(t *testing.T) {
+	runner := &fakeRunner{missing: map[string]bool{"journalctl": true}}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	if err := os.Remove(filepath.Join(etcRoot, "apt", "sources.list")); err != nil {
+		t.Fatal(err)
+	}
+
+	capability := findCapability(manager.Capabilities(), "system.cleanup.write")
+	if !capability.Enabled {
+		t.Fatalf("cache cleanup capability unexpectedly disabled: %#v", capability)
+	}
+	if err := manager.RunMaintenance(context.Background(), "cleanup-cache"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RunMaintenance(context.Background(), "cleanup-standard"); err != nil {
+		t.Fatalf("standard cleanup without journalctl should retain package cleanup: %v", err)
+	}
+	if err := manager.RunMaintenance(context.Background(), "update"); err != nil {
+		t.Fatalf("native package manager should decide whether configured sources are usable: %v", err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	if !strings.Contains(commands, "apt-get -o Dpkg::Lock::Timeout=120 clean") {
+		t.Fatalf("cache cleanup did not run:\n%s", commands)
+	}
+	if !strings.Contains(commands, "apt-get -o Dpkg::Lock::Timeout=120 update") {
+		t.Fatalf("update did not reach the native package manager:\n%s", commands)
+	}
+	if strings.Contains(commands, "journalctl") {
+		t.Fatalf("optional journal cleanup was not skipped:\n%s", commands)
+	}
+}
+
 func TestRunMaintenanceFailureIsPersisted(t *testing.T) {
 	runner := &fakeRunner{
 		run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
@@ -922,8 +1007,15 @@ func TestDetectPackageManagerFamilies(t *testing.T) {
 		{name: "arch", release: "ID=arch\n", wantKind: packageManagerPacman, wantCommand: "pacman"},
 		{name: "manjaro", release: "ID=manjaro\nID_LIKE=arch\n", wantKind: packageManagerPacman, wantCommand: "pacman"},
 		{name: "opensuse", release: "ID=opensuse-tumbleweed\nID_LIKE=\"suse opensuse\"\n", wantKind: packageManagerZypper, wantCommand: "zypper"},
-		{name: "alpine protected", release: "ID=alpine\n", wantKind: packageManagerUnknown},
-		{name: "unknown protected", release: "ID=customlinux\n", wantKind: packageManagerUnknown},
+		{name: "alpine", release: "ID=alpine\n", wantKind: packageManagerAPK, wantCommand: "apk"},
+		{
+			name: "unknown protected", release: "ID=customlinux\n",
+			missing: map[string]bool{
+				"apt-get": true, "dpkg": true, "dnf": true, "dnf5": true, "yum": true,
+				"apk": true, "pacman": true, "zypper": true,
+			},
+			wantKind: packageManagerUnknown,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -997,6 +1089,58 @@ func TestRunMaintenanceStandardCleanupUsesSafePacmanSequence(t *testing.T) {
 	}
 }
 
+func TestRunMaintenancePacmanRemovesOnlyValidatedOrphans(t *testing.T) {
+	runner := &fakeRunner{
+		run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+			if name == "pacman" && slices.Equal(arguments, []string{"-Qdtq"}) {
+				return []byte("old-library\nunused-tool\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=arch\n")
+	mustWrite(
+		t,
+		filepath.Join(etcRoot, "pacman.d", "mirrorlist"),
+		"Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch\n",
+	)
+
+	if err := manager.RunMaintenance(context.Background(), "cleanup-standard"); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	expected := "pacman -Rns --noconfirm -- old-library unused-tool"
+	if !strings.Contains(commands, expected) {
+		t.Fatalf("validated orphan removal missing %q:\n%s", expected, commands)
+	}
+	if strings.Contains(commands, "sh -c") || strings.Contains(commands, "$(") {
+		t.Fatalf("Pacman orphan cleanup used a shell:\n%s", commands)
+	}
+}
+
+func TestRunMaintenanceRejectsUnsafePacmanOrphanOutput(t *testing.T) {
+	runner := &fakeRunner{
+		run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+			if name == "pacman" && slices.Equal(arguments, []string{"-Qdtq"}) {
+				return []byte("safe-package\n--dangerous\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=arch\n")
+	mustWrite(t, filepath.Join(etcRoot, "pacman.d", "mirrorlist"), "Server = https://example.invalid\n")
+
+	if err := manager.RunMaintenance(context.Background(), "cleanup-standard"); err == nil {
+		t.Fatal("expected unsafe Pacman output to be rejected")
+	}
+	commands := strings.Join(runner.commands, "\n")
+	if strings.Contains(commands, "pacman -Rns") {
+		t.Fatalf("unsafe orphan output reached removal:\n%s", commands)
+	}
+}
+
 func TestRunMaintenanceUpdateUsesSafeZypperSequence(t *testing.T) {
 	runner := &fakeRunner{}
 	manager, etcRoot, _, _ := testManager(t, runner)
@@ -1021,15 +1165,63 @@ func TestRunMaintenanceUpdateUsesSafeZypperSequence(t *testing.T) {
 	}
 }
 
-func TestRunMaintenanceRejectsAlpineAndUnknownDistributions(t *testing.T) {
-	for _, release := range []string{"ID=alpine\n", "ID=customlinux\n"} {
-		t.Run(strings.TrimSpace(release), func(t *testing.T) {
-			manager, etcRoot, _, _ := testManager(t, &fakeRunner{})
-			mustWrite(t, filepath.Join(etcRoot, "os-release"), release)
-			if err := manager.RunMaintenance(context.Background(), "update"); !errors.Is(err, ErrUnsupported) {
-				t.Fatalf("expected unsupported error, got %v", err)
-			}
-		})
+func TestRunMaintenanceUsesSafeAPKSequence(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=alpine\n")
+	mustWrite(
+		t,
+		filepath.Join(etcRoot, "apk", "repositories"),
+		"https://dl-cdn.alpinelinux.org/alpine/v3.23/main\n",
+	)
+
+	if err := manager.RunMaintenance(context.Background(), "update"); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	for _, expected := range []string{"apk update", "apk upgrade"} {
+		if !strings.Contains(commands, expected) {
+			t.Fatalf("APK update sequence missing %q:\n%s", expected, commands)
+		}
+	}
+	runner.commands = nil
+	if err := manager.RunMaintenance(context.Background(), "cleanup-standard"); err != nil {
+		t.Fatal(err)
+	}
+	commands = strings.Join(runner.commands, "\n")
+	if !strings.Contains(commands, "apk cache clean") {
+		t.Fatalf("APK cleanup sequence is incomplete:\n%s", commands)
+	}
+	for _, forbidden := range []string{"rm -rf", "/var/log", "/tmp"} {
+		if strings.Contains(commands, forbidden) {
+			t.Fatalf("unsafe APK cleanup %q found:\n%s", forbidden, commands)
+		}
+	}
+}
+
+func TestDetectPackageManagerFallsBackToInstalledNativeTool(t *testing.T) {
+	missing := map[string]bool{
+		"dnf": true, "dnf5": true, "yum": true, "apk": true, "pacman": true, "zypper": true,
+	}
+	runner := &fakeRunner{missing: missing}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=vendorlinux\n")
+
+	support := manager.detectPackageManager()
+	if support.kind != packageManagerAPT || support.command != "apt-get" {
+		t.Fatalf("fallback support = %#v", support)
+	}
+}
+
+func TestRunMaintenanceRejectsUnknownDistributionWithoutSupportedTools(t *testing.T) {
+	missing := map[string]bool{
+		"apt-get": true, "dpkg": true, "dnf": true, "dnf5": true, "yum": true,
+		"apk": true, "pacman": true, "zypper": true,
+	}
+	manager, etcRoot, _, _ := testManager(t, &fakeRunner{missing: missing})
+	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=customlinux\n")
+	if err := manager.RunMaintenance(context.Background(), "update"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("expected unsupported error, got %v", err)
 	}
 }
 

@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,7 +23,13 @@ type maintenanceStep struct {
 	progress  int
 	command   string
 	arguments []string
+	operation string
+	optional  bool
 }
+
+const maintenanceOperationPacmanOrphans = "pacman-orphans"
+
+var pacmanPackagePattern = regexp.MustCompile(`^[a-z0-9@._+][a-z0-9@._+-]{0,127}$`)
 
 func (m *Manager) MaintenanceStatus() contract.SystemMaintenanceSummary {
 	m.mu.Lock()
@@ -64,10 +72,11 @@ func (m *Manager) startMaintenance(
 	if current.State == "running" {
 		return false, "", fmt.Errorf("%w: another maintenance task is already running", ErrConflict)
 	}
-	if m.executable == "" || m.executable == "." {
-		return false, "", fmt.Errorf("%w: Agent executable path is unavailable", ErrUnsupported)
-	}
 	if _, _, _, err := m.maintenanceSteps(mode); err != nil {
+		return false, "", err
+	}
+	executable, err := m.backgroundExecutable()
+	if err != nil {
 		return false, "", err
 	}
 
@@ -100,7 +109,7 @@ func (m *Manager) startMaintenance(
 		"--property=IOWeight=20",
 		"--property=SyslogIdentifier=kpanel-maintenance",
 		"--",
-		m.executable,
+		executable,
 		"maintenance-run",
 		"--state-dir",
 		m.stateDir,
@@ -152,14 +161,20 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 		if err := m.writeMaintenance(status); err != nil {
 			return fmt.Errorf("persist maintenance progress: %w", err)
 		}
-		if _, err := m.runner.Run(ctx, step.command, step.arguments...); err != nil {
+		var runErr error
+		if step.operation == maintenanceOperationPacmanOrphans {
+			runErr = m.removePacmanOrphans(ctx, step.command)
+		} else {
+			_, runErr = m.runner.Run(ctx, step.command, step.arguments...)
+		}
+		if runErr != nil {
 			finishedAt := m.now().UTC()
 			status.State = "failed"
 			status.Progress = 100
-			status.Message = maintenanceErrorMessage(err)
+			status.Message = maintenanceErrorMessage(runErr)
 			status.FinishedAt = &finishedAt
 			_ = m.writeMaintenance(status)
-			return fmt.Errorf("%s: %w", step.stage, err)
+			return fmt.Errorf("%s: %w", step.stage, runErr)
 		}
 	}
 
@@ -187,14 +202,6 @@ func (m *Manager) maintenanceSteps(
 		}
 		return "", "", nil, fmt.Errorf("%w: %s", ErrUnsupported, reason)
 	}
-	if len(m.packageSourceFiles(support.kind)) == 0 {
-		return "", "", nil, fmt.Errorf(
-			"%w: %s 软件源配置不可用",
-			ErrUnsupported,
-			support.displayName(),
-		)
-	}
-
 	aptOptions := []string{"-o", "Dpkg::Lock::Timeout=120"}
 	var action, policy string
 	var steps []maintenanceStep
@@ -205,6 +212,8 @@ func (m *Manager) maintenanceSteps(
 		action, policy, steps = rpmMaintenanceSteps(mode, support.command)
 	case packageManagerYUM:
 		action, policy, steps = rpmMaintenanceSteps(mode, support.command)
+	case packageManagerAPK:
+		action, policy, steps = apkMaintenanceSteps(mode, support.command)
 	case packageManagerPacman:
 		action, policy, steps = pacmanMaintenanceSteps(mode)
 	case packageManagerZypper:
@@ -213,7 +222,22 @@ func (m *Manager) maintenanceSteps(
 	if action == "" {
 		return "", "", nil, fmt.Errorf("%w: unknown maintenance mode", ErrInvalidInput)
 	}
-	return action, policy, steps, nil
+	availableSteps := make([]maintenanceStep, 0, len(steps))
+	for _, step := range steps {
+		if _, err := m.runner.LookPath(step.command); err != nil {
+			if step.optional {
+				continue
+			}
+			return "", "", nil, fmt.Errorf(
+				"%w: %s command %s is unavailable",
+				ErrUnsupported,
+				support.displayName(),
+				step.command,
+			)
+		}
+		availableSteps = append(availableSteps, step)
+	}
+	return action, policy, availableSteps, nil
 }
 
 func aptMaintenanceSteps(mode string, aptOptions []string) (string, string, []maintenanceStep) {
@@ -267,6 +291,26 @@ func rpmMaintenanceSteps(mode, command string) (string, string, []maintenanceSte
 	}
 }
 
+func apkMaintenanceSteps(mode, command string) (string, string, []maintenanceStep) {
+	switch mode {
+	case "update":
+		return "update", "full", []maintenanceStep{
+			{stage: "package_index", progress: 30, command: command, arguments: []string{"update"}},
+			{stage: "full_upgrade", progress: 60, command: command, arguments: []string{"upgrade"}},
+		}
+	case "cleanup-cache":
+		return "cleanup", "cache", []maintenanceStep{
+			{stage: "package_cache", progress: 50, command: command, arguments: []string{"cache", "clean"}},
+		}
+	case "cleanup-standard":
+		return "cleanup", "standard", []maintenanceStep{
+			{stage: "package_cache", progress: 50, command: command, arguments: []string{"cache", "clean"}},
+		}
+	default:
+		return "", "", nil
+	}
+}
+
 func pacmanMaintenanceSteps(mode string) (string, string, []maintenanceStep) {
 	switch mode {
 	case "update":
@@ -279,11 +323,40 @@ func pacmanMaintenanceSteps(mode string) (string, string, []maintenanceStep) {
 		}
 	case "cleanup-standard":
 		return "cleanup", "standard", append([]maintenanceStep{
+			{
+				stage: "unused_packages", progress: 15, command: "pacman",
+				operation: maintenanceOperationPacmanOrphans,
+			},
 			{stage: "package_cache", progress: 50, command: "pacman", arguments: []string{"-Scc", "--noconfirm"}},
 		}, journalCleanupSteps()...)
 	default:
 		return "", "", nil
 	}
+}
+
+func (m *Manager) removePacmanOrphans(ctx context.Context, command string) error {
+	output, err := m.runner.Run(ctx, command, "-Qdtq")
+	if err != nil {
+		return err
+	}
+	packages := strings.Fields(string(output))
+	if len(packages) == 0 {
+		return nil
+	}
+	if len(packages) > 4096 {
+		return errors.New("Pacman orphan list exceeds the safe limit")
+	}
+	seen := make(map[string]bool, len(packages))
+	arguments := []string{"-Rns", "--noconfirm", "--"}
+	for _, name := range packages {
+		if !pacmanPackagePattern.MatchString(name) || seen[name] {
+			return fmt.Errorf("Pacman returned an invalid or duplicated package name %q", name)
+		}
+		seen[name] = true
+		arguments = append(arguments, name)
+	}
+	_, err = m.runner.Run(ctx, command, arguments...)
+	return err
 }
 
 func zypperMaintenanceSteps(mode string) (string, string, []maintenanceStep) {
@@ -309,9 +382,9 @@ func zypperMaintenanceSteps(mode string) (string, string, []maintenanceStep) {
 
 func journalCleanupSteps() []maintenanceStep {
 	return []maintenanceStep{
-		{stage: "journal_rotate", progress: 70, command: "journalctl", arguments: []string{"--rotate"}},
-		{stage: "journal_time", progress: 80, command: "journalctl", arguments: []string{"--vacuum-time=7d"}},
-		{stage: "journal_size", progress: 90, command: "journalctl", arguments: []string{"--vacuum-size=500M"}},
+		{stage: "journal_rotate", progress: 70, command: "journalctl", arguments: []string{"--rotate"}, optional: true},
+		{stage: "journal_time", progress: 80, command: "journalctl", arguments: []string{"--vacuum-time=7d"}, optional: true},
+		{stage: "journal_size", progress: 90, command: "journalctl", arguments: []string{"--vacuum-size=500M"}, optional: true},
 	}
 }
 

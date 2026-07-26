@@ -14,7 +14,7 @@ Rocky 等系统分别制作 Panel 镜像。
 | 已实现，待实机准入 | Arch Linux、Manjaro | Pacman 与 systemd 路径已实现 |
 | 已实现，待实机准入 | openSUSE Leap/Tumbleweed、SLES | Zypper 与 systemd 路径已实现 |
 | 暂不支持正式安装 | Alpine Linux | 宿主机使用 OpenRC，当前 Agent 安装和事务执行依赖 systemd |
-| 安全降级 | 其他或无法识别的 Linux | 只返回明确的不可写原因，不猜测软件包命令 |
+| 安全降级 | 其他或无法识别的 systemd Linux | 检测本机 APT/dpkg、DNF/DNF5/YUM、APK、Pacman 或 Zypper；没有受支持工具时返回明确的只读原因 |
 
 “已实现”表示代码路径和固定命令矩阵通过自动化测试，不等于已经完成对应发行版
 的真实服务器验收。进入正式支持层级前，必须在干净实例上完成安装、更新、清理、
@@ -31,13 +31,13 @@ Rocky 等系统分别制作 Panel 镜像。
 | DNS 写入 | systemd-resolved drop-in | NetworkManager、resolvconf、静态 resolv.conf 暂时只读 |
 | 软件源读取 | APT、DNF/YUM、APK、Pacman、Zypper | 页面展示实际源主机 |
 | 软件源切换 | Debian/Ubuntu APT | 其他系统只读，避免覆盖订阅和第三方仓库 |
-| 系统更新/清理 | APT、DNF/DNF5/YUM、Pacman、Zypper | 固定命令；不接受包名、命令或 Shell |
+| 系统更新/清理 | APT、DNF/DNF5/YUM、APK、Pacman、Zypper | 固定命令；不接受 Web 传入的包名、命令或 Shell |
 | 重装系统 | 全部锁定 | 必须先具备带外控制台和恢复链路 |
 
 ## 部署前置条件
 
 - Linux `amd64` 或 `arm64`。
-- systemd，以及 `systemctl`、`systemd-run`、`journalctl`。
+- systemd，以及 `systemctl`、`systemd-run`；`journalctl` 缺失时只跳过可选日志清理。
 - Docker Engine 与 Docker Compose v2。
 - 本机 Docker Socket；安装器拒绝远程 `DOCKER_HOST` 或其他 Docker Context。
 - 能运行对应架构的无 CGO Agent 二进制。
@@ -50,7 +50,8 @@ Rocky 等系统分别制作 Panel 镜像。
 | --- | --- | --- | --- |
 | Debian/Ubuntu | dpkg 恢复、APT update、full-upgrade | APT clean/autoclean | APT autoremove + 缓存 + journal |
 | RHEL/Fedora | DNF/DNF5/YUM update | clean all | autoremove + 缓存重建 + journal |
-| Arch/Manjaro | `pacman -Syu --noconfirm` | `pacman -Scc --noconfirm` | 缓存 + journal，不根据动态包名删除软件包 |
+| Alpine/APK | APK update、upgrade | `apk cache clean` | APK 缓存；标准 Alpine/OpenRC 仍不属于正式安装目标 |
+| Arch/Manjaro | `pacman -Syu --noconfirm` | `pacman -Scc --noconfirm` | 校验孤立包名后移除 + 缓存 + journal |
 | openSUSE/SLES | Zypper refresh、update | Zypper clean | 缓存刷新 + journal |
 
 所有维护任务均由固定参数的一次性 systemd 服务执行，不自动重启宿主机，不清理

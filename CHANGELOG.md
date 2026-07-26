@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-07-27
+
+### Fixed
+
+- 系统更新、系统清理和 Swap 后台任务改为使用当前运行中的 Agent 绝对路径，兼容
+  `/usr/local/libexec/kejilion-agent` 标准安装与
+  `/home/docker/kpanel/bin/kejilion-agent` 应用市场安装，不再错误回退到不存在的
+  FHS 路径。
+- 软件源位于自定义目录或缺少 `journalctl` 时不再误判整个维护功能不可用；原生包
+  管理器负责校验其仓库，标准清理会安全跳过不可用的可选日志步骤。
+
+### Changed
+
+- 更新与清理覆盖 APT/dpkg、DNF/DNF5/YUM、APK、Pacman 和 Zypper；无法识别的
+  Linux 发行版可按本机唯一受支持的原生包管理器安全降级。
+- Pacman 标准清理对 `pacman -Qdtq` 返回的孤立包名进行数量、格式和重复校验后，
+  以固定参数直接调用 `pacman -Rns`，不经过 Shell。
+
+### Security
+
+- 保持 KPanel 安全清理边界：不删除软件包锁、完整日志目录、`/tmp`、网站数据或
+  Docker 资源；journal 默认保留 7 天并限制为 500 MiB。
+
 ## [0.16.1] - 2026-07-27
 
 ### Added

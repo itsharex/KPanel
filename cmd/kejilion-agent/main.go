@@ -108,6 +108,7 @@ func run(arguments []string) error {
 		WebRoot: *webRoot, StateDir: *stateDir, System: systemCollector,
 		SystemManager: systemmanage.NewManager(systemmanage.Config{
 			Enabled: *enableSystemWrites, StateDir: filepath.Join(*stateDir, "system"),
+			Executable: executable,
 		}),
 		Sites: sites.NewDiscoverer(*webRoot), Docker: dockerClient, AppMarket: appMarket,
 	})
