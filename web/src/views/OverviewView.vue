@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, type Component } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
 import {
   Activity,
   ArrowLeftRight,
@@ -36,6 +36,7 @@ import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import MetricCard from '@/components/overview/MetricCard.vue'
 import { ApiError, api } from '@/lib/api'
 import { clampPercent, formatBytes, formatDateTime, formatDuration, formatPercent } from '@/lib/format'
+import { customPreset, detectDNSPreset, dnsPresets, parseDNSServers, timezonePresets } from '@/lib/systemPresets'
 import { usePanelState } from '@/stores/panel'
 import { useToast } from '@/stores/toast'
 import type { SystemActionInput, SystemOverview } from '@/types/api'
@@ -68,13 +69,22 @@ const actionForm = reactive({
   hostname: '',
   port: 2222,
   dns: '',
+  dnsPreset: customPreset,
   timezone: 'Asia/Shanghai',
+  timezonePreset: 'Asia/Shanghai',
   swapSizeMiB: 2048,
   mirrorPreset: 'official' as 'official' | 'aliyun',
   preference: 'ipv4' as 'ipv4' | 'system_default',
   profile: 'balanced' as 'balanced' | 'web' | 'off',
   bbrEnabled: true,
 })
+
+watch(
+  () => actionForm.dns,
+  (value) => {
+    actionForm.dnsPreset = detectDNSPreset(value)
+  },
+)
 
 const loadPercent = computed(() => {
   const cores = Number(data.value?.load.unit || 1)
@@ -236,7 +246,11 @@ function openTool(tool: ManagementTool): void {
   actionForm.hostname = data.value?.hostname || ''
   actionForm.port = nextSSHPort(management?.ssh.ports || [])
   actionForm.dns = (management?.dns.servers || []).filter((server) => server !== '127.0.0.53').join('\n')
+  actionForm.dnsPreset = detectDNSPreset(actionForm.dns)
   actionForm.timezone = management?.timezone || 'Asia/Shanghai'
+  actionForm.timezonePreset = timezonePresets.some((preset) => preset.value === actionForm.timezone)
+    ? actionForm.timezone
+    : customPreset
   actionForm.swapSizeMiB = management?.swap.totalBytes
     ? Math.max(256, Math.round(management.swap.totalBytes / 1024 / 1024))
     : 2048
@@ -259,6 +273,15 @@ function nextSSHPort(ports: number[]): number {
   return 2222
 }
 
+function applyDNSPreset(): void {
+  const preset = dnsPresets.find((item) => item.value === actionForm.dnsPreset)
+  if (preset) actionForm.dns = preset.servers.join('\n')
+}
+
+function applyTimezonePreset(): void {
+  if (actionForm.timezonePreset !== customPreset) actionForm.timezone = actionForm.timezonePreset
+}
+
 function closeTool(): void {
   if (actionRunning.value) return
   selectedTool.value = undefined
@@ -275,10 +298,7 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
     case 'dns':
       return {
         action: 'dns',
-        servers: actionForm.dns
-          .split(/[\s,，;；]+/)
-          .map((item) => item.trim())
-          .filter(Boolean),
+        servers: parseDNSServers(actionForm.dns),
       }
     case 'timezone':
       return { action: 'timezone', timezone: actionForm.timezone.trim() }
@@ -645,23 +665,45 @@ onBeforeUnmount(() => {
             <input v-model.number="actionForm.port" type="number" min="1" max="65535" inputmode="numeric" />
             <small>新端口监听成功前不会移除任何现有端口。</small>
           </label>
-          <label v-else-if="selectedTool.id === 'dns'" class="field">
-            <span>DNS 服务器</span>
-            <textarea v-model.trim="actionForm.dns" rows="4" placeholder="1.1.1.1&#10;8.8.8.8"></textarea>
-            <small>每行一个 IP，最多 4 个；通过 systemd-resolved 原生配置应用。</small>
-          </label>
-          <label v-else-if="selectedTool.id === 'timezone'" class="field">
-            <span>IANA 时区</span>
-            <input v-model.trim="actionForm.timezone" list="kpanel-timezones" maxlength="128" autocomplete="off" />
-            <datalist id="kpanel-timezones">
-              <option value="Asia/Shanghai" />
-              <option value="Asia/Hong_Kong" />
-              <option value="Asia/Tokyo" />
-              <option value="Europe/London" />
-              <option value="America/New_York" />
-              <option value="Etc/UTC" />
-            </datalist>
-          </label>
+          <div v-else-if="selectedTool.id === 'dns'" class="form-stack compact">
+            <label class="field">
+              <span>常用 DNS 方案</span>
+              <select v-model="actionForm.dnsPreset" @change="applyDNSPreset">
+                <option :value="customPreset">自定义 DNS 地址</option>
+                <option v-for="preset in dnsPresets" :key="preset.value" :value="preset.value">
+                  {{ preset.label }}
+                </option>
+              </select>
+              <small>选择预设后会自动填充地址，执行前仍可检查或调整。</small>
+            </label>
+            <label class="field">
+              <span>DNS 服务器</span>
+              <textarea v-model.trim="actionForm.dns" rows="4" placeholder="1.1.1.1&#10;8.8.8.8"></textarea>
+              <small>每行一个 IP，最多 4 个；通过 systemd-resolved 原生配置应用。</small>
+            </label>
+          </div>
+          <div v-else-if="selectedTool.id === 'timezone'" class="form-stack compact">
+            <label class="field">
+              <span>常用城市与时区</span>
+              <select v-model="actionForm.timezonePreset" @change="applyTimezonePreset">
+                <option v-for="preset in timezonePresets" :key="preset.value" :value="preset.value">
+                  {{ preset.label }}
+                </option>
+                <option :value="customPreset">其他 IANA 时区…</option>
+              </select>
+              <small>选择城市后自动使用对应 IANA 时区，夏令时由系统规则处理。</small>
+            </label>
+            <label v-if="actionForm.timezonePreset === customPreset" class="field">
+              <span>自定义 IANA 时区</span>
+              <input
+                v-model.trim="actionForm.timezone"
+                maxlength="128"
+                autocomplete="off"
+                placeholder="例如 Europe/Amsterdam"
+              />
+              <small>必须是服务器 `/usr/share/zoneinfo` 中存在的时区名称。</small>
+            </label>
+          </div>
           <label v-else-if="selectedTool.id === 'swap'" class="field">
             <span>KPanel 专属 Swap</span>
             <select v-model.number="actionForm.swapSizeMiB">

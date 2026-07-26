@@ -531,6 +531,10 @@ textarea:focus-visible,
   gap: 18px;
 }
 
+.form-stack.compact {
+  gap: 14px;
+}
+
 .field {
   display: grid;
   gap: 7px;
