@@ -68,6 +68,11 @@ func run(arguments []string) error {
 		envBool("KEJILION_SYSTEM_WRITES_ENABLED", true),
 		"enable typed, audited host system mutations",
 	)
+	enablePublicNetworkLookup := flags.Bool(
+		"public-network-lookup",
+		envBool("KEJILION_PUBLIC_NETWORK_LOOKUP_ENABLED", true),
+		"query fixed IPinfo endpoints for cached public IP, ISP, and location metadata",
+	)
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -81,9 +86,11 @@ func run(arguments []string) error {
 	}
 	dockerClient := dockerx.New(*dockerSocket, *webRoot, *stateDir)
 	dockerClient.ConfigureDaemonAccess(*dockerPIDFile, *allowDockerSocketActivation)
+	systemCollector := systeminfo.NewCollector()
+	systemCollector.PublicNetworkLookupEnabled = *enablePublicNetworkLookup
 	handler, err := agent.NewServer(agent.Config{
 		Token: token, Version: version.Version, ProtocolVersion: version.ProtocolVersion,
-		WebRoot: *webRoot, System: systeminfo.NewCollector(),
+		WebRoot: *webRoot, System: systemCollector,
 		SystemManager: systemmanage.NewManager(systemmanage.Config{
 			Enabled: *enableSystemWrites, StateDir: filepath.Join(*stateDir, "system"),
 		}),

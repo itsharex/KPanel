@@ -54,7 +54,7 @@ if KP_AGENT_VERSION=0.0.1 run_installer >"$TEST_DIR/version.out" 2>&1; then
 	echo "installer accepted a mismatched Agent version" >&2
 	exit 1
 fi
-grep -F 'does not match 0.7.0 v1alpha1' "$TEST_DIR/version.out" >/dev/null
+grep -F 'does not match 0.8.0 v1alpha1' "$TEST_DIR/version.out" >/dev/null
 
 if PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
 	sh "$PROJECT_DIR/deploy/install.sh" \

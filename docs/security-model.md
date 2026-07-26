@@ -18,6 +18,9 @@
   认证及管理操作写入脱敏审计日志。
 - Agent 请求使用独立 Bearer Token，通过文件权限和 Unix Socket 组权限双重限制。
 - 公共 API 不接受 Shell、命令行、绝对目标路径、Docker Exec 或原始 Nginx 配置。
+- `k info` 公网信息只访问 Agent 内置的 IPinfo IPv4/IPv6 HTTPS 端点，不接受
+  用户 URL；使用地址族校验、短超时、响应大小限制、同主机重定向限制和
+  30 分钟缓存。可通过环境变量关闭，查询失败不会阻塞本地主机监控。
 - Docker 资源默认只读；只有归属证据充分的 Kejilion 资源允许生命周期操作。
 - Agent 无法识别宿主机布局、缺少操作前置条件、检测到漂移或验证失败时，
   对应 capability 降级为只读。

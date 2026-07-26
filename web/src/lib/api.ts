@@ -55,7 +55,7 @@ interface RawSystemSummary {
   architecture?: string
   uptimeSeconds: number
   load: { one: number; five: number; fifteen: number }
-  cpu: { model?: string; cores: number; usagePercent: number }
+  cpu: { model?: string; cores: number; frequencyMHz?: number; usagePercent: number }
   memory: {
     totalBytes: number
     availableBytes: number
@@ -77,6 +77,17 @@ interface RawSystemSummary {
     sentBytes: number
     tcpConnections?: number
     udpConnections?: number
+  }
+  publicNetwork?: {
+    ipv4?: string
+    ipv6?: string
+    isp?: string
+    country?: string
+    region?: string
+    city?: string
+    timezone?: string
+    source?: string
+    updatedAt?: string
   }
   management?: {
     ssh?: { ports?: number[]; source?: string }
@@ -607,7 +618,14 @@ export const api = {
         architecture: system.architecture,
         uptimeSeconds: system.uptimeSeconds,
         observedAt: system.collectedAt,
-        cpu: { value: system.cpu.usagePercent, percent: system.cpu.usagePercent, unit: '%' },
+        cpu: {
+          value: system.cpu.usagePercent,
+          percent: system.cpu.usagePercent,
+          unit: '%',
+          model: system.cpu.model,
+          cores: system.cpu.cores,
+          frequencyMHz: system.cpu.frequencyMHz,
+        },
         memory: {
           value: system.memory.usedBytes,
           total: system.memory.totalBytes,
@@ -620,12 +638,31 @@ export const api = {
           percent: rootDisk?.usagePercent,
           unit: 'bytes',
         },
-        load: { value: system.load.one, unit: String(system.cpu.cores) },
+        load: {
+          value: system.load.one,
+          unit: String(system.cpu.cores),
+          one: system.load.one,
+          five: system.load.five,
+          fifteen: system.load.fifteen,
+        },
         network: {
           receiveBytesPerSecond: rates.receive,
           transmitBytesPerSecond: rates.transmit,
           totalReceivedBytes: system.network.receivedBytes,
           totalTransmittedBytes: system.network.sentBytes,
+          tcpConnections: system.network.tcpConnections || 0,
+          udpConnections: system.network.udpConnections || 0,
+        },
+        publicNetwork: {
+          ipv4: system.publicNetwork?.ipv4,
+          ipv6: system.publicNetwork?.ipv6,
+          isp: system.publicNetwork?.isp,
+          country: system.publicNetwork?.country,
+          region: system.publicNetwork?.region,
+          city: system.publicNetwork?.city,
+          timezone: system.publicNetwork?.timezone,
+          source: system.publicNetwork?.source,
+          updatedAt: system.publicNetwork?.updatedAt,
         },
         management: {
           ssh: {

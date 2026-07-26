@@ -46,6 +46,7 @@ type SystemSummary struct {
 	Memory        MemorySummary           `json:"memory"`
 	Disks         []DiskSummary           `json:"disks"`
 	Network       NetworkSummary          `json:"network"`
+	PublicNetwork PublicNetworkSummary    `json:"publicNetwork"`
 	Management    SystemManagementSummary `json:"management"`
 	CollectedAt   time.Time               `json:"collectedAt"`
 }
@@ -152,6 +153,7 @@ type LoadSummary struct {
 type CPUSummary struct {
 	Model        string  `json:"model,omitempty"`
 	Cores        int     `json:"cores"`
+	FrequencyMHz float64 `json:"frequencyMHz,omitempty"`
 	UsagePercent float64 `json:"usagePercent"`
 }
 
@@ -178,6 +180,18 @@ type NetworkSummary struct {
 	SentBytes      uint64 `json:"sentBytes"`
 	TCPConnections int    `json:"tcpConnections"`
 	UDPConnections int    `json:"udpConnections"`
+}
+
+type PublicNetworkSummary struct {
+	IPv4      string     `json:"ipv4,omitempty"`
+	IPv6      string     `json:"ipv6,omitempty"`
+	ISP       string     `json:"isp,omitempty"`
+	Country   string     `json:"country,omitempty"`
+	Region    string     `json:"region,omitempty"`
+	City      string     `json:"city,omitempty"`
+	Timezone  string     `json:"timezone,omitempty"`
+	Source    string     `json:"source,omitempty"`
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
 }
 
 type Origin string

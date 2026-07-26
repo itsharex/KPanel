@@ -82,6 +82,20 @@ export interface NetworkSummary {
   transmitBytesPerSecond: number
   totalReceivedBytes?: number
   totalTransmittedBytes?: number
+  tcpConnections: number
+  udpConnections: number
+}
+
+export interface PublicNetworkSummary {
+  ipv4?: string
+  ipv6?: string
+  isp?: string
+  country?: string
+  region?: string
+  city?: string
+  timezone?: string
+  source?: string
+  updatedAt?: string
 }
 
 export interface CapabilityState {
@@ -153,11 +167,20 @@ export interface SystemOverview {
   architecture?: string
   uptimeSeconds: number
   observedAt: string
-  cpu: MetricValue
+  cpu: MetricValue & {
+    model?: string
+    cores: number
+    frequencyMHz?: number
+  }
   memory: MetricValue
   disk: MetricValue
-  load: MetricValue
+  load: MetricValue & {
+    one: number
+    five: number
+    fifteen: number
+  }
   network: NetworkSummary
+  publicNetwork: PublicNetworkSummary
   management: SystemManagement
   services: ServiceStatus[]
   agent: AgentStatus

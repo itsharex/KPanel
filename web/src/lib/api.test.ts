@@ -221,7 +221,7 @@ describe('API client', () => {
       architecture: 'amd64',
       uptimeSeconds: 120,
       load: { one: 0.2, five: 0.1, fifteen: 0.1 },
-      cpu: { cores: 2, usagePercent: 5 },
+      cpu: { model: 'AMD EPYC Test CPU', cores: 2, frequencyMHz: 2450.5, usagePercent: 5 },
       memory: {
         totalBytes: 1024,
         availableBytes: 512,
@@ -231,7 +231,18 @@ describe('API client', () => {
         swapUsedBytes: 64,
       },
       disks: [],
-      network: { receivedBytes: 100, sentBytes: 200 },
+      network: { receivedBytes: 100, sentBytes: 200, tcpConnections: 12, udpConnections: 3 },
+      publicNetwork: {
+        ipv4: '203.0.113.8',
+        ipv6: '2001:db8::8',
+        isp: 'AS64500 Example Network',
+        country: 'CN',
+        region: 'Shanghai',
+        city: 'Shanghai',
+        timezone: 'Asia/Shanghai',
+        source: 'ipinfo.io',
+        updatedAt: collectedAt,
+      },
       collectedAt,
     }
     const fetchMock = vi
@@ -274,6 +285,21 @@ describe('API client', () => {
       ipPreference: 'unknown',
       bbr: { supported: false, enabled: false, available: [] },
       capabilities: { 'system.read': { enabled: true } },
+    })
+    expect(overview.cpu).toMatchObject({
+      model: 'AMD EPYC Test CPU',
+      cores: 2,
+      frequencyMHz: 2450.5,
+    })
+    expect(overview.load).toMatchObject({ one: 0.2, five: 0.1, fifteen: 0.1 })
+    expect(overview.network).toMatchObject({ tcpConnections: 12, udpConnections: 3 })
+    expect(overview.publicNetwork).toMatchObject({
+      ipv4: '203.0.113.8',
+      ipv6: '2001:db8::8',
+      isp: 'AS64500 Example Network',
+      country: 'CN',
+      city: 'Shanghai',
+      source: 'ipinfo.io',
     })
   })
 

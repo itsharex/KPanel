@@ -1480,6 +1480,12 @@ textarea:focus-visible,
   font-weight: 620;
 }
 
+.detail-list__mono {
+  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px !important;
+}
+
 .network-summary {
   display: grid;
   gap: 10px;
@@ -1512,6 +1518,14 @@ textarea:focus-visible,
 .resource-summary {
   display: grid;
   gap: 8px;
+}
+
+.resource-summary--horizontal {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.panel-card--resource-overview .panel-card__header {
+  margin-bottom: 14px;
 }
 
 .resource-summary__item {
@@ -1552,6 +1566,15 @@ textarea:focus-visible,
   color: var(--muted);
   font-size: 10px;
   font-style: normal;
+}
+
+.k-info-note {
+  padding-top: 12px;
+  margin: 14px 0 0;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
 }
 
 .service-grid {
@@ -3029,6 +3052,7 @@ div.resource-name {
 
   .detail-list--grid,
   .network-summary,
+  .resource-summary--horizontal,
   .service-grid,
   .system-tool-grid,
   .summary-strip,

@@ -10,27 +10,40 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
 
-// Collector reads Linux kernel pseudo-files directly. It never invokes a shell.
+// Collector reads Linux kernel pseudo-files directly and can optionally perform
+// one fixed, cached public-network identity lookup. It never invokes a shell.
 type Collector struct {
-	ProcRoot          string
-	EtcRoot           string
-	SwapPath          string
-	LegacySwapPath    string
-	Now               func() time.Time
-	CPUSampleInterval time.Duration
+	ProcRoot                   string
+	SysRoot                    string
+	EtcRoot                    string
+	SwapPath                   string
+	LegacySwapPath             string
+	Now                        func() time.Time
+	CPUSampleInterval          time.Duration
+	PublicNetworkLookupEnabled bool
+	PublicNetworkLookup        func(context.Context) (contract.PublicNetworkSummary, error)
+	PublicNetworkCacheTTL      time.Duration
+
+	publicNetworkMu      sync.Mutex
+	publicNetworkCache   contract.PublicNetworkSummary
+	publicNetworkExpires time.Time
 }
 
 func NewCollector() *Collector {
 	return &Collector{
-		ProcRoot: "/proc", EtcRoot: "/etc",
+		ProcRoot: "/proc", SysRoot: "/sys", EtcRoot: "/etc",
 		SwapPath: "/swapfile", LegacySwapPath: "/var/lib/kejilion-panel/system/swapfile",
-		Now:               time.Now,
-		CPUSampleInterval: 150 * time.Millisecond,
+		Now:                        time.Now,
+		CPUSampleInterval:          150 * time.Millisecond,
+		PublicNetworkLookupEnabled: true,
+		PublicNetworkLookup:        lookupPublicNetwork,
+		PublicNetworkCacheTTL:      30 * time.Minute,
 	}
 }
 
@@ -41,6 +54,9 @@ func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error)
 	if c.EtcRoot == "" {
 		c.EtcRoot = "/etc"
 	}
+	if c.SysRoot == "" {
+		c.SysRoot = "/sys"
+	}
 	if c.SwapPath == "" {
 		c.SwapPath = "/swapfile"
 	}
@@ -49,6 +65,9 @@ func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error)
 	}
 	if c.Now == nil {
 		c.Now = time.Now
+	}
+	if c.PublicNetworkCacheTTL <= 0 {
+		c.PublicNetworkCacheTTL = 30 * time.Minute
 	}
 
 	result := contract.SystemSummary{
@@ -74,6 +93,9 @@ func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error)
 	}
 	if err := c.readNetwork(&result.Network); err != nil {
 		errs = append(errs, err)
+	}
+	if c.PublicNetworkLookupEnabled {
+		result.PublicNetwork = c.readPublicNetwork(ctx)
 	}
 	result.Disks = c.readDisks()
 	c.readManagement(&result.Management)
@@ -152,10 +174,29 @@ func (c *Collector) readCPU(ctx context.Context, out *contract.CPUSummary) error
 			if out.Model == "" {
 				out.Model = strings.TrimSpace(value)
 			}
+		case "cpu MHz":
+			if out.FrequencyMHz == 0 {
+				out.FrequencyMHz, _ = strconv.ParseFloat(strings.TrimSpace(value), 64)
+			}
 		}
 	}
 	if out.Cores == 0 {
 		out.Cores = runtime.NumCPU()
+	}
+	if out.FrequencyMHz == 0 {
+		frequency := strings.TrimSpace(readFileLimited(filepath.Join(
+			c.SysRoot,
+			"devices",
+			"system",
+			"cpu",
+			"cpu0",
+			"cpufreq",
+			"scaling_cur_freq",
+		)))
+		kHz, _ := strconv.ParseFloat(frequency, 64)
+		if kHz > 0 {
+			out.FrequencyMHz = kHz / 1000
+		}
 	}
 	return nil
 }

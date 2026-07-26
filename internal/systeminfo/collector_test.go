@@ -25,11 +25,20 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	if got.CPU.Cores != 2 || got.CPU.UsagePercent != 0 {
 		t.Fatalf("unexpected CPU: %#v", got.CPU)
 	}
+	if got.CPU.Model != "Fixture CPU" || got.CPU.FrequencyMHz != 2400 {
+		t.Fatalf("unexpected CPU identity: %#v", got.CPU)
+	}
+	if got.Load.One != 0.1 || got.Load.Five != 0.2 || got.Load.Fifteen != 0.3 {
+		t.Fatalf("unexpected load averages: %#v", got.Load)
+	}
 	if got.Memory.TotalBytes != 8*1024*1024 || got.Memory.UsedBytes != 6*1024*1024 {
 		t.Fatalf("unexpected memory: %#v", got.Memory)
 	}
 	if got.Network.ReceivedBytes != 3000 || got.Network.SentBytes != 7000 {
 		t.Fatalf("unexpected network: %#v", got.Network)
+	}
+	if got.Network.TCPConnections != 1 {
+		t.Fatalf("unexpected connection counts: %#v", got.Network)
 	}
 	if got.UptimeSeconds != 12345 {
 		t.Fatalf("unexpected uptime: %d", got.UptimeSeconds)

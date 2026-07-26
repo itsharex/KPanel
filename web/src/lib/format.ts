@@ -52,6 +52,27 @@ export function formatDateTime(value?: string): string {
   return Number.isNaN(date.getTime()) ? '—' : dateFormatter.format(date)
 }
 
+export function formatHostDateTime(value?: string, timezone?: string): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
+      timeZone: timezone || 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZoneName: 'short',
+    }).format(date)
+  } catch {
+    return `${dateFormatter.format(date)} ${timezone || 'UTC'}`
+  }
+}
+
 export function relativeTime(value?: string, now = Date.now()): string {
   if (!value) return '从未'
   const date = new Date(value)

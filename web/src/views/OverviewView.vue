@@ -35,7 +35,7 @@ import LoadingState from '@/components/feedback/LoadingState.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import MetricCard from '@/components/overview/MetricCard.vue'
 import { ApiError, api } from '@/lib/api'
-import { clampPercent, formatBytes, formatDateTime, formatDuration, formatPercent } from '@/lib/format'
+import { clampPercent, formatBytes, formatDateTime, formatDuration, formatHostDateTime, formatPercent } from '@/lib/format'
 import { customPreset, detectDNSPreset, dnsPresets, parseDNSServers, timezonePresets } from '@/lib/systemPresets'
 import { usePanelState } from '@/stores/panel'
 import { useToast } from '@/stores/toast'
@@ -102,6 +102,26 @@ const agentLabel = computed(() => {
   if (agent.readOnly) return { status: 'read_only', label: '只读模式' }
   return { status: 'connected', label: '运行正常' }
 })
+
+const cpuFrequencyLabel = computed(() => {
+  const frequencyMHz = data.value?.cpu.frequencyMHz
+  if (!frequencyMHz || !Number.isFinite(frequencyMHz)) return '未识别'
+  return frequencyMHz >= 1000 ? `${(frequencyMHz / 1000).toFixed(2)} GHz` : `${frequencyMHz.toFixed(0)} MHz`
+})
+
+const publicLocation = computed(() => {
+  const network = data.value?.publicNetwork
+  return [network?.country, network?.region, network?.city].filter(Boolean).join(' · ') || '未获取'
+})
+
+const networkAlgorithm = computed(() => {
+  const bbr = data.value?.management.bbr
+  return [bbr?.congestionControl, bbr?.defaultQDisc].filter(Boolean).join(' · ') || '未识别'
+})
+
+const hostObservedTime = computed(() =>
+  formatHostDateTime(data.value?.observedAt, data.value?.management.timezone),
+)
 
 const basicSettings = computed<ManagementTool[]>(() => {
   if (!data.value) return []
@@ -539,14 +559,14 @@ onBeforeUnmount(() => {
               <span class="panel-card__icon"><Server :size="18" /></span>
               <div>
                 <h2>{{ data.hostname || '未命名主机' }}</h2>
-                <p>系统信息</p>
+                <p>对齐 kejilion.sh 的 k info 主机事实</p>
               </div>
             </div>
             <StatusBadge :status="agentLabel.status" :label="agentLabel.label" />
           </header>
 
           <dl class="detail-list detail-list--grid">
-            <div>
+            <div class="detail-list__wide">
               <dt>操作系统</dt>
               <dd>{{ data.os || '—' }}</dd>
             </div>
@@ -557,6 +577,22 @@ onBeforeUnmount(() => {
             <div>
               <dt>架构</dt>
               <dd>{{ data.architecture || '—' }}</dd>
+            </div>
+            <div class="detail-list__wide">
+              <dt>CPU 型号</dt>
+              <dd>{{ data.cpu.model || '未识别' }}</dd>
+            </div>
+            <div>
+              <dt>CPU 规格</dt>
+              <dd>{{ data.cpu.cores }} 核 · {{ cpuFrequencyLabel }}</dd>
+            </div>
+            <div>
+              <dt>系统负载（1 / 5 / 15 分钟）</dt>
+              <dd>{{ data.load.one.toFixed(2) }} / {{ data.load.five.toFixed(2) }} / {{ data.load.fifteen.toFixed(2) }}</dd>
+            </div>
+            <div>
+              <dt>宿主机时间</dt>
+              <dd>{{ hostObservedTime }}</dd>
             </div>
             <div>
               <dt>运行时间</dt>
@@ -579,42 +615,101 @@ onBeforeUnmount(() => {
         <section class="panel-card">
           <header class="panel-card__header">
             <div>
-              <span class="panel-card__icon panel-card__icon--blue"><Activity :size="18" /></span>
+              <span class="panel-card__icon panel-card__icon--blue"><Globe2 :size="18" /></span>
               <div>
-                <h2>资源与一致性</h2>
-                <p>当前发现结果</p>
+                <h2>网络与位置</h2>
+                <p>宿主机出口网络与解析状态</p>
               </div>
             </div>
+            <span class="management-read-state" :class="{ 'is-warning': !data.publicNetwork.source }">
+              <ShieldCheck v-if="data.publicNetwork.source" :size="14" />
+              <CircleAlert v-else :size="14" />
+              {{ data.publicNetwork.source ? '外网已识别' : '外网查询不可用' }}
+            </span>
           </header>
 
-          <div class="resource-summary">
-            <RouterLink to="/sites" class="resource-summary__item">
-              <span class="resource-summary__icon resource-summary__icon--brand"><Globe2 :size="20" /></span>
-              <span>
-                <strong>{{ data.sites?.total ?? '—' }}</strong>
-                <small>已发现网站</small>
-              </span>
-              <em v-if="data.sites">{{ data.sites.drifted }} 个待核对</em>
-            </RouterLink>
-            <RouterLink to="/docker" class="resource-summary__item">
-              <span class="resource-summary__icon resource-summary__icon--blue"><Box :size="20" /></span>
-              <span>
-                <strong>{{ data.containers?.total ?? '—' }}</strong>
-                <small>Docker 容器</small>
-              </span>
-              <em v-if="data.containers">{{ data.containers.running }} 个运行中</em>
-            </RouterLink>
-            <RouterLink to="/audit" class="resource-summary__item">
-              <span class="resource-summary__icon resource-summary__icon--violet"><ShieldCheck :size="20" /></span>
-              <span>
-                <strong>完整</strong>
-                <small>操作审计</small>
-              </span>
-              <em>查看记录</em>
-            </RouterLink>
-          </div>
+          <dl class="detail-list detail-list--grid">
+            <div class="detail-list__wide">
+              <dt>运营商</dt>
+              <dd>{{ data.publicNetwork.isp || '未获取' }}</dd>
+            </div>
+            <div>
+              <dt>公网 IPv4</dt>
+              <dd class="detail-list__mono">{{ data.publicNetwork.ipv4 || '未获取' }}</dd>
+            </div>
+            <div>
+              <dt>公网 IPv6</dt>
+              <dd class="detail-list__mono">{{ data.publicNetwork.ipv6 || '未获取' }}</dd>
+            </div>
+            <div class="detail-list__wide">
+              <dt>地理位置</dt>
+              <dd>{{ publicLocation }}</dd>
+            </div>
+            <div class="detail-list__wide">
+              <dt>DNS 地址</dt>
+              <dd class="detail-list__mono">
+                {{ data.management.dns.servers.length ? data.management.dns.servers.join(' · ') : '未识别' }}
+              </dd>
+            </div>
+            <div>
+              <dt>网络算法</dt>
+              <dd>{{ networkAlgorithm }}</dd>
+            </div>
+            <div>
+              <dt>TCP / UDP 连接数</dt>
+              <dd>{{ data.network.tcpConnections }} / {{ data.network.udpConnections }}</dd>
+            </div>
+          </dl>
+
+          <p class="k-info-note">
+            <template v-if="data.publicNetwork.source">
+              {{ data.publicNetwork.source }} · 30 分钟缓存 · 更新于 {{ formatDateTime(data.publicNetwork.updatedAt) }}
+            </template>
+            <template v-else>
+              其他主机信息不依赖外网查询；可在 Agent 环境变量中关闭该项。
+            </template>
+          </p>
         </section>
       </div>
+
+      <section class="panel-card panel-card--resource-overview">
+        <header class="panel-card__header">
+          <div>
+            <span class="panel-card__icon panel-card__icon--violet"><Activity :size="18" /></span>
+            <div>
+              <h2>资源与一致性</h2>
+              <p>网站、Docker 与审计事实来源</p>
+            </div>
+          </div>
+        </header>
+
+        <div class="resource-summary resource-summary--horizontal">
+          <RouterLink to="/sites" class="resource-summary__item">
+            <span class="resource-summary__icon resource-summary__icon--brand"><Globe2 :size="20" /></span>
+            <span>
+              <strong>{{ data.sites?.total ?? '—' }}</strong>
+              <small>已发现网站</small>
+            </span>
+            <em v-if="data.sites">{{ data.sites.drifted }} 个待核对</em>
+          </RouterLink>
+          <RouterLink to="/docker" class="resource-summary__item">
+            <span class="resource-summary__icon resource-summary__icon--blue"><Box :size="20" /></span>
+            <span>
+              <strong>{{ data.containers?.total ?? '—' }}</strong>
+              <small>Docker 容器</small>
+            </span>
+            <em v-if="data.containers">{{ data.containers.running }} 个运行中</em>
+          </RouterLink>
+          <RouterLink to="/audit" class="resource-summary__item">
+            <span class="resource-summary__icon resource-summary__icon--violet"><ShieldCheck :size="20" /></span>
+            <span>
+              <strong>完整</strong>
+              <small>操作审计</small>
+            </span>
+            <em>查看记录</em>
+          </RouterLink>
+        </div>
+      </section>
 
       <div class="management-layout">
         <section class="panel-card panel-card--wide">
