@@ -139,6 +139,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.siteOperation(w, r, requestID)
 	case r.URL.Path == "/v1/apps":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.appList)
+	case r.URL.Path == "/v1/app-jobs":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.appJobList)
+	case strings.HasPrefix(r.URL.Path, "/v1/app-jobs/"):
+		s.requireMethod(w, r, requestID, http.MethodGet, s.appJob)
 	case strings.HasPrefix(r.URL.Path, "/v1/apps/"):
 		s.appOperation(w, r, requestID)
 	case r.URL.Path == "/v1/docker/summary":
@@ -419,6 +423,30 @@ func (s *Server) appList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, inventory)
 }
 
+func (s *Server) appJobList(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_app_job_request", "应用任务 URL 无效", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, contract.PageResult[appmarket.AppJob]{
+		Items: s.appMarket.AppJobs(),
+	})
+}
+
+func (s *Server) appJob(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_app_job_request", "应用任务 URL 无效", "")
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/v1/app-jobs/")
+	job, err := s.appMarket.AppJob(id)
+	if err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusNotFound, "app_job_not_found", "应用任务不存在", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
 func (s *Server) appOperation(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -449,12 +477,12 @@ func (s *Server) appOperation(w http.ResponseWriter, r *http.Request, requestID 
 			writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
 			return
 		}
-		result, err := s.appMarket.Install(ctx, id, input)
+		result, err := s.appMarket.StartInstall(ctx, id, input)
 		if err != nil {
 			s.writeAppError(w, requestID, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, result)
+		writeJSON(w, http.StatusAccepted, result)
 		return
 	}
 
@@ -503,7 +531,8 @@ func (s *Server) writeAppError(w http.ResponseWriter, requestID string, err erro
 		status, code, title = http.StatusForbidden, "app_action_forbidden", "该应用操作不允许"
 	case errors.Is(err, dockerx.ErrVersionRequired):
 		status, code, title = http.StatusBadRequest, "resource_version_required", "必须提供资源版本"
-	case errors.Is(err, dockerx.ErrResourceConflict), errors.Is(err, dockerx.ErrAppConflict):
+	case errors.Is(err, appmarket.ErrConflict),
+		errors.Is(err, dockerx.ErrResourceConflict), errors.Is(err, dockerx.ErrAppConflict):
 		status, code, title = http.StatusConflict, "resource_conflict", "应用资源已发生变化"
 	case errors.Is(err, appmarket.ErrRolledBack), errors.Is(err, dockerx.ErrAppRolledBack):
 		status, code, title = http.StatusUnprocessableEntity, "app_action_rolled_back", "应用操作失败并已回滚"

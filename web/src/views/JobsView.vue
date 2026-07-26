@@ -57,6 +57,7 @@ function actionLabel(action: string): string {
     'docker.start': '启动容器',
     'docker.stop': '停止容器',
     'docker.restart': '重启容器',
+    'app.install': '安装应用',
   }
   return labels[action] || action
 }

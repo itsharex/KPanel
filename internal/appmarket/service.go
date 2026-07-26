@@ -54,6 +54,7 @@ type Runtime struct {
 type Summary struct {
 	App
 	DefaultPort  int                   `json:"defaultPort,omitempty"`
+	Installer    string                `json:"installer"`
 	Runtime      Runtime               `json:"runtime"`
 	Capabilities map[string]Capability `json:"capabilities"`
 }
@@ -110,6 +111,10 @@ type Service struct {
 	catalogRefreshedAt time.Time
 	catalogWarning     string
 	actions            sync.Mutex
+	jobs               *appJobRegistry
+	jobExecutable      string
+	jobRunner          jobCommandRunner
+	scriptFinder       func() (string, error)
 }
 
 func New(docker Docker, appRoot string) (*Service, error) {
@@ -134,7 +139,7 @@ func newService(docker Docker, appRoot string, fetcher catalogFetcher) (*Service
 	return &Service{
 		catalog: catalog, legacy: legacy, scriptSHA256: scriptSHA256,
 		docker: docker, appRoot: filepath.Clean(appRoot), now: time.Now,
-		fetchCatalog: fetcher,
+		fetchCatalog: fetcher, scriptFinder: findKejilionScript,
 	}, nil
 }
 
@@ -160,16 +165,18 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 		refreshedAt := catalogState.RefreshedAt
 		result.CatalogRefreshedAt = &refreshedAt
 	}
+	scriptInstallAvailable := s.scriptInstallAvailable()
 	for _, app := range catalogState.Catalog.Apps {
 		legacy := s.legacy[app.Num]
 		item := Summary{
 			App:         app,
 			DefaultPort: legacy.DefaultPort,
+			Installer:   installerKind(app, legacy, scriptInstallAvailable),
 			Runtime: Runtime{
 				State: "not_installed", AccessMode: "not_applicable",
 				UpdateStatus: "not_installed", Ports: []contract.PortBinding{}, DetectedBy: []string{},
 			},
-			Capabilities: defaultCapabilities(app),
+			Capabilities: defaultCapabilities(app, legacy, scriptInstallAvailable),
 		}
 		container, hasContainer := byName[legacy.Container]
 		marker := markers[strconv.Itoa(app.Num)] || markers[app.Token]
@@ -203,6 +210,16 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 		result.Items = append(result.Items, item)
 	}
 	return result, nil
+}
+
+func installerKind(app App, legacy LegacyApp, scriptInstallAvailable bool) string {
+	if _, ok := declarativeSpecs[app.Token]; ok {
+		return "declarative"
+	}
+	if scriptInstallAvailable && (app.Source == "thirdparty" || legacy.UsesDockerApp) {
+		return "kejilion"
+	}
+	return "guided"
 }
 
 func (s *Service) currentCatalog(ctx context.Context) catalogSnapshot {
@@ -264,11 +281,20 @@ func runtimeFromContainer(container contract.ContainerSummary) Runtime {
 	}
 }
 
-func defaultCapabilities(app App) map[string]Capability {
-	reason := "该应用尚未完成 KPanel 声明式安全适配"
+func defaultCapabilities(
+	app App,
+	legacy LegacyApp,
+	scriptInstallAvailable bool,
+) map[string]Capability {
+	reason := "该应用需要专属配置向导，暂不能无人值守安装"
 	install := Capability{Reason: reason}
 	if _, ok := declarativeSpecs[app.Token]; ok {
 		install = Capability{Enabled: true}
+	} else if scriptInstallAvailable &&
+		(app.Source == "thirdparty" || legacy.UsesDockerApp) {
+		install = Capability{Enabled: true}
+	} else if app.Source == "thirdparty" || legacy.UsesDockerApp {
+		install = Capability{Reason: "请先更新 kejilion.sh，再使用后台安装"}
 	}
 	return map[string]Capability{
 		"install":       install,
@@ -704,6 +730,7 @@ var (
 	ErrNotFound       = errors.New("application not found")
 	ErrForbidden      = errors.New("application action is not safely allowed")
 	ErrUnsupported    = errors.New("application action is not supported")
+	ErrConflict       = errors.New("application task conflicts with an active task")
 	ErrRolledBack     = errors.New("application action failed and was rolled back")
 	ErrNeedsAttention = errors.New("application action requires manual attention")
 )

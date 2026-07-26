@@ -1,12 +1,14 @@
 package panel
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/kejilion/kejilion-panel/internal/appmarket"
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/store"
 )
@@ -36,7 +38,49 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	events, _ := s.store.ListAudit(200, "")
 	jobs := jobsFromAudit(events, limit)
+	if response, err := s.agent.Get(r.Context(), "/v1/app-jobs", "", requestID(r)); err == nil &&
+		response.StatusCode == http.StatusOK {
+		var page contract.PageResult[appmarket.AppJob]
+		if json.Unmarshal(response.Body, &page) == nil {
+			jobs = append(jobs, jobsFromAppJobs(page.Items)...)
+			sort.SliceStable(jobs, func(left, right int) bool {
+				return jobs[left].CreatedAt.After(jobs[right].CreatedAt)
+			})
+			if len(jobs) > limit {
+				jobs = jobs[:limit]
+			}
+		}
+	}
 	s.writeJSON(w, http.StatusOK, contract.PageResult[contract.Job]{Items: jobs})
+}
+
+func jobsFromAppJobs(items []appmarket.AppJob) []contract.Job {
+	jobs := make([]contract.Job, 0, len(items))
+	for _, item := range items {
+		state := contract.JobRunning
+		switch item.Status {
+		case "queued":
+			state = contract.JobQueued
+		case "succeeded":
+			state = contract.JobSucceeded
+		case "failed":
+			state = contract.JobFailedNeedsAttention
+		}
+		job := contract.Job{
+			ID: item.ID, Action: "app." + item.Action, Origin: contract.OriginWeb,
+			State: state, Stage: item.Stage, Progress: item.Progress,
+			TargetKind: "application", TargetID: item.AppID, TargetLabel: item.AppName,
+			CreatedAt: item.CreatedAt, StartedAt: item.StartedAt, FinishedAt: item.FinishedAt,
+		}
+		if item.Status == "failed" {
+			job.Error = &contract.Problem{
+				Title: "应用安装失败", Code: "app_install_failed",
+				Detail: item.Message, Retryable: true,
+			}
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs
 }
 
 func jobsLimit(r *http.Request) (int, bool) {

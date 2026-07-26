@@ -2,7 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   ArrowUpRight,
+  Activity,
   CheckCircle2,
+  ChevronRight,
   Download,
   Globe2,
   LoaderCircle,
@@ -28,7 +30,7 @@ import LoadingState from '@/components/feedback/LoadingState.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import { ApiError, api } from '@/lib/api'
 import { useToast } from '@/stores/toast'
-import type { AppMarketInventory, AppMarketItem, Site } from '@/types/api'
+import type { AppInstallJob, AppMarketInventory, AppMarketItem, Site } from '@/types/api'
 
 type SourceFilter = 'all' | 'builtin' | 'thirdparty'
 type StatusFilter = 'all' | 'installed' | 'running' | 'adapted'
@@ -42,7 +44,7 @@ const error = ref('')
 const search = ref('')
 const category = ref('all')
 const source = ref<SourceFilter>('all')
-const status = ref<StatusFilter>('all')
+const status = ref<StatusFilter>('installed')
 const selectedID = ref('')
 const installOpen = ref(false)
 const installPort = ref(0)
@@ -52,8 +54,13 @@ const domainError = ref('')
 const operation = ref('')
 const confirmAction = ref<ConfirmAction>()
 const checkedUpdates = ref<Record<string, 'available' | 'current'>>({})
+const activeJob = ref<AppInstallJob>()
+const jobDetailsOpen = ref(false)
 const toast = useToast()
 let controller: AbortController | undefined
+let jobController: AbortController | undefined
+let jobTimer: number | undefined
+const activeJobStorageKey = 'kpanel:active-app-job'
 
 const selected = computed(() => inventory.value?.items.find((item) => item.id === selectedID.value))
 const selectedPort = computed(() => selected.value?.runtime.ports.find((port) => port.type === 'tcp' && port.publicPort))
@@ -82,6 +89,9 @@ const filteredApps = computed(() => {
     return [item.name_zh, item.name_en, item.desc_zh, item.token, item.runtime.containerName]
       .filter(Boolean)
       .some((value) => value!.toLowerCase().includes(needle))
+  }).sort((left, right) => {
+    if (left.runtime.installed !== right.runtime.installed) return left.runtime.installed ? -1 : 1
+    return (left.num || 9999) - (right.num || 9999)
   })
 })
 
@@ -153,6 +163,79 @@ function openInstall(item: AppMarketItem): void {
   installOpen.value = true
 }
 
+function showAllApps(): void {
+  status.value = 'all'
+  category.value = 'all'
+  source.value = 'all'
+  search.value = ''
+}
+
+function isActiveJob(job?: AppInstallJob): boolean {
+  return job?.status === 'queued' || job?.status === 'running'
+}
+
+function stopJobPolling(): void {
+  if (jobTimer) window.clearInterval(jobTimer)
+  jobTimer = undefined
+  jobController?.abort()
+  jobController = undefined
+}
+
+async function refreshJob(id: string): Promise<void> {
+  jobController?.abort()
+  jobController = new AbortController()
+  try {
+    const job = await api.apps.job(id, jobController.signal)
+    const previousStatus = activeJob.value?.status
+    activeJob.value = job
+    if (isActiveJob(job)) return
+    stopJobPolling()
+    window.localStorage.removeItem(activeJobStorageKey)
+    if (previousStatus === 'queued' || previousStatus === 'running') {
+      if (job.status === 'succeeded') {
+        toast.success('后台安装完成', `${job.appName} 已完成安装与状态对账。`)
+        await load(true)
+      } else {
+        toast.danger('后台安装失败', job.message || '请查看任务日志后重试。')
+      }
+    }
+  } catch (reason) {
+    if (reason instanceof DOMException && reason.name === 'AbortError') return
+    stopJobPolling()
+    window.localStorage.removeItem(activeJobStorageKey)
+  }
+}
+
+function startJobPolling(job: AppInstallJob): void {
+  stopJobPolling()
+  activeJob.value = job
+  window.localStorage.setItem(activeJobStorageKey, job.id)
+  void refreshJob(job.id)
+  jobTimer = window.setInterval(() => void refreshJob(job.id), 2_000)
+}
+
+async function restoreBackgroundJob(): Promise<void> {
+  const savedID = window.localStorage.getItem(activeJobStorageKey)
+  if (savedID) {
+    try {
+      const job = await api.apps.job(savedID)
+      activeJob.value = job
+      if (isActiveJob(job)) startJobPolling(job)
+      else window.localStorage.removeItem(activeJobStorageKey)
+      return
+    } catch {
+      window.localStorage.removeItem(activeJobStorageKey)
+    }
+  }
+  try {
+    const result = await api.apps.jobs()
+    const running = result.items.find((job) => isActiveJob(job))
+    if (running) startJobPolling(running)
+  } catch {
+    // The catalog remains usable when an older Agent has no job endpoint.
+  }
+}
+
 async function load(silent = false): Promise<void> {
   controller?.abort()
   controller = new AbortController()
@@ -181,13 +264,15 @@ async function install(): Promise<void> {
   if (!item || !capability(item, 'install')) return
   operation.value = 'install'
   try {
-    await api.apps.install(item.id, {
+    const job = await api.apps.install(item.id, {
       hostPort: installPort.value || undefined,
       accessMode: installAccess.value,
     })
     installOpen.value = false
-    toast.success('应用安装完成', `${item.name_zh} 已按声明式安全模板启动。`)
-    await load(true)
+    selectedID.value = ''
+    startJobPolling(job)
+    jobDetailsOpen.value = true
+    toast.success('已转入后台安装', `${item.name_zh} 安装期间可以继续使用面板。`)
   } catch (reason) {
     toast.danger('安装失败', reason instanceof ApiError ? reason.message : 'Agent 未能完成安装。')
   } finally {
@@ -301,15 +386,21 @@ function directURL(item: AppMarketItem): string {
   return `http://${window.location.hostname}:${port}`
 }
 
-onMounted(() => void load())
-onBeforeUnmount(() => controller?.abort())
+onMounted(() => {
+  void load()
+  void restoreBackgroundJob()
+})
+onBeforeUnmount(() => {
+  controller?.abort()
+  stopJobPolling()
+})
 </script>
 
 <template>
   <div class="page app-market">
     <PageHeader
       title="应用市场"
-      description="完整呈现 kejilion.sh 应用目录；运行状态来自宿主机 Docker，写操作只通过已审计的安全适配器执行。"
+      description="已安装应用优先呈现；标准应用使用 kejilion.sh 原生业务函数在后台安装，并持续显示执行进度。"
     >
       <template #actions>
         <a class="button button--secondary" href="https://app.kejilion.sh" target="_blank" rel="noopener noreferrer">
@@ -333,13 +424,35 @@ onBeforeUnmount(() => controller?.abort())
         <div><strong>{{ inventory.items.length }}</strong><span>全部应用</span></div>
         <div><strong>{{ inventory.installed }}</strong><span>已安装</span></div>
         <div><strong>{{ inventory.running }}</strong><span>运行中</span></div>
-        <div><strong>{{ inventory.items.filter((item) => capability(item, 'install') || capability(item, 'update')).length }}</strong><span>安全适配</span></div>
+        <div><strong>{{ inventory.items.filter((item) => capability(item, 'install') || capability(item, 'update')).length }}</strong><span>可直接安装</span></div>
       </div>
     </section>
 
     <div v-if="inventory?.catalogWarning" class="inline-alert inline-alert--warning">
       {{ inventory.catalogWarning }}
     </div>
+
+    <section v-if="activeJob" class="app-job-banner" :class="`is-${activeJob.status}`">
+      <span class="app-job-banner__icon">
+        <LoaderCircle v-if="isActiveJob(activeJob)" class="spin" :size="20" />
+        <CheckCircle2 v-else-if="activeJob.status === 'succeeded'" :size="20" />
+        <Activity v-else :size="20" />
+      </span>
+      <div class="app-job-banner__body">
+        <span>
+          <strong>{{ activeJob.appName }}</strong>
+          <StatusBadge :status="activeJob.status" subtle />
+        </span>
+        <small>{{ activeJob.message || '正在准备后台任务…' }}</small>
+        <i class="app-job-banner__progress">
+          <b :style="{ width: `${activeJob.progress || 0}%` }" />
+        </i>
+      </div>
+      <strong class="app-job-banner__percent">{{ activeJob.progress || 0 }}%</strong>
+      <button class="button button--secondary button--small" type="button" @click="jobDetailsOpen = true">
+        查看进度 <ChevronRight :size="15" />
+      </button>
+    </section>
 
     <section v-if="inventory" class="market-toolbar">
       <label class="market-search">
@@ -364,10 +477,10 @@ onBeforeUnmount(() => controller?.abort())
       <div class="market-segment" aria-label="状态筛选">
         <button
           v-for="item in [
-            { key: 'all', label: '全部状态' },
             { key: 'installed', label: '已安装' },
+            { key: 'all', label: '全部应用' },
             { key: 'running', label: '运行中' },
-            { key: 'adapted', label: '可安全操作' },
+            { key: 'adapted', label: '可直接安装' },
           ]"
           :key="item.key"
           type="button"
@@ -425,7 +538,7 @@ onBeforeUnmount(() => controller?.abort())
               <em>{{ categoryName(item.cat) }}</em>
               <em>{{ item.source === 'builtin' ? `内置 #${item.num}` : '第三方' }}</em>
               <em v-if="capability(item, 'install') || capability(item, 'update')" class="is-adapted">
-                <ShieldCheck :size="12" /> 安全适配
+                <ShieldCheck :size="12" /> 可直接安装
               </em>
             </span>
             <span class="app-card__description">{{ item.desc_zh }}</span>
@@ -446,10 +559,21 @@ onBeforeUnmount(() => controller?.abort())
             <Download :size="14" /> 安装
           </button>
           <button v-else class="button button--ghost button--small" type="button" @click="openDetails(item)">
-            {{ item.runtime.installed ? '管理' : '查看' }}
+            {{ item.runtime.installed ? '管理' : '了解详情' }}
           </button>
         </footer>
       </article>
+    </section>
+
+    <section v-if="inventory && status === 'installed'" class="install-more-card">
+      <span><Store :size="22" /></span>
+      <div>
+        <strong>{{ inventory.installed ? '还想安装更多应用？' : '还没有安装应用' }}</strong>
+        <p>前往完整应用列表，选择支持后台安装的应用；安装期间可以继续使用面板。</p>
+      </div>
+      <button class="button button--primary" type="button" @click="showAllApps">
+        浏览全部应用 <ChevronRight :size="16" />
+      </button>
     </section>
 
     <footer v-if="inventory && filteredApps.length" class="market-result">
@@ -571,7 +695,12 @@ onBeforeUnmount(() => controller?.abort())
           <PackageCheck :size="25" />
           <div>
             <strong>当前未安装</strong>
-            <p v-if="capability(selected, 'install')">此应用已有固定镜像、端口和回滚策略，可以由 KPanel 安全安装。</p>
+            <p v-if="capability(selected, 'install') && selected.installer === 'kejilion'">
+              此应用会在后台调用 kejilion.sh 的标准安装函数，产物与脚本端保持一致。
+            </p>
+            <p v-else-if="capability(selected, 'install')">
+              此应用已有固定镜像、端口和回滚策略，可以由 KPanel 在后台安全安装。
+            </p>
             <p v-else>{{ selected.capabilities.install?.reason || '等待安全适配。' }}</p>
           </div>
           <button
@@ -678,17 +807,23 @@ onBeforeUnmount(() => controller?.abort())
     <ModalDialog
       :open="installOpen && Boolean(selected)"
       :title="`安装 ${selected?.name_zh || ''}`"
-      description="使用固定镜像与端口模板；安装后 kejilion.sh 的应用编号和端口文件也会同步生成。"
+      description="任务提交后会在宿主机后台运行；关闭窗口或切换页面不会中断安装。"
       size="small"
       @close="installOpen = false"
     >
       <form id="app-install-form" class="form-stack" @submit.prevent="install">
         <label class="field">
           <span>访问端口</span>
-          <input v-model.number="installPort" type="number" min="1024" max="65535" required />
-          <small>默认沿用 kejilion.sh 的端口；发生冲突时请换用其他端口。</small>
+          <input
+            v-model.number="installPort"
+            type="number"
+            :min="selected?.installer === 'declarative' ? 1024 : 1"
+            max="65535"
+            :placeholder="selected?.defaultPort ? String(selected.defaultPort) : '留空使用脚本默认端口'"
+          />
+          <small>留空时沿用 kejilion.sh 默认端口；低位系统端口和已有服务发生冲突时请换用其他端口。</small>
         </label>
-        <fieldset class="access-options">
+        <fieldset v-if="selected?.installer === 'declarative'" class="access-options">
           <legend>初始访问方式</legend>
           <button
             type="button"
@@ -707,14 +842,58 @@ onBeforeUnmount(() => controller?.abort())
         </fieldset>
         <div class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          不执行远程 Shell，不加载第三方 Compose；容器创建失败不会写入脚本安装标记。
+          {{
+            selected?.installer === 'kejilion'
+              ? '使用宿主机已安装且支持 KPanel 后台模式的 kejilion.sh；应用编号、端口文件和 Docker 产物保持同源。'
+              : '使用固定声明式模板；容器创建失败不会写入脚本安装标记。'
+          }}
         </div>
       </form>
       <template #footer>
         <button class="button button--secondary" type="button" @click="installOpen = false">取消</button>
         <button class="button button--primary" type="submit" form="app-install-form" :disabled="Boolean(operation)">
           <LoaderCircle v-if="operation === 'install'" class="spin" :size="16" />
-          <Download v-else :size="16" /> {{ operation === 'install' ? '正在安装…' : '确认安装' }}
+          <Download v-else :size="16" /> {{ operation === 'install' ? '正在提交…' : '后台安装' }}
+        </button>
+      </template>
+    </ModalDialog>
+
+    <ModalDialog
+      :open="jobDetailsOpen && Boolean(activeJob)"
+      :title="`${activeJob?.appName || ''} 安装进度`"
+      description="任务由宿主机后台执行，离开本页面不会中断。"
+      size="large"
+      @close="jobDetailsOpen = false"
+    >
+      <template v-if="activeJob">
+        <div class="job-detail-summary">
+          <span class="app-job-banner__icon">
+            <LoaderCircle v-if="isActiveJob(activeJob)" class="spin" :size="21" />
+            <CheckCircle2 v-else-if="activeJob.status === 'succeeded'" :size="21" />
+            <Activity v-else :size="21" />
+          </span>
+          <div>
+            <strong>{{ activeJob.message || '正在执行安装任务' }}</strong>
+            <small>阶段：{{ activeJob.stage }} · 任务 {{ activeJob.id }}</small>
+          </div>
+          <StatusBadge :status="activeJob.status" />
+        </div>
+        <div class="job-detail-progress">
+          <i><b :style="{ width: `${activeJob.progress || 0}%` }" /></i>
+          <strong>{{ activeJob.progress || 0 }}%</strong>
+        </div>
+        <section class="job-log">
+          <header>
+            <strong>实时日志</strong>
+            <small>显示最近 {{ activeJob.logs.length }} 行</small>
+          </header>
+          <pre v-if="activeJob.logs.length">{{ activeJob.logs.join('\n') }}</pre>
+          <p v-else>任务已进入队列，正在等待首批输出…</p>
+        </section>
+      </template>
+      <template #footer>
+        <button class="button button--secondary" type="button" @click="jobDetailsOpen = false">
+          后台运行
         </button>
       </template>
     </ModalDialog>
@@ -1399,6 +1578,176 @@ onBeforeUnmount(() => controller?.abort())
   color: var(--text-tertiary);
 }
 
+.app-job-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 14px;
+  align-items: center;
+  padding: 15px 17px;
+  border: 1px solid color-mix(in srgb, var(--market-accent) 28%, var(--border));
+  border-radius: 16px;
+  background: linear-gradient(120deg, var(--market-accent-soft), var(--surface));
+  box-shadow: var(--shadow-xs);
+}
+
+.app-job-banner.is-failed {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+}
+
+.app-job-banner__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--market-accent);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.app-job-banner__body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.app-job-banner__body > span {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.app-job-banner__body small {
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-job-banner__progress,
+.job-detail-progress i {
+  display: block;
+  overflow: hidden;
+  height: 6px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.app-job-banner__progress b,
+.job-detail-progress b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--market-accent), #8e83ff);
+  transition: width 0.35s ease;
+}
+
+.app-job-banner__percent {
+  color: var(--market-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.install-more-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 20px;
+  border: 1px dashed color-mix(in srgb, var(--market-accent) 38%, var(--border));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--market-accent) 5%, var(--surface));
+}
+
+.install-more-card > span {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 14px;
+  color: var(--market-accent);
+  background: var(--market-accent-soft);
+}
+
+.install-more-card div {
+  display: grid;
+  gap: 4px;
+}
+
+.install-more-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.job-detail-summary {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 13px;
+  align-items: center;
+}
+
+.job-detail-summary > div {
+  display: grid;
+  gap: 4px;
+}
+
+.job-detail-summary small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.job-detail-progress {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 18px;
+}
+
+.job-detail-progress i {
+  height: 9px;
+}
+
+.job-detail-progress strong {
+  min-width: 44px;
+  color: var(--market-accent);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.job-log {
+  overflow: hidden;
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.job-log header {
+  display: flex;
+  justify-content: space-between;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.job-log header small {
+  color: var(--text-tertiary);
+}
+
+.job-log pre,
+.job-log p {
+  overflow: auto;
+  max-height: 340px;
+  margin: 0;
+  padding: 14px;
+  color: #dce4ff;
+  font: 12px/1.65 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #111827;
+}
+
 @media (max-width: 1280px) {
   .market-hero {
     grid-template-columns: 1fr;
@@ -1471,6 +1820,16 @@ onBeforeUnmount(() => controller?.abort())
 
   .access-options {
     grid-template-columns: 1fr;
+  }
+
+  .app-job-banner,
+  .install-more-card,
+  .job-detail-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .app-job-banner__percent {
+    display: none;
   }
 }
 </style>

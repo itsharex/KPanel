@@ -10,6 +10,7 @@ import type {
   DockerInventory,
   DockerActionResult,
   Job,
+  AppInstallJob,
   LoginRequest,
   PanelSettings,
   SetupRequest,
@@ -823,8 +824,12 @@ export const api = {
     install: (
       id: string,
       body: { hostPort?: number; accessMode?: 'direct' | 'domain_only' },
-    ): Promise<AppMutationResult> =>
-      request<AppMutationResult>(`/apps/${encodeURIComponent(id)}/install`, { method: 'POST', body }),
+    ): Promise<AppInstallJob> =>
+      request<AppInstallJob>(`/apps/${encodeURIComponent(id)}/install`, { method: 'POST', body }),
+    job: (id: string, signal?: AbortSignal): Promise<AppInstallJob> =>
+      request<AppInstallJob>(`/app-jobs/${encodeURIComponent(id)}`, { signal }),
+    jobs: async (signal?: AbortSignal): Promise<ApiList<AppInstallJob>> =>
+      normalizeList(await request<ApiList<AppInstallJob> | AppInstallJob[]>('/app-jobs', { signal })),
     action: (
       id: string,
       action: 'start' | 'stop' | 'restart' | 'update' | 'uninstall' | 'direct_access',

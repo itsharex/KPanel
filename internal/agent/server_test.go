@@ -36,6 +36,46 @@ func TestBearerRequired(t *testing.T) {
 	}
 }
 
+func TestApplicationJobEndpointsRequireAuthenticationAndStrictIDs(t *testing.T) {
+	server := testServer(t)
+	if err := server.appMarket.ConfigureJobs(
+		filepath.Join(t.TempDir(), "app-jobs"),
+		filepath.Join(t.TempDir(), "kejilion-agent"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	unauthenticated := httptest.NewRequest(http.MethodGet, "/v1/app-jobs", nil)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, unauthenticated)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d", response.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/app-jobs", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"items":[]`) {
+		t.Fatalf("job list status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/v1/app-jobs?cursor=unsafe", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("job list query status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/v1/app-jobs/not-an-id", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("invalid job id status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestSitesPageEndpoint(t *testing.T) {
 	server := testServer(t)
 	request := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)

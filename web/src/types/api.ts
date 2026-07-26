@@ -278,6 +278,7 @@ export interface AppMarketItem {
   iconSha256: string
   slug: string
   defaultPort?: number
+  installer: 'declarative' | 'kejilion' | 'guided'
   runtime: AppMarketRuntime
   capabilities: Record<string, AppActionCapability>
 }
@@ -302,6 +303,21 @@ export interface AppMutationResult {
   action: string
   status: string
   resourceVersion?: string
+}
+
+export interface AppInstallJob {
+  id: string
+  appId: string
+  appName: string
+  action: 'install'
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  stage: string
+  progress: number
+  message?: string
+  logs: string[]
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
 }
 
 export interface AppImageUpdateResult {

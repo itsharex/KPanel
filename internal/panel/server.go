@@ -459,6 +459,7 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		"/api/v1/system/summary":    "/v1/system/summary",
 		"/api/v1/sites":             "/v1/sites",
 		"/api/v1/apps":              "/v1/apps",
+		"/api/v1/app-jobs":          "/v1/app-jobs",
 		"/api/v1/docker/summary":    "/v1/docker/summary",
 		"/api/v1/docker/containers": "/v1/docker/containers",
 		"/api/v1/docker/images":     "/v1/docker/images",
@@ -467,6 +468,13 @@ func allowedAgentPath(publicPath string) (string, bool) {
 	}
 	if path, ok := exact[publicPath]; ok {
 		return path, true
+	}
+	const appJobPrefix = "/api/v1/app-jobs/"
+	if strings.HasPrefix(publicPath, appJobPrefix) {
+		id := strings.TrimPrefix(publicPath, appJobPrefix)
+		if siteIDPattern.MatchString(id) {
+			return "/v1/app-jobs/" + id, true
+		}
 	}
 	const installationPrefix = "/api/v1/site-installations/"
 	if strings.HasPrefix(publicPath, installationPrefix) {

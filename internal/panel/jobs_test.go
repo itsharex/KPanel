@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kejilion/kejilion-panel/internal/appmarket"
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/store"
 )
@@ -105,5 +106,23 @@ func TestJobsRequiresSessionAndStrictLimit(t *testing.T) {
 		if response.Code != http.StatusUnprocessableEntity {
 			t.Errorf("%s returned %d: %s", path, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestApplicationJobsMapToManagementJobs(t *testing.T) {
+	now := time.Date(2026, time.July, 26, 8, 0, 0, 0, time.UTC)
+	finished := now.Add(time.Minute)
+	jobs := jobsFromAppJobs([]appmarket.AppJob{
+		{
+			ID: strings.Repeat("a", 32), AppID: "builtin-4", AppName: "Nginx Proxy Manager",
+			Action: "install", Status: "failed", Stage: "failed", Progress: 100,
+			Message: "port conflict", CreatedAt: now, FinishedAt: &finished,
+		},
+	})
+	if len(jobs) != 1 || jobs[0].Action != "app.install" ||
+		jobs[0].State != contract.JobFailedNeedsAttention ||
+		jobs[0].TargetID != "builtin-4" || jobs[0].Error == nil ||
+		jobs[0].Error.Detail != "port conflict" {
+		t.Fatalf("application job mapping = %#v", jobs)
 	}
 }

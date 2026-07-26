@@ -14,16 +14,19 @@ const installed = new Map([
   ['n8n', { state: 'exited', direct: false }],
 ])
 const adapted = new Set(['speedtest', 'it-tools', 'dosgame'])
+const appJobs = new Map()
 
 const items = catalog.apps.map((app) => {
   const mapping = legacyByNumber.get(app.num) || {}
   const runtime = installed.get(app.token)
   const isAdapted = adapted.has(app.token)
+  const isStandard = app.source === 'thirdparty' || mapping.usesDockerApp
   const isRunning = runtime?.state === 'running'
   const port = mapping.defaultPort || 0
   return {
     ...app,
     defaultPort: port,
+    installer: isAdapted ? 'declarative' : isStandard ? 'kejilion' : 'guided',
     runtime: runtime
       ? {
           installed: true,
@@ -57,8 +60,8 @@ const items = catalog.apps.map((app) => {
         },
     capabilities: {
       install: {
-        enabled: isAdapted && !runtime,
-        reason: isAdapted ? (runtime ? '应用已安装' : '') : '该应用尚未完成 KPanel 声明式安全适配',
+        enabled: (isAdapted || isStandard) && !runtime,
+        reason: runtime ? '应用已安装' : isStandard ? '' : '该应用需要专属配置向导',
       },
       start: { enabled: Boolean(runtime && !isRunning), reason: '当前状态不允许启动' },
       stop: { enabled: Boolean(runtime && isRunning), reason: '当前状态不允许停止' },
@@ -76,12 +79,35 @@ const inventory = {
   schemaVersion: 1,
   source: catalog.source,
   scriptSha256: legacy.scriptSha256,
+  catalogMode: 'live',
   categories: catalog.categories,
   items,
   installed: installed.size,
   running: [...installed.values()].filter((item) => item.state === 'running').length,
   updateAvailable: 0,
   collectedAt: new Date().toISOString(),
+}
+
+function materializeJob(job) {
+  const elapsed = Date.now() - job.created
+  const progress = Math.min(100, Math.max(5, Math.floor(elapsed / 80)))
+  return {
+    id: job.id,
+    appId: job.app.id,
+    appName: job.app.name_zh,
+    action: 'install',
+    status: progress >= 100 ? 'succeeded' : 'running',
+    stage: progress >= 100 ? 'completed' : progress < 30 ? 'runtime' : 'installing',
+    progress,
+    message: progress >= 100 ? '应用安装完成' : '正在执行 kejilion.sh 应用安装函数',
+    logs: [
+      'KPANEL_PROGRESS 5 正在校验端口与宿主机环境',
+      progress >= 30 ? 'KPANEL_PROGRESS 30 正在执行 kejilion.sh 应用安装函数' : '',
+    ].filter(Boolean),
+    createdAt: new Date(job.created).toISOString(),
+    startedAt: new Date(job.created + 100).toISOString(),
+    ...(progress >= 100 ? { finishedAt: new Date().toISOString() } : {}),
+  }
 }
 
 const systemSummary = {
@@ -201,7 +227,7 @@ createServer((request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/v1/agent/health') {
     send(response, 200, {
       status: 'ok',
-      version: '0.15.1',
+      version: '0.16.0',
       protocolVersion: 'v1',
       readOnly: false,
       checkedAt: new Date().toISOString(),
@@ -210,6 +236,29 @@ createServer((request, response) => {
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/apps') {
     send(response, 200, inventory)
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/app-jobs') {
+    send(response, 200, { items: [...appJobs.values()].map(materializeJob) })
+    return
+  }
+  const appJobMatch = url.pathname.match(/^\/api\/v1\/app-jobs\/([a-f0-9]{32})$/)
+  if (request.method === 'GET' && appJobMatch) {
+    const job = appJobs.get(appJobMatch[1])
+    send(response, job ? 200 : 404, job ? materializeJob(job) : { title: '任务不存在' })
+    return
+  }
+  const appInstallMatch = url.pathname.match(/^\/api\/v1\/apps\/([^/]+)\/install$/)
+  if (request.method === 'POST' && appInstallMatch) {
+    const app = items.find((item) => item.id === appInstallMatch[1])
+    if (!app) {
+      send(response, 404, { title: '应用不存在' })
+      return
+    }
+    const id = `${Date.now().toString(16).padStart(16, '0')}${'a'.repeat(16)}`.slice(-32)
+    const job = { id, app, created: Date.now() }
+    appJobs.set(id, job)
+    send(response, 202, materializeJob(job))
     return
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/system/summary') {

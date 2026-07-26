@@ -50,6 +50,9 @@ func run(arguments []string) error {
 	if len(arguments) > 0 && arguments[0] == "swap-run" {
 		return runSwap(arguments[1:])
 	}
+	if len(arguments) > 0 && arguments[0] == "app-run" {
+		return runAppJob(arguments[1:])
+	}
 
 	flags := flag.NewFlagSet("kejilion-agent", flag.ContinueOnError)
 	socketPath := flags.String("socket", env("KEJILION_AGENT_SOCKET", "/run/kejilion-panel/agent.sock"), "Unix Socket path")
@@ -90,6 +93,13 @@ func run(arguments []string) error {
 	appMarket, err := appmarket.NewWithOfficialCatalog(dockerClient, "/home/docker")
 	if err != nil {
 		return fmt.Errorf("initialize application market: %w", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve Agent executable: %w", err)
+	}
+	if err := appMarket.ConfigureJobs(filepath.Join(*stateDir, "app-jobs"), executable); err != nil {
+		return fmt.Errorf("initialize application jobs: %w", err)
 	}
 	systemCollector := systeminfo.NewCollector()
 	systemCollector.PublicNetworkLookupEnabled = *enablePublicNetworkLookup
@@ -196,6 +206,27 @@ func runSwap(arguments []string) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetEscapeHTML(false)
 	return encoder.Encode(manager.RunSwapTransaction(ctx, *sizeMiB))
+}
+
+func runAppJob(arguments []string) error {
+	flags := flag.NewFlagSet("kejilion-agent app-run", flag.ContinueOnError)
+	stateDir := flags.String(
+		"state-dir",
+		env("KEJILION_AGENT_STATE_DIR", "/var/lib/kejilion-panel/app-jobs"),
+		"application job state directory",
+	)
+	id := flags.String("id", "", "application job identity")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *id == "" {
+		return errors.New("app-run requires exactly one job identity")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Minute)
+	defer cancel()
+	return appmarket.RunAppJob(ctx, *stateDir, *id)
 }
 
 func runHealthcheck(arguments []string) error {

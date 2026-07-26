@@ -55,7 +55,7 @@ until curl -fsS "http://127.0.0.1:$PORT/api/v1/health" >"$TEST_DIR/health.json" 
 	}
 	sleep 1
 done
-grep -F '"version":"0.15.1"' "$TEST_DIR/health.json" >/dev/null
+grep -F '"version":"0.16.0"' "$TEST_DIR/health.json" >/dev/null
 
 test "$(curl -sS -o /dev/null -w '%{http_code}' \
 	-H "Host: 127.0.0.1:$PORT" "http://127.0.0.1:$PORT/")" = 200

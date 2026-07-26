@@ -1,0 +1,722 @@
+package appmarket
+
+import (
+	"bufio"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	appJobUnitPrefix = "kejilion-panel-app-"
+	maxAppJobBytes   = 256 << 10
+	maxAppJobLog     = 1 << 20
+)
+
+var (
+	appJobIDPattern    = regexp.MustCompile(`^[a-f0-9]{32}$`)
+	appSelectorPattern = regexp.MustCompile(`^(?:[1-9][0-9]{0,2}|[A-Za-z0-9][A-Za-z0-9_-]{0,63})$`)
+	appProgressPattern = regexp.MustCompile(`^KPANEL_PROGRESS ([0-9]{1,3}) (.+)$`)
+)
+
+type AppJob struct {
+	ID         string     `json:"id"`
+	AppID      string     `json:"appId"`
+	AppName    string     `json:"appName"`
+	Action     string     `json:"action"`
+	Status     string     `json:"status"`
+	Stage      string     `json:"stage"`
+	Progress   int        `json:"progress"`
+	Message    string     `json:"message,omitempty"`
+	Logs       []string   `json:"logs"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	StartedAt  *time.Time `json:"startedAt,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+}
+
+type appJobRecord struct {
+	AppJob
+	Selector   string `json:"selector"`
+	HostPort   uint16 `json:"hostPort,omitempty"`
+	AccessMode string `json:"accessMode,omitempty"`
+	Adapter    string `json:"adapter"`
+}
+
+type appJobRegistry struct {
+	mu       sync.Mutex
+	stateDir string
+	jobs     map[string]appJobRecord
+}
+
+type jobCommandRunner interface {
+	Run(context.Context, string, ...string) ([]byte, error)
+	LookPath(string) (string, error)
+}
+
+type systemJobRunner struct{}
+
+func (systemJobRunner) Run(ctx context.Context, name string, arguments ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, name, arguments...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if len(detail) > 300 {
+			detail = detail[:300]
+		}
+		if detail != "" {
+			return nil, fmt.Errorf("%s: %w", detail, err)
+		}
+		return nil, err
+	}
+	return output, nil
+}
+
+func (systemJobRunner) LookPath(name string) (string, error) {
+	return exec.LookPath(name)
+}
+
+func (s *Service) ConfigureJobs(stateDir, executable string) error {
+	return s.configureJobs(stateDir, executable, systemJobRunner{})
+}
+
+func (s *Service) configureJobs(stateDir, executable string, runner jobCommandRunner) error {
+	stateDir = filepath.Clean(stateDir)
+	executable = filepath.Clean(executable)
+	if !filepath.IsAbs(stateDir) || stateDir == string(filepath.Separator) ||
+		!filepath.IsAbs(executable) || runner == nil {
+		return errors.New("application jobs require dedicated absolute paths")
+	}
+	if err := ensureAppJobDirectory(stateDir); err != nil {
+		return err
+	}
+	registry := &appJobRegistry{stateDir: stateDir, jobs: make(map[string]appJobRecord)}
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 ||
+			!strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if !appJobIDPattern.MatchString(id) {
+			continue
+		}
+		record, readErr := registry.read(id)
+		if readErr == nil {
+			registry.jobs[id] = record
+		}
+	}
+	s.jobs = registry
+	s.jobExecutable = executable
+	s.jobRunner = runner
+	s.recoverInterruptedJobs()
+	return nil
+}
+
+func (s *Service) recoverInterruptedJobs() {
+	for _, record := range s.jobs.list() {
+		if record.Status != "queued" && record.Status != "running" {
+			continue
+		}
+		if record.Adapter == "kejilion" {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			output, err := s.jobRunner.Run(
+				ctx,
+				"systemctl",
+				"is-active",
+				appJobUnitPrefix+record.ID+".service",
+			)
+			cancel()
+			state := strings.TrimSpace(string(output))
+			if err == nil && (state == "active" || state == "activating" || state == "reloading") {
+				continue
+			}
+		}
+		finished := s.now().UTC()
+		record.Status = "failed"
+		record.Stage = "interrupted"
+		record.Progress = 100
+		record.Message = "后台安装任务已被 Agent 或服务器重启中断，请核对应用状态后重试"
+		record.FinishedAt = &finished
+		_ = s.jobs.put(record)
+	}
+}
+
+func ensureAppJobDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(path, 0o750); err != nil {
+			return err
+		}
+		info, err = os.Lstat(path)
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("application job state directory is unavailable or unsafe")
+	}
+	return nil
+}
+
+func (s *Service) StartInstall(
+	ctx context.Context,
+	id string,
+	input InstallInput,
+) (AppJob, error) {
+	s.actions.Lock()
+	defer s.actions.Unlock()
+	if s.jobs == nil {
+		return AppJob{}, fmt.Errorf("%w: background application jobs are unavailable", ErrUnsupported)
+	}
+	item, err := s.Find(ctx, id)
+	if err != nil {
+		return AppJob{}, err
+	}
+	if !item.Capabilities["install"].Enabled {
+		return AppJob{}, fmt.Errorf("%w: %s", ErrForbidden, item.Capabilities["install"].Reason)
+	}
+	if input.HostPort == 0 {
+		input.HostPort = uint16(item.DefaultPort)
+	}
+	if input.AccessMode == "" {
+		input.AccessMode = "direct"
+	}
+	if s.jobs.hasActive() {
+		return AppJob{}, fmt.Errorf("%w: another application task is already running", ErrConflict)
+	}
+
+	selector, scriptBacked := s.scriptSelector(item)
+	adapter := "declarative"
+	if scriptBacked {
+		adapter = "kejilion"
+	}
+	record, err := newAppJobRecord(item, selector, adapter, input)
+	if err != nil {
+		return AppJob{}, err
+	}
+	if err := s.jobs.put(record); err != nil {
+		return AppJob{}, fmt.Errorf("%w: persist application job: %v", ErrNeedsAttention, err)
+	}
+
+	if scriptBacked {
+		if err := s.launchScriptJob(ctx, record); err != nil {
+			finished := s.now().UTC()
+			record.Status = "failed"
+			record.Stage = "launch_failed"
+			record.Progress = 100
+			record.Message = safeAppJobMessage(err)
+			record.FinishedAt = &finished
+			_ = s.jobs.put(record)
+			return AppJob{}, fmt.Errorf("%w: launch background application task: %v", ErrNeedsAttention, err)
+		}
+		return s.jobs.public(record), nil
+	}
+
+	go s.runDeclarativeInstall(record, input)
+	return s.jobs.public(record), nil
+}
+
+func newAppJobRecord(
+	item Summary,
+	selector, adapter string,
+	input InstallInput,
+) (appJobRecord, error) {
+	var idBytes [16]byte
+	if _, err := rand.Read(idBytes[:]); err != nil {
+		return appJobRecord{}, err
+	}
+	now := time.Now().UTC()
+	return appJobRecord{
+		AppJob: AppJob{
+			ID: hex.EncodeToString(idBytes[:]), AppID: item.ID, AppName: item.NameZH,
+			Action: "install", Status: "queued", Stage: "queued", Progress: 0,
+			Message: "安装任务已进入后台队列", Logs: []string{}, CreatedAt: now,
+		},
+		Selector: selector, HostPort: input.HostPort,
+		AccessMode: input.AccessMode, Adapter: adapter,
+	}, nil
+}
+
+func (s *Service) runDeclarativeInstall(record appJobRecord, input InstallInput) {
+	started := s.now().UTC()
+	record.Status = "running"
+	record.Stage = "preparing"
+	record.Progress = 10
+	record.Message = "正在校验端口与 Docker 环境"
+	record.StartedAt = &started
+	if s.jobs.put(record) != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+	record.Stage = "installing"
+	record.Progress = 35
+	record.Message = "正在拉取镜像并创建应用容器"
+	_ = s.jobs.put(record)
+	result, err := s.Install(ctx, record.AppID, input)
+	finished := s.now().UTC()
+	record.FinishedAt = &finished
+	record.Progress = 100
+	if err != nil {
+		record.Status = "failed"
+		record.Stage = "failed"
+		record.Message = safeAppJobMessage(err)
+	} else {
+		record.Status = "succeeded"
+		record.Stage = "completed"
+		record.Message = "应用安装完成，Docker 与 kejilion.sh 兼容状态已对账"
+		record.Logs = []string{
+			fmt.Sprintf("container=%s", result.ContainerID),
+			fmt.Sprintf("resourceVersion=%s", result.ResourceVersion),
+		}
+	}
+	_ = s.jobs.put(record)
+}
+
+func (s *Service) launchScriptJob(ctx context.Context, record appJobRecord) error {
+	if s.jobRunner == nil || s.jobExecutable == "" {
+		return errors.New("application background runner is unavailable")
+	}
+	if _, err := s.jobRunner.LookPath("systemd-run"); err != nil {
+		return errors.New("systemd background task runner is unavailable")
+	}
+	arguments := []string{
+		"--unit=" + appJobUnitPrefix + record.ID,
+		"--collect",
+		"--no-block",
+		"--property=Type=oneshot",
+		"--property=TimeoutStartSec=45min",
+		"--property=TimeoutStopSec=10min",
+		"--property=User=root",
+		"--property=UMask=0027",
+		"--property=PrivateTmp=yes",
+		"--property=NoNewPrivileges=no",
+		"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+		"--property=Nice=5",
+		"--property=CPUWeight=40",
+		"--property=IOWeight=40",
+		"--property=SyslogIdentifier=kpanel-app",
+		"--",
+		s.jobExecutable,
+		"app-run",
+		"--state-dir",
+		s.jobs.stateDir,
+		"--id",
+		record.ID,
+	}
+	_, err := s.jobRunner.Run(ctx, "systemd-run", arguments...)
+	return err
+}
+
+func (s *Service) AppJob(id string) (AppJob, error) {
+	if s.jobs == nil || !appJobIDPattern.MatchString(id) {
+		return AppJob{}, ErrNotFound
+	}
+	record, err := s.jobs.read(id)
+	if err != nil {
+		return AppJob{}, ErrNotFound
+	}
+	return s.jobs.public(record), nil
+}
+
+func (s *Service) AppJobs() []AppJob {
+	if s.jobs == nil {
+		return []AppJob{}
+	}
+	records := s.jobs.list()
+	jobs := make([]AppJob, 0, len(records))
+	for _, record := range records {
+		jobs = append(jobs, s.jobs.public(record))
+	}
+	return jobs
+}
+
+func (s *Service) scriptSelector(item Summary) (string, bool) {
+	if _, declarative := declarativeSpecs[item.Token]; declarative {
+		return "", false
+	}
+	if !s.scriptInstallAvailable() {
+		return "", false
+	}
+	if item.Source == "thirdparty" {
+		return item.Token, true
+	}
+	legacy, ok := s.legacy[item.Num]
+	if !ok || !legacy.UsesDockerApp {
+		return "", false
+	}
+	return strconv.Itoa(item.Num), true
+}
+
+func (s *Service) scriptInstallAvailable() bool {
+	if s.jobs == nil || s.jobRunner == nil || s.jobExecutable == "" || s.scriptFinder == nil {
+		return false
+	}
+	if _, err := s.jobRunner.LookPath("systemd-run"); err != nil {
+		return false
+	}
+	_, err := s.scriptFinder()
+	return err == nil
+}
+
+func findKejilionScript() (string, error) {
+	candidates := []string{"/usr/local/bin/k", "/usr/bin/k", "/root/kejilion.sh"}
+	if path, err := exec.LookPath("k"); err == nil {
+		candidates = append([]string{path}, candidates...)
+	}
+	seen := make(map[string]bool)
+	for _, candidate := range candidates {
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			continue
+		}
+		resolved = filepath.Clean(resolved)
+		if seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		info, err := os.Stat(resolved)
+		if err != nil || !info.Mode().IsRegular() || info.Size() < 1024 || info.Size() > 4<<20 {
+			continue
+		}
+		if runtime.GOOS == "linux" && info.Mode().Perm()&0o022 != 0 {
+			continue
+		}
+		content, err := os.ReadFile(resolved)
+		if err != nil ||
+			!strings.Contains(string(content), "KJ_APP_NONINTERACTIVE") ||
+			!strings.Contains(string(content), "kpanel_run_docker_app_install") {
+			continue
+		}
+		return resolved, nil
+	}
+	return "", errors.New("a KPanel-compatible kejilion.sh was not found")
+}
+
+func RunAppJob(ctx context.Context, stateDir, id string) error {
+	if os.Geteuid() != 0 {
+		return errors.New("app-run requires root")
+	}
+	if !appJobIDPattern.MatchString(id) {
+		return errors.New("invalid application job identity")
+	}
+	registry := &appJobRegistry{stateDir: filepath.Clean(stateDir), jobs: make(map[string]appJobRecord)}
+	if err := ensureAppJobDirectory(registry.stateDir); err != nil {
+		return err
+	}
+	record, err := registry.read(id)
+	if err != nil {
+		return err
+	}
+	if record.Adapter != "kejilion" || record.Action != "install" ||
+		!appSelectorPattern.MatchString(record.Selector) {
+		return errors.New("application job contains an unsupported adapter request")
+	}
+	script, err := findKejilionScript()
+	if err != nil {
+		return registry.fail(record, "script_unavailable", err)
+	}
+
+	started := time.Now().UTC()
+	record.Status = "running"
+	record.Stage = "starting"
+	record.Progress = 1
+	record.Message = "正在启动 kejilion.sh 标准应用安装器"
+	record.StartedAt = &started
+	record.FinishedAt = nil
+	if err := registry.put(record); err != nil {
+		return err
+	}
+
+	command := exec.CommandContext(ctx, "/bin/bash", script, "app", record.Selector)
+	command.Env = append(
+		os.Environ(),
+		"KJ_APP_NONINTERACTIVE=1",
+		"KJ_APP_ACTION=install",
+		"LC_ALL=C.UTF-8",
+		"LANG=C.UTF-8",
+	)
+	if record.HostPort != 0 {
+		command.Env = append(command.Env, "KJ_APP_PORT="+strconv.Itoa(int(record.HostPort)))
+	}
+	reader, writer := io.Pipe()
+	command.Stdout = writer
+	command.Stderr = writer
+	if err := command.Start(); err != nil {
+		_ = writer.Close()
+		_ = reader.Close()
+		return registry.fail(record, "start_failed", err)
+	}
+	wait := make(chan error, 1)
+	go func() {
+		wait <- command.Wait()
+		_ = writer.Close()
+	}()
+
+	logFile, logErr := os.OpenFile(
+		registry.logPath(id),
+		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
+		0o600,
+	)
+	if logErr != nil {
+		_ = command.Process.Kill()
+		_ = reader.Close()
+		<-wait
+		return registry.fail(record, "log_unavailable", logErr)
+	}
+	written := int64(0)
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if written < maxAppJobLog {
+			payload := []byte(line + "\n")
+			remaining := int64(maxAppJobLog) - written
+			if int64(len(payload)) > remaining {
+				payload = payload[:remaining]
+			}
+			count, _ := logFile.Write(payload)
+			written += int64(count)
+		}
+		if matches := appProgressPattern.FindStringSubmatch(line); len(matches) == 3 {
+			progress, _ := strconv.Atoi(matches[1])
+			if progress < 0 {
+				progress = 0
+			}
+			if progress > 100 {
+				progress = 100
+			}
+			record.Progress = progress
+			record.Stage = appJobStage(progress)
+			record.Message = safeAppJobMessage(errors.New(matches[2]))
+			_ = registry.put(record)
+		}
+	}
+	_ = reader.Close()
+	_ = logFile.Sync()
+	_ = logFile.Close()
+	commandErr := <-wait
+	if scanErr := scanner.Err(); scanErr != nil && commandErr == nil {
+		commandErr = scanErr
+	}
+	finished := time.Now().UTC()
+	record.Progress = 100
+	record.FinishedAt = &finished
+	if commandErr != nil {
+		record.Status = "failed"
+		record.Stage = "failed"
+		record.Message = "安装失败，请查看任务日志后修复并重试"
+		_ = registry.put(record)
+		return commandErr
+	}
+	record.Status = "succeeded"
+	record.Stage = "completed"
+	record.Message = "应用安装完成，产物由 kejilion.sh 原生业务函数创建"
+	return registry.put(record)
+}
+
+func appJobStage(progress int) string {
+	switch {
+	case progress < 15:
+		return "preflight"
+	case progress < 30:
+		return "runtime"
+	case progress < 90:
+		return "installing"
+	case progress < 100:
+		return "reconciling"
+	default:
+		return "completed"
+	}
+}
+
+func safeAppJobMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	value := strings.TrimSpace(err.Error())
+	if len(value) > 400 {
+		value = value[:400]
+	}
+	if value == "" {
+		return "应用后台任务失败"
+	}
+	return value
+}
+
+func (registry *appJobRegistry) fail(record appJobRecord, stage string, cause error) error {
+	finished := time.Now().UTC()
+	record.Status = "failed"
+	record.Stage = stage
+	record.Progress = 100
+	record.Message = safeAppJobMessage(cause)
+	record.FinishedAt = &finished
+	_ = registry.put(record)
+	return cause
+}
+
+func (registry *appJobRegistry) put(record appJobRecord) error {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if !appJobIDPattern.MatchString(record.ID) {
+		return errors.New("invalid application job identity")
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if len(data) > maxAppJobBytes {
+		return errors.New("application job state exceeds the safety limit")
+	}
+	temp, err := os.CreateTemp(registry.stateDir, "."+record.ID+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0o600); err != nil {
+		temp.Close()
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	targetPath := registry.statePath(record.ID)
+	// KPanel runs on Linux, where rename atomically replaces the old state file.
+	// Windows does not allow that replacement, so remove only the test/dev copy.
+	if runtime.GOOS == "windows" {
+		_ = os.Remove(targetPath)
+	}
+	if err := os.Rename(tempPath, targetPath); err != nil {
+		return err
+	}
+	registry.jobs[record.ID] = record
+	registry.pruneLocked()
+	return nil
+}
+
+func (registry *appJobRegistry) read(id string) (appJobRecord, error) {
+	if !appJobIDPattern.MatchString(id) {
+		return appJobRecord{}, os.ErrNotExist
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	data, err := os.ReadFile(registry.statePath(id))
+	if err != nil || len(data) > maxAppJobBytes {
+		return appJobRecord{}, os.ErrNotExist
+	}
+	var record appJobRecord
+	if json.Unmarshal(data, &record) != nil || record.ID != id {
+		return appJobRecord{}, os.ErrNotExist
+	}
+	registry.jobs[id] = record
+	return record, nil
+}
+
+func (registry *appJobRegistry) list() []appJobRecord {
+	registry.mu.Lock()
+	ids := make([]string, 0, len(registry.jobs))
+	for id := range registry.jobs {
+		ids = append(ids, id)
+	}
+	registry.mu.Unlock()
+	records := make([]appJobRecord, 0, len(ids))
+	for _, id := range ids {
+		if record, err := registry.read(id); err == nil {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].CreatedAt.After(records[j].CreatedAt)
+	})
+	return records
+}
+
+func (registry *appJobRegistry) hasActive() bool {
+	for _, record := range registry.list() {
+		if record.Status == "queued" || record.Status == "running" {
+			return true
+		}
+	}
+	return false
+}
+
+func (registry *appJobRegistry) public(record appJobRecord) AppJob {
+	job := record.AppJob
+	job.Logs = registry.logTail(record.ID, 120)
+	return job
+}
+
+func (registry *appJobRegistry) logTail(id string, maxLines int) []string {
+	data, err := os.ReadFile(registry.logPath(id))
+	if err != nil {
+		return []string{}
+	}
+	if len(data) > maxAppJobLog {
+		data = data[len(data)-maxAppJobLog:]
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\r\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return []string{}
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return lines
+}
+
+func (registry *appJobRegistry) pruneLocked() {
+	if len(registry.jobs) <= 100 {
+		return
+	}
+	terminal := make([]appJobRecord, 0, len(registry.jobs))
+	for _, record := range registry.jobs {
+		if record.Status != "queued" && record.Status != "running" {
+			terminal = append(terminal, record)
+		}
+	}
+	sort.Slice(terminal, func(i, j int) bool {
+		return terminal[i].CreatedAt.Before(terminal[j].CreatedAt)
+	})
+	removeCount := len(registry.jobs) - 100
+	if removeCount > len(terminal) {
+		removeCount = len(terminal)
+	}
+	for _, record := range terminal[:removeCount] {
+		delete(registry.jobs, record.ID)
+		_ = os.Remove(registry.statePath(record.ID))
+		_ = os.Remove(registry.logPath(record.ID))
+	}
+}
+
+func (registry *appJobRegistry) statePath(id string) string {
+	return filepath.Join(registry.stateDir, id+".json")
+}
+
+func (registry *appJobRegistry) logPath(id string) string {
+	return filepath.Join(registry.stateDir, id+".log")
+}

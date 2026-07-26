@@ -54,7 +54,7 @@ if KP_AGENT_VERSION=0.0.1 run_installer >"$TEST_DIR/version.out" 2>&1; then
 	echo "installer accepted a mismatched Agent version" >&2
 	exit 1
 fi
-grep -F 'does not match 0.15.1 v1alpha1' "$TEST_DIR/version.out" >/dev/null
+grep -F 'does not match 0.16.0 v1alpha1' "$TEST_DIR/version.out" >/dev/null
 
 if PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
 	sh "$PROJECT_DIR/deploy/install.sh" \
@@ -168,12 +168,16 @@ grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F '/var/lib/kejilion-panel/system' >/dev/null
 grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F '/var/lib/kejilion-panel/wordpress-jobs' >/dev/null
+grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
+	grep -F '/var/lib/kejilion-panel/app-jobs' >/dev/null
 grep -F 'ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F -- '-/home/web/certs' |
 	grep -F -- '-/home/web/letsencrypt' >/dev/null
 grep -F 'SYSTEM_STATE_DIR=/var/lib/kejilion-panel/system' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'WORDPRESS_STATE_DIR=/var/lib/kejilion-panel/wordpress-jobs' \
+	"$PROJECT_DIR/deploy/install.sh" >/dev/null
+grep -F 'APP_STATE_DIR=/var/lib/kejilion-panel/app-jobs' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'expected 65532:65532:700' "$PROJECT_DIR/deploy/install.sh" >/dev/null
 test "$(grep -c '^assert_panel_data_dir \"after ' "$PROJECT_DIR/deploy/install.sh")" = 3
