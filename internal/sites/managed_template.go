@@ -2,6 +2,8 @@ package sites
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -14,7 +16,10 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
 
-const managedMarker = "# managed-by: kejilion-panel/v1"
+const (
+	managedMarkerV1 = "# managed-by: kejilion-panel/v1"
+	managedMarker   = "# managed-by: kejilion-panel/v2"
+)
 
 var (
 	ErrInvalidInput   = errors.New("invalid site request")
@@ -30,15 +35,23 @@ type SiteInput struct {
 	Aliases                 []string `json:"aliases,omitempty"`
 	Type                    string   `json:"type"`
 	Upstream                string   `json:"upstream,omitempty"`
+	Upstreams               []string `json:"upstreams,omitempty"`
+	RedirectTarget          string   `json:"redirectTarget,omitempty"`
+	RedirectCode            int      `json:"redirectCode,omitempty"`
+	PHPVersion              string   `json:"phpVersion,omitempty"`
 	Enabled                 *bool    `json:"enabled,omitempty"`
 	ExpectedResourceVersion string   `json:"expectedResourceVersion,omitempty"`
 }
 
 type managedSpec struct {
-	Primary  string
-	Aliases  []string
-	Kind     contract.SiteKind
-	Upstream string
+	Primary        string
+	Aliases        []string
+	Kind           contract.SiteKind
+	Upstream       string
+	Upstreams      []string
+	RedirectCode   int
+	RedirectTarget string
+	PHPVersion     string
 }
 
 func normalizeSiteInput(input SiteInput) (managedSpec, error) {
@@ -71,19 +84,76 @@ func normalizeSiteInput(input SiteInput) (managedSpec, error) {
 	switch input.Type {
 	case "static":
 		spec.Kind = contract.SiteStatic
-		if strings.TrimSpace(input.Upstream) != "" {
-			return managedSpec{}, fmt.Errorf("%w: static sites cannot define an upstream", ErrUnprocessable)
+		err = rejectUnusedSiteFields(input, "static")
+	case "php":
+		spec.Kind = contract.SitePHP
+		spec.PHPVersion = input.PHPVersion
+		if spec.PHPVersion == "" {
+			spec.PHPVersion = "latest"
 		}
+		if spec.PHPVersion != "latest" && spec.PHPVersion != "7.4" {
+			return managedSpec{}, fmt.Errorf("%w: phpVersion must be latest or 7.4", ErrUnprocessable)
+		}
+		err = rejectUnusedSiteFields(input, "php")
 	case "proxy":
 		spec.Kind = contract.SiteReverseProxy
-		spec.Upstream, err = normalizeUpstream(input.Upstream)
-		if err != nil {
-			return managedSpec{}, err
+		spec.Upstream, err = normalizeUpstream(input.Upstream, upstreamPrivate)
+		if err == nil {
+			err = rejectUnusedSiteFields(input, "proxy")
 		}
+	case "proxy_domain":
+		spec.Kind = contract.SiteDomainProxy
+		spec.Upstream, err = normalizeUpstream(input.Upstream, upstreamDomain)
+		if err == nil {
+			err = rejectUnusedSiteFields(input, "proxy_domain")
+		}
+	case "load_balance":
+		spec.Kind = contract.SiteLoadBalance
+		spec.Upstreams, err = normalizeUpstreams(input.Upstreams)
+		if err == nil {
+			err = rejectUnusedSiteFields(input, "load_balance")
+		}
+	case "redirect":
+		spec.Kind = contract.SiteRedirect
+		spec.RedirectTarget, err = normalizeUpstream(input.RedirectTarget, upstreamDomain)
+		if err != nil {
+			break
+		}
+		spec.RedirectCode = input.RedirectCode
+		if spec.RedirectCode == 0 {
+			spec.RedirectCode = 301
+		}
+		if spec.RedirectCode != 301 && spec.RedirectCode != 302 &&
+			spec.RedirectCode != 307 && spec.RedirectCode != 308 {
+			return managedSpec{}, fmt.Errorf("%w: redirectCode must be 301, 302, 307, or 308", ErrUnprocessable)
+		}
+		err = rejectUnusedSiteFields(input, "redirect")
 	default:
-		return managedSpec{}, fmt.Errorf("%w: type must be static or proxy", ErrInvalidInput)
+		return managedSpec{}, fmt.Errorf(
+			"%w: type must be static, php, proxy, proxy_domain, load_balance, or redirect",
+			ErrInvalidInput,
+		)
+	}
+	if err != nil {
+		return managedSpec{}, err
 	}
 	return spec, nil
+}
+
+func rejectUnusedSiteFields(input SiteInput, kind string) error {
+	if kind != "proxy" && kind != "proxy_domain" && strings.TrimSpace(input.Upstream) != "" {
+		return fmt.Errorf("%w: %s sites cannot define upstream", ErrUnprocessable, kind)
+	}
+	if kind != "load_balance" && len(input.Upstreams) != 0 {
+		return fmt.Errorf("%w: %s sites cannot define upstreams", ErrUnprocessable, kind)
+	}
+	if kind != "redirect" && (strings.TrimSpace(input.RedirectTarget) != "" || input.RedirectCode != 0) {
+		return fmt.Errorf("%w: %s sites cannot define a redirect", ErrUnprocessable, kind)
+	}
+	if kind != "php" && strings.TrimSpace(input.PHPVersion) != "" {
+		return fmt.Errorf("%w: %s sites cannot define phpVersion", ErrUnprocessable, kind)
+	}
+	return nil
 }
 
 func normalizeFQDN(raw string) (string, error) {
@@ -109,13 +179,21 @@ func normalizeFQDN(raw string) (string, error) {
 	return value, nil
 }
 
-func normalizeUpstream(raw string) (string, error) {
+type upstreamPolicy int
+
+const (
+	upstreamPrivate upstreamPolicy = iota
+	upstreamDomain
+	upstreamBalanced
+)
+
+func normalizeUpstream(raw string, policy upstreamPolicy) (string, error) {
 	if raw == "" || strings.TrimSpace(raw) != raw {
 		return "", fmt.Errorf("%w: upstream must be an http(s) origin", ErrUnprocessable)
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
-		parsed.User != nil || parsed.Opaque != "" || parsed.Path != "" || parsed.RawPath != "" ||
+		parsed.User != nil || parsed.Opaque != "" || (parsed.Path != "" && parsed.Path != "/") || parsed.RawPath != "" ||
 		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
 		return "", fmt.Errorf("%w: upstream must be an http(s) origin without credentials or a path", ErrUnprocessable)
 	}
@@ -123,12 +201,35 @@ func normalizeUpstream(raw string) (string, error) {
 	if host == "" {
 		return "", fmt.Errorf("%w: upstream host is required", ErrUnprocessable)
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		if !ip.IsLoopback() && !isRFC1918(ip) {
-			return "", fmt.Errorf("%w: upstream IP must be loopback or RFC1918", ErrUnprocessable)
+	ip := net.ParseIP(host)
+	switch policy {
+	case upstreamPrivate:
+		if ip != nil {
+			if !ip.IsLoopback() && !ip.IsPrivate() {
+				return "", fmt.Errorf("%w: upstream IP must be loopback or private", ErrUnprocessable)
+			}
+		} else if !validSingleDNSLabel(host) {
+			return "", fmt.Errorf("%w: upstream host must be a single Docker DNS label", ErrUnprocessable)
 		}
-	} else if !validSingleDNSLabel(host) {
-		return "", fmt.Errorf("%w: upstream host must be a single Docker DNS label", ErrUnprocessable)
+	case upstreamDomain:
+		if ip != nil {
+			return "", fmt.Errorf("%w: domain upstream must use an ASCII FQDN", ErrUnprocessable)
+		}
+		if normalized, domainErr := normalizeFQDN(host); domainErr != nil || normalized != host {
+			return "", fmt.Errorf("%w: domain upstream must use an ASCII FQDN", ErrUnprocessable)
+		}
+	case upstreamBalanced:
+		if ip != nil {
+			if !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsGlobalUnicast() {
+				return "", fmt.Errorf("%w: load balancing target IP is not routable", ErrUnprocessable)
+			}
+		} else if strings.Contains(host, ".") {
+			if normalized, domainErr := normalizeFQDN(host); domainErr != nil || normalized != host {
+				return "", fmt.Errorf("%w: invalid load balancing target", ErrUnprocessable)
+			}
+		} else if !validSingleDNSLabel(host) {
+			return "", fmt.Errorf("%w: invalid load balancing target", ErrUnprocessable)
+		}
 	}
 	port := parsed.Port()
 	if port != "" {
@@ -147,14 +248,29 @@ func normalizeUpstream(raw string) (string, error) {
 	return parsed.Scheme + "://" + normalizedHost, nil
 }
 
-func isRFC1918(ip net.IP) bool {
-	ip = ip.To4()
-	if ip == nil {
-		return false
+func normalizeUpstreams(values []string) ([]string, error) {
+	if len(values) < 2 || len(values) > 8 {
+		return nil, fmt.Errorf("%w: load balancing requires 2 to 8 upstreams", ErrUnprocessable)
 	}
-	return ip[0] == 10 ||
-		(ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) ||
-		(ip[0] == 192 && ip[1] == 168)
+	result := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		normalized, err := normalizeUpstream(value, upstreamBalanced)
+		if err != nil {
+			return nil, err
+		}
+		parsed, _ := url.Parse(normalized)
+		if parsed.Scheme != "http" {
+			return nil, fmt.Errorf("%w: load balancing upstreams must use http", ErrUnprocessable)
+		}
+		if seen[normalized] {
+			return nil, fmt.Errorf("%w: duplicate load balancing upstream", ErrUnprocessable)
+		}
+		seen[normalized] = true
+		result = append(result, normalized)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 func validSingleDNSLabel(value string) bool {
@@ -173,6 +289,121 @@ func renderManagedConfig(spec managedSpec) []byte {
 	serverNames := append([]string{spec.Primary}, spec.Aliases...)
 	var body strings.Builder
 	body.WriteString(managedMarker)
+	body.WriteString("\n# This file is generated by KPanel. Manual edits make it read-only.\n")
+	if spec.Kind == contract.SiteLoadBalance {
+		name := managedUpstreamName(spec.Primary)
+		body.WriteString("upstream ")
+		body.WriteString(name)
+		body.WriteString(" {\n")
+		body.WriteString("    hash $remote_addr consistent;\n")
+		for _, upstream := range spec.Upstreams {
+			parsed, _ := url.Parse(upstream)
+			target := parsed.Host
+			if parsed.Port() == "" {
+				if parsed.Scheme == "https" {
+					target += ":443"
+				} else {
+					target += ":80"
+				}
+			}
+			body.WriteString("    server ")
+			body.WriteString(target)
+			body.WriteString(";\n")
+		}
+		body.WriteString("    keepalive 64;\n")
+		body.WriteString("}\n\n")
+	}
+	body.WriteString("server {\n")
+	body.WriteString("    listen 80;\n")
+	body.WriteString("    listen [::]:80;\n")
+	body.WriteString("    server_name ")
+	body.WriteString(strings.Join(serverNames, " "))
+	body.WriteString(";\n\n")
+	body.WriteString("    location ^~ /.well-known/acme-challenge/ {\n")
+	body.WriteString("        default_type \"text/plain\";\n")
+	body.WriteString("        root /var/www/letsencrypt;\n")
+	body.WriteString("    }\n\n")
+	switch spec.Kind {
+	case contract.SiteStatic:
+		body.WriteString("    root /var/www/html/")
+		body.WriteString(spec.Primary)
+		body.WriteString(";\n")
+		body.WriteString("    index index.html;\n\n")
+		body.WriteString("    location / {\n")
+		body.WriteString("        try_files $uri $uri/ =404;\n")
+		body.WriteString("    }\n")
+		body.WriteString("\n    client_max_body_size 50m;\n")
+	case contract.SitePHP:
+		body.WriteString("    root /var/www/html/")
+		body.WriteString(spec.Primary)
+		body.WriteString(";\n")
+		body.WriteString("    index index.php index.html;\n\n")
+		body.WriteString("    location / {\n")
+		body.WriteString("        try_files $uri $uri/ /index.php?$args;\n")
+		body.WriteString("    }\n\n")
+		body.WriteString("    location ~ \\.php$ {\n")
+		body.WriteString("        try_files $uri =404;\n")
+		body.WriteString("        include fastcgi_params;\n")
+		body.WriteString("        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n")
+		body.WriteString("        fastcgi_pass unix:/run/")
+		if spec.PHPVersion == "7.4" {
+			body.WriteString("php74")
+		} else {
+			body.WriteString("php")
+		}
+		body.WriteString("/php-fpm.sock;\n")
+		body.WriteString("    }\n\n")
+		body.WriteString("    location ~ /\\. { deny all; }\n")
+		body.WriteString("    client_max_body_size 50m;\n")
+	case contract.SiteRedirect:
+		body.WriteString("    location / {\n")
+		body.WriteString("        return ")
+		body.WriteString(strconv.Itoa(spec.RedirectCode))
+		body.WriteString(" ")
+		body.WriteString(spec.RedirectTarget)
+		body.WriteString("$request_uri;\n")
+		body.WriteString("    }\n")
+	case contract.SiteReverseProxy, contract.SiteDomainProxy, contract.SiteLoadBalance:
+		target := spec.Upstream
+		if spec.Kind == contract.SiteLoadBalance {
+			parsed, _ := url.Parse(spec.Upstreams[0])
+			target = parsed.Scheme + "://" + managedUpstreamName(spec.Primary)
+		}
+		body.WriteString("    location / {\n")
+		body.WriteString("        proxy_pass ")
+		body.WriteString(target)
+		body.WriteString(";\n")
+		body.WriteString("        proxy_http_version 1.1;\n")
+		if spec.Kind == contract.SiteDomainProxy {
+			parsed, _ := url.Parse(spec.Upstream)
+			body.WriteString("        proxy_set_header Host ")
+			body.WriteString(parsed.Host)
+			body.WriteString(";\n")
+		} else {
+			body.WriteString("        proxy_set_header Host $host;\n")
+		}
+		body.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
+		body.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+		body.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
+		body.WriteString("        proxy_set_header Upgrade $http_upgrade;\n")
+		body.WriteString("        proxy_set_header Connection \"upgrade\";\n")
+		if spec.Kind == contract.SiteDomainProxy {
+			parsed, _ := url.Parse(spec.Upstream)
+			body.WriteString("        proxy_ssl_server_name on;\n")
+			body.WriteString("        proxy_ssl_name ")
+			body.WriteString(parsed.Hostname())
+			body.WriteString(";\n")
+		}
+		body.WriteString("    }\n")
+	}
+	body.WriteString("}\n")
+	return []byte(body.String())
+}
+
+func renderManagedConfigV1(spec managedSpec) []byte {
+	serverNames := append([]string{spec.Primary}, spec.Aliases...)
+	var body strings.Builder
+	body.WriteString(managedMarkerV1)
 	body.WriteString("\n# This file is generated by KPanel. Manual edits make it read-only.\n")
 	body.WriteString("server {\n")
 	body.WriteString("    listen 80;\n")
@@ -206,14 +437,40 @@ func renderManagedConfig(spec managedSpec) []byte {
 	return []byte(body.String())
 }
 
+func managedUpstreamName(primary string) string {
+	sum := sha256.Sum256([]byte(primary))
+	return "kp_" + hex.EncodeToString(sum[:6])
+}
+
 func renderDefaultIndex(domain string) []byte {
 	return []byte("<!doctype html>\n<html lang=\"zh-CN\">\n<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>" +
 		domain + "</title></head>\n<body><main><h1>网站已创建</h1><p>" + domain +
 		" 已由 KPanel 安全创建。</p></main></body>\n</html>\n")
 }
 
+func renderDefaultPHP(domain string) []byte {
+	return []byte("<?php\nheader('Content-Type: text/html; charset=utf-8');\n?><!doctype html>\n" +
+		"<html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" " +
+		"content=\"width=device-width,initial-scale=1\"><title>" + domain + "</title></head>" +
+		"<body><main><h1>PHP 网站已创建</h1><p>" + domain +
+		" 已由 KPanel 安全创建。</p></main></body></html>\n")
+}
+
+func siteNeedsDocumentRoot(kind contract.SiteKind) bool {
+	return kind == contract.SiteStatic || kind == contract.SitePHP
+}
+
+func managedDefaultDocument(spec managedSpec) (string, []byte) {
+	if spec.Kind == contract.SitePHP {
+		return "index.php", renderDefaultPHP(spec.Primary)
+	}
+	return "index.html", renderDefaultIndex(spec.Primary)
+}
+
 func (d *Discoverer) markManagedSite(site *contract.SiteSummary, data []byte, configPath string) {
-	if !bytes.HasPrefix(data, []byte(managedMarker+"\n")) {
+	v1 := bytes.HasPrefix(data, []byte(managedMarkerV1+"\n"))
+	v2 := bytes.HasPrefix(data, []byte(managedMarker+"\n"))
+	if !v1 && !v2 {
 		return
 	}
 	site.Origin = contract.OriginWeb
@@ -222,8 +479,16 @@ func (d *Discoverer) markManagedSite(site *contract.SiteSummary, data []byte, co
 	if err == nil {
 		expectedPath = filepath.Join(d.WebRoot, "conf.d", spec.Primary+".conf")
 	}
+	expectedConfig := renderManagedConfig(spec)
+	if v1 {
+		if spec.Kind != contract.SiteStatic && spec.Kind != contract.SiteReverseProxy {
+			err = errors.New("v1 marker used by an unsupported site type")
+		} else {
+			expectedConfig = renderManagedConfigV1(spec)
+		}
+	}
 	if err != nil || filepath.Clean(configPath) != filepath.Clean(expectedPath) ||
-		!bytes.Equal(data, renderManagedConfig(spec)) {
+		!bytes.Equal(data, expectedConfig) {
 		site.Consistency = contract.ConsistencyDrifted
 		site.AllowedActions = []string{}
 		site.Warnings = uniqueStrings(append(site.Warnings,
@@ -231,7 +496,7 @@ func (d *Discoverer) markManagedSite(site *contract.SiteSummary, data []byte, co
 		))
 		return
 	}
-	if spec.Kind == contract.SiteStatic {
+	if spec.Kind == contract.SiteStatic || spec.Kind == contract.SitePHP {
 		expectedRoot := filepath.Join(d.WebRoot, "html", spec.Primary)
 		if filepath.Clean(site.DocumentRoot) != filepath.Clean(expectedRoot) {
 			site.Consistency = contract.ConsistencyDrifted
@@ -264,10 +529,43 @@ func managedSpecFromSummary(site contract.SiteSummary) (managedSpec, error) {
 		if site.Target != "" {
 			return managedSpec{}, errors.New("static managed site has a target")
 		}
+	case contract.SitePHP:
+		switch site.Target {
+		case "php":
+			spec.PHPVersion = "latest"
+		case "php74":
+			spec.PHPVersion = "7.4"
+		default:
+			return managedSpec{}, errors.New("PHP managed site has an unknown runtime")
+		}
 	case contract.SiteReverseProxy:
-		spec.Upstream, err = normalizeUpstream(site.Target)
+		spec.Upstream, err = normalizeUpstream(site.Target, upstreamPrivate)
 		if err != nil || spec.Upstream != site.Target {
 			return managedSpec{}, errors.New("proxy managed site has a non-canonical upstream")
+		}
+	case contract.SiteDomainProxy:
+		spec.Upstream, err = normalizeUpstream(site.Target, upstreamDomain)
+		if err != nil || spec.Upstream != site.Target {
+			return managedSpec{}, errors.New("domain proxy managed site has a non-canonical upstream")
+		}
+	case contract.SiteLoadBalance:
+		values := strings.Split(site.Target, ",")
+		for index := range values {
+			values[index] = strings.TrimSpace(values[index])
+		}
+		spec.Upstreams, err = normalizeUpstreams(values)
+		if err != nil || strings.Join(spec.Upstreams, ", ") != site.Target {
+			return managedSpec{}, errors.New("load balancing site has non-canonical upstreams")
+		}
+	case contract.SiteRedirect:
+		code, target, ok := strings.Cut(site.Target, " ")
+		spec.RedirectCode, err = strconv.Atoi(code)
+		if !ok || err != nil {
+			return managedSpec{}, errors.New("redirect managed site has an invalid target")
+		}
+		spec.RedirectTarget, err = normalizeUpstream(target, upstreamDomain)
+		if err != nil || fmt.Sprintf("%d %s", spec.RedirectCode, spec.RedirectTarget) != site.Target {
+			return managedSpec{}, errors.New("redirect managed site has a non-canonical target")
 		}
 	default:
 		return managedSpec{}, errors.New("unsupported managed site kind")

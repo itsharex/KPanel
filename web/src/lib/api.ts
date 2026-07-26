@@ -390,7 +390,10 @@ function normalizeSite(raw: RawSite): Site {
     static: 'static',
     reverse_proxy: 'proxy',
     proxy: 'proxy',
+    domain_proxy: 'proxy_domain',
+    load_balance: 'load_balance',
     php: 'php',
+    wordpress: 'wordpress',
     redirect: 'redirect',
   }
   const consistencyMap: Record<string, Site['consistency']> = {

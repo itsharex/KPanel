@@ -68,7 +68,7 @@ IP + 端口反代入口位于 `kejilion.sh:3499`。它使用
 因此 Panel 不调用脚本函数，也不照搬其删除、下载、证书申请、文本替换和
 reload 流程。
 
-## v0.1 双向呈现规则
+## v0.9 双向呈现规则
 
 读取方向：
 
@@ -83,13 +83,15 @@ reload 流程。
 
 写入方向：
 
-1. 首版只允许固定、内置、无 TLS 的 HTTP 静态站和单上游反向代理模板。
+1. 允许固定、内置、无 TLS 的 HTTP 模板创建静态站、PHP 动态站、
+   IP/端口反代、域名反代、负载均衡和域名重定向。
 2. 产物仍使用 `/home/web/conf.d/<domain>.conf` 与
    `/home/web/html/<domain>`，因此脚本侧列表能发现。
 3. 已存在任何同名配置、目录或域名归属时返回 `409`，绝不调用删除。
 4. 只有带 Panel 管理标记且仍匹配固定模板的站点允许 Web 更新；脚本和人工
    创建的配置默认只读，避免覆盖自定义指令。
-5. 输入只接受结构化域名、别名和 HTTP(S) upstream；不接受 Shell、任意
+5. 输入只接受结构化域名、别名、PHP 版本、跳转状态码和 HTTP(S) origin；
+   负载均衡与脚本一致使用 2–8 个 HTTP upstream。不接受 Shell、任意
    Nginx 文本或绝对目标路径。
 6. 写入使用同文件系统临时文件、`fsync` 和原子替换。
 7. 固定执行 `nginx -t`，成功后才 reload；失败时在确认没有外部并发改写后
@@ -97,9 +99,37 @@ reload 流程。
 8. 更新必须携带由实际配置和证书计算出的 `resourceVersion`；外部变化返回
    `409`，不静默覆盖。
 
-旧脚本不遵守 Panel 的资源锁，所以 v0.1 能保证真实产物双向可见和冲突拒绝，
+旧脚本不遵守 Panel 的资源锁，所以 v0.9 能保证真实产物双向可见和冲突拒绝，
 不能宣称 CLI/Web 严格串行。只有未来让脚本显式通过 `kpctl` 调用 Agent，才能
 形成同一事务入口。
+
+## v0.9 新建站点服务矩阵
+
+| Web 选择 | `kejilion.sh` 对应业务 | Panel 产物与限制 |
+| --- | --- | --- |
+| 静态网站 | 自定义静态站点 | `<domain>.conf`、`html/<domain>/index.html` |
+| PHP 网站 | 自定义 PHP 网站 | `<domain>.conf`、`html/<domain>/index.php`；可选 `php` / `php74` Socket |
+| IP / 端口反代 | `ldnmp_Proxy` | 只允许本机、私网 IP 或单段 Docker DNS 名称 |
+| 域名反代 | 反向代理-域名 | 固定上游 Host 与 HTTPS SNI；不复用脚本模板中的业务特定内容替换 |
+| 负载均衡 | `ldnmp_Proxy_backend` | 2–8 个 HTTP origin、稳定 upstream 名称、按来源 IP 一致性哈希 |
+| 域名重定向 | 站点重定向 | 固定 301 / 302 / 307 / 308，保留原请求 URI |
+
+所有类型仍写入脚本可发现的 `/home/web/conf.d/<domain>.conf`；静态和 PHP
+目录映射保持 `/home/web/html/<domain>` → `/var/www/html/<domain>`。
+Panel v2 模板保留 ACME Webroot location，但创建站点不自动签发证书，也不停止
+Nginx。已由旧版 Panel 创建且仍完全匹配 v1 模板的站点可在下一次安全更新时
+原地迁移到 v2，站点目录内容不会被替换。
+
+以下入口不混入普通“新建网站”事务：
+
+- WordPress、Discuz、Kodbox、Typecho、Halo、Vaultwarden 等是应用安装器，
+  还涉及镜像/源码供应链、数据库凭据、持久卷与升级回滚。
+- Nginx Stream 是 TCP/UDP 四层代理，写入 `/home/web/stream.d` 并可能修改
+  全局 `nginx.conf`，不是域名网站。
+- TLS 签发会改变线上监听状态，必须由独立证书事务实现。
+
+这些现有脚本产物会继续被保守发现和显示；在拥有固定版本、凭据生命周期、
+备份与回滚契约前，不伪装成普通站点创建能力。
 
 ## 固定模板摘要
 

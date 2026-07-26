@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
+  ArrowRight,
   Braces,
   FileCode2,
   Globe2,
@@ -9,8 +10,10 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Server,
   ShieldCheck,
   TriangleAlert,
+  Waypoints,
 } from '@lucide/vue'
 import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
@@ -25,6 +28,9 @@ import { useToast } from '@/stores/toast'
 import type { Site, SiteInput } from '@/types/api'
 
 type Filter = 'all' | 'healthy' | 'drifted' | 'read-only'
+type SiteServiceType = SiteInput['type']
+type RedirectCode = NonNullable<SiteInput['redirectCode']>
+type PHPVersion = NonNullable<SiteInput['phpVersion']>
 
 const sites = ref<Site[]>([])
 const capabilities = ref<Array<{ id: string; enabled: boolean; reason?: string; methods?: string[] }>>([])
@@ -42,11 +48,66 @@ const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
 
+const serviceOptions = [
+  {
+    type: 'static',
+    title: '静态网站',
+    summary: 'HTML、图片与前端构建产物',
+    detail: '创建独立站点目录与默认首页',
+    icon: FileCode2,
+  },
+  {
+    type: 'php',
+    title: 'PHP 网站',
+    summary: '动态网站与自建 PHP 程序',
+    detail: '使用 kejilion.sh 同款 PHP-FPM Socket',
+    icon: Braces,
+  },
+  {
+    type: 'proxy',
+    title: 'IP / 端口反代',
+    summary: '代理本机、内网或 Docker 服务',
+    detail: '例如 127.0.0.1:3000',
+    icon: Server,
+  },
+  {
+    type: 'proxy_domain',
+    title: '域名反代',
+    summary: '代理另一域名提供的 HTTPS 服务',
+    detail: '自动配置上游 SNI',
+    icon: Globe2,
+  },
+  {
+    type: 'load_balance',
+    title: '负载均衡',
+    summary: '将请求分配到多个后端节点',
+    detail: '支持 2–8 个 HTTP 上游',
+    icon: Waypoints,
+  },
+  {
+    type: 'redirect',
+    title: '域名重定向',
+    summary: '将访问跳转到另一个域名',
+    detail: '支持 301、302、307、308',
+    icon: ArrowRight,
+  },
+] as const satisfies ReadonlyArray<{
+  type: SiteServiceType
+  title: string
+  summary: string
+  detail: string
+  icon: typeof FileCode2
+}>
+
 const form = reactive({
   primaryDomain: '',
   aliases: '',
-  type: 'static' as 'static' | 'proxy',
+  type: 'static' as SiteServiceType,
   upstream: '',
+  upstreams: '',
+  redirectTarget: '',
+  redirectCode: 301 as RedirectCode,
+  phpVersion: 'latest' as PHPVersion,
 })
 
 const siteWriteCapability = computed(() => capabilities.value.find((capability) => capability.id === 'sites.write'))
@@ -83,12 +144,52 @@ const counts = computed(() => ({
   'read-only': sites.value.filter((site) => site.access !== 'managed').length,
 }))
 
+const selectedService = computed(() => serviceOptions.find((option) => option.type === form.type))
+
 const formValid = computed(() => {
   const domain = form.primaryDomain.trim()
-  const validDomain = domain.includes('.') && !domain.includes('/') && !domain.includes(' ')
-  const validUpstream = form.type === 'static' || /^https?:\/\/[^ ]+$/i.test(form.upstream.trim())
-  return validDomain && validUpstream
+  if (!isDomain(domain)) return false
+  if (form.type === 'proxy' || form.type === 'proxy_domain') return isOrigin(form.upstream)
+  if (form.type === 'load_balance') {
+    const upstreams = splitUpstreams(form.upstreams)
+    return upstreams.length >= 2 && upstreams.length <= 8 && upstreams.every(isHTTPOrigin)
+  }
+  if (form.type === 'redirect') return isOrigin(form.redirectTarget)
+  return true
 })
+
+function isDomain(value: string): boolean {
+  return /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(
+    value,
+  )
+}
+
+function isOrigin(value: string): boolean {
+  try {
+    const parsed = new URL(value.trim())
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      !parsed.username &&
+      !parsed.password &&
+      parsed.pathname === '/' &&
+      !parsed.search &&
+      !parsed.hash
+    )
+  } catch {
+    return false
+  }
+}
+
+function isHTTPOrigin(value: string): boolean {
+  return isOrigin(value) && new URL(value.trim()).protocol === 'http:'
+}
+
+function splitUpstreams(value: string): string[] {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
 
 function sourceLabel(source: Site['source']): string {
   return {
@@ -102,11 +203,29 @@ function sourceLabel(source: Site['source']): string {
 function typeLabel(type: Site['type']): string {
   return {
     static: '静态站点',
-    proxy: '反向代理',
-    php: 'PHP',
-    redirect: '重定向',
+    proxy: 'IP / 端口反代',
+    proxy_domain: '域名反代',
+    load_balance: '负载均衡',
+    php: 'PHP 网站',
+    wordpress: 'WordPress',
+    redirect: '域名重定向',
     unknown: '未知类型',
   }[type]
+}
+
+function siteTargetLabel(site: Site): string {
+  if (site.type === 'static' || site.type === 'php' || site.type === 'wordpress') return '站点目录'
+  if (site.type === 'redirect') return '跳转目标'
+  if (site.type === 'load_balance') return '上游节点'
+  return '上游地址'
+}
+
+function siteTargetValue(site: Site): string {
+  if (site.type === 'php' || site.type === 'wordpress') {
+    const runtime = site.upstream === 'php74' ? 'PHP 7.4' : site.upstream === 'php' ? 'PHP 最新版' : ''
+    return [site.rootPath, runtime].filter(Boolean).join(' · ') || '—'
+  }
+  return site.upstream || site.rootPath || '—'
 }
 
 async function load(silent = false): Promise<void> {
@@ -139,16 +258,26 @@ function openCreate(): void {
   form.aliases = ''
   form.type = 'static'
   form.upstream = ''
+  form.upstreams = ''
+  form.redirectTarget = ''
+  form.redirectCode = 301
+  form.phpVersion = 'latest'
   formError.value = ''
   editorOpen.value = true
 }
 
 function openEdit(site: Site): void {
+  if (!serviceOptions.some((option) => option.type === site.type)) return
   editingSite.value = site
   form.primaryDomain = site.primaryDomain
   form.aliases = site.domains.filter((domain) => domain !== site.primaryDomain).join('\n')
-  form.type = site.type === 'proxy' ? 'proxy' : 'static'
-  form.upstream = site.upstream || ''
+  form.type = site.type as SiteServiceType
+  form.upstream = site.type === 'proxy' || site.type === 'proxy_domain' ? site.upstream || '' : ''
+  form.upstreams = site.type === 'load_balance' ? (site.upstream || '').split(',').join('\n') : ''
+  const redirectMatch = site.type === 'redirect' ? (site.upstream || '').match(/^(301|302|307|308)\s+(.+)$/) : null
+  form.redirectCode = redirectMatch ? (Number(redirectMatch[1]) as RedirectCode) : 301
+  form.redirectTarget = redirectMatch?.[2] || ''
+  form.phpVersion = site.type === 'php' && site.upstream === 'php74' ? '7.4' : 'latest'
   formError.value = ''
   selectedSite.value = undefined
   editorOpen.value = true
@@ -157,7 +286,7 @@ function openEdit(site: Site): void {
 async function submitSite(): Promise<void> {
   formError.value = ''
   if (!formValid.value) {
-    formError.value = '请检查域名与上游地址。'
+    formError.value = '请检查域名和当前服务所需的配置。'
     return
   }
 
@@ -169,7 +298,11 @@ async function submitSite(): Promise<void> {
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
     type: form.type,
-    upstream: form.type === 'proxy' ? form.upstream.trim() : undefined,
+    upstream: form.type === 'proxy' || form.type === 'proxy_domain' ? form.upstream.trim() : undefined,
+    upstreams: form.type === 'load_balance' ? splitUpstreams(form.upstreams) : undefined,
+    redirectTarget: form.type === 'redirect' ? form.redirectTarget.trim() : undefined,
+    redirectCode: form.type === 'redirect' ? form.redirectCode : undefined,
+    phpVersion: form.type === 'php' ? form.phpVersion : undefined,
     enabled: true,
     expectedResourceVersion: editingSite.value?.resourceVersion,
   }
@@ -204,7 +337,7 @@ onBeforeUnmount(() => controller?.abort())
   <div class="page">
     <PageHeader
       title="网站管理"
-      description="从 Nginx 配置、站点目录与证书实际产物中发现；安全写入同步执行，不接管未知资源。"
+      description="从实际产物发现网站；新建站点沿用 kejilion.sh 的 /home/web 架构，并通过安全事务提交。"
     >
       <template #actions>
         <button
@@ -288,8 +421,8 @@ onBeforeUnmount(() => controller?.abort())
               <td>
                 <div class="table-stack">
                   <StatusBadge :status="site.type" :label="typeLabel(site.type)" subtle />
-                  <small :title="site.upstream || site.rootPath">
-                    {{ site.upstream || site.rootPath || '未识别目标' }}
+                  <small :title="siteTargetValue(site)">
+                    {{ siteTargetValue(site) }}
                   </small>
                 </div>
               </td>
@@ -366,8 +499,8 @@ onBeforeUnmount(() => controller?.abort())
             <dd>{{ formatDateTime(selectedSite.observedAt) }}</dd>
           </div>
           <div class="detail-list__wide">
-            <dt>{{ selectedSite.type === 'proxy' ? '上游地址' : '站点目录' }}</dt>
-            <dd><code>{{ selectedSite.upstream || selectedSite.rootPath || '—' }}</code></dd>
+            <dt>{{ siteTargetLabel(selectedSite) }}</dt>
+            <dd><code>{{ siteTargetValue(selectedSite) }}</code></dd>
           </div>
           <div class="detail-list__wide">
             <dt>绑定域名</dt>
@@ -420,7 +553,8 @@ onBeforeUnmount(() => controller?.abort())
     <ModalDialog
       :open="editorOpen"
       :title="editingSite ? '编辑网站设置' : '新建网站'"
-      description="提交后同步执行安全事务：校验资源版本与 nginx -t，失败自动回滚，成功后 reload。"
+      description="按 kejilion.sh 的站点架构生成固定配置；先通过 nginx -t，成功后才 reload。"
+      size="large"
       @close="editorOpen = false"
     >
       <form id="site-form" class="form-stack" @submit.prevent="submitSite">
@@ -436,26 +570,113 @@ onBeforeUnmount(() => controller?.abort())
           />
           <small>{{ editingSite ? '首版更新不重命名主域名或移动网站目录。' : '不要包含协议、路径或端口。' }}</small>
         </label>
-        <label class="field">
-          <span>网站类型</span>
-          <select v-model="form.type" :disabled="Boolean(editingSite)">
-            <option value="static">静态网站</option>
-            <option value="proxy">反向代理</option>
-          </select>
-          <small v-if="editingSite">首版不在静态站与反向代理之间转换，避免遗留或删除业务文件。</small>
-        </label>
-        <label v-if="form.type === 'proxy'" class="field">
+
+        <fieldset class="site-service-field">
+          <legend>选择站点服务</legend>
+          <div class="site-service-grid">
+            <button
+              v-for="option in serviceOptions"
+              :key="option.type"
+              class="site-service-card"
+              :class="{ 'is-active': form.type === option.type }"
+              type="button"
+              :disabled="Boolean(editingSite)"
+              :aria-pressed="form.type === option.type"
+              @click="form.type = option.type"
+            >
+              <span class="site-service-card__icon"><component :is="option.icon" :size="20" /></span>
+              <span class="site-service-card__content">
+                <strong>{{ option.title }}</strong>
+                <small>{{ option.summary }}</small>
+                <em>{{ option.detail }}</em>
+              </span>
+            </button>
+          </div>
+          <small v-if="editingSite">服务类型保持不变，避免遗留目录或意外改变现有流量路径。</small>
+        </fieldset>
+
+        <div v-if="selectedService" class="site-service-summary">
+          <component :is="selectedService.icon" :size="18" />
+          <span><strong>{{ selectedService.title }}</strong>{{ selectedService.summary }}</span>
+        </div>
+
+        <fieldset v-if="form.type === 'php'" class="field site-inline-options">
+          <legend>PHP 运行环境</legend>
+          <div class="choice-pills">
+            <button
+              type="button"
+              :class="{ 'is-active': form.phpVersion === 'latest' }"
+              :aria-pressed="form.phpVersion === 'latest'"
+              @click="form.phpVersion = 'latest'"
+            >
+              PHP 最新版
+            </button>
+            <button
+              type="button"
+              :class="{ 'is-active': form.phpVersion === '7.4' }"
+              :aria-pressed="form.phpVersion === '7.4'"
+              @click="form.phpVersion = '7.4'"
+            >
+              PHP 7.4
+            </button>
+          </div>
+          <small>分别对应脚本架构中的 php 与 php74 PHP-FPM 服务。</small>
+        </fieldset>
+
+        <label v-if="form.type === 'proxy' || form.type === 'proxy_domain'" class="field">
           <span>上游地址</span>
-          <input v-model.trim="form.upstream" type="url" placeholder="http://127.0.0.1:3000" required />
-          <small>仅允许 HTTP 或 HTTPS 上游，Agent 会继续执行 SSRF 与端口校验。</small>
+          <input
+            v-model.trim="form.upstream"
+            type="url"
+            :placeholder="form.type === 'proxy_domain' ? 'https://origin.example.com' : 'http://127.0.0.1:3000'"
+            required
+          />
+          <small v-if="form.type === 'proxy'">仅允许本机、内网 IP 或 Docker 服务名，阻止意外代理公网地址。</small>
+          <small v-else>填写完整域名源站，HTTPS 会自动启用上游 SNI；不接受路径、账号或查询参数。</small>
         </label>
+
+        <label v-if="form.type === 'load_balance'" class="field">
+          <span>后端节点</span>
+          <textarea
+            v-model="form.upstreams"
+            rows="4"
+            placeholder="http://10.0.0.11:8080&#10;http://10.0.0.12:8080"
+            required
+          />
+          <small>每行一个 HTTP 源站，2–8 个；与 kejilion.sh 的 HTTP upstream 架构一致。</small>
+        </label>
+
+        <template v-if="form.type === 'redirect'">
+          <label class="field">
+            <span>跳转目标</span>
+            <input v-model.trim="form.redirectTarget" type="url" placeholder="https://www.example.com" required />
+            <small>访问路径与查询参数会原样追加到目标域名。</small>
+          </label>
+          <fieldset class="field site-inline-options">
+            <legend>跳转方式</legend>
+            <div class="choice-pills choice-pills--four">
+              <button
+                v-for="code in ([301, 302, 307, 308] as RedirectCode[])"
+                :key="code"
+                type="button"
+                :class="{ 'is-active': form.redirectCode === code }"
+                :aria-pressed="form.redirectCode === code"
+                @click="form.redirectCode = code"
+              >
+                {{ code }}<small>{{ code === 301 || code === 308 ? '永久' : '临时' }}</small>
+              </button>
+            </div>
+          </fieldset>
+        </template>
+
         <label class="field">
           <span>附加域名（可选）</span>
           <textarea v-model="form.aliases" rows="3" placeholder="www.example.com&#10;api.example.com" />
+          <small>每行一个域名，最多 20 个；主域名不要重复填写。</small>
         </label>
         <div class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          Agent 会锁定资源并原子写入；仅更新由 Panel 固定模板创建且未被外部修改的网站。脚本或人工配置保持只读，首版不删除网站、目录、数据库或证书。
+          Agent 会写入 /home/web 对应产物并原子提交；脚本或人工配置保持只读。创建不会删除目录、数据库或证书，也不会为签发证书停止现有 Nginx。
         </div>
       </form>
       <template #footer>

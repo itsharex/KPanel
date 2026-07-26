@@ -93,32 +93,38 @@ func (m *Manager) Create(ctx context.Context, input SiteInput) (contract.SiteSum
 
 	var staticPath, staticTemp string
 	var staticInfo os.FileInfo
-	if spec.Kind == contract.SiteStatic {
+	if siteNeedsDocumentRoot(spec.Kind) {
 		staticPath = filepath.Join(m.webRoot, "html", spec.Primary)
-		staticTemp, err = stageStaticDirectory(filepath.Dir(staticPath), spec.Primary, renderDefaultIndex(spec.Primary))
+		indexName, indexBody := managedDefaultDocument(spec)
+		staticTemp, err = stageStaticDirectory(
+			filepath.Dir(staticPath),
+			spec.Primary,
+			indexName,
+			indexBody,
+		)
 		if err != nil {
-			return contract.SiteSummary{}, fmt.Errorf("%w: stage static document root: %v", ErrUnavailable, err)
+			return contract.SiteSummary{}, fmt.Errorf("%w: stage document root: %v", ErrUnavailable, err)
 		}
-		defer removeStagedStaticDirectory(staticTemp)
+		defer removeStagedStaticDirectory(staticTemp, indexName)
 		if err := atomicNoReplace(staticTemp, staticPath); err != nil {
 			if pathExists(staticPath) {
-				return contract.SiteSummary{}, fmt.Errorf("%w: static directory already exists", ErrConflict)
+				return contract.SiteSummary{}, fmt.Errorf("%w: document root already exists", ErrConflict)
 			}
-			return contract.SiteSummary{}, fmt.Errorf("%w: publish static directory: %v", ErrUnavailable, err)
+			return contract.SiteSummary{}, fmt.Errorf("%w: publish document root: %v", ErrUnavailable, err)
 		}
 		staticTemp = ""
 		staticInfo, _ = os.Lstat(staticPath)
 		if err := syncDirectory(filepath.Dir(staticPath)); err != nil {
-			if rollbackErr := m.removeCreatedStatic(staticPath, staticInfo, spec.Primary); rollbackErr != nil {
+			if rollbackErr := m.removeCreatedStatic(staticPath, staticInfo, spec); rollbackErr != nil {
 				return contract.SiteSummary{}, rollbackErr
 			}
-			return contract.SiteSummary{}, fmt.Errorf("%w: sync static directory publication; candidate rolled back: %v", ErrUnavailable, err)
+			return contract.SiteSummary{}, fmt.Errorf("%w: sync document root publication; candidate rolled back: %v", ErrUnavailable, err)
 		}
 	}
 
 	m.callHook("before_config_publish", configPath)
 	if err := atomicNoReplace(configTemp, configPath); err != nil {
-		rollbackErr := m.removeCreatedStatic(staticPath, staticInfo, spec.Primary)
+		rollbackErr := m.removeCreatedStatic(staticPath, staticInfo, spec)
 		if rollbackErr != nil {
 			return contract.SiteSummary{}, rollbackErr
 		}
@@ -130,7 +136,7 @@ func (m *Manager) Create(ctx context.Context, input SiteInput) (contract.SiteSum
 	configTemp = ""
 	configInfo, _ := os.Lstat(configPath)
 	if err := syncDirectory(filepath.Dir(configPath)); err != nil {
-		if rollbackErr := m.rollbackCreate(configPath, configInfo, config, staticPath, staticInfo, spec.Primary); rollbackErr != nil {
+		if rollbackErr := m.rollbackCreate(configPath, configInfo, config, staticPath, staticInfo, spec); rollbackErr != nil {
 			return contract.SiteSummary{}, rollbackErr
 		}
 		return contract.SiteSummary{}, fmt.Errorf("%w: sync configuration publication; candidate rolled back: %v", ErrUnavailable, err)
@@ -141,7 +147,7 @@ func (m *Manager) Create(ctx context.Context, input SiteInput) (contract.SiteSum
 		return contract.SiteSummary{}, fmt.Errorf("%w: candidate changed before validation", ErrNeedsAttention)
 	}
 	if err := m.nginx.NginxTest(ctx); err != nil {
-		if rollbackErr := m.rollbackCreate(configPath, configInfo, config, staticPath, staticInfo, spec.Primary); rollbackErr != nil {
+		if rollbackErr := m.rollbackCreate(configPath, configInfo, config, staticPath, staticInfo, spec); rollbackErr != nil {
 			return contract.SiteSummary{}, rollbackErr
 		}
 		return contract.SiteSummary{}, fmt.Errorf("%w: candidate failed nginx -t: %v", ErrUnprocessable, err)
@@ -150,7 +156,7 @@ func (m *Manager) Create(ctx context.Context, input SiteInput) (contract.SiteSum
 		return contract.SiteSummary{}, fmt.Errorf("%w: candidate changed during validation", ErrNeedsAttention)
 	}
 	if err := m.nginx.NginxReload(ctx); err != nil {
-		if rollbackErr := m.rollbackCreate(configPath, configInfo, config, staticPath, staticInfo, spec.Primary); rollbackErr != nil {
+		if rollbackErr := m.rollbackCreate(configPath, configInfo, config, staticPath, staticInfo, spec); rollbackErr != nil {
 			return contract.SiteSummary{}, rollbackErr
 		}
 		if recoveryErr := m.validateAndReloadPrevious(ctx); recoveryErr != nil {
@@ -191,10 +197,10 @@ func (m *Manager) Update(ctx context.Context, id string, input SiteInput) (contr
 	if err := m.checkCollisions(spec, current.ID); err != nil {
 		return contract.SiteSummary{}, err
 	}
-	if spec.Kind == contract.SiteStatic {
+	if siteNeedsDocumentRoot(spec.Kind) {
 		rootInfo, rootErr := os.Lstat(filepath.Join(m.webRoot, "html", spec.Primary))
 		if rootErr != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
-			return contract.SiteSummary{}, fmt.Errorf("%w: static document root is unavailable or unsafe", ErrForbidden)
+			return contract.SiteSummary{}, fmt.Errorf("%w: document root is unavailable or unsafe", ErrForbidden)
 		}
 	}
 
@@ -206,6 +212,13 @@ func (m *Manager) Update(ctx context.Context, id string, input SiteInput) (contr
 	newConfig := renderManagedConfig(spec)
 	configPath := filepath.Join(m.webRoot, "conf.d", spec.Primary+".conf")
 	oldInfo, err := os.Lstat(configPath)
+	if err == nil && !fileMatches(configPath, oldInfo, oldConfig) &&
+		(oldSpec.Kind == contract.SiteStatic || oldSpec.Kind == contract.SiteReverseProxy) {
+		legacyConfig := renderManagedConfigV1(oldSpec)
+		if fileMatches(configPath, oldInfo, legacyConfig) {
+			oldConfig = legacyConfig
+		}
+	}
 	if err != nil || !fileMatches(configPath, oldInfo, oldConfig) {
 		return contract.SiteSummary{}, fmt.Errorf("%w: current configuration is no longer canonical", ErrForbidden)
 	}
@@ -329,7 +342,7 @@ func (m *Manager) checkCollisions(spec managedSpec, excludeID string) error {
 		for _, path := range conflictPaths {
 			if excludeID != "" && domain == spec.Primary &&
 				(path == filepath.Join(m.webRoot, "conf.d", spec.Primary+".conf") ||
-					(spec.Kind == contract.SiteStatic && path == filepath.Join(m.webRoot, "html", spec.Primary))) {
+					(siteNeedsDocumentRoot(spec.Kind) && path == filepath.Join(m.webRoot, "html", spec.Primary))) {
 				continue
 			}
 			if _, statErr := os.Lstat(path); statErr == nil {
@@ -371,7 +384,14 @@ func (m *Manager) discoverManaged(primary string) (contract.SiteSummary, error) 
 	return contract.SiteSummary{}, fmt.Errorf("%w: committed site could not be rediscovered", ErrNeedsAttention)
 }
 
-func (m *Manager) rollbackCreate(configPath string, configInfo os.FileInfo, config []byte, staticPath string, staticInfo os.FileInfo, primary string) error {
+func (m *Manager) rollbackCreate(
+	configPath string,
+	configInfo os.FileInfo,
+	config []byte,
+	staticPath string,
+	staticInfo os.FileInfo,
+	spec managedSpec,
+) error {
 	if !fileMatches(configPath, configInfo, config) {
 		return fmt.Errorf("%w: candidate changed; refusing rollback", ErrNeedsAttention)
 	}
@@ -381,24 +401,26 @@ func (m *Manager) rollbackCreate(configPath string, configInfo os.FileInfo, conf
 	if err := syncDirectory(filepath.Dir(configPath)); err != nil {
 		return fmt.Errorf("%w: sync rollback: %v", ErrNeedsAttention, err)
 	}
-	return m.removeCreatedStatic(staticPath, staticInfo, primary)
+	return m.removeCreatedStatic(staticPath, staticInfo, spec)
 }
 
-func (m *Manager) removeCreatedStatic(path string, expected os.FileInfo, primary string) error {
+func (m *Manager) removeCreatedStatic(path string, expected os.FileInfo, spec managedSpec) error {
 	if path == "" {
 		return nil
 	}
 	current, err := os.Lstat(path)
 	if err != nil || expected == nil || !os.SameFile(expected, current) || !current.IsDir() {
-		return fmt.Errorf("%w: static directory changed; refusing rollback", ErrNeedsAttention)
+		return fmt.Errorf("%w: document root changed; refusing rollback", ErrNeedsAttention)
 	}
+	indexName, indexBody := managedDefaultDocument(spec)
 	entries, err := os.ReadDir(path)
-	if err != nil || len(entries) != 1 || entries[0].Name() != "index.html" || entries[0].Type()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%w: static directory contains external changes; refusing rollback", ErrNeedsAttention)
+	if err != nil || len(entries) != 1 || entries[0].Name() != indexName ||
+		entries[0].Type()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%w: document root contains external changes; refusing rollback", ErrNeedsAttention)
 	}
-	indexPath := filepath.Join(path, "index.html")
+	indexPath := filepath.Join(path, indexName)
 	indexInfo, err := os.Lstat(indexPath)
-	if err != nil || !fileMatches(indexPath, indexInfo, renderDefaultIndex(primary)) {
+	if err != nil || !fileMatches(indexPath, indexInfo, indexBody) {
 		return fmt.Errorf("%w: default index changed; refusing rollback", ErrNeedsAttention)
 	}
 	if err := os.Remove(indexPath); err != nil {
@@ -471,7 +493,7 @@ func writeTemporaryFile(directory, pattern string, data []byte, mode os.FileMode
 	return path, nil
 }
 
-func stageStaticDirectory(parent, primary string, index []byte) (string, error) {
+func stageStaticDirectory(parent, primary, indexName string, index []byte) (string, error) {
 	path, err := os.MkdirTemp(parent, "."+primary+".kp-*")
 	if err != nil {
 		return "", err
@@ -479,13 +501,13 @@ func stageStaticDirectory(parent, primary string, index []byte) (string, error) 
 	ok := false
 	defer func() {
 		if !ok {
-			_ = removeStagedStaticDirectory(path)
+			_ = removeStagedStaticDirectory(path, indexName)
 		}
 	}()
 	if err := os.Chmod(path, 0o755); err != nil {
 		return "", err
 	}
-	indexPath := filepath.Join(path, "index.html")
+	indexPath := filepath.Join(path, indexName)
 	file, err := os.OpenFile(indexPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return "", err
@@ -511,7 +533,7 @@ func stageStaticDirectory(parent, primary string, index []byte) (string, error) 
 	return path, nil
 }
 
-func removeStagedStaticDirectory(path string) error {
+func removeStagedStaticDirectory(path, indexName string) error {
 	if path == "" {
 		return nil
 	}
@@ -522,10 +544,10 @@ func removeStagedStaticDirectory(path string) error {
 		}
 		return err
 	}
-	if len(entries) != 1 || entries[0].Name() != "index.html" || entries[0].Type()&os.ModeSymlink != 0 {
-		return errors.New("unexpected staged static directory contents")
+	if len(entries) != 1 || entries[0].Name() != indexName || entries[0].Type()&os.ModeSymlink != 0 {
+		return errors.New("unexpected staged document root contents")
 	}
-	if err := os.Remove(filepath.Join(path, "index.html")); err != nil {
+	if err := os.Remove(filepath.Join(path, indexName)); err != nil {
 		return err
 	}
 	return os.Remove(path)

@@ -90,6 +90,130 @@ func TestCreateStaticProducesCanonicalDiscoverableArtifacts(t *testing.T) {
 	}
 }
 
+func TestCreateAllSupportedSiteServices(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      SiteInput
+		wantKind   contract.SiteKind
+		wantTarget string
+		indexName  string
+	}{
+		{
+			name: "php latest",
+			input: SiteInput{
+				PrimaryDomain: "php.example.com", Type: "php", PHPVersion: "latest",
+			},
+			wantKind: contract.SitePHP, wantTarget: "php", indexName: "index.php",
+		},
+		{
+			name: "php 7.4",
+			input: SiteInput{
+				PrimaryDomain: "php74.example.com", Type: "php", PHPVersion: "7.4",
+			},
+			wantKind: contract.SitePHP, wantTarget: "php74", indexName: "index.php",
+		},
+		{
+			name: "private proxy",
+			input: SiteInput{
+				PrimaryDomain: "proxy.example.com", Type: "proxy", Upstream: "http://127.0.0.1:3000",
+			},
+			wantKind: contract.SiteReverseProxy, wantTarget: "http://127.0.0.1:3000",
+		},
+		{
+			name: "domain proxy",
+			input: SiteInput{
+				PrimaryDomain: "edge.example.com", Type: "proxy_domain", Upstream: "https://origin.example.net",
+			},
+			wantKind: contract.SiteDomainProxy, wantTarget: "https://origin.example.net",
+		},
+		{
+			name: "load balance",
+			input: SiteInput{
+				PrimaryDomain: "balanced.example.com", Type: "load_balance",
+				Upstreams: []string{"http://10.0.0.12:8080", "http://10.0.0.11:8080"},
+			},
+			wantKind:   contract.SiteLoadBalance,
+			wantTarget: "http://10.0.0.11:8080, http://10.0.0.12:8080",
+		},
+		{
+			name: "redirect",
+			input: SiteInput{
+				PrimaryDomain: "old.example.com", Type: "redirect",
+				RedirectTarget: "https://new.example.com", RedirectCode: 308,
+			},
+			wantKind: contract.SiteRedirect, wantTarget: "308 https://new.example.com",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager, nginx, root := newTestManager(t)
+			created, err := manager.Create(context.Background(), test.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if created.Kind != test.wantKind || created.Target != test.wantTarget ||
+				created.Consistency != contract.ConsistencyInSync ||
+				!containsString(created.AllowedActions, "update") {
+				t.Fatalf("created site mismatch: %#v", created)
+			}
+			if test.indexName != "" {
+				path := filepath.Join(root, "html", test.input.PrimaryDomain, test.indexName)
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("default document is missing: %v", err)
+				}
+			}
+			config, err := os.ReadFile(filepath.Join(root, "conf.d", test.input.PrimaryDomain+".conf"))
+			if err != nil || !bytes.HasPrefix(config, []byte(managedMarker+"\n")) {
+				t.Fatalf("canonical v2 configuration missing: err=%v config=%s", err, config)
+			}
+			if nginx.tests != 2 || nginx.reloads != 1 {
+				t.Fatalf("nginx calls tests=%d reloads=%d, want 2/1", nginx.tests, nginx.reloads)
+			}
+		})
+	}
+}
+
+func TestUpdateMigratesCanonicalV1SiteWithoutChangingDocumentRoot(t *testing.T) {
+	manager, _, root := newTestManager(t)
+	spec := managedSpec{Primary: "legacy.example.com", Kind: contract.SiteStatic}
+	configPath := filepath.Join(root, "conf.d", spec.Primary+".conf")
+	if err := os.WriteFile(configPath, renderManagedConfigV1(spec), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	documentRoot := filepath.Join(root, "html", spec.Primary)
+	if err := os.Mkdir(documentRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(documentRoot, "index.html")
+	if err := os.WriteFile(indexPath, renderDefaultIndex(spec.Primary), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := manager.discoverer.Discover()
+	if err != nil || len(items) != 1 || !containsString(items[0].AllowedActions, "update") {
+		t.Fatalf("canonical v1 site was not manageable: err=%v sites=%#v", err, items)
+	}
+	updated, err := manager.Update(context.Background(), items[0].ID, SiteInput{
+		PrimaryDomain:           spec.Primary,
+		Aliases:                 []string{"www." + spec.Primary},
+		Type:                    "static",
+		ExpectedResourceVersion: items[0].ResourceVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, _ := os.ReadFile(configPath)
+	after, _ := os.ReadFile(indexPath)
+	if !bytes.HasPrefix(config, []byte(managedMarker+"\n")) ||
+		!bytes.Equal(before, after) || updated.Kind != contract.SiteStatic {
+		t.Fatalf("v1 migration mismatch: updated=%#v config=%s", updated, config)
+	}
+}
+
 func TestCreateCollisionLeavesExistingArtifactsUnchanged(t *testing.T) {
 	manager, nginx, root := newTestManager(t)
 	path := filepath.Join(root, "conf.d", "collision.example.com.conf")
@@ -277,6 +401,13 @@ func TestStrictSiteInputValidation(t *testing.T) {
 		{PrimaryDomain: "example.com", Type: "proxy", Upstream: "http://app.example:8080"},
 		{PrimaryDomain: "example.com", Type: "proxy", Upstream: "http://8.8.8.8:53"},
 		{PrimaryDomain: "example.com", Type: "proxy", Upstream: "http://127.0.0.1:0"},
+		{PrimaryDomain: "example.com", Type: "proxy_domain", Upstream: "https://127.0.0.1"},
+		{PrimaryDomain: "example.com", Type: "load_balance", Upstreams: []string{"http://10.0.0.1:80"}},
+		{PrimaryDomain: "example.com", Type: "load_balance", Upstreams: []string{"http://10.0.0.1:80", "https://10.0.0.2:443"}},
+		{PrimaryDomain: "example.com", Type: "redirect", RedirectTarget: "https://new.example.com/path"},
+		{PrimaryDomain: "example.com", Type: "redirect", RedirectTarget: "https://new.example.com", RedirectCode: 200},
+		{PrimaryDomain: "example.com", Type: "php", PHPVersion: "8.0"},
+		{PrimaryDomain: "example.com", Type: "static", Upstream: "http://127.0.0.1:80"},
 	}
 	for _, input := range invalid {
 		if _, err := normalizeSiteInput(input); !errors.Is(err, ErrUnprocessable) {

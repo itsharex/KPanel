@@ -201,7 +201,7 @@ func TestSiteWritesRejectUnsafeRequestsBeforeAgentCall(t *testing.T) {
 		},
 		{
 			name: "unsupported site type", method: http.MethodPost, path: "/api/v1/sites",
-			body: []byte(`{"primaryDomain":"example.com","type":"php"}`),
+			body: []byte(`{"primaryDomain":"example.com","type":"shell"}`),
 			csrf: true, wantStatus: http.StatusUnprocessableEntity,
 		},
 		{
@@ -278,6 +278,47 @@ func TestSiteWritesRejectUnsafeRequestsBeforeAgentCall(t *testing.T) {
 	if len(calls) != 1 || calls[0].method != http.MethodPatch ||
 		calls[0].path != "/v1/sites/"+id {
 		t.Fatalf("valid update was not routed exactly: %#v", calls)
+	}
+}
+
+func TestSiteWriteCatalogValidationAndForwarding(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "static", body: `{"primaryDomain":"static.example.com","type":"static"}`},
+		{name: "php", body: `{"primaryDomain":"php.example.com","type":"php","phpVersion":"7.4"}`},
+		{name: "private proxy", body: `{"primaryDomain":"proxy.example.com","type":"proxy","upstream":"http://127.0.0.1:3000"}`},
+		{name: "domain proxy", body: `{"primaryDomain":"edge.example.com","type":"proxy_domain","upstream":"https://origin.example.net"}`},
+		{name: "load balance", body: `{"primaryDomain":"balanced.example.com","type":"load_balance","upstreams":["http://10.0.0.1:80","http://10.0.0.2:80"]}`},
+		{name: "redirect", body: `{"primaryDomain":"old.example.com","type":"redirect","redirectTarget":"https://new.example.com","redirectCode":308}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var input siteWriteInput
+			if err := json.Unmarshal([]byte(test.body), &input); err != nil {
+				t.Fatal(err)
+			}
+			if field, detail := validateSiteWriteInput(&input, true); field != "" {
+				t.Fatalf("valid catalog request rejected at %s: %s", field, detail)
+			}
+			encoded, err := json.Marshal(input.agentPayload())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var original, forwarded map[string]any
+			if err := json.Unmarshal([]byte(test.body), &original); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(encoded, &forwarded); err != nil {
+				t.Fatal(err)
+			}
+			for key, value := range original {
+				if !reflect.DeepEqual(forwarded[key], value) {
+					t.Fatalf("field %s changed: got %#v want %#v; body=%s", key, forwarded[key], value, encoded)
+				}
+			}
+		})
 	}
 }
 

@@ -219,6 +219,8 @@ type SiteKind string
 const (
 	SiteStatic       SiteKind = "static"
 	SiteReverseProxy SiteKind = "reverse_proxy"
+	SiteDomainProxy  SiteKind = "domain_proxy"
+	SiteLoadBalance  SiteKind = "load_balance"
 	SitePHP          SiteKind = "php"
 	SiteWordPress    SiteKind = "wordpress"
 	SiteRedirect     SiteKind = "redirect"

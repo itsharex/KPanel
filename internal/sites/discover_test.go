@@ -16,7 +16,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
 
-func TestDiscoverStaticReverseAndUnknown(t *testing.T) {
+func TestDiscoverStaticLoadBalanceAndUnknown(t *testing.T) {
 	root := t.TempDir()
 	copyFixtureTree(t, filepath.Join("testdata", "web"), root)
 	d := &Discoverer{WebRoot: root, Now: func() time.Time { return time.Unix(1_700_000_000, 0) }}
@@ -33,13 +33,38 @@ func TestDiscoverStaticReverseAndUnknown(t *testing.T) {
 		site.ResourceVersion == "" {
 		t.Fatalf("unexpected static site: %#v", site)
 	}
-	if site := byDomain["proxy.example.com"]; site.Kind != contract.SiteReverseProxy ||
-		site.Target != "127.0.0.1:8080, 127.0.0.1:8081" {
-		t.Fatalf("unexpected proxy site: %#v", site)
+	if site := byDomain["proxy.example.com"]; site.Kind != contract.SiteLoadBalance ||
+		site.Target != "http://127.0.0.1:8080, http://127.0.0.1:8081" {
+		t.Fatalf("unexpected load balancing site: %#v", site)
 	}
 	if site := byDomain["unknown.example.com"]; site.Kind != contract.SiteUnknown ||
 		site.Consistency != contract.ConsistencyReadOnly || len(site.AllowedActions) != 0 {
 		t.Fatalf("unexpected unknown site: %#v", site)
+	}
+}
+
+func TestClassifyIgnoresACMERootAndHTTPSRedirectForContentSites(t *testing.T) {
+	root := t.TempDir()
+	discoverer := NewDiscoverer(root)
+	clean := `
+server {
+    listen 80;
+    server_name content.example.com;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
+    return 301 https://content.example.com$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name content.example.com;
+    root /var/www/html/content.example.com;
+    index index.html;
+}
+`
+	kind, target, documentRoot, warnings := discoverer.classify(clean, parseDirectives(clean))
+	if kind != contract.SiteStatic || target != "" ||
+		documentRoot != filepath.Join(root, "html", "content.example.com") || len(warnings) != 0 {
+		t.Fatalf("unexpected content site classification: kind=%s target=%q root=%q warnings=%#v",
+			kind, target, documentRoot, warnings)
 	}
 }
 

@@ -241,7 +241,7 @@ export interface Site {
   id: string
   primaryDomain: string
   domains: string[]
-  type: 'static' | 'proxy' | 'php' | 'redirect' | 'unknown'
+  type: 'static' | 'proxy' | 'proxy_domain' | 'load_balance' | 'php' | 'wordpress' | 'redirect' | 'unknown'
   enabled: boolean
   health: HealthLevel
   consistency: ConsistencyState
@@ -265,8 +265,12 @@ export interface Site {
 export interface SiteInput {
   primaryDomain: string
   aliases?: string[]
-  type: 'static' | 'proxy'
+  type: 'static' | 'php' | 'proxy' | 'proxy_domain' | 'load_balance' | 'redirect'
   upstream?: string
+  upstreams?: string[]
+  redirectTarget?: string
+  redirectCode?: 301 | 302 | 307 | 308
+  phpVersion?: 'latest' | '7.4'
   enabled?: boolean
   expectedResourceVersion?: string
 }

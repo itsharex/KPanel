@@ -172,7 +172,7 @@ func (d *Discoverer) fromConfig(path string, now time.Time) (contract.SiteSummar
 
 func (d *Discoverer) classify(clean string, directives map[string][]string) (contract.SiteKind, string, string, []string) {
 	var warnings []string
-	roots := uniqueStrings(directives["root"])
+	roots := d.contentRoots(directives["root"])
 	proxies := uniqueStrings(directives["proxy_pass"])
 	fastCGI := directives["fastcgi_pass"]
 	returns := directives["return"]
@@ -191,21 +191,47 @@ func (d *Discoverer) classify(clean string, directives map[string][]string) (con
 		if len(resolved) == 0 {
 			return contract.SiteUnknown, "", documentRoot, append(warnings, "无法解析反向代理上游")
 		}
-		return contract.SiteReverseProxy, strings.Join(resolved, ", "), documentRoot, warnings
+		kind := contract.SiteReverseProxy
+		if len(resolved) > 1 {
+			kind = contract.SiteLoadBalance
+		} else if parsed, err := url.Parse(resolved[0]); err == nil &&
+			net.ParseIP(parsed.Hostname()) == nil && strings.Contains(parsed.Hostname(), ".") {
+			kind = contract.SiteDomainProxy
+		}
+		return kind, strings.Join(resolved, ", "), documentRoot, warnings
 	}
 	if len(fastCGI) > 0 && documentRoot != "" {
-		return contract.SitePHP, "", documentRoot, warnings
-	}
-	for _, value := range returns {
-		fields := strings.Fields(value)
-		if len(fields) >= 2 && (fields[0] == "301" || fields[0] == "302" || fields[0] == "307" || fields[0] == "308") {
-			return contract.SiteRedirect, sanitizeTarget(fields[1]), documentRoot, warnings
+		kind := contract.SitePHP
+		if strings.HasSuffix(filepath.ToSlash(documentRoot), "/wordpress") {
+			kind = contract.SiteWordPress
 		}
+		return kind, phpRuntime(fastCGI), documentRoot, warnings
 	}
 	if documentRoot != "" {
 		return contract.SiteStatic, "", documentRoot, warnings
 	}
+	for _, value := range returns {
+		fields := strings.Fields(value)
+		if len(fields) >= 2 && (fields[0] == "301" || fields[0] == "302" || fields[0] == "307" || fields[0] == "308") {
+			target := strings.TrimSuffix(fields[1], "$request_uri")
+			return contract.SiteRedirect, fields[0] + " " + sanitizeTarget(target), documentRoot, warnings
+		}
+	}
 	return contract.SiteUnknown, "", "", warnings
+}
+
+func (d *Discoverer) contentRoots(values []string) []string {
+	var roots []string
+	for _, value := range values {
+		trimmed := strings.Trim(strings.TrimSpace(value), `"'`)
+		hostPath := d.hostDocumentRoot(trimmed)
+		if filepath.Clean(hostPath) == filepath.Join(filepath.Clean(d.WebRoot), "letsencrypt") ||
+			pathpkg.Clean(filepath.ToSlash(trimmed)) == "/var/www/letsencrypt" {
+			continue
+		}
+		roots = append(roots, trimmed)
+	}
+	return uniqueStrings(roots)
 }
 
 func (d *Discoverer) hostDocumentRoot(value string) string {
@@ -473,14 +499,33 @@ func resolveProxyTargets(clean string, proxies []string) []string {
 	var result []string
 	for _, raw := range proxies {
 		target := sanitizeTarget(strings.TrimSpace(raw))
+		parsed, parseErr := url.Parse(target)
 		name := strings.TrimPrefix(strings.TrimPrefix(target, "http://"), "https://")
 		if resolved := upstreams[name]; len(resolved) > 0 {
-			result = append(result, resolved...)
+			for _, upstream := range resolved {
+				if parseErr == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") {
+					result = append(result, parsed.Scheme+"://"+upstream)
+				} else {
+					result = append(result, upstream)
+				}
+			}
 		} else if target != "" && !strings.ContainsAny(target, "$ \t\r\n") {
 			result = append(result, target)
 		}
 	}
 	return uniqueStrings(result)
+}
+
+func phpRuntime(values []string) string {
+	for _, value := range values {
+		switch {
+		case strings.Contains(value, "/run/php74/"), strings.Contains(value, "php74:"):
+			return "php74"
+		case strings.Contains(value, "/run/php/"), strings.Contains(value, "php:"):
+			return "php"
+		}
+	}
+	return "unknown"
 }
 
 func sanitizeTarget(raw string) string {
