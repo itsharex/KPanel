@@ -117,7 +117,10 @@ async function load(silent = false): Promise<void> {
   error.value = ''
 
   try {
-    data.value = await api.docker.inventory(controller.signal)
+    data.value = await api.docker.inventory(controller.signal, (partial) => {
+      data.value = partial
+      loading.value = false
+    })
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
     error.value = reason instanceof ApiError ? reason.message : '无法读取 Docker 资源。'
@@ -338,7 +341,11 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else-if="activeTab === 'images'">
-          <EmptyState v-if="!filteredImages.length" title="没有符合条件的镜像" />
+          <LoadingState v-if="data.loading?.images" :rows="3" />
+          <div v-else-if="data.errors?.images" class="inline-alert inline-alert--warning">
+            镜像列表加载失败：{{ data.errors.images }}
+          </div>
+          <EmptyState v-else-if="!filteredImages.length" title="没有符合条件的镜像" />
           <div v-else class="table-scroll">
             <table class="data-table">
               <thead><tr><th>镜像标签</th><th>镜像 ID</th><th>大小</th><th>创建时间</th><th>使用状态</th></tr></thead>
@@ -356,7 +363,11 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else-if="activeTab === 'networks'">
-          <EmptyState v-if="!filteredNetworks.length" title="没有符合条件的网络" />
+          <LoadingState v-if="data.loading?.networks" :rows="3" />
+          <div v-else-if="data.errors?.networks" class="inline-alert inline-alert--warning">
+            网络列表加载失败：{{ data.errors.networks }}
+          </div>
+          <EmptyState v-else-if="!filteredNetworks.length" title="没有符合条件的网络" />
           <div v-else class="table-scroll">
             <table class="data-table">
               <thead><tr><th>网络名称</th><th>驱动</th><th>作用域</th><th>已连接容器</th><th>网络 ID</th></tr></thead>
@@ -374,7 +385,11 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else>
-          <EmptyState v-if="!filteredVolumes.length" title="没有符合条件的存储卷" />
+          <LoadingState v-if="data.loading?.volumes" :rows="3" />
+          <div v-else-if="data.errors?.volumes" class="inline-alert inline-alert--warning">
+            存储卷加载失败：{{ data.errors.volumes }}
+          </div>
+          <EmptyState v-else-if="!filteredVolumes.length" title="没有符合条件的存储卷" />
           <div v-else class="table-scroll">
             <table class="data-table">
               <thead><tr><th>卷名称</th><th>驱动</th><th>挂载点</th><th>使用状态</th></tr></thead>

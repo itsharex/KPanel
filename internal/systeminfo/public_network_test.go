@@ -14,11 +14,13 @@ import (
 func TestReadPublicNetworkCachesSuccessfulLookup(t *testing.T) {
 	now := time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC)
 	calls := 0
+	lookedUp := make(chan struct{}, 2)
 	collector := &Collector{
 		Now:                   func() time.Time { return now },
 		PublicNetworkCacheTTL: time.Hour,
 		PublicNetworkLookup: func(context.Context) (contract.PublicNetworkSummary, error) {
 			calls++
+			lookedUp <- struct{}{}
 			return contract.PublicNetworkSummary{
 				IPv4: "203.0.113.10", ISP: "AS64500 Example Network", Country: "CN", City: "Shanghai",
 			}, nil
@@ -26,16 +28,20 @@ func TestReadPublicNetworkCachesSuccessfulLookup(t *testing.T) {
 	}
 
 	first := collector.readPublicNetwork(context.Background())
+	<-lookedUp
+	waitForPublicNetworkRefresh(t, collector)
 	second := collector.readPublicNetwork(context.Background())
-	if calls != 1 || first.IPv4 != "203.0.113.10" || second.IPv4 != first.IPv4 {
+	if calls != 1 || first.IPv4 != "" || second.IPv4 != "203.0.113.10" {
 		t.Fatalf("unexpected cached lookup: calls=%d first=%#v second=%#v", calls, first, second)
 	}
-	if first.Source != "ipinfo.io" || first.UpdatedAt == nil || !first.UpdatedAt.Equal(now) {
-		t.Fatalf("lookup metadata was not normalized: %#v", first)
+	if second.Source != "ipinfo.io" || second.UpdatedAt == nil || !second.UpdatedAt.Equal(now) {
+		t.Fatalf("lookup metadata was not normalized: %#v", second)
 	}
 
 	now = now.Add(2 * time.Hour)
 	_ = collector.readPublicNetwork(context.Background())
+	<-lookedUp
+	waitForPublicNetworkRefresh(t, collector)
 	if calls != 2 {
 		t.Fatalf("expired cache was not refreshed: calls=%d", calls)
 	}
@@ -44,11 +50,13 @@ func TestReadPublicNetworkCachesSuccessfulLookup(t *testing.T) {
 func TestReadPublicNetworkCachesFailureBriefly(t *testing.T) {
 	now := time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC)
 	calls := 0
+	lookedUp := make(chan struct{}, 2)
 	collector := &Collector{
 		Now:                   func() time.Time { return now },
 		PublicNetworkCacheTTL: 30 * time.Minute,
 		PublicNetworkLookup: func(context.Context) (contract.PublicNetworkSummary, error) {
 			calls++
+			lookedUp <- struct{}{}
 			return contract.PublicNetworkSummary{}, errors.New("offline")
 		},
 	}
@@ -56,6 +64,8 @@ func TestReadPublicNetworkCachesFailureBriefly(t *testing.T) {
 	if got := collector.readPublicNetwork(context.Background()); got.Source != "" {
 		t.Fatalf("failed lookup returned data: %#v", got)
 	}
+	<-lookedUp
+	waitForPublicNetworkRefresh(t, collector)
 	_ = collector.readPublicNetwork(context.Background())
 	if calls != 1 {
 		t.Fatalf("failed lookup was repeated without backoff: calls=%d", calls)
@@ -63,9 +73,52 @@ func TestReadPublicNetworkCachesFailureBriefly(t *testing.T) {
 
 	now = now.Add(6 * time.Minute)
 	_ = collector.readPublicNetwork(context.Background())
+	<-lookedUp
+	waitForPublicNetworkRefresh(t, collector)
 	if calls != 2 {
 		t.Fatalf("failed lookup was not retried after backoff: calls=%d", calls)
 	}
+}
+
+func TestReadPublicNetworkDoesNotBlockSummary(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{})
+	collector := &Collector{
+		Now:                   time.Now,
+		PublicNetworkCacheTTL: time.Hour,
+		PublicNetworkLookup: func(context.Context) (contract.PublicNetworkSummary, error) {
+			close(started)
+			<-release
+			return contract.PublicNetworkSummary{IPv4: "203.0.113.20"}, nil
+		},
+	}
+
+	begin := time.Now()
+	got := collector.readPublicNetwork(context.Background())
+	if elapsed := time.Since(begin); elapsed > 100*time.Millisecond {
+		t.Fatalf("cached public network read blocked for %s", elapsed)
+	}
+	if got.IPv4 != "" {
+		t.Fatalf("cold cache returned unexpected data: %#v", got)
+	}
+	<-started
+	close(release)
+	waitForPublicNetworkRefresh(t, collector)
+}
+
+func waitForPublicNetworkRefresh(t *testing.T, collector *Collector) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		collector.publicNetworkMu.Lock()
+		loading := collector.publicNetworkLoading
+		collector.publicNetworkMu.Unlock()
+		if !loading {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("public network refresh did not finish")
 }
 
 func TestQueryIPInfoValidatesAddressFamilyAndBoundsMetadata(t *testing.T) {

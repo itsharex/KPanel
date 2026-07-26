@@ -138,6 +138,18 @@ interface RawSystemSummary {
   collectedAt: string
 }
 
+interface RawPublicNetworkSummary {
+  ipv4?: string
+  ipv6?: string
+  isp?: string
+  country?: string
+  region?: string
+  city?: string
+  timezone?: string
+  source?: string
+  updatedAt?: string
+}
+
 interface RawSite {
   id: string
   primaryDomain: string
@@ -608,29 +620,21 @@ export const api = {
     },
   },
   overview: {
-    get: async (signal?: AbortSignal): Promise<SystemOverview> => {
+    get: async (
+      signal?: AbortSignal,
+      onUpdate?: (overview: SystemOverview) => void,
+    ): Promise<SystemOverview> => {
       type Capability = { id: string; enabled: boolean; reason?: string; methods?: string[] }
-      const [system, agent, capabilitiesResult, sitesResult, dockerResult, containersResult] = await Promise.all([
+      const [system, agent] = await Promise.all([
         request<RawSystemSummary>('/system/summary', { signal }),
         request<RawAgentHealth>('/agent/health', { signal }),
-        request<ApiList<Capability> | Capability[]>('/capabilities', { signal }).catch(() => []),
-        request<ApiList<RawSite> | RawSite[]>('/sites', { signal }).catch(() => []),
-        request<RawDockerSummary>('/docker/summary', { signal }).catch(() => undefined),
-        request<ApiList<RawContainer> | RawContainer[]>('/docker/containers', { signal }).catch(() => []),
       ])
+      let capabilitiesResult: ApiList<Capability> | Capability[] | undefined
+      let sitesResult: ApiList<RawSite> | RawSite[] | undefined
+      let dockerResult: RawDockerSummary | undefined
+      let containersResult: ApiList<RawContainer> | RawContainer[] | undefined
+      let publicNetwork: RawPublicNetworkSummary | undefined = system.publicNetwork
       const rootDisk = system.disks.find((disk) => disk.mountPoint === '/') || system.disks[0]
-      const sites = normalizeList(sitesResult).items.map(normalizeSite)
-      const containers = normalizeList(containersResult).items
-      const capabilities = Object.fromEntries(
-        normalizeList(capabilitiesResult).items.map((capability) => [
-          capability.id,
-          {
-            enabled: capability.enabled,
-            reason: capability.reason,
-            methods: capability.methods,
-          },
-        ]),
-      )
       const rates = networkRates(system)
       const knownServices = [
         { id: 'nginx', name: 'Nginx' },
@@ -639,30 +643,43 @@ export const api = {
         { id: 'php74', name: 'PHP 7.4' },
         { id: 'redis', name: 'Redis' },
       ]
-      const services: SystemOverview['services'] = dockerResult
-        ? [
+      const build = (): SystemOverview => {
+        const sites = normalizeList(sitesResult).items.map(normalizeSite)
+        const containers = normalizeList(containersResult).items
+        const capabilities = Object.fromEntries(
+          normalizeList(capabilitiesResult).items.map((capability) => [
+            capability.id,
             {
-              id: 'docker',
-              name: 'Docker Engine',
-              state: dockerResult.available ? 'running' : 'stopped',
-              version: dockerResult.serverVersion,
+              enabled: capability.enabled,
+              reason: capability.reason,
+              methods: capability.methods,
             },
-            ...knownServices.flatMap((known) => {
-              const container = containers.find((item) => item.name.replace(/^\/+/, '') === known.id)
-              if (!container) return []
-              const state: SystemOverview['services'][number]['state'] =
-                container.state === 'running'
-                  ? 'running'
-                  : container.state === 'paused' || container.state === 'restarting'
-                    ? 'degraded'
-                    : ['exited', 'dead', 'created'].includes(container.state)
-                      ? 'stopped'
-                      : 'unknown'
-              return [{ id: known.id, name: known.name, state, detail: container.image }]
-            }),
-          ]
-        : []
-      return {
+          ]),
+        )
+        const services: SystemOverview['services'] = dockerResult
+          ? [
+              {
+                id: 'docker',
+                name: 'Docker Engine',
+                state: dockerResult.available ? 'running' : 'stopped',
+                version: dockerResult.serverVersion,
+              },
+              ...knownServices.flatMap((known) => {
+                const container = containers.find((item) => item.name.replace(/^\/+/, '') === known.id)
+                if (!container) return []
+                const state: SystemOverview['services'][number]['state'] =
+                  container.state === 'running'
+                    ? 'running'
+                    : container.state === 'paused' || container.state === 'restarting'
+                      ? 'degraded'
+                      : ['exited', 'dead', 'created'].includes(container.state)
+                        ? 'stopped'
+                        : 'unknown'
+                return [{ id: known.id, name: known.name, state, detail: container.image }]
+              }),
+            ]
+          : []
+        return {
         hostname: system.hostname,
         os: system.os,
         kernel: system.kernel,
@@ -705,15 +722,15 @@ export const api = {
           udpConnections: system.network.udpConnections || 0,
         },
         publicNetwork: {
-          ipv4: system.publicNetwork?.ipv4,
-          ipv6: system.publicNetwork?.ipv6,
-          isp: system.publicNetwork?.isp,
-          country: system.publicNetwork?.country,
-          region: system.publicNetwork?.region,
-          city: system.publicNetwork?.city,
-          timezone: system.publicNetwork?.timezone,
-          source: system.publicNetwork?.source,
-          updatedAt: system.publicNetwork?.updatedAt,
+          ipv4: publicNetwork?.ipv4,
+          ipv6: publicNetwork?.ipv6,
+          isp: publicNetwork?.isp,
+          country: publicNetwork?.country,
+          region: publicNetwork?.region,
+          city: publicNetwork?.city,
+          timezone: publicNetwork?.timezone,
+          source: publicNetwork?.source,
+          updatedAt: publicNetwork?.updatedAt,
         },
         management: {
           ssh: {
@@ -789,15 +806,45 @@ export const api = {
         },
         services,
         agent: normalizeAgent(agent),
-        sites: {
-          total: sites.length,
-          healthy: sites.filter((site) => site.health === 'healthy').length,
-          drifted: sites.filter((site) => site.consistency !== 'synced').length,
-        },
+        sites:
+          sitesResult === undefined
+            ? undefined
+            : {
+                total: sites.length,
+                healthy: sites.filter((site) => site.health === 'healthy').length,
+                drifted: sites.filter((site) => site.consistency !== 'synced').length,
+              },
         containers: dockerResult
           ? { total: dockerResult.containers, running: dockerResult.running, stopped: dockerResult.stopped }
           : undefined,
+        }
       }
+
+      onUpdate?.(build())
+      const emit = () => onUpdate?.(build())
+      await Promise.allSettled([
+        request<ApiList<Capability> | Capability[]>('/capabilities', { signal }).then((value) => {
+          capabilitiesResult = value
+          emit()
+        }),
+        request<ApiList<RawSite> | RawSite[]>('/sites', { signal }).then((value) => {
+          sitesResult = value
+          emit()
+        }),
+        request<RawDockerSummary>('/docker/summary', { signal }).then((value) => {
+          dockerResult = value
+          emit()
+        }),
+        request<ApiList<RawContainer> | RawContainer[]>('/docker/containers', { signal }).then((value) => {
+          containersResult = value
+          emit()
+        }),
+        request<RawPublicNetworkSummary>('/system/public-network', { signal }).then((value) => {
+          publicNetwork = value
+          emit()
+        }),
+      ])
+      return build()
     },
   },
   system: {
@@ -846,23 +893,56 @@ export const api = {
       }),
   },
   docker: {
-    inventory: async (signal?: AbortSignal): Promise<DockerInventory> => {
-      const [summary, containersResult, imagesResult, networksResult, volumesResult] = await Promise.all([
+    inventory: async (
+      signal?: AbortSignal,
+      onUpdate?: (inventory: DockerInventory) => void,
+    ): Promise<DockerInventory> => {
+      const [summary, containersResult] = await Promise.all([
         request<RawDockerSummary>('/docker/summary', { signal }),
         request<ApiList<RawContainer> | RawContainer[]>('/docker/containers', { signal }),
-        request<ApiList<DockerInventory['images'][number]> | DockerInventory['images']>('/docker/images', { signal }),
-        request<ApiList<DockerInventory['networks'][number]> | DockerInventory['networks']>('/docker/networks', { signal }),
-        request<ApiList<DockerInventory['volumes'][number]> | DockerInventory['volumes']>('/docker/volumes', { signal }),
       ])
-      return {
+      const inventory: DockerInventory = {
         available: summary.available,
         version: summary.serverVersion,
         observedAt: summary.collectedAt,
         containers: normalizeList(containersResult).items.map(normalizeContainer),
-        images: normalizeList(imagesResult).items,
-        networks: normalizeList(networksResult).items,
-        volumes: normalizeList(volumesResult).items,
+        images: [],
+        networks: [],
+        volumes: [],
+        loading: { images: true, networks: true, volumes: true },
+        errors: {},
       }
+      const emit = () =>
+        onUpdate?.({
+          ...inventory,
+          images: [...inventory.images],
+          networks: [...inventory.networks],
+          volumes: [...inventory.volumes],
+          loading: { ...inventory.loading },
+          errors: { ...inventory.errors },
+        })
+      emit()
+      const loadResource = async <K extends 'images' | 'networks' | 'volumes'>(
+        key: K,
+        path: string,
+      ): Promise<void> => {
+        try {
+          const result = await request<ApiList<DockerInventory[K][number]> | DockerInventory[K]>(path, { signal })
+          ;(inventory[key] as DockerInventory[K]) = normalizeList(result).items as DockerInventory[K]
+        } catch (reason) {
+          if (reason instanceof DOMException && reason.name === 'AbortError') throw reason
+          inventory.errors![key] = reason instanceof ApiError ? reason.message : `${key} 读取失败`
+        } finally {
+          inventory.loading![key] = false
+          emit()
+        }
+      }
+      await Promise.allSettled([
+        loadResource('images', '/docker/images'),
+        loadResource('networks', '/docker/networks'),
+        loadResource('volumes', '/docker/volumes'),
+      ])
+      return inventory
     },
     action: (id: string, action: 'start' | 'stop' | 'restart', resourceVersion: string) =>
       request<DockerActionResult>(`/docker/containers/${encodeURIComponent(id)}/${action}`, {

@@ -33,6 +33,8 @@ type Collector struct {
 	publicNetworkMu      sync.Mutex
 	publicNetworkCache   contract.PublicNetworkSummary
 	publicNetworkExpires time.Time
+	publicNetworkLoading bool
+	publicNetworkDone    chan struct{}
 }
 
 func NewCollector() *Collector {

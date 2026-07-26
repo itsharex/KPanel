@@ -52,20 +52,72 @@ func (c *Collector) readPublicNetwork(ctx context.Context) contract.PublicNetwor
 		c.publicNetworkMu.Unlock()
 		return cached
 	}
-	c.publicNetworkMu.Unlock()
-
-	if c.PublicNetworkLookup == nil {
+	if c.PublicNetworkLookup == nil || c.publicNetworkLoading {
+		c.publicNetworkMu.Unlock()
 		return cached
 	}
-	lookupContext, cancel := context.WithTimeout(ctx, 3*time.Second)
+	c.publicNetworkLoading = true
+	c.publicNetworkDone = make(chan struct{})
+	c.publicNetworkMu.Unlock()
+
+	// Public IP and carrier metadata are informational and may take seconds on
+	// hosts with an unavailable address family. Never make the host summary
+	// wait for that external service: return the last snapshot immediately and
+	// refresh it once in the background.
+	go c.refreshPublicNetwork(ctx)
+	return cached
+}
+
+// PublicNetwork returns the cached public-network identity, waiting only for
+// the dedicated background refresh when the snapshot is cold or expired. It
+// is intentionally separate from Collect so a slow external lookup can never
+// delay local host metrics.
+func (c *Collector) PublicNetwork(ctx context.Context) contract.PublicNetworkSummary {
+	cached := c.readPublicNetwork(ctx)
+	c.publicNetworkMu.Lock()
+	loading := c.publicNetworkLoading
+	done := c.publicNetworkDone
+	c.publicNetworkMu.Unlock()
+	if !loading || done == nil {
+		return cached
+	}
+	select {
+	case <-ctx.Done():
+		return cached
+	case <-done:
+		c.publicNetworkMu.Lock()
+		refreshed := c.publicNetworkCache
+		c.publicNetworkMu.Unlock()
+		return refreshed
+	}
+}
+
+func (c *Collector) refreshPublicNetwork(parent context.Context) {
+	defer func() {
+		c.publicNetworkMu.Lock()
+		c.publicNetworkLoading = false
+		if c.publicNetworkDone != nil {
+			close(c.publicNetworkDone)
+			c.publicNetworkDone = nil
+		}
+		c.publicNetworkMu.Unlock()
+	}()
+	// A request context is normally cancelled as soon as the summary response
+	// is written, so detach the lookup while still honoring an already
+	// cancelled caller before doing any network work.
+	if err := parent.Err(); err != nil {
+		return
+	}
+	lookupContext, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	result, err := c.PublicNetworkLookup(lookupContext)
+	now := c.Now().UTC()
 	if err != nil || (result.IPv4 == "" && result.IPv6 == "") {
 		retryAfter := min(c.PublicNetworkCacheTTL, 5*time.Minute)
 		c.publicNetworkMu.Lock()
 		c.publicNetworkExpires = now.Add(retryAfter)
 		c.publicNetworkMu.Unlock()
-		return cached
+		return
 	}
 	if result.Source == "" {
 		result.Source = "ipinfo.io"
@@ -76,7 +128,6 @@ func (c *Collector) readPublicNetwork(ctx context.Context) contract.PublicNetwor
 	c.publicNetworkCache = result
 	c.publicNetworkExpires = now.Add(c.PublicNetworkCacheTTL)
 	c.publicNetworkMu.Unlock()
-	return result
 }
 
 func lookupPublicNetwork(ctx context.Context) (contract.PublicNetworkSummary, error) {

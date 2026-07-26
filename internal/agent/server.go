@@ -129,6 +129,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.capabilities)
 	case r.URL.Path == "/v1/system/summary":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemSummary)
+	case r.URL.Path == "/v1/system/public-network":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.publicNetwork)
 	case r.URL.Path == "/v1/system/actions":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.systemAction)
 	case r.URL.Path == "/v1/sites":
@@ -239,6 +241,12 @@ func (s *Server) systemSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	summary.Management.Maintenance = s.systemManager.MaintenanceStatus()
 	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *Server) publicNetwork(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3500*time.Millisecond)
+	defer cancel()
+	writeJSON(w, http.StatusOK, s.system.PublicNetwork(ctx))
 }
 
 func (s *Server) systemAction(w http.ResponseWriter, r *http.Request) {

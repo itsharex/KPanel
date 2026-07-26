@@ -435,6 +435,8 @@ export interface DockerInventory {
   images: DockerImage[]
   networks: DockerNetwork[]
   volumes: DockerVolume[]
+  loading?: Partial<Record<'images' | 'networks' | 'volumes', boolean>>
+  errors?: Partial<Record<'images' | 'networks' | 'volumes', string>>
 }
 
 export type JobStatus =

@@ -454,17 +454,18 @@ func allowedDockerActionPath(publicPath string) (agentPath, containerID, action 
 
 func allowedAgentPath(publicPath string) (string, bool) {
 	exact := map[string]string{
-		"/api/v1/agent/health":      "/v1/health",
-		"/api/v1/capabilities":      "/v1/capabilities",
-		"/api/v1/system/summary":    "/v1/system/summary",
-		"/api/v1/sites":             "/v1/sites",
-		"/api/v1/apps":              "/v1/apps",
-		"/api/v1/app-jobs":          "/v1/app-jobs",
-		"/api/v1/docker/summary":    "/v1/docker/summary",
-		"/api/v1/docker/containers": "/v1/docker/containers",
-		"/api/v1/docker/images":     "/v1/docker/images",
-		"/api/v1/docker/networks":   "/v1/docker/networks",
-		"/api/v1/docker/volumes":    "/v1/docker/volumes",
+		"/api/v1/agent/health":          "/v1/health",
+		"/api/v1/capabilities":          "/v1/capabilities",
+		"/api/v1/system/summary":        "/v1/system/summary",
+		"/api/v1/system/public-network": "/v1/system/public-network",
+		"/api/v1/sites":                 "/v1/sites",
+		"/api/v1/apps":                  "/v1/apps",
+		"/api/v1/app-jobs":              "/v1/app-jobs",
+		"/api/v1/docker/summary":        "/v1/docker/summary",
+		"/api/v1/docker/containers":     "/v1/docker/containers",
+		"/api/v1/docker/images":         "/v1/docker/images",
+		"/api/v1/docker/networks":       "/v1/docker/networks",
+		"/api/v1/docker/volumes":        "/v1/docker/volumes",
 	}
 	if path, ok := exact[publicPath]; ok {
 		return path, true
