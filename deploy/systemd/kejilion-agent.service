@@ -39,7 +39,9 @@ ReadOnlyPaths=/var/lib/kejilion-panel/panel
 # market writes only audited appno/port compatibility files below /home/docker;
 # container changes remain constrained by fixed declarative adapters.
 ReadWritePaths=/run/kejilion-panel /var/lib/kejilion-panel/system /var/lib/kejilion-panel/wordpress-jobs /var/lib/kejilion-panel/site-recipe-jobs /var/lib/kejilion-panel/app-jobs /var/lib/kejilion-panel/docker-jobs -/home/web/conf.d -/home/web/html -/home/web/certs -/home/web/letsencrypt -/home/docker /etc
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# iptables-nft talks to the kernel through netlink. Keep that family available
+# so Docker access rules work inside the otherwise restricted service sandbox.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true

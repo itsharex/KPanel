@@ -200,6 +200,8 @@ run_lifecycle() {
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
+		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -F -- '-/home/web/certs -/home/web/letsencrypt' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	test -f /home/docker/kpanel/secrets/agent.token

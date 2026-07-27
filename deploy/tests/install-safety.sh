@@ -154,6 +154,8 @@ grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_S
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
 grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
+grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
 if grep -Eq '^ProtectProc=(invisible|ptraceable|noaccess)$' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service"; then
 	echo "Agent unit hides the dockerd process required by the socket activation guard" >&2
