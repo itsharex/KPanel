@@ -530,11 +530,32 @@ async function createSite(
     }
     if (attempt === 900) break
     await new Promise((resolve) => setTimeout(resolve, 2_000))
-    job = await request<RawSiteInstallJob>(
-      `/site-installations/${encodeURIComponent(job.id)}`,
-    )
+    try {
+      job = await request<RawSiteInstallJob>(
+        `/site-installations/${encodeURIComponent(job.id)}`,
+      )
+    } catch (reason) {
+      if (!isTransientAgentError(reason)) throw reason
+      onProgress?.({
+        ...progress,
+        status: 'running',
+        stage: 'reconnecting',
+        message: 'Agent 暂时不可用，后台建站任务不受影响，正在自动重连。',
+      })
+    }
   }
   throw new ApiError('一键建站状态等待超时，请在网站列表中核对实际产物。', 504, 'site_install_timeout')
+}
+
+export function isTransientAgentError(reason: unknown): boolean {
+  return reason instanceof ApiError && (
+    reason.status === 0 ||
+    reason.status === 502 ||
+    reason.status === 503 ||
+    reason.status === 504 ||
+    reason.code === 'agent_unavailable' ||
+    reason.code === 'network_error'
+  )
 }
 
 function normalizeSiteInstallationProgress(job: RawSiteInstallJob): SiteInstallationProgress {

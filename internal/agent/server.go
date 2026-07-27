@@ -90,8 +90,13 @@ func NewServer(config Config) (*Server, error) {
 	if config.SitesManager == nil {
 		config.SitesManager = sites.NewManager(config.WebRoot, config.Sites, config.Docker)
 		if config.StateDir != "" {
+			executable, executableErr := os.Executable()
+			if executableErr != nil {
+				return nil, fmt.Errorf("resolve Agent executable: %w", executableErr)
+			}
 			if err := config.SitesManager.ConfigureRecipeJobState(
 				filepath.Join(config.StateDir, "site-recipe-jobs"),
+				executable,
 			); err != nil {
 				return nil, fmt.Errorf("initialize site recipe job state: %w", err)
 			}

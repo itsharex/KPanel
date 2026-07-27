@@ -60,6 +60,9 @@ func run(arguments []string) error {
 	if len(arguments) > 0 && arguments[0] == "diagnostic-run" {
 		return runDiagnosticJob(arguments[1:])
 	}
+	if len(arguments) > 0 && arguments[0] == "site-pty-run" {
+		return runSiteJob(arguments[1:])
+	}
 
 	flags := flag.NewFlagSet("kejilion-agent", flag.ContinueOnError)
 	socketPath := flags.String("socket", env("KEJILION_AGENT_SOCKET", "/run/kejilion-panel/agent.sock"), "Unix Socket path")
@@ -271,6 +274,32 @@ func runDiagnosticJob(arguments []string) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Minute)
 	defer cancel()
 	return diagnostics.RunJob(ctx, *stateDir, *id)
+}
+
+func runSiteJob(arguments []string) error {
+	flags := flag.NewFlagSet("kejilion-agent site-pty-run", flag.ContinueOnError)
+	stateDir := flags.String(
+		"state-dir",
+		env("KEJILION_AGENT_STATE_DIR", "/var/lib/kejilion-panel/site-recipe-jobs"),
+		"website job state directory",
+	)
+	webRoot := flags.String(
+		"web-root",
+		env("KEJILION_WEB_ROOT", "/home/web"),
+		"Kejilion Web root",
+	)
+	id := flags.String("id", "", "website job identity")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *id == "" {
+		return errors.New("site-pty-run requires exactly one job identity")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Minute)
+	defer cancel()
+	return sites.RunRecipeJob(ctx, *stateDir, *webRoot, *id)
 }
 
 func runHealthcheck(arguments []string) error {

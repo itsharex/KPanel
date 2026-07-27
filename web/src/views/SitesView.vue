@@ -26,7 +26,7 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
-import { ApiError, api } from '@/lib/api'
+import { ApiError, api, isTransientAgentError } from '@/lib/api'
 import { formatDateTime, relativeTime, shortId } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
 import { useToast } from '@/stores/toast'
@@ -77,6 +77,7 @@ const installStageLabels: Record<string, string> = {
   reconcile: '产物对账',
   completed: '搭建完成',
   interrupted: '任务中断',
+  reconnecting: 'Agent 重连中',
   script_unavailable: '脚本不可用',
   runner_unavailable: '后台执行器不可用',
   start_failed: '任务启动失败',
@@ -432,6 +433,20 @@ function monitorInstallation(id?: string): void {
         await load(true)
       }
     } catch (reason) {
+      if (isTransientAgentError(reason)) {
+        submitting.value = true
+        formError.value = ''
+        if (installProgress.value) {
+          installProgress.value = {
+            ...installProgress.value,
+            status: 'running',
+            stage: 'reconnecting',
+            message: 'Agent 暂时不可用，后台建站任务不受影响，正在自动重连。',
+          }
+        }
+        installationMonitor = setTimeout(() => void poll(), 2_000)
+        return
+      }
       submitting.value = false
       const message = reason instanceof ApiError ? reason.message : '无法继续读取后台建站任务。'
       formError.value = message

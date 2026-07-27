@@ -275,6 +275,17 @@ describe('API client', () => {
         }),
       )
       .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            type: 'about:blank',
+            title: 'Agent unavailable',
+            status: 503,
+            code: 'agent_unavailable',
+          },
+          { status: 503 },
+        ),
+      )
+      .mockResolvedValueOnce(
         jsonResponse({
           id: jobID,
           domain: 'blog.example.com',
@@ -300,7 +311,7 @@ describe('API client', () => {
       },
       onProgress,
     )
-    await vi.advanceTimersByTimeAsync(4_000)
+    await vi.advanceTimersByTimeAsync(6_000)
 
     await expect(created).resolves.toMatchObject({
       primaryDomain: 'blog.example.com',
@@ -314,6 +325,7 @@ describe('API client', () => {
       '/api/v1/sites',
       `/api/v1/site-installations/${jobID}`,
       `/api/v1/site-installations/${jobID}`,
+      `/api/v1/site-installations/${jobID}`,
     ])
     expect(onProgress).toHaveBeenCalledWith({
       id: jobID,
@@ -322,6 +334,14 @@ describe('API client', () => {
       stage: 'database',
       progress: 38,
       message: 'installing',
+    })
+    expect(onProgress).toHaveBeenCalledWith({
+      id: jobID,
+      domain: 'blog.example.com',
+      status: 'running',
+      stage: 'reconnecting',
+      progress: 38,
+      message: 'Agent 暂时不可用，后台建站任务不受影响，正在自动重连。',
     })
   })
 

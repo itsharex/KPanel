@@ -31,6 +31,8 @@ const (
 	maxRecipeTerminalInput   = 16 << 10
 	maxRecipeTerminalChunk   = 64 << 10
 	maxRecipeTerminalLogSize = 8 << 20
+	recipeJobLaunchGrace     = 5 * time.Second
+	recipeJobUnitPrefix      = "kpanel-site-"
 )
 
 var (
@@ -63,6 +65,8 @@ type RecipeJob struct {
 	ID          string                `json:"id"`
 	Domain      string                `json:"domain"`
 	Recipe      string                `json:"recipe"`
+	ProxyHost   string                `json:"proxyHost,omitempty"`
+	ProxyPort   string                `json:"proxyPort,omitempty"`
 	Status      string                `json:"status"`
 	Stage       string                `json:"stage"`
 	Progress    int                   `json:"progress"`
@@ -96,14 +100,34 @@ type scriptSiteInvocation struct {
 	timeout     time.Duration
 }
 
+type recipeJobCommandRunner interface {
+	Run(context.Context, string, ...string) ([]byte, error)
+}
+
+type systemRecipeJobRunner struct{}
+
+func (systemRecipeJobRunner) Run(ctx context.Context, name string, arguments ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, arguments...).CombinedOutput()
+}
+
 func newRecipeJobRegistry(stateDir string) *recipeJobRegistry {
 	return &recipeJobRegistry{stateDir: stateDir, jobs: make(map[string]RecipeJob)}
 }
 
-func (m *Manager) ConfigureRecipeJobState(stateDir string) error {
+func (m *Manager) ConfigureRecipeJobState(stateDir, executable string) error {
+	return m.configureRecipeJobState(stateDir, executable, systemRecipeJobRunner{})
+}
+
+func (m *Manager) configureRecipeJobState(
+	stateDir string,
+	executable string,
+	runner recipeJobCommandRunner,
+) error {
 	stateDir = filepath.Clean(stateDir)
-	if !filepath.IsAbs(stateDir) || stateDir == string(filepath.Separator) {
-		return errors.New("site recipe jobs require a dedicated absolute directory")
+	executable = filepath.Clean(executable)
+	if !filepath.IsAbs(stateDir) || stateDir == string(filepath.Separator) ||
+		!filepath.IsAbs(executable) || runner == nil {
+		return errors.New("site recipe jobs require dedicated absolute paths")
 	}
 	if err := ensureRecipeJobDirectory(stateDir); err != nil {
 		return err
@@ -122,21 +146,12 @@ func (m *Manager) ConfigureRecipeJobState(stateDir string) error {
 		if readErr != nil {
 			continue
 		}
-		if job.Status == "queued" || job.Status == "running" {
-			finished := time.Now().UTC()
-			job.Status = "failed"
-			job.Stage = "interrupted"
-			job.Progress = 100
-			job.Message = "一键建站任务被 Agent 或服务器重启中断，请先核对实际站点产物"
-			job.InputOpen = false
-			job.FinishedAt = &finished
-			appendRecipeEvent(&job, job.Stage, job.Progress, job.Message)
-			_ = registry.put(job)
-			_ = hostpty.RemoveInput(registry.inputPath(job.ID))
-		}
 		registry.jobs[id] = job
 	}
 	m.recipeJobs = registry
+	m.jobExecutable = executable
+	m.jobRunner = runner
+	m.recoverInterruptedRecipeJobs()
 	return nil
 }
 
@@ -160,6 +175,9 @@ func (m *Manager) RecipeWritable() error {
 	}
 	if m.recipeJobs == nil || m.recipeJobs.stateDir == "" {
 		return fmt.Errorf("%w: recipe background jobs are unavailable", ErrUnavailable)
+	}
+	if m.jobRunner == nil || m.jobExecutable == "" {
+		return fmt.Errorf("%w: recipe background worker is unavailable", ErrUnavailable)
 	}
 	if _, err := findSystemdRun(); err != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
@@ -200,6 +218,9 @@ func (m *Manager) directSiteWritable(required ...string) error {
 	if m.recipeJobs == nil || m.recipeJobs.stateDir == "" {
 		return fmt.Errorf("%w: website background jobs are unavailable", ErrUnavailable)
 	}
+	if m.jobRunner == nil || m.jobExecutable == "" {
+		return fmt.Errorf("%w: website background worker is unavailable", ErrUnavailable)
+	}
 	if _, err := findSystemdRun(); err != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
@@ -210,7 +231,7 @@ func (m *Manager) directSiteWritable(required ...string) error {
 }
 
 func (m *Manager) StartRecipe(_ context.Context, input SiteInput) (RecipeJob, error) {
-	domain, selector, err := normalizeRecipeInput(input)
+	domain, _, err := normalizeRecipeInput(input)
 	if err != nil {
 		return RecipeJob{}, err
 	}
@@ -243,19 +264,11 @@ func (m *Manager) StartRecipe(_ context.Context, input SiteInput) (RecipeJob, er
 		_ = hostpty.RemoveInput(m.recipeJobs.inputPath(job.ID))
 		return RecipeJob{}, fmt.Errorf("%w: persist recipe job: %v", ErrNeedsAttention, err)
 	}
-	go m.runRecipeJob(job.ID, scriptSiteInvocation{
-		arguments:   []string{recipeCommands[input.Recipe], domain},
-		environment: []string{"KJ_WEB_NONINTERACTIVE=1", "KJ_WEB_INTERACTIVE=1", "KJ_WEB_RECIPE=" + selector, "KJ_WEB_DOMAIN=" + domain},
-		required: []string{
-			"KJ_WEB_NONINTERACTIVE",
-			"KJ_WEB_INTERACTIVE",
-			"KJ_WEB_RECIPE",
-			"KJ_WEB_DOMAIN",
-			"kpanel_run_web_recipe_cli()",
-			recipeCommands[input.Recipe] + ")",
-		},
-		timeout: 60 * time.Minute,
-	})
+	if err := m.launchRecipeJob(context.Background(), job); err != nil {
+		m.failRecipeJob(job, "start_failed", err)
+		_ = hostpty.RemoveInput(m.recipeJobs.inputPath(job.ID))
+		return RecipeJob{}, fmt.Errorf("%w: launch website job: %v", ErrUnavailable, err)
+	}
 	return job, nil
 }
 
@@ -353,6 +366,10 @@ func (m *Manager) startDirectSiteJob(
 		Message: "kejilion.sh 原生建站任务已进入后台队列", CreatedAt: time.Now().UTC(),
 		Interactive: true,
 	}
+	if recipe == "reverse-proxy" {
+		job.ProxyHost = invocation.arguments[2]
+		job.ProxyPort = invocation.arguments[3]
+	}
 	appendRecipeEvent(&job, job.Stage, job.Progress, job.Message)
 	if err := hostpty.CreateInput(m.recipeJobs.inputPath(job.ID)); err != nil {
 		return RecipeJob{}, fmt.Errorf("%w: prepare interactive website terminal: %v", ErrUnavailable, err)
@@ -361,7 +378,11 @@ func (m *Manager) startDirectSiteJob(
 		_ = hostpty.RemoveInput(m.recipeJobs.inputPath(job.ID))
 		return RecipeJob{}, fmt.Errorf("%w: persist website job: %v", ErrNeedsAttention, err)
 	}
-	go m.runRecipeJob(job.ID, invocation)
+	if err := m.launchRecipeJob(context.Background(), job); err != nil {
+		m.failRecipeJob(job, "start_failed", err)
+		_ = hostpty.RemoveInput(m.recipeJobs.inputPath(job.ID))
+		return RecipeJob{}, fmt.Errorf("%w: launch website job: %v", ErrUnavailable, err)
+	}
 	return job, nil
 }
 
@@ -448,10 +469,146 @@ func normalizeDirectProxyInput(input SiteInput) (managedSpec, string, string, er
 	return spec, host, port, nil
 }
 
+func (m *Manager) launchRecipeJob(ctx context.Context, job RecipeJob) error {
+	if m.jobRunner == nil || m.jobExecutable == "" {
+		return errors.New("website background worker is unavailable")
+	}
+	systemdRun, err := findSystemdRun()
+	if err != nil {
+		return err
+	}
+	arguments := siteWorkerSystemdArguments(
+		job,
+		m.jobExecutable,
+		m.recipeJobs.stateDir,
+		m.webRoot,
+	)
+	output, err := m.jobRunner.Run(ctx, systemdRun, arguments...)
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(string(output))
+	if len(detail) > 300 {
+		detail = detail[:300]
+	}
+	if detail != "" {
+		return fmt.Errorf("%s: %w", detail, err)
+	}
+	return err
+}
+
+func siteWorkerSystemdArguments(
+	job RecipeJob,
+	executable string,
+	stateDir string,
+	webRoot string,
+) []string {
+	return []string{
+		"--unit=" + recipeJobUnitPrefix + job.ID,
+		"--collect",
+		"--no-block",
+		"--property=Type=oneshot",
+		"--property=TimeoutStartSec=60min",
+		"--property=TimeoutStopSec=10min",
+		"--property=User=root",
+		"--property=UMask=0027",
+		"--property=PrivateTmp=no",
+		"--property=NoNewPrivileges=no",
+		"--property=ProtectSystem=no",
+		"--property=ProtectHome=no",
+		"--property=PrivateDevices=no",
+		"--property=RestrictNamespaces=no",
+		"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+		"--property=SyslogIdentifier=kpanel-site",
+		"--",
+		executable,
+		"site-pty-run",
+		"--state-dir",
+		stateDir,
+		"--web-root",
+		webRoot,
+		"--id",
+		job.ID,
+	}
+}
+
+func (m *Manager) recipeUnitState(id string) (running bool, known bool) {
+	if m.jobRunner == nil {
+		return false, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	output, err := m.jobRunner.Run(
+		ctx,
+		"systemctl",
+		"is-active",
+		recipeJobUnitPrefix+id+".service",
+	)
+	state := strings.TrimSpace(string(output))
+	switch state {
+	case "active", "activating", "reloading":
+		return true, true
+	case "inactive", "failed", "dead", "deactivating":
+		return false, true
+	default:
+		return false, err == nil && state != ""
+	}
+}
+
+func (m *Manager) recoverInterruptedRecipeJobs() {
+	if m.recipeJobs == nil {
+		return
+	}
+	for _, job := range m.recipeJobs.list() {
+		if job.Status != "queued" && job.Status != "running" {
+			continue
+		}
+		running, known := m.recipeUnitState(job.ID)
+		if known && !running {
+			m.markRecipeJobInterrupted(job)
+		}
+	}
+}
+
+func (m *Manager) reconcileInactiveRecipeJobs() {
+	if m.recipeJobs == nil {
+		return
+	}
+	for _, job := range m.recipeJobs.list() {
+		if (job.Status != "queued" && job.Status != "running") ||
+			time.Since(job.CreatedAt) < recipeJobLaunchGrace {
+			continue
+		}
+		running, known := m.recipeUnitState(job.ID)
+		if !known || running {
+			continue
+		}
+		latest, err := m.recipeJobs.read(job.ID)
+		if err != nil || (latest.Status != "queued" && latest.Status != "running") {
+			continue
+		}
+		m.markRecipeJobInterrupted(latest)
+	}
+}
+
+func (m *Manager) markRecipeJobInterrupted(job RecipeJob) {
+	finished := time.Now().UTC()
+	job.Status = "failed"
+	job.Stage = "interrupted"
+	job.Progress = 100
+	job.Message = "后台建站单元已结束但未回写结果，请核对实际站点产物后重试"
+	job.InputOpen = false
+	job.FinishedAt = &finished
+	appendRecipeEvent(&job, job.Stage, job.Progress, job.Message)
+	_ = m.recipeJobs.put(job)
+	_ = hostpty.RemoveInput(m.recipeJobs.inputPath(job.ID))
+}
+
 func (m *Manager) RecipeJob(id string) (RecipeJob, error) {
 	if m.recipeJobs == nil {
 		return RecipeJob{}, ErrConflict
 	}
+	m.reconcileInactiveRecipeJobs()
 	return m.recipeJobs.read(id)
 }
 
@@ -466,6 +623,7 @@ func (m *Manager) InstallationJobs() []RecipeJob {
 	if m.recipeJobs == nil {
 		return []RecipeJob{}
 	}
+	m.reconcileInactiveRecipeJobs()
 	return m.recipeJobs.list()
 }
 
@@ -542,7 +700,101 @@ func (m *Manager) WriteInstallationInput(id, value string) error {
 	return nil
 }
 
-func (m *Manager) runRecipeJob(id string, invocation scriptSiteInvocation) {
+func RunRecipeJob(ctx context.Context, stateDir, webRoot, id string) error {
+	if os.Geteuid() != 0 {
+		return errors.New("site-pty-run requires root")
+	}
+	if !recipeJobIDPattern.MatchString(id) {
+		return errors.New("invalid website job identity")
+	}
+	stateDir = filepath.Clean(stateDir)
+	webRoot = filepath.Clean(webRoot)
+	if !filepath.IsAbs(stateDir) || stateDir == string(filepath.Separator) ||
+		!filepath.IsAbs(webRoot) || webRoot == string(filepath.Separator) {
+		return errors.New("website job requires dedicated absolute paths")
+	}
+	registry := newRecipeJobRegistry(stateDir)
+	if err := ensureRecipeJobDirectory(stateDir); err != nil {
+		return err
+	}
+	job, err := registry.read(id)
+	if err != nil {
+		return err
+	}
+	invocation, err := invocationForRecipeJob(job)
+	if err != nil {
+		finished := time.Now().UTC()
+		job.Status = "failed"
+		job.Stage = "invalid_job"
+		job.Message = "后台建站任务参数无效"
+		job.FinishedAt = &finished
+		_ = registry.put(job)
+		return err
+	}
+	manager := NewManager(webRoot, NewDiscoverer(webRoot), nil)
+	manager.recipeJobs = registry
+	manager.runRecipeJob(ctx, id, invocation)
+	completed, err := registry.read(id)
+	if err != nil {
+		return err
+	}
+	if completed.Status == "failed" {
+		return errors.New(completed.Message)
+	}
+	return nil
+}
+
+func invocationForRecipeJob(job RecipeJob) (scriptSiteInvocation, error) {
+	switch job.Recipe {
+	case "wordpress":
+		if _, err := normalizeWordPressInput(SiteInput{
+			PrimaryDomain: job.Domain,
+			Type:          "wordpress",
+		}); err != nil {
+			return scriptSiteInvocation{}, err
+		}
+		return wordPressInvocation(job.Domain), nil
+	case "reverse-proxy":
+		_, host, port, err := normalizeDirectProxyInput(SiteInput{
+			PrimaryDomain: job.Domain,
+			Type:          "proxy",
+			Upstream:      "http://" + job.ProxyHost + ":" + job.ProxyPort,
+		})
+		if err != nil {
+			return scriptSiteInvocation{}, err
+		}
+		return proxyInvocation(job.Domain, host, port), nil
+	default:
+		domain, selector, err := normalizeRecipeInput(SiteInput{
+			PrimaryDomain: job.Domain,
+			Type:          "recipe",
+			Recipe:        job.Recipe,
+		})
+		if err != nil {
+			return scriptSiteInvocation{}, err
+		}
+		return scriptSiteInvocation{
+			arguments: []string{recipeCommands[job.Recipe], domain},
+			environment: []string{
+				"KJ_WEB_NONINTERACTIVE=1",
+				"KJ_WEB_INTERACTIVE=1",
+				"KJ_WEB_RECIPE=" + selector,
+				"KJ_WEB_DOMAIN=" + domain,
+			},
+			required: []string{
+				"KJ_WEB_NONINTERACTIVE",
+				"KJ_WEB_INTERACTIVE",
+				"KJ_WEB_RECIPE",
+				"KJ_WEB_DOMAIN",
+				"kpanel_run_web_recipe_cli()",
+				recipeCommands[job.Recipe] + ")",
+			},
+			timeout: 60 * time.Minute,
+		}, nil
+	}
+}
+
+func (m *Manager) runRecipeJob(ctx context.Context, id string, invocation scriptSiteInvocation) {
 	job, err := m.recipeJobs.read(id)
 	if err != nil {
 		return
@@ -553,11 +805,6 @@ func (m *Manager) runRecipeJob(id string, invocation scriptSiteInvocation) {
 	script, err := findTrustedKejilionScript(invocation.required...)
 	if err != nil {
 		m.failRecipeJob(job, "script_unavailable", err)
-		return
-	}
-	systemdRun, err := findSystemdRun()
-	if err != nil {
-		m.failRecipeJob(job, "runner_unavailable", err)
 		return
 	}
 	started := time.Now().UTC()
@@ -571,18 +818,12 @@ func (m *Manager) runRecipeJob(id string, invocation scriptSiteInvocation) {
 		return
 	}
 
-	timeout := invocation.timeout
-	if timeout <= 0 {
-		timeout = 60 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	command := exec.CommandContext(
-		ctx,
-		systemdRun,
-		systemdSiteArguments(job, script, invocation)...,
+	commandArguments := append([]string{script}, invocation.arguments...)
+	command := exec.CommandContext(ctx, "/bin/bash", commandArguments...)
+	command.Env = append(
+		os.Environ(),
+		append(invocation.environment, "LC_ALL=C.UTF-8", "LANG=C.UTF-8", "TERM=xterm-256color")...,
 	)
-	command.Env = os.Environ()
 	input, err := hostpty.OpenInput(m.recipeJobs.inputPath(id))
 	if err != nil {
 		m.failRecipeJob(job, "terminal_unavailable", err)
@@ -730,44 +971,6 @@ func (m *Manager) copyRecipeTerminalOutput(
 			return err
 		}
 	}
-}
-
-func systemdSiteArguments(
-	job RecipeJob,
-	script string,
-	invocation scriptSiteInvocation,
-) []string {
-	timeout := invocation.timeout
-	if timeout <= 0 {
-		timeout = 60 * time.Minute
-	}
-	arguments := []string{
-		"--unit=kpanel-site-" + job.ID,
-		"--wait",
-		"--pipe",
-		"--collect",
-		"--quiet",
-		"--property=Type=exec",
-		"--property=TimeoutStartSec=" + strconv.FormatInt(int64(timeout.Seconds()), 10) + "s",
-		"--property=TimeoutStopSec=30s",
-		"--property=User=root",
-		"--property=UMask=0027",
-		"--property=NoNewPrivileges=no",
-		"--property=ProtectSystem=no",
-		"--property=ProtectHome=no",
-		"--property=PrivateTmp=no",
-		"--property=PrivateDevices=no",
-		"--property=RestrictNamespaces=no",
-		"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
-		"--setenv=LC_ALL=C.UTF-8",
-		"--setenv=LANG=C.UTF-8",
-		"--setenv=TERM=xterm-256color",
-	}
-	for _, value := range invocation.environment {
-		arguments = append(arguments, "--setenv="+value)
-	}
-	arguments = append(arguments, "--", "/bin/bash", script)
-	return append(arguments, invocation.arguments...)
 }
 
 func scriptSiteLabel(recipe string) string {
@@ -964,9 +1167,7 @@ func appendRecipeEvent(job *RecipeJob, stage string, progress int, message strin
 }
 
 func (registry *recipeJobRegistry) hasActive() bool {
-	registry.mu.Lock()
-	defer registry.mu.Unlock()
-	for _, job := range registry.jobs {
+	for _, job := range registry.list() {
 		if job.Status == "queued" || job.Status == "running" {
 			return true
 		}
@@ -1043,10 +1244,16 @@ func (registry *recipeJobRegistry) read(id string) (RecipeJob, error) {
 
 func (registry *recipeJobRegistry) list() []RecipeJob {
 	registry.mu.Lock()
-	defer registry.mu.Unlock()
-	jobs := make([]RecipeJob, 0, len(registry.jobs))
-	for _, job := range registry.jobs {
-		jobs = append(jobs, job)
+	ids := make([]string, 0, len(registry.jobs))
+	for id := range registry.jobs {
+		ids = append(ids, id)
+	}
+	registry.mu.Unlock()
+	jobs := make([]RecipeJob, 0, len(ids))
+	for _, id := range ids {
+		if job, err := registry.read(id); err == nil {
+			jobs = append(jobs, job)
+		}
 	}
 	sort.Slice(jobs, func(i, j int) bool {
 		return jobs[i].CreatedAt.After(jobs[j].CreatedAt)

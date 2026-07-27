@@ -30,6 +30,8 @@ type Manager struct {
 	siteDataRuntime SiteDataRuntime
 	scriptDeleter   siteScriptDeleter
 	recipeJobs      *recipeJobRegistry
+	jobExecutable   string
+	jobRunner       recipeJobCommandRunner
 	testHook        func(stage, path string)
 }
 

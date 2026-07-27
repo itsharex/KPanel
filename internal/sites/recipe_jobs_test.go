@@ -1,15 +1,38 @@
 package sites
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
+
+type fakeRecipeJobRunner struct {
+	active  map[string]bool
+	unknown bool
+}
+
+func (runner *fakeRecipeJobRunner) Run(
+	_ context.Context,
+	name string,
+	arguments ...string,
+) ([]byte, error) {
+	if runner.unknown {
+		return nil, errors.New("systemd unavailable")
+	}
+	if name == "systemctl" && len(arguments) == 2 &&
+		arguments[0] == "is-active" && runner.active[arguments[1]] {
+		return []byte("active\n"), nil
+	}
+	return []byte("inactive\n"), errors.New("inactive")
+}
 
 func TestNormalizeRecipeInputUsesFixedKejilionSelectors(t *testing.T) {
 	domain, selector, err := normalizeRecipeInput(SiteInput{
@@ -124,36 +147,74 @@ func TestDirectWebsiteInvocationsUseKejilionCommands(t *testing.T) {
 	}
 }
 
-func TestSystemdSiteArgumentsRunExactScriptWithoutShellFragments(t *testing.T) {
+func TestSiteWorkerSystemdArgumentsDetachFromAgent(t *testing.T) {
 	job := RecipeJob{ID: "0123456789abcdef0123456789abcdef"}
-	invocation := proxyInvocation("proxy.example.com", "127.0.0.1", "8080")
-	arguments := systemdSiteArguments(job, "/usr/local/bin/k", invocation)
+	arguments := siteWorkerSystemdArguments(
+		job,
+		"/usr/local/bin/kejilion-agent",
+		"/var/lib/kejilion-panel/site-recipe-jobs",
+		"/home/web",
+	)
 	joined := strings.Join(arguments, "\n")
 	for _, expected := range []string{
 		"--unit=kpanel-site-" + job.ID,
-		"--wait",
-		"--pipe",
+		"--no-block",
 		"--property=ProtectSystem=no",
 		"--",
-		"/bin/bash",
-		"/usr/local/bin/k",
-		"fd",
-		"proxy.example.com",
-		"127.0.0.1",
-		"8080",
-		"--setenv=KJ_WEB_RECIPE=23",
-		"--setenv=KJ_WEB_DOMAIN=proxy.example.com",
-		"--setenv=KJ_WEB_PROXY_HOST=127.0.0.1",
-		"--setenv=KJ_WEB_PROXY_PORT=8080",
+		"/usr/local/bin/kejilion-agent",
+		"site-pty-run",
+		"--state-dir",
+		"/var/lib/kejilion-panel/site-recipe-jobs",
+		"--web-root",
+		"/home/web",
 	} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("systemd site arguments missing %q: %#v", expected, arguments)
+		}
+	}
+	for _, forbidden := range []string{"--wait", "--pipe"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("detached website worker contains %q: %#v", forbidden, arguments)
 		}
 	}
 	for _, argument := range arguments {
 		if strings.ContainsAny(argument, ";&`") {
 			t.Fatalf("shell fragment reached systemd invocation: %q", argument)
 		}
+	}
+}
+
+func TestInvocationForRecipeJobRestoresValidatedCommands(t *testing.T) {
+	for _, test := range []struct {
+		job  RecipeJob
+		want []string
+	}{
+		{
+			job:  RecipeJob{Domain: "blog.example.com", Recipe: "wordpress"},
+			want: []string{"wp", "blog.example.com"},
+		},
+		{
+			job: RecipeJob{
+				Domain: "proxy.example.com", Recipe: "reverse-proxy",
+				ProxyHost: "127.0.0.1", ProxyPort: "8080",
+			},
+			want: []string{"fd", "proxy.example.com", "127.0.0.1", "8080"},
+		},
+		{
+			job:  RecipeJob{Domain: "forum.example.com", Recipe: "discuz"},
+			want: []string{"discuz", "forum.example.com"},
+		},
+	} {
+		invocation, err := invocationForRecipeJob(test.job)
+		if err != nil || !reflect.DeepEqual(invocation.arguments, test.want) {
+			t.Fatalf("invocationForRecipeJob(%#v) = %#v, %v", test.job, invocation, err)
+		}
+	}
+	if _, err := invocationForRecipeJob(RecipeJob{
+		Domain: "proxy.example.com", Recipe: "reverse-proxy",
+		ProxyHost: "127.0.0.1;id", ProxyPort: "8080",
+	}); err == nil {
+		t.Fatal("unsafe persisted proxy host was accepted")
 	}
 }
 
@@ -186,6 +247,85 @@ func TestRecipeJobEventsAreBoundedAndDeduplicated(t *testing.T) {
 	}
 	if job.Events[0].Progress != 12 || job.Events[len(job.Events)-1].Progress != 59 {
 		t.Fatalf("bounded events = %#v", job.Events)
+	}
+}
+
+func TestRecipeJobRegistryRefreshesWorkerStateFromDisk(t *testing.T) {
+	stateDir := t.TempDir()
+	agentRegistry := newRecipeJobRegistry(stateDir)
+	workerRegistry := newRecipeJobRegistry(stateDir)
+	id := "0123456789abcdef0123456789abcdef"
+	job := RecipeJob{
+		ID: id, Domain: "blog.example.com", Recipe: "wordpress",
+		Status: "queued", Stage: "queued", CreatedAt: time.Now().UTC(),
+	}
+	if err := agentRegistry.put(job); err != nil {
+		t.Fatal(err)
+	}
+	job.Status = "running"
+	job.Stage = "installing"
+	job.Progress = 38
+	if err := workerRegistry.put(job); err != nil {
+		t.Fatal(err)
+	}
+	jobs := agentRegistry.list()
+	if len(jobs) != 1 || jobs[0].Status != "running" ||
+		jobs[0].Stage != "installing" || jobs[0].Progress != 38 {
+		t.Fatalf("agent registry did not refresh worker state: %#v", jobs)
+	}
+}
+
+func TestConfigureRecipeJobsPreservesActiveDetachedWorker(t *testing.T) {
+	stateDir := t.TempDir()
+	id := "0123456789abcdef0123456789abcdef"
+	registry := newRecipeJobRegistry(stateDir)
+	job := RecipeJob{
+		ID: id, Domain: "blog.example.com", Recipe: "wordpress",
+		Status: "running", Stage: "installing", Progress: 38, CreatedAt: time.Now().UTC(),
+	}
+	if err := registry.put(job); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager("/home/web", nil, nil)
+	runner := &fakeRecipeJobRunner{active: map[string]bool{
+		recipeJobUnitPrefix + id + ".service": true,
+	}}
+	if err := manager.configureRecipeJobState(
+		stateDir,
+		filepath.Join(t.TempDir(), "kejilion-agent"),
+		runner,
+	); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := manager.recipeJobs.read(id)
+	if err != nil || recovered.Status != "running" ||
+		recovered.Stage != "installing" || recovered.Progress != 38 {
+		t.Fatalf("active detached website worker was not preserved: %#v, %v", recovered, err)
+	}
+}
+
+func TestConfigureRecipeJobsDoesNotFailOnUnknownSystemdState(t *testing.T) {
+	stateDir := t.TempDir()
+	id := "0123456789abcdef0123456789abcdef"
+	registry := newRecipeJobRegistry(stateDir)
+	job := RecipeJob{
+		ID: id, Domain: "blog.example.com", Recipe: "wordpress",
+		Status: "running", Stage: "installing", Progress: 38, CreatedAt: time.Now().UTC(),
+	}
+	if err := registry.put(job); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager("/home/web", nil, nil)
+	if err := manager.configureRecipeJobState(
+		stateDir,
+		filepath.Join(t.TempDir(), "kejilion-agent"),
+		&fakeRecipeJobRunner{unknown: true},
+	); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := manager.recipeJobs.read(id)
+	if err != nil || recovered.Status != "running" {
+		t.Fatalf("unknown systemd state was treated as task failure: %#v, %v", recovered, err)
 	}
 }
 
