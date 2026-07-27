@@ -23,6 +23,7 @@ cleanup() {
 	esac
 	rm -rf -- /home/docker/kpanel
 	rm -f /bin/systemctl
+	rm -f /root/kejilion.sh
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -60,6 +61,23 @@ case "$1 ${2:-}" in
 		;;
 	"cp "*)
 		destination=$3
+		case "$2" in
+			*:/release/kejilion.sh)
+				cat >"$destination" <<'SCRIPT'
+#!/usr/bin/env bash
+canshu="default"
+permission_granted="false"
+ENABLE_STATS="true"
+KJ_DNS_NONINTERACTIVE=1
+KJ_APP_NONINTERACTIVE=1
+KJ_WEB_NONINTERACTIVE=1
+KJ_WEB_INTERACTIVE=1
+KJ_TEST_NONINTERACTIVE=1
+SCRIPT
+				chmod 700 "$destination"
+				exit 0
+				;;
+		esac
 		cat >"$destination" <<'AGENT'
 #!/bin/sh
 case "${1:-}" in
@@ -151,6 +169,13 @@ cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
 exit 0
 EOF
+
+cat >"$FAKE_BIN/sha256sum" <<'EOF'
+#!/bin/sh
+printf '%s  %s\n' \
+	'40289bf18f1550afa4cd2cad58c2d1f515b99189692b80ffffb0a7e3c540290b' \
+	"$1"
+EOF
 chmod 755 "$FAKE_BIN"/*
 [ ! -e /bin/systemctl ] || {
 	echo "disposable app-conf test image unexpectedly provides /bin/systemctl" >&2
@@ -160,6 +185,14 @@ ln -s "$FAKE_BIN/systemctl" /bin/systemctl
 
 run_lifecycle() {
 	local ipv4_address="198.51.100.25"
+
+	cat >/root/kejilion.sh <<'EOF'
+#!/usr/bin/env bash
+canshu="CN"
+permission_granted="true"
+ENABLE_STATS="false"
+EOF
+	chmod 700 /root/kejilion.sh
 
 	systemctl() {
 		local COMMAND="$1"
@@ -196,9 +229,9 @@ run_lifecycle() {
 	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 1
 	grep -F 'ExecStart=/home/docker/kpanel/bin/kejilion-agent' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
-	grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE' \
+	grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_LINUX_IMMUTABLE' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
-	grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE' \
+	grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_LINUX_IMMUTABLE' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
@@ -216,9 +249,15 @@ run_lifecycle() {
 	test "$(stat -c '%u:%g' /home/docker/kpanel/secrets/agent.token)" = 0:987
 	test "$(tr -d '\r\n' </home/docker/kpanel/secrets/agent.token | wc -c)" = 64
 	test -f /home/docker/kpanel/.managed-by-kejilion-app
+	test -x /home/docker/kpanel/bin/kejilion.sh
+	test "$(stat -c '%a' /home/docker/kpanel/bin/kejilion.sh)" = 700
+	grep -Fx 'permission_granted="true"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
+	grep -Fx 'ENABLE_STATS="false"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
+	grep -Fx 'canshu="CN"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 
 	docker_app_update
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
+	grep -Fx 'permission_granted="true"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 
 	docker_app_uninstall
 	[ ! -e /home/docker/kpanel ]

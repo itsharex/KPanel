@@ -1,6 +1,9 @@
 package sites
 
 import (
+	"encoding/base64"
+	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -95,7 +98,12 @@ func TestDirectWebsiteInvocationsUseKejilionCommands(t *testing.T) {
 	if !reflect.DeepEqual(wordPress.arguments, []string{"web"}) ||
 		!reflect.DeepEqual(
 			wordPress.environment,
-			[]string{"KJ_WEB_NONINTERACTIVE=1", "KJ_WEB_RECIPE=2", "KJ_WEB_DOMAIN=blog.example.com"},
+			[]string{
+				"KJ_WEB_NONINTERACTIVE=1",
+				"KJ_WEB_INTERACTIVE=1",
+				"KJ_WEB_RECIPE=2",
+				"KJ_WEB_DOMAIN=blog.example.com",
+			},
 		) {
 		t.Fatalf("WordPress invocation = %#v", wordPress)
 	}
@@ -105,6 +113,7 @@ func TestDirectWebsiteInvocationsUseKejilionCommands(t *testing.T) {
 			proxy.environment,
 			[]string{
 				"KJ_WEB_NONINTERACTIVE=1",
+				"KJ_WEB_INTERACTIVE=1",
 				"KJ_WEB_RECIPE=23",
 				"KJ_WEB_DOMAIN=proxy.example.com",
 				"KJ_WEB_PROXY_HOST=127.0.0.1",
@@ -142,5 +151,80 @@ func TestSystemdSiteArgumentsRunExactScriptWithoutShellFragments(t *testing.T) {
 		if strings.ContainsAny(argument, ";&`") {
 			t.Fatalf("shell fragment reached systemd invocation: %q", argument)
 		}
+	}
+}
+
+func TestRecipeFailureMessagePreservesSafeProtocolReason(t *testing.T) {
+	job := RecipeJob{
+		Message:  "Nginx 配置校验失败",
+		Progress: 85,
+	}
+	message := recipeFailureMessage(job, "failed", errors.New("exit status 1"))
+	if message != "建站失败：Nginx 配置校验失败" {
+		t.Fatalf("recipeFailureMessage() = %q", message)
+	}
+	if got := recipeFailureMessage(job, "reconcile_failed", errors.New("missing")); !strings.Contains(got, "未发现完整站点产物") {
+		t.Fatalf("reconcile failure message = %q", got)
+	}
+}
+
+func TestRecipeJobEventsAreBoundedAndDeduplicated(t *testing.T) {
+	job := RecipeJob{}
+	appendRecipeEvent(&job, "queued", 0, "等待执行")
+	appendRecipeEvent(&job, "queued", 0, "等待执行")
+	if len(job.Events) != 1 {
+		t.Fatalf("duplicate events = %d, want 1", len(job.Events))
+	}
+	for index := 0; index < 60; index++ {
+		appendRecipeEvent(&job, "installing", index, "执行阶段")
+	}
+	if len(job.Events) != 48 {
+		t.Fatalf("events = %d, want 48", len(job.Events))
+	}
+	if job.Events[0].Progress != 12 || job.Events[len(job.Events)-1].Progress != 59 {
+		t.Fatalf("bounded events = %#v", job.Events)
+	}
+}
+
+func TestSiteInstallationTerminalReturnsRawChunks(t *testing.T) {
+	stateDir := t.TempDir()
+	registry := newRecipeJobRegistry(stateDir)
+	manager := &Manager{recipeJobs: registry}
+	id := "0123456789abcdef0123456789abcdef"
+	job := RecipeJob{
+		ID:          id,
+		Domain:      "proxy.example.com",
+		Recipe:      "reverse-proxy",
+		Status:      "running",
+		Stage:       "installing",
+		Interactive: true,
+		InputOpen:   true,
+	}
+	if err := registry.put(job); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("\x1b[32mkejilion.sh terminal\x1b[0m\r\n")
+	if err := os.WriteFile(registry.logPath(id), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	chunk, err := manager.InstallationTerminal(id, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(chunk.DataBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(decoded) != string(raw) || chunk.NextOffset != int64(len(raw)) ||
+		!chunk.InputOpen || chunk.Finished {
+		t.Fatalf("terminal chunk = %#v raw=%q", chunk, decoded)
+	}
+}
+
+func TestStripSiteTerminalControlsKeepsProgressPayload(t *testing.T) {
+	got := stripSiteTerminalControls("\x1b[2K\rKPANEL_PROGRESS 35 正在安装\x1b[0m\r\n")
+	if got != "\rKPANEL_PROGRESS 35 正在安装\r\n" {
+		t.Fatalf("stripped terminal output = %q", got)
 	}
 }

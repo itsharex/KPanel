@@ -8,6 +8,7 @@ import { api } from '@/lib/api'
 const props = defineProps<{
   jobId: string
   inputOpen?: boolean
+  kind?: 'app' | 'site'
 }>()
 
 const host = ref<HTMLElement>()
@@ -41,7 +42,11 @@ async function flushInput(): Promise<void> {
     while (inputQueue && terminalInputOpen.value && !disposed) {
       const data = inputQueue
       inputQueue = ''
-      await api.apps.terminalInput(props.jobId, data)
+      if (props.kind === 'site') {
+        await api.sites.terminalInput(props.jobId, data)
+      } else {
+        await api.apps.terminalInput(props.jobId, data)
+      }
     }
   } catch {
     terminal?.write('\r\n\x1b[31m[KPanel] 输入发送失败，请确认任务仍在等待输入。\x1b[0m\r\n')
@@ -67,7 +72,9 @@ async function poll(): Promise<void> {
   pollController?.abort()
   pollController = new AbortController()
   try {
-    const chunk = await api.apps.terminal(props.jobId, offset, pollController.signal)
+    const chunk = props.kind === 'site'
+      ? await api.sites.terminal(props.jobId, offset, pollController.signal)
+      : await api.apps.terminal(props.jobId, offset, pollController.signal)
     const data = chunk.dataBase64 ? decodeBase64(chunk.dataBase64) : undefined
     if (data) terminal?.write(data)
     offset = chunk.nextOffset
@@ -149,8 +156,14 @@ onBeforeUnmount(() => {
   <section class="interactive-terminal">
     <header>
       <div>
-        <strong>kejilion.sh 交互终端</strong>
-        <small>直接按脚本提示输入；窗口关闭后任务仍在后台继续。</small>
+        <strong>kejilion.sh {{ props.kind === 'site' ? '建站' : '应用' }}终端</strong>
+        <small>
+          {{
+            props.kind === 'site'
+              ? '域名和固定参数已由面板传入；需要时按脚本提示继续输入。'
+              : '直接按脚本提示输入；窗口关闭后任务仍在后台继续。'
+          }}
+        </small>
       </div>
       <span :class="`is-${connectionState}`">
         {{

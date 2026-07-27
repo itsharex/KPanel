@@ -1058,6 +1058,31 @@ func TestMaintenanceStatusDetectsSystemdLaunchFailure(t *testing.T) {
 	}
 }
 
+func TestMaintenanceStatusRecognizesCollectedSuccessfulUnit(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, _, _, _ := testManager(t, runner)
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	runner.run = func(_ context.Context, name string, _ ...string) ([]byte, error) {
+		if name == "systemctl" {
+			return []byte(
+				"LoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\nExecMainStatus=0\n",
+			), nil
+		}
+		return nil, nil
+	}
+
+	if changed, _, err := manager.startMaintenance(context.Background(), "update", "full"); err != nil || !changed {
+		t.Fatalf("start maintenance: changed=%v err=%v", changed, err)
+	}
+	now = now.Add(maintenanceLaunchGrace + time.Second)
+	status := manager.MaintenanceStatus()
+	if status.State != "succeeded" || status.Stage != "completed" ||
+		status.Progress != 100 || status.FinishedAt == nil {
+		t.Fatalf("collected successful unit was not reconciled: %#v", status)
+	}
+}
+
 func TestStartMaintenanceUsesManagedAppAgentPath(t *testing.T) {
 	runner := &fakeRunner{}
 	manager, _, _, stateDir := testManager(t, runner)

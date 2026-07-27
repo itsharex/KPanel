@@ -424,16 +424,69 @@ func (s *Server) siteCollection(w http.ResponseWriter, r *http.Request, requestI
 }
 
 func (s *Server) siteInstallation(w http.ResponseWriter, r *http.Request, requestID string) {
-	if r.Method != http.MethodGet {
+	if r.URL.RawPath != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_site_installation_request", "安装任务 URL 无效", "")
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/site-installations/")
+	parts := strings.Split(rest, "/")
+	id := parts[0]
+	if !validSiteID(id) || len(parts) > 2 {
+		writeProblem(w, requestID, http.StatusNotFound, "not_found", "安装任务不存在", "")
+		return
+	}
+	if len(parts) == 2 && parts[1] == "terminal" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		offset := int64(0)
+		if raw := r.URL.Query().Get("offset"); raw != "" {
+			var err error
+			offset, err = strconv.ParseInt(raw, 10, 64)
+			if err != nil || offset < 0 {
+				writeProblem(w, requestID, http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
+				return
+			}
+		}
+		chunk, err := s.sitesManager.InstallationTerminal(id, offset)
+		if err != nil {
+			writeProblem(w, requestID, http.StatusNotFound, "site_terminal_not_found", "建站终端不存在", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, chunk)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "input" {
+		if r.Method != http.MethodPost || r.URL.RawQuery != "" {
+			w.Header().Set("Allow", http.MethodPost)
+			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		var input struct {
+			Data string `json:"data"`
+		}
+		if err := decodeJSON(w, r, &input); err != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+			return
+		}
+		if err := s.sitesManager.WriteInstallationInput(id, input.Data); err != nil {
+			status, code, title := http.StatusConflict, "site_terminal_closed", "建站终端输入已关闭"
+			if errors.Is(err, sites.ErrInvalidInput) {
+				status, code, title = http.StatusUnprocessableEntity, "invalid_terminal_input", "终端输入无效"
+			}
+			writeProblem(w, requestID, status, code, title, safeDetail(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	if len(parts) != 1 || r.Method != http.MethodGet || r.URL.RawQuery != "" {
 		w.Header().Set("Allow", http.MethodGet)
 		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
 		return
 	}
-	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
-		writeProblem(w, requestID, http.StatusBadRequest, "invalid_site_installation_request", "安装任务 URL 无效", "")
-		return
-	}
-	id := strings.TrimPrefix(r.URL.Path, "/v1/site-installations/")
 	job, err := s.sitesManager.InstallationJob(id)
 	if err != nil {
 		writeProblem(w, requestID, http.StatusNotFound, "not_found", "安装任务不存在", "")
@@ -708,6 +761,9 @@ func (s *Server) writeAppError(w http.ResponseWriter, requestID string, err erro
 		status, code, title = http.StatusUnprocessableEntity, "app_action_unsupported", "当前应用状态或适配器不支持此操作"
 	case errors.Is(err, dockerx.ErrVersionRequired):
 		status, code, title = http.StatusBadRequest, "resource_version_required", "必须提供资源版本"
+	case errors.Is(err, appmarket.ErrTaskConflict):
+		status, code, title = http.StatusConflict, "app_task_conflict", "已有应用任务正在运行"
+		err = errors.New("请先完成或关闭当前任务；若后台进程已经结束，刷新后会自动释放任务锁")
 	case errors.Is(err, appmarket.ErrConflict),
 		errors.Is(err, dockerx.ErrResourceConflict), errors.Is(err, dockerx.ErrAppConflict):
 		status, code, title = http.StatusConflict, "resource_conflict", "应用资源已发生变化"

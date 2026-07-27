@@ -150,6 +150,46 @@ func TestKejilionStandardAppsBecomeDirectlyInstallable(t *testing.T) {
 	}
 }
 
+func TestInactiveScriptJobAutomaticallyReleasesTaskLock(t *testing.T) {
+	root := t.TempDir()
+	service, err := New(&fakeDocker{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeJobRunner{}
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		runner,
+	); err != nil {
+		t.Fatal(err)
+	}
+	service.scriptFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+
+	job, err := service.StartInstall(context.Background(), "builtin-4", InstallInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := service.jobs.read(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.CreatedAt = service.now().Add(-appJobLaunchGrace - time.Second)
+	if err := service.jobs.put(record); err != nil {
+		t.Fatal(err)
+	}
+
+	history := service.AppJobs()
+	if len(history) != 1 || history[0].Status != "failed" ||
+		history[0].Stage != "interrupted" || history[0].InputOpen {
+		t.Fatalf("stale task lock was not released: %#v", history)
+	}
+	if _, err := service.StartInstall(context.Background(), "builtin-28", InstallInput{}); err != nil {
+		t.Fatalf("stale task still blocked a new install: %v", err)
+	}
+}
+
 func TestKejilionScriptCompatibilityRequiresExplicitLicenseAcceptance(t *testing.T) {
 	base := []byte("KJ_APP_NONINTERACTIVE\nkpanel_run_docker_app_install\n")
 	unaccepted := append(

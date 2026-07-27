@@ -35,6 +35,8 @@ import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import MetricCard from '@/components/overview/MetricCard.vue'
+import OperatingSystemIcon from '@/components/overview/OperatingSystemIcon.vue'
+import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import { ApiError, api } from '@/lib/api'
 import { clampPercent, formatBytes, formatDateTime, formatDuration, formatHostDateTime, formatPercent } from '@/lib/format'
 import {
@@ -157,11 +159,11 @@ const publicLocation = computed(() => {
   return [network?.country, network?.region, network?.city].filter(Boolean).join(' · ') || '未获取'
 })
 
-const publicCountryFlag = computed(() => {
+const publicCountryCode = computed(() => {
   const network = data.value?.publicNetwork
   const code = (network?.countryCode || (network?.country?.length === 2 ? network.country : '')).toUpperCase()
   if (!/^[A-Z]{2}$/.test(code)) return ''
-  return String.fromCodePoint(...[...code].map((letter) => 0x1f1e6 + letter.charCodeAt(0) - 65))
+  return code
 })
 
 const osIdentity = computed(() => {
@@ -171,20 +173,20 @@ const osIdentity = computed(() => {
     .join(' ')
     .toLowerCase()
   const distros = [
-    { match: 'ubuntu', key: 'ubuntu', mark: 'U', label: 'Ubuntu' },
-    { match: 'debian', key: 'debian', mark: 'D', label: 'Debian' },
-    { match: 'centos', key: 'centos', mark: 'C', label: 'CentOS' },
-    { match: 'rocky', key: 'rocky', mark: 'R', label: 'Rocky Linux' },
-    { match: 'almalinux', key: 'alma', mark: 'A', label: 'AlmaLinux' },
-    { match: 'fedora', key: 'fedora', mark: 'f', label: 'Fedora' },
-    { match: 'alpine', key: 'alpine', mark: 'A', label: 'Alpine Linux' },
-    { match: 'arch', key: 'arch', mark: 'A', label: 'Arch Linux' },
-    { match: 'opensuse', key: 'suse', mark: 'S', label: 'openSUSE' },
-    { match: 'suse', key: 'suse', mark: 'S', label: 'SUSE' },
-    { match: 'oracle', key: 'oracle', mark: 'O', label: 'Oracle Linux' },
+    { match: 'ubuntu', key: 'ubuntu', label: 'Ubuntu' },
+    { match: 'debian', key: 'debian', label: 'Debian' },
+    { match: 'centos', key: 'centos', label: 'CentOS' },
+    { match: 'rocky', key: 'rocky', label: 'Rocky Linux' },
+    { match: 'almalinux', key: 'alma', label: 'AlmaLinux' },
+    { match: 'fedora', key: 'fedora', label: 'Fedora' },
+    { match: 'alpine', key: 'alpine', label: 'Alpine Linux' },
+    { match: 'arch', key: 'arch', label: 'Arch Linux' },
+    { match: 'opensuse', key: 'suse', label: 'openSUSE' },
+    { match: 'suse', key: 'suse', label: 'SUSE' },
+    { match: 'oracle', key: 'oracle', label: 'Oracle Linux' },
   ]
   return distros.find((distro) => tokens.includes(distro.match)) ||
-    { key: 'linux', mark: 'L', label: 'Linux' }
+    { key: 'linux', label: 'Linux' }
 })
 
 const networkAlgorithm = computed(() => {
@@ -699,9 +701,7 @@ onBeforeUnmount(() => {
             <div class="detail-list__wide">
               <dt>操作系统</dt>
               <dd class="os-identity">
-                <span class="os-identity__mark" :class="`is-${osIdentity.key}`" :title="osIdentity.label">
-                  {{ osIdentity.mark }}
-                </span>
+                <OperatingSystemIcon :distro="osIdentity.key" :label="osIdentity.label" />
                 <span>{{ data.os || '—' }}</span>
               </dd>
             </div>
@@ -779,9 +779,11 @@ onBeforeUnmount(() => {
             <div class="detail-list__wide">
               <dt>地理位置</dt>
               <dd class="location-identity">
-                <span v-if="publicCountryFlag" class="country-flag" role="img" :aria-label="data.publicNetwork.country">
-                  {{ publicCountryFlag }}
-                </span>
+                <CountryFlagIcon
+                  v-if="publicCountryCode"
+                  :country-code="publicCountryCode"
+                  :label="data.publicNetwork.country || publicCountryCode"
+                />
                 <span>{{ publicLocation }}</span>
               </dd>
             </div>

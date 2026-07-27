@@ -73,7 +73,7 @@ const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
 const search = ref('')
-const activeTab = ref<DockerTab>('environment')
+const activeTab = ref<DockerTab>('containers')
 const taskRunning = ref(false)
 const activeJob = ref<DockerMaintenanceJob>()
 const pendingMaintenance = ref<{
@@ -146,11 +146,11 @@ let jobTimer: number | undefined
 const activeDockerJobKey = 'kpanel.active-docker-job'
 
 const tabs = computed(() => [
-  { id: 'environment' as const, label: '环境', icon: Wrench, count: data.value?.available ? '正常' : '异常' },
   { id: 'containers' as const, label: '容器', icon: Container, count: String(data.value?.containers.length || 0) },
   { id: 'images' as const, label: '镜像', icon: Box, count: String(data.value?.images.length || 0) },
   { id: 'networks' as const, label: '网络', icon: Network, count: String(data.value?.networks.length || 0) },
   { id: 'volumes' as const, label: '存储卷', icon: HardDrive, count: String(data.value?.volumes.length || 0) },
+  { id: 'environment' as const, label: '环境设置', icon: Wrench, count: data.value?.available ? '正常' : '异常' },
 ])
 const dockerJobActive = computed(() =>
   activeJob.value?.status === 'queued' || activeJob.value?.status === 'running',
@@ -795,10 +795,6 @@ onBeforeUnmount(() => {
       </nav>
 
       <div v-if="activeTab !== 'environment'" class="docker-toolbar">
-        <div>
-          <strong>{{ tabs.find((item) => item.id === activeTab)?.label }}管理</strong>
-          <small>操作完成后重新读取 Docker Engine，脚本端可立即看到相同结果。</small>
-        </div>
         <div class="search-field search-field--small">
           <Search :size="16" />
           <input v-model="search" type="search" placeholder="搜索当前资源" aria-label="搜索 Docker 资源" />
@@ -930,6 +926,14 @@ onBeforeUnmount(() => {
           <EmptyState v-if="!filteredContainers.length" title="没有符合条件的容器" description="Docker Engine 未返回容器，或搜索条件没有匹配项。" />
           <div v-else class="table-scroll">
             <table class="data-table docker-table">
+              <colgroup>
+                <col class="docker-table__name" />
+                <col class="docker-table__status" />
+                <col class="docker-table__ports" />
+                <col class="docker-table__network" />
+                <col class="docker-table__owner" />
+                <col class="docker-table__actions" />
+              </colgroup>
               <thead><tr><th>容器</th><th>状态</th><th>端口</th><th>网络</th><th>归属</th><th>操作</th></tr></thead>
               <tbody>
                 <tr v-for="container in filteredContainers" :key="container.id">
@@ -944,15 +948,19 @@ onBeforeUnmount(() => {
                   <td><span class="table-code">{{ container.networks.join(', ') || '—' }}</span></td>
                   <td><div class="table-stack"><StatusBadge :status="container.access" subtle /><small>{{ container.project || '独立容器' }}</small></div></td>
                   <td>
-                    <div class="row-actions row-actions--wrap">
-                      <button class="icon-button" type="button" title="性能占用" @click="showStats(container)"><Waypoints :size="16" /></button>
-                      <button v-if="permits(container, 'logs')" class="icon-button" type="button" title="查看日志" @click="showLogs(container)"><FileText :size="16" /></button>
-                      <button v-if="permits(container, 'exec')" class="icon-button" type="button" title="进入控制台" @click="openConsole(container)"><Wrench :size="16" /></button>
-                      <button v-if="permits(container, 'access')" class="icon-button" type="button" title="外部访问" @click="openAccess(container)"><ShieldCheck :size="16" /></button>
-                      <button v-if="permits(container, 'start')" class="icon-button" type="button" title="启动" @click="askAction(container, 'start')"><Play :size="16" /></button>
-                      <button v-if="permits(container, 'restart')" class="icon-button" type="button" title="重启" @click="askAction(container, 'restart')"><RotateCw :size="16" /></button>
-                      <button v-if="permits(container, 'stop')" class="icon-button icon-button--danger" type="button" title="停止" @click="askAction(container, 'stop')"><CircleStop :size="16" /></button>
-                      <button v-if="permits(container, 'remove')" class="icon-button icon-button--danger" type="button" title="删除" @click="askAction(container, 'remove')"><Trash2 :size="16" /></button>
+                    <div class="docker-row-actions">
+                      <div class="docker-row-actions__group" aria-label="查看与管理">
+                        <button class="icon-button" type="button" title="性能占用" aria-label="性能占用" @click="showStats(container)"><Waypoints :size="16" /></button>
+                        <button v-if="permits(container, 'logs')" class="icon-button" type="button" title="查看日志" aria-label="查看日志" @click="showLogs(container)"><FileText :size="16" /></button>
+                        <button v-if="permits(container, 'exec')" class="icon-button" type="button" title="进入控制台" aria-label="进入控制台" @click="openConsole(container)"><Wrench :size="16" /></button>
+                        <button v-if="permits(container, 'access')" class="icon-button" type="button" title="外部访问" aria-label="外部访问" @click="openAccess(container)"><ShieldCheck :size="16" /></button>
+                      </div>
+                      <div class="docker-row-actions__group" aria-label="生命周期">
+                        <button v-if="permits(container, 'start')" class="icon-button icon-button--success" type="button" title="启动" aria-label="启动" @click="askAction(container, 'start')"><Play :size="16" /></button>
+                        <button v-if="permits(container, 'restart')" class="icon-button" type="button" title="重启" aria-label="重启" @click="askAction(container, 'restart')"><RotateCw :size="16" /></button>
+                        <button v-if="permits(container, 'stop')" class="icon-button icon-button--danger" type="button" title="停止" aria-label="停止" @click="askAction(container, 'stop')"><CircleStop :size="16" /></button>
+                        <button v-if="permits(container, 'remove')" class="icon-button icon-button--danger" type="button" title="删除" aria-label="删除" @click="askAction(container, 'remove')"><Trash2 :size="16" /></button>
+                      </div>
                       <span v-if="!container.allowedActions?.length" class="action-unavailable-label">状态暂不可操作</span>
                     </div>
                   </td>
@@ -1171,15 +1179,13 @@ onBeforeUnmount(() => {
 .docker-job span { display: grid; gap: 3px; }
 .docker-job small { color: var(--text-muted); }
 .docker-job progress { width: 100%; }
-.docker-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
-.docker-nav button { min-width: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text); padding: 14px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; text-align: left; cursor: pointer; transition: .18s ease; }
+.docker-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; padding: 5px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--surface-raised) 72%, transparent); }
+.docker-nav button { min-width: 0; border: 1px solid transparent; border-radius: 11px; background: transparent; color: var(--text); padding: 10px 12px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; text-align: left; cursor: pointer; transition: .18s ease; }
 .docker-nav button:hover { border-color: var(--primary); transform: translateY(-1px); }
-.docker-nav button.is-active { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); background: color-mix(in srgb, var(--primary) 8%, var(--surface)); box-shadow: 0 8px 28px color-mix(in srgb, var(--primary) 12%, transparent); }
-.docker-nav button > span { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.docker-nav button.is-active { border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); background: var(--surface); box-shadow: var(--shadow-sm); }
+.docker-nav button > span { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--primary); background: color-mix(in srgb, var(--primary) 11%, transparent); }
 .docker-nav small { color: var(--text-muted); }
-.docker-toolbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
-.docker-toolbar > div:first-child { display: grid; gap: 3px; }
-.docker-toolbar small { color: var(--text-muted); }
+.docker-toolbar { display: flex; justify-content: flex-end; gap: 16px; align-items: center; margin-bottom: -4px; }
 .workspace-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .workspace-grid--environment { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .workspace-card { min-width: 0; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); padding: 18px; display: grid; align-content: start; gap: 16px; }
@@ -1209,6 +1215,17 @@ onBeforeUnmount(() => {
 .resource-section__header { padding: 18px; border-bottom: 1px solid var(--border); }
 .resource-section__header > div:first-child { grid-template-columns: auto 1fr; }
 .resource-section .table-scroll, .resource-section > .empty-state { margin: 0; }
+.docker-table { min-width: 1320px; }
+.docker-table__name { width: 20%; }
+.docker-table__status { width: 11%; }
+.docker-table__ports { width: 23%; }
+.docker-table__network { width: 13%; }
+.docker-table__owner { width: 11%; }
+.docker-table__actions { width: 330px; }
+.docker-row-actions { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.docker-row-actions__group { display: inline-flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface-raised) 70%, transparent); }
+.docker-row-actions__group .icon-button { width: 32px; height: 32px; border: 0; border-radius: 7px; background: transparent; }
+.docker-row-actions__group .icon-button:hover { background: var(--surface); }
 .network-membership { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto auto; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface-raised) 70%, transparent); }
 .compact-input { width: min(240px, 34vw); }
 .compact-input--driver { width: min(170px, 24vw); }

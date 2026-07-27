@@ -22,6 +22,7 @@ import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import { ApiError, api } from '@/lib/api'
@@ -57,28 +58,35 @@ const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
 
-const installStageLabel = computed(() => {
-  const stage = installProgress.value?.stage
-  const labels: Record<string, string> = {
-    submitting: '提交配置',
-    queued: '等待执行',
-    preflight: '环境校验',
-    source: '获取源码',
-    files: '准备文件',
-    database: '创建数据库',
-    configure: '写入配置',
-    nginx_bootstrap: '临时入口',
-    certificate: '签发证书',
-    installing: '执行脚本',
-    publish: '发布站点',
-    activate: '激活服务',
-    reconciling: '产物对账',
-    reconcile: '产物对账',
-    completed: '搭建完成',
-    failed: '搭建失败',
-  }
-  return labels[stage || ''] || '正在执行'
-})
+const installStageLabels: Record<string, string> = {
+  submitting: '提交配置',
+  queued: '等待执行',
+  preflight: '环境校验',
+  source: '获取源码',
+  files: '准备文件',
+  database: '创建数据库',
+  configure: '写入配置',
+  nginx_bootstrap: '临时入口',
+  certificate: '签发证书',
+  installing: '执行脚本',
+  publish: '发布站点',
+  activate: '激活服务',
+  reconciling: '产物对账',
+  reconcile: '产物对账',
+  completed: '搭建完成',
+  interrupted: '任务中断',
+  script_unavailable: '脚本不可用',
+  runner_unavailable: '后台执行器不可用',
+  start_failed: '任务启动失败',
+  reconcile_failed: '产物对账失败',
+  failed: '搭建失败',
+}
+
+function installStageName(stage?: string): string {
+  return installStageLabels[stage || ''] || '正在执行'
+}
+
+const installStageLabel = computed(() => installStageName(installProgress.value?.stage))
 
 const serviceOptions = [
   {
@@ -455,10 +463,28 @@ async function submitSite(): Promise<void> {
     )
     await load(true)
   } catch (reason) {
-    formError.value = reason instanceof ApiError ? reason.message : '操作失败，请稍后重试。'
+    const message = reason instanceof ApiError ? reason.message : '操作失败，请稍后重试。'
+    formError.value = message
+    const current = installProgress.value
+    if (current && current.status !== 'failed') {
+      installProgress.value = {
+        ...current,
+        status: 'failed',
+        stage: 'failed',
+        message,
+        events: [
+          ...(current.events || []),
+          {
+            stage: 'failed',
+            progress: current.progress,
+            message,
+            at: new Date().toISOString(),
+          },
+        ],
+      }
+    }
   } finally {
     submitting.value = false
-    installProgress.value = undefined
   }
 }
 
@@ -476,9 +502,18 @@ async function deleteSite(): Promise<void> {
   deleting.value = true
   deleteError.value = ''
   try {
+    let resourceVersion = site.resourceVersion
+    if (!/^sha256:[a-f0-9]{64}$/.test(resourceVersion)) {
+      const refreshed = await api.sites.list()
+      const current = refreshed.items.find((item) => item.id === site.id)
+      resourceVersion = current?.resourceVersion || ''
+    }
+    if (!/^sha256:[a-f0-9]{64}$/.test(resourceVersion)) {
+      throw new ApiError('无法读取站点当前版本，请刷新页面后重试。', 422, 'site_version_unavailable')
+    }
     const result = await api.sites.remove(
       site.id,
-      site.resourceVersion,
+      resourceVersion,
       deleteMode.value,
     )
     deleteOpen.value = false
@@ -829,9 +864,19 @@ onBeforeUnmount(() => controller?.abort())
     >
       <form id="site-form" class="form-stack" @submit.prevent="submitSite">
         <div v-if="formError" class="inline-alert inline-alert--danger" role="alert">{{ formError }}</div>
-        <div v-if="submitting && installProgress" class="site-install-progress" role="status" aria-live="polite">
+        <div
+          v-if="installProgress && (submitting || installProgress.status === 'failed')"
+          class="site-install-progress"
+          :class="{ 'is-failed': installProgress.status === 'failed' }"
+          role="status"
+          aria-live="polite"
+        >
           <div class="site-install-progress__heading">
-            <span><LoaderCircle class="spin" :size="17" /> {{ installStageLabel }}</span>
+            <span>
+              <LoaderCircle v-if="submitting" class="spin" :size="17" />
+              <TriangleAlert v-else :size="17" />
+              {{ installStageLabel }}
+            </span>
             <strong>{{ installProgress.progress }}%</strong>
           </div>
           <div
@@ -844,6 +889,28 @@ onBeforeUnmount(() => controller?.abort())
             <span :style="{ width: `${installProgress.progress}%` }"></span>
           </div>
           <p>{{ installProgress.message }}</p>
+          <ol v-if="installProgress.events?.length" class="site-install-progress__events">
+            <li
+              v-for="(event, index) in installProgress.events"
+              :key="`${event.at}-${index}`"
+              :class="{ 'is-current': index === installProgress.events.length - 1 }"
+            >
+              <span>{{ event.progress }}%</span>
+              <div>
+                <strong>{{ installStageName(event.stage) }}</strong>
+                <small>{{ event.message }}</small>
+              </div>
+            </li>
+          </ol>
+          <small class="site-install-progress__privacy">
+            上方时间线仅展示安全进度事件；原生脚本输出和后续交互请查看下方受登录保护的终端。
+          </small>
+          <AppInteractiveTerminal
+            v-if="installProgress.interactive && installProgress.id"
+            :job-id="installProgress.id"
+            :input-open="installProgress.inputOpen"
+            kind="site"
+          />
         </div>
         <label class="field">
           <span>主域名</span>

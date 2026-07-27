@@ -89,6 +89,19 @@ func (m *Manager) reconcileMaintenanceLaunch(status *contract.SystemMaintenanceS
 	if err == nil && (active == "active" || active == "activating") {
 		return
 	}
+	if err == nil &&
+		strings.EqualFold(strings.TrimSpace(unit["Result"]), "success") &&
+		strings.TrimSpace(unit["ExecMainStatus"]) == "0" {
+		finishedAt := m.now().UTC()
+		status.State = "succeeded"
+		status.Stage = "completed"
+		status.Progress = 100
+		status.Message = maintenanceSuccessMessage(status.Action, status.Policy)
+		status.FinishedAt = &finishedAt
+		status.RebootRequired = regularFile(filepath.Join(m.runRoot, "reboot-required"))
+		_ = m.writeMaintenance(*status)
+		return
+	}
 	if err != nil && elapsed < maintenanceLaunchTimeout {
 		return
 	}

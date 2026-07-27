@@ -1877,8 +1877,12 @@ textarea:focus-visible,
   color: #fff;
   background: #334155;
   border-radius: 8px;
-  font-size: 12px;
-  font-weight: 800;
+}
+
+.os-identity__mark svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
 }
 
 .os-identity__mark.is-ubuntu { background: #e95420; }
@@ -1893,8 +1897,11 @@ textarea:focus-visible,
 .os-identity__mark.is-oracle { background: #c74634; }
 
 .country-flag {
-  font-size: 22px;
-  line-height: 1;
+  display: block;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  object-fit: contain;
 }
 
 .k-info-note {
@@ -2673,6 +2680,82 @@ div.resource-name {
   color: var(--text-soft);
   font-size: 10px;
   line-height: 1.55;
+}
+
+.site-install-progress.is-failed {
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+}
+
+.site-install-progress.is-failed .site-install-progress__heading strong {
+  color: var(--danger);
+}
+
+.site-install-progress.is-failed .site-install-progress__track span {
+  background: var(--danger);
+}
+
+.site-install-progress__events {
+  display: grid;
+  max-height: 230px;
+  padding: 2px 0 2px 3px;
+  margin: 2px 0 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.site-install-progress__events li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 9px;
+  padding: 6px 0 6px 13px;
+  border-left: 1px solid color-mix(in srgb, var(--brand) 28%, var(--border));
+}
+
+.site-install-progress__events li::before {
+  position: absolute;
+  top: 11px;
+  left: -4px;
+  width: 7px;
+  height: 7px;
+  content: "";
+  background: var(--surface);
+  border: 2px solid var(--brand);
+  border-radius: 50%;
+}
+
+.site-install-progress__events li.is-current::before {
+  background: var(--brand);
+}
+
+.site-install-progress__events li > span {
+  padding-top: 1px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.site-install-progress__events li > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.site-install-progress__events strong {
+  font-size: 10px;
+}
+
+.site-install-progress__events small {
+  color: var(--text-soft);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.site-install-progress__privacy {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .resource-name small,

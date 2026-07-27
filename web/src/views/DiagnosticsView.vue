@@ -29,6 +29,7 @@ import type { DiagnosticCatalog, DiagnosticCheck, DiagnosticJob } from '@/types/
 const catalog = ref<DiagnosticCatalog>()
 const jobs = ref<DiagnosticJob[]>([])
 const selectedCategory = ref('all')
+const selectedCheck = ref<DiagnosticCheck>()
 const pendingCheck = ref<DiagnosticCheck>()
 const activeJob = ref<DiagnosticJob>()
 const loading = ref(true)
@@ -145,6 +146,9 @@ async function load(silent = false): Promise<void> {
     ])
     catalog.value = nextCatalog
     jobs.value = history.items
+    if (!selectedCheck.value || !nextCatalog.items.some((item) => item.id === selectedCheck.value?.id)) {
+      selectedCheck.value = nextCatalog.items[0]
+    }
     const current = history.items.find((item) => item.id === activeJob.value?.id)
     if (current) activeJob.value = current
     const active = history.items.find((item) => item.status === 'queued' || item.status === 'running')
@@ -182,7 +186,19 @@ async function confirmStart(): Promise<void> {
 
 function openJob(job: DiagnosticJob): void {
   activeJob.value = job
+  const check = catalog.value?.items.find((item) => item.id === job.checkId)
+  if (check) {
+    selectedCheck.value = check
+    selectedCategory.value = check.category
+  }
   if (job.status === 'queued' || job.status === 'running') startPolling(job)
+}
+
+function selectCheck(check: DiagnosticCheck): void {
+  selectedCheck.value = check
+  const matchingJob = jobs.value.find((job) => job.checkId === check.id)
+  if (matchingJob) openJob(matchingJob)
+  else if (!hasActiveJob.value) activeJob.value = undefined
 }
 
 onMounted(() => void load())
@@ -218,79 +234,81 @@ onBeforeUnmount(() => {
     <ErrorState v-else-if="error" title="体检功能暂不可用" :message="error" @retry="load()" />
 
     <template v-else-if="catalog">
-      <nav class="diagnostic-tabs" aria-label="体检分类">
-        <button
-          type="button"
-          :class="{ 'is-active': selectedCategory === 'all' }"
-          @click="selectedCategory = 'all'"
-        >
-          全部 <span>{{ catalog.items.length }}</span>
-        </button>
-        <button
-          v-for="item in categories"
-          :key="item.id"
-          type="button"
-          :class="{ 'is-active': selectedCategory === item.id }"
-          @click="selectedCategory = item.id"
-        >
-          {{ item.name }}
-          <span>{{ catalog.items.filter((check) => check.category === item.id).length }}</span>
-        </button>
-      </nav>
+      <section class="diagnostic-workbench">
+        <aside class="diagnostic-command-panel">
+          <nav class="diagnostic-tabs" aria-label="体检分类">
+            <button type="button" :class="{ 'is-active': selectedCategory === 'all' }" @click="selectedCategory = 'all'">
+              全部 <span>{{ catalog.items.length }}</span>
+            </button>
+            <button
+              v-for="item in categories"
+              :key="item.id"
+              type="button"
+              :class="{ 'is-active': selectedCategory === item.id }"
+              @click="selectedCategory = item.id"
+            >
+              {{ item.name }}
+              <span>{{ catalog.items.filter((check) => check.category === item.id).length }}</span>
+            </button>
+          </nav>
+          <div v-if="visibleChecks.length" class="diagnostic-command-list">
+            <button
+              v-for="check in visibleChecks"
+              :key="check.id"
+              type="button"
+              :class="{ 'is-active': selectedCheck?.id === check.id }"
+              @click="selectCheck(check)"
+            >
+              <span class="diagnostic-card__icon"><component :is="categoryIcon(check.category)" :size="19" /></span>
+              <span>
+                <strong>{{ check.name }}</strong>
+                <small>{{ categoryName(check.category) }} · 约 {{ check.estimatedMinutes }} 分钟</small>
+              </span>
+            </button>
+          </div>
+          <EmptyState v-else title="当前分类没有项目" description="请切换其他分类。" />
+        </aside>
 
-      <section v-if="visibleChecks.length" class="diagnostic-grid">
-        <article v-for="check in visibleChecks" :key="check.id" class="diagnostic-card">
-          <header>
-            <span class="diagnostic-card__icon">
-              <component :is="categoryIcon(check.category)" :size="22" />
-            </span>
-            <div>
-              <small>{{ categoryName(check.category) }}</small>
-              <h2>{{ check.name }}</h2>
+        <section class="diagnostic-result">
+          <header class="diagnostic-result__header">
+            <div v-if="selectedCheck">
+              <span class="eyebrow">{{ categoryName(selectedCheck.category) }}</span>
+              <h2>{{ selectedCheck.name }}</h2>
+              <p>{{ selectedCheck.description }}</p>
             </div>
+            <button
+              v-if="selectedCheck"
+              class="button button--primary"
+              type="button"
+              :disabled="hasActiveJob || starting"
+              @click="pendingCheck = selectedCheck"
+            >
+              <Play :size="16" /> {{ hasActiveJob ? '任务运行中' : '开始体检' }}
+            </button>
           </header>
-          <p>{{ check.description }}</p>
-          <div class="diagnostic-card__meta">
-            <span><Timer :size="14" /> 约 {{ check.estimatedMinutes }} 分钟</span>
-            <span class="impact-pill" :class="impactClass(check.impact)">
-              {{ impactLabel(check.impact) }}
-            </span>
+          <div v-if="hasActiveJob" class="diagnostic-progress" aria-label="任务进度">
+            <span :style="{ width: `${activeJob?.progress || 0}%` }" />
           </div>
-          <a :href="check.sourceUrl" target="_blank" rel="noopener noreferrer" class="diagnostic-source">
-            {{ sourceHost(check.sourceUrl) }} <ExternalLink :size="13" />
-          </a>
-          <button
-            class="button button--primary diagnostic-card__action"
-            type="button"
-            :disabled="hasActiveJob || starting"
-            @click="pendingCheck = check"
-          >
-            <Play :size="16" /> {{ hasActiveJob ? '已有任务运行中' : '开始体检' }}
-          </button>
-        </article>
-      </section>
-      <EmptyState v-else title="当前分类没有体检项目" description="切换其他分类后重试。" />
-
-      <section v-if="activeJob" class="diagnostic-result">
-        <header class="diagnostic-result__header">
-          <div>
-            <span class="eyebrow">当前结果</span>
-            <h2>{{ activeJob.checkName }}</h2>
-            <p>{{ activeJob.message }}</p>
+          <div class="diagnostic-terminal-bar">
+            <span><i :class="{ 'is-live': hasActiveJob }" /> {{ hasActiveJob ? '实时输出' : '终端输出' }}</span>
+            <StatusBadge v-if="activeJob" :status="activeJob.status" />
           </div>
-          <StatusBadge :status="activeJob.status" />
-        </header>
-        <div v-if="hasActiveJob" class="diagnostic-progress" aria-label="任务进度">
-          <span :style="{ width: `${activeJob.progress}%` }" />
-        </div>
-        <pre class="diagnostic-log" aria-live="polite">{{ activeLog }}</pre>
-        <footer>
-          <span><Activity :size="14" /> {{ categoryName(activeJob.category) }}</span>
-          <span><Timer :size="14" /> 开始于 {{ formatDateTime(activeJob.startedAt || activeJob.createdAt) }}</span>
-          <a :href="activeJob.sourceUrl" target="_blank" rel="noopener noreferrer">
-            查看来源 <ExternalLink :size="13" />
-          </a>
-        </footer>
+          <pre class="diagnostic-log" aria-live="polite">{{ activeJob ? activeLog : '选择左侧体检命令，点击“开始体检”后在这里查看实时输出。' }}</pre>
+          <footer v-if="activeJob">
+            <span><Activity :size="14" /> {{ activeJob.message }}</span>
+            <span><Timer :size="14" /> {{ formatDateTime(activeJob.startedAt || activeJob.createdAt) }}</span>
+            <a :href="activeJob.sourceUrl" target="_blank" rel="noopener noreferrer">
+              查看来源 <ExternalLink :size="13" />
+            </a>
+          </footer>
+          <footer v-else-if="selectedCheck">
+            <span><Timer :size="14" /> 约 {{ selectedCheck.estimatedMinutes }} 分钟</span>
+            <span class="impact-pill" :class="impactClass(selectedCheck.impact)">{{ impactLabel(selectedCheck.impact) }}</span>
+            <a :href="selectedCheck.sourceUrl" target="_blank" rel="noopener noreferrer">
+              {{ sourceHost(selectedCheck.sourceUrl) }} <ExternalLink :size="13" />
+            </a>
+          </footer>
+        </section>
       </section>
 
       <section class="diagnostic-history">
@@ -387,9 +405,10 @@ onBeforeUnmount(() => {
 
 .diagnostic-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 2px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 .diagnostic-tabs button {
@@ -416,28 +435,63 @@ onBeforeUnmount(() => {
   color: var(--primary);
 }
 
-.diagnostic-grid {
+.diagnostic-workbench {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 15px;
-}
-
-.diagnostic-card {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-height: 255px;
-  padding: 19px;
+  grid-template-columns: minmax(300px, 0.72fr) minmax(0, 1.6fr);
+  min-height: 620px;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
 }
 
-.diagnostic-card header {
-  display: flex;
-  gap: 12px;
+.diagnostic-command-panel {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-muted) 38%, var(--surface));
+}
+
+.diagnostic-command-list {
+  display: grid;
+  max-height: 550px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.diagnostic-command-list > button {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 11px;
   align-items: center;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.diagnostic-command-list > button:hover {
+  background: var(--surface);
+}
+
+.diagnostic-command-list > button.is-active {
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+  background: color-mix(in srgb, var(--primary) 9%, var(--surface));
+}
+
+.diagnostic-command-list strong,
+.diagnostic-command-list small {
+  display: block;
+}
+
+.diagnostic-command-list small {
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 12px;
 }
 
 .diagnostic-card__icon {
@@ -451,35 +505,17 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--primary) 11%, var(--surface));
 }
 
-.diagnostic-card small,
 .eyebrow {
   color: var(--text-tertiary);
   font-size: 12px;
 }
 
-.diagnostic-card h2,
 .diagnostic-result h2,
 .diagnostic-history h2 {
   margin: 2px 0 0;
   font-size: 17px;
 }
 
-.diagnostic-card > p {
-  min-height: 43px;
-  color: var(--text-secondary);
-  line-height: 1.55;
-}
-
-.diagnostic-card__meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-.diagnostic-card__meta > span:first-child,
 .diagnostic-result footer span,
 .diagnostic-result footer a,
 .diagnostic-source {
@@ -502,21 +538,6 @@ onBeforeUnmount(() => {
   color: var(--danger);
 }
 
-.diagnostic-source {
-  width: fit-content;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--primary);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.diagnostic-card__action {
-  width: 100%;
-  margin-top: auto;
-}
-
 .diagnostic-result,
 .diagnostic-history {
   overflow: hidden;
@@ -537,6 +558,11 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
 }
 
+.diagnostic-result__header > .button {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
 .diagnostic-progress {
   height: 4px;
   background: var(--surface-muted);
@@ -551,9 +577,39 @@ onBeforeUnmount(() => {
   transition: width 220ms ease;
 }
 
+.diagnostic-terminal-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #273040;
+  background: #151b25;
+  color: #aeb9cb;
+  font-size: 12px;
+}
+
+.diagnostic-terminal-bar > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnostic-terminal-bar i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #667085;
+}
+
+.diagnostic-terminal-bar i.is-live {
+  background: #36d399;
+  box-shadow: 0 0 0 4px rgb(54 211 153 / 12%);
+}
+
 .diagnostic-log {
-  min-height: 250px;
-  max-height: 560px;
+  min-height: 390px;
+  max-height: 540px;
   overflow: auto;
   margin: 0;
   padding: 18px 20px;
@@ -653,16 +709,26 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 680px) {
-  .diagnostic-grid {
+  .diagnostic-workbench {
     grid-template-columns: 1fr;
+    min-height: 0;
   }
 
-  .diagnostic-card {
-    min-height: auto;
+  .diagnostic-command-panel {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .diagnostic-command-list {
+    max-height: 300px;
   }
 
   .diagnostic-result__header {
-    align-items: center;
+    flex-direction: column;
+  }
+
+  .diagnostic-result__header > .button {
+    width: 100%;
   }
 }
 </style>

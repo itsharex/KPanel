@@ -616,14 +616,20 @@ func TestAllowedDockerReadPaths(t *testing.T) {
 
 func TestAllowedWordPressInstallationPath(t *testing.T) {
 	id := strings.Repeat("a", 32)
-	path, ok := allowedAgentPath("/api/v1/site-installations/" + id)
-	if !ok || path != "/v1/site-installations/"+id {
-		t.Fatalf("allowedAgentPath() = %q, %v", path, ok)
+	for publicPath, expected := range map[string]string{
+		"/api/v1/site-installations/" + id:               "/v1/site-installations/" + id,
+		"/api/v1/site-installations/" + id + "/terminal": "/v1/site-installations/" + id + "/terminal",
+	} {
+		path, ok := allowedAgentPath(publicPath)
+		if !ok || path != expected {
+			t.Fatalf("allowedAgentPath(%q) = %q, %v", publicPath, path, ok)
+		}
 	}
 	for _, invalid := range []string{
 		"/api/v1/site-installations/",
 		"/api/v1/site-installations/" + strings.Repeat("a", 31),
 		"/api/v1/site-installations/" + id + "/extra",
+		"/api/v1/site-installations/" + id + "/terminal/extra",
 		"/api/v1/site-installations/" + strings.Repeat("g", 32),
 	} {
 		if _, ok := allowedAgentPath(invalid); ok {

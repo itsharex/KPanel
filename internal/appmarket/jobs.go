@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	appJobUnitPrefix = "kejilion-panel-app-"
-	maxAppJobBytes   = 256 << 10
-	maxAppJobLog     = 1 << 20
+	appJobUnitPrefix  = "kejilion-panel-app-"
+	maxAppJobBytes    = 256 << 10
+	maxAppJobLog      = 1 << 20
+	appJobLaunchGrace = 15 * time.Second
 )
 
 var (
@@ -165,6 +166,44 @@ func (s *Service) recoverInterruptedJobs() {
 	}
 }
 
+func (s *Service) reconcileInactiveScriptJobs() {
+	if s.jobs == nil || s.jobRunner == nil {
+		return
+	}
+	for _, record := range s.jobs.list() {
+		if record.Adapter != "kejilion" ||
+			(record.Status != "queued" && record.Status != "running") ||
+			s.now().Sub(record.CreatedAt) < appJobLaunchGrace {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		output, err := s.jobRunner.Run(
+			ctx,
+			"systemctl",
+			"is-active",
+			appJobUnitPrefix+record.ID+".service",
+		)
+		cancel()
+		state := strings.TrimSpace(string(output))
+		if err == nil && (state == "active" || state == "activating" || state == "reloading") {
+			continue
+		}
+		latest, readErr := s.jobs.read(record.ID)
+		if readErr != nil || (latest.Status != "queued" && latest.Status != "running") {
+			continue
+		}
+		finished := s.now().UTC()
+		latest.Status = "failed"
+		latest.Stage = "interrupted"
+		latest.Progress = 100
+		latest.Message = "上一个应用任务已结束但状态未回写，已自动释放任务锁；请核对应用实际状态后重试"
+		latest.InputOpen = false
+		latest.FinishedAt = &finished
+		_ = s.jobs.put(latest)
+		_ = removeTerminalInput(s.jobs.inputPath(latest.ID))
+	}
+}
+
 func ensureAppJobDirectory(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -202,8 +241,9 @@ func (s *Service) StartInstall(
 	if input.AccessMode == "" {
 		input.AccessMode = "direct"
 	}
+	s.reconcileInactiveScriptJobs()
 	if s.jobs.hasActive() {
-		return AppJob{}, fmt.Errorf("%w: another application task is already running", ErrConflict)
+		return AppJob{}, ErrTaskConflict
 	}
 
 	selector, scriptBacked := s.scriptSelector(item)
@@ -316,8 +356,9 @@ func (s *Service) StartScriptMutation(
 	if action == "direct_access" && input.AccessMode != "direct" && input.AccessMode != "domain_only" {
 		return AppJob{}, true, fmt.Errorf("%w: invalid access mode", ErrForbidden)
 	}
+	s.reconcileInactiveScriptJobs()
 	if s.jobs.hasActive() {
-		return AppJob{}, true, fmt.Errorf("%w: another application task is already running", ErrConflict)
+		return AppJob{}, true, ErrTaskConflict
 	}
 	record, err := newAppJobRecord(
 		item,
@@ -433,6 +474,7 @@ func (s *Service) AppJob(id string) (AppJob, error) {
 	if s.jobs == nil || !appJobIDPattern.MatchString(id) {
 		return AppJob{}, ErrNotFound
 	}
+	s.reconcileInactiveScriptJobs()
 	record, err := s.jobs.read(id)
 	if err != nil {
 		return AppJob{}, ErrNotFound
@@ -444,6 +486,7 @@ func (s *Service) AppJobs() []AppJob {
 	if s.jobs == nil {
 		return []AppJob{}
 	}
+	s.reconcileInactiveScriptJobs()
 	records := s.jobs.list()
 	jobs := make([]AppJob, 0, len(records))
 	for _, record := range records {
@@ -508,9 +551,14 @@ func findKejilionInteractiveScript() (string, error) {
 }
 
 func findKejilionScriptMatching(compatible func([]byte) bool) (string, error) {
-	candidates := []string{"/usr/local/bin/k", "/usr/bin/k", "/root/kejilion.sh"}
+	candidates := []string{
+		"/home/docker/kpanel/bin/kejilion.sh",
+		"/usr/local/bin/k",
+		"/usr/bin/k",
+		"/root/kejilion.sh",
+	}
 	if path, err := exec.LookPath("k"); err == nil {
-		candidates = append([]string{path}, candidates...)
+		candidates = append(candidates, path)
 	}
 	seen := make(map[string]bool)
 	for _, candidate := range candidates {

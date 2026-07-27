@@ -460,6 +460,40 @@ func TestSiteWriteFailsClosedWhenIntentAuditCannotPersist(t *testing.T) {
 	}
 }
 
+func TestSiteInstallationInputRequiresCSRFAndForwardsOnlyValidatedData(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &stubAgent{response: AgentResponse{
+		StatusCode: http.StatusOK, ContentType: "application/json", Body: []byte(`{"ok":true}`),
+	}}
+	server.agent = agent
+	path := "/api/v1/site-installations/0123456789abcdef0123456789abcdef/input"
+	body := []byte(`{"data":"continue\n"}`)
+
+	rejected := authenticatedSiteRequest(
+		server, sessionCookie, csrfCookie, http.MethodPost, path, body, false,
+	)
+	if rejected.Code != http.StatusForbidden {
+		t.Fatalf("site terminal input without CSRF returned %d %s", rejected.Code, rejected.Body.String())
+	}
+	if calls := agent.snapshotCalls(); len(calls) != 0 {
+		t.Fatalf("Agent received input before CSRF validation: %#v", calls)
+	}
+
+	accepted := authenticatedSiteRequest(
+		server, sessionCookie, csrfCookie, http.MethodPost, path, body, true,
+	)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("site terminal input returned %d %s", accepted.Code, accepted.Body.String())
+	}
+	calls := agent.snapshotCalls()
+	if len(calls) != 1 || calls[0].method != http.MethodPost ||
+		calls[0].path != "/v1/site-installations/0123456789abcdef0123456789abcdef/input" ||
+		calls[0].rawQuery != "" || !bytes.Equal(calls[0].body, body) {
+		t.Fatalf("unexpected site terminal Agent call: %#v", calls)
+	}
+}
+
 func authenticatedSiteRequest(
 	server *Server,
 	sessionCookie *http.Cookie,

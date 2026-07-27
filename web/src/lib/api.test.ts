@@ -197,6 +197,29 @@ describe('API client', () => {
     })
   })
 
+  it('shows the actionable validation field instead of the generic problem title', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          {
+            title: 'Validation failed',
+            status: 422,
+            code: 'validation_failed',
+            fieldErrors: {
+              expectedResourceVersion: '站点状态已变化，请刷新后重试。',
+            },
+          },
+          { status: 422 },
+        ),
+      ),
+    )
+
+    await expect(api.sites.remove('a'.repeat(32), '', 'full')).rejects.toMatchObject({
+      message: '站点状态已变化，请刷新后重试。',
+    })
+  })
+
   it('polls an asynchronous WordPress installation until the reconciled site is ready', async () => {
     vi.useFakeTimers()
     const jobID = 'd'.repeat(32)
@@ -298,6 +321,63 @@ describe('API client', () => {
       stage: 'database',
       progress: 38,
       message: 'installing',
+    })
+  })
+
+  it('surfaces safe site installation events and the script failure reason', async () => {
+    const jobID = 'c'.repeat(32)
+    const events = [
+      {
+        stage: 'preflight',
+        progress: 10,
+        message: '正在校验 WordPress 域名与现有站点',
+        at: '2026-07-27T10:00:00Z',
+      },
+      {
+        stage: 'failed',
+        progress: 35,
+        message: '建站失败：证书签发失败（脚本退出码 1）',
+        at: '2026-07-27T10:00:05Z',
+      },
+    ]
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse(
+        {
+          id: jobID,
+          domain: 'blog.example.com',
+          status: 'failed',
+          stage: 'failed',
+          progress: 35,
+          message: events[1]?.message,
+          events,
+        },
+        { status: 202 },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const onProgress = vi.fn()
+
+    await expect(
+      api.sites.create(
+        {
+          primaryDomain: 'blog.example.com',
+          aliases: [],
+          type: 'wordpress',
+          enabled: true,
+        },
+        onProgress,
+      ),
+    ).rejects.toMatchObject({
+      code: 'site_install_failed',
+      message: '建站失败：证书签发失败（脚本退出码 1）',
+    })
+    expect(onProgress).toHaveBeenLastCalledWith({
+      id: jobID,
+      status: 'failed',
+      stage: 'failed',
+      progress: 35,
+      message: '建站失败：证书签发失败（脚本退出码 1）',
+      events,
     })
   })
 

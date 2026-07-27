@@ -1,6 +1,6 @@
 //go:build linux
 
-package appmarket
+package hostpty
 
 import (
 	"errors"
@@ -13,15 +13,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type linuxTerminalProcess struct {
+type linuxProcess struct {
 	*os.File
 	command *exec.Cmd
 }
 
-func startPlatformTerminalProcess(
-	command *exec.Cmd,
-	rows, columns uint16,
-) (terminalProcess, error) {
+func startPlatform(command *exec.Cmd, rows, columns uint16) (Process, error) {
 	masterFD, err := unix.Open(
 		"/dev/ptmx",
 		unix.O_RDWR|unix.O_NOCTTY|unix.O_CLOEXEC,
@@ -73,30 +70,30 @@ func startPlatformTerminalProcess(
 		return nil, err
 	}
 	closeMaster = false
-	return &linuxTerminalProcess{File: master, command: command}, nil
+	return &linuxProcess{File: master, command: command}, nil
 }
 
-func (process *linuxTerminalProcess) Wait() error {
+func (process *linuxProcess) Wait() error {
 	return process.command.Wait()
 }
 
-func (process *linuxTerminalProcess) Kill() error {
+func (process *linuxProcess) Kill() error {
 	if process.command.Process == nil {
 		return nil
 	}
 	return process.command.Process.Kill()
 }
 
-func createTerminalInput(path string) error {
+func createPlatformInput(path string) error {
 	_ = unix.Unlink(path)
 	return unix.Mkfifo(path, 0o600)
 }
 
-func openTerminalInput(path string) (*os.File, error) {
+func openPlatformInput(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDWR, 0)
 }
 
-func writeTerminalInput(path string, data []byte) error {
+func writePlatformInput(path string, data []byte) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return err
@@ -106,7 +103,7 @@ func writeTerminalInput(path string, data []byte) error {
 	return err
 }
 
-func removeTerminalInput(path string) error {
+func removePlatformInput(path string) error {
 	err := unix.Unlink(path)
 	if err == unix.ENOENT {
 		return nil
@@ -114,6 +111,6 @@ func removeTerminalInput(path string) error {
 	return err
 }
 
-func isTerminalEnd(err error) bool {
+func isPlatformEnd(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, syscall.EIO)
 }

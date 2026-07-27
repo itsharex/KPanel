@@ -1,13 +1,15 @@
 package sites
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -21,9 +23,15 @@ import (
 	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
+	"github.com/kejilion/kejilion-panel/internal/hostpty"
 )
 
-const maxRecipeJobBytes = 128 << 10
+const (
+	maxRecipeJobBytes        = 128 << 10
+	maxRecipeTerminalInput   = 16 << 10
+	maxRecipeTerminalChunk   = 64 << 10
+	maxRecipeTerminalLogSize = 8 << 20
+)
 
 var (
 	recipeJobIDPattern  = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -42,17 +50,27 @@ var (
 )
 
 type RecipeJob struct {
-	ID         string                `json:"id"`
-	Domain     string                `json:"domain"`
-	Recipe     string                `json:"recipe"`
-	Status     string                `json:"status"`
-	Stage      string                `json:"stage"`
-	Progress   int                   `json:"progress"`
-	Message    string                `json:"message,omitempty"`
-	Site       *contract.SiteSummary `json:"site,omitempty"`
-	CreatedAt  time.Time             `json:"createdAt"`
-	StartedAt  *time.Time            `json:"startedAt,omitempty"`
-	FinishedAt *time.Time            `json:"finishedAt,omitempty"`
+	ID          string                `json:"id"`
+	Domain      string                `json:"domain"`
+	Recipe      string                `json:"recipe"`
+	Status      string                `json:"status"`
+	Stage       string                `json:"stage"`
+	Progress    int                   `json:"progress"`
+	Message     string                `json:"message,omitempty"`
+	Events      []RecipeJobEvent      `json:"events,omitempty"`
+	Interactive bool                  `json:"interactive,omitempty"`
+	InputOpen   bool                  `json:"inputOpen,omitempty"`
+	Site        *contract.SiteSummary `json:"site,omitempty"`
+	CreatedAt   time.Time             `json:"createdAt"`
+	StartedAt   *time.Time            `json:"startedAt,omitempty"`
+	FinishedAt  *time.Time            `json:"finishedAt,omitempty"`
+}
+
+type RecipeJobEvent struct {
+	Stage    string    `json:"stage"`
+	Progress int       `json:"progress"`
+	Message  string    `json:"message"`
+	At       time.Time `json:"at"`
 }
 
 type recipeJobRegistry struct {
@@ -100,8 +118,11 @@ func (m *Manager) ConfigureRecipeJobState(stateDir string) error {
 			job.Stage = "interrupted"
 			job.Progress = 100
 			job.Message = "一键建站任务被 Agent 或服务器重启中断，请先核对实际站点产物"
+			job.InputOpen = false
 			job.FinishedAt = &finished
+			appendRecipeEvent(&job, job.Stage, job.Progress, job.Message)
 			_ = registry.put(job)
+			_ = hostpty.RemoveInput(registry.inputPath(job.ID))
 		}
 		registry.jobs[id] = job
 	}
@@ -143,6 +164,7 @@ func (m *Manager) RecipeWritable() error {
 func (m *Manager) WordPressWritable(_ context.Context) error {
 	return m.directSiteWritable(
 		"KJ_WEB_NONINTERACTIVE",
+		"KJ_WEB_INTERACTIVE",
 		"KJ_WEB_RECIPE",
 		"KJ_WEB_DOMAIN",
 		`ldnmp_wp "${KJ_WEB_DOMAIN:-}"`,
@@ -152,6 +174,7 @@ func (m *Manager) WordPressWritable(_ context.Context) error {
 func (m *Manager) ProxyWritable() error {
 	return m.directSiteWritable(
 		"KJ_WEB_NONINTERACTIVE",
+		"KJ_WEB_INTERACTIVE",
 		"KJ_WEB_RECIPE",
 		"KJ_WEB_DOMAIN",
 		"KJ_WEB_PROXY_HOST",
@@ -200,14 +223,20 @@ func (m *Manager) StartRecipe(_ context.Context, input SiteInput) (RecipeJob, er
 		ID: hex.EncodeToString(identity[:]), Domain: domain, Recipe: input.Recipe,
 		Status: "queued", Stage: "queued", Progress: 0,
 		Message: "一键建站任务已进入后台队列", CreatedAt: time.Now().UTC(),
+		Interactive: true,
+	}
+	appendRecipeEvent(&job, job.Stage, job.Progress, job.Message)
+	if err := hostpty.CreateInput(m.recipeJobs.inputPath(job.ID)); err != nil {
+		return RecipeJob{}, fmt.Errorf("%w: prepare interactive website terminal: %v", ErrUnavailable, err)
 	}
 	if err := m.recipeJobs.put(job); err != nil {
+		_ = hostpty.RemoveInput(m.recipeJobs.inputPath(job.ID))
 		return RecipeJob{}, fmt.Errorf("%w: persist recipe job: %v", ErrNeedsAttention, err)
 	}
 	go m.runRecipeJob(job.ID, scriptSiteInvocation{
 		arguments:   []string{"web"},
-		environment: []string{"KJ_WEB_NONINTERACTIVE=1", "KJ_WEB_RECIPE=" + selector, "KJ_WEB_DOMAIN=" + domain},
-		required:    []string{"KJ_WEB_NONINTERACTIVE", "KJ_WEB_RECIPE", "KJ_WEB_DOMAIN"},
+		environment: []string{"KJ_WEB_NONINTERACTIVE=1", "KJ_WEB_INTERACTIVE=1", "KJ_WEB_RECIPE=" + selector, "KJ_WEB_DOMAIN=" + domain},
+		required:    []string{"KJ_WEB_NONINTERACTIVE", "KJ_WEB_INTERACTIVE", "KJ_WEB_RECIPE", "KJ_WEB_DOMAIN"},
 		timeout:     60 * time.Minute,
 	})
 	return job, nil
@@ -246,9 +275,10 @@ func (m *Manager) StartProxy(input SiteInput) (RecipeJob, error) {
 func wordPressInvocation(domain string) scriptSiteInvocation {
 	return scriptSiteInvocation{
 		arguments:   []string{"web"},
-		environment: []string{"KJ_WEB_NONINTERACTIVE=1", "KJ_WEB_RECIPE=2", "KJ_WEB_DOMAIN=" + domain},
+		environment: []string{"KJ_WEB_NONINTERACTIVE=1", "KJ_WEB_INTERACTIVE=1", "KJ_WEB_RECIPE=2", "KJ_WEB_DOMAIN=" + domain},
 		required: []string{
 			"KJ_WEB_NONINTERACTIVE",
+			"KJ_WEB_INTERACTIVE",
 			"KJ_WEB_RECIPE",
 			"KJ_WEB_DOMAIN",
 			`ldnmp_wp "${KJ_WEB_DOMAIN:-}"`,
@@ -262,6 +292,7 @@ func proxyInvocation(domain, host, port string) scriptSiteInvocation {
 		arguments: []string{"web"},
 		environment: []string{
 			"KJ_WEB_NONINTERACTIVE=1",
+			"KJ_WEB_INTERACTIVE=1",
 			"KJ_WEB_RECIPE=23",
 			"KJ_WEB_DOMAIN=" + domain,
 			"KJ_WEB_PROXY_HOST=" + host,
@@ -269,6 +300,7 @@ func proxyInvocation(domain, host, port string) scriptSiteInvocation {
 		},
 		required: []string{
 			"KJ_WEB_NONINTERACTIVE",
+			"KJ_WEB_INTERACTIVE",
 			"KJ_WEB_RECIPE",
 			"KJ_WEB_DOMAIN",
 			"KJ_WEB_PROXY_HOST",
@@ -300,8 +332,14 @@ func (m *Manager) startDirectSiteJob(
 		ID: hex.EncodeToString(identity[:]), Domain: spec.Primary, Recipe: recipe,
 		Status: "queued", Stage: "queued", Progress: 0,
 		Message: "kejilion.sh 原生建站任务已进入后台队列", CreatedAt: time.Now().UTC(),
+		Interactive: true,
+	}
+	appendRecipeEvent(&job, job.Stage, job.Progress, job.Message)
+	if err := hostpty.CreateInput(m.recipeJobs.inputPath(job.ID)); err != nil {
+		return RecipeJob{}, fmt.Errorf("%w: prepare interactive website terminal: %v", ErrUnavailable, err)
 	}
 	if err := m.recipeJobs.put(job); err != nil {
+		_ = hostpty.RemoveInput(m.recipeJobs.inputPath(job.ID))
 		return RecipeJob{}, fmt.Errorf("%w: persist website job: %v", ErrNeedsAttention, err)
 	}
 	go m.runRecipeJob(job.ID, invocation)
@@ -405,11 +443,87 @@ func (m *Manager) InstallationJob(id string) (any, error) {
 	return nil, ErrConflict
 }
 
+type SiteTerminalChunk struct {
+	DataBase64 string `json:"dataBase64"`
+	NextOffset int64  `json:"nextOffset"`
+	InputOpen  bool   `json:"inputOpen"`
+	Finished   bool   `json:"finished"`
+}
+
+func (m *Manager) InstallationTerminal(id string, offset int64) (SiteTerminalChunk, error) {
+	if m.recipeJobs == nil || !recipeJobIDPattern.MatchString(id) || offset < 0 {
+		return SiteTerminalChunk{}, ErrConflict
+	}
+	job, err := m.recipeJobs.read(id)
+	if err != nil || !job.Interactive {
+		return SiteTerminalChunk{}, ErrConflict
+	}
+	path := m.recipeJobs.logPath(id)
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return SiteTerminalChunk{
+			InputOpen: job.InputOpen,
+			Finished:  job.Status == "succeeded" || job.Status == "failed",
+		}, nil
+	}
+	if err != nil {
+		return SiteTerminalChunk{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return SiteTerminalChunk{}, err
+	}
+	if offset > info.Size() {
+		offset = 0
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return SiteTerminalChunk{}, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxRecipeTerminalChunk))
+	if err != nil {
+		return SiteTerminalChunk{}, err
+	}
+	nextOffset := offset + int64(len(data))
+	return SiteTerminalChunk{
+		DataBase64: base64.StdEncoding.EncodeToString(data),
+		NextOffset: nextOffset,
+		InputOpen:  job.InputOpen,
+		Finished: (job.Status == "succeeded" || job.Status == "failed") &&
+			nextOffset >= info.Size(),
+	}, nil
+}
+
+func (m *Manager) WriteInstallationInput(id, value string) error {
+	if m.recipeJobs == nil || !recipeJobIDPattern.MatchString(id) {
+		return ErrConflict
+	}
+	data := []byte(value)
+	if len(data) == 0 || len(data) > maxRecipeTerminalInput || bytes.IndexByte(data, 0) >= 0 {
+		return fmt.Errorf("%w: interactive website input is invalid", ErrInvalidInput)
+	}
+	job, err := m.recipeJobs.read(id)
+	if err != nil {
+		return ErrConflict
+	}
+	if !job.Interactive || !job.InputOpen ||
+		(job.Status != "queued" && job.Status != "running") {
+		return fmt.Errorf("%w: interactive website input is not open", ErrConflict)
+	}
+	if err := hostpty.WriteInput(m.recipeJobs.inputPath(id), data); err != nil {
+		return fmt.Errorf("%w: interactive website input is unavailable: %v", ErrConflict, err)
+	}
+	return nil
+}
+
 func (m *Manager) runRecipeJob(id string, invocation scriptSiteInvocation) {
 	job, err := m.recipeJobs.read(id)
 	if err != nil {
 		return
 	}
+	defer func() {
+		_ = hostpty.RemoveInput(m.recipeJobs.inputPath(id))
+	}()
 	script, err := findTrustedKejilionScript(invocation.required...)
 	if err != nil {
 		m.failRecipeJob(job, "script_unavailable", err)
@@ -426,6 +540,7 @@ func (m *Manager) runRecipeJob(id string, invocation scriptSiteInvocation) {
 	job.Progress = 1
 	job.Message = "正在启动 kejilion.sh 原生一键建站流程"
 	job.StartedAt = &started
+	appendRecipeEvent(&job, job.Stage, job.Progress, job.Message)
 	if m.recipeJobs.put(job) != nil {
 		return
 	}
@@ -442,44 +557,56 @@ func (m *Manager) runRecipeJob(id string, invocation scriptSiteInvocation) {
 		systemdSiteArguments(job, script, invocation)...,
 	)
 	command.Env = os.Environ()
-	output, err := command.StdoutPipe()
+	input, err := hostpty.OpenInput(m.recipeJobs.inputPath(id))
 	if err != nil {
-		m.failRecipeJob(job, "start_failed", err)
+		m.failRecipeJob(job, "terminal_unavailable", err)
 		return
 	}
-	command.Stderr = command.Stdout
-	if err := command.Start(); err != nil {
-		m.failRecipeJob(job, "start_failed", err)
+	defer input.Close()
+	logFile, err := os.OpenFile(
+		m.recipeJobs.logPath(id),
+		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
+		0o600,
+	)
+	if err != nil {
+		m.failRecipeJob(job, "terminal_unavailable", err)
 		return
 	}
-	scanner := bufio.NewScanner(output)
-	scanner.Buffer(make([]byte, 64<<10), 1<<20)
-	outputLines := 0
-	for scanner.Scan() {
-		matches := recipeProgressLine.FindStringSubmatch(scanner.Text())
-		if len(matches) == 3 {
-			progress, _ := strconv.Atoi(matches[1])
-			job.Progress = min(max(progress, 0), 100)
-			job.Stage = recipeJobStage(job.Progress)
-			job.Message = safeRecipeMessage(matches[2])
-			_ = m.recipeJobs.put(job)
-			continue
-		}
-		outputLines++
-		if outputLines%8 == 0 && job.Progress < 88 {
-			job.Progress = min(job.Progress+3, 88)
-			job.Stage = "installing"
-			job.Message = fmt.Sprintf(
-				"kejilion.sh 原生%s流程正在执行（已处理 %d 行输出）",
-				scriptSiteLabel(job.Recipe),
-				outputLines,
-			)
-			_ = m.recipeJobs.put(job)
-		}
+	terminal, err := hostpty.Start(command, 36, 120)
+	if err != nil {
+		_ = logFile.Close()
+		m.failRecipeJob(job, "terminal_unavailable", err)
+		return
 	}
-	waitErr := command.Wait()
-	if scanErr := scanner.Err(); scanErr != nil && waitErr == nil {
-		waitErr = scanErr
+	defer terminal.Close()
+	job.InputOpen = true
+	if m.recipeJobs.put(job) != nil {
+		_ = terminal.Kill()
+		_ = terminal.Wait()
+		_ = logFile.Close()
+		return
+	}
+
+	inputDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(terminal, input)
+		close(inputDone)
+	}()
+	readErr := m.copyRecipeTerminalOutput(&job, logFile, terminal)
+	if readErr != nil && !hostpty.IsEnd(readErr) {
+		_ = terminal.Kill()
+	}
+	_ = logFile.Sync()
+	_ = logFile.Close()
+	waitErr := terminal.Wait()
+	_ = input.Close()
+	select {
+	case <-inputDone:
+	case <-time.After(250 * time.Millisecond):
+	}
+	job.InputOpen = false
+	if readErr != nil && !hostpty.IsEnd(readErr) && waitErr == nil {
+		waitErr = readErr
 	}
 	if waitErr != nil {
 		m.failRecipeJob(job, "failed", waitErr)
@@ -505,8 +632,78 @@ func (m *Manager) runRecipeJob(id string, invocation scriptSiteInvocation) {
 	job.Stage = "completed"
 	job.Progress = 100
 	job.Message = "kejilion.sh 原生" + scriptSiteLabel(job.Recipe) + "产物已完成对账"
+	job.InputOpen = false
 	job.FinishedAt = &finished
+	appendRecipeEvent(&job, job.Stage, job.Progress, job.Message)
 	_ = m.recipeJobs.put(job)
+}
+
+func (m *Manager) copyRecipeTerminalOutput(
+	job *RecipeJob,
+	logFile *os.File,
+	terminal hostpty.Process,
+) error {
+	buffer := make([]byte, 4096)
+	pending := ""
+	written := int64(0)
+	outputLines := 0
+	for {
+		count, err := terminal.Read(buffer)
+		if count > 0 {
+			chunk := buffer[:count]
+			if written < maxRecipeTerminalLogSize {
+				remaining := int64(maxRecipeTerminalLogSize) - written
+				if int64(len(chunk)) > remaining {
+					chunk = chunk[:remaining]
+				}
+				size, writeErr := logFile.Write(chunk)
+				written += int64(size)
+				if writeErr != nil {
+					return writeErr
+				}
+			}
+			pending += stripSiteTerminalControls(string(buffer[:count]))
+			lines := strings.FieldsFunc(pending, func(value rune) bool {
+				return value == '\n' || value == '\r'
+			})
+			if strings.HasSuffix(pending, "\n") || strings.HasSuffix(pending, "\r") {
+				pending = ""
+			} else if len(lines) > 0 {
+				pending = lines[len(lines)-1]
+				lines = lines[:len(lines)-1]
+			}
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				matches := recipeProgressLine.FindStringSubmatch(line)
+				if len(matches) == 3 {
+					progress, _ := strconv.Atoi(matches[1])
+					job.Progress = min(max(progress, 0), 100)
+					job.Stage = recipeJobStage(job.Progress)
+					job.Message = safeRecipeMessage(matches[2])
+					appendRecipeEvent(job, job.Stage, job.Progress, job.Message)
+					_ = m.recipeJobs.put(*job)
+					continue
+				}
+				outputLines++
+				if outputLines%8 == 0 && job.Progress < 88 {
+					job.Progress = min(job.Progress+3, 88)
+					job.Stage = "installing"
+					job.Message = fmt.Sprintf(
+						"kejilion.sh 原生%s流程正在执行（终端已输出 %d 行）",
+						scriptSiteLabel(job.Recipe),
+						outputLines,
+					)
+					_ = m.recipeJobs.put(*job)
+				}
+			}
+			if len(pending) > 4096 {
+				pending = pending[len(pending)-4096:]
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 func systemdSiteArguments(
@@ -538,6 +735,7 @@ func systemdSiteArguments(
 		"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
 		"--setenv=LC_ALL=C.UTF-8",
 		"--setenv=LANG=C.UTF-8",
+		"--setenv=TERM=xterm-256color",
 	}
 	for _, value := range invocation.environment {
 		arguments = append(arguments, "--setenv="+value)
@@ -561,27 +759,58 @@ func (m *Manager) failRecipeJob(job RecipeJob, stage string, cause error) {
 	finished := time.Now().UTC()
 	job.Status = "failed"
 	job.Stage = stage
-	job.Progress = 100
-	job.Message = "一键建站失败；未展示脚本原始输出，以免泄露数据库凭证。请核对域名、证书和任务产物"
-	if errors.Is(cause, context.DeadlineExceeded) {
-		job.Message = "一键建站超过 60 分钟并已终止，请核对实际产物"
-	}
+	job.InputOpen = false
+	job.Message = recipeFailureMessage(job, stage, cause)
 	job.FinishedAt = &finished
+	appendRecipeEvent(&job, job.Stage, job.Progress, job.Message)
 	_ = m.recipeJobs.put(job)
+}
+
+func recipeFailureMessage(job RecipeJob, stage string, cause error) string {
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return "一键建站执行超时并已终止，请核对当前服务器网络和实际站点产物"
+	case stage == "script_unavailable":
+		return "未找到已授权且支持建站协议的 kejilion.sh，请先更新脚本后重试"
+	case stage == "runner_unavailable":
+		return "无法启动后台建站任务，请检查 systemd-run 和 Host Agent 状态"
+	case stage == "start_failed":
+		return "kejilion.sh 建站任务启动失败，请检查 Host Agent 的 systemd 权限"
+	case stage == "terminal_unavailable":
+		return "建站交互终端启动失败，请检查 Host Agent 的 PTY、状态目录和 systemd 权限"
+	case stage == "reconcile_failed":
+		return "脚本已结束，但 KPanel 未发现完整站点产物，请检查 Nginx 配置、站点目录和证书"
+	}
+
+	message := strings.TrimSpace(job.Message)
+	if message == "" || message == "正在启动 kejilion.sh 原生一键建站流程" {
+		message = "kejilion.sh 未返回可识别的失败阶段"
+	}
+	var exitErr *exec.ExitError
+	if errors.As(cause, &exitErr) {
+		return fmt.Sprintf("建站失败：%s（脚本退出码 %d）", message, exitErr.ExitCode())
+	}
+	return "建站失败：" + message
 }
 
 func findRecipeScript() (string, error) {
 	return findTrustedKejilionScript(
 		"KJ_WEB_NONINTERACTIVE",
+		"KJ_WEB_INTERACTIVE",
 		"KJ_WEB_RECIPE",
 		"KJ_WEB_DOMAIN",
 	)
 }
 
 func findTrustedKejilionScript(required ...string) (string, error) {
-	candidates := []string{"/usr/local/bin/k", "/usr/bin/k", "/root/kejilion.sh"}
+	candidates := []string{
+		"/home/docker/kpanel/bin/kejilion.sh",
+		"/usr/local/bin/k",
+		"/usr/bin/k",
+		"/root/kejilion.sh",
+	}
 	if path, err := exec.LookPath("k"); err == nil {
-		candidates = append([]string{path}, candidates...)
+		candidates = append(candidates, path)
 	}
 	seen := make(map[string]bool)
 	for _, candidate := range candidates {
@@ -650,6 +879,61 @@ func safeRecipeMessage(value string) string {
 		value = value[:300]
 	}
 	return value
+}
+
+func stripSiteTerminalControls(value string) string {
+	var result strings.Builder
+	result.Grow(len(value))
+	escape := false
+	csi := false
+	for _, character := range value {
+		if escape {
+			if character == '[' {
+				csi = true
+				escape = false
+				continue
+			}
+			escape = false
+			continue
+		}
+		if csi {
+			if character >= 0x40 && character <= 0x7e {
+				csi = false
+			}
+			continue
+		}
+		if character == 0x1b {
+			escape = true
+			continue
+		}
+		if character == '\t' || character == '\n' || character == '\r' ||
+			character >= 0x20 {
+			result.WriteRune(character)
+		}
+	}
+	return result.String()
+}
+
+func appendRecipeEvent(job *RecipeJob, stage string, progress int, message string) {
+	message = safeRecipeMessage(message)
+	if message == "" {
+		return
+	}
+	if count := len(job.Events); count > 0 {
+		last := job.Events[count-1]
+		if last.Stage == stage && last.Progress == progress && last.Message == message {
+			return
+		}
+	}
+	if len(job.Events) >= 48 {
+		job.Events = append([]RecipeJobEvent(nil), job.Events[len(job.Events)-47:]...)
+	}
+	job.Events = append(job.Events, RecipeJobEvent{
+		Stage:    stage,
+		Progress: min(max(progress, 0), 100),
+		Message:  message,
+		At:       time.Now().UTC(),
+	})
 }
 
 func (registry *recipeJobRegistry) hasActive() bool {
@@ -734,6 +1018,14 @@ func (registry *recipeJobRegistry) path(id string) string {
 	return filepath.Join(registry.stateDir, id+".json")
 }
 
+func (registry *recipeJobRegistry) logPath(id string) string {
+	return filepath.Join(registry.stateDir, id+".terminal.log")
+}
+
+func (registry *recipeJobRegistry) inputPath(id string) string {
+	return filepath.Join(registry.stateDir, id+".terminal.input")
+}
+
 func (registry *recipeJobRegistry) pruneLocked() {
 	jobs := make([]RecipeJob, 0, len(registry.jobs))
 	for _, job := range registry.jobs {
@@ -751,5 +1043,7 @@ func (registry *recipeJobRegistry) pruneLocked() {
 		}
 		delete(registry.jobs, job.ID)
 		_ = os.Remove(registry.path(job.ID))
+		_ = os.Remove(registry.logPath(job.ID))
+		_ = hostpty.RemoveInput(registry.inputPath(job.ID))
 	}
 }

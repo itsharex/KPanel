@@ -138,6 +138,9 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSiteUpdate(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/sites/"):
 		s.handleSiteDelete(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/site-installations/") &&
+		strings.HasSuffix(r.URL.Path, "/input"):
+		s.handleSiteInstallationInput(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/app-jobs/") &&
 		strings.HasSuffix(r.URL.Path, "/input"):
 		s.handleAppJobInput(w, r)
@@ -609,7 +612,14 @@ func allowedAgentPath(publicPath string) (string, bool) {
 	}
 	const installationPrefix = "/api/v1/site-installations/"
 	if strings.HasPrefix(publicPath, installationPrefix) {
-		id := strings.TrimPrefix(publicPath, installationPrefix)
+		rest := strings.TrimPrefix(publicPath, installationPrefix)
+		if strings.HasSuffix(rest, "/terminal") {
+			id := strings.TrimSuffix(rest, "/terminal")
+			if siteIDPattern.MatchString(id) {
+				return "/v1/site-installations/" + id + "/terminal", true
+			}
+		}
+		id := rest
 		if siteIDPattern.MatchString(id) {
 			return "/v1/site-installations/" + id, true
 		}

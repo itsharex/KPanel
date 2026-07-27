@@ -42,3 +42,11 @@ jobs:
         env:
           VERIFY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: make verify-change
+
+      - name: Verify kejilion.sh application lifecycle
+        run: |
+          docker run --rm \
+            -e KPANEL_APP_CONF_TEST_ROOTFS=1 \
+            -v "$PWD:/src:ro" \
+            node:24.17.0-alpine@sha256:156b55f92e98ccd5ef49578a8cea0df4679826564bad1c9d4ef04462b9f0ded6 \
+            sh -lc 'apk add --no-cache bash coreutils >/dev/null && bash /src/packaging/tests/app-conf-lifecycle.sh /src'

@@ -902,6 +902,7 @@ var (
 	ErrForbidden      = errors.New("application action is not available for the current runtime state")
 	ErrUnsupported    = errors.New("application action is not supported")
 	ErrConflict       = errors.New("application task conflicts with an active task")
+	ErrTaskConflict   = fmt.Errorf("%w: another application task is already running", ErrConflict)
 	ErrRolledBack     = errors.New("application action failed and was rolled back")
 	ErrNeedsAttention = errors.New("application action requires manual attention")
 )

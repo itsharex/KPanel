@@ -280,10 +280,18 @@ interface RawAuditEvent {
 interface RawSiteInstallJob {
   id: string
   domain: string
+  interactive?: boolean
+  inputOpen?: boolean
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   stage?: string
   progress?: number
   message?: string
+  events?: Array<{
+    stage: string
+    progress: number
+    message: string
+    at: string
+  }>
   site?: RawSite
 }
 
@@ -411,10 +419,14 @@ async function request<T>(
   if (!response.ok) {
     const envelope = payload && typeof payload === 'object' ? (payload as ApiEnvelope<unknown>) : undefined
     const problem = payload && typeof payload === 'object' ? (payload as ProblemPayload) : undefined
+    const fieldError = problem?.fieldErrors
+      ? Object.values(problem.fieldErrors).find((value) => value.trim() !== '')
+      : undefined
     const message =
       envelope?.error?.message ||
       envelope?.message ||
       problem?.detail ||
+      fieldError ||
       problem?.title ||
       (typeof payload === 'string' ? payload : '') ||
       `请求失败（HTTP ${response.status}）`
@@ -502,13 +514,24 @@ async function createSite(
   }
   let job = result as RawSiteInstallJob
   for (let attempt = 0; attempt <= 900; attempt += 1) {
-    onProgress?.({
+    const progress: SiteInstallationProgress = {
       id: job.id,
       status: job.status,
       stage: job.stage || job.status,
       progress: Math.min(100, Math.max(0, job.progress ?? (job.status === 'queued' ? 0 : 1))),
       message: job.message || '一键建站任务正在执行。',
-    })
+    }
+    if (job.interactive !== undefined) progress.interactive = Boolean(job.interactive)
+    if (job.inputOpen !== undefined) progress.inputOpen = Boolean(job.inputOpen)
+    if (job.events?.length) {
+      progress.events = job.events.map((event) => ({
+        stage: event.stage,
+        progress: Math.min(100, Math.max(0, event.progress)),
+        message: event.message,
+        at: event.at,
+      }))
+    }
+    onProgress?.(progress)
     if (job.status === 'succeeded') {
       if (!job.site) throw new ApiError('一键建站已完成，但网站对账结果缺失。', 503, 'site_result_missing')
       return normalizeSite(job.site)
@@ -955,6 +978,16 @@ export const api = {
       return { ...result, items: result.items.map(normalizeSite) }
     },
     create: createSite,
+    terminal: (id: string, offset = 0, signal?: AbortSignal): Promise<AppTerminalChunk> =>
+      request<AppTerminalChunk>(`/site-installations/${encodeURIComponent(id)}/terminal`, {
+        query: { offset },
+        signal,
+      }),
+    terminalInput: (id: string, data: string): Promise<{ ok: boolean }> =>
+      request<{ ok: boolean }>(`/site-installations/${encodeURIComponent(id)}/input`, {
+        method: 'POST',
+        body: { data },
+      }),
     update: async (id: string, body: SiteInput): Promise<Site> =>
       normalizeSite(await request<RawSite>(`/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body })),
     remove: (

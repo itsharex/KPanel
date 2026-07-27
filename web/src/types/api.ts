@@ -434,10 +434,18 @@ export interface SiteInput {
 
 export interface SiteInstallationProgress {
   id?: string
+  interactive?: boolean
+  inputOpen?: boolean
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   stage: string
   progress: number
   message: string
+  events?: Array<{
+    stage: string
+    progress: number
+    message: string
+    at: string
+  }>
 }
 
 export interface SiteDeleteResult {
