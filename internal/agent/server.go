@@ -87,11 +87,6 @@ func NewServer(config Config) (*Server, error) {
 	if config.SitesManager == nil {
 		config.SitesManager = sites.NewManager(config.WebRoot, config.Sites, config.Docker)
 		if config.StateDir != "" {
-			if err := config.SitesManager.ConfigureWordPressJobState(
-				filepath.Join(config.StateDir, "wordpress-jobs"),
-			); err != nil {
-				return nil, fmt.Errorf("initialize WordPress job state: %w", err)
-			}
 			if err := config.SitesManager.ConfigureRecipeJobState(
 				filepath.Join(config.StateDir, "site-recipe-jobs"),
 			); err != nil {
@@ -235,10 +230,11 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		siteErr           error
 		siteWriteErr      error
 		wordPressWriteErr error
+		proxyWriteErr     error
 		recipeWriteErr    error
 	)
 	var checks sync.WaitGroup
-	checks.Add(5)
+	checks.Add(6)
 	go func() {
 		defer checks.Done()
 		pingContext, pingCancel := context.WithTimeout(ctx, 800*time.Millisecond)
@@ -259,6 +255,10 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	}()
 	go func() {
 		defer checks.Done()
+		proxyWriteErr = s.sitesManager.ProxyWritable()
+	}()
+	go func() {
+		defer checks.Done()
 		recipeWriteErr = s.sitesManager.RecipeWritable()
 	}()
 	checks.Wait()
@@ -275,6 +275,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		{ID: "docker.maintenance", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET", "POST"}},
 		{ID: "sites.write", Enabled: siteWriteErr == nil, Reason: reasonIf(siteWriteErr, "网站写入依赖未就绪"), Methods: []string{"POST", "PATCH"}},
 		{ID: "sites.wordpress.install", Enabled: wordPressWriteErr == nil, Reason: reasonIf(wordPressWriteErr, "WordPress 一键搭建条件不满足"), Methods: []string{"POST"}},
+		{ID: "sites.proxy.install", Enabled: proxyWriteErr == nil, Reason: reasonIf(proxyWriteErr, "kejilion.sh IP+端口反向代理命令不可用"), Methods: []string{"POST"}},
 		{ID: "sites.recipes.install", Enabled: recipeWriteErr == nil, Reason: reasonIf(recipeWriteErr, "kejilion.sh 一键建站协议不可用"), Methods: []string{"POST"}},
 	}
 	items = append(items, s.systemManager.Capabilities()...)
@@ -376,6 +377,15 @@ func (s *Server) siteCollection(w http.ResponseWriter, r *http.Request, requestI
 		}
 		if input.Type == "recipe" {
 			job, err := s.sitesManager.StartRecipe(r.Context(), input)
+			if err != nil {
+				s.writeSiteError(w, requestID, err)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, job)
+			return
+		}
+		if input.Type == "proxy" {
+			job, err := s.sitesManager.StartProxy(input)
 			if err != nil {
 				s.writeSiteError(w, requestID, err)
 				return

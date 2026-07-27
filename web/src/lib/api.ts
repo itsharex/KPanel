@@ -274,7 +274,7 @@ interface RawAuditEvent {
   requestId?: string
 }
 
-interface RawWordPressInstallJob {
+interface RawSiteInstallJob {
   id: string
   domain: string
   status: 'queued' | 'running' | 'succeeded' | 'failed'
@@ -483,8 +483,12 @@ async function createSite(
     progress: 2,
     message: '正在提交建站配置并检查现有产物。',
   })
-  const result = await request<RawSite | RawWordPressInstallJob>('/sites', { method: 'POST', body })
-  if ((body.type !== 'wordpress' && body.type !== 'recipe') || !('status' in result) || !('id' in result)) {
+  const result = await request<RawSite | RawSiteInstallJob>('/sites', { method: 'POST', body })
+  if (
+    (body.type !== 'wordpress' && body.type !== 'proxy' && body.type !== 'recipe') ||
+    !('status' in result) ||
+    !('id' in result)
+  ) {
     onProgress?.({
       status: 'succeeded',
       stage: 'completed',
@@ -493,7 +497,7 @@ async function createSite(
     })
     return normalizeSite(result as RawSite)
   }
-  let job = result as RawWordPressInstallJob
+  let job = result as RawSiteInstallJob
   for (let attempt = 0; attempt <= 900; attempt += 1) {
     onProgress?.({
       id: job.id,
@@ -515,7 +519,7 @@ async function createSite(
     }
     if (attempt === 900) break
     await new Promise((resolve) => setTimeout(resolve, 2_000))
-    job = await request<RawWordPressInstallJob>(
+    job = await request<RawSiteInstallJob>(
       `/site-installations/${encodeURIComponent(job.id)}`,
     )
   }

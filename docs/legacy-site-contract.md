@@ -114,31 +114,21 @@ IP + 端口反代入口位于 `kejilion.sh:3499`。它使用
 
 | Web 选择 | `kejilion.sh` 对应业务 | Panel 产物与限制 |
 | --- | --- | --- |
-| WordPress | `ldnmp_wp` / `k wp <domain>` | 同款源码包、`html/<domain>/wordpress`、同名数据库、Redis、TLS 与 Nginx 产物；一键安装事务 |
+| WordPress | `ldnmp_wp` / `KJ_WEB_RECIPE=2` | 后台执行脚本固定非交互分支；源码、数据库、Redis、TLS 与 Nginx 产物均由脚本生成 |
 | 静态网站 | 自定义静态站点 | `<domain>.conf`、`html/<domain>/index.html` |
 | PHP 网站 | 自定义 PHP 网站 | `<domain>.conf`、`html/<domain>/index.php`；可选 `php` / `php74` Socket |
-| IP / 端口反代 | `ldnmp_Proxy` | 只允许本机、私网 IP 或单段 Docker DNS 名称 |
+| IP / 端口反代 | `ldnmp_Proxy` / `KJ_WEB_RECIPE=23` | 后台执行脚本固定非交互分支，并对账脚本生成的官方反代配置 |
 | 域名反代 | 反向代理-域名 | 固定上游 Host 与 HTTPS SNI；不复用脚本模板中的业务特定内容替换 |
 | 负载均衡 | `ldnmp_Proxy_backend` | 2–8 个 HTTP origin、稳定 upstream 名称、按来源 IP 一致性哈希 |
 | 域名重定向 | 站点重定向 | 固定 301 / 302 / 307 / 308，保留原请求 URI |
 
 所有类型仍写入脚本可发现的 `/home/web/conf.d/<domain>.conf`；静态和 PHP
 目录映射保持 `/home/web/html/<domain>` → `/var/www/html/<domain>`。
-Panel v2 基础模板保留 ACME Webroot location；普通基础站点不自动签发证书。
-WordPress 安装器会通过临时 ACME Webroot 配置在线签发证书，但不会停止现有
-Nginx。已由旧版 Panel 创建且仍完全匹配 v1 模板的站点可在下一次安全更新时
-原地迁移到 v2，站点目录内容不会被替换。
-
-WordPress 虽在“新建网站”窗口中优先呈现，后端仍是独立安装事务，不会被降级成
-普通 PHP 空站。安装任务会持久化到 Agent 状态目录；脚本标准 LDNMP 服务存在但
-处于停止状态时，只以 `docker compose up -d --no-recreate mysql redis php php74`
-启动固定依赖，不重建或停止 Nginx。以下入口尚未开放安全写入：
-
-- Discuz、Kodbox、Typecho、Halo、Vaultwarden 等是应用安装器，
-  还涉及镜像/源码供应链、数据库凭据、持久卷与升级回滚。
-- Nginx Stream 是 TCP/UDP 四层代理，写入 `/home/web/stream.d` 并可能修改
-  全局 `nginx.conf`，不是域名网站。
-- TLS 签发会改变线上监听状态，必须由独立证书事务实现。
+WordPress 与 IP+端口反代任务统一持久化到
+`/var/lib/kejilion-panel/site-recipe-jobs`。Agent 通过独立 systemd 后台单元执行
+脚本原生命令，允许脚本按自身流程安装缺失的 Docker、Certbot 或 LDNMP 环境；
+KPanel 不再维护第二套 WordPress 安装器或反向代理模板。静态站、PHP、域名反代、
+负载均衡、重定向与 Nginx Stream 仍待迁移到脚本同源入口或共享生成器。
 
 这些尚未适配的脚本产物会继续被保守发现和显示；在拥有固定版本、凭据生命周期、
 备份与回滚契约前，不伪装成普通站点创建能力。

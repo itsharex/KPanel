@@ -66,7 +66,8 @@ grep -Fq '核验分级' PROJECT_RULES.md
 grep -Fq '`kejilion.sh` 已有的外联配置必须直接复用，禁止 KPanel 自行编写替代模板' PROJECT_RULES.md
 grep -Fq '没有稳定脚本接口时登记为适配缺口，不得先做一套 KPanel 专属实现' docs/ecosystem-parity.md
 grep -Fq '<!-- external-config-debt:website-nginx:blocked -->' docs/external-config-sources.md
-grep -Fq '<!-- external-config-debt:wordpress-flow:blocked -->' docs/external-config-sources.md
+grep -F '| `wordpress-flow` ' docs/external-config-sources.md |
+  grep -Fq '**已合规（代码链路）**'
 
 policy_base="${ECOSYSTEM_POLICY_BASE_REF:-}"
 if [[ -z "$policy_base" ]]; then

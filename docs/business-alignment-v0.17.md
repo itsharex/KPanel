@@ -26,7 +26,7 @@
   Nginx 入口；管理员逐字确认主域名后，可按 `k web` 产物范围完整清理目录、
   域名证书和同名数据库。文件先原子暂存，`nginx -t` 或 reload 失败时恢复。
 - 结构漂移、未知模板和无法证明归属的站点保持只读，避免覆盖现有业务。
-- WordPress 继续使用 KPanel 已审计的事务安装器；Discuz、Kodbox、MacCMS、独角数卡、Flarum、Typecho、LinkStack 和 AI Prompt 使用 `kejilion.sh` 同一业务分支和产物，通过固定非交互协议在后台执行。
+- WordPress、IP+端口反代、Discuz、Kodbox、MacCMS、独角数卡、Flarum、Typecho、LinkStack 和 AI Prompt 均使用 `kejilion.sh web` 固定非交互协议在后台执行。
 - 一键建站拒绝覆盖同名配置、目录、证书或已有站点。脚本输出可能包含数据库凭证，因此任务只保存固定进度消息，不保存原始输出。
 
 ## Docker 业务

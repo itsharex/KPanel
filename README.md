@@ -30,8 +30,8 @@ KPanel 本体可在仅具备 systemd、Docker Engine 与 Compose v2 的干净 Li
   负载均衡和域名重定向创建与更新；Web 使用直观卡片选择服务。
 - 脚本、Panel、人工修改及孤立网站产物均可按真实资源 ID 管理和删除；完整删除处理
   实际站点目录、域名证书与同名数据库，Nginx 变更失败时回滚，数据库清理失败时明确告警。
-- WordPress 一键成品站：对齐脚本源码、目录、数据库、Redis、TLS 与 Nginx
-  产物，使用在线 ACME 验证、供应链校验、冲突拒绝和失败回滚保护现有网站。
+- WordPress 与 IP+端口反代通过独立后台任务执行 `kejilion.sh web` 固定非交互分支，脚本原生负责
+  LDNMP、源码、数据库、Redis、TLS、官方 Nginx 模板及端口访问控制，Web 负责进度和产物对账。
 - Discuz、Kodbox、MacCMS、独角数卡、Flarum、Typecho、LinkStack 和 AI Prompt
   通过 `kejilion.sh` 固定非交互协议在后台一键搭建，直接复用脚本业务分支和真实产物。
 - Docker 环境、容器、镜像、网络、卷五分区管理；全部容器均按实时状态支持启动、

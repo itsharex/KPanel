@@ -24,15 +24,12 @@ type SiteDataRuntime interface {
 }
 
 type Manager struct {
-	webRoot          string
-	discoverer       *Discoverer
-	nginx            NginxController
-	siteDataRuntime  SiteDataRuntime
-	wordPressRuntime WordPressRuntime
-	archiveLoader    WordPressArchiveLoader
-	wordPressJobs    *wordPressJobRegistry
-	recipeJobs       *recipeJobRegistry
-	testHook         func(stage, path string)
+	webRoot         string
+	discoverer      *Discoverer
+	nginx           NginxController
+	siteDataRuntime SiteDataRuntime
+	recipeJobs      *recipeJobRegistry
+	testHook        func(stage, path string)
 }
 
 var siteWriteMutex sync.Mutex
@@ -44,14 +41,9 @@ func NewManager(webRoot string, discoverer *Discoverer, nginx NginxController) *
 	manager := &Manager{
 		webRoot: filepath.Clean(webRoot), discoverer: discoverer, nginx: nginx,
 	}
-	if runtime, ok := nginx.(WordPressRuntime); ok {
-		manager.wordPressRuntime = runtime
-	}
 	if runtime, ok := nginx.(SiteDataRuntime); ok {
 		manager.siteDataRuntime = runtime
 	}
-	manager.archiveLoader = downloadKejilionWordPressArchive
-	manager.wordPressJobs = newWordPressJobRegistry("")
 	manager.recipeJobs = newRecipeJobRegistry("")
 	return manager
 }
@@ -93,9 +85,6 @@ func (m *Manager) writePrerequisites(ctx context.Context) error {
 }
 
 func (m *Manager) Create(ctx context.Context, input SiteInput) (contract.SiteSummary, error) {
-	if input.Type == "wordpress" {
-		return m.installWordPress(ctx, input)
-	}
 	spec, err := normalizeSiteInput(input)
 	if err != nil {
 		return contract.SiteSummary{}, err

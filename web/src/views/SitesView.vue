@@ -187,13 +187,19 @@ const siteWriteCapability = computed(() => capabilities.value.find((capability) 
 const wordPressCapability = computed(() =>
   capabilities.value.find((capability) => capability.id === 'sites.wordpress.install'),
 )
+const proxyCapability = computed(() =>
+  capabilities.value.find((capability) => capability.id === 'sites.proxy.install'),
+)
 const recipeCapability = computed(() =>
   capabilities.value.find((capability) => capability.id === 'sites.recipes.install'),
 )
 const canCreate = computed(() => siteWriteCapability.value?.enabled === true)
 const canInstallWordPress = computed(() => wordPressCapability.value?.enabled === true)
+const canInstallProxy = computed(() => proxyCapability.value?.enabled === true)
 const canInstallRecipes = computed(() => recipeCapability.value?.enabled === true)
-const canCreateAny = computed(() => canCreate.value || canInstallWordPress.value || canInstallRecipes.value)
+const canCreateAny = computed(
+  () => canCreate.value || canInstallWordPress.value || canInstallProxy.value || canInstallRecipes.value,
+)
 const wordPressReason = computed(
   () => wordPressCapability.value?.reason?.trim() || 'WordPress 一键搭建依赖尚未就绪。',
 )
@@ -237,8 +243,9 @@ const canSubmit = computed(
   () =>
     formValid.value &&
     (form.type !== 'wordpress' || canInstallWordPress.value) &&
+    (form.type !== 'proxy' || canInstallProxy.value) &&
     (form.type !== 'recipe' || canInstallRecipes.value) &&
-    (form.type === 'wordpress' || form.type === 'recipe' || canCreate.value),
+    (form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe' || canCreate.value),
 )
 
 const formValid = computed(() => {
@@ -348,7 +355,13 @@ function openCreate(): void {
   editingSite.value = undefined
   form.primaryDomain = ''
   form.aliases = ''
-  form.type = canInstallWordPress.value ? 'wordpress' : canCreate.value ? 'proxy' : 'recipe'
+  form.type = canInstallWordPress.value
+    ? 'wordpress'
+    : canInstallProxy.value
+      ? 'proxy'
+      : canCreate.value
+        ? 'static'
+        : 'recipe'
   form.recipe = 'discuz'
   form.upstream = ''
   form.upstreams = ''
@@ -389,6 +402,10 @@ async function submitSite(): Promise<void> {
     formError.value = wordPressReason.value
     return
   }
+  if (form.type === 'proxy' && !canInstallProxy.value) {
+    formError.value = proxyCapability.value?.reason || '当前 Agent 无法调用 kejilion.sh IP+端口反向代理命令。'
+    return
+  }
   if (form.type === 'recipe' && !canInstallRecipes.value) {
     formError.value = recipeCapability.value?.reason || '当前 Agent 尚未启用 kejilion.sh 一键建站协议。'
     return
@@ -403,7 +420,7 @@ async function submitSite(): Promise<void> {
   }
   const input: SiteInput = {
     primaryDomain: form.primaryDomain.trim().toLowerCase(),
-    aliases: form.type === 'wordpress' || form.type === 'recipe' ? [] : form.aliases
+    aliases: form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe' ? [] : form.aliases
       .split(/[\n,]/)
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
@@ -429,11 +446,11 @@ async function submitSite(): Promise<void> {
     toast.success(
       wasEditing
         ? '网站已更新'
-        : form.type === 'wordpress' || form.type === 'recipe'
+        : form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe'
           ? '一键建站已完成'
           : '网站已创建',
-      form.type === 'wordpress' || form.type === 'recipe'
-        ? `${savedSite.primaryDomain} 的源码、数据库、证书和 Nginx 产物已与 kejilion.sh 完成对账。`
+      form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe'
+        ? `${savedSite.primaryDomain} 的原生建站产物已与 kejilion.sh 完成对账。`
         : `${savedSite.primaryDomain} 已通过 nginx -t 校验并完成同步应用。`,
     )
     await load(true)
@@ -849,9 +866,18 @@ onBeforeUnmount(() => controller?.abort())
               class="site-service-card"
               :class="{ 'is-active': form.type === option.type }"
               type="button"
-              :disabled="option.type === 'wordpress' && !canInstallWordPress"
+              :disabled="
+                (option.type === 'wordpress' && !canInstallWordPress) ||
+                (option.type === 'proxy' && !canInstallProxy)
+              "
               :aria-pressed="form.type === option.type"
-              :title="option.type === 'wordpress' && !canInstallWordPress ? wordPressReason : ''"
+              :title="
+                option.type === 'wordpress' && !canInstallWordPress
+                  ? wordPressReason
+                  : option.type === 'proxy' && !canInstallProxy
+                    ? proxyCapability?.reason
+                    : ''
+              "
               @click="form.type = option.type"
             >
               <span class="site-service-card__icon"><component :is="option.icon" :size="20" /></span>
@@ -939,9 +965,15 @@ onBeforeUnmount(() => controller?.abort())
         <div v-if="form.type === 'wordpress'" class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
           <span>
-            将创建 <code>/home/web/html/&lt;域名&gt;/wordpress</code>、同名数据库、脚本同款 Redis 配置与
-            TLS 证书，并生成可被 <code>k web</code> 正确识别的 Nginx 产物。整个过程先做冲突检查，
-            不覆盖任何现有网站。
+            后台执行 kejilion.sh 的 WordPress 固定非交互分支，由脚本原生流程完成 LDNMP、数据库、
+            证书、官方 Nginx 模板和 WordPress 源码部署；KPanel 只负责显示进度并对账最终产物。
+          </span>
+        </div>
+        <div v-if="form.type === 'proxy' && !editingSite" class="inline-alert inline-alert--info">
+          <ShieldCheck :size="17" />
+          <span>
+            后台执行 kejilion.sh 的 IP+端口反向代理固定非交互分支，官方反向代理模板、证书、
+            Nginx 重载及端口访问控制均沿用脚本原生流程。
           </span>
         </div>
         <div v-if="form.type === 'recipe'" class="inline-alert inline-alert--info">
@@ -1021,7 +1053,7 @@ onBeforeUnmount(() => controller?.abort())
           </fieldset>
         </template>
 
-        <label v-if="form.type !== 'wordpress' && form.type !== 'recipe'" class="field">
+        <label v-if="form.type !== 'wordpress' && form.type !== 'proxy' && form.type !== 'recipe'" class="field">
           <span>附加域名（可选）</span>
           <textarea v-model="form.aliases" rows="3" placeholder="www.example.com&#10;api.example.com" />
           <small>每行一个域名，最多 20 个；主域名不要重复填写。</small>
@@ -1040,13 +1072,15 @@ onBeforeUnmount(() => controller?.abort())
             submitting
               ? form.type === 'wordpress'
                 ? '正在搭建 WordPress…'
-                : form.type === 'recipe'
+                : form.type === 'proxy' || form.type === 'recipe'
                   ? 'kejilion.sh 正在后台搭建…'
                 : '正在提交…'
               : editingSite
                 ? '更新设置'
                 : form.type === 'wordpress'
                   ? '一键搭建 WordPress'
+                  : form.type === 'proxy'
+                    ? '一键创建反向代理'
                   : form.type === 'recipe'
                     ? `一键搭建 ${selectedRecipe?.title || '成品站'}`
                   : '创建网站'
