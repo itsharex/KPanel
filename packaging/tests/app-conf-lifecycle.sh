@@ -8,6 +8,8 @@ set -eu
 }
 
 PROJECT_DIR=${1:-/src}
+RELEASE_VERSION=$(tr -d '\r\n' <"$PROJECT_DIR/VERSION")
+export KPANEL_RELEASE_VERSION=$RELEASE_VERSION
 TEST_DIR=$(mktemp -d /tmp/kpanel-app-conf-test.XXXXXX)
 FAKE_BIN="$TEST_DIR/bin"
 MOCK_STATE="$TEST_DIR/state"
@@ -35,7 +37,7 @@ require_state() {
 	}
 }
 case "$1 ${2:-}" in
-	"compose version"|"pull docker.io/kjlion/kejilion-panel:0.17.0")
+	"compose version"|"pull docker.io/kjlion/kejilion-panel:$KPANEL_RELEASE_VERSION")
 		exit 0
 		;;
 	"ps -a")
@@ -61,7 +63,7 @@ case "$1 ${2:-}" in
 		cat >"$destination" <<'AGENT'
 #!/bin/sh
 case "${1:-}" in
-	version) printf '%s\n' '0.17.0 v1alpha1' ;;
+	version) printf '%s v1alpha1\n' "${KPANEL_RELEASE_VERSION:?}" ;;
 	healthcheck)
 		[ -f "${KEJILION_AGENT_TOKEN_FILE:?}" ]
 		[ "$(stat -c '%a' "$KEJILION_AGENT_TOKEN_FILE")" = 640 ]
@@ -184,7 +186,7 @@ run_lifecycle() {
 		return 1
 	fi
 
-	grep -F 'image: docker.io/kjlion/kejilion-panel:0.17.0' \
+	grep -F "image: docker.io/kjlion/kejilion-panel:$RELEASE_VERSION" \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx 'KPANEL_PUBLIC_URL=http://198.51.100.25:18080' \
@@ -193,6 +195,10 @@ run_lifecycle() {
 		/home/docker/kpanel/.env >/dev/null
 	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 1
 	grep -F 'ExecStart=/home/docker/kpanel/bin/kejilion-agent' \
+		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE' \
+		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -F -- '-/home/web/certs -/home/web/letsencrypt' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
@@ -203,7 +209,7 @@ run_lifecycle() {
 	test -f /home/docker/kpanel/.managed-by-kejilion-app
 
 	docker_app_update
-	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = '0.17.0 v1alpha1'
+	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 
 	docker_app_uninstall
 	[ ! -e /home/docker/kpanel ]

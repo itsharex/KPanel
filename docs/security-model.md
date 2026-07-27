@@ -52,6 +52,9 @@
   当前 `kejilion.sh` 的内核预设允许在用户确认后切换，并先保存完整快照。
 - 写文件使用同文件系统临时文件、同步和原子替换；Nginx 或系统配置校验、
   reload、监听探测或状态回读失败时恢复原文件。
+- Agent 的 `CAP_DAC_OVERRIDE` 只用于处理可能由脚本调用用户拥有的标准
+  `/home/web` 站点产物，同时仍受 systemd capability 边界和明确
+  `ReadWritePaths` 限制；Panel 登录、Session 与审计目录保持只读。
 - `k fd` 可以把域名反代到 KPanel 的直连端口。只有立即来源位于显式可信代理
   CIDR 且 `X-Forwarded-Proto` 严格为单一 `https` 时，Panel 才接受代理传入的
   HTTPS Host/Origin、启用 Secure Cookie，并解析真实客户端地址；公网客户端伪造

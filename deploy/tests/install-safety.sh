@@ -3,6 +3,8 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+RELEASE_VERSION=$(tr -d '\r\n' <"$PROJECT_DIR/VERSION")
+export KP_AGENT_VERSION="${KP_AGENT_VERSION:-$RELEASE_VERSION}"
 FAKE_BIN=$SCRIPT_DIR/fake-bin
 TEST_DIR=$(mktemp -d /tmp/kejilion-panel-install-test.XXXXXX)
 
@@ -27,6 +29,7 @@ IMAGE=docker.io/example/kejilion-panel@sha256:0000000000000000000000000000000000
 run_installer() {
 	PATH="$FAKE_BIN:$PATH" \
 	KP_DOCKER_LOG="$DOCKER_LOG" \
+	KP_AGENT_VERSION="${KP_AGENT_VERSION:-$RELEASE_VERSION}" \
 	sh "$PROJECT_DIR/deploy/install.sh" \
 		--agent-binary "$AGENT_BINARY" \
 		--agent-sha256 "$AGENT_SHA" \
@@ -54,7 +57,7 @@ if KP_AGENT_VERSION=0.0.1 run_installer >"$TEST_DIR/version.out" 2>&1; then
 	echo "installer accepted a mismatched Agent version" >&2
 	exit 1
 fi
-grep -F 'does not match 0.17.0 v1alpha1' "$TEST_DIR/version.out" >/dev/null
+grep -F "does not match $RELEASE_VERSION v1alpha1" "$TEST_DIR/version.out" >/dev/null
 
 if PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
 	sh "$PROJECT_DIR/deploy/install.sh" \
@@ -146,6 +149,10 @@ grep -F '/run/kejilion-panel \' "$PROJECT_DIR/deploy/preflight.sh" >/dev/null
 grep -F 'CRITICAL: automatic failure cleanup could not be fully verified.' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -Fx 'ProtectProc=default' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
+grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
+grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
 if grep -Eq '^ProtectProc=(invisible|ptraceable|noaccess)$' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service"; then

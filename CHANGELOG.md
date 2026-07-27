@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-07-27
+
+### Fixed
+
+- Agent systemd 沙箱补充受边界和 `ReadWritePaths` 双重限制的 `CAP_DAC_OVERRIDE`，
+  使 `/home/web/html` 由脚本用户而非 root 拥有时，静态站、PHP/WordPress 和完整
+  站点删除仍可处理标准 Kejilion 目录；不扩大到 Panel 登录/审计数据目录。
+
 ## [0.17.1] - 2026-07-27
 
 ### Added
