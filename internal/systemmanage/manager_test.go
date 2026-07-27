@@ -1084,6 +1084,45 @@ func TestMaintenanceStatusRejectsCollectedUnitWithoutCompletionReceipt(t *testin
 	}
 }
 
+func TestMaintenanceStatusPreservesWorkerReceiptDuringSystemdReconcile(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, _, _, _ := testManager(t, runner)
+	now := time.Date(2026, 7, 27, 12, 30, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	runner.run = func(_ context.Context, name string, _ ...string) ([]byte, error) {
+		if name != "systemctl" {
+			return nil, nil
+		}
+		workerStatus := manager.readMaintenance()
+		finishedAt := now.UTC()
+		workerStatus.State = "succeeded"
+		workerStatus.Stage = "completed"
+		workerStatus.Progress = 100
+		workerStatus.Message = "worker completion receipt"
+		workerStatus.FinishedAt = &finishedAt
+		if err := manager.writeMaintenance(workerStatus); err != nil {
+			return nil, err
+		}
+		return []byte(
+			"LoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\nExecMainStatus=0\n",
+		), nil
+	}
+
+	if changed, _, err := manager.startMaintenance(context.Background(), "update", "full"); err != nil || !changed {
+		t.Fatalf("start maintenance: changed=%v err=%v", changed, err)
+	}
+	now = now.Add(maintenanceLaunchGrace + time.Second)
+	status := manager.MaintenanceStatus()
+	if status.State != "succeeded" || status.Stage != "completed" ||
+		status.Progress != 100 || status.Message != "worker completion receipt" {
+		t.Fatalf("worker receipt was overwritten by stale reconciliation: %#v", status)
+	}
+	persisted := manager.readMaintenance()
+	if persisted.State != "succeeded" || persisted.Message != "worker completion receipt" {
+		t.Fatalf("persisted worker receipt was overwritten: %#v", persisted)
+	}
+}
+
 func TestStartMaintenanceUsesManagedAppAgentPath(t *testing.T) {
 	runner := &fakeRunner{}
 	manager, _, _, stateDir := testManager(t, runner)

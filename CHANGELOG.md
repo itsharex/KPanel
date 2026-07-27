@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.20.7] - 2026-07-28
+
+### Fixed
+
+- 系统维护对账在写入失败状态前重新读取 worker 的原子任务状态，修复快速任务完成后被
+  旧的 `2%` 启动快照覆盖成 `LoadState=not-found` 失败的竞态。
+- RHEL 9 / systemd 252 使用与生产一致的 transient unit 参数完成兼容性复核，确认
+  RPM 系并非因 systemd 属性不兼容而失败。
+
 ## [0.20.6] - 2026-07-28
 
 ### Fixed

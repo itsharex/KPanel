@@ -97,6 +97,19 @@ func (m *Manager) reconcileMaintenanceLaunch(status *contract.SystemMaintenanceS
 		return
 	}
 
+	// The worker writes the same atomic state file from another process. It may
+	// finish after this request read the launch snapshot but before systemctl
+	// returns. Never overwrite that newer worker receipt with a reconciliation
+	// result derived from the stale snapshot.
+	latest := m.readMaintenance()
+	if latest.ID != status.ID ||
+		latest.State != status.State ||
+		latest.Stage != status.Stage ||
+		latest.Progress != status.Progress {
+		*status = latest
+		return
+	}
+
 	details := make([]string, 0, 5)
 	for _, key := range []string{"LoadState", "ActiveState", "SubState", "Result", "ExecMainStatus"} {
 		if value := strings.TrimSpace(unit[key]); value != "" {
