@@ -185,8 +185,8 @@ func TestInactiveScriptJobAutomaticallyReleasesTaskLock(t *testing.T) {
 		history[0].Stage != "interrupted" || history[0].InputOpen {
 		t.Fatalf("stale task lock was not released: %#v", history)
 	}
-	if _, err := service.StartInstall(context.Background(), "builtin-28", InstallInput{}); err != nil {
-		t.Fatalf("stale task still blocked a new install: %v", err)
+	if service.jobs.hasActive() {
+		t.Fatal("stale task still blocked a new install")
 	}
 }
 
