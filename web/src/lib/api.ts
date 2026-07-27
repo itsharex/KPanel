@@ -17,6 +17,7 @@ import type {
   PanelSettings,
   SetupRequest,
   Site,
+  SiteDeleteResult,
   SiteInput,
   SystemActionInput,
   SystemActionResult,
@@ -888,10 +889,15 @@ export const api = {
     create: createSite,
     update: async (id: string, body: SiteInput): Promise<Site> =>
       normalizeSite(await request<RawSite>(`/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body })),
-    remove: (id: string, expectedResourceVersion: string) =>
-      request<{ id: string; primaryDomain: string; status: string; resourceVersion: string }>(
+    remove: (
+      id: string,
+      expectedResourceVersion: string,
+      mode: 'configuration' | 'full',
+      confirmDomain?: string,
+    ) =>
+      request<SiteDeleteResult>(
         `/sites/${encodeURIComponent(id)}`,
-        { method: 'DELETE', body: { expectedResourceVersion } },
+        { method: 'DELETE', body: { expectedResourceVersion, mode, confirmDomain } },
       ),
   },
   apps: {

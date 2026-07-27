@@ -167,6 +167,37 @@ describe('API client', () => {
     })
   })
 
+  it('sends an explicit site deletion scope and exact domain confirmation', async () => {
+    const id = 'a'.repeat(32)
+    const version = `sha256:${'b'.repeat(64)}`
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        id,
+        primaryDomain: 'example.com',
+        status: 'deleted',
+        mode: 'full',
+        resourceVersion: version,
+        removed: ['nginx_config', 'document_root'],
+        databaseDropped: false,
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.sites.remove(id, version, 'full', 'example.com')).resolves.toMatchObject({
+      status: 'deleted',
+      mode: 'full',
+      primaryDomain: 'example.com',
+    })
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/sites/${id}`)
+    expect(requestInit.method).toBe('DELETE')
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      expectedResourceVersion: version,
+      mode: 'full',
+      confirmDomain: 'example.com',
+    })
+  })
+
   it('polls an asynchronous WordPress installation until the reconciled site is ready', async () => {
     vi.useFakeTimers()
     const jobID = 'd'.repeat(32)

@@ -19,6 +19,9 @@
 - CLI 和 Web 均以 `/home/web/conf.d`、`/home/web/html`、`/home/web/certs` 和实际 Docker/证书状态为事实来源，Panel 数据库不复制站点真相。
 - Web 创建的静态站、PHP 站、IP + 端口反代、域名反代、负载均衡和重定向使用与脚本兼容的文件布局，`k web` 可继续发现和管理。
 - 脚本创建且结构可确认的上述站点可在 Web 修改。KPanel只修补已识别指令，保留证书、站点目录、安全规则和未知 Nginx 指令；提交前校验 `resourceVersion`，执行 `nginx -t`，失败回滚原文件。
+- 脚本与 Panel 创建、配置文件名和主域名一致且未漂移的站点可删除：默认只移除
+  Nginx 入口；管理员逐字确认主域名后，可按 `k web` 产物范围完整清理目录、
+  域名证书和同名数据库。文件先原子暂存，`nginx -t` 或 reload 失败时恢复。
 - 结构漂移、未知模板和无法证明归属的站点保持只读，避免覆盖现有业务。
 - WordPress 继续使用 KPanel 已审计的事务安装器；Discuz、Kodbox、MacCMS、独角数卡、Flarum、Typecho、LinkStack 和 AI Prompt 使用 `kejilion.sh` 同一业务分支和产物，通过固定非交互协议在后台执行。
 - 一键建站拒绝覆盖同名配置、目录、证书或已有站点。脚本输出可能包含数据库凭证，因此任务只保存固定进度消息，不保存原始输出。

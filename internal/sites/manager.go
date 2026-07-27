@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
@@ -18,10 +19,15 @@ type NginxController interface {
 	NginxReload(context.Context) error
 }
 
+type SiteDataRuntime interface {
+	DropSiteDatabase(context.Context, string) (bool, error)
+}
+
 type Manager struct {
 	webRoot          string
 	discoverer       *Discoverer
 	nginx            NginxController
+	siteDataRuntime  SiteDataRuntime
 	wordPressRuntime WordPressRuntime
 	archiveLoader    WordPressArchiveLoader
 	wordPressJobs    *wordPressJobRegistry
@@ -40,6 +46,9 @@ func NewManager(webRoot string, discoverer *Discoverer, nginx NginxController) *
 	}
 	if runtime, ok := nginx.(WordPressRuntime); ok {
 		manager.wordPressRuntime = runtime
+	}
+	if runtime, ok := nginx.(SiteDataRuntime); ok {
+		manager.siteDataRuntime = runtime
 	}
 	manager.archiveLoader = downloadKejilionWordPressArchive
 	manager.wordPressJobs = newWordPressJobRegistry("")
@@ -329,128 +338,375 @@ func (m *Manager) Update(ctx context.Context, id string, input SiteInput) (contr
 }
 
 type DeleteResult struct {
-	ID              string `json:"id"`
-	PrimaryDomain   string `json:"primaryDomain"`
-	Status          string `json:"status"`
-	ResourceVersion string `json:"resourceVersion"`
+	ID              string   `json:"id"`
+	PrimaryDomain   string   `json:"primaryDomain"`
+	Status          string   `json:"status"`
+	Mode            string   `json:"mode"`
+	ResourceVersion string   `json:"resourceVersion"`
+	Removed         []string `json:"removed"`
+	DatabaseDropped bool     `json:"databaseDropped"`
 }
 
-func (m *Manager) Delete(ctx context.Context, id, expectedVersion string) (DeleteResult, error) {
-	if expectedVersion == "" {
+type DeleteInput struct {
+	ExpectedResourceVersion string `json:"expectedResourceVersion"`
+	Mode                    string `json:"mode"`
+	ConfirmDomain           string `json:"confirmDomain,omitempty"`
+}
+
+type stagedDeleteArtifact struct {
+	kind      string
+	path      string
+	backup    string
+	info      os.FileInfo
+	directory bool
+}
+
+func (m *Manager) DeleteWithOptions(
+	ctx context.Context,
+	id string,
+	input DeleteInput,
+) (DeleteResult, error) {
+	if input.ExpectedResourceVersion == "" {
 		return DeleteResult{}, fmt.Errorf("%w: expectedResourceVersion is required", ErrInvalidInput)
+	}
+	if input.Mode == "" {
+		input.Mode = "configuration"
+	}
+	if input.Mode != "configuration" && input.Mode != "full" {
+		return DeleteResult{}, fmt.Errorf(
+			"%w: delete mode must be configuration or full",
+			ErrInvalidInput,
+		)
 	}
 	siteWriteMutex.Lock()
 	defer siteWriteMutex.Unlock()
 	if err := m.Writable(ctx); err != nil {
 		return DeleteResult{}, err
 	}
-	current, err := m.findManagedByID(id)
+	current, err := m.findActionableByID(id, "delete")
 	if err != nil {
 		return DeleteResult{}, err
 	}
-	if current.Kind != contract.SiteReverseProxy {
-		return DeleteResult{}, fmt.Errorf("%w: only a Panel-managed reverse proxy can be deleted", ErrForbidden)
+	if input.ConfirmDomain != current.PrimaryDomain {
+		return DeleteResult{}, fmt.Errorf(
+			"%w: confirmDomain must exactly match the primary domain",
+			ErrForbidden,
+		)
 	}
-	if current.ResourceVersion != expectedVersion {
+	if current.ResourceVersion != input.ExpectedResourceVersion {
 		return DeleteResult{}, fmt.Errorf("%w: resource version changed", ErrConflict)
 	}
-	spec, err := managedSpecFromSummary(current)
+
+	configPath, configInfo, configData, err := m.verifiedDeleteConfig(current)
 	if err != nil {
-		return DeleteResult{}, fmt.Errorf("%w: current site is no longer canonical", ErrForbidden)
+		return DeleteResult{}, err
 	}
-	config := renderManagedConfig(spec)
-	configPath := filepath.Join(m.webRoot, "conf.d", spec.Primary+".conf")
-	configInfo, err := os.Lstat(configPath)
-	if err == nil && !fileMatches(configPath, configInfo, config) {
-		legacyConfig := renderManagedConfigV1(spec)
-		if fileMatches(configPath, configInfo, legacyConfig) {
-			config = legacyConfig
+
+	artifacts := []stagedDeleteArtifact{{
+		kind: "nginx_config", path: configPath, info: configInfo,
+	}}
+	if input.Mode == "full" {
+		artifacts, err = m.fullDeleteArtifacts(current, configData, artifacts)
+		if err != nil {
+			return DeleteResult{}, err
 		}
 	}
-	if err != nil || !fileMatches(configPath, configInfo, config) {
-		return DeleteResult{}, fmt.Errorf("%w: current configuration is no longer canonical", ErrForbidden)
-	}
-	backup, err := os.CreateTemp(filepath.Dir(configPath), "."+spec.Primary+".kp-delete-*.tmp")
-	if err != nil {
-		return DeleteResult{}, fmt.Errorf("%w: stage delete backup: %v", ErrUnavailable, err)
-	}
-	backupPath := backup.Name()
-	if closeErr := backup.Close(); closeErr != nil {
-		_ = os.Remove(backupPath)
-		return DeleteResult{}, fmt.Errorf("%w: close delete backup: %v", ErrUnavailable, closeErr)
-	}
-	if err := os.Remove(backupPath); err != nil {
-		return DeleteResult{}, fmt.Errorf("%w: prepare delete backup: %v", ErrUnavailable, err)
-	}
-	keepBackup := false
-	defer func() {
-		if !keepBackup {
-			_ = os.Remove(backupPath)
+
+	for index := range artifacts {
+		backup, backupErr := reserveDeleteBackup(artifacts[index].path)
+		if backupErr != nil {
+			return DeleteResult{}, fmt.Errorf(
+				"%w: stage %s delete backup: %v",
+				ErrUnavailable,
+				artifacts[index].kind,
+				backupErr,
+			)
 		}
-	}()
-	if err := os.Rename(configPath, backupPath); err != nil {
-		return DeleteResult{}, fmt.Errorf("%w: atomically withdraw configuration: %v", ErrUnavailable, err)
+		artifacts[index].backup = backup
 	}
-	backupInfo, _ := os.Lstat(backupPath)
-	if !fileMatches(backupPath, backupInfo, config) {
-		keepBackup = true
-		return DeleteResult{}, fmt.Errorf("%w: delete backup changed unexpectedly at %s", ErrNeedsAttention, backupPath)
+	staged := make([]stagedDeleteArtifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if renameErr := atomicNoReplace(artifact.path, artifact.backup); renameErr != nil {
+			if restoreErr := restoreDeleteArtifacts(staged); restoreErr != nil {
+				return DeleteResult{}, restoreErr
+			}
+			return DeleteResult{}, fmt.Errorf(
+				"%w: atomically withdraw %s: %v",
+				ErrUnavailable,
+				artifact.kind,
+				renameErr,
+			)
+		}
+		staged = append(staged, artifact)
 	}
-	if err := syncDirectory(filepath.Dir(configPath)); err != nil {
-		if restoreErr := restoreDeletedConfig(configPath, backupPath, backupInfo, config); restoreErr != nil {
-			keepBackup = true
+	if err := syncDeleteDirectories(staged); err != nil {
+		if restoreErr := restoreDeleteArtifacts(staged); restoreErr != nil {
 			return DeleteResult{}, restoreErr
 		}
-		return DeleteResult{}, fmt.Errorf("%w: sync delete transaction; configuration restored: %v", ErrUnavailable, err)
+		return DeleteResult{}, fmt.Errorf(
+			"%w: sync delete transaction; artifacts restored: %v",
+			ErrUnavailable,
+			err,
+		)
 	}
 	if err := m.nginx.NginxTest(ctx); err != nil {
-		if restoreErr := restoreDeletedConfig(configPath, backupPath, backupInfo, config); restoreErr != nil {
-			keepBackup = true
+		if restoreErr := restoreDeleteArtifacts(staged); restoreErr != nil {
 			return DeleteResult{}, restoreErr
 		}
-		return DeleteResult{}, fmt.Errorf("%w: delete candidate failed nginx -t: %v", ErrUnprocessable, err)
+		return DeleteResult{}, fmt.Errorf(
+			"%w: delete candidate failed nginx -t; artifacts restored: %v",
+			ErrUnprocessable,
+			err,
+		)
 	}
 	if err := m.nginx.NginxReload(ctx); err != nil {
-		if restoreErr := restoreDeletedConfig(configPath, backupPath, backupInfo, config); restoreErr != nil {
-			keepBackup = true
+		if restoreErr := restoreDeleteArtifacts(staged); restoreErr != nil {
 			return DeleteResult{}, restoreErr
 		}
 		if recoveryErr := m.validateAndReloadPrevious(ctx); recoveryErr != nil {
 			return DeleteResult{}, recoveryErr
 		}
-		return DeleteResult{}, fmt.Errorf("%w: Nginx reload failed and the configuration was restored: %v", ErrUnavailable, err)
+		return DeleteResult{}, fmt.Errorf(
+			"%w: Nginx reload failed and all site artifacts were restored: %v",
+			ErrUnavailable,
+			err,
+		)
 	}
-	if _, err := os.Lstat(configPath); !errors.Is(err, os.ErrNotExist) {
-		keepBackup = true
-		return DeleteResult{}, fmt.Errorf("%w: configuration path was recreated during deletion; backup retained at %s", ErrNeedsAttention, backupPath)
+
+	databaseDropped := false
+	if input.Mode == "full" {
+		if m.siteDataRuntime == nil {
+			if restoreErr := m.restoreDeletedSite(ctx, staged); restoreErr != nil {
+				return DeleteResult{}, restoreErr
+			}
+			return DeleteResult{}, fmt.Errorf(
+				"%w: the verified MySQL runtime is unavailable; site artifacts were restored",
+				ErrUnavailable,
+			)
+		}
+		databaseDropped, err = m.siteDataRuntime.DropSiteDatabase(ctx, current.PrimaryDomain)
+		if err != nil {
+			if restoreErr := m.restoreDeletedSite(ctx, staged); restoreErr != nil {
+				return DeleteResult{}, restoreErr
+			}
+			return DeleteResult{}, fmt.Errorf(
+				"%w: database operation failed; site artifacts were restored, but the database state must be verified: %v",
+				ErrNeedsAttention,
+				err,
+			)
+		}
 	}
-	if err := os.Remove(backupPath); err != nil {
-		keepBackup = true
-		return DeleteResult{}, fmt.Errorf("%w: proxy was deleted but backup cleanup failed at %s: %v", ErrNeedsAttention, backupPath, err)
+
+	removed := make([]string, 0, len(staged))
+	for _, artifact := range staged {
+		var removeErr error
+		if artifact.directory {
+			removeErr = os.RemoveAll(artifact.backup)
+		} else {
+			removeErr = os.Remove(artifact.backup)
+		}
+		if removeErr != nil {
+			return DeleteResult{}, fmt.Errorf(
+				"%w: site was deleted but backup cleanup failed at %s: %v",
+				ErrNeedsAttention,
+				artifact.backup,
+				removeErr,
+			)
+		}
+		removed = append(removed, artifact.kind)
 	}
-	if err := syncDirectory(filepath.Dir(configPath)); err != nil {
-		return DeleteResult{}, fmt.Errorf("%w: proxy was deleted but directory cleanup could not be synced: %v", ErrNeedsAttention, err)
+	if err := syncDeleteDirectories(staged); err != nil {
+		return DeleteResult{}, fmt.Errorf(
+			"%w: site was deleted but directory cleanup could not be synced: %v",
+			ErrNeedsAttention,
+			err,
+		)
 	}
+
 	return DeleteResult{
 		ID: current.ID, PrimaryDomain: current.PrimaryDomain,
-		Status: "deleted", ResourceVersion: current.ResourceVersion,
+		Status: "deleted", Mode: input.Mode, ResourceVersion: current.ResourceVersion,
+		Removed: removed, DatabaseDropped: databaseDropped,
 	}, nil
 }
 
-func restoreDeletedConfig(configPath, backupPath string, backupInfo os.FileInfo, config []byte) error {
-	if !fileMatches(backupPath, backupInfo, config) {
-		return fmt.Errorf("%w: delete backup changed; retained at %s", ErrNeedsAttention, backupPath)
+func (m *Manager) verifiedDeleteConfig(
+	site contract.SiteSummary,
+) (string, os.FileInfo, []byte, error) {
+	confRoot := filepath.Join(m.webRoot, "conf.d")
+	for _, artifact := range site.Artifacts {
+		if artifact.Kind != "nginx_config" || artifact.Hash == "" {
+			continue
+		}
+		path := filepath.Clean(artifact.Path)
+		relative, err := filepath.Rel(confRoot, path)
+		if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) ||
+			filepath.IsAbs(relative) || filepath.Ext(path) != ".conf" {
+			break
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			break
+		}
+		data, err := readRegularFile(path, maxConfigBytes)
+		if err != nil || hashBytes(data) != artifact.Hash {
+			break
+		}
+		return path, info, data, nil
 	}
-	if _, err := os.Lstat(configPath); !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("%w: configuration path is occupied; backup retained at %s", ErrNeedsAttention, backupPath)
+	return "", nil, nil, fmt.Errorf(
+		"%w: current Nginx configuration is no longer the discovered artifact",
+		ErrForbidden,
+	)
+}
+
+func (m *Manager) fullDeleteArtifacts(
+	site contract.SiteSummary,
+	configData []byte,
+	artifacts []stagedDeleteArtifact,
+) ([]stagedDeleteArtifact, error) {
+	siteRoot := filepath.Join(m.webRoot, "html", site.PrimaryDomain)
+	if siteNeedsDocumentRoot(site.Kind) {
+		expectedDocumentRoot := siteRoot
+		if site.Kind == contract.SiteWordPress {
+			expectedDocumentRoot = filepath.Join(siteRoot, "wordpress")
+		}
+		if filepath.Clean(site.DocumentRoot) != filepath.Clean(expectedDocumentRoot) {
+			return nil, fmt.Errorf(
+				"%w: document root does not match the k web site layout",
+				ErrForbidden,
+			)
+		}
 	}
-	if err := os.Rename(backupPath, configPath); err != nil {
-		return fmt.Errorf("%w: restore deleted configuration from %s: %v", ErrNeedsAttention, backupPath, err)
+	directives := parseDirectives(stripComments(string(configData)))
+	certificates := uniqueStrings(directives["ssl_certificate"])
+	keys := uniqueStrings(directives["ssl_certificate_key"])
+	if len(certificates) > 0 || len(keys) > 0 {
+		expectedCertificate := filepath.Join(m.webRoot, "certs", site.PrimaryDomain+"_cert.pem")
+		expectedKey := filepath.Join(m.webRoot, "certs", site.PrimaryDomain+"_key.pem")
+		certificatePath, certificateOK := "", false
+		keyPath, keyOK := "", false
+		if len(certificates) == 1 {
+			certificatePath, certificateOK = m.discoverer.certificateHostPath(certificates[0])
+		}
+		if len(keys) == 1 {
+			keyPath, keyOK = m.discoverer.certificateHostPath(keys[0])
+		}
+		if !certificateOK || !keyOK ||
+			filepath.Clean(certificatePath) != filepath.Clean(expectedCertificate) ||
+			filepath.Clean(keyPath) != filepath.Clean(expectedKey) {
+			return nil, fmt.Errorf(
+				"%w: TLS artifacts do not match the k web site layout",
+				ErrForbidden,
+			)
+		}
 	}
-	if err := syncDirectory(filepath.Dir(configPath)); err != nil {
-		return fmt.Errorf("%w: sync restored configuration: %v", ErrNeedsAttention, err)
+
+	candidates := []stagedDeleteArtifact{
+		{
+			kind:      "document_root",
+			path:      siteRoot,
+			directory: true,
+		},
+		{
+			kind: "certificate",
+			path: filepath.Join(m.webRoot, "certs", site.PrimaryDomain+"_cert.pem"),
+		},
+		{
+			kind: "certificate_key",
+			path: filepath.Join(m.webRoot, "certs", site.PrimaryDomain+"_key.pem"),
+		},
+	}
+	for _, candidate := range candidates {
+		info, err := os.Lstat(candidate.path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || info.Mode()&os.ModeSymlink != 0 ||
+			(candidate.directory && !info.IsDir()) ||
+			(!candidate.directory && !info.Mode().IsRegular()) {
+			return nil, fmt.Errorf(
+				"%w: %s is unavailable or unsafe",
+				ErrForbidden,
+				candidate.kind,
+			)
+		}
+		candidate.info = info
+		artifacts = append(artifacts, candidate)
+	}
+	return artifacts, nil
+}
+
+func reserveDeleteBackup(path string) (string, error) {
+	temp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".kp-delete-*.tmp")
+	if err != nil {
+		return "", err
+	}
+	name := temp.Name()
+	if err := temp.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := os.Remove(name); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func restoreDeleteArtifacts(staged []stagedDeleteArtifact) error {
+	for index := len(staged) - 1; index >= 0; index-- {
+		artifact := staged[index]
+		if _, err := os.Lstat(artifact.path); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf(
+				"%w: restore target is occupied; backup retained at %s",
+				ErrNeedsAttention,
+				artifact.backup,
+			)
+		}
+		backupInfo, err := os.Lstat(artifact.backup)
+		if err != nil || artifact.info == nil || !os.SameFile(artifact.info, backupInfo) {
+			return fmt.Errorf(
+				"%w: delete backup changed; retained at %s",
+				ErrNeedsAttention,
+				artifact.backup,
+			)
+		}
+		if err := atomicNoReplace(artifact.backup, artifact.path); err != nil {
+			return fmt.Errorf(
+				"%w: restore %s from %s: %v",
+				ErrNeedsAttention,
+				artifact.kind,
+				artifact.backup,
+				err,
+			)
+		}
+	}
+	return syncDeleteDirectories(staged)
+}
+
+func syncDeleteDirectories(artifacts []stagedDeleteArtifact) error {
+	seen := make(map[string]bool)
+	for _, artifact := range artifacts {
+		directory := filepath.Dir(artifact.path)
+		if seen[directory] {
+			continue
+		}
+		seen[directory] = true
+		if err := syncDirectory(directory); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func (m *Manager) restoreDeletedSite(
+	ctx context.Context,
+	staged []stagedDeleteArtifact,
+) error {
+	if err := restoreDeleteArtifacts(staged); err != nil {
+		return err
+	}
+	return m.validateAndReloadPrevious(ctx)
 }
 
 func (m *Manager) checkCollisions(spec managedSpec, excludeID string) error {
@@ -498,6 +754,10 @@ func (m *Manager) checkCollisions(spec managedSpec, excludeID string) error {
 }
 
 func (m *Manager) findManagedByID(id string) (contract.SiteSummary, error) {
+	return m.findActionableByID(id, "update")
+}
+
+func (m *Manager) findActionableByID(id, action string) (contract.SiteSummary, error) {
 	items, err := m.discoverer.Discover()
 	if err != nil {
 		return contract.SiteSummary{}, fmt.Errorf("%w: discover sites: %v", ErrUnavailable, err)
@@ -505,8 +765,12 @@ func (m *Manager) findManagedByID(id string) (contract.SiteSummary, error) {
 	for _, site := range items {
 		if site.ID == id {
 			if (site.Origin != contract.OriginWeb && site.Origin != contract.OriginCLI) ||
-				!containsString(site.AllowedActions, "update") {
-				return contract.SiteSummary{}, fmt.Errorf("%w: only a recognized unchanged site can be updated", ErrForbidden)
+				!containsString(site.AllowedActions, action) {
+				return contract.SiteSummary{}, fmt.Errorf(
+					"%w: only a recognized unchanged site can be %s",
+					ErrForbidden,
+					action,
+				)
 			}
 			return site, nil
 		}

@@ -20,6 +20,8 @@ KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录�
 - `/home/web` 现有站点、证书和 Nginx 状态发现。
 - 与 `kejilion.sh` 产物布局一致的静态站、PHP 站、IP/端口反代、域名反代、
   负载均衡和域名重定向创建与安全更新；Web 使用直观卡片选择服务。
+- 对结构可确认且未漂移的脚本/Panel 站点提供配置解绑和确认式完整删除；完整删除按
+  `k web` 布局处理站点目录、域名证书与同名数据库，并在 Nginx 校验失败时回滚。
 - WordPress 一键成品站：对齐脚本源码、目录、数据库、Redis、TLS 与 Nginx
   产物，使用在线 ACME 验证、供应链校验、冲突拒绝和失败回滚保护现有网站。
 - Discuz、Kodbox、MacCMS、独角数卡、Flarum、Typecho、LinkStack 和 AI Prompt
@@ -35,8 +37,8 @@ KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录�
   以及不触碰 Docker、网站和备份的安全系统清理。
 - 管理变更记录、审计、资源版本冲突检测和只读降级。
 
-任意 Shell、Docker Exec、系统重装、磁盘格式化、任意远程命令和数据目录硬删除等高风险能力
-不进入首版。
+任意 Shell、公共 Docker Exec、系统重装、磁盘格式化、任意远程命令，以及无法确认归属和
+布局的数据目录硬删除等高风险能力不开放。
 
 ## 文档
 

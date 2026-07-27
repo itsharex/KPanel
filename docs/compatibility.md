@@ -14,7 +14,7 @@
 | 资源 | kejilion.sh 产物 | 面板行为 |
 | --- | --- | --- |
 | 网站配置 | `/home/web/conf.d/*.conf` | 解析并计算内容哈希，不保存影子配置 |
-| 网站文件 | `/home/web/html/<domain>` | 展示真实目录；首版不删除 |
+| 网站文件 | `/home/web/html/<domain>` | 展示真实目录；仅在确认式完整删除中按固定布局清理 |
 | 证书 | `/home/web/certs/<domain>_cert.pem`、`<domain>_key.pem` | 只读取公钥状态，不返回私钥 |
 | Web 运行环境 | `/home/web/docker-compose.yml` 与 Docker Engine | 联合识别 Nginx、PHP、MySQL 等服务 |
 | 应用 | Docker/Compose 与 `/home/docker` | Docker 是运行状态真相，目录仅作归属证据 |
@@ -33,7 +33,9 @@
 
 - 允许：固定模板的 HTTP/已有证书 HTTPS 静态站、反向代理站安全创建和更新；
   WordPress 独立安装事务可创建脚本同款数据库、源码、证书与 Nginx 产物。
+- 允许：对配置哈希、主域名、文件名和固定布局均可核验的站点执行 Nginx 解绑；
+  管理员逐字确认主域名后，可按 `web_del()` 产物范围完整删除目录、证书和同名数据库。
 - 允许：归属证据充分的 Kejilion 容器启动、停止、重启。
-- 禁止：既有网站/证书/数据库/目录删除，任意 Nginx 文本，任意 Shell、公共
+- 禁止：归属或布局不明的网站/证书/数据库/目录删除，任意 Nginx 文本，任意 Shell、公共
   Docker Exec、Compose 在线编辑。WordPress 事务内部仅允许固定 MySQL 命令，
   且只能回滚本事务刚创建并仍可核验的产物。

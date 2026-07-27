@@ -377,6 +377,16 @@ export interface SiteInput {
   expectedResourceVersion?: string
 }
 
+export interface SiteDeleteResult {
+  id: string
+  primaryDomain: string
+  status: 'deleted'
+  mode: 'configuration' | 'full'
+  resourceVersion: string
+  removed: string[]
+  databaseDropped: boolean
+}
+
 export interface DockerPort {
   privatePort: number
   publicPort?: number

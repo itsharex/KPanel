@@ -414,14 +414,12 @@ func (s *Server) siteOperation(w http.ResponseWriter, r *http.Request, requestID
 		return
 	}
 	if r.Method == http.MethodDelete {
-		var input struct {
-			ExpectedResourceVersion string `json:"expectedResourceVersion"`
-		}
+		var input sites.DeleteInput
 		if err := decodeJSON(w, r, &input); err != nil {
 			writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
 			return
 		}
-		result, err := s.sitesManager.Delete(r.Context(), id, input.ExpectedResourceVersion)
+		result, err := s.sitesManager.DeleteWithOptions(r.Context(), id, input)
 		if err != nil {
 			s.writeSiteError(w, requestID, err)
 			return

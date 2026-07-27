@@ -72,7 +72,8 @@ func TestWordPressInstallerProducesKejilionCompatibleArtifacts(t *testing.T) {
 	}
 	if created.Kind != contract.SiteWordPress || created.Origin != contract.OriginWeb ||
 		created.DocumentRoot != filepath.Join(root, "html", "blog.example.com", "wordpress") ||
-		len(created.AllowedActions) != 0 {
+		!containsString(created.AllowedActions, "delete") ||
+		containsString(created.AllowedActions, "update") {
 		t.Fatalf("unexpected WordPress summary: %#v", created)
 	}
 	if runtime.database != "blog_example_com" || runtime.databaseRolledBack {

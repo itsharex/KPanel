@@ -13,6 +13,7 @@ import {
   Search,
   Server,
   ShieldCheck,
+  Trash2,
   TriangleAlert,
   Waypoints,
 } from '@lucide/vue'
@@ -46,6 +47,12 @@ const editingSite = ref<Site>()
 const submitting = ref(false)
 const formError = ref('')
 const installProgress = ref('')
+const deleteOpen = ref(false)
+const deletingSite = ref<Site>()
+const deleteMode = ref<'configuration' | 'full'>('configuration')
+const deleteConfirmation = ref('')
+const deleteError = ref('')
+const deleting = ref(false)
 const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
@@ -411,6 +418,43 @@ async function submitSite(): Promise<void> {
   }
 }
 
+function openDelete(site: Site): void {
+  deletingSite.value = site
+  deleteMode.value = 'configuration'
+  deleteConfirmation.value = ''
+  deleteError.value = ''
+  selectedSite.value = undefined
+  deleteOpen.value = true
+}
+
+async function deleteSite(): Promise<void> {
+  const site = deletingSite.value
+  if (!site || deleteConfirmation.value !== site.primaryDomain || deleting.value) return
+  deleting.value = true
+  deleteError.value = ''
+  try {
+    const result = await api.sites.remove(
+      site.id,
+      site.resourceVersion,
+      deleteMode.value,
+      deleteConfirmation.value,
+    )
+    deleteOpen.value = false
+    deletingSite.value = undefined
+    toast.success(
+      deleteMode.value === 'full' ? '站点数据已删除' : '网站配置已移除',
+      deleteMode.value === 'full'
+        ? `${result.primaryDomain} 已按 k web 业务清理；Nginx 已重新校验并加载。`
+        : `${result.primaryDomain} 的 Nginx 访问配置已移除，网站目录、证书和数据库均已保留。`,
+    )
+    await load(true)
+  } catch (reason) {
+    deleteError.value = reason instanceof ApiError ? reason.message : '删除失败，原网站产物已尽可能恢复。'
+  } finally {
+    deleting.value = false
+  }
+}
+
 watch(editorOpen, (open) => {
   if (!open) formError.value = ''
 })
@@ -545,6 +589,16 @@ onBeforeUnmount(() => controller?.abort())
                 >
                   设置
                 </button>
+                <button
+                  v-if="site.allowedActions?.includes('delete')"
+                  class="button button--ghost button--small button--danger-text"
+                  type="button"
+                  :disabled="panel.isReadOnly.value || !canCreate"
+                  :title="!canCreate ? siteWriteReason : ''"
+                  @click="openDelete(site)"
+                >
+                  删除
+                </button>
               </td>
             </tr>
           </tbody>
@@ -622,6 +676,16 @@ onBeforeUnmount(() => controller?.abort())
         </div>
       </template>
       <template #footer>
+        <button
+          v-if="selectedSite?.allowedActions?.includes('delete')"
+          class="button button--ghost button--danger-text"
+          type="button"
+          :disabled="panel.isReadOnly.value || !canCreate"
+          :title="!canCreate ? siteWriteReason : ''"
+          @click="openDelete(selectedSite)"
+        >
+          <Trash2 :size="16" /> 删除站点
+        </button>
         <button class="button button--secondary" type="button" @click="selectedSite = undefined">关闭</button>
         <button
           v-if="selectedSite?.allowedActions?.includes('update')"
@@ -632,6 +696,69 @@ onBeforeUnmount(() => controller?.abort())
           @click="openEdit(selectedSite)"
         >
           编辑设置
+        </button>
+      </template>
+    </ModalDialog>
+
+    <ModalDialog
+      :open="deleteOpen && Boolean(deletingSite)"
+      :title="`删除 ${deletingSite?.primaryDomain || ''}`"
+      description="仅对当前仍与实际产物一致的网站开放；提交后会先撤下候选产物，通过 nginx -t 后才 reload。"
+      size="small"
+      @close="!deleting && (deleteOpen = false)"
+    >
+      <form id="site-delete-form" class="form-stack" @submit.prevent="deleteSite">
+        <div v-if="deleteError" class="inline-alert inline-alert--danger" role="alert">{{ deleteError }}</div>
+
+        <fieldset class="delete-mode-grid">
+          <legend>删除范围</legend>
+          <button
+            type="button"
+            :class="{ 'is-active': deleteMode === 'configuration' }"
+            @click="deleteMode = 'configuration'"
+          >
+            <strong>仅移除网站配置</strong>
+            <small>删除 Nginx 入口；保留网站目录、证书和数据库，便于重新绑定。</small>
+          </button>
+          <button
+            type="button"
+            :class="{ 'is-active': deleteMode === 'full' }"
+            @click="deleteMode = 'full'"
+          >
+            <strong>按 k web 完整删除</strong>
+            <small>同时删除该域名的网站目录、证书和同名数据库（若存在），与 k web 删除产物一致。</small>
+          </button>
+        </fieldset>
+
+        <div v-if="deleteMode === 'full'" class="inline-alert inline-alert--danger">
+          <TriangleAlert :size="17" />
+          <span>完整删除不可从面板撤销。请先确认网站数据已有独立备份。</span>
+        </div>
+
+        <label class="field">
+          <span>输入主域名确认</span>
+          <input
+            v-model.trim="deleteConfirmation"
+            autocomplete="off"
+            spellcheck="false"
+            :placeholder="deletingSite?.primaryDomain"
+          />
+          <small>必须完整输入 <code>{{ deletingSite?.primaryDomain }}</code></small>
+        </label>
+      </form>
+      <template #footer>
+        <button class="button button--secondary" type="button" :disabled="deleting" @click="deleteOpen = false">
+          取消
+        </button>
+        <button
+          class="button button--danger"
+          type="submit"
+          form="site-delete-form"
+          :disabled="deleting || deleteConfirmation !== deletingSite?.primaryDomain"
+        >
+          <LoaderCircle v-if="deleting" class="spin" :size="16" />
+          <Trash2 v-else :size="16" />
+          {{ deleting ? '正在安全删除…' : deleteMode === 'full' ? '完整删除站点' : '移除网站配置' }}
         </button>
       </template>
     </ModalDialog>

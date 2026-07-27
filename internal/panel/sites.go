@@ -150,6 +150,8 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	var input struct {
 		ExpectedResourceVersion optionalString `json:"expectedResourceVersion"`
+		Mode                    optionalString `json:"mode"`
+		ConfirmDomain           optionalString `json:"confirmDomain"`
 	}
 	if err := s.decodeJSON(w, r, &input); err != nil {
 		return
@@ -159,15 +161,40 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeValidationProblem(w, r, "expectedResourceVersion", "a valid expectedResourceVersion is required")
 		return
 	}
+	if !input.Mode.Set ||
+		(input.Mode.Value != "configuration" && input.Mode.Value != "full") {
+		s.writeValidationProblem(w, r, "mode", "mode must be configuration or full")
+		return
+	}
+	if !input.ConfirmDomain.Set {
+		s.writeValidationProblem(w, r, "confirmDomain", "a valid confirmation domain is required")
+		return
+	}
+	if input.ConfirmDomain.Set {
+		normalized, valid := normalizePanelSiteDomain(input.ConfirmDomain.Value)
+		if !valid || normalized != input.ConfirmDomain.Value {
+			s.writeValidationProblem(w, r, "confirmDomain", "a valid lowercase confirmation domain is required")
+			return
+		}
+	}
 	payload := struct {
 		ExpectedResourceVersion string `json:"expectedResourceVersion"`
-	}{ExpectedResourceVersion: input.ExpectedResourceVersion.Value}
+		Mode                    string `json:"mode"`
+		ConfirmDomain           string `json:"confirmDomain,omitempty"`
+	}{
+		ExpectedResourceVersion: input.ExpectedResourceVersion.Value,
+		Mode:                    input.Mode.Value,
+		ConfirmDomain:           input.ConfirmDomain.Value,
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
 		return
 	}
-	change := map[string]any{"resourceVersion": input.ExpectedResourceVersion.Value}
+	change := map[string]any{
+		"resourceVersion": input.ExpectedResourceVersion.Value,
+		"mode":            input.Mode.Value,
+	}
 	if err := s.audit(r, session.User.ID, "site.delete", "site", siteID, "intent", change); err != nil {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return

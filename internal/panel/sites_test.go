@@ -145,6 +145,83 @@ func TestSiteCreateProxiesAgentProblemAndAuditsSafeMetadata(t *testing.T) {
 	}
 }
 
+func TestSiteDeleteRequiresExplicitScopeAndConfirmation(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	version := "sha256:" + strings.Repeat("b", 64)
+	id := strings.Repeat("a", 32)
+	agent := &stubAgent{response: AgentResponse{
+		StatusCode:  http.StatusOK,
+		ContentType: "application/json",
+		Body: []byte(`{
+			"id":"` + id + `",
+			"primaryDomain":"example.com",
+			"status":"deleted",
+			"mode":"full",
+			"resourceVersion":"` + version + `",
+			"removed":["nginx_config","document_root"],
+			"databaseDropped":false
+		}`),
+	}}
+	server.agent = agent
+
+	invalid := authenticatedSiteRequest(
+		server,
+		sessionCookie,
+		csrfCookie,
+		http.MethodDelete,
+		"/api/v1/sites/"+id,
+		[]byte(`{"expectedResourceVersion":"`+version+`"}`),
+		true,
+	)
+	if invalid.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("delete without scope returned %d: %s", invalid.Code, invalid.Body.String())
+	}
+	if calls := agent.snapshotCalls(); len(calls) != 0 {
+		t.Fatalf("invalid delete reached Agent: %#v", calls)
+	}
+
+	response := authenticatedSiteRequest(
+		server,
+		sessionCookie,
+		csrfCookie,
+		http.MethodDelete,
+		"/api/v1/sites/"+id,
+		[]byte(`{
+			"expectedResourceVersion":"`+version+`",
+			"mode":"full",
+			"confirmDomain":"example.com"
+		}`),
+		true,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid delete failed: %d %s", response.Code, response.Body.String())
+	}
+	calls := agent.snapshotCalls()
+	if len(calls) != 1 || calls[0].method != http.MethodDelete ||
+		calls[0].path != "/v1/sites/"+id {
+		t.Fatalf("delete was not routed exactly: %#v", calls)
+	}
+	var forwarded map[string]any
+	if err := json.Unmarshal(calls[0].body, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	if forwarded["expectedResourceVersion"] != version ||
+		forwarded["mode"] != "full" ||
+		forwarded["confirmDomain"] != "example.com" {
+		t.Fatalf("unexpected delete payload: %#v", forwarded)
+	}
+	events, _ := server.store.ListAudit(20, "")
+	for _, event := range events {
+		if event.Action != "site.delete" {
+			continue
+		}
+		if _, leaked := event.Change["confirmDomain"]; leaked {
+			t.Fatalf("confirmation domain leaked into audit metadata: %#v", event.Change)
+		}
+	}
+}
+
 func TestSiteWritesRejectUnsafeRequestsBeforeAgentCall(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)

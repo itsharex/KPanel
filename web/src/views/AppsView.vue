@@ -412,7 +412,12 @@ async function removeDomain(site: Site): Promise<void> {
   operation.value = `remove_domain:${site.id}`
   domainError.value = ''
   try {
-    await api.sites.remove(site.id, site.resourceVersion)
+    await api.sites.remove(
+      site.id,
+      site.resourceVersion,
+      'configuration',
+      site.primaryDomain,
+    )
     toast.success('域名已解绑', `${site.primaryDomain} 的反向代理已安全移除。`)
     await load(true)
   } catch (reason) {

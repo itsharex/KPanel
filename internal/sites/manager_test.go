@@ -21,6 +21,9 @@ type fakeNginxController struct {
 	reloadErrs []error
 	tests      int
 	reloads    int
+	dropDomain string
+	dropResult bool
+	dropErr    error
 }
 
 func (f *fakeNginxController) NginxReady(context.Context) error {
@@ -47,6 +50,11 @@ func (f *fakeNginxController) NginxReload(context.Context) error {
 		return f.reloadErrs[index]
 	}
 	return nil
+}
+
+func (f *fakeNginxController) DropSiteDatabase(_ context.Context, domain string) (bool, error) {
+	f.dropDomain = domain
+	return f.dropResult, f.dropErr
 }
 
 func TestCreateStaticProducesCanonicalDiscoverableArtifacts(t *testing.T) {
@@ -182,7 +190,11 @@ func TestDeleteManagedProxyRemovesOnlyCanonicalConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := manager.Delete(context.Background(), created.ID, created.ResourceVersion)
+	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
+		ExpectedResourceVersion: created.ResourceVersion,
+		Mode:                    "configuration",
+		ConfirmDomain:           created.PrimaryDomain,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +209,7 @@ func TestDeleteManagedProxyRemovesOnlyCanonicalConfig(t *testing.T) {
 	}
 }
 
-func TestDeleteRejectsManagedStaticSite(t *testing.T) {
+func TestDeleteManagedStaticConfigurationPreservesContent(t *testing.T) {
 	manager, _, root := newTestManager(t)
 	created, err := manager.Create(context.Background(), SiteInput{
 		PrimaryDomain: "static-delete.example.com", Type: "static",
@@ -205,12 +217,103 @@ func TestDeleteRejectsManagedStaticSite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = manager.Delete(context.Background(), created.ID, created.ResourceVersion)
-	if !errors.Is(err, ErrForbidden) {
-		t.Fatalf("Delete() error = %v, want ErrForbidden", err)
+	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
+		ExpectedResourceVersion: created.ResourceVersion,
+		Mode:                    "configuration",
+		ConfirmDomain:           created.PrimaryDomain,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "conf.d", "static-delete.example.com.conf")); err != nil {
-		t.Fatalf("static config changed: %v", err)
+	if result.Mode != "configuration" || len(result.Removed) != 1 ||
+		result.Removed[0] != "nginx_config" {
+		t.Fatalf("unexpected delete result: %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, "conf.d", "static-delete.example.com.conf")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("static config still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "html", "static-delete.example.com", "index.html")); err != nil {
+		t.Fatalf("configuration-only delete removed content: %v", err)
+	}
+}
+
+func TestDeleteManagedPHPFullRemovesKWebArtifactsAndDatabase(t *testing.T) {
+	manager, nginx, root := newTestManager(t)
+	nginx.dropResult = true
+	created, err := manager.Create(context.Background(), SiteInput{
+		PrimaryDomain: "php-delete.example.com", Type: "php", PHPVersion: "latest",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath := filepath.Join(root, "certs", created.PrimaryDomain+"_cert.pem")
+	keyPath := filepath.Join(root, "certs", created.PrimaryDomain+"_key.pem")
+	if err := os.WriteFile(certPath, []byte("test certificate"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, []byte("test key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
+		ExpectedResourceVersion: created.ResourceVersion,
+		Mode:                    "full",
+		ConfirmDomain:           created.PrimaryDomain,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != "full" || !result.DatabaseDropped ||
+		nginx.dropDomain != created.PrimaryDomain || len(result.Removed) != 4 {
+		t.Fatalf("unexpected full delete result: result=%#v runtime=%#v", result, nginx)
+	}
+	for _, path := range []string{
+		filepath.Join(root, "conf.d", created.PrimaryDomain+".conf"),
+		filepath.Join(root, "html", created.PrimaryDomain),
+		certPath,
+		keyPath,
+	} {
+		if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("full delete left artifact %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestDeleteRequiresExactDomainAndRollsBackFailedCandidate(t *testing.T) {
+	manager, nginx, root := newTestManager(t)
+	created, err := manager.Create(context.Background(), SiteInput{
+		PrimaryDomain: "rollback-delete.example.com", Type: "static",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "conf.d", created.PrimaryDomain+".conf")
+	indexPath := filepath.Join(root, "html", created.PrimaryDomain, "index.html")
+
+	_, err = manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
+		ExpectedResourceVersion: created.ResourceVersion,
+		Mode:                    "full",
+		ConfirmDomain:           "wrong.example.com",
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("confirmation mismatch error = %v, want ErrForbidden", err)
+	}
+	nginx.mu.Lock()
+	nginx.testErrs = make([]error, nginx.tests+2)
+	nginx.testErrs[nginx.tests+1] = errors.New("candidate rejected")
+	nginx.mu.Unlock()
+	_, err = manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
+		ExpectedResourceVersion: created.ResourceVersion,
+		Mode:                    "full",
+		ConfirmDomain:           created.PrimaryDomain,
+	})
+	if !errors.Is(err, ErrUnprocessable) {
+		t.Fatalf("candidate failure error = %v, want ErrUnprocessable", err)
+	}
+	for _, path := range []string{configPath, indexPath} {
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("failed delete did not restore %s: %v", path, statErr)
+		}
 	}
 }
 

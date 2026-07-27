@@ -571,9 +571,9 @@ func (d *Discoverer) markManagedSite(site *contract.SiteSummary, data []byte, co
 	}
 	site.Consistency = contract.ConsistencyInSync
 	if spec.Kind == contract.SiteWordPress {
-		site.AllowedActions = []string{}
+		site.AllowedActions = []string{"delete"}
 	} else {
-		site.AllowedActions = []string{"update"}
+		site.AllowedActions = []string{"update", "delete"}
 	}
 }
 
