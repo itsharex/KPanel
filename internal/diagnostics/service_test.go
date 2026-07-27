@@ -113,6 +113,92 @@ func TestStartUsesCatalogSelectorAndFixedSystemdWorker(t *testing.T) {
 	}
 }
 
+func TestReloadMarksInterruptedJobFailed(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("diagnostic execution is Linux-only")
+	}
+	root := t.TempDir()
+	runner := &fakeRunner{}
+	first := &Service{
+		runner:       runner,
+		scriptFinder: func() (string, error) { return "/usr/local/bin/k", nil },
+		now:          fixedNow,
+		bootID:       func() string { return "boot-a" },
+		jobs:         make(map[string]record),
+	}
+	stateDir := filepath.Join(root, "jobs")
+	if err := first.configure(stateDir, filepath.Join(root, "agent"), runner); err != nil {
+		t.Fatal(err)
+	}
+	job, err := first.Start(context.Background(), "yabs")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := &Service{
+		runner:       runner,
+		scriptFinder: func() (string, error) { return "/usr/local/bin/k", nil },
+		now:          func() time.Time { return fixedNow().Add(time.Minute) },
+		bootID:       func() string { return "boot-b" },
+		jobs:         make(map[string]record),
+	}
+	if err := reloaded.configure(stateDir, filepath.Join(root, "agent"), runner); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := reloaded.Job(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Status != "failed" || recovered.Stage != "interrupted" ||
+		recovered.FinishedAt == nil {
+		t.Fatalf("recovered job = %#v", recovered)
+	}
+	if _, err := reloaded.Start(context.Background(), "chatgpt"); err != nil {
+		t.Fatalf("interrupted job still blocked a new diagnostic: %v", err)
+	}
+}
+
+func TestReloadMarksExpiredJobFailedWithoutBootID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("diagnostic execution is Linux-only")
+	}
+	root := t.TempDir()
+	runner := &fakeRunner{}
+	first := &Service{
+		runner:       runner,
+		scriptFinder: func() (string, error) { return "/usr/local/bin/k", nil },
+		now:          fixedNow,
+		bootID:       func() string { return "" },
+		jobs:         make(map[string]record),
+	}
+	stateDir := filepath.Join(root, "jobs")
+	if err := first.configure(stateDir, filepath.Join(root, "agent"), runner); err != nil {
+		t.Fatal(err)
+	}
+	job, err := first.Start(context.Background(), "yabs")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := &Service{
+		runner:       runner,
+		scriptFinder: func() (string, error) { return "/usr/local/bin/k", nil },
+		now:          func() time.Time { return fixedNow().Add(maxJobRuntime + time.Minute) },
+		bootID:       func() string { return "" },
+		jobs:         make(map[string]record),
+	}
+	if err := reloaded.configure(stateDir, filepath.Join(root, "agent"), runner); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := reloaded.Job(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Status != "failed" || recovered.Stage != "interrupted" {
+		t.Fatalf("expired job = %#v", recovered)
+	}
+}
+
 func TestCompatibilityRequiresAcceptedExplicitProtocol(t *testing.T) {
 	base := []byte("KJ_TEST_NONINTERACTIVE\nkpanel_test_catalog\nkpanel_run_test_noninteractive\n")
 	if compatibleScript(append(base, []byte("permission_granted=\"false\"\n")...)) {

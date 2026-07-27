@@ -17,8 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
-      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+      DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE || 'kjlion/kejilion-panel' }}
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME || 'kjlion' }}
     steps:
       - name: Check out
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

@@ -28,6 +28,7 @@ const (
 	maxLogBytes     = 8 << 20
 	maxCatalogBytes = 256 << 10
 	maxPublicLines  = 400
+	maxJobRuntime   = 100 * time.Minute
 )
 
 var (
@@ -81,6 +82,7 @@ type Job struct {
 
 type record struct {
 	Job
+	BootID string `json:"bootId,omitempty"`
 }
 
 type commandRunner interface {
@@ -106,6 +108,7 @@ type Service struct {
 	runner       commandRunner
 	scriptFinder func() (string, error)
 	now          func() time.Time
+	bootID       func() string
 	jobs         map[string]record
 }
 
@@ -114,6 +117,7 @@ func New(stateDir, executable string) (*Service, error) {
 		runner:       systemRunner{},
 		scriptFinder: findScript,
 		now:          time.Now,
+		bootID:       currentBootID,
 		jobs:         make(map[string]record),
 	}
 	if err := service.configure(stateDir, executable, service.runner); err != nil {
@@ -134,6 +138,12 @@ func (s *Service) configure(stateDir, executable string, runner commandRunner) e
 	if runner == nil {
 		return errors.New("diagnostics require a background command runner")
 	}
+	if s.now == nil {
+		s.now = time.Now
+	}
+	if s.bootID == nil {
+		s.bootID = currentBootID
+	}
 	if err := os.MkdirAll(stateDir, 0o750); err != nil {
 		return fmt.Errorf("create diagnostic state directory: %w", err)
 	}
@@ -141,6 +151,7 @@ func (s *Service) configure(stateDir, executable string, runner commandRunner) e
 	s.executable = executable
 	s.runner = runner
 	s.load()
+	s.reconcileInterruptedLocked()
 	return nil
 }
 
@@ -229,7 +240,7 @@ func (s *Service) Start(ctx context.Context, checkID string) (Job, error) {
 		EstimatedMinutes: selected.EstimatedMinutes, Impact: selected.Impact,
 		Status: "queued", Stage: "queued", Progress: 0,
 		Message: "体检任务已提交，正在等待后台执行", Logs: []string{}, CreatedAt: now,
-	}}
+	}, BootID: s.bootID()}
 	if !jobIDPattern.MatchString(item.ID) {
 		return Job{}, errors.New("generate diagnostic job identity")
 	}
@@ -294,6 +305,7 @@ func (s *Service) Job(id string) (Job, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reconcileInterruptedLocked()
 	item, err := s.readLocked(id)
 	if err != nil {
 		return Job{}, ErrNotFound
@@ -304,6 +316,7 @@ func (s *Service) Job(id string) (Job, error) {
 func (s *Service) Jobs() []Job {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reconcileInterruptedLocked()
 	records := s.listLocked()
 	result := make([]Job, 0, len(records))
 	for _, item := range records {
@@ -569,12 +582,35 @@ func (s *Service) load() {
 }
 
 func (s *Service) hasActiveLocked() bool {
+	s.reconcileInterruptedLocked()
 	for _, item := range s.listLocked() {
 		if item.Status == "queued" || item.Status == "running" {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *Service) reconcileInterruptedLocked() {
+	currentBoot := s.bootID()
+	now := s.now().UTC()
+	for _, item := range s.jobs {
+		if item.Status != "queued" && item.Status != "running" {
+			continue
+		}
+		bootChanged := item.BootID != "" && currentBoot != "" && item.BootID != currentBoot
+		timedOut := !item.CreatedAt.IsZero() && now.Sub(item.CreatedAt) > maxJobRuntime
+		if !bootChanged && !timedOut {
+			continue
+		}
+		finished := now
+		item.Status = "failed"
+		item.Stage = "interrupted"
+		item.Progress = 100
+		item.Message = "体检任务因系统重启或运行超时而中断，请重新执行"
+		item.FinishedAt = &finished
+		_ = s.putLocked(item)
+	}
 }
 
 func (s *Service) putLocked(item record) error {
@@ -759,4 +795,19 @@ func safeMessage(err error) string {
 		return "体检任务失败"
 	}
 	return value
+}
+
+func currentBootID() string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	value, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return ""
+	}
+	bootID := strings.TrimSpace(string(value))
+	if len(bootID) > 128 {
+		return ""
+	}
+	return bootID
 }

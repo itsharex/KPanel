@@ -39,6 +39,8 @@ Agent 为每个任务创建 `kejilion-panel-diagnostic-<job-id>` transient syste
 
 - 同一时间只运行一个体检；
 - 最长运行 90 分钟；
+- Agent 重启后继续读取同一系统启动周期内的后台任务；系统重启或任务超过 100 分钟时，
+  自动把遗留的运行状态标记为中断，避免永久阻塞新体检；
 - 单任务日志最多写入 8 MiB；
 - API 只返回清理控制字符后的最近 400 行；
 - 最多保留 50 条任务历史；
@@ -51,6 +53,6 @@ Agent 为每个任务创建 `kejilion-panel-diagnostic-<job-id>` transient syste
 ## 验收状态
 
 - **已验证**：目录解析、HTTPS 校验、未知 selector 拒绝、协议许可校验、固定 systemd
-  worker、单任务冲突、日志截断、API 路由、前端类型检查/测试/构建。
+  worker、单任务冲突、跨重启与超时恢复、日志截断、API 路由、前端类型检查/测试/构建。
 - **已实现未实机验证**：目标服务器上的 transient unit、第三方命令真实下载和完整跑分。
 - **不在本版范围**：自定义测试命令、任意 URL、并行跑分、交互式目标 IP 输入。

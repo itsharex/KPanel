@@ -39,6 +39,8 @@ const toast = useToast()
 let controller: AbortController | undefined
 let pollController: AbortController | undefined
 let pollTimer: number | undefined
+let pollInFlight = false
+let pollFailures = 0
 
 const categories = computed(() => catalog.value?.categories || [])
 const visibleChecks = computed(() =>
@@ -89,10 +91,13 @@ function stopPolling(): void {
 }
 
 async function refreshJob(id: string): Promise<void> {
-  pollController?.abort()
-  pollController = new AbortController()
+  if (pollInFlight) return
+  pollInFlight = true
+  const requestController = new AbortController()
+  pollController = requestController
   try {
-    const next = await api.diagnostics.job(id, pollController.signal)
+    const next = await api.diagnostics.job(id, requestController.signal)
+    pollFailures = 0
     const previous = activeJob.value?.status
     activeJob.value = next
     const index = jobs.value.findIndex((item) => item.id === next.id)
@@ -107,13 +112,21 @@ async function refreshJob(id: string): Promise<void> {
     }
   } catch (reason) {
     if (!(reason instanceof DOMException && reason.name === 'AbortError')) {
-      stopPolling()
+      pollFailures += 1
+      if (pollFailures >= 3) {
+        toast.danger('体检进度刷新中断', '后台任务可能仍在运行，请稍后点击刷新重新连接。')
+        stopPolling()
+      }
     }
+  } finally {
+    if (pollController === requestController) pollController = undefined
+    pollInFlight = false
   }
 }
 
 function startPolling(job: DiagnosticJob): void {
   stopPolling()
+  pollFailures = 0
   activeJob.value = job
   void refreshJob(job.id)
   pollTimer = window.setInterval(() => void refreshJob(job.id), 2_000)
@@ -132,8 +145,11 @@ async function load(silent = false): Promise<void> {
     ])
     catalog.value = nextCatalog
     jobs.value = history.items
+    const current = history.items.find((item) => item.id === activeJob.value?.id)
+    if (current) activeJob.value = current
     const active = history.items.find((item) => item.status === 'queued' || item.status === 'running')
     if (active) startPolling(active)
+    else stopPolling()
   } catch (reason) {
     if (!(reason instanceof DOMException && reason.name === 'AbortError')) {
       error.value = reason instanceof ApiError ? reason.message : '无法读取体检项目，请检查 Agent 与 kejilion.sh 版本。'
