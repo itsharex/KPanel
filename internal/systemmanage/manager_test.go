@@ -883,11 +883,39 @@ func TestStartMaintenanceUsesFixedSystemdUnit(t *testing.T) {
 	if status.State != "running" || status.Action != "update" || status.Policy != "full" {
 		t.Fatalf("unexpected maintenance state: %#v", status)
 	}
+	if status.Stage != "launching" || status.Progress != 2 {
+		t.Fatalf("maintenance launch progress was not exposed: %#v", status)
+	}
 	if _, _, err := manager.startMaintenance(context.Background(), "cleanup", "cache"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("second maintenance task should conflict, got %v", err)
 	}
 	if len(runner.commands) != 1 {
 		t.Fatalf("conflicting task reached runner: %#v", runner.commands)
+	}
+}
+
+func TestMaintenanceStatusDetectsSystemdLaunchFailure(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, _, _, _ := testManager(t, runner)
+	now := time.Date(2026, 7, 26, 3, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	runner.run = func(_ context.Context, name string, _ ...string) ([]byte, error) {
+		if name == "systemctl" {
+			return []byte(
+				"LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=exit-code\nExecMainStatus=203\n",
+			), nil
+		}
+		return nil, nil
+	}
+
+	if changed, _, err := manager.startMaintenance(context.Background(), "update", "full"); err != nil || !changed {
+		t.Fatalf("start maintenance: changed=%v err=%v", changed, err)
+	}
+	now = now.Add(maintenanceLaunchGrace + time.Second)
+	status := manager.MaintenanceStatus()
+	if status.State != "failed" || status.Stage != "launch_failed" ||
+		status.Progress != 100 || !strings.Contains(status.Message, "exit-code") {
+		t.Fatalf("launch failure was not reconciled: %#v", status)
 	}
 }
 

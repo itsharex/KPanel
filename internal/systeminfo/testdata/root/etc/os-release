@@ -1,3 +1,5 @@
 NAME="Fixture Linux"
 VERSION="1"
 PRETTY_NAME="Fixture Linux 1"
+ID=fixture
+ID_LIKE="debian linux"

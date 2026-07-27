@@ -50,6 +50,8 @@ type Capability struct {
 type SystemSummary struct {
 	Hostname      string                  `json:"hostname"`
 	OS            string                  `json:"os"`
+	OSID          string                  `json:"osId,omitempty"`
+	OSLike        []string                `json:"osLike,omitempty"`
 	Kernel        string                  `json:"kernel"`
 	Architecture  string                  `json:"architecture"`
 	UptimeSeconds uint64                  `json:"uptimeSeconds"`
@@ -196,15 +198,16 @@ type NetworkSummary struct {
 }
 
 type PublicNetworkSummary struct {
-	IPv4      string     `json:"ipv4,omitempty"`
-	IPv6      string     `json:"ipv6,omitempty"`
-	ISP       string     `json:"isp,omitempty"`
-	Country   string     `json:"country,omitempty"`
-	Region    string     `json:"region,omitempty"`
-	City      string     `json:"city,omitempty"`
-	Timezone  string     `json:"timezone,omitempty"`
-	Source    string     `json:"source,omitempty"`
-	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
+	IPv4        string     `json:"ipv4,omitempty"`
+	IPv6        string     `json:"ipv6,omitempty"`
+	ISP         string     `json:"isp,omitempty"`
+	Country     string     `json:"country,omitempty"`
+	CountryCode string     `json:"countryCode,omitempty"`
+	Region      string     `json:"region,omitempty"`
+	City        string     `json:"city,omitempty"`
+	Timezone    string     `json:"timezone,omitempty"`
+	Source      string     `json:"source,omitempty"`
+	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
 }
 
 type Origin string

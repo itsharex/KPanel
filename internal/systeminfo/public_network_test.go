@@ -166,7 +166,7 @@ func TestMergeIPInfoMetadataSupportsASNObject(t *testing.T) {
 	info.ASN.Name = "Example Transit"
 	var summary contract.PublicNetworkSummary
 	mergeIPInfoMetadata(&summary, info)
-	if summary.ISP != "Example Transit" || summary.Country != "US" {
+	if summary.ISP != "Example Transit" || summary.Country != "US" || summary.CountryCode != "US" {
 		t.Fatalf("unexpected merged metadata: %#v", summary)
 	}
 }

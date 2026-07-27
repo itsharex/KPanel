@@ -77,7 +77,7 @@ func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error)
 		CollectedAt:  c.Now().UTC(),
 	}
 	result.Hostname, _ = os.Hostname()
-	result.OS = c.readOSName()
+	result.OS, result.OSID, result.OSLike = c.readOSRelease()
 	result.Kernel = strings.TrimSpace(c.readOptional("sys/kernel/osrelease"))
 
 	var errs []error
@@ -104,10 +104,10 @@ func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error)
 	return result, errors.Join(errs...)
 }
 
-func (c *Collector) readOSName() string {
+func (c *Collector) readOSRelease() (string, string, []string) {
 	data, err := os.ReadFile(filepath.Join(c.EtcRoot, "os-release"))
 	if err != nil {
-		return runtime.GOOS
+		return runtime.GOOS, runtime.GOOS, nil
 	}
 	values := make(map[string]string)
 	s := bufio.NewScanner(strings.NewReader(string(data)))
@@ -118,10 +118,13 @@ func (c *Collector) readOSName() string {
 		}
 		values[k] = strings.Trim(strings.TrimSpace(v), `"'`)
 	}
-	if values["PRETTY_NAME"] != "" {
-		return values["PRETTY_NAME"]
+	name := values["PRETTY_NAME"]
+	if name == "" {
+		name = strings.TrimSpace(values["NAME"] + " " + values["VERSION"])
 	}
-	return strings.TrimSpace(values["NAME"] + " " + values["VERSION"])
+	id := strings.ToLower(strings.TrimSpace(values["ID"]))
+	like := strings.Fields(strings.ToLower(values["ID_LIKE"]))
+	return name, id, like
 }
 
 func (c *Collector) readLoad(out *contract.LoadSummary) error {

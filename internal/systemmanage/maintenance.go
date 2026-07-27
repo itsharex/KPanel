@@ -18,6 +18,11 @@ import (
 
 const maintenanceUnitPrefix = "kejilion-panel-maintenance-"
 
+const (
+	maintenanceLaunchGrace   = 15 * time.Second
+	maintenanceLaunchTimeout = 2 * time.Minute
+)
+
 type maintenanceStep struct {
 	stage     string
 	progress  int
@@ -30,11 +35,13 @@ type maintenanceStep struct {
 const maintenanceOperationPacmanOrphans = "pacman-orphans"
 
 var pacmanPackagePattern = regexp.MustCompile(`^[a-z0-9@._+][a-z0-9@._+-]{0,127}$`)
+var maintenanceIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,96}$`)
 
 func (m *Manager) MaintenanceStatus() contract.SystemMaintenanceSummary {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	status := m.readMaintenance()
+	m.reconcileMaintenanceLaunch(&status)
 	if status.State == "running" && status.StartedAt != nil && m.now().Sub(*status.StartedAt) > time.Hour {
 		finishedAt := m.now().UTC()
 		status.State = "failed"
@@ -45,6 +52,70 @@ func (m *Manager) MaintenanceStatus() contract.SystemMaintenanceSummary {
 		_ = m.writeMaintenance(status)
 	}
 	return status
+}
+
+func (m *Manager) reconcileMaintenanceLaunch(status *contract.SystemMaintenanceSummary) {
+	if status.State != "running" || status.StartedAt == nil ||
+		(status.Stage != "queued" && status.Stage != "launching") ||
+		!maintenanceIDPattern.MatchString(status.ID) {
+		return
+	}
+	elapsed := m.now().Sub(*status.StartedAt)
+	if elapsed < maintenanceLaunchGrace {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	output, err := m.runner.Run(
+		ctx,
+		"systemctl",
+		"show",
+		maintenanceUnitPrefix+status.ID,
+		"--property=LoadState",
+		"--property=ActiveState",
+		"--property=SubState",
+		"--property=Result",
+		"--property=ExecMainStatus",
+		"--no-pager",
+	)
+	unit := make(map[string]string)
+	for _, line := range strings.Split(string(output), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok {
+			unit[key] = value
+		}
+	}
+	active := unit["ActiveState"]
+	if err == nil && (active == "active" || active == "activating") {
+		return
+	}
+	if err != nil && elapsed < maintenanceLaunchTimeout {
+		return
+	}
+	if err == nil && active == "" && elapsed < maintenanceLaunchTimeout {
+		return
+	}
+
+	details := make([]string, 0, 5)
+	for _, key := range []string{"LoadState", "ActiveState", "SubState", "Result", "ExecMainStatus"} {
+		if value := strings.TrimSpace(unit[key]); value != "" {
+			details = append(details, key+"="+value)
+		}
+	}
+	detail := strings.Join(details, " / ")
+	if detail == "" && err != nil {
+		detail = maintenanceErrorMessage(err)
+	}
+	if detail == "" {
+		detail = "systemd 未返回执行状态"
+	}
+	finishedAt := m.now().UTC()
+	status.State = "failed"
+	status.Stage = "launch_failed"
+	status.Progress = 100
+	status.Message = "后台维护进程未成功启动：" + detail
+	status.FinishedAt = &finishedAt
+	_ = m.writeMaintenance(*status)
 }
 
 func (m *Manager) startMaintenance(
@@ -84,7 +155,7 @@ func (m *Manager) startMaintenance(
 	status := contract.SystemMaintenanceSummary{
 		ID:    idForMaintenance(startedAt),
 		State: "running", Action: action, Policy: policy,
-		Stage: "queued", Progress: 0, Message: "任务已进入 systemd 执行队列",
+		Stage: "launching", Progress: 2, Message: "正在启动 systemd 后台维护任务",
 		StartedAt: &startedAt,
 	}
 	if err := m.writeMaintenance(status); err != nil {
@@ -147,7 +218,7 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 	}
 	status.State = "running"
 	status.Stage = "starting"
-	status.Progress = 1
+	status.Progress = 5
 	status.Message = "正在准备系统维护任务"
 	status.FinishedAt = nil
 	if err := m.writeMaintenance(status); err != nil {

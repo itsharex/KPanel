@@ -58,6 +58,9 @@ const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
 let refreshTimer: number | undefined
+let maintenanceController: AbortController | undefined
+let maintenanceRefreshTimer: number | undefined
+let refreshActive = false
 
 interface ManagementTool {
   id: string
@@ -152,6 +155,36 @@ const cpuFrequencyLabel = computed(() => {
 const publicLocation = computed(() => {
   const network = data.value?.publicNetwork
   return [network?.country, network?.region, network?.city].filter(Boolean).join(' · ') || '未获取'
+})
+
+const publicCountryFlag = computed(() => {
+  const network = data.value?.publicNetwork
+  const code = (network?.countryCode || (network?.country?.length === 2 ? network.country : '')).toUpperCase()
+  if (!/^[A-Z]{2}$/.test(code)) return ''
+  return String.fromCodePoint(...[...code].map((letter) => 0x1f1e6 + letter.charCodeAt(0) - 65))
+})
+
+const osIdentity = computed(() => {
+  const summary = data.value
+  const tokens = [summary?.osId, ...(summary?.osLike || []), summary?.os]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  const distros = [
+    { match: 'ubuntu', key: 'ubuntu', mark: 'U', label: 'Ubuntu' },
+    { match: 'debian', key: 'debian', mark: 'D', label: 'Debian' },
+    { match: 'centos', key: 'centos', mark: 'C', label: 'CentOS' },
+    { match: 'rocky', key: 'rocky', mark: 'R', label: 'Rocky Linux' },
+    { match: 'almalinux', key: 'alma', mark: 'A', label: 'AlmaLinux' },
+    { match: 'fedora', key: 'fedora', mark: 'f', label: 'Fedora' },
+    { match: 'alpine', key: 'alpine', mark: 'A', label: 'Alpine Linux' },
+    { match: 'arch', key: 'arch', mark: 'A', label: 'Arch Linux' },
+    { match: 'opensuse', key: 'suse', mark: 'S', label: 'openSUSE' },
+    { match: 'suse', key: 'suse', mark: 'S', label: 'SUSE' },
+    { match: 'oracle', key: 'oracle', mark: 'O', label: 'Oracle Linux' },
+  ]
+  return distros.find((distro) => tokens.includes(distro.match)) ||
+    { key: 'linux', mark: 'L', label: 'Linux' }
 })
 
 const networkAlgorithm = computed(() => {
@@ -300,6 +333,28 @@ const systemTools = computed<ManagementTool[]>(() => {
 })
 
 const maintenanceRunning = computed(() => data.value?.management.maintenance.state === 'running')
+
+function scheduleMaintenanceRefresh(): void {
+  if (maintenanceRefreshTimer) window.clearTimeout(maintenanceRefreshTimer)
+  if (!refreshActive || !maintenanceRunning.value) return
+  maintenanceRefreshTimer = window.setTimeout(async () => {
+    maintenanceController?.abort()
+    maintenanceController = new AbortController()
+    try {
+      const maintenance = await api.system.maintenance(maintenanceController.signal)
+      if (data.value) data.value.management.maintenance = maintenance
+      if (maintenance.state !== 'running') await load(true)
+    } catch (reason) {
+      if (!(reason instanceof DOMException && reason.name === 'AbortError')) {
+        // The regular overview refresh remains active; a transient poll failure is retried.
+      }
+    } finally {
+      scheduleMaintenanceRefresh()
+    }
+  }, 3_000)
+}
+
+watch(maintenanceRunning, () => scheduleMaintenanceRefresh())
 
 const maintenanceTools = computed<ManagementTool[]>(() => {
   if (!data.value) return []
@@ -549,13 +604,17 @@ async function load(silent = false): Promise<void> {
 }
 
 onMounted(() => {
+  refreshActive = true
   void load()
   refreshTimer = window.setInterval(() => void load(true), 20_000)
 })
 
 onBeforeUnmount(() => {
+  refreshActive = false
   controller?.abort()
+  maintenanceController?.abort()
   if (refreshTimer) window.clearInterval(refreshTimer)
+  if (maintenanceRefreshTimer) window.clearTimeout(maintenanceRefreshTimer)
 })
 </script>
 
@@ -634,7 +693,12 @@ onBeforeUnmount(() => {
           <dl class="detail-list detail-list--grid">
             <div class="detail-list__wide">
               <dt>操作系统</dt>
-              <dd>{{ data.os || '—' }}</dd>
+              <dd class="os-identity">
+                <span class="os-identity__mark" :class="`is-${osIdentity.key}`" :title="osIdentity.label">
+                  {{ osIdentity.mark }}
+                </span>
+                <span>{{ data.os || '—' }}</span>
+              </dd>
             </div>
             <div>
               <dt>内核</dt>
@@ -709,7 +773,12 @@ onBeforeUnmount(() => {
             </div>
             <div class="detail-list__wide">
               <dt>地理位置</dt>
-              <dd>{{ publicLocation }}</dd>
+              <dd class="location-identity">
+                <span v-if="publicCountryFlag" class="country-flag" role="img" :aria-label="data.publicNetwork.country">
+                  {{ publicCountryFlag }}
+                </span>
+                <span>{{ publicLocation }}</span>
+              </dd>
             </div>
             <div class="detail-list__wide">
               <dt>DNS 地址</dt>
@@ -765,6 +834,16 @@ onBeforeUnmount(() => {
               <small>Docker 容器</small>
             </span>
             <em v-if="data.containers">{{ data.containers.running }} 个运行中</em>
+          </RouterLink>
+          <RouterLink to="/apps" class="resource-summary__item">
+            <span class="resource-summary__icon resource-summary__icon--amber"><Boxes :size="20" /></span>
+            <span>
+              <strong>{{ data.apps?.installed ?? '—' }}</strong>
+              <small>已安装应用</small>
+            </span>
+            <em v-if="data.apps">
+              {{ data.apps.running }} 个运行中 · 共 {{ data.apps.total }} 个
+            </em>
           </RouterLink>
           <RouterLink to="/audit" class="resource-summary__item">
             <span class="resource-summary__icon resource-summary__icon--violet"><ShieldCheck :size="20" /></span>

@@ -231,6 +231,8 @@ describe('API client', () => {
             id: jobID,
             domain: 'blog.example.com',
             status: 'queued',
+            stage: 'queued',
+            progress: 0,
             message: 'queued',
             createdAt: '2026-07-26T09:59:55Z',
           },
@@ -242,6 +244,8 @@ describe('API client', () => {
           id: jobID,
           domain: 'blog.example.com',
           status: 'running',
+          stage: 'database',
+          progress: 38,
           message: 'installing',
           createdAt: '2026-07-26T09:59:55Z',
           startedAt: '2026-07-26T09:59:56Z',
@@ -252,6 +256,8 @@ describe('API client', () => {
           id: jobID,
           domain: 'blog.example.com',
           status: 'succeeded',
+          stage: 'completed',
+          progress: 100,
           message: 'completed',
           site: installedRaw,
           createdAt: '2026-07-26T09:59:55Z',
@@ -286,7 +292,13 @@ describe('API client', () => {
       `/api/v1/site-installations/${jobID}`,
       `/api/v1/site-installations/${jobID}`,
     ])
-    expect(onProgress).toHaveBeenCalledWith('running', 'installing')
+    expect(onProgress).toHaveBeenCalledWith({
+      id: jobID,
+      status: 'running',
+      stage: 'database',
+      progress: 38,
+      message: 'installing',
+    })
   })
 
   it('sends only the typed system action payload through the protected mutation path', async () => {
@@ -360,6 +372,8 @@ describe('API client', () => {
     const system = {
       hostname: 'legacy-host',
       os: 'Debian 12',
+      osId: 'debian',
+      osLike: ['linux'],
       kernel: '6.1.0',
       architecture: 'amd64',
       uptimeSeconds: 120,
@@ -380,6 +394,7 @@ describe('API client', () => {
         ipv6: '2001:db8::8',
         isp: 'AS64500 Example Network',
         country: 'CN',
+        countryCode: 'CN',
         region: 'Shanghai',
         city: 'Shanghai',
         timezone: 'Asia/Shanghai',
@@ -404,11 +419,28 @@ describe('API client', () => {
       .mockResolvedValueOnce(jsonResponse({ items: [] }))
       .mockResolvedValueOnce(jsonResponse({ available: false, containers: 0, running: 0, stopped: 0, images: 0, collectedAt }))
       .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse(system.publicNetwork))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          schemaVersion: 1,
+          source: 'fixture',
+          scriptSha256: 'fixture',
+          catalogMode: 'embedded',
+          categories: [],
+          items: [{ id: 'app-1' }, { id: 'app-2' }, { id: 'app-3' }, { id: 'app-4' }],
+          installed: 3,
+          running: 2,
+          updateAvailable: 1,
+          collectedAt,
+        }),
+      )
     vi.stubGlobal('fetch', fetchMock)
 
     const overview = await api.overview.get()
 
     expect(overview.hostname).toBe('legacy-host')
+    expect(overview.osId).toBe('debian')
+    expect(overview.osLike).toEqual(['linux'])
     expect(overview.management).toMatchObject({
       ssh: { ports: [], source: 'unknown' },
       dns: { servers: [], manager: 'unknown' },
@@ -441,9 +473,11 @@ describe('API client', () => {
       ipv6: '2001:db8::8',
       isp: 'AS64500 Example Network',
       country: 'CN',
+      countryCode: 'CN',
       city: 'Shanghai',
       source: 'ipinfo.io',
     })
+    expect(overview.apps).toEqual({ total: 4, installed: 3, running: 2, updateAvailable: 1 })
   })
 
   it('normalizes kejilion.sh and legacy swap artifacts separately', async () => {

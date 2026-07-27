@@ -101,7 +101,23 @@ type wordPressTransaction struct {
 	certificateReady  bool
 }
 
+type wordPressProgress func(stage string, progress int, message string)
+
 func (m *Manager) installWordPress(ctx context.Context, input SiteInput) (contract.SiteSummary, error) {
+	return m.installWordPressWithProgress(ctx, input, nil)
+}
+
+func (m *Manager) installWordPressWithProgress(
+	ctx context.Context,
+	input SiteInput,
+	progress wordPressProgress,
+) (contract.SiteSummary, error) {
+	report := func(stage string, percent int, message string) {
+		if progress != nil {
+			progress(stage, percent, message)
+		}
+	}
+	report("preflight", 5, "正在校验域名、现有站点和宿主机环境")
 	spec, err := normalizeWordPressInput(input)
 	if err != nil {
 		return contract.SiteSummary{}, err
@@ -116,10 +132,12 @@ func (m *Manager) installWordPress(ctx context.Context, input SiteInput) (contra
 		return contract.SiteSummary{}, err
 	}
 
+	report("source", 12, "正在获取 kejilion.sh 固定版本的 WordPress 源码")
 	archive, err := m.archiveLoader(ctx)
 	if err != nil {
 		return contract.SiteSummary{}, fmt.Errorf("%w: load the pinned kejilion.sh WordPress package: %v", ErrUnavailable, err)
 	}
+	report("files", 25, "正在解压并校验 WordPress 文件")
 	stagePath, err := stageWordPressArchive(filepath.Join(m.webRoot, "html"), spec.Primary, archive)
 	if err != nil {
 		return contract.SiteSummary{}, fmt.Errorf("%w: stage WordPress files: %v", ErrUnprocessable, err)
@@ -130,6 +148,7 @@ func (m *Manager) installWordPress(ctx context.Context, input SiteInput) (contra
 		}
 	}()
 
+	report("database", 38, "正在创建与 kejilion.sh 兼容的数据库和账号")
 	databaseName := wordPressDatabaseName(spec.Primary)
 	credentials, err := m.wordPressRuntime.PrepareWordPressDatabase(ctx, databaseName)
 	if err != nil {
@@ -153,6 +172,7 @@ func (m *Manager) installWordPress(ctx context.Context, input SiteInput) (contra
 	if credentials.Name != databaseName {
 		return fail(fmt.Errorf("%w: database runtime returned an unexpected identity", ErrNeedsAttention))
 	}
+	report("configure", 50, "正在写入站点配置并生成文件指纹")
 	if err := configureWordPress(stagePath, spec.Primary, credentials); err != nil {
 		return fail(fmt.Errorf("%w: configure WordPress: %v", ErrUnavailable, err))
 	}
@@ -161,6 +181,7 @@ func (m *Manager) installWordPress(ctx context.Context, input SiteInput) (contra
 		return fail(fmt.Errorf("%w: fingerprint staged WordPress files: %v", ErrUnavailable, err))
 	}
 
+	report("nginx_bootstrap", 62, "正在启用证书签发所需的临时 Nginx 配置")
 	bootstrapTemp, err := writeTemporaryFile(
 		filepath.Dir(tx.configPath), "."+spec.Primary+".kp-wp-bootstrap-*.tmp",
 		tx.bootstrapConfig, 0o640,
@@ -191,11 +212,13 @@ func (m *Manager) installWordPress(ctx context.Context, input SiteInput) (contra
 		return fail(fmt.Errorf("%w: activate ACME bootstrap: %v", ErrUnavailable, err))
 	}
 
+	report("certificate", 73, "正在签发并配置 TLS 证书")
 	if err := m.wordPressRuntime.PrepareWordPressCertificate(ctx, spec.Primary); err != nil {
 		return fail(fmt.Errorf("%w: issue the WordPress certificate: %v", ErrUnavailable, err))
 	}
 	tx.certificateReady = true
 
+	report("publish", 84, "正在发布 WordPress 目录和正式站点配置")
 	if err := atomicNoReplace(stagePath, tx.documentRoot); err != nil {
 		return fail(fmt.Errorf("%w: publish WordPress document root: %v", ErrUnavailable, err))
 	}
@@ -220,6 +243,7 @@ func (m *Manager) installWordPress(ctx context.Context, input SiteInput) (contra
 	if err := syncDirectory(filepath.Dir(tx.configPath)); err != nil {
 		return fail(fmt.Errorf("%w: sync final WordPress configuration: %v", ErrUnavailable, err))
 	}
+	report("activate", 93, "正在校验并重载正式 Nginx 配置")
 	if err := m.nginx.NginxTest(ctx); err != nil {
 		return fail(fmt.Errorf("%w: final WordPress configuration failed nginx -t: %v", ErrUnprocessable, err))
 	}
@@ -237,7 +261,13 @@ func (m *Manager) installWordPress(ctx context.Context, input SiteInput) (contra
 	if err := syncDirectory(filepath.Dir(tx.configPath)); err != nil {
 		return contract.SiteSummary{}, fmt.Errorf("%w: WordPress is active but configuration cleanup was not synced: %v", ErrNeedsAttention, err)
 	}
-	return m.discoverManaged(spec.Primary)
+	report("reconcile", 98, "正在对账网站、证书和 Nginx 实际产物")
+	site, err := m.discoverManaged(spec.Primary)
+	if err != nil {
+		return contract.SiteSummary{}, err
+	}
+	report("completed", 100, "WordPress 网站已完成并与 kejilion.sh 产物对账")
+	return site, nil
 }
 
 func (m *Manager) rollbackWordPress(ctx context.Context, tx *wordPressTransaction) error {

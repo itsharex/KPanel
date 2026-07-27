@@ -19,7 +19,9 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
 	}
-	if got.OS != "Fixture Linux 1" || got.Kernel != "6.8.0-fixture" {
+	if got.OS != "Fixture Linux 1" || got.OSID != "fixture" ||
+		len(got.OSLike) != 2 || got.OSLike[0] != "debian" ||
+		got.Kernel != "6.8.0-fixture" {
 		t.Fatalf("unexpected OS data: %#v", got)
 	}
 	if got.CPU.Cores != 2 || got.CPU.UsagePercent != 0 {

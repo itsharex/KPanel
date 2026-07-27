@@ -216,6 +216,12 @@ func mergeIPInfoMetadata(summary *contract.PublicNetworkSummary, info ipInfoResp
 			summary.Country = cleanPublicField(info.CountryCode, 32)
 		}
 	}
+	if summary.CountryCode == "" {
+		summary.CountryCode = strings.ToUpper(cleanPublicField(info.CountryCode, 2))
+		if summary.CountryCode == "" && len(summary.Country) == 2 {
+			summary.CountryCode = strings.ToUpper(summary.Country)
+		}
+	}
 	if summary.Region == "" {
 		summary.Region = cleanPublicField(info.Region, 96)
 	}

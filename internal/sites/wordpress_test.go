@@ -171,7 +171,8 @@ func TestWordPressJobRunsAsynchronouslyAndPersistsResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Status != "queued" || !wordPressJobIDPattern.MatchString(job.ID) {
+	if job.Status != "queued" || job.Stage != "queued" || job.Progress != 0 ||
+		!wordPressJobIDPattern.MatchString(job.ID) {
 		t.Fatalf("unexpected queued job: %#v", job)
 	}
 
@@ -193,7 +194,8 @@ func TestWordPressJobRunsAsynchronouslyAndPersistsResult(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if job.Site == nil || job.Site.Kind != contract.SiteWordPress ||
-		job.Site.PrimaryDomain != "async.example.com" {
+		job.Site.PrimaryDomain != "async.example.com" ||
+		job.Stage != "completed" || job.Progress != 100 {
 		t.Fatalf("unexpected job result: %#v", job)
 	}
 	if _, err := os.Stat(filepath.Join(stateDir, job.ID+".json")); err != nil {
@@ -228,7 +230,8 @@ func TestWordPressJobRecoveryFailsInterruptedWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recovered.Status != "failed" || recovered.EndedAt == nil ||
+	if recovered.Status != "failed" || recovered.Stage != "interrupted" ||
+		recovered.Progress != 100 || recovered.EndedAt == nil ||
 		!strings.Contains(recovered.Message, "Agent") {
 		t.Fatalf("unexpected recovered job: %#v", recovered)
 	}

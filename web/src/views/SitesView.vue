@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   ArrowRight,
   Braces,
+  ExternalLink,
   FileCode2,
   Flame,
   Globe2,
@@ -27,7 +28,7 @@ import { ApiError, api } from '@/lib/api'
 import { formatDateTime, relativeTime, shortId } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
 import { useToast } from '@/stores/toast'
-import type { Site, SiteInput } from '@/types/api'
+import type { Site, SiteInput, SiteInstallationProgress } from '@/types/api'
 
 type Filter = 'all' | 'healthy' | 'drifted' | 'config-only'
 type SiteServiceType = SiteInput['type']
@@ -46,7 +47,7 @@ const editorOpen = ref(false)
 const editingSite = ref<Site>()
 const submitting = ref(false)
 const formError = ref('')
-const installProgress = ref('')
+const installProgress = ref<SiteInstallationProgress>()
 const deleteOpen = ref(false)
 const deletingSite = ref<Site>()
 const deleteMode = ref<'configuration' | 'full'>('configuration')
@@ -55,6 +56,29 @@ const deleting = ref(false)
 const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
+
+const installStageLabel = computed(() => {
+  const stage = installProgress.value?.stage
+  const labels: Record<string, string> = {
+    submitting: '提交配置',
+    queued: '等待执行',
+    preflight: '环境校验',
+    source: '获取源码',
+    files: '准备文件',
+    database: '创建数据库',
+    configure: '写入配置',
+    nginx_bootstrap: '临时入口',
+    certificate: '签发证书',
+    installing: '执行脚本',
+    publish: '发布站点',
+    activate: '激活服务',
+    reconciling: '产物对账',
+    reconcile: '产物对账',
+    completed: '搭建完成',
+    failed: '搭建失败',
+  }
+  return labels[stage || ''] || '正在执行'
+})
 
 const serviceOptions = [
   {
@@ -332,7 +356,7 @@ function openCreate(): void {
   form.redirectCode = 301
   form.phpVersion = 'latest'
   formError.value = ''
-  installProgress.value = ''
+  installProgress.value = undefined
   editorOpen.value = true
 }
 
@@ -350,7 +374,7 @@ function openEdit(site: Site): void {
   form.redirectTarget = redirectMatch?.[2] || ''
   form.phpVersion = site.type === 'php' && site.upstream === 'php74' ? '7.4' : 'latest'
   formError.value = ''
-  installProgress.value = ''
+  installProgress.value = undefined
   selectedSite.value = undefined
   editorOpen.value = true
 }
@@ -371,8 +395,12 @@ async function submitSite(): Promise<void> {
   }
 
   submitting.value = true
-  installProgress.value =
-    form.type === 'wordpress' || form.type === 'recipe' ? '正在创建后台安装任务…' : ''
+  installProgress.value = {
+    status: 'running',
+    stage: 'submitting',
+    progress: 2,
+    message: editingSite.value ? '正在提交网站设置。' : '正在提交建站配置并检查现有产物。',
+  }
   const input: SiteInput = {
     primaryDomain: form.primaryDomain.trim().toLowerCase(),
     aliases: form.type === 'wordpress' || form.type === 'recipe' ? [] : form.aliases
@@ -394,8 +422,8 @@ async function submitSite(): Promise<void> {
     const wasEditing = Boolean(editingSite.value)
     const savedSite = editingSite.value
       ? await api.sites.update(editingSite.value.id, input)
-      : await api.sites.create(input, (_status, message) => {
-          installProgress.value = message
+      : await api.sites.create(input, (progress) => {
+          installProgress.value = progress
         })
     editorOpen.value = false
     toast.success(
@@ -413,7 +441,7 @@ async function submitSite(): Promise<void> {
     formError.value = reason instanceof ApiError ? reason.message : '操作失败，请稍后重试。'
   } finally {
     submitting.value = false
-    installProgress.value = ''
+    installProgress.value = undefined
   }
 }
 
@@ -454,8 +482,17 @@ async function deleteSite(): Promise<void> {
 }
 
 watch(editorOpen, (open) => {
-  if (!open) formError.value = ''
+  if (!open) {
+    formError.value = ''
+    installProgress.value = undefined
+  }
 })
+
+function sitePublicURL(site: Site): string {
+  const certificateStatus = site.certificate?.status
+  const protocol = certificateStatus && !['missing', 'unknown'].includes(certificateStatus) ? 'https' : 'http'
+  return `${protocol}://${site.primaryDomain}`
+}
 
 onMounted(() => void load())
 onBeforeUnmount(() => controller?.abort())
@@ -538,13 +575,19 @@ onBeforeUnmount(() => controller?.abort())
           <tbody>
             <tr v-for="site in filteredSites" :key="site.id">
               <td>
-                <button class="resource-name" type="button" @click="selectedSite = site">
+                <a
+                  class="resource-name resource-name--link"
+                  :href="sitePublicURL(site)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  :title="`访问 ${site.primaryDomain}`"
+                >
                   <span class="resource-name__icon"><Globe2 :size="18" /></span>
                   <span>
-                    <strong>{{ site.primaryDomain }}</strong>
+                    <strong>{{ site.primaryDomain }} <ExternalLink :size="11" /></strong>
                     <small>{{ site.enabled ? '已启用' : '已停用' }} · {{ site.domains.length }} 个域名</small>
                   </span>
-                </button>
+                </a>
               </td>
               <td>
                 <div class="table-stack">
@@ -674,6 +717,15 @@ onBeforeUnmount(() => controller?.abort())
         </div>
       </template>
       <template #footer>
+        <a
+          v-if="selectedSite"
+          class="button button--secondary"
+          :href="sitePublicURL(selectedSite)"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <ExternalLink :size="16" /> 访问网站
+        </a>
         <button
           v-if="selectedSite?.allowedActions?.includes('delete')"
           class="button button--ghost button--danger-text"
@@ -756,17 +808,25 @@ onBeforeUnmount(() => controller?.abort())
       :title="editingSite ? '编辑网站设置' : '新建网站'"
       description="按 kejilion.sh 的站点架构生成固定配置；先通过 nginx -t，成功后才 reload。"
       size="large"
-      @close="editorOpen = false"
+      @close="!submitting && (editorOpen = false)"
     >
       <form id="site-form" class="form-stack" @submit.prevent="submitSite">
         <div v-if="formError" class="inline-alert inline-alert--danger" role="alert">{{ formError }}</div>
-        <div
-          v-if="submitting && (form.type === 'wordpress' || form.type === 'recipe')"
-          class="inline-alert inline-alert--info"
-          role="status"
-        >
-          <LoaderCircle class="spin" :size="17" />
-          <span>{{ installProgress || '一键建站任务正在执行…' }}</span>
+        <div v-if="submitting && installProgress" class="site-install-progress" role="status" aria-live="polite">
+          <div class="site-install-progress__heading">
+            <span><LoaderCircle class="spin" :size="17" /> {{ installStageLabel }}</span>
+            <strong>{{ installProgress.progress }}%</strong>
+          </div>
+          <div
+            class="site-install-progress__track"
+            role="progressbar"
+            :aria-valuenow="installProgress.progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+          >
+            <span :style="{ width: `${installProgress.progress}%` }"></span>
+          </div>
+          <p>{{ installProgress.message }}</p>
         </div>
         <label class="field">
           <span>主域名</span>
@@ -973,7 +1033,7 @@ onBeforeUnmount(() => controller?.abort())
         </div>
       </form>
       <template #footer>
-        <button class="button button--secondary" type="button" @click="editorOpen = false">取消</button>
+        <button class="button button--secondary" type="button" :disabled="submitting" @click="editorOpen = false">取消</button>
         <button class="button button--primary" type="submit" form="site-form" :disabled="submitting || !canSubmit">
           <LoaderCircle v-if="submitting" class="spin" :size="16" />
           {{

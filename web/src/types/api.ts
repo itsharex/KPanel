@@ -91,6 +91,7 @@ export interface PublicNetworkSummary {
   ipv6?: string
   isp?: string
   country?: string
+  countryCode?: string
   region?: string
   city?: string
   timezone?: string
@@ -163,6 +164,8 @@ export interface SystemManagement {
 export interface SystemOverview {
   hostname: string
   os: string
+  osId?: string
+  osLike: string[]
   kernel?: string
   architecture?: string
   uptimeSeconds: number
@@ -193,6 +196,12 @@ export interface SystemOverview {
     total: number
     running: number
     stopped: number
+  }
+  apps?: {
+    total: number
+    installed: number
+    running: number
+    updateAvailable: number
   }
 }
 
@@ -374,6 +383,14 @@ export interface SiteInput {
   phpVersion?: 'latest' | '7.4'
   enabled?: boolean
   expectedResourceVersion?: string
+}
+
+export interface SiteInstallationProgress {
+  id?: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  stage: string
+  progress: number
+  message: string
 }
 
 export interface SiteDeleteResult {

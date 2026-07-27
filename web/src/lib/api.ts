@@ -23,6 +23,7 @@ import type {
   Site,
   SiteDeleteResult,
   SiteInput,
+  SiteInstallationProgress,
   SystemActionInput,
   SystemActionResult,
   SystemOverview,
@@ -62,6 +63,8 @@ interface RawAgentHealth {
 interface RawSystemSummary {
   hostname: string
   os: string
+  osId?: string
+  osLike?: string[]
   kernel?: string
   architecture?: string
   uptimeSeconds: number
@@ -94,6 +97,7 @@ interface RawSystemSummary {
     ipv6?: string
     isp?: string
     country?: string
+    countryCode?: string
     region?: string
     city?: string
     timezone?: string
@@ -150,6 +154,7 @@ interface RawPublicNetworkSummary {
   ipv6?: string
   isp?: string
   country?: string
+  countryCode?: string
   region?: string
   city?: string
   timezone?: string
@@ -273,6 +278,8 @@ interface RawWordPressInstallJob {
   id: string
   domain: string
   status: 'queued' | 'running' | 'succeeded' | 'failed'
+  stage?: string
+  progress?: number
   message?: string
   site?: RawSite
 }
@@ -444,17 +451,57 @@ function normalizeAgent(raw: RawAgentHealth): AgentStatus {
   }
 }
 
+function normalizeMaintenance(
+  raw?: NonNullable<RawSystemSummary['management']>['maintenance'],
+): SystemOverview['management']['maintenance'] {
+  return {
+    id: raw?.id,
+    state: ['running', 'succeeded', 'failed'].includes(raw?.state || '')
+      ? (raw?.state as 'running' | 'succeeded' | 'failed')
+      : 'idle',
+    action: raw?.action === 'update' || raw?.action === 'cleanup' ? raw.action : undefined,
+    policy:
+      raw?.policy === 'full' || raw?.policy === 'cache' || raw?.policy === 'standard'
+        ? raw.policy
+        : undefined,
+    stage: raw?.stage,
+    progress: raw?.progress || 0,
+    message: raw?.message,
+    startedAt: raw?.startedAt,
+    finishedAt: raw?.finishedAt,
+    rebootRequired: Boolean(raw?.rebootRequired),
+  }
+}
+
 async function createSite(
   body: SiteInput,
-  onProgress?: (status: string, message: string) => void,
+  onProgress?: (progress: SiteInstallationProgress) => void,
 ): Promise<Site> {
+  onProgress?.({
+    status: 'running',
+    stage: 'submitting',
+    progress: 2,
+    message: '正在提交建站配置并检查现有产物。',
+  })
   const result = await request<RawSite | RawWordPressInstallJob>('/sites', { method: 'POST', body })
   if ((body.type !== 'wordpress' && body.type !== 'recipe') || !('status' in result) || !('id' in result)) {
+    onProgress?.({
+      status: 'succeeded',
+      stage: 'completed',
+      progress: 100,
+      message: '网站配置已创建并通过 Nginx 校验。',
+    })
     return normalizeSite(result as RawSite)
   }
   let job = result as RawWordPressInstallJob
   for (let attempt = 0; attempt <= 900; attempt += 1) {
-    onProgress?.(job.status, job.message || '一键建站任务正在执行。')
+    onProgress?.({
+      id: job.id,
+      status: job.status,
+      stage: job.stage || job.status,
+      progress: Math.min(100, Math.max(0, job.progress ?? (job.status === 'queued' ? 0 : 1))),
+      message: job.message || '一键建站任务正在执行。',
+    })
     if (job.status === 'succeeded') {
       if (!job.site) throw new ApiError('一键建站已完成，但网站对账结果缺失。', 503, 'site_result_missing')
       return normalizeSite(job.site)
@@ -673,6 +720,7 @@ export const api = {
       ])
       let capabilitiesResult: ApiList<Capability> | Capability[] | undefined
       let sitesResult: ApiList<RawSite> | RawSite[] | undefined
+      let appsResult: AppMarketInventory | undefined
       let dockerResult: RawDockerSummary | undefined
       let containersResult: ApiList<RawContainer> | RawContainer[] | undefined
       let publicNetwork: RawPublicNetworkSummary | undefined = system.publicNetwork
@@ -724,6 +772,8 @@ export const api = {
         return {
         hostname: system.hostname,
         os: system.os,
+        osId: system.osId,
+        osLike: system.osLike || [],
         kernel: system.kernel,
         architecture: system.architecture,
         uptimeSeconds: system.uptimeSeconds,
@@ -768,6 +818,7 @@ export const api = {
           ipv6: publicNetwork?.ipv6,
           isp: publicNetwork?.isp,
           country: publicNetwork?.country,
+          countryCode: publicNetwork?.countryCode,
           region: publicNetwork?.region,
           city: publicNetwork?.city,
           timezone: publicNetwork?.timezone,
@@ -805,29 +856,7 @@ export const api = {
           },
           packageManager: system.management?.packageManager,
           packageSources: system.management?.packageSources || [],
-          maintenance: {
-            id: system.management?.maintenance?.id,
-            state: ['running', 'succeeded', 'failed'].includes(system.management?.maintenance?.state || '')
-              ? (system.management?.maintenance?.state as 'running' | 'succeeded' | 'failed')
-              : 'idle',
-            action:
-              system.management?.maintenance?.action === 'update' ||
-              system.management?.maintenance?.action === 'cleanup'
-                ? system.management.maintenance.action
-                : undefined,
-            policy:
-              system.management?.maintenance?.policy === 'full' ||
-              system.management?.maintenance?.policy === 'cache' ||
-              system.management?.maintenance?.policy === 'standard'
-                ? system.management.maintenance.policy
-                : undefined,
-            stage: system.management?.maintenance?.stage,
-            progress: system.management?.maintenance?.progress || 0,
-            message: system.management?.maintenance?.message,
-            startedAt: system.management?.maintenance?.startedAt,
-            finishedAt: system.management?.maintenance?.finishedAt,
-            rebootRequired: Boolean(system.management?.maintenance?.rebootRequired),
-          },
+          maintenance: normalizeMaintenance(system.management?.maintenance),
           ipPreference:
             system.management?.ipPreference === 'ipv4' || system.management?.ipPreference === 'system_default'
               ? system.management.ipPreference
@@ -859,6 +888,14 @@ export const api = {
         containers: dockerResult
           ? { total: dockerResult.containers, running: dockerResult.running, stopped: dockerResult.stopped }
           : undefined,
+        apps: appsResult
+          ? {
+              total: appsResult.items.length,
+              installed: appsResult.installed,
+              running: appsResult.running,
+              updateAvailable: appsResult.updateAvailable,
+            }
+          : undefined,
         }
       }
 
@@ -885,6 +922,10 @@ export const api = {
           publicNetwork = value
           emit()
         }),
+        request<AppMarketInventory>('/apps', { signal }).then((value) => {
+          appsResult = value
+          emit()
+        }),
       ])
       return build()
     },
@@ -892,6 +933,12 @@ export const api = {
   system: {
     action: (body: SystemActionInput): Promise<SystemActionResult> =>
       request<SystemActionResult>('/system/actions', { method: 'POST', body }),
+    maintenance: async (
+      signal?: AbortSignal,
+    ): Promise<SystemOverview['management']['maintenance']> => {
+      const summary = await request<RawSystemSummary>('/system/summary', { signal })
+      return normalizeMaintenance(summary.management?.maintenance)
+    },
     publicNetwork: (signal?: AbortSignal): Promise<RawPublicNetworkSummary> =>
       request<RawPublicNetworkSummary>('/system/public-network', { signal }),
   },

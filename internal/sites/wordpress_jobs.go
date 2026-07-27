@@ -24,6 +24,8 @@ type WordPressJob struct {
 	ID        string                `json:"id"`
 	Domain    string                `json:"domain"`
 	Status    string                `json:"status"`
+	Stage     string                `json:"stage"`
+	Progress  int                   `json:"progress"`
 	Message   string                `json:"message,omitempty"`
 	Site      *contract.SiteSummary `json:"site,omitempty"`
 	CreatedAt time.Time             `json:"createdAt"`
@@ -81,6 +83,8 @@ func (m *Manager) ConfigureWordPressJobState(stateDir string) error {
 		if job.Status == "queued" || job.Status == "running" {
 			now := time.Now().UTC()
 			job.Status = "failed"
+			job.Stage = "interrupted"
+			job.Progress = 100
 			job.Message = "Agent 在安装完成前重启，请核对实际产物后重新提交。"
 			job.EndedAt = &now
 		}
@@ -105,6 +109,7 @@ func (m *Manager) StartWordPress(ctx context.Context, input SiteInput) (WordPres
 	}
 	job := WordPressJob{
 		ID: hex.EncodeToString(idBytes), Domain: spec.Primary,
+		Stage: "queued", Progress: 0,
 		Status: "queued", Message: "安装任务已进入安全事务队列。",
 		CreatedAt: time.Now().UTC(),
 	}
@@ -139,6 +144,8 @@ func (m *Manager) runWordPressJob(id string, input SiteInput) {
 	}
 	now := time.Now().UTC()
 	job.Status = "running"
+	job.Stage = "preflight"
+	job.Progress = 2
 	job.Message = "正在准备 LDNMP、源码、数据库和 TLS 证书。"
 	job.StartedAt = &now
 	if err := registry.put(job); err != nil {
@@ -146,14 +153,27 @@ func (m *Manager) runWordPressJob(id string, input SiteInput) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	site, err := m.installWordPress(ctx, input)
+	site, err := m.installWordPressWithProgress(
+		ctx,
+		input,
+		func(stage string, progress int, message string) {
+			job.Stage = stage
+			job.Progress = progress
+			job.Message = message
+			_ = registry.put(job)
+		},
+	)
 	ended := time.Now().UTC()
 	job.EndedAt = &ended
 	if err != nil {
 		job.Status = "failed"
+		job.Stage = "failed"
+		job.Progress = 100
 		job.Message = safeWordPressJobError(err)
 	} else {
 		job.Status = "succeeded"
+		job.Stage = "completed"
+		job.Progress = 100
 		job.Message = "WordPress 源码、数据库、证书和 Nginx 产物已完成对账。"
 		job.Site = &site
 	}
