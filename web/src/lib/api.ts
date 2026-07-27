@@ -9,6 +9,10 @@ import type {
   AuthStatus,
   DockerInventory,
   DockerActionResult,
+  DockerBackup,
+  DockerContainerStats,
+  DockerExecResult,
+  DockerEnvironment,
   DockerMaintenanceInput,
   DockerMaintenanceJob,
   Job,
@@ -207,6 +211,7 @@ interface RawContainer {
   resourceVersion?: string
   allowedActions?: string[]
   mounts?: Array<{ type?: string; name?: string; source?: string; destination?: string }>
+  networks?: string[]
 }
 
 interface RawDockerImage {
@@ -557,6 +562,13 @@ function normalizeContainer(raw: RawContainer): DockerInventory['containers'][nu
       ip: port.ip,
       protocol: (port.protocol || port.type || 'tcp') as 'tcp' | 'udp' | 'sctp',
     })),
+    networks: raw.networks || [],
+    mounts: (raw.mounts || []).map((mount) => ({
+      type: mount.type || 'unknown',
+      name: mount.name,
+      source: mount.source,
+      destination: mount.destination || '',
+    })),
     allowedActions: actions,
     resourceVersion: raw.resourceVersion,
     statusText: raw.status,
@@ -880,6 +892,8 @@ export const api = {
   system: {
     action: (body: SystemActionInput): Promise<SystemActionResult> =>
       request<SystemActionResult>('/system/actions', { method: 'POST', body }),
+    publicNetwork: (signal?: AbortSignal): Promise<RawPublicNetworkSummary> =>
+      request<RawPublicNetworkSummary>('/system/public-network', { signal }),
   },
   sites: {
     list: async (query?: { search?: string; cursor?: string }, signal?: AbortSignal): Promise<ApiList<Site>> => {
@@ -928,6 +942,8 @@ export const api = {
       }),
   },
   docker: {
+    environment: (signal?: AbortSignal): Promise<DockerEnvironment> =>
+      request<DockerEnvironment>('/docker/environment', { signal }),
     inventory: async (
       signal?: AbortSignal,
       onUpdate?: (inventory: DockerInventory) => void,
@@ -1025,6 +1041,15 @@ export const api = {
         query: { tail },
         signal,
       }),
+    stats: (id: string, signal?: AbortSignal): Promise<DockerContainerStats> =>
+      request<DockerContainerStats>(`/docker/containers/${encodeURIComponent(id)}/stats`, { signal }),
+    exec: (id: string, resourceVersion: string, command: string): Promise<DockerExecResult> =>
+      request<DockerExecResult>(`/docker/containers/${encodeURIComponent(id)}/exec`, {
+        method: 'POST',
+        body: { resourceVersion, command },
+      }),
+    backups: async (signal?: AbortSignal): Promise<ApiList<DockerBackup>> =>
+      normalizeList(await request<ApiList<DockerBackup> | DockerBackup[]>('/docker/backups', { signal })),
     task: (body: DockerMaintenanceInput): Promise<DockerMaintenanceJob> =>
       request<DockerMaintenanceJob>('/docker/tasks', { method: 'POST', body }),
     job: (id: string, signal?: AbortSignal): Promise<DockerMaintenanceJob> =>

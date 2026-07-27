@@ -404,6 +404,13 @@ export interface DockerContainer {
   consistency: ConsistencyState
   project?: string
   ports: DockerPort[]
+  networks: string[]
+  mounts: Array<{
+    type: string
+    name?: string
+    source?: string
+    destination: string
+  }>
   createdAt?: string
   startedAt?: string
   cpuPercent?: number
@@ -454,7 +461,67 @@ export interface DockerInventory {
   errors?: Partial<Record<'images' | 'networks' | 'volumes', string>>
 }
 
+export interface DockerContainerStats {
+  containerId: string
+  cpuPercent: number
+  memoryBytes: number
+  memoryLimitBytes: number
+  memoryPercent: number
+  networkRxBytes: number
+  networkTxBytes: number
+  blockReadBytes: number
+  blockWriteBytes: number
+  pids: number
+  collectedAt: string
+}
+
+export interface DockerExecResult {
+  containerId: string
+  exitCode: number
+  output: string
+  truncated: boolean
+  finishedAt: string
+}
+
+export interface DockerBackup {
+  id: string
+  sizeBytes: number
+  createdAt: string
+  format: 'kpanel-home-docker-v1'
+}
+
+export interface DockerEnvironment {
+  available: boolean
+  engineVersion?: string
+  storageDriver?: string
+  dataRoot?: string
+  containers: number
+  images: number
+  mirrorPreset: 'cn' | 'official' | 'custom'
+  registryMirrors: string[]
+  ipv6Enabled: boolean
+  ipv6Cidr?: string
+  daemonConfig: 'missing' | 'valid' | 'invalid'
+  daemonWarning?: string
+  observedAt: string
+}
+
+export interface DockerContainerCreatePort {
+  privatePort: number
+  publicPort: number
+  protocol?: 'tcp' | 'udp'
+  hostIp?: '0.0.0.0' | '127.0.0.1' | '::' | '::1'
+}
+
+export interface DockerContainerCreateMount {
+  volume: string
+  target: string
+  readOnly?: boolean
+}
+
 export type DockerMaintenanceAction =
+  | 'container_create'
+  | 'container_access'
   | 'image_pull'
   | 'image_remove'
   | 'network_create'
@@ -464,8 +531,14 @@ export type DockerMaintenanceAction =
   | 'volume_create'
   | 'volume_remove'
   | 'backup_create'
+  | 'backup_restore'
+  | 'backup_migrate'
   | 'daemon_mirror'
   | 'daemon_ipv6'
+  | 'container_prune'
+  | 'image_prune'
+  | 'network_prune'
+  | 'volume_prune'
   | 'prune'
 
 export interface DockerMaintenanceInput {
@@ -477,10 +550,20 @@ export interface DockerMaintenanceInput {
   containerId?: string
   containerResourceVersion?: string
   expectedResourceVersion?: string
-  confirmation?: 'PRUNE'
+  confirmation?: 'PRUNE' | 'RESTORE' | 'MIGRATE'
   preset?: 'cn' | 'official'
   enabled?: boolean
   ipv6Cidr?: string
+  ports?: DockerContainerCreatePort[]
+  mounts?: DockerContainerCreateMount[]
+  command?: string[]
+  network?: string
+  restartPolicy?: 'no' | 'always' | 'unless-stopped' | 'on-failure'
+  allowedIp?: string
+  backupId?: string
+  migrationHost?: string
+  migrationUser?: string
+  migrationPort?: number
 }
 
 export interface DockerMaintenanceJob {

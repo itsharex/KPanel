@@ -78,5 +78,7 @@ Docker Events、文件事件与后台周期对账属于后续优化。
 - Compose 工作目录为 `/home/web` 的 LDNMP 容器。
 - Compose 工作目录位于解析后的 `/home/docker` 下且身份唯一的应用。
 
-外部或归属不明确的容器保持只读。KPanel 只允许删除已停止且归属可验证的非面板容器，并通过固定
-Docker API 提供 Pull、网络/卷管理与确认式 Prune；仍不提供任意容器创建、Exec 或 Compose 编辑。
+外部或归属不明确的容器保持只读。KPanel 只允许删除已停止且归属可验证的非面板容器，
+并通过固定 Docker API 提供结构化容器创建、Pull、网络/卷管理与确认式 Prune。
+控制台只对通过相同危险配置检查的运行中容器开放单次无 TTY 命令，不提供宿主机
+Shell、外部容器 Exec 或 Compose 文本编辑。

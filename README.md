@@ -26,8 +26,11 @@ KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录�
   产物，使用在线 ACME 验证、供应链校验、冲突拒绝和失败回滚保护现有网站。
 - Discuz、Kodbox、MacCMS、独角数卡、Flarum、Typecho、LinkStack 和 AI Prompt
   通过 `kejilion.sh` 固定非交互协议在后台一键搭建，直接复用脚本业务分支和真实产物。
-- Docker 容器、镜像、网络、卷渐进查看；已识别 Kejilion 容器的启动、停止、重启、安全删除和有界日志。
-- 镜像拉取/删除、网络与存储卷管理、资源清理、脚本同源镜像组、Docker IPv6 和 `/home/docker` 后台备份。
+- Docker 环境、容器、镜像、网络、卷五分区管理；已识别 Kejilion 容器支持启动、
+  停止、重启、安全删除、有界日志、性能采样、受审计单次控制台与脚本兼容访问控制。
+- 结构化创建容器、镜像拉取/更新/删除、网络成员关系、local 卷、分类/完整清理、
+  脚本同源镜像组、Docker IPv6，以及 `/home/docker` 后台备份、冲突保护还原和
+  SSH 密钥迁移。
 - 与 `app.kejilion.sh` 动态对齐的应用目录、本地图标、脚本安装状态、容器状态、镜像更新检查、
   域名绑定/解绑和访问策略；已审计的标准应用支持持久化后台安装与实时进度，声明式应用额外支持
   安全更新、卸载与失败回滚。
@@ -37,8 +40,9 @@ KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录�
   以及不触碰 Docker、网站和备份的安全系统清理。
 - 管理变更记录、审计、资源版本冲突检测和只读降级。
 
-任意 Shell、公共 Docker Exec、系统重装、磁盘格式化、任意远程命令，以及无法确认归属和
-布局的数据目录硬删除等高风险能力不开放。
+宿主机 Shell、外部/危险容器 Exec、交互式 TTY、任意 Compose/daemon.json 文本、
+系统重装、磁盘格式化、密码式远程命令，以及无法确认归属和布局的数据目录硬删除等
+高风险能力不开放。
 
 ## 文档
 
@@ -49,6 +53,7 @@ KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录�
 - [kejilion.sh 网站业务分析](docs/legacy-site-contract.md)
 - [应用市场对齐与安全边界](docs/application-market.md)
 - [v0.17 业务对齐与加载策略](docs/business-alignment-v0.17.md)
+- [v0.18 Docker 五分区管理与互通边界](docs/docker-management-v0.18.md)
 - [构建、发布与部署](docs/deployment.md)
 - [宿主机系统兼容矩阵](docs/platform-support.md)
 - [版本变更记录](CHANGELOG.md)

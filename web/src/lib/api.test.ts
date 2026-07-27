@@ -589,6 +589,70 @@ describe('API client', () => {
     })
   })
 
+  it('uses dedicated typed endpoints for Docker environment, backups, stats, and console', async () => {
+    const containerID = 'a'.repeat(64)
+    const resourceVersion = `sha256:${'b'.repeat(64)}`
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          available: true,
+          engineVersion: '28.1.1',
+          containers: 1,
+          images: 2,
+          mirrorPreset: 'official',
+          registryMirrors: [],
+          ipv6Enabled: false,
+          daemonConfig: 'missing',
+          observedAt: '2026-07-27T12:00:00Z',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          containerId: containerID,
+          cpuPercent: 1.25,
+          memoryBytes: 1024,
+          memoryLimitBytes: 2048,
+          memoryPercent: 50,
+          networkRxBytes: 10,
+          networkTxBytes: 20,
+          blockReadBytes: 30,
+          blockWriteBytes: 40,
+          pids: 2,
+          collectedAt: '2026-07-27T12:00:00Z',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          containerId: containerID,
+          exitCode: 0,
+          output: 'uid=0(root)',
+          truncated: false,
+          finishedAt: '2026-07-27T12:00:01Z',
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.docker.environment()
+    await api.docker.backups()
+    await api.docker.stats(containerID)
+    await api.docker.exec(containerID, resourceVersion, 'id')
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/docker/environment',
+      '/api/v1/docker/backups',
+      `/api/v1/docker/containers/${containerID}/stats`,
+      `/api/v1/docker/containers/${containerID}/exec`,
+    ])
+    const execInit = fetchMock.mock.calls[3]?.[1] as RequestInit
+    expect(execInit.method).toBe('POST')
+    expect(JSON.parse(String(execInit.body))).toEqual({
+      resourceVersion,
+      command: 'id',
+    })
+  })
+
   it('normalizes list responses without a total field', () => {
     expect(normalizeList({ items: ['a', 'b'] } as { items: string[]; total: number })).toEqual({
       items: ['a', 'b'],
