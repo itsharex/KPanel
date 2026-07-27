@@ -26,6 +26,8 @@ KPanel 0.18 把原“Docker 工具箱”拆为环境、容器、镜像、网络�
   `docker ps`、`docker image ls`、网络和卷命令无需适配即可直接操作。
 - 脚本 Compose 工作目录在 `/home/web` 或 `/home/docker` 且身份唯一时，KPanel
   可继续执行生命周期、日志、性能、控制台和访问控制；危险配置或外部目录保持只读。
+- 脚本以 `docker run` 安装的单容器应用，通过同名 `<容器名>_port.conf` 业务标记
+  建立归属，仍须通过 privileged、host namespace、设备、capability 和挂载边界复核。
 - 备份还原后的项目文件、数值属主和 `appno.txt` 会回到脚本原布局；`appno.txt` 去重合并，
   KPanel 自身目录、备份目录和端口标记不会被覆盖。
 

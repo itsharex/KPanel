@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	pathpkg "path"
 	"path/filepath"
 	"regexp"
@@ -458,7 +459,8 @@ type dockerMount struct {
 }
 
 func (c *Client) summaryFromList(raw containerListItem) contract.ContainerSummary {
-	ownership, evidence := c.ownership(raw.Labels)
+	name := strings.TrimPrefix(first(raw.Names), "/")
+	ownership, evidence := c.ownership(raw.Labels, name)
 	ports := make([]contract.PortBinding, 0, len(raw.Ports))
 	for _, port := range raw.Ports {
 		ports = append(ports, contract.PortBinding{
@@ -473,7 +475,6 @@ func (c *Client) summaryFromList(raw containerListItem) contract.ContainerSummar
 		})
 	}
 	networks := sortedKeys(raw.NetworkSettings.Networks)
-	name := strings.TrimPrefix(first(raw.Names), "/")
 	version := resourceHash(struct {
 		ID, ImageID, State, Status string
 		Labels                     map[string]string
@@ -489,7 +490,8 @@ func (c *Client) summaryFromList(raw containerListItem) contract.ContainerSummar
 }
 
 func (c *Client) summaryFromInspect(raw containerInspect) contract.ContainerSummary {
-	ownership, evidence := c.ownership(raw.Config.Labels)
+	name := strings.TrimPrefix(raw.Name, "/")
+	ownership, evidence := c.ownership(raw.Config.Labels, name)
 	var mounts []contract.Mount
 	for _, mount := range raw.Mounts {
 		mounts = append(mounts, contract.Mount{
@@ -539,7 +541,7 @@ func (c *Client) summaryFromInspect(raw containerInspect) contract.ContainerSumm
 			case "created", "exited", "dead":
 				allowed = []string{"start", "remove"}
 			}
-			if strings.EqualFold(strings.TrimPrefix(raw.Name, "/"), "kejilion-panel") {
+			if strings.EqualFold(name, "kejilion-panel") {
 				allowed = removeString(removeString(removeString(allowed, "remove"), "exec"), "access")
 			}
 			evidence = append(evidence, "危险配置检查通过")
@@ -548,7 +550,7 @@ func (c *Client) summaryFromInspect(raw containerInspect) contract.ContainerSumm
 		}
 	}
 	return contract.ContainerSummary{
-		ID: raw.ID, Name: strings.TrimPrefix(raw.Name, "/"), Image: raw.Config.Image,
+		ID: raw.ID, Name: name, Image: raw.Config.Image,
 		State: raw.State.Status, Status: raw.State.Status, Health: health,
 		Ports: ports, Mounts: mounts, Networks: sortedKeys(raw.NetworkSettings.Networks),
 		ComposeProject: raw.Config.Labels["com.docker.compose.project"],
@@ -557,21 +559,47 @@ func (c *Client) summaryFromInspect(raw containerInspect) contract.ContainerSumm
 	}
 }
 
-func (c *Client) ownership(labels map[string]string) (string, []string) {
+func (c *Client) ownership(labels map[string]string, containerName string) (string, []string) {
 	if labels["io.kejilion.panel.managed"] == "true" {
 		return "kejilion", []string{"io.kejilion.panel.managed=true"}
 	}
 	workdir := labels["com.docker.compose.project.working_dir"]
+	if workdir != "" {
+		if c.provenWithin(workdir, c.webRoot, true) {
+			return "kejilion", []string{"Compose 工作目录为 " + c.webRoot}
+		}
+		if c.provenWithin(workdir, c.appRoot, false) {
+			return "kejilion", []string{"Compose 工作目录位于 " + c.appRoot}
+		}
+	}
+	if c.scriptContainerPortMarker(containerName) {
+		return "kejilion", []string{"存在 kejilion.sh 容器端口标记"}
+	}
 	if workdir == "" {
 		return "external", nil
 	}
-	if c.provenWithin(workdir, c.webRoot, true) {
-		return "kejilion", []string{"Compose 工作目录为 " + c.webRoot}
-	}
-	if c.provenWithin(workdir, c.appRoot, false) {
-		return "kejilion", []string{"Compose 工作目录位于 " + c.appRoot}
-	}
 	return "external", []string{"Compose 工作目录不在 Kejilion 管理范围"}
+}
+
+func (c *Client) scriptContainerPortMarker(containerName string) bool {
+	if !dockerNamePattern.MatchString(containerName) {
+		return false
+	}
+	path := filepath.Join(c.appRoot, containerName+"_port.conf")
+	if !c.provenWithin(filepath.ToSlash(path), c.appRoot, false) {
+		return false
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 ||
+		info.Size() < 1 || info.Size() > 16 {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	port, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 16)
+	return err == nil && port <= 65535
 }
 
 func (c *Client) provenWithin(candidate, root string, exact bool) bool {

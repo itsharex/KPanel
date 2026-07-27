@@ -11,6 +11,8 @@
 - 容器新增支持端口、卷、环境变量和启动参数的结构化创建、按需性能采样、
   受审计的单次控制台命令，以及与
   `kejilion.sh` `DOCKER-USER` 规则形态一致的允许/阻止外部访问。
+- `kejilion.sh` 以单容器方式安装且保留 `<容器名>_port.conf` 标记的应用，
+  经危险配置检查后可在 Docker 页继续执行生命周期、日志、性能和访问控制。
 - Docker 备份增加持久化列表、冲突保护还原和仅使用既有 SSH 密钥及
   `known_hosts` 的迁移；备份保存在 `/home/docker/.kpanel-backups`，KPanel
   更新或卸载不会顺带删除。
