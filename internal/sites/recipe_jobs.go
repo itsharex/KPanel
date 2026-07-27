@@ -47,6 +47,16 @@ var (
 		"linkstack": "9",
 		"ai-prompt": "27",
 	}
+	recipeCommands = map[string]string{
+		"discuz":    "discuz",
+		"kodbox":    "kodbox",
+		"maccms":    "maccms",
+		"dujiaoka":  "dujiaoka",
+		"flarum":    "flarum",
+		"typecho":   "typecho",
+		"linkstack": "linkstack",
+		"ai-prompt": "ai-prompt",
+	}
 )
 
 type RecipeJob struct {
@@ -234,10 +244,17 @@ func (m *Manager) StartRecipe(_ context.Context, input SiteInput) (RecipeJob, er
 		return RecipeJob{}, fmt.Errorf("%w: persist recipe job: %v", ErrNeedsAttention, err)
 	}
 	go m.runRecipeJob(job.ID, scriptSiteInvocation{
-		arguments:   []string{"web"},
+		arguments:   []string{recipeCommands[input.Recipe], domain},
 		environment: []string{"KJ_WEB_NONINTERACTIVE=1", "KJ_WEB_INTERACTIVE=1", "KJ_WEB_RECIPE=" + selector, "KJ_WEB_DOMAIN=" + domain},
-		required:    []string{"KJ_WEB_NONINTERACTIVE", "KJ_WEB_INTERACTIVE", "KJ_WEB_RECIPE", "KJ_WEB_DOMAIN"},
-		timeout:     60 * time.Minute,
+		required: []string{
+			"KJ_WEB_NONINTERACTIVE",
+			"KJ_WEB_INTERACTIVE",
+			"KJ_WEB_RECIPE",
+			"KJ_WEB_DOMAIN",
+			"kpanel_run_web_recipe_cli()",
+			recipeCommands[input.Recipe] + ")",
+		},
+		timeout: 60 * time.Minute,
 	})
 	return job, nil
 }
@@ -274,14 +291,15 @@ func (m *Manager) StartProxy(input SiteInput) (RecipeJob, error) {
 
 func wordPressInvocation(domain string) scriptSiteInvocation {
 	return scriptSiteInvocation{
-		arguments:   []string{"web"},
+		arguments:   []string{"wp", domain},
 		environment: []string{"KJ_WEB_NONINTERACTIVE=1", "KJ_WEB_INTERACTIVE=1", "KJ_WEB_RECIPE=2", "KJ_WEB_DOMAIN=" + domain},
 		required: []string{
 			"KJ_WEB_NONINTERACTIVE",
 			"KJ_WEB_INTERACTIVE",
 			"KJ_WEB_RECIPE",
 			"KJ_WEB_DOMAIN",
-			`ldnmp_wp "${KJ_WEB_DOMAIN:-}"`,
+			"wp|wordpress)",
+			`ldnmp_wp "$@"`,
 		},
 		timeout: 60 * time.Minute,
 	}
@@ -289,7 +307,7 @@ func wordPressInvocation(domain string) scriptSiteInvocation {
 
 func proxyInvocation(domain, host, port string) scriptSiteInvocation {
 	return scriptSiteInvocation{
-		arguments: []string{"web"},
+		arguments: []string{"fd", domain, host, port},
 		environment: []string{
 			"KJ_WEB_NONINTERACTIVE=1",
 			"KJ_WEB_INTERACTIVE=1",
@@ -305,7 +323,8 @@ func proxyInvocation(domain, host, port string) scriptSiteInvocation {
 			"KJ_WEB_DOMAIN",
 			"KJ_WEB_PROXY_HOST",
 			"KJ_WEB_PROXY_PORT",
-			`ldnmp_Proxy "${KJ_WEB_DOMAIN:-}" "${KJ_WEB_PROXY_HOST:-}" "${KJ_WEB_PROXY_PORT:-}"`,
+			"fd|rp|反代)",
+			`ldnmp_Proxy "$@"`,
 		},
 		timeout: 45 * time.Minute,
 	}
@@ -441,6 +460,13 @@ func (m *Manager) InstallationJob(id string) (any, error) {
 		return job, nil
 	}
 	return nil, ErrConflict
+}
+
+func (m *Manager) InstallationJobs() []RecipeJob {
+	if m.recipeJobs == nil {
+		return []RecipeJob{}
+	}
+	return m.recipeJobs.list()
 }
 
 type SiteTerminalChunk struct {
@@ -799,6 +825,7 @@ func findRecipeScript() (string, error) {
 		"KJ_WEB_INTERACTIVE",
 		"KJ_WEB_RECIPE",
 		"KJ_WEB_DOMAIN",
+		"kpanel_run_web_recipe_cli()",
 	)
 }
 
@@ -1012,6 +1039,19 @@ func (registry *recipeJobRegistry) read(id string) (RecipeJob, error) {
 		return RecipeJob{}, ErrConflict
 	}
 	return job, nil
+}
+
+func (registry *recipeJobRegistry) list() []RecipeJob {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	jobs := make([]RecipeJob, 0, len(registry.jobs))
+	for _, job := range registry.jobs {
+		jobs = append(jobs, job)
+	}
+	sort.Slice(jobs, func(i, j int) bool {
+		return jobs[i].CreatedAt.After(jobs[j].CreatedAt)
+	})
+	return jobs
 }
 
 func (registry *recipeJobRegistry) path(id string) string {

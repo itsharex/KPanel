@@ -167,6 +167,55 @@ func (s *Server) handleSiteInstallationInput(w http.ResponseWriter, r *http.Requ
 	s.writeAgentResponse(w, response)
 }
 
+func (s *Server) handleDiagnosticInput(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	const prefix = "/api/v1/diagnostic-jobs/"
+	const suffix = "/input"
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, prefix), suffix)
+	if !siteIDPattern.MatchString(id) {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	var input struct {
+		Data string `json:"data"`
+	}
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	if len(input.Data) == 0 || len(input.Data) > 16<<10 || strings.IndexByte(input.Data, 0) >= 0 {
+		s.writeValidationProblem(w, r, "data", "terminal input must contain 1 to 16384 bytes without NUL")
+		return
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
+		return
+	}
+	response, err := s.agent.Do(
+		r.Context(),
+		http.MethodPost,
+		"/v1/diagnostic-jobs/"+id+"/input",
+		"",
+		requestID(r),
+		body,
+	)
+	if err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	s.writeAgentResponse(w, response)
+}
+
 func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/api/v1/sites" || r.URL.RawPath != "" || r.URL.RawQuery != "" {
 		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
@@ -200,12 +249,12 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		ExpectedResourceVersion optionalString `json:"expectedResourceVersion"`
 		Mode                    optionalString `json:"mode"`
-		ConfirmDomain           optionalString `json:"confirmDomain"`
+		PrimaryDomain           optionalString `json:"primaryDomain"`
 	}
 	if err := s.decodeJSON(w, r, &input); err != nil {
 		return
 	}
-	if !input.ExpectedResourceVersion.Set ||
+	if input.ExpectedResourceVersion.Set &&
 		!resourceVersionPattern.MatchString(input.ExpectedResourceVersion.Value) {
 		s.writeValidationProblem(w, r, "expectedResourceVersion", "a valid expectedResourceVersion is required")
 		return
@@ -215,12 +264,28 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeValidationProblem(w, r, "mode", "mode must be configuration or full")
 		return
 	}
-	payload := struct {
-		ExpectedResourceVersion string `json:"expectedResourceVersion"`
-		Mode                    string `json:"mode"`
-	}{
-		ExpectedResourceVersion: input.ExpectedResourceVersion.Value,
-		Mode:                    input.Mode.Value,
+	if input.Mode.Value == "configuration" && !input.ExpectedResourceVersion.Set {
+		s.writeValidationProblem(w, r, "expectedResourceVersion", "expectedResourceVersion is required for configuration deletion")
+		return
+	}
+	if input.Mode.Value == "full" {
+		if !input.PrimaryDomain.Set {
+			s.writeValidationProblem(w, r, "primaryDomain", "primaryDomain is required for full deletion")
+			return
+		}
+		normalized, valid := normalizePanelSiteDomain(input.PrimaryDomain.Value)
+		if !valid {
+			s.writeValidationProblem(w, r, "primaryDomain", "primaryDomain must be a valid ASCII domain")
+			return
+		}
+		input.PrimaryDomain.Value = normalized
+	}
+	payload := map[string]string{"mode": input.Mode.Value}
+	if input.ExpectedResourceVersion.Set {
+		payload["expectedResourceVersion"] = input.ExpectedResourceVersion.Value
+	}
+	if input.PrimaryDomain.Set {
+		payload["primaryDomain"] = input.PrimaryDomain.Value
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -228,8 +293,13 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	change := map[string]any{
-		"resourceVersion": input.ExpectedResourceVersion.Value,
-		"mode":            input.Mode.Value,
+		"mode": input.Mode.Value,
+	}
+	if input.ExpectedResourceVersion.Set {
+		change["resourceVersion"] = input.ExpectedResourceVersion.Value
+	}
+	if input.PrimaryDomain.Set {
+		change["primaryDomain"] = input.PrimaryDomain.Value
 	}
 	if err := s.audit(r, session.User.ID, "site.delete", "site", siteID, "intent", change); err != nil {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")

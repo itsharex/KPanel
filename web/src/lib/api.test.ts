@@ -167,7 +167,7 @@ describe('API client', () => {
     })
   })
 
-  it('sends an explicit site deletion scope without a typed confirmation gate', async () => {
+  it('sends full site deletion to the script adapter without a browser resource version gate', async () => {
     const id = 'a'.repeat(32)
     const version = `sha256:${'b'.repeat(64)}`
     const fetchMock = vi.fn().mockResolvedValueOnce(
@@ -183,7 +183,7 @@ describe('API client', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(api.sites.remove(id, version, 'full')).resolves.toMatchObject({
+    await expect(api.sites.remove(id, undefined, 'full', 'example.com')).resolves.toMatchObject({
       status: 'deleted',
       mode: 'full',
       primaryDomain: 'example.com',
@@ -192,8 +192,8 @@ describe('API client', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/sites/${id}`)
     expect(requestInit.method).toBe('DELETE')
     expect(JSON.parse(String(requestInit.body))).toEqual({
-      expectedResourceVersion: version,
       mode: 'full',
+      primaryDomain: 'example.com',
     })
   })
 
@@ -317,6 +317,7 @@ describe('API client', () => {
     ])
     expect(onProgress).toHaveBeenCalledWith({
       id: jobID,
+      domain: 'blog.example.com',
       status: 'running',
       stage: 'database',
       progress: 38,
@@ -373,6 +374,7 @@ describe('API client', () => {
     })
     expect(onProgress).toHaveBeenLastCalledWith({
       id: jobID,
+      domain: 'blog.example.com',
       status: 'failed',
       stage: 'failed',
       progress: 35,

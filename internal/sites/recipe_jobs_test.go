@@ -95,7 +95,7 @@ func TestContainsAllRequiresExactWebsiteCommandTokens(t *testing.T) {
 
 func TestDirectWebsiteInvocationsUseKejilionCommands(t *testing.T) {
 	wordPress := wordPressInvocation("blog.example.com")
-	if !reflect.DeepEqual(wordPress.arguments, []string{"web"}) ||
+	if !reflect.DeepEqual(wordPress.arguments, []string{"wp", "blog.example.com"}) ||
 		!reflect.DeepEqual(
 			wordPress.environment,
 			[]string{
@@ -108,7 +108,7 @@ func TestDirectWebsiteInvocationsUseKejilionCommands(t *testing.T) {
 		t.Fatalf("WordPress invocation = %#v", wordPress)
 	}
 	proxy := proxyInvocation("proxy.example.com", "127.0.0.1", "8080")
-	if !reflect.DeepEqual(proxy.arguments, []string{"web"}) ||
+	if !reflect.DeepEqual(proxy.arguments, []string{"fd", "proxy.example.com", "127.0.0.1", "8080"}) ||
 		!reflect.DeepEqual(
 			proxy.environment,
 			[]string{
@@ -137,7 +137,10 @@ func TestSystemdSiteArgumentsRunExactScriptWithoutShellFragments(t *testing.T) {
 		"--",
 		"/bin/bash",
 		"/usr/local/bin/k",
-		"web",
+		"fd",
+		"proxy.example.com",
+		"127.0.0.1",
+		"8080",
 		"--setenv=KJ_WEB_RECIPE=23",
 		"--setenv=KJ_WEB_DOMAIN=proxy.example.com",
 		"--setenv=KJ_WEB_PROXY_HOST=127.0.0.1",

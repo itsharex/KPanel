@@ -28,6 +28,7 @@ type Manager struct {
 	discoverer      *Discoverer
 	nginx           NginxController
 	siteDataRuntime SiteDataRuntime
+	scriptDeleter   siteScriptDeleter
 	recipeJobs      *recipeJobRegistry
 	testHook        func(stage, path string)
 }
@@ -40,6 +41,7 @@ func NewManager(webRoot string, discoverer *Discoverer, nginx NginxController) *
 	}
 	manager := &Manager{
 		webRoot: filepath.Clean(webRoot), discoverer: discoverer, nginx: nginx,
+		scriptDeleter: kejilionSiteScriptDeleter{},
 	}
 	if runtime, ok := nginx.(SiteDataRuntime); ok {
 		manager.siteDataRuntime = runtime
@@ -347,7 +349,7 @@ type DeleteResult struct {
 type DeleteInput struct {
 	ExpectedResourceVersion string `json:"expectedResourceVersion"`
 	Mode                    string `json:"mode"`
-	ConfirmDomain           string `json:"confirmDomain,omitempty"`
+	PrimaryDomain           string `json:"primaryDomain,omitempty"`
 }
 
 type stagedDeleteArtifact struct {
@@ -363,9 +365,6 @@ func (m *Manager) DeleteWithOptions(
 	id string,
 	input DeleteInput,
 ) (DeleteResult, error) {
-	if input.ExpectedResourceVersion == "" {
-		return DeleteResult{}, fmt.Errorf("%w: expectedResourceVersion is required", ErrInvalidInput)
-	}
 	if input.Mode == "" {
 		input.Mode = "configuration"
 	}
@@ -374,6 +373,12 @@ func (m *Manager) DeleteWithOptions(
 			"%w: delete mode must be configuration or full",
 			ErrInvalidInput,
 		)
+	}
+	if input.Mode == "full" && input.ExpectedResourceVersion == "" {
+		return m.deleteWithScript(ctx, id, input.PrimaryDomain)
+	}
+	if input.ExpectedResourceVersion == "" {
+		return DeleteResult{}, fmt.Errorf("%w: expectedResourceVersion is required", ErrInvalidInput)
 	}
 	siteWriteMutex.Lock()
 	defer siteWriteMutex.Unlock()

@@ -27,6 +27,34 @@ type fakeNginxController struct {
 	dropErr    error
 }
 
+type fakeSiteScriptDeleter struct {
+	root    string
+	domain  string
+	outcome scriptDeleteOutcome
+	err     error
+}
+
+func (f *fakeSiteScriptDeleter) Delete(
+	_ context.Context,
+	domain string,
+) (scriptDeleteOutcome, error) {
+	f.domain = domain
+	if f.err != nil {
+		return scriptDeleteOutcome{}, f.err
+	}
+	for _, path := range []string{
+		filepath.Join(f.root, "conf.d", domain+".conf"),
+		filepath.Join(f.root, "html", domain),
+		filepath.Join(f.root, "certs", domain+"_cert.pem"),
+		filepath.Join(f.root, "certs", domain+"_key.pem"),
+	} {
+		if err := os.RemoveAll(path); err != nil {
+			return scriptDeleteOutcome{}, err
+		}
+	}
+	return f.outcome, nil
+}
+
 func (f *fakeNginxController) NginxReady(context.Context) error {
 	return f.readyErr
 }
@@ -235,6 +263,65 @@ func TestDeleteManagedStaticConfigurationPreservesContent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "html", "static-delete.example.com", "index.html")); err != nil {
 		t.Fatalf("configuration-only delete removed content: %v", err)
+	}
+}
+
+func TestFullDeleteWithoutResourceVersionUsesKWebDel(t *testing.T) {
+	manager, _, root := newTestManager(t)
+	created, err := manager.Create(context.Background(), SiteInput{
+		PrimaryDomain: "script-delete.example.com", Type: "static",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeSiteScriptDeleter{
+		root: root,
+		outcome: scriptDeleteOutcome{
+			databaseDropped: true,
+			warnings:        []string{"script warning"},
+		},
+	}
+	manager.scriptDeleter = runner
+
+	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
+		Mode:          "full",
+		PrimaryDomain: created.PrimaryDomain,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.domain != created.PrimaryDomain ||
+		result.Mode != "full" ||
+		!result.DatabaseDropped ||
+		len(result.Warnings) != 1 ||
+		result.Warnings[0] != "script warning" {
+		t.Fatalf("script delete mismatch: result=%#v runner=%#v", result, runner)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "conf.d", created.PrimaryDomain+".conf")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("script delete left Nginx config: %v", statErr)
+	}
+}
+
+func TestFullDeleteWithoutResourceVersionRejectsDomainMismatch(t *testing.T) {
+	manager, _, _ := newTestManager(t)
+	created, err := manager.Create(context.Background(), SiteInput{
+		PrimaryDomain: "expected.example.com", Type: "static",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeSiteScriptDeleter{}
+	manager.scriptDeleter = runner
+
+	_, err = manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
+		Mode:          "full",
+		PrimaryDomain: "other.example.com",
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("domain mismatch error = %v, want ErrConflict", err)
+	}
+	if runner.domain != "" {
+		t.Fatalf("domain mismatch reached k web del: %#v", runner)
 	}
 }
 

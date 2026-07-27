@@ -380,6 +380,8 @@ export interface DiagnosticJob {
   stage: string
   progress: number
   message?: string
+  interactive?: boolean
+  inputOpen?: boolean
   logs: string[]
   createdAt: string
   startedAt?: string
@@ -434,6 +436,8 @@ export interface SiteInput {
 
 export interface SiteInstallationProgress {
   id?: string
+  domain?: string
+  recipe?: string
   interactive?: boolean
   inputOpen?: boolean
   status: 'queued' | 'running' | 'succeeded' | 'failed'

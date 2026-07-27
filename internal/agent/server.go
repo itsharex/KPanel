@@ -145,6 +145,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodPost, s.systemAction)
 	case r.URL.Path == "/v1/sites":
 		s.siteCollection(w, r, requestID)
+	case r.URL.Path == "/v1/site-installations":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.siteInstallationList)
 	case strings.HasPrefix(r.URL.Path, "/v1/site-installations/"):
 		s.siteInstallation(w, r, requestID)
 	case strings.HasPrefix(r.URL.Path, "/v1/sites/"):
@@ -162,7 +164,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/v1/diagnostic-jobs":
 		s.diagnosticJobCollection(w, r, requestID)
 	case strings.HasPrefix(r.URL.Path, "/v1/diagnostic-jobs/"):
-		s.requireMethod(w, r, requestID, http.MethodGet, s.diagnosticJob)
+		s.diagnosticJob(w, r)
 	case r.URL.Path == "/v1/docker/summary":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerSummary)
 	case r.URL.Path == "/v1/docker/environment":
@@ -421,6 +423,14 @@ func (s *Server) siteCollection(w http.ResponseWriter, r *http.Request, requestI
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
 		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
 	}
+}
+
+func (s *Server) siteInstallationList(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(
+		w,
+		http.StatusOK,
+		contract.PageResult[sites.RecipeJob]{Items: s.sitesManager.InstallationJobs()},
+	)
 }
 
 func (s *Server) siteInstallation(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -832,7 +842,7 @@ func (s *Server) diagnosticJobCollection(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) diagnosticJob(w http.ResponseWriter, r *http.Request) {
-	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+	if r.URL.RawPath != "" {
 		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_diagnostic_request", "体检请求无效", "")
 		return
 	}
@@ -840,7 +850,65 @@ func (s *Server) diagnosticJob(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "diagnostics_unavailable", "体检服务不可用", "")
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/v1/diagnostic-jobs/")
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/diagnostic-jobs/")
+	parts := strings.Split(rest, "/")
+	id := parts[0]
+	if !validSiteID(id) || len(parts) > 2 {
+		writeProblem(w, requestIDFrom(w), http.StatusNotFound, "diagnostic_job_not_found", "体检任务不存在", "")
+		return
+	}
+	if len(parts) == 2 && parts[1] == "terminal" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeProblem(w, requestIDFrom(w), http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		offset := int64(0)
+		if raw := r.URL.Query().Get("offset"); raw != "" {
+			var err error
+			offset, err = strconv.ParseInt(raw, 10, 64)
+			if err != nil || offset < 0 {
+				writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
+				return
+			}
+		}
+		chunk, err := s.diagnostics.Terminal(id, offset)
+		if err != nil {
+			writeProblem(w, requestIDFrom(w), http.StatusNotFound, "diagnostic_terminal_not_found", "体检终端不存在", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, chunk)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "input" {
+		if r.Method != http.MethodPost || r.URL.RawQuery != "" {
+			w.Header().Set("Allow", http.MethodPost)
+			writeProblem(w, requestIDFrom(w), http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		var input struct {
+			Data string `json:"data"`
+		}
+		if err := decodeJSON(w, r, &input); err != nil {
+			writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+			return
+		}
+		if err := s.diagnostics.WriteInput(id, input.Data); err != nil {
+			status, code, title := http.StatusConflict, "diagnostic_terminal_closed", "体检终端输入已关闭"
+			if errors.Is(err, diagnostics.ErrInvalidInput) {
+				status, code, title = http.StatusUnprocessableEntity, "invalid_terminal_input", "终端输入无效"
+			}
+			writeProblem(w, requestIDFrom(w), status, code, title, safeDetail(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	if len(parts) != 1 || r.Method != http.MethodGet || r.URL.RawQuery != "" {
+		w.Header().Set("Allow", http.MethodGet)
+		writeProblem(w, requestIDFrom(w), http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+		return
+	}
 	job, err := s.diagnostics.Job(id)
 	if err != nil {
 		writeProblem(w, requestIDFrom(w), http.StatusNotFound, "diagnostic_job_not_found", "体检任务不存在", "")

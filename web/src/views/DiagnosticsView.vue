@@ -17,6 +17,7 @@ import {
 } from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
 import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
@@ -173,7 +174,7 @@ async function confirmStart(): Promise<void> {
     jobs.value.unshift(job)
     pendingCheck.value = undefined
     startPolling(job)
-    toast.success(`${check.name}已开始`, '页面会持续刷新第三方脚本输出。')
+    toast.success(`${check.name}已开始`, '任务已在后台运行；第三方脚本需要确认时可直接在终端输入。')
   } catch (reason) {
     toast.danger(
       '体检任务启动失败',
@@ -293,7 +294,14 @@ onBeforeUnmount(() => {
             <span><i :class="{ 'is-live': hasActiveJob }" /> {{ hasActiveJob ? '实时输出' : '终端输出' }}</span>
             <StatusBadge v-if="activeJob" :status="activeJob.status" />
           </div>
-          <pre class="diagnostic-log" aria-live="polite">{{ activeJob ? activeLog : '选择左侧体检命令，点击“开始体检”后在这里查看实时输出。' }}</pre>
+          <AppInteractiveTerminal
+            v-if="activeJob?.interactive"
+            class="diagnostic-interactive-terminal"
+            :job-id="activeJob.id"
+            :input-open="activeJob.inputOpen"
+            kind="diagnostic"
+          />
+          <pre v-else class="diagnostic-log" aria-live="polite">{{ activeJob ? activeLog : '选择左侧体检命令，点击“开始体检”后在这里查看实时输出。' }}</pre>
           <footer v-if="activeJob">
             <span><Activity :size="14" /> {{ activeJob.message }}</span>
             <span><Timer :size="14" /> {{ formatDateTime(activeJob.startedAt || activeJob.createdAt) }}</span>

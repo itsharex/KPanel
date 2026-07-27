@@ -148,6 +148,9 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleAppAction(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/diagnostic-jobs":
 		s.handleDiagnosticStart(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/diagnostic-jobs/") &&
+		strings.HasSuffix(r.URL.Path, "/input"):
+		s.handleDiagnosticInput(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/") &&
 		strings.HasSuffix(r.URL.Path, "/exec"):
 		s.handleDockerExec(w, r)
@@ -566,6 +569,7 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		"/api/v1/system/summary":        "/v1/system/summary",
 		"/api/v1/system/public-network": "/v1/system/public-network",
 		"/api/v1/sites":                 "/v1/sites",
+		"/api/v1/site-installations":    "/v1/site-installations",
 		"/api/v1/apps":                  "/v1/apps",
 		"/api/v1/app-jobs":              "/v1/app-jobs",
 		"/api/v1/diagnostics":           "/v1/diagnostics",
@@ -598,7 +602,14 @@ func allowedAgentPath(publicPath string) (string, bool) {
 	}
 	const diagnosticJobPrefix = "/api/v1/diagnostic-jobs/"
 	if strings.HasPrefix(publicPath, diagnosticJobPrefix) {
-		id := strings.TrimPrefix(publicPath, diagnosticJobPrefix)
+		rest := strings.TrimPrefix(publicPath, diagnosticJobPrefix)
+		if strings.HasSuffix(rest, "/terminal") {
+			id := strings.TrimSuffix(rest, "/terminal")
+			if siteIDPattern.MatchString(id) {
+				return "/v1/diagnostic-jobs/" + id + "/terminal", true
+			}
+		}
+		id := rest
 		if siteIDPattern.MatchString(id) {
 			return "/v1/diagnostic-jobs/" + id, true
 		}

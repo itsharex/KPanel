@@ -3,7 +3,9 @@ package diagnostics
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -218,6 +220,40 @@ func TestLimitedWriterCapsOutput(t *testing.T) {
 	if !strings.HasPrefix(target.String(), "abcd") ||
 		!strings.Contains(target.String(), "后续内容已截断") {
 		t.Fatalf("limited output = %q", target.String())
+	}
+}
+
+func TestTerminalPreservesANSIOutputAndOffsets(t *testing.T) {
+	stateDir := t.TempDir()
+	id := strings.Repeat("a", 32)
+	service := &Service{
+		stateDir: stateDir,
+		now:      fixedNow,
+		bootID:   func() string { return "boot-a" },
+		jobs:     make(map[string]record),
+	}
+	item := record{Job: Job{
+		ID: id, CheckID: "ip-quality", CheckName: "IP 质量体检",
+		Status: "succeeded", Stage: "completed", Progress: 100,
+		Interactive: true, Logs: []string{}, CreatedAt: fixedNow(),
+	}}
+	if err := service.putLocked(item); err != nil {
+		t.Fatal(err)
+	}
+	output := []byte("\x1b[31mfailed\x1b[0m\r\n")
+	if err := os.WriteFile(service.logPath(id), output, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chunk, err := service.Terminal(id, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(chunk.DataBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded, output) || chunk.NextOffset != int64(len(output)) || !chunk.Finished {
+		t.Fatalf("terminal chunk = %#v, decoded = %q", chunk, decoded)
 	}
 }
 

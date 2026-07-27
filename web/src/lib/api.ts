@@ -280,6 +280,7 @@ interface RawAuditEvent {
 interface RawSiteInstallJob {
   id: string
   domain: string
+  recipe?: string
   interactive?: boolean
   inputOpen?: boolean
   status: 'queued' | 'running' | 'succeeded' | 'failed'
@@ -514,23 +515,7 @@ async function createSite(
   }
   let job = result as RawSiteInstallJob
   for (let attempt = 0; attempt <= 900; attempt += 1) {
-    const progress: SiteInstallationProgress = {
-      id: job.id,
-      status: job.status,
-      stage: job.stage || job.status,
-      progress: Math.min(100, Math.max(0, job.progress ?? (job.status === 'queued' ? 0 : 1))),
-      message: job.message || '一键建站任务正在执行。',
-    }
-    if (job.interactive !== undefined) progress.interactive = Boolean(job.interactive)
-    if (job.inputOpen !== undefined) progress.inputOpen = Boolean(job.inputOpen)
-    if (job.events?.length) {
-      progress.events = job.events.map((event) => ({
-        stage: event.stage,
-        progress: Math.min(100, Math.max(0, event.progress)),
-        message: event.message,
-        at: event.at,
-      }))
-    }
+    const progress = normalizeSiteInstallationProgress(job)
     onProgress?.(progress)
     if (job.status === 'succeeded') {
       if (!job.site) throw new ApiError('一键建站已完成，但网站对账结果缺失。', 503, 'site_result_missing')
@@ -550,6 +535,29 @@ async function createSite(
     )
   }
   throw new ApiError('一键建站状态等待超时，请在网站列表中核对实际产物。', 504, 'site_install_timeout')
+}
+
+function normalizeSiteInstallationProgress(job: RawSiteInstallJob): SiteInstallationProgress {
+  const progress: SiteInstallationProgress = {
+    id: job.id,
+    status: job.status,
+    stage: job.stage || job.status,
+    progress: Math.min(100, Math.max(0, job.progress ?? (job.status === 'queued' ? 0 : 1))),
+    message: job.message || '一键建站任务正在执行。',
+  }
+  if (job.domain) progress.domain = job.domain
+  if (job.recipe) progress.recipe = job.recipe
+  if (job.interactive !== undefined) progress.interactive = Boolean(job.interactive)
+  if (job.inputOpen !== undefined) progress.inputOpen = Boolean(job.inputOpen)
+  if (job.events?.length) {
+    progress.events = job.events.map((event) => ({
+      stage: event.stage,
+      progress: Math.min(100, Math.max(0, event.progress)),
+      message: event.message,
+      at: event.at,
+    }))
+  }
+  return progress
 }
 
 function normalizeSite(raw: RawSite): Site {
@@ -978,6 +986,16 @@ export const api = {
       return { ...result, items: result.items.map(normalizeSite) }
     },
     create: createSite,
+    installations: async (signal?: AbortSignal): Promise<SiteInstallationProgress[]> => {
+      const result = normalizeList(
+        await request<ApiList<RawSiteInstallJob> | RawSiteInstallJob[]>('/site-installations', { signal }),
+      )
+      return result.items.map(normalizeSiteInstallationProgress)
+    },
+    installation: async (id: string, signal?: AbortSignal): Promise<SiteInstallationProgress> =>
+      normalizeSiteInstallationProgress(
+        await request<RawSiteInstallJob>(`/site-installations/${encodeURIComponent(id)}`, { signal }),
+      ),
     terminal: (id: string, offset = 0, signal?: AbortSignal): Promise<AppTerminalChunk> =>
       request<AppTerminalChunk>(`/site-installations/${encodeURIComponent(id)}/terminal`, {
         query: { offset },
@@ -992,12 +1010,20 @@ export const api = {
       normalizeSite(await request<RawSite>(`/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body })),
     remove: (
       id: string,
-      expectedResourceVersion: string,
+      expectedResourceVersion: string | undefined,
       mode: 'configuration' | 'full',
+      primaryDomain?: string,
     ) =>
       request<SiteDeleteResult>(
         `/sites/${encodeURIComponent(id)}`,
-        { method: 'DELETE', body: { expectedResourceVersion, mode } },
+        {
+          method: 'DELETE',
+          body: {
+            ...(expectedResourceVersion ? { expectedResourceVersion } : {}),
+            mode,
+            ...(primaryDomain ? { primaryDomain } : {}),
+          },
+        },
       ),
   },
   apps: {
@@ -1049,6 +1075,16 @@ export const api = {
       ),
     job: (id: string, signal?: AbortSignal): Promise<DiagnosticJob> =>
       request<DiagnosticJob>(`/diagnostic-jobs/${encodeURIComponent(id)}`, { signal }),
+    terminal: (id: string, offset = 0, signal?: AbortSignal): Promise<AppTerminalChunk> =>
+      request<AppTerminalChunk>(`/diagnostic-jobs/${encodeURIComponent(id)}/terminal`, {
+        query: { offset },
+        signal,
+      }),
+    terminalInput: (id: string, data: string): Promise<{ ok: boolean }> =>
+      request<{ ok: boolean }>(`/diagnostic-jobs/${encodeURIComponent(id)}/input`, {
+        method: 'POST',
+        body: { data },
+      }),
     start: (checkId: string): Promise<DiagnosticJob> =>
       request<DiagnosticJob>('/diagnostic-jobs', {
         method: 'POST',

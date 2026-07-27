@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,15 +21,19 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kejilion/kejilion-panel/internal/hostpty"
 )
 
 const (
-	jobUnitPrefix   = "kejilion-panel-diagnostic-"
-	maxStateBytes   = 256 << 10
-	maxLogBytes     = 8 << 20
-	maxCatalogBytes = 256 << 10
-	maxPublicLines  = 400
-	maxJobRuntime   = 100 * time.Minute
+	jobUnitPrefix    = "kejilion-panel-diagnostic-"
+	maxStateBytes    = 256 << 10
+	maxLogBytes      = 8 << 20
+	maxCatalogBytes  = 256 << 10
+	maxPublicLines   = 400
+	maxJobRuntime    = 100 * time.Minute
+	maxTerminalInput = 16 << 10
+	maxTerminalChunk = 64 << 10
 )
 
 var (
@@ -78,6 +83,8 @@ type Job struct {
 	CreatedAt        time.Time  `json:"createdAt"`
 	StartedAt        *time.Time `json:"startedAt,omitempty"`
 	FinishedAt       *time.Time `json:"finishedAt,omitempty"`
+	Interactive      bool       `json:"interactive,omitempty"`
+	InputOpen        bool       `json:"inputOpen,omitempty"`
 }
 
 type record struct {
@@ -240,11 +247,16 @@ func (s *Service) Start(ctx context.Context, checkID string) (Job, error) {
 		EstimatedMinutes: selected.EstimatedMinutes, Impact: selected.Impact,
 		Status: "queued", Stage: "queued", Progress: 0,
 		Message: "体检任务已提交，正在等待后台执行", Logs: []string{}, CreatedAt: now,
+		Interactive: true,
 	}, BootID: s.bootID()}
 	if !jobIDPattern.MatchString(item.ID) {
 		return Job{}, errors.New("generate diagnostic job identity")
 	}
+	if err := hostpty.CreateInput(s.inputPath(item.ID)); err != nil {
+		return Job{}, fmt.Errorf("%w: prepare diagnostic terminal input: %v", ErrUnsupported, err)
+	}
 	if err := s.putLocked(item); err != nil {
+		_ = hostpty.RemoveInput(s.inputPath(item.ID))
 		return Job{}, err
 	}
 	if err := s.launch(ctx, item); err != nil {
@@ -255,6 +267,7 @@ func (s *Service) Start(ctx context.Context, checkID string) (Job, error) {
 		item.Message = safeMessage(err)
 		item.FinishedAt = &finished
 		_ = s.putLocked(item)
+		_ = hostpty.RemoveInput(s.inputPath(item.ID))
 		return Job{}, fmt.Errorf("%w: %v", ErrUnsupported, err)
 	}
 	return s.publicLocked(item), nil
@@ -325,6 +338,77 @@ func (s *Service) Jobs() []Job {
 	return result
 }
 
+type TerminalChunk struct {
+	DataBase64 string `json:"dataBase64"`
+	NextOffset int64  `json:"nextOffset"`
+	InputOpen  bool   `json:"inputOpen"`
+	Finished   bool   `json:"finished"`
+}
+
+func (s *Service) Terminal(id string, offset int64) (TerminalChunk, error) {
+	if !jobIDPattern.MatchString(id) || offset < 0 {
+		return TerminalChunk{}, ErrNotFound
+	}
+	s.mu.Lock()
+	item, err := s.readLocked(id)
+	s.mu.Unlock()
+	if err != nil || !item.Interactive {
+		return TerminalChunk{}, ErrNotFound
+	}
+	file, err := os.Open(s.logPath(id))
+	if errors.Is(err, os.ErrNotExist) {
+		return TerminalChunk{
+			InputOpen: item.InputOpen,
+			Finished:  item.Status == "succeeded" || item.Status == "failed",
+		}, nil
+	}
+	if err != nil {
+		return TerminalChunk{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return TerminalChunk{}, err
+	}
+	if offset > info.Size() {
+		offset = 0
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return TerminalChunk{}, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxTerminalChunk))
+	if err != nil {
+		return TerminalChunk{}, err
+	}
+	nextOffset := offset + int64(len(data))
+	return TerminalChunk{
+		DataBase64: base64.StdEncoding.EncodeToString(data),
+		NextOffset: nextOffset,
+		InputOpen:  item.InputOpen,
+		Finished: (item.Status == "succeeded" || item.Status == "failed") &&
+			nextOffset >= info.Size(),
+	}, nil
+}
+
+func (s *Service) WriteInput(id, value string) error {
+	data := []byte(value)
+	if !jobIDPattern.MatchString(id) || len(data) == 0 || len(data) > maxTerminalInput ||
+		strings.IndexByte(value, 0) >= 0 {
+		return ErrInvalidInput
+	}
+	s.mu.Lock()
+	item, err := s.readLocked(id)
+	s.mu.Unlock()
+	if err != nil || !item.Interactive || !item.InputOpen ||
+		(item.Status != "queued" && item.Status != "running") {
+		return ErrConflict
+	}
+	if err := hostpty.WriteInput(s.inputPath(id), data); err != nil {
+		return fmt.Errorf("%w: diagnostic terminal input is unavailable: %v", ErrConflict, err)
+	}
+	return nil
+}
+
 func RunJob(ctx context.Context, stateDir, id string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("diagnostic-run requires root")
@@ -369,6 +453,12 @@ func RunJob(ctx context.Context, stateDir, id string) error {
 		return service.fail(item, "log_unavailable", err)
 	}
 	defer logFile.Close()
+	input, err := hostpty.OpenInput(service.inputPath(id))
+	if err != nil {
+		return service.fail(item, "terminal_unavailable", err)
+	}
+	defer input.Close()
+	defer hostpty.RemoveInput(service.inputPath(id))
 	writer := &limitedWriter{target: logFile, remaining: maxLogBytes}
 	_, _ = fmt.Fprintf(writer, "KPanel 体检：%s\n来源：%s\n\n", item.CheckName, item.SourceURL)
 
@@ -377,6 +467,7 @@ func RunJob(ctx context.Context, stateDir, id string) error {
 	item.Stage = "running"
 	item.Progress = 10
 	item.Message = "第三方体检脚本正在运行，结果将持续写入日志"
+	item.InputOpen = true
 	item.StartedAt = &started
 	item.FinishedAt = nil
 	service.mu.Lock()
@@ -392,8 +483,7 @@ func RunJob(ctx context.Context, stateDir, id string) error {
 		"KJ_TEST_NONINTERACTIVE=1",
 		"LC_ALL=C.UTF-8",
 		"LANG=C.UTF-8",
-		"TERM=dumb",
-		"NO_COLOR=1",
+		"TERM=xterm-256color",
 		"/bin/bash",
 		script,
 		"test",
@@ -401,14 +491,35 @@ func RunJob(ctx context.Context, stateDir, id string) error {
 		item.CheckID,
 	)
 	command.Dir = workspace
-	command.Stdout = writer
-	command.Stderr = writer
-	runErr := command.Run()
+	terminal, err := hostpty.Start(command, 36, 120)
+	if err != nil {
+		return service.fail(item, "terminal_unavailable", err)
+	}
+	inputDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(terminal, input)
+		close(inputDone)
+	}()
+	_, readErr := io.Copy(writer, terminal)
+	if readErr != nil && !hostpty.IsEnd(readErr) {
+		_ = terminal.Kill()
+	}
+	runErr := terminal.Wait()
+	_ = input.Close()
+	select {
+	case <-inputDone:
+	case <-time.After(250 * time.Millisecond):
+	}
+	_ = terminal.Close()
+	if runErr == nil && readErr != nil && !hostpty.IsEnd(readErr) {
+		runErr = readErr
+	}
 	_ = logFile.Sync()
 
 	finished := service.now().UTC()
 	item.Progress = 100
 	item.FinishedAt = &finished
+	item.InputOpen = false
 	if runErr != nil {
 		item.Status = "failed"
 		item.Stage = "failed"
@@ -561,7 +672,9 @@ func (s *Service) fail(item record, stage string, cause error) error {
 	item.Stage = stage
 	item.Progress = 100
 	item.Message = safeMessage(cause)
+	item.InputOpen = false
 	item.FinishedAt = &finished
+	_ = hostpty.RemoveInput(s.inputPath(item.ID))
 	s.mu.Lock()
 	_ = s.putLocked(item)
 	s.mu.Unlock()
@@ -613,8 +726,10 @@ func (s *Service) reconcileInterruptedLocked() {
 		item.Stage = "interrupted"
 		item.Progress = 100
 		item.Message = "体检任务因系统重启或运行超时而中断，请重新执行"
+		item.InputOpen = false
 		item.FinishedAt = &finished
 		_ = s.putLocked(item)
+		_ = hostpty.RemoveInput(s.inputPath(item.ID))
 	}
 }
 
@@ -778,6 +893,10 @@ func (s *Service) statePath(id string) string {
 
 func (s *Service) logPath(id string) string {
 	return filepath.Join(s.stateDir, id+".log")
+}
+
+func (s *Service) inputPath(id string) string {
+	return filepath.Join(s.stateDir, id+".input")
 }
 
 func newJobID() string {

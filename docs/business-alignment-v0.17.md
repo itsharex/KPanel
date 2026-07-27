@@ -26,8 +26,10 @@
   Nginx 入口；管理员逐字确认主域名后，可按 `k web` 产物范围完整清理目录、
   域名证书和同名数据库。文件先原子暂存，`nginx -t` 或 reload 失败时恢复。
 - 结构漂移、未知模板和无法证明归属的站点保持只读，避免覆盖现有业务。
-- WordPress、IP+端口反代、Discuz、Kodbox、MacCMS、独角数卡、Flarum、Typecho、LinkStack 和 AI Prompt 均使用 `kejilion.sh web` 固定非交互协议在后台执行。
-- 一键建站拒绝覆盖同名配置、目录、证书或已有站点。脚本输出可能包含数据库凭证，因此任务只保存固定进度消息，不保存原始输出。
+- WordPress 与 IP+端口反代分别直接执行 `k wp <域名>`、`k fd <域名> <目标> <端口>`；
+  Discuz、Kodbox、MacCMS、独角数卡、Flarum、Typecho、LinkStack 和 AI Prompt 使用各自固定直达命令。
+- 一键建站拒绝覆盖同名配置、目录、证书或已有站点。后台 PTY 日志只通过登录态终端读取，
+  输入经过 Origin、CSRF、长度与 NUL 校验；窗口关闭不终止任务，重新进入可按任务 ID 恢复。
 
 ## Docker 业务
 

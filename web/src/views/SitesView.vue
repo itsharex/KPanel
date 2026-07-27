@@ -57,6 +57,7 @@ const deleting = ref(false)
 const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
+let installationMonitor: ReturnType<typeof setTimeout> | undefined
 
 const installStageLabels: Record<string, string> = {
   submitting: '提交配置',
@@ -87,6 +88,9 @@ function installStageName(stage?: string): string {
 }
 
 const installStageLabel = computed(() => installStageName(installProgress.value?.stage))
+const installTaskActive = computed(
+  () => installProgress.value?.status === 'queued' || installProgress.value?.status === 'running',
+)
 
 const serviceOptions = [
   {
@@ -163,14 +167,14 @@ const serviceOptions = [
 }>
 
 const recipeOptions = [
-  { recipe: 'discuz', title: 'Discuz 论坛', summary: '成熟中文社区论坛', detail: '脚本菜单 3', icon: Globe2 },
-  { recipe: 'kodbox', title: '可道云 Kodbox', summary: '私有云盘与在线桌面', detail: '脚本菜单 4', icon: FileCode2 },
-  { recipe: 'maccms', title: '苹果 CMS', summary: '影视内容管理系统', detail: '脚本菜单 5', icon: Globe2 },
-  { recipe: 'dujiaoka', title: '独角数卡', summary: '数字商品发卡商城', detail: '脚本菜单 6', icon: Braces },
-  { recipe: 'flarum', title: 'Flarum', summary: '现代轻量论坛', detail: '脚本菜单 7', icon: Globe2 },
-  { recipe: 'typecho', title: 'Typecho', summary: '轻量博客系统', detail: '脚本菜单 8', icon: Braces },
-  { recipe: 'linkstack', title: 'LinkStack', summary: '共享链接主页', detail: '脚本菜单 9', icon: Waypoints },
-  { recipe: 'ai-prompt', title: 'AI 提示词生成器', summary: '脚本原生静态成品站', detail: '脚本菜单 27', icon: FileCode2 },
+  { recipe: 'discuz', title: 'Discuz 论坛', summary: '成熟中文社区论坛', detail: 'k discuz <域名>', icon: Globe2 },
+  { recipe: 'kodbox', title: '可道云 Kodbox', summary: '私有云盘与在线桌面', detail: 'k kodbox <域名>', icon: FileCode2 },
+  { recipe: 'maccms', title: '苹果 CMS', summary: '影视内容管理系统', detail: 'k maccms <域名>', icon: Globe2 },
+  { recipe: 'dujiaoka', title: '独角数卡', summary: '数字商品发卡商城', detail: 'k dujiaoka <域名>', icon: Braces },
+  { recipe: 'flarum', title: 'Flarum', summary: '现代轻量论坛', detail: 'k flarum <域名>', icon: Globe2 },
+  { recipe: 'typecho', title: 'Typecho', summary: '轻量博客系统', detail: 'k typecho <域名>', icon: Braces },
+  { recipe: 'linkstack', title: 'LinkStack', summary: '共享链接主页', detail: 'k linkstack <域名>', icon: Waypoints },
+  { recipe: 'ai-prompt', title: 'AI 提示词生成器', summary: '脚本原生静态成品站', detail: 'k ai-prompt <域名>', icon: FileCode2 },
 ] as const satisfies ReadonlyArray<{
   recipe: NonNullable<SiteInput['recipe']>
   title: string
@@ -347,9 +351,19 @@ async function load(silent = false): Promise<void> {
 
   try {
     const capabilityPromise = api.agent.capabilities(controller.signal).catch(() => [])
+    const installationPromise = api.sites.installations(controller.signal).catch(() => [])
     sites.value = (await api.sites.list(undefined, controller.signal)).items
     loading.value = false
     capabilities.value = await capabilityPromise
+    const installationJobs = await installationPromise
+    const activeInstallation = installationJobs.find(
+      (job) => job.status === 'queued' || job.status === 'running',
+    )
+    if (activeInstallation && !installTaskActive.value) {
+      installProgress.value = activeInstallation
+      submitting.value = true
+      monitorInstallation(activeInstallation.id)
+    }
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
     error.value = reason instanceof ApiError ? reason.message : '无法读取网站列表。'
@@ -360,6 +374,10 @@ async function load(silent = false): Promise<void> {
 }
 
 function openCreate(): void {
+  if (installTaskActive.value && installProgress.value?.id) {
+    editorOpen.value = true
+    return
+  }
   editingSite.value = undefined
   form.primaryDomain = ''
   form.aliases = ''
@@ -379,6 +397,58 @@ function openCreate(): void {
   formError.value = ''
   installProgress.value = undefined
   editorOpen.value = true
+}
+
+function openInstallationTask(): void {
+  editorOpen.value = true
+}
+
+function closeEditor(): void {
+  editorOpen.value = false
+}
+
+function dismissInstallationTask(): void {
+  if (installTaskActive.value) return
+  installProgress.value = undefined
+  formError.value = ''
+}
+
+function monitorInstallation(id?: string): void {
+  if (!id) return
+  if (installationMonitor) clearTimeout(installationMonitor)
+  const poll = async (): Promise<void> => {
+    try {
+      const progress = await api.sites.installation(id)
+      installProgress.value = progress
+      if (progress.status === 'queued' || progress.status === 'running') {
+        submitting.value = true
+        installationMonitor = setTimeout(() => void poll(), 2_000)
+        return
+      }
+      submitting.value = false
+      if (progress.status === 'succeeded') {
+        toast.success('后台建站已完成', `${progress.domain || '网站'} 已完成脚本执行与产物对账。`)
+        await load(true)
+      }
+    } catch (reason) {
+      submitting.value = false
+      const message = reason instanceof ApiError ? reason.message : '无法继续读取后台建站任务。'
+      formError.value = message
+      installProgress.value = {
+        ...(installProgress.value || {
+          id,
+          status: 'failed',
+          stage: 'failed',
+          progress: 100,
+          message,
+        }),
+        status: 'failed',
+        stage: 'failed',
+        message,
+      }
+    }
+  }
+  void poll()
 }
 
 function openEdit(site: Site): void {
@@ -502,19 +572,23 @@ async function deleteSite(): Promise<void> {
   deleting.value = true
   deleteError.value = ''
   try {
-    let resourceVersion = site.resourceVersion
-    if (!/^sha256:[a-f0-9]{64}$/.test(resourceVersion)) {
-      const refreshed = await api.sites.list()
-      const current = refreshed.items.find((item) => item.id === site.id)
-      resourceVersion = current?.resourceVersion || ''
-    }
-    if (!/^sha256:[a-f0-9]{64}$/.test(resourceVersion)) {
-      throw new ApiError('无法读取站点当前版本，请刷新页面后重试。', 422, 'site_version_unavailable')
+    let resourceVersion: string | undefined
+    if (deleteMode.value === 'configuration') {
+      resourceVersion = site.resourceVersion
+      if (!/^sha256:[a-f0-9]{64}$/.test(resourceVersion)) {
+        const refreshed = await api.sites.list()
+        const current = refreshed.items.find((item) => item.id === site.id)
+        resourceVersion = current?.resourceVersion || ''
+      }
+      if (!/^sha256:[a-f0-9]{64}$/.test(resourceVersion)) {
+        throw new ApiError('无法读取站点当前版本，请刷新页面后重试。', 422, 'site_version_unavailable')
+      }
     }
     const result = await api.sites.remove(
       site.id,
       resourceVersion,
       deleteMode.value,
+      deleteMode.value === 'full' ? site.primaryDomain : undefined,
     )
     deleteOpen.value = false
     deletingSite.value = undefined
@@ -534,7 +608,7 @@ async function deleteSite(): Promise<void> {
 }
 
 watch(editorOpen, (open) => {
-  if (!open) {
+  if (!open && !installProgress.value?.id) {
     formError.value = ''
     installProgress.value = undefined
   }
@@ -547,7 +621,10 @@ function sitePublicURL(site: Site): string {
 }
 
 onMounted(() => void load())
-onBeforeUnmount(() => controller?.abort())
+onBeforeUnmount(() => {
+  controller?.abort()
+  if (installationMonitor) clearTimeout(installationMonitor)
+})
 </script>
 
 <template>
@@ -573,6 +650,38 @@ onBeforeUnmount(() => controller?.abort())
       <ShieldCheck :size="17" />
       <span><strong>网站写入当前不可用</strong><br />{{ siteWriteReason }}</span>
     </div>
+
+    <section v-if="installProgress?.id && !editorOpen" class="site-background-task" aria-live="polite">
+      <div class="site-background-task__icon">
+        <LoaderCircle v-if="installTaskActive" class="spin" :size="19" />
+        <ShieldCheck v-else-if="installProgress.status === 'succeeded'" :size="19" />
+        <TriangleAlert v-else :size="19" />
+      </div>
+      <div class="site-background-task__body">
+        <div>
+          <strong>{{ installProgress.domain || '建站任务' }}</strong>
+          <StatusBadge
+            :status="installTaskActive ? 'running_job' : installProgress.status"
+            :label="installTaskActive ? '后台运行中' : installProgress.status === 'succeeded' ? '已完成' : '执行失败'"
+          />
+        </div>
+        <p>{{ installStageName(installProgress.stage) }} · {{ installProgress.progress }}% · {{ installProgress.message }}</p>
+      </div>
+      <div class="site-background-task__actions">
+        <button class="button button--secondary" type="button" @click="openInstallationTask">
+          查看终端
+        </button>
+        <button
+          v-if="!installTaskActive"
+          class="icon-button"
+          type="button"
+          aria-label="关闭建站任务提示"
+          @click="dismissInstallationTask"
+        >
+          ×
+        </button>
+      </div>
+    </section>
 
     <section class="toolbar-card">
       <div class="search-field">
@@ -858,9 +967,9 @@ onBeforeUnmount(() => controller?.abort())
     <ModalDialog
       :open="editorOpen"
       :title="editingSite ? '编辑网站设置' : '新建网站'"
-      description="按 kejilion.sh 的站点架构生成固定配置；先通过 nginx -t，成功后才 reload。"
+      description="脚本建站由独立后台任务执行；关闭窗口不会中断，可从网站页重新打开终端。"
       size="large"
-      @close="!submitting && (editorOpen = false)"
+      @close="closeEditor"
     >
       <form id="site-form" class="form-stack" @submit.prevent="submitSite">
         <div v-if="formError" class="inline-alert inline-alert--danger" role="alert">{{ formError }}</div>
@@ -1082,7 +1191,7 @@ onBeforeUnmount(() => controller?.abort())
             :placeholder="form.type === 'proxy_domain' ? 'https://origin.example.com' : 'http://127.0.0.1:3000'"
             required
           />
-          <small v-if="form.type === 'proxy'">支持本机、内网、公网 IP、域名或 Docker 服务名，与 k web 的 IP+端口反代一致。</small>
+          <small v-if="form.type === 'proxy'">支持本机、内网、公网 IP、域名或 Docker 服务名，直接执行 k fd 域名 目标 端口。</small>
           <small v-else>填写完整域名源站，HTTPS 会自动启用上游 SNI；不接受路径、账号或查询参数。</small>
         </label>
 
@@ -1132,7 +1241,9 @@ onBeforeUnmount(() => controller?.abort())
         </div>
       </form>
       <template #footer>
-        <button class="button button--secondary" type="button" :disabled="submitting" @click="editorOpen = false">取消</button>
+        <button class="button button--secondary" type="button" @click="closeEditor">
+          {{ submitting ? '转入后台' : '取消' }}
+        </button>
         <button class="button button--primary" type="submit" form="site-form" :disabled="submitting || !canSubmit">
           <LoaderCircle v-if="submitting" class="spin" :size="16" />
           {{
