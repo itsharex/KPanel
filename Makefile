@@ -20,13 +20,13 @@ test-deploy:
 	sh deploy/tests/install-safety.sh
 
 verify-change:
-	sh scripts/verify-change.sh
+	bash scripts/verify-change.sh
 
 verify-l2:
-	VERIFY_LEVEL=l2 sh scripts/verify-change.sh
+	VERIFY_LEVEL=l2 bash scripts/verify-change.sh
 
 verify-release:
-	VERIFY_LEVEL=release sh scripts/verify-change.sh
+	VERIFY_LEVEL=release bash scripts/verify-change.sh
 
 build: build-web
 	mkdir -p dist
