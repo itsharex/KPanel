@@ -42,7 +42,8 @@ Rocky 等系统分别制作 Panel 镜像。
 - 本机 Docker Socket；安装器拒绝远程 `DOCKER_HOST` 或其他 Docker Context。
 - 能运行对应架构的无 CGO Agent 二进制。
 - 网站功能需要 Kejilion 标准 `/home/web` 布局；当前生产预检要求
-  `/home/web` 根目录存在，缺失的子目录会让对应网站能力保持只读。
+  `/home/web` 根目录不是安装前置条件；根目录或子目录缺失时仅网站能力保持不可用，
+  系统、Docker 与应用市场功能仍可独立运行。
 
 ## 发行版维护命令
 

@@ -202,6 +202,13 @@ run_lifecycle() {
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	grep -F 'kpanel_report_failed_install' \
+		"$PROJECT_DIR/packaging/kejilion-app/kpanel.conf" >/dev/null
+	if grep -F '请运行：systemctl status kejilion-agent' \
+		"$PROJECT_DIR/packaging/kejilion-app/kpanel.conf" >/dev/null; then
+		echo "KPanel installer still points users at a unit removed by cleanup" >&2
+		exit 1
+	fi
 	grep -F -- '-/home/web/certs -/home/web/letsencrypt' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	test -f /home/docker/kpanel/secrets/agent.token

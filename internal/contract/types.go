@@ -28,6 +28,18 @@ type AgentHealth struct {
 	CheckedAt       time.Time `json:"checkedAt"`
 }
 
+// CoreReady reports whether the Agent can safely serve the Panel's core
+// system, Docker, and application APIs. A missing Kejilion web root only
+// disables website capabilities and must not prevent standalone installation.
+func (health AgentHealth) CoreReady() bool {
+	if health.Status == "ok" {
+		return len(health.Reasons) == 0
+	}
+	return health.Status == "degraded" &&
+		len(health.Reasons) == 1 &&
+		health.Reasons[0] == "web_root_unavailable"
+}
+
 type Capability struct {
 	ID      string   `json:"id"`
 	Enabled bool     `json:"enabled"`

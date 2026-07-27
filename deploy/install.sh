@@ -264,10 +264,10 @@ for managed_path in \
 done
 inspect_systemd_unit_absence
 
-WEB_ROOT_KIND=$(stat -L -c %F /home/web 2>/dev/null) ||
-	fail "Kejilion Web root is unavailable: /home/web"
-[ "$WEB_ROOT_KIND" = "directory" ] ||
-	fail "Kejilion Web root is not a directory: /home/web"
+if [ ! -d /home/web ]; then
+	printf '%s\n' \
+		'Kejilion Web root is unavailable; KPanel will install with website management disabled.' >&2
+fi
 DOCKER_SOCKET_KIND=$(stat -L -c %F /var/run/docker.sock 2>/dev/null) ||
 	fail "local Docker Unix socket is unavailable: /var/run/docker.sock"
 [ "$DOCKER_SOCKET_KIND" = "socket" ] ||

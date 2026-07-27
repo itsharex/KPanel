@@ -112,19 +112,15 @@ if KP_UNIT_LOAD_STATE=loaded \
 fi
 grep -F 'existing or loaded kejilion-agent.service' "$TEST_DIR/install-unit.out" >/dev/null
 
-if KP_WEB_ROOT_FAIL=1 \
-	run_installer >"$TEST_DIR/install-web-root-missing.out" 2>&1; then
-	echo "installer accepted a missing Kejilion Web root" >&2
-	exit 1
-fi
-grep -F 'Kejilion Web root is unavailable' "$TEST_DIR/install-web-root-missing.out" >/dev/null
+KP_WEB_ROOT_FAIL=1 \
+	run_installer >"$TEST_DIR/install-web-root-missing.out" 2>&1
+grep -F 'website management disabled' "$TEST_DIR/install-web-root-missing.out" >/dev/null
+grep -F 'Docker daemon was not queried and no host state was changed.' \
+	"$TEST_DIR/install-web-root-missing.out" >/dev/null
 
-if KP_WEB_ROOT_KIND='regular file' \
-	run_installer >"$TEST_DIR/install-web-root-file.out" 2>&1; then
-	echo "installer accepted a non-directory Kejilion Web root" >&2
-	exit 1
-fi
-grep -F 'Kejilion Web root is not a directory' "$TEST_DIR/install-web-root-file.out" >/dev/null
+KP_WEB_ROOT_KIND='regular file' \
+	run_installer >"$TEST_DIR/install-web-root-file.out" 2>&1
+grep -F 'website management disabled' "$TEST_DIR/install-web-root-file.out" >/dev/null
 
 if KP_DOCKER_SOCKET_FAIL=1 \
 	run_installer >"$TEST_DIR/install-docker-socket-missing.out" 2>&1; then
@@ -236,6 +232,8 @@ PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
 test "$(wc -l <"$DOCKER_LOG" | tr -d ' ')" = 1
 grep -Fx -- '--host unix:///var/run/docker.sock compose version' "$DOCKER_LOG" >/dev/null
 grep -F 'private Panel endpoint is reserved: http://172.29.255.242:8080' \
+	"$TEST_DIR/preflight.out" >/dev/null
+grep -F 'website management will remain disabled until /home/web is initialized' \
 	"$TEST_DIR/preflight.out" >/dev/null
 
 : >"$DOCKER_LOG"

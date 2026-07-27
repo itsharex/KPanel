@@ -211,7 +211,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 800*time.Millisecond)
 	defer cancel()
 	var reasons []string
-	if _, err := os.Stat(s.webRoot); err != nil {
+	if err := availableWebRoot(s.webRoot); err != nil {
 		reasons = append(reasons, "web_root_unavailable")
 	}
 	if err := s.docker.Ping(ctx); err != nil {
@@ -247,7 +247,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	}()
 	go func() {
 		defer checks.Done()
-		_, siteErr = os.Stat(s.webRoot)
+		siteErr = availableWebRoot(s.webRoot)
 	}()
 	go func() {
 		defer checks.Done()
@@ -279,6 +279,17 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	}
 	items = append(items, s.systemManager.Capabilities()...)
 	writeJSON(w, http.StatusOK, contract.PageResult[contract.Capability]{Items: items})
+}
+
+func availableWebRoot(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("web root is not a directory")
+	}
+	return nil
 }
 
 func (s *Server) systemSummary(w http.ResponseWriter, r *http.Request) {

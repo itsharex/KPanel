@@ -172,7 +172,7 @@ func validateAgentHealth(health contract.AgentHealth) error {
 			version.ProtocolVersion,
 		)
 	}
-	if health.Status != "ok" {
+	if !health.CoreReady() {
 		return fmt.Errorf("Agent is not ready: status %q, reasons %v", health.Status, health.Reasons)
 	}
 	if health.ReadOnly {

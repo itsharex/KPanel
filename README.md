@@ -2,6 +2,9 @@
 
 KPanel 是 `kejilion.sh` 的现代 Web 管理形态。首版聚焦安全登录、主机监控、现有网站发现、Docker 查看与受控生命周期管理。
 
+KPanel 本体可在仅具备 systemd、Docker Engine 与 Compose v2 的干净 Linux 主机上独立安装；
+不要求预先运行 `kejilion.sh` 或存在 `/home/web`。未初始化网站环境时只禁用网站相关能力。
+
 ## 核心原则
 
 - 不修改、覆盖或 `source` 现有 `kejilion.sh`；只有固定白名单动作可通过已更新脚本的

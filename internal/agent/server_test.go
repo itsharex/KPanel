@@ -36,6 +36,55 @@ func TestBearerRequired(t *testing.T) {
 	}
 }
 
+func TestAvailableWebRootRequiresDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := availableWebRoot(root); err != nil {
+		t.Fatalf("availableWebRoot(directory) error = %v", err)
+	}
+	if err := availableWebRoot(filepath.Join(root, "missing")); err == nil {
+		t.Fatal("availableWebRoot() accepted a missing path")
+	}
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := availableWebRoot(file); err == nil {
+		t.Fatal("availableWebRoot() accepted a regular file")
+	}
+}
+
+func TestHealthKeepsCoreReadyWithoutWebRoot(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("Unix Socket integration test")
+	}
+	root := filepath.Join(t.TempDir(), "not-created")
+	docker := dockerx.New(fakeDockerSocket(t), root, t.TempDir())
+	docker.ConfigureDaemonAccess("", true)
+	server, err := NewServer(Config{
+		Token: []byte(strings.Repeat("x", 32)), Version: "test", ProtocolVersion: "test",
+		WebRoot: root, System: systeminfo.NewCollector(),
+		Sites: sites.NewDiscoverer(root), Docker: docker,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	var health contract.AgentHealth
+	if err := json.Unmarshal(response.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK ||
+		health.Status != "degraded" ||
+		!health.CoreReady() ||
+		len(health.Reasons) != 1 ||
+		health.Reasons[0] != "web_root_unavailable" {
+		t.Fatalf("unexpected standalone health: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestApplicationJobEndpointsRequireAuthenticationAndStrictIDs(t *testing.T) {
 	server := testServer(t)
 	if err := server.appMarket.ConfigureJobs(

@@ -197,17 +197,16 @@ fi
 
 if [ -d /home/web ] && [ -r /home/web ]; then
 	ok "Kejilion Web root is available: /home/web"
+	for web_path in /home/web/conf.d /home/web/html /home/web/certs; do
+		if [ -d "$web_path" ] && [ -r "$web_path" ]; then
+			ok "Kejilion path is readable: $web_path"
+		else
+			warn "Kejilion path is unavailable: $web_path"
+		fi
+	done
 else
-	fail "Kejilion Web root must be a readable directory: /home/web"
+	warn "Kejilion Web root is unavailable; website management will remain disabled until /home/web is initialized"
 fi
-
-for web_path in /home/web/conf.d /home/web/html /home/web/certs; do
-	if [ -d "$web_path" ] && [ -r "$web_path" ]; then
-		ok "Kejilion path is readable: $web_path"
-	else
-		warn "Kejilion path is unavailable: $web_path"
-	fi
-done
 
 for managed_path in \
 	/etc/kejilion-panel \
