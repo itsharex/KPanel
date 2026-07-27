@@ -89,23 +89,11 @@ func (m *Manager) reconcileMaintenanceLaunch(status *contract.SystemMaintenanceS
 	if err == nil && (active == "active" || active == "activating") {
 		return
 	}
-	if err == nil &&
-		strings.EqualFold(strings.TrimSpace(unit["Result"]), "success") &&
-		strings.TrimSpace(unit["ExecMainStatus"]) == "0" {
-		finishedAt := m.now().UTC()
-		status.State = "succeeded"
-		status.Stage = "completed"
-		status.Progress = 100
-		status.Message = maintenanceSuccessMessage(status.Action, status.Policy)
-		status.FinishedAt = &finishedAt
-		status.RebootRequired = regularFile(filepath.Join(m.runRoot, "reboot-required"))
-		_ = m.writeMaintenance(*status)
-		return
-	}
 	if err != nil && elapsed < maintenanceLaunchTimeout {
 		return
 	}
-	if err == nil && active == "" && elapsed < maintenanceLaunchTimeout {
+	if err == nil && active == "" && strings.TrimSpace(unit["LoadState"]) == "" &&
+		elapsed < maintenanceLaunchTimeout {
 		return
 	}
 
@@ -124,9 +112,16 @@ func (m *Manager) reconcileMaintenanceLaunch(status *contract.SystemMaintenanceS
 	}
 	finishedAt := m.now().UTC()
 	status.State = "failed"
-	status.Stage = "launch_failed"
+	if err == nil &&
+		strings.EqualFold(strings.TrimSpace(unit["Result"]), "success") &&
+		strings.TrimSpace(unit["ExecMainStatus"]) == "0" {
+		status.Stage = "completion_unverified"
+		status.Message = "后台维护进程已退出，但未写入任务完成凭据；不能判定为成功：" + detail
+	} else {
+		status.Stage = "launch_failed"
+		status.Message = "后台维护进程未成功启动：" + detail
+	}
 	status.Progress = 100
-	status.Message = "后台维护进程未成功启动：" + detail
 	status.FinishedAt = &finishedAt
 	_ = m.writeMaintenance(*status)
 }
@@ -266,7 +261,12 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 	status.State = "succeeded"
 	status.Stage = "completed"
 	status.Progress = 100
-	status.Message = maintenanceSuccessMessage(action, policy)
+	status.Message = maintenanceCompletionMessage(
+		action,
+		policy,
+		len(steps),
+		finishedAt.Sub(*status.StartedAt),
+	)
 	status.FinishedAt = &finishedAt
 	status.RebootRequired = regularFile(filepath.Join(m.runRoot, "reboot-required"))
 	if err := m.writeMaintenance(status); err != nil {
@@ -543,6 +543,31 @@ func maintenanceSuccessMessage(action, policy string) string {
 		return "软件包缓存清理已完成"
 	}
 	return "系统支持的无用依赖、软件包缓存和旧 journal 已安全清理"
+}
+
+func maintenanceCompletionMessage(
+	action string,
+	policy string,
+	completedSteps int,
+	elapsed time.Duration,
+) string {
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	duration := "<1 秒"
+	if elapsed >= time.Second {
+		seconds := int(elapsed.Round(time.Second) / time.Second)
+		duration = fmt.Sprintf("%d 秒", seconds)
+		if seconds >= 60 {
+			duration = fmt.Sprintf("%d 分 %d 秒", seconds/60, seconds%60)
+		}
+	}
+	return fmt.Sprintf(
+		"%s；已执行 %d 个固定维护步骤，耗时 %s",
+		maintenanceSuccessMessage(action, policy),
+		completedSteps,
+		duration,
+	)
 }
 
 func maintenanceErrorMessage(err error) string {

@@ -1058,7 +1058,7 @@ func TestMaintenanceStatusDetectsSystemdLaunchFailure(t *testing.T) {
 	}
 }
 
-func TestMaintenanceStatusRecognizesCollectedSuccessfulUnit(t *testing.T) {
+func TestMaintenanceStatusRejectsCollectedUnitWithoutCompletionReceipt(t *testing.T) {
 	runner := &fakeRunner{}
 	manager, _, _, _ := testManager(t, runner)
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
@@ -1077,9 +1077,10 @@ func TestMaintenanceStatusRecognizesCollectedSuccessfulUnit(t *testing.T) {
 	}
 	now = now.Add(maintenanceLaunchGrace + time.Second)
 	status := manager.MaintenanceStatus()
-	if status.State != "succeeded" || status.Stage != "completed" ||
-		status.Progress != 100 || status.FinishedAt == nil {
-		t.Fatalf("collected successful unit was not reconciled: %#v", status)
+	if status.State != "failed" || status.Stage != "completion_unverified" ||
+		status.Progress != 100 || status.FinishedAt == nil ||
+		!strings.Contains(status.Message, "未写入任务完成凭据") {
+		t.Fatalf("collected unit without completion receipt was trusted: %#v", status)
 	}
 }
 
@@ -1157,6 +1158,10 @@ func TestRunMaintenanceUpdateUsesSafeAPTSequence(t *testing.T) {
 	status := manager.MaintenanceStatus()
 	if status.State != "succeeded" || status.Progress != 100 || status.Action != "update" {
 		t.Fatalf("unexpected final update state: %#v", status)
+	}
+	if !strings.Contains(status.Message, "已执行 3 个固定维护步骤") ||
+		!strings.Contains(status.Message, "耗时") {
+		t.Fatalf("successful update lacks execution evidence: %#v", status)
 	}
 }
 

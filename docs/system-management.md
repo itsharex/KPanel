@@ -80,6 +80,9 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 - 后台状态持久化在
   `/var/lib/kejilion-panel/system/maintenance-state.json`；同一时间只允许
   一个维护任务。
+- 只有 worker 原子写入的 `succeeded` 状态才是完成凭据；systemd 单元已退出、被
+  `--collect` 回收或返回默认的 `Result=success`，均不能替代业务完成状态。未取得
+  完成凭据时必须显示未验证失败，不能从启动进度直接推断成功。
 - 更新和清理属于不可逆的软件包事务，KPanel 不宣称自动回滚；失败时保留
   阶段和错误摘要供人工检查。任务不会自动重启宿主机。
 
