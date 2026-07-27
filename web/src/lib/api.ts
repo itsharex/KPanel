@@ -15,6 +15,8 @@ import type {
   DockerEnvironment,
   DockerMaintenanceInput,
   DockerMaintenanceJob,
+  DiagnosticCatalog,
+  DiagnosticJob,
   Job,
   AppInstallJob,
   AppTerminalChunk,
@@ -1003,6 +1005,21 @@ export const api = {
       request<AppImageUpdateResult>(`/apps/${encodeURIComponent(id)}/check_update`, {
         method: 'POST',
         body: { resourceVersion },
+      }),
+  },
+  diagnostics: {
+    catalog: (signal?: AbortSignal): Promise<DiagnosticCatalog> =>
+      request<DiagnosticCatalog>('/diagnostics', { signal }),
+    jobs: async (signal?: AbortSignal): Promise<ApiList<DiagnosticJob>> =>
+      normalizeList(
+        await request<ApiList<DiagnosticJob> | DiagnosticJob[]>('/diagnostic-jobs', { signal }),
+      ),
+    job: (id: string, signal?: AbortSignal): Promise<DiagnosticJob> =>
+      request<DiagnosticJob>(`/diagnostic-jobs/${encodeURIComponent(id)}`, { signal }),
+    start: (checkId: string): Promise<DiagnosticJob> =>
+      request<DiagnosticJob>('/diagnostic-jobs', {
+        method: 'POST',
+        body: { checkId },
       }),
   },
   docker: {

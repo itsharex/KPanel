@@ -15,6 +15,71 @@ const installed = new Map([
 ])
 const adapted = new Set(['speedtest', 'it-tools', 'dosgame'])
 const appJobs = new Map()
+const diagnosticJobs = new Map()
+const diagnosticCatalog = {
+  categories: [
+    { id: 'access', name: 'IP 与解锁' },
+    { id: 'network', name: '网络线路' },
+    { id: 'hardware', name: '硬件性能' },
+    { id: 'comprehensive', name: '综合评测' },
+  ],
+  items: [
+    {
+      id: 'chatgpt',
+      category: 'access',
+      name: 'ChatGPT 解锁检测',
+      description: '检测当前出口 IP 的 ChatGPT 可用性',
+      sourceUrl: 'https://cdn.jsdelivr.net/gh/missuo/OpenAI-Checker/openai.sh',
+      estimatedMinutes: 2,
+      impact: 'light',
+    },
+    {
+      id: 'ip-quality',
+      category: 'access',
+      name: 'IP 质量体检',
+      description: '检测 IP 风险、信誉、邮件与流媒体质量',
+      sourceUrl: 'https://IP.Check.Place',
+      estimatedMinutes: 8,
+      impact: 'network',
+    },
+    {
+      id: 'superspeed',
+      category: 'network',
+      name: 'SuperSpeed 三网测速',
+      description: '执行国内三网节点带宽测试',
+      sourceUrl: 'https://git.io/superspeed_uxh',
+      estimatedMinutes: 15,
+      impact: 'intensive',
+    },
+    {
+      id: 'net-quality',
+      category: 'network',
+      name: '网络质量体检',
+      description: '检测延迟、抖动、丢包和网络质量',
+      sourceUrl: 'https://Net.Check.Place',
+      estimatedMinutes: 10,
+      impact: 'network',
+    },
+    {
+      id: 'yabs',
+      category: 'hardware',
+      name: 'YABS 性能测试',
+      description: '测试 CPU、磁盘与网络；无 Swap 时按脚本创建 1 GiB /swapfile',
+      sourceUrl: 'https://yabs.sh',
+      estimatedMinutes: 30,
+      impact: 'intensive',
+    },
+    {
+      id: 'nodequality',
+      category: 'comprehensive',
+      name: 'NodeQuality 综合测评',
+      description: '运行 NodeQuality 节点质量综合测试',
+      sourceUrl: 'https://run.NodeQuality.com',
+      estimatedMinutes: 30,
+      impact: 'intensive',
+    },
+  ],
+}
 
 const items = catalog.apps.map((app) => {
   const mapping = legacyByNumber.get(app.num) || {}
@@ -104,6 +169,36 @@ function materializeJob(job) {
       'KPANEL_PROGRESS 5 正在校验端口与宿主机环境',
       progress >= 30 ? 'KPANEL_PROGRESS 30 正在执行 kejilion.sh 应用安装函数' : '',
     ].filter(Boolean),
+    createdAt: new Date(job.created).toISOString(),
+    startedAt: new Date(job.created + 100).toISOString(),
+    ...(progress >= 100 ? { finishedAt: new Date().toISOString() } : {}),
+  }
+}
+
+function materializeDiagnosticJob(job) {
+  const elapsed = Date.now() - job.created
+  const progress = Math.min(100, Math.max(10, Math.floor(elapsed / 80)))
+  return {
+    id: job.id,
+    checkId: job.check.id,
+    checkName: job.check.name,
+    category: job.check.category,
+    sourceUrl: job.check.sourceUrl,
+    estimatedMinutes: job.check.estimatedMinutes,
+    impact: job.check.impact,
+    status: progress >= 100 ? 'succeeded' : 'running',
+    stage: progress >= 100 ? 'completed' : 'running',
+    progress,
+    message: progress >= 100 ? '体检完成，完整跑分结果已保存在任务日志' : '第三方体检脚本正在运行，结果将持续写入日志',
+    logs: [
+      `KPanel 体检：${job.check.name}`,
+      `来源：${job.check.sourceUrl}`,
+      '',
+      '正在检测系统与网络环境…',
+      progress >= 40 ? 'CPU benchmark score: 8241' : '',
+      progress >= 70 ? 'Disk 4k read: 118.4 MB/s' : '',
+      progress >= 100 ? 'KPANEL_TEST_RESULT succeeded ' + job.check.id : '',
+    ].filter((line) => line !== ''),
     createdAt: new Date(job.created).toISOString(),
     startedAt: new Date(job.created + 100).toISOString(),
     ...(progress >= 100 ? { finishedAt: new Date().toISOString() } : {}),
@@ -242,6 +337,27 @@ createServer((request, response) => {
     send(response, 200, { items: [...appJobs.values()].map(materializeJob) })
     return
   }
+  if (request.method === 'GET' && url.pathname === '/api/v1/diagnostics') {
+    send(response, 200, diagnosticCatalog)
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/diagnostic-jobs') {
+    send(response, 200, { items: [...diagnosticJobs.values()].map(materializeDiagnosticJob) })
+    return
+  }
+  const diagnosticJobMatch = url.pathname.match(/^\/api\/v1\/diagnostic-jobs\/([a-f0-9]{32})$/)
+  if (request.method === 'GET' && diagnosticJobMatch) {
+    const job = diagnosticJobs.get(diagnosticJobMatch[1])
+    send(response, job ? 200 : 404, job ? materializeDiagnosticJob(job) : { title: '任务不存在' })
+    return
+  }
+  if (request.method === 'POST' && url.pathname === '/api/v1/diagnostic-jobs') {
+    const id = `${Date.now().toString(16).padStart(16, '0')}${'d'.repeat(16)}`.slice(-32)
+    const job = { id, check: diagnosticCatalog.items[4], created: Date.now() }
+    diagnosticJobs.set(id, job)
+    send(response, 202, materializeDiagnosticJob(job))
+    return
+  }
   const appJobMatch = url.pathname.match(/^\/api\/v1\/app-jobs\/([a-f0-9]{32})$/)
   if (request.method === 'GET' && appJobMatch) {
     const job = appJobs.get(appJobMatch[1])
@@ -289,6 +405,7 @@ createServer((request, response) => {
     send(response, 200, {
       items: [
         { id: 'apps.install', enabled: true, methods: ['POST'] },
+        { id: 'diagnostics.run', enabled: true, methods: ['GET', 'POST'] },
         ...systemCapabilities,
         { id: 'system.reinstall', enabled: false, reason: '需要带外控制台' },
       ],

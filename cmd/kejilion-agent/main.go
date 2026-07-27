@@ -19,6 +19,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/agentclient"
 	"github.com/kejilion/kejilion-panel/internal/appmarket"
 	"github.com/kejilion/kejilion-panel/internal/contract"
+	"github.com/kejilion/kejilion-panel/internal/diagnostics"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
@@ -55,6 +56,9 @@ func run(arguments []string) error {
 	}
 	if len(arguments) > 0 && arguments[0] == "app-pty-run" {
 		return runAppJob(arguments[1:], true)
+	}
+	if len(arguments) > 0 && arguments[0] == "diagnostic-run" {
+		return runDiagnosticJob(arguments[1:])
 	}
 
 	flags := flag.NewFlagSet("kejilion-agent", flag.ContinueOnError)
@@ -104,6 +108,13 @@ func run(arguments []string) error {
 	if err := appMarket.ConfigureJobs(filepath.Join(*stateDir, "app-jobs"), executable); err != nil {
 		return fmt.Errorf("initialize application jobs: %w", err)
 	}
+	diagnosticService, err := diagnostics.New(
+		filepath.Join(*stateDir, "diagnostic-jobs"),
+		executable,
+	)
+	if err != nil {
+		return fmt.Errorf("initialize diagnostic jobs: %w", err)
+	}
 	systemCollector := systeminfo.NewCollector()
 	systemCollector.PublicNetworkLookupEnabled = *enablePublicNetworkLookup
 	handler, err := agent.NewServer(agent.Config{
@@ -114,6 +125,7 @@ func run(arguments []string) error {
 			Executable: executable,
 		}),
 		Sites: sites.NewDiscoverer(*webRoot), Docker: dockerClient, AppMarket: appMarket,
+		Diagnostics: diagnosticService,
 	})
 	clear(token)
 	if err != nil {
@@ -238,6 +250,27 @@ func runAppJob(arguments []string, interactive bool) error {
 		return appmarket.RunInteractiveAppJob(ctx, *stateDir, *id)
 	}
 	return appmarket.RunAppJob(ctx, *stateDir, *id)
+}
+
+func runDiagnosticJob(arguments []string) error {
+	flags := flag.NewFlagSet("kejilion-agent diagnostic-run", flag.ContinueOnError)
+	stateDir := flags.String(
+		"state-dir",
+		env("KEJILION_AGENT_STATE_DIR", "/var/lib/kejilion-panel/diagnostic-jobs"),
+		"diagnostic job state directory",
+	)
+	id := flags.String("id", "", "diagnostic job identity")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *id == "" {
+		return errors.New("diagnostic-run requires exactly one job identity")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Minute)
+	defer cancel()
+	return diagnostics.RunJob(ctx, *stateDir, *id)
 }
 
 func runHealthcheck(arguments []string) error {

@@ -175,6 +175,8 @@ grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F '/var/lib/kejilion-panel/wordpress-jobs' >/dev/null
 grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F '/var/lib/kejilion-panel/app-jobs' >/dev/null
+grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
+	grep -F '/var/lib/kejilion-panel/diagnostic-jobs' >/dev/null
 grep -F 'ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F -- '-/home/web/certs' |
 	grep -F -- '-/home/web/letsencrypt' >/dev/null
@@ -183,6 +185,8 @@ grep -F 'SYSTEM_STATE_DIR=/var/lib/kejilion-panel/system' \
 grep -F 'WORDPRESS_STATE_DIR=/var/lib/kejilion-panel/wordpress-jobs' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'APP_STATE_DIR=/var/lib/kejilion-panel/app-jobs' \
+	"$PROJECT_DIR/deploy/install.sh" >/dev/null
+grep -F 'DIAGNOSTIC_STATE_DIR=/var/lib/kejilion-panel/diagnostic-jobs' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'expected 65532:65532:700' "$PROJECT_DIR/deploy/install.sh" >/dev/null
 test "$(grep -c '^assert_panel_data_dir \"after ' "$PROJECT_DIR/deploy/install.sh")" = 3

@@ -17,6 +17,7 @@
 | `website-recipes` | Discuz、KodBox、MacCMS、独角数卡、Flarum、Typecho、LinkStack、AI Prompt | 本机可信 `kejilion.sh web` 非交互协议 | 直接执行脚本并读取 `KPANEL_PROGRESS` | **已合规（代码链路）**：发布前仍需按目标脚本版本做实机闭环 |
 | `application-market` | 应用安装、更新、卸载、域名与访问控制 | `/root/apps/*.conf`、动态应用目录及脚本非交互协议 | 部分直接脚本任务，部分 KPanel 适配器 | **待审计**：逐应用登记入口与来源后才能宣称完全对齐 |
 | `system-dns` | 概览页 DNS 设置 | `set_dns` 与 `kpanel_set_dns_noninteractive` | Go 仅校验结构化 IP 并调用本机可信 `kejilion.sh dns`；最终配置、后端选择和回滚由脚本负责 | **已合规（代码链路）**：发布前仍需在 systemd-resolved、静态文件和受网络管理器接管的主机完成双端实机闭环 |
+| `diagnostic-scripts` | 体检页 IP、线路、性能与综合测试 | `linux_test`、`kpanel_test_catalog` 与 `kpanel_run_test_noninteractive` | Agent 从可信脚本读取固定目录并以 `KJ_TEST_NONINTERACTIVE=1 k test run <selector>` 执行；KPanel 不复制命令或下载地址 | **已合规（代码链路）**：目录、拒绝未知 selector、后台日志和失败状态已自动验证；各第三方来源的完整实机跑分需在目标服务器按需验收 |
 | `system-network` | 软件源、V4/V6、内核、BBR、防火墙 | `kejilion.sh` 系统工具对应函数和远程配置 | 多个 Go 适配器独立执行 | **待审计**：凡脚本已有外联模板/远程来源的项目必须迁移为同源 |
 | `docker-environment` | Docker 安装、换源、维护、迁移、备份与还原 | `kejilion.sh` Docker 工具函数及其远程来源 | KPanel 固定动作适配器 | **待审计**：逐动作核对，不得新增自编外联配置 |
 

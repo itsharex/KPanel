@@ -50,6 +50,12 @@ export const router = createRouter({
           meta: { title: '应用市场' },
         },
         {
+          path: 'diagnostics',
+          name: 'diagnostics',
+          component: () => import('@/views/DiagnosticsView.vue'),
+          meta: { title: '体检' },
+        },
+        {
           path: 'docker',
           name: 'docker',
           component: () => import('@/views/DockerView.vue'),

@@ -444,6 +444,7 @@ DATA_DIR=/var/lib/kejilion-panel/panel
 SYSTEM_STATE_DIR=/var/lib/kejilion-panel/system
 WORDPRESS_STATE_DIR=/var/lib/kejilion-panel/wordpress-jobs
 APP_STATE_DIR=/var/lib/kejilion-panel/app-jobs
+DIAGNOSTIC_STATE_DIR=/var/lib/kejilion-panel/diagnostic-jobs
 AGENT_TARGET=/usr/local/libexec/kejilion-agent
 SERVICE_TARGET=/etc/systemd/system/kejilion-agent.service
 COMPOSE_TARGET=$OPT_DIR/compose.yml
@@ -457,6 +458,7 @@ install -d -o 65532 -g 65532 -m 0700 "$DATA_DIR"
 install -d -o root -g root -m 0700 "$SYSTEM_STATE_DIR"
 install -d -o root -g root -m 0750 "$WORDPRESS_STATE_DIR"
 install -d -o root -g root -m 0750 "$APP_STATE_DIR"
+install -d -o root -g root -m 0750 "$DIAGNOSTIC_STATE_DIR"
 install -d -o root -g root -m 0755 \
 	/etc/ssh/sshd_config.d /etc/systemd/resolved.conf.d /etc/sysctl.d
 [ -e /etc/gai.conf ] || install -o root -g root -m 0644 /dev/null /etc/gai.conf

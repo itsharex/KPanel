@@ -20,6 +20,7 @@ import (
 
 	"github.com/kejilion/kejilion-panel/internal/appmarket"
 	"github.com/kejilion/kejilion-panel/internal/contract"
+	"github.com/kejilion/kejilion-panel/internal/diagnostics"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
@@ -40,6 +41,7 @@ type Config struct {
 	SitesManager    *sites.Manager
 	Docker          *dockerx.Client
 	AppMarket       *appmarket.Service
+	Diagnostics     *diagnostics.Service
 	Now             func() time.Time
 }
 
@@ -54,6 +56,7 @@ type Server struct {
 	sitesManager    *sites.Manager
 	docker          *dockerx.Client
 	appMarket       *appmarket.Service
+	diagnostics     *diagnostics.Service
 	now             func() time.Time
 }
 
@@ -112,6 +115,7 @@ func NewServer(config Config) (*Server, error) {
 		sitesManager:    config.SitesManager,
 		docker:          config.Docker,
 		appMarket:       config.AppMarket,
+		diagnostics:     config.Diagnostics,
 		now:             config.Now,
 	}, nil
 }
@@ -153,6 +157,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.appJobOperation(w, r, requestID)
 	case strings.HasPrefix(r.URL.Path, "/v1/apps/"):
 		s.appOperation(w, r, requestID)
+	case r.URL.Path == "/v1/diagnostics":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.diagnosticCatalog)
+	case r.URL.Path == "/v1/diagnostic-jobs":
+		s.diagnosticJobCollection(w, r, requestID)
+	case strings.HasPrefix(r.URL.Path, "/v1/diagnostic-jobs/"):
+		s.requireMethod(w, r, requestID, http.MethodGet, s.diagnosticJob)
 	case r.URL.Path == "/v1/docker/summary":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerSummary)
 	case r.URL.Path == "/v1/docker/environment":
@@ -232,9 +242,10 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		wordPressWriteErr error
 		proxyWriteErr     error
 		recipeWriteErr    error
+		diagnosticErr     = errors.New("体检服务未配置")
 	)
 	var checks sync.WaitGroup
-	checks.Add(6)
+	checks.Add(7)
 	go func() {
 		defer checks.Done()
 		pingContext, pingCancel := context.WithTimeout(ctx, 800*time.Millisecond)
@@ -261,6 +272,12 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		defer checks.Done()
 		recipeWriteErr = s.sitesManager.RecipeWritable()
 	}()
+	go func() {
+		defer checks.Done()
+		if s.diagnostics != nil {
+			diagnosticErr = s.diagnostics.Available()
+		}
+	}()
 	checks.Wait()
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
@@ -277,6 +294,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		{ID: "sites.wordpress.install", Enabled: wordPressWriteErr == nil, Reason: reasonIf(wordPressWriteErr, "WordPress 一键搭建条件不满足"), Methods: []string{"POST"}},
 		{ID: "sites.proxy.install", Enabled: proxyWriteErr == nil, Reason: reasonIf(proxyWriteErr, "kejilion.sh IP+端口反向代理命令不可用"), Methods: []string{"POST"}},
 		{ID: "sites.recipes.install", Enabled: recipeWriteErr == nil, Reason: reasonIf(recipeWriteErr, "kejilion.sh 一键建站协议不可用"), Methods: []string{"POST"}},
+		{ID: "diagnostics.run", Enabled: diagnosticErr == nil, Reason: reasonIf(diagnosticErr, "请更新本机 kejilion.sh 以启用体检协议"), Methods: []string{"GET", "POST"}},
 	}
 	items = append(items, s.systemManager.Capabilities()...)
 	writeJSON(w, http.StatusOK, contract.PageResult[contract.Capability]{Items: items})
@@ -699,6 +717,80 @@ func (s *Server) writeAppError(w http.ResponseWriter, requestID string, err erro
 		status, code, title = http.StatusServiceUnavailable, "app_needs_attention", "应用操作需要人工检查"
 	}
 	writeProblem(w, requestID, status, code, title, safeDetail(err))
+}
+
+func (s *Server) diagnosticCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_diagnostic_request", "体检请求无效", "")
+		return
+	}
+	if s.diagnostics == nil {
+		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "diagnostics_unavailable", "体检服务不可用", "")
+		return
+	}
+	catalog, err := s.diagnostics.Catalog(r.Context())
+	if err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "diagnostics_unavailable", "体检服务不可用", safeDetail(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, catalog)
+}
+
+func (s *Server) diagnosticJobCollection(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_diagnostic_request", "体检请求无效", "")
+		return
+	}
+	if s.diagnostics == nil {
+		writeProblem(w, requestID, http.StatusServiceUnavailable, "diagnostics_unavailable", "体检服务不可用", "")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, contract.PageResult[diagnostics.Job]{Items: s.diagnostics.Jobs()})
+	case http.MethodPost:
+		var input struct {
+			CheckID string `json:"checkId"`
+		}
+		if err := decodeJSON(w, r, &input); err != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+			return
+		}
+		job, err := s.diagnostics.Start(r.Context(), input.CheckID)
+		if err != nil {
+			status, code, title := http.StatusUnprocessableEntity, "diagnostic_request_invalid", "体检任务请求无效"
+			switch {
+			case errors.Is(err, diagnostics.ErrConflict):
+				status, code, title = http.StatusConflict, "diagnostic_job_conflict", "已有体检任务正在运行"
+			case errors.Is(err, diagnostics.ErrUnsupported):
+				status, code, title = http.StatusServiceUnavailable, "diagnostics_unavailable", "体检服务不可用"
+			}
+			writeProblem(w, requestID, status, code, title, safeDetail(err))
+			return
+		}
+		writeJSON(w, http.StatusAccepted, job)
+	default:
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+	}
+}
+
+func (s *Server) diagnosticJob(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_diagnostic_request", "体检请求无效", "")
+		return
+	}
+	if s.diagnostics == nil {
+		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "diagnostics_unavailable", "体检服务不可用", "")
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/v1/diagnostic-jobs/")
+	job, err := s.diagnostics.Job(id)
+	if err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusNotFound, "diagnostic_job_not_found", "体检任务不存在", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
 }
 
 func (s *Server) dockerSummary(w http.ResponseWriter, r *http.Request) {

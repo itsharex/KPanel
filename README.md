@@ -43,13 +43,15 @@ KPanel 本体可在仅具备 systemd、Docker Engine 与 Compose v2 的干净 Li
 - 与 `app.kejilion.sh` 动态对齐的应用目录、本地图标、脚本安装状态、容器状态、镜像更新检查、
   域名绑定/解绑和访问策略；已审计的标准应用支持持久化后台安装与实时进度，声明式应用额外支持
   更新、卸载与失败回滚。
+- 独立“体检”页面直接读取 `kejilion.sh` 测试目录，以固定协议运行 IP/解锁、网络线路、
+  硬件性能和综合测评，持续显示第三方脚本来源、资源影响、后台日志与跑分历史。
 - 主机名、SSH 新端口、DNS、时区、与 `kejilion.sh` 共用的 `/swapfile`、APT 镜像、IP 优先级、
   五种内存自适应内核预设、BBR 和确认式服务器重启的类型化管理。
 - Debian/Ubuntu、RHEL/Fedora、Arch/Manjaro 和 openSUSE/SLES 的系统更新，
   以及不触碰 Docker、网站和备份的系统清理。
 - 管理变更记录、审计、资源版本冲突检测，以及依赖不可用时的明确状态。
 
-当前尚缺少宿主机终端、交互式 TTY、Compose/daemon.json 通用编辑器、系统重装非交互
+当前尚缺少通用宿主机终端、Compose/daemon.json 通用编辑器、系统重装非交互
 适配器和部分发行版 DNS/换源适配器。这些是待实现能力，不是以“高风险”为由永久关闭的产品限制；
 实现时仍须经过鉴权、结构化输入、路径约束、并发控制、审计和失败恢复。
 
@@ -62,6 +64,7 @@ KPanel 本体可在仅具备 systemd、Docker Engine 与 Compose v2 的干净 Li
 - [kejilion.sh 兼容基线](docs/compatibility.md)
 - [kejilion.sh 网站业务分析](docs/legacy-site-contract.md)
 - [应用市场对齐](docs/application-market.md)
+- [体检与第三方测试协议](docs/diagnostics.md)
 - [v0.17 业务对齐与加载策略](docs/business-alignment-v0.17.md)
 - [v0.18 Docker 五分区管理与互通边界](docs/docker-management-v0.18.md)
 - [构建、发布与部署](docs/deployment.md)

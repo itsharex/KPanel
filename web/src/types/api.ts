@@ -348,6 +348,44 @@ export interface AppImageUpdateResult {
   checkedAt: string
 }
 
+export interface DiagnosticCategory {
+  id: string
+  name: string
+}
+
+export interface DiagnosticCheck {
+  id: string
+  category: string
+  name: string
+  description: string
+  sourceUrl: string
+  estimatedMinutes: number
+  impact: 'light' | 'network' | 'intensive'
+}
+
+export interface DiagnosticCatalog {
+  categories: DiagnosticCategory[]
+  items: DiagnosticCheck[]
+}
+
+export interface DiagnosticJob {
+  id: string
+  checkId: string
+  checkName: string
+  category: string
+  sourceUrl: string
+  estimatedMinutes: number
+  impact: 'light' | 'network' | 'intensive'
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  stage: string
+  progress: number
+  message?: string
+  logs: string[]
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+}
+
 export interface CertificateSummary {
   status: 'valid' | 'expiring' | 'expired' | 'missing' | 'unknown'
   issuer?: string
