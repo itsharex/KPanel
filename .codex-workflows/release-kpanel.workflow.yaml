@@ -1,0 +1,213 @@
+---
+name: release-kpanel
+description: "完成 KPanel 版本准备、CI、GitHub Release、Docker Hub、应用市场同步和公开镜像验收"
+version: "1.0"
+author: "Codex"
+tags: [release, deploy, docker, github, appmarket, verification]
+params: [version, previous_version, image, apps_repo]
+created: "2026-07-27T13:00:00Z"
+updated: "2026-07-27T13:00:00Z"
+---
+
+# Release KPanel
+
+## Purpose
+
+把 KPanel 的 L3 发布链路固化为可重复执行、可验证、可回滚的流程。链路包括版本准备、
+主仓库 CI、GitHub Release、Docker Hub 多架构镜像、`latest` 提升、`kejilion/apps`
+应用市场同步和公开镜像端到端验收。
+
+## Prerequisites
+
+- 已阅读 `AGENTS.md` 和 `PROJECT_RULES.md`，并取得用户对本次发布、推送的明确授权。
+- KPanel 仓库为 `C:\GitHub\kejilion-panel`，远端为 `kejilion/KPanel`。
+- `${{apps_repo}}` 指向 `kejilion/apps` 本地仓库，默认 `C:\GitHub\kejilion\apps`。
+- GitHub 仓库已配置 `DOCKERHUB_TOKEN` Secret；Token 对 `${{image}}` 具有 Read & Write 权限。
+- GitHub 仓库变量 `DOCKERHUB_IMAGE`、`DOCKERHUB_USERNAME` 与目标 Docker Hub 仓库一致。
+- `release.yml` 的 Docker 登录不得限定仅 push 的 Buildx `scope`，因为 `latest` 提升同时需要
+  拉取和推送清单的权限。
+- 保留所有无关未提交改动；只提交本次发布范围内的文件。
+
+## Steps
+
+### 1. 预检发布状态
+
+确认目标版本尚未作为正式 Release 发布，目标镜像标签尚未被占用，并记录回滚点：
+
+```bash
+git fetch origin --tags
+git status --short
+git rev-parse HEAD
+git rev-parse origin/main
+git tag --list "v${{version}}"
+```
+
+同时检查 GitHub Release、Actions 和 Docker Hub 标签。不得覆盖已经发布的 Release、镜像或
+可追溯版本；若版本已占用，必须提升版本号。
+
+**Expected output:** 发布基线明确，目标版本未占用，记录 `${{previous_version}}` 对应源码和镜像回滚点。
+
+### 2. 准备一致的版本变更
+
+将 `${{version}}` 同步到以下位置，并补充 `CHANGELOG.md`：
+
+- `VERSION`
+- `internal/version/version.go`（开发态使用 `${{version}}-dev`）
+- `web/package.json`
+- `web/package-lock.json`
+- `packaging/kejilion-app/kpanel.conf` 中所有镜像和 Agent 版本引用
+
+检查：
+
+```bash
+git diff --check
+git diff -- VERSION internal/version/version.go web/package.json \
+  web/package-lock.json packaging/kejilion-app/kpanel.conf CHANGELOG.md
+```
+
+**Expected output:** 所有发行版本字段均为 `${{version}}`，没有空白错误或无关修改。
+
+### 3. 执行 L3 发布前核验
+
+在 Linux、WSL 或 CI 等支持 Bash、Go、Node 和 Docker 的环境执行：
+
+```bash
+make verify-release
+sh packaging/tests/app-conf-lifecycle.sh
+```
+
+另外解析 `.github/workflows/ci.yml` 和 `.github/workflows/release.yml`，确认 YAML 有效，并复核：
+
+- Release tag 必须与 `VERSION` 完全一致；
+- Release 先保持 draft，镜像成功后才公开；
+- 镜像平台包含 `linux/amd64` 和 `linux/arm64`；
+- 稳定版本才提升 `latest`；
+- Release action 和 Docker action 使用固定提交摘要。
+
+**Expected output:** L3 测试、构建、安装安全、应用配置生命周期和工作流静态检查全部通过。
+
+### 4. 提交主仓库并等待 CI
+
+仅暂存发布范围文件，提交后直接推送 `main`：
+
+```bash
+git add VERSION CHANGELOG.md internal/version/version.go \
+  web/package.json web/package-lock.json packaging/kejilion-app/kpanel.conf
+git commit -m "chore: prepare KPanel ${{version}}"
+git push origin HEAD:main
+```
+
+如果发布工作流本身需要修复，应将 `.github/workflows/release.yml` 纳入同一独立修复提交。
+等待 `main` 的 CI 成功，不得只依据本地测试继续发布。
+
+**Expected output:** `main` CI 成功，远端提交哈希与本地待发布提交一致。
+
+### 5. 创建不可变版本标签并监控 Release
+
+创建 annotated tag 并推送：
+
+```bash
+git tag -a "v${{version}}" -m "KPanel ${{version}}"
+git push origin "v${{version}}"
+```
+
+持续检查对应 Release run，直到所有步骤完成：
+
+1. 源码验证；
+2. Agent 双架构二进制和校验文件；
+3. 原生镜像运行时契约；
+4. draft GitHub Release；
+5. Docker Hub 登录；
+6. 多架构版本镜像；
+7. 稳定版 `latest` 提升；
+8. GitHub Release 正式公开。
+
+**Expected output:** Release workflow 全绿，GitHub Release 为非 draft、非 prerelease。
+
+### 6. 验证 GitHub Release 和 Docker Hub
+
+核对 Release 附件至少包含：
+
+- `kejilion-agent-linux-amd64`
+- `kejilion-agent-linux-arm64`
+- `kejilion-panel-deploy-${{version}}.tar.gz`
+- `SHA256SUMS`
+
+核对 `${{image}}:${{version}}` 与稳定版 `${{image}}:latest` 的清单摘要完全一致，并确认
+`linux/amd64`、`linux/arm64` 均存在。额外的 `unknown/unknown` 条目可为 provenance/SBOM
+attestation，不能误判为架构缺失。
+
+**Expected output:** Release 附件完整，版本镜像与 `latest` 指向同一摘要，双架构齐全。
+
+### 7. 同步应用市场
+
+只有正式 Release 和镜像验证成功后，才更新 `${{apps_repo}}/kpanel.conf` 中全部版本引用。
+将其与本仓库 `packaging/kejilion-app/kpanel.conf` 归一化对比，运行 Bash 语法和生命周期检查，
+然后在 `kejilion/apps` 仓库独立提交并推送：
+
+```bash
+git add kpanel.conf
+git commit -m "chore: update KPanel to ${{version}}"
+git push origin HEAD:main
+```
+
+**Expected output:** 应用市场配置与发布配置一致，`kejilion/apps` 的 `main` 已更新且工作树干净。
+
+### 8. 从公开仓库完成最终验收
+
+不得复用本地构建缓存作为线上证据。显式拉取公开镜像并运行端到端测试：
+
+```bash
+docker pull "${{image}}:${{version}}"
+KPANEL_EXPECTED_VERSION="${{version}}" \
+  sh packaging/tests/image-e2e.sh "${{image}}:${{version}}"
+```
+
+再次核对 GitHub Release 页面、Actions 结果、Docker Hub 摘要和应用市场提交。
+
+**Expected output:** 输出 `image_e2e=pass`，四个线上状态均与 `${{version}}` 一致。
+
+### 9. 统一交付并记录证据
+
+最终回传必须包含：
+
+- 主仓库提交和 tag；
+- CI、Release run、GitHub Release、Docker Hub 链接；
+- 版本镜像和 `latest` 摘要；
+- 支持的平台；
+- `kejilion/apps` 提交；
+- 公开镜像 E2E 结果；
+- 保留的无关本地改动；
+- `${{previous_version}}` 回滚点及任何未验证风险。
+
+**Expected output:** 用户无需查看其他会话即可获得完整、可追溯的发布结论。
+
+## Parameters
+
+- `${{version}}`：不含 `v` 的目标语义版本，例如 `0.20.2`。
+- `${{previous_version}}`：发布前稳定源码或镜像版本，用于回滚说明。
+- `${{image}}`：完整镜像仓库，默认 `docker.io/kjlion/kejilion-panel`。
+- `${{apps_repo}}`：`kejilion/apps` 本地路径，默认 `C:\GitHub\kejilion\apps`。
+
+## Verification
+
+```bash
+py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
+  validate release-kpanel --project-dir C:/GitHub/kejilion-panel
+py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
+  run release-kpanel --project-dir C:/GitHub/kejilion-panel \
+  --param version=0.0.0-test \
+  --param previous_version=0.0.0 \
+  --param image=docker.io/example/kpanel \
+  --param apps_repo=C:/tmp/apps
+```
+
+确认渲染结果中不存在未替换参数，并执行 `git diff --check`。
+
+## Notes
+
+- 工作流负责指导执行，不保存 GitHub、Docker Hub Token 或任何会话 ID。
+- Release 失败时先定位精确失败步骤；不得把登录成功等同于推送和提升 `latest` 成功。
+- 若失败发生在正式产物生成之后，修复后发布新的 patch 版本，不移动或覆盖旧 tag。
+- 若仅生成 draft Release，不得手工公开；镜像成功且线上验收通过后才允许公开。
+- 源码回滚与镜像回滚分别记录；历史源码 tag 不代表一定存在可用 Docker 镜像。
