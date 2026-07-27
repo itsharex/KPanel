@@ -29,7 +29,7 @@ node scripts/audit-kejilion-apps.mjs /path/to/kejilion.sh internal/appmarket/leg
 
 两条命令都有严格的数量、字段、URL、文件类型、大小和重复项校验。上游内置应用或分类结构发生
 变化时，同步会失败，必须先人工复核。运行时远程目录只提供应用标识与展示元数据；安装执行仍由
-本机已更新且支持 KPanel 非交互协议的 `kejilion.sh` 解析固定应用标识，KPanel 不接收远程命令行。
+本机已更新且支持 KPanel 交互协议的 `kejilion.sh` 解析固定应用标识，KPanel 不接收远程命令行。
 
 ## 功能矩阵
 
@@ -46,8 +46,8 @@ node scripts/audit-kejilion-apps.mjs /path/to/kejilion.sh internal/appmarket/leg
 | 更新、卸载 | 需要脚本管理协议或声明式适配器 | 脚本协议可用时 | 是 |
 
 当前审计快照中，99 个采用 `docker_app`/`docker_app_plus` 的内置应用，以及官方目录中由
-`docker_app_plus` 提供配置的第三方应用，可以直接从 KPanel 发起后台安装。使用面板安装器或其他
-专属交互流程的应用继续显示“需要专属配置向导”，不会伪装成可无人值守安装。
+`docker_app_plus` 提供配置的第三方应用，可以直接从 KPanel 发起后台交互安装。使用独立面板
+安装器或没有进入统一应用管理函数的专属流程，仍需单独适配，不能伪装成已支持。
 
 首批声明式适配应用：
 
@@ -85,18 +85,25 @@ KPanel 安装成功后原子更新：
 - 用户选择的 `1-65535` 宿主机端口；
 - `direct` 或 `domain_only` 两种访问模式。
 
-标准脚本安装器由独立的 systemd 临时服务在后台执行，只接受经过正则校验的数字编号或应用 token，
-动作固定为 `install`，可选端口限制为 `1-65535` 并在安装前检查占用。它通过
-`KJ_APP_NONINTERACTIVE=1 KJ_APP_ACTION=install` 调用本机 `kejilion.sh app <selector>`，
-直接复用脚本的 Docker/Compose、数据目录、默认凭据和兼容标记业务，不模拟终端输入。脚本未更新、
-文件可被非 root 用户修改、用户尚未在终端运行 `k` 接受许可协议、系统没有 systemd，或应用仍要求
-专属交互配置时，安装能力保持禁用。KPanel 不会代表用户自动接受脚本许可协议。
+标准脚本应用统一由独立的 systemd 临时服务和宿主机 PTY 在后台执行，只接受经过正则校验的数字
+编号或应用 token，以及固定的 `install`、`update`、`uninstall`、`direct_access` 动作。新版
+KPanel 不再设置 `KJ_APP_NONINTERACTIVE=1`，而是使用
+`KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=<固定动作>` 调用
+`kejilion.sh app <selector>`。脚本将动作映射到原菜单的 `1/2/3/7/8`，端口、域名、账号、
+密码、配置文件等后续问题仍由原来的 `read` 和安装函数处理，最终 Docker/Compose、数据目录、
+默认凭据与兼容标记均与 SSH 端同源。
 
-后台任务状态文件和日志权限为 `0600`；Web 容器没有 Docker Socket，也不能直接执行脚本。
+浏览器每次读取最多 64 KiB 原始终端输出，并把键盘输入写入该任务专属的 `0600` FIFO；安装、
+更新等任务意图正常审计，但终端键盘内容、长度和分段本身均不写入审计。PTY、FIFO 和任务由
+systemd 持有，因此刷新页面、
+关闭弹窗或 Panel/Agent 重启不会终止正在运行的脚本，重新打开任务会从受限的原始终端记录回放。
+每个终端记录最多 8 MiB，历史任务仍受总数清理限制。Web 容器没有 Docker Socket，也不能提交
+任意命令；Agent 始终只执行已校验的 `kejilion.sh app <selector>`。
 
-更新先拉取新镜像，再核对 `resourceVersion` 和应用约定端口。重建失败时使用原镜像 ID、端口、
-访问模式、标签和运行状态恢复旧容器。卸载按发现到的主容器执行，不要求镜像、挂载、特权参数或
-KPanel label 保持不变；共享镜像、Docker prune 和应用数据目录仍由对应脚本业务决定。
+脚本未更新、文件可被非 root 用户修改、用户尚未在终端运行 `k` 接受许可协议、系统没有 systemd，
+或应用没有进入统一 `docker_app`/`docker_app_plus` 流程时，交互任务保持不可用。KPanel 不代表
+用户自动接受脚本许可协议。旧版 KPanel 使用的非交互入口继续保留在脚本中用于版本兼容，但新版
+KPanel 不再调用。
 
 ## 域名与直接访问
 
@@ -106,7 +113,7 @@ KPanel label 保持不变；共享镜像、Docker prune 和应用数据目录仍
 删除域名按实际反向代理资源 ID 和资源版本执行，并且只移除 Nginx 入口；静态站、PHP 站和
 数据目录不通过应用域名入口删除。
 
-标准脚本应用通过 `kejilion.sh` 非交互管理协议执行原生阻止/放行流程。声明式应用以当前容器
+标准脚本应用通过 `kejilion.sh` 交互任务执行原生阻止/放行流程。声明式应用以当前容器
 运行信息重建端口绑定，把宿主机监听地址在公网地址与回环地址之间切换；宿主机 Nginx 仍可通过
 回环地址访问。
 

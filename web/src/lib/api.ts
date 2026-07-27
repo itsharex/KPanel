@@ -17,6 +17,7 @@ import type {
   DockerMaintenanceJob,
   Job,
   AppInstallJob,
+  AppTerminalChunk,
   LoginRequest,
   PanelSettings,
   SetupRequest,
@@ -969,13 +970,26 @@ export const api = {
       request<AppMarketInventory>('/apps', { signal }),
     install: (
       id: string,
-      body: { hostPort?: number; accessMode?: 'direct' | 'domain_only' },
+      body: {
+        hostPort?: number
+        accessMode?: 'direct' | 'domain_only'
+      },
     ): Promise<AppInstallJob> =>
       request<AppInstallJob>(`/apps/${encodeURIComponent(id)}/install`, { method: 'POST', body }),
     job: (id: string, signal?: AbortSignal): Promise<AppInstallJob> =>
       request<AppInstallJob>(`/app-jobs/${encodeURIComponent(id)}`, { signal }),
     jobs: async (signal?: AbortSignal): Promise<ApiList<AppInstallJob>> =>
       normalizeList(await request<ApiList<AppInstallJob> | AppInstallJob[]>('/app-jobs', { signal })),
+    terminal: (id: string, offset: number, signal?: AbortSignal): Promise<AppTerminalChunk> =>
+      request<AppTerminalChunk>(`/app-jobs/${encodeURIComponent(id)}/terminal`, {
+        query: { offset },
+        signal,
+      }),
+    terminalInput: (id: string, data: string): Promise<{ ok: boolean }> =>
+      request<{ ok: boolean }>(`/app-jobs/${encodeURIComponent(id)}/input`, {
+        method: 'POST',
+        body: { data },
+      }),
     action: (
       id: string,
       action: 'start' | 'stop' | 'restart' | 'update' | 'uninstall' | 'direct_access',

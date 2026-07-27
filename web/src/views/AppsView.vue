@@ -28,6 +28,7 @@ import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
+import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
 import { ApiError, api } from '@/lib/api'
 import { useToast } from '@/stores/toast'
 import type { AppInstallJob, AppMarketInventory, AppMarketItem, Site } from '@/types/api'
@@ -284,8 +285,8 @@ async function install(): Promise<void> {
   operation.value = 'install'
   try {
     const job = await api.apps.install(item.id, {
-      hostPort: installPort.value || undefined,
-      accessMode: installAccess.value,
+      hostPort: item.installer === 'kejilion' ? undefined : installPort.value || undefined,
+      accessMode: item.installer === 'kejilion' ? undefined : installAccess.value,
     })
     installOpen.value = false
     selectedID.value = ''
@@ -494,7 +495,9 @@ onBeforeUnmount(() => {
           <b :style="{ width: `${activeJob.progress || 0}%` }" />
         </i>
       </div>
-      <strong class="app-job-banner__percent">{{ activeJob.progress || 0 }}%</strong>
+      <strong class="app-job-banner__percent">
+        {{ activeJob.interactive && isActiveJob(activeJob) ? '交互中' : `${activeJob.progress || 0}%` }}
+      </strong>
       <button class="button button--secondary button--small" type="button" @click="jobDetailsOpen = true">
         查看进度 <ChevronRight :size="15" />
       </button>
@@ -858,7 +861,7 @@ onBeforeUnmount(() => {
       @close="installOpen = false"
     >
       <form id="app-install-form" class="form-stack" @submit.prevent="install">
-        <label class="field">
+        <label v-if="selected?.installer !== 'kejilion'" class="field">
           <span>访问端口</span>
           <input
             v-model.number="installPort"
@@ -869,7 +872,7 @@ onBeforeUnmount(() => {
           />
           <small>留空时沿用 kejilion.sh 默认端口；低位系统端口和已有服务发生冲突时请换用其他端口。</small>
         </label>
-        <fieldset v-if="selected?.installer !== 'guided'" class="access-options">
+        <fieldset v-if="selected?.installer === 'declarative'" class="access-options">
           <legend>初始访问方式</legend>
           <button
             type="button"
@@ -890,7 +893,7 @@ onBeforeUnmount(() => {
           <ShieldCheck :size="17" />
           {{
             selected?.installer === 'kejilion'
-              ? '使用宿主机已安装且支持 KPanel 后台模式的 kejilion.sh；应用编号、端口文件和 Docker 产物保持同源。'
+              ? '提交后直接打开 kejilion.sh 网页终端；端口、域名、账号和密码均按原脚本提示输入。'
               : '使用固定声明式模板；容器创建失败不会写入脚本安装标记。'
           }}
         </div>
@@ -924,11 +927,17 @@ onBeforeUnmount(() => {
           </div>
           <StatusBadge :status="activeJob.status" />
         </div>
-        <div class="job-detail-progress">
+        <div v-if="!activeJob.interactive" class="job-detail-progress">
           <i><b :style="{ width: `${activeJob.progress || 0}%` }" /></i>
           <strong>{{ activeJob.progress || 0 }}%</strong>
         </div>
-        <section class="job-log">
+        <AppInteractiveTerminal
+          v-if="activeJob.interactive"
+          :key="activeJob.id"
+          :job-id="activeJob.id"
+          :input-open="activeJob.inputOpen"
+        />
+        <section v-else class="job-log">
           <header>
             <strong>实时日志</strong>
             <small>显示最近 {{ activeJob.logs.length }} 行</small>

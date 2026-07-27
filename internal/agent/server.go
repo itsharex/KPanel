@@ -150,7 +150,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/v1/app-jobs":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.appJobList)
 	case strings.HasPrefix(r.URL.Path, "/v1/app-jobs/"):
-		s.requireMethod(w, r, requestID, http.MethodGet, s.appJob)
+		s.appJobOperation(w, r, requestID)
 	case strings.HasPrefix(r.URL.Path, "/v1/apps/"):
 		s.appOperation(w, r, requestID)
 	case r.URL.Path == "/v1/docker/summary":
@@ -517,18 +517,84 @@ func (s *Server) appJobList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) appJob(w http.ResponseWriter, r *http.Request) {
-	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+func (s *Server) appJobOperation(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.URL.RawPath != "" {
 		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_app_job_request", "应用任务 URL 无效", "")
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/v1/app-jobs/")
-	job, err := s.appMarket.AppJob(id)
-	if err != nil {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/app-jobs/"), "/")
+	if len(parts) < 1 || len(parts) > 2 || !validSiteID(parts[0]) {
 		writeProblem(w, requestIDFrom(w), http.StatusNotFound, "app_job_not_found", "应用任务不存在", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, job)
+	id := parts[0]
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet || r.URL.RawQuery != "" {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_app_job_request", "应用任务请求无效", "")
+			return
+		}
+		job, err := s.appMarket.AppJob(id)
+		if err != nil {
+			writeProblem(w, requestID, http.StatusNotFound, "app_job_not_found", "应用任务不存在", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, job)
+		return
+	}
+	switch parts[1] {
+	case "terminal":
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		values := r.URL.Query()
+		if len(values) != 1 || len(values["offset"]) != 1 {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
+			return
+		}
+		offset, err := strconv.ParseInt(values.Get("offset"), 10, 64)
+		if err != nil || offset < 0 {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
+			return
+		}
+		chunk, err := s.appMarket.AppJobTerminal(id, offset)
+		if err != nil {
+			writeProblem(w, requestID, http.StatusNotFound, "app_terminal_not_found", "交互终端不存在", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, chunk)
+	case "input":
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		if r.URL.RawQuery != "" {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_app_job_request", "应用任务请求无效", "")
+			return
+		}
+		var input struct {
+			Data string `json:"data"`
+		}
+		if err := decodeJSON(w, r, &input); err != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+			return
+		}
+		if err := s.appMarket.WriteAppJobInput(id, input.Data); err != nil {
+			status, code, title := http.StatusConflict, "app_terminal_closed", "交互终端输入已关闭"
+			if errors.Is(err, appmarket.ErrNotFound) {
+				status, code, title = http.StatusNotFound, "app_terminal_not_found", "交互终端不存在"
+			} else if errors.Is(err, appmarket.ErrForbidden) {
+				status, code, title = http.StatusUnprocessableEntity, "invalid_terminal_input", "终端输入无效"
+			}
+			writeProblem(w, requestID, status, code, title, safeDetail(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	default:
+		writeProblem(w, requestID, http.StatusNotFound, "not_found", "资源不存在", "")
+	}
 }
 
 func (s *Server) appOperation(w http.ResponseWriter, r *http.Request, requestID string) {

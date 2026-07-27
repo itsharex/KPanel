@@ -96,6 +96,9 @@ func TestKejilionStandardAppsBecomeDirectlyInstallable(t *testing.T) {
 	service.scriptFinder = func() (string, error) {
 		return "/usr/local/bin/k", nil
 	}
+	service.scriptInteractiveFinder = func() (string, error) {
+		return "/usr/local/bin/k", nil
+	}
 
 	item, err := service.Find(context.Background(), "builtin-4")
 	if err != nil {
@@ -115,8 +118,12 @@ func TestKejilionStandardAppsBecomeDirectlyInstallable(t *testing.T) {
 	if record.Selector != "4" || record.Adapter != "kejilion" || record.HostPort != 18081 {
 		t.Fatalf("unsafe or incomplete script job record: %#v", record)
 	}
+	if !record.Interactive {
+		t.Fatal("kejilion.sh install was not routed through the interactive terminal")
+	}
 	if len(runner.calls) != 1 || runner.calls[0][0] != "systemd-run" ||
-		!strings.Contains(strings.Join(runner.calls[0], " "), appJobUnitPrefix+job.ID) {
+		!strings.Contains(strings.Join(runner.calls[0], " "), appJobUnitPrefix+job.ID) ||
+		!strings.Contains(strings.Join(runner.calls[0], " "), "app-pty-run") {
 		t.Fatalf("background launch = %#v", runner.calls)
 	}
 	if _, err := service.StartInstall(context.Background(), "builtin-28", InstallInput{}); !errors.Is(err, ErrConflict) {
@@ -155,5 +162,22 @@ func TestKejilionScriptCompatibilityRequiresExplicitLicenseAcceptance(t *testing
 	accepted := append(append([]byte{}, base...), []byte("permission_granted=\"true\"\n")...)
 	if !isKPanelCompatibleScript(accepted) {
 		t.Fatal("accepted compatible script was rejected")
+	}
+}
+
+func TestKejilionInteractiveCompatibilityIsExplicit(t *testing.T) {
+	base := []byte(
+		"KJ_APP_NONINTERACTIVE\nkpanel_run_docker_app_install\n" +
+			"permission_granted=\"true\"\n",
+	)
+	if isKPanelInteractiveCompatibleScript(base) {
+		t.Fatal("legacy script unexpectedly enabled interactive terminal jobs")
+	}
+	compatible := append(
+		append([]byte{}, base...),
+		[]byte("KJ_APP_INTERACTIVE\nkpanel_app_interactive_choice\n")...,
+	)
+	if !isKPanelInteractiveCompatibleScript(compatible) {
+		t.Fatal("interactive script protocol was rejected")
 	}
 }

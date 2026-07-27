@@ -1,0 +1,234 @@
+<script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { FitAddon } from '@xterm/addon-fit'
+import { Terminal } from '@xterm/xterm'
+import '@xterm/xterm/css/xterm.css'
+import { api } from '@/lib/api'
+
+const props = defineProps<{
+  jobId: string
+  inputOpen?: boolean
+}>()
+
+const host = ref<HTMLElement>()
+const connectionState = ref<'connecting' | 'connected' | 'finished' | 'error'>('connecting')
+const terminalInputOpen = ref(Boolean(props.inputOpen))
+let terminal: Terminal | undefined
+let fitAddon: FitAddon | undefined
+let resizeObserver: ResizeObserver | undefined
+let pollController: AbortController | undefined
+let pollTimer: number | undefined
+let inputTimer: number | undefined
+let inputQueue = ''
+let inputSending = false
+let offset = 0
+let disposed = false
+let polling = false
+
+function decodeBase64(value: string): Uint8Array {
+  const decoded = window.atob(value)
+  const bytes = new Uint8Array(decoded.length)
+  for (let index = 0; index < decoded.length; index += 1) {
+    bytes[index] = decoded.charCodeAt(index)
+  }
+  return bytes
+}
+
+async function flushInput(): Promise<void> {
+  if (inputSending || !terminalInputOpen.value || disposed) return
+  inputSending = true
+  try {
+    while (inputQueue && terminalInputOpen.value && !disposed) {
+      const data = inputQueue
+      inputQueue = ''
+      await api.apps.terminalInput(props.jobId, data)
+    }
+  } catch {
+    terminal?.write('\r\n\x1b[31m[KPanel] 输入发送失败，请确认任务仍在等待输入。\x1b[0m\r\n')
+  } finally {
+    inputSending = false
+  }
+}
+
+function queueInput(data: string): void {
+  if (!terminalInputOpen.value || disposed) return
+  inputQueue += data
+  if (new TextEncoder().encode(inputQueue).byteLength >= 2048) {
+    void flushInput()
+    return
+  }
+  if (inputTimer) window.clearTimeout(inputTimer)
+  inputTimer = window.setTimeout(() => void flushInput(), 25)
+}
+
+async function poll(): Promise<void> {
+  if (polling || disposed) return
+  polling = true
+  pollController?.abort()
+  pollController = new AbortController()
+  try {
+    const chunk = await api.apps.terminal(props.jobId, offset, pollController.signal)
+    const data = chunk.dataBase64 ? decodeBase64(chunk.dataBase64) : undefined
+    if (data) terminal?.write(data)
+    offset = chunk.nextOffset
+    terminalInputOpen.value = chunk.inputOpen
+    connectionState.value = chunk.finished ? 'finished' : 'connected'
+    if (!chunk.finished && !disposed) {
+      pollTimer = window.setTimeout(() => void poll(), data?.byteLength === 64 << 10 ? 0 : 350)
+    }
+  } catch (reason) {
+    if (reason instanceof DOMException && reason.name === 'AbortError') return
+    connectionState.value = 'error'
+    if (!disposed) pollTimer = window.setTimeout(() => void poll(), 1500)
+  } finally {
+    polling = false
+  }
+}
+
+function resetTerminal(): void {
+  pollController?.abort()
+  polling = false
+  offset = 0
+  terminal?.reset()
+  terminalInputOpen.value = Boolean(props.inputOpen)
+  connectionState.value = 'connecting'
+  if (pollTimer) window.clearTimeout(pollTimer)
+  pollTimer = window.setTimeout(() => void poll(), 0)
+}
+
+watch(() => props.jobId, resetTerminal)
+watch(
+  () => props.inputOpen,
+  (open) => {
+    terminalInputOpen.value = Boolean(open)
+  },
+)
+
+onMounted(() => {
+  terminal = new Terminal({
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    convertEol: false,
+    fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace',
+    fontSize: 13,
+    lineHeight: 1.25,
+    scrollback: 5000,
+    theme: {
+      background: '#090d18',
+      foreground: '#dbe6f3',
+      cursor: '#8b7cff',
+      selectionBackground: '#6d5dfc55',
+    },
+  })
+  fitAddon = new FitAddon()
+  terminal.loadAddon(fitAddon)
+  // A remote script may print OSC 52; never allow it to write the browser clipboard.
+  terminal.parser.registerOscHandler(52, () => true)
+  terminal.onData(queueInput)
+  if (host.value) {
+    terminal.open(host.value)
+    fitAddon.fit()
+    resizeObserver = new ResizeObserver(() => fitAddon?.fit())
+    resizeObserver.observe(host.value)
+    terminal.focus()
+  }
+  void poll()
+})
+
+onBeforeUnmount(() => {
+  disposed = true
+  pollController?.abort()
+  if (pollTimer) window.clearTimeout(pollTimer)
+  if (inputTimer) window.clearTimeout(inputTimer)
+  resizeObserver?.disconnect()
+  terminal?.dispose()
+})
+</script>
+
+<template>
+  <section class="interactive-terminal">
+    <header>
+      <div>
+        <strong>kejilion.sh 交互终端</strong>
+        <small>直接按脚本提示输入；窗口关闭后任务仍在后台继续。</small>
+      </div>
+      <span :class="`is-${connectionState}`">
+        {{
+          connectionState === 'connected'
+            ? terminalInputOpen
+              ? '可输入'
+              : '运行中'
+            : connectionState === 'finished'
+              ? '已结束'
+              : connectionState === 'error'
+                ? '正在重连'
+                : '正在连接'
+        }}
+      </span>
+    </header>
+    <div ref="host" class="interactive-terminal__screen" @click="terminal?.focus()" />
+  </section>
+</template>
+
+<style scoped>
+.interactive-terminal {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border, #243044) 88%, #6d5dfc);
+  border-radius: 14px;
+  background: #090d18;
+}
+
+.interactive-terminal header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 14px;
+  border-bottom: 1px solid #202a3b;
+  background: #111827;
+}
+
+.interactive-terminal header div {
+  display: grid;
+  gap: 2px;
+}
+
+.interactive-terminal header strong {
+  color: #f2f5fb;
+  font-size: 13px;
+}
+
+.interactive-terminal header small {
+  color: #91a0b7;
+  font-size: 11px;
+}
+
+.interactive-terminal header > span {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: #aebbd0;
+  background: #243044;
+  font-size: 11px;
+}
+
+.interactive-terminal header > span.is-connected {
+  color: #72e4ae;
+  background: #123b30;
+}
+
+.interactive-terminal header > span.is-error {
+  color: #ffb4aa;
+  background: #462020;
+}
+
+.interactive-terminal__screen {
+  height: min(54vh, 520px);
+  min-height: 320px;
+  padding: 10px;
+}
+
+.interactive-terminal__screen :deep(.xterm) {
+  height: 100%;
+}
+</style>

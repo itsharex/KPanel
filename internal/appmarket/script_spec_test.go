@@ -61,6 +61,7 @@ func TestThirdPartyScriptAppUsesVerifiedMainContainerAndManagementProtocol(t *te
 		t.Fatal(err)
 	}
 	service.scriptFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	service.scriptManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 
 	item, err := service.Find(context.Background(), "thirdparty-AIClient-2-API")
@@ -153,6 +154,7 @@ func TestDynamicThirdPartyConfigDoesNotBecomeAManagementGuardrail(t *testing.T) 
 		t.Fatal(err)
 	}
 	service.scriptFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	service.scriptManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 
 	item, err := service.Find(context.Background(), "thirdparty-AIClient-2-API")

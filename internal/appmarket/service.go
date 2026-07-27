@@ -98,27 +98,28 @@ var declarativeSpecs = map[string]declarativeSpec{
 }
 
 type Service struct {
-	catalog            Catalog
-	legacy             map[int]LegacyApp
-	scriptSHA256       string
-	docker             Docker
-	appRoot            string
-	scriptAppRoot      string
-	now                func() time.Time
-	fetchCatalog       catalogFetcher
-	catalogMu          sync.Mutex
-	liveCatalog        *Catalog
-	catalogExpiry      time.Time
-	catalogRefreshedAt time.Time
-	catalogWarning     string
-	catalogLoading     bool
-	actions            sync.Mutex
-	jobs               *appJobRegistry
-	jobExecutable      string
-	jobRunner          jobCommandRunner
-	scriptFinder       func() (string, error)
-	scriptManageFinder func() (string, error)
-	fileOwnerTrusted   func(os.FileInfo) bool
+	catalog                 Catalog
+	legacy                  map[int]LegacyApp
+	scriptSHA256            string
+	docker                  Docker
+	appRoot                 string
+	scriptAppRoot           string
+	now                     func() time.Time
+	fetchCatalog            catalogFetcher
+	catalogMu               sync.Mutex
+	liveCatalog             *Catalog
+	catalogExpiry           time.Time
+	catalogRefreshedAt      time.Time
+	catalogWarning          string
+	catalogLoading          bool
+	actions                 sync.Mutex
+	jobs                    *appJobRegistry
+	jobExecutable           string
+	jobRunner               jobCommandRunner
+	scriptFinder            func() (string, error)
+	scriptInteractiveFinder func() (string, error)
+	scriptManageFinder      func() (string, error)
+	fileOwnerTrusted        func(os.FileInfo) bool
 }
 
 func New(docker Docker, appRoot string) (*Service, error) {
@@ -144,8 +145,10 @@ func newService(docker Docker, appRoot string, fetcher catalogFetcher) (*Service
 		catalog: catalog, legacy: legacy, scriptSHA256: scriptSHA256,
 		docker: docker, appRoot: filepath.Clean(appRoot), now: time.Now,
 		scriptAppRoot: "/root/apps", fetchCatalog: fetcher,
-		scriptFinder: findKejilionScript, scriptManageFinder: findKejilionManageScript,
-		fileOwnerTrusted: trustedFileOwner,
+		scriptFinder:            findKejilionScript,
+		scriptInteractiveFinder: findKejilionInteractiveScript,
+		scriptManageFinder:      findKejilionManageScript,
+		fileOwnerTrusted:        trustedFileOwner,
 	}, nil
 }
 
@@ -596,8 +599,9 @@ func (s *Service) Lifecycle(ctx context.Context, id, action, expectedVersion str
 }
 
 type InstallInput struct {
-	HostPort   uint16 `json:"hostPort"`
-	AccessMode string `json:"accessMode"`
+	HostPort    uint16 `json:"hostPort"`
+	AccessMode  string `json:"accessMode"`
+	Interactive bool   `json:"-"`
 }
 
 type MutationInput struct {

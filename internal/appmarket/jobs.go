@@ -36,18 +36,20 @@ var (
 )
 
 type AppJob struct {
-	ID         string     `json:"id"`
-	AppID      string     `json:"appId"`
-	AppName    string     `json:"appName"`
-	Action     string     `json:"action"`
-	Status     string     `json:"status"`
-	Stage      string     `json:"stage"`
-	Progress   int        `json:"progress"`
-	Message    string     `json:"message,omitempty"`
-	Logs       []string   `json:"logs"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	StartedAt  *time.Time `json:"startedAt,omitempty"`
-	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	ID          string     `json:"id"`
+	AppID       string     `json:"appId"`
+	AppName     string     `json:"appName"`
+	Action      string     `json:"action"`
+	Interactive bool       `json:"interactive,omitempty"`
+	InputOpen   bool       `json:"inputOpen,omitempty"`
+	Status      string     `json:"status"`
+	Stage       string     `json:"stage"`
+	Progress    int        `json:"progress"`
+	Message     string     `json:"message,omitempty"`
+	Logs        []string   `json:"logs"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	StartedAt   *time.Time `json:"startedAt,omitempty"`
+	FinishedAt  *time.Time `json:"finishedAt,omitempty"`
 }
 
 type appJobRecord struct {
@@ -156,8 +158,10 @@ func (s *Service) recoverInterruptedJobs() {
 		record.Stage = "interrupted"
 		record.Progress = 100
 		record.Message = "后台应用任务已被 Agent 或服务器重启中断，请核对应用状态后重试"
+		record.InputOpen = false
 		record.FinishedAt = &finished
 		_ = s.jobs.put(record)
+		_ = removeTerminalInput(s.jobs.inputPath(record.ID))
 	}
 }
 
@@ -207,6 +211,18 @@ func (s *Service) StartInstall(
 	if scriptBacked {
 		adapter = "kejilion"
 	}
+	input.Interactive = scriptBacked
+	if scriptBacked {
+		if s.scriptInteractiveFinder == nil {
+			return AppJob{}, fmt.Errorf("%w: interactive kejilion.sh protocol is unavailable", ErrUnsupported)
+		}
+		if _, err := s.scriptInteractiveFinder(); err != nil {
+			return AppJob{}, fmt.Errorf(
+				"%w: the installed kejilion.sh does not support KPanel interactive jobs",
+				ErrUnsupported,
+			)
+		}
+	}
 	record, err := newAppJobRecord(item, selector, adapter, "install", input, "")
 	if err != nil {
 		return AppJob{}, err
@@ -249,6 +265,7 @@ func newAppJobRecord(
 			ID: hex.EncodeToString(idBytes[:]), AppID: item.ID, AppName: item.NameZH,
 			Action: action, Status: "queued", Stage: "queued", Progress: 0,
 			Message: appActionLabel(action) + "任务已进入后台队列", Logs: []string{}, CreatedAt: now,
+			Interactive: input.Interactive,
 		},
 		Selector: selector, HostPort: input.HostPort,
 		AccessMode: input.AccessMode, Adapter: adapter,
@@ -280,6 +297,15 @@ func (s *Service) StartScriptMutation(
 	if s.jobs == nil {
 		return AppJob{}, true, fmt.Errorf("%w: background application jobs are unavailable", ErrUnsupported)
 	}
+	if s.scriptInteractiveFinder == nil {
+		return AppJob{}, true, fmt.Errorf("%w: interactive kejilion.sh protocol is unavailable", ErrUnsupported)
+	}
+	if _, err := s.scriptInteractiveFinder(); err != nil {
+		return AppJob{}, true, fmt.Errorf(
+			"%w: the installed kejilion.sh does not support KPanel interactive jobs",
+			ErrUnsupported,
+		)
+	}
 	if !item.Capabilities[action].Enabled {
 		return AppJob{}, true, fmt.Errorf("%w: %s", ErrForbidden, item.Capabilities[action].Reason)
 	}
@@ -304,6 +330,7 @@ func (s *Service) StartScriptMutation(
 	if err != nil {
 		return AppJob{}, true, err
 	}
+	record.Interactive = true
 	if err := s.jobs.put(record); err != nil {
 		return AppJob{}, true, fmt.Errorf("%w: persist application job: %v", ErrNeedsAttention, err)
 	}
@@ -364,6 +391,13 @@ func (s *Service) launchScriptJob(ctx context.Context, record appJobRecord) erro
 	if _, err := s.jobRunner.LookPath("systemd-run"); err != nil {
 		return errors.New("systemd background task runner is unavailable")
 	}
+	subcommand := "app-run"
+	if record.Interactive {
+		if err := createTerminalInput(s.jobs.inputPath(record.ID)); err != nil {
+			return fmt.Errorf("prepare interactive input: %w", err)
+		}
+		subcommand = "app-pty-run"
+	}
 	arguments := []string{
 		"--unit=" + appJobUnitPrefix + record.ID,
 		"--collect",
@@ -382,13 +416,16 @@ func (s *Service) launchScriptJob(ctx context.Context, record appJobRecord) erro
 		"--property=SyslogIdentifier=kpanel-app",
 		"--",
 		s.jobExecutable,
-		"app-run",
+		subcommand,
 		"--state-dir",
 		s.jobs.stateDir,
 		"--id",
 		record.ID,
 	}
 	_, err := s.jobRunner.Run(ctx, "systemd-run", arguments...)
+	if err != nil && record.Interactive {
+		_ = removeTerminalInput(s.jobs.inputPath(record.ID))
+	}
 	return err
 }
 
@@ -466,6 +503,10 @@ func findKejilionManageScript() (string, error) {
 	return findKejilionScriptMatching(isKPanelManageCompatibleScript)
 }
 
+func findKejilionInteractiveScript() (string, error) {
+	return findKejilionScriptMatching(isKPanelInteractiveCompatibleScript)
+}
+
 func findKejilionScriptMatching(compatible func([]byte) bool) (string, error) {
 	candidates := []string{"/usr/local/bin/k", "/usr/bin/k", "/root/kejilion.sh"}
 	if path, err := exec.LookPath("k"); err == nil {
@@ -511,6 +552,13 @@ func isKPanelManageCompatibleScript(content []byte) bool {
 	return isKPanelCompatibleScript(content) &&
 		strings.Contains(value, "kpanel_run_docker_app_action") &&
 		strings.Contains(value, "KJ_APP_EXPECTED_CONTAINER_ID")
+}
+
+func isKPanelInteractiveCompatibleScript(content []byte) bool {
+	value := string(content)
+	return isKPanelCompatibleScript(content) &&
+		strings.Contains(value, "KJ_APP_INTERACTIVE") &&
+		strings.Contains(value, "kpanel_app_interactive_choice")
 }
 
 func RunAppJob(ctx context.Context, stateDir, id string) error {
@@ -852,6 +900,7 @@ func (registry *appJobRegistry) pruneLocked() {
 		delete(registry.jobs, record.ID)
 		_ = os.Remove(registry.statePath(record.ID))
 		_ = os.Remove(registry.logPath(record.ID))
+		_ = removeTerminalInput(registry.inputPath(record.ID))
 	}
 }
 

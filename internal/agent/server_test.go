@@ -125,6 +125,34 @@ func TestApplicationJobEndpointsRequireAuthenticationAndStrictIDs(t *testing.T) 
 	}
 }
 
+func TestApplicationTerminalRoutesValidateMethodAndOffset(t *testing.T) {
+	server := testServer(t)
+	id := strings.Repeat("a", 32)
+	token := "Bearer " + strings.Repeat("x", 32)
+	for target, expected := range map[string]int{
+		"/v1/app-jobs/" + id + "/terminal":                  http.StatusBadRequest,
+		"/v1/app-jobs/" + id + "/terminal?offset=-1":        http.StatusBadRequest,
+		"/v1/app-jobs/" + id + "/terminal?offset=0&extra=1": http.StatusBadRequest,
+		"/v1/app-jobs/" + id + "/terminal?offset=0":         http.StatusNotFound,
+	} {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request.Header.Set("Authorization", token)
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != expected {
+			t.Fatalf("%s status = %d body=%s", target, response.Code, response.Body.String())
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/app-jobs/"+id+"/input", nil)
+	request.Header.Set("Authorization", token)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("terminal input GET status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestSitesPageEndpoint(t *testing.T) {
 	server := testServer(t)
 	request := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)

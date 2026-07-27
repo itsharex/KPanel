@@ -634,9 +634,14 @@ func TestAllowedWordPressInstallationPath(t *testing.T) {
 
 func TestAllowedApplicationJobPath(t *testing.T) {
 	id := strings.Repeat("b", 32)
-	path, ok := allowedAgentPath("/api/v1/app-jobs/" + id)
-	if !ok || path != "/v1/app-jobs/"+id {
-		t.Fatalf("allowedAgentPath() = %q, %v", path, ok)
+	for publicPath, expected := range map[string]string{
+		"/api/v1/app-jobs/" + id:               "/v1/app-jobs/" + id,
+		"/api/v1/app-jobs/" + id + "/terminal": "/v1/app-jobs/" + id + "/terminal",
+	} {
+		path, ok := allowedAgentPath(publicPath)
+		if !ok || path != expected {
+			t.Fatalf("allowedAgentPath(%q) = %q, %v", publicPath, path, ok)
+		}
 	}
 	if path, ok := allowedAgentPath("/api/v1/app-jobs"); !ok || path != "/v1/app-jobs" {
 		t.Fatalf("application job collection mapping = %q, %v", path, ok)
@@ -645,6 +650,7 @@ func TestAllowedApplicationJobPath(t *testing.T) {
 		"/api/v1/app-jobs/",
 		"/api/v1/app-jobs/" + strings.Repeat("b", 31),
 		"/api/v1/app-jobs/" + id + "/extra",
+		"/api/v1/app-jobs/" + id + "/terminal/extra",
 		"/api/v1/app-jobs/" + strings.Repeat("B", 32),
 	} {
 		if _, ok := allowedAgentPath(invalid); ok {

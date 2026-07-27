@@ -51,7 +51,10 @@ func run(arguments []string) error {
 		return runSwap(arguments[1:])
 	}
 	if len(arguments) > 0 && arguments[0] == "app-run" {
-		return runAppJob(arguments[1:])
+		return runAppJob(arguments[1:], false)
+	}
+	if len(arguments) > 0 && arguments[0] == "app-pty-run" {
+		return runAppJob(arguments[1:], true)
 	}
 
 	flags := flag.NewFlagSet("kejilion-agent", flag.ContinueOnError)
@@ -209,8 +212,12 @@ func runSwap(arguments []string) error {
 	return encoder.Encode(manager.RunSwapTransaction(ctx, *sizeMiB))
 }
 
-func runAppJob(arguments []string) error {
-	flags := flag.NewFlagSet("kejilion-agent app-run", flag.ContinueOnError)
+func runAppJob(arguments []string, interactive bool) error {
+	commandName := "app-run"
+	if interactive {
+		commandName = "app-pty-run"
+	}
+	flags := flag.NewFlagSet("kejilion-agent "+commandName, flag.ContinueOnError)
 	stateDir := flags.String(
 		"state-dir",
 		env("KEJILION_AGENT_STATE_DIR", "/var/lib/kejilion-panel/app-jobs"),
@@ -221,12 +228,15 @@ func runAppJob(arguments []string) error {
 		return err
 	}
 	if flags.NArg() != 0 || *id == "" {
-		return errors.New("app-run requires exactly one job identity")
+		return fmt.Errorf("%s requires exactly one job identity", commandName)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Minute)
 	defer cancel()
+	if interactive {
+		return appmarket.RunInteractiveAppJob(ctx, *stateDir, *id)
+	}
 	return appmarket.RunAppJob(ctx, *stateDir, *id)
 }
 

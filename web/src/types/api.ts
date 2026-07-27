@@ -318,6 +318,8 @@ export interface AppInstallJob {
   appId: string
   appName: string
   action: 'install' | 'update' | 'uninstall' | 'direct_access'
+  interactive?: boolean
+  inputOpen?: boolean
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   stage: string
   progress: number
@@ -326,6 +328,13 @@ export interface AppInstallJob {
   createdAt: string
   startedAt?: string
   finishedAt?: string
+}
+
+export interface AppTerminalChunk {
+  dataBase64: string
+  nextOffset: number
+  inputOpen: boolean
+  finished: boolean
 }
 
 export interface AppImageUpdateResult {
