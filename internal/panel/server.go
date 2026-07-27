@@ -140,6 +140,9 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSiteDelete(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/apps/"):
 		s.handleAppAction(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/") &&
+		strings.HasSuffix(r.URL.Path, "/exec"):
+		s.handleDockerExec(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/"):
 		s.handleDockerAction(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/docker/tasks":
@@ -198,6 +201,67 @@ func (s *Server) handleDockerAction(w http.ResponseWriter, r *http.Request) {
 		result = "success"
 	}
 	_ = s.audit(r, session.User.ID, "docker."+action, "container", containerID, result, change)
+	s.writeAgentResponse(w, response)
+}
+
+func (s *Server) handleDockerExec(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusBadRequest, "invalid_docker_exec_request", "Invalid Docker exec request", "")
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	const prefix = "/api/v1/docker/containers/"
+	const suffix = "/exec"
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, prefix), suffix)
+	if !containerIDPattern.MatchString(id) {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	var input dockerx.ContainerExecInput
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		_ = s.audit(r, session.User.ID, "docker.exec", "container", id, "failure", nil)
+		return
+	}
+	if !resourceVersionPattern.MatchString(input.ResourceVersion) ||
+		strings.TrimSpace(input.Command) == "" || len(input.Command) > 2048 ||
+		strings.ContainsAny(input.Command, "\r\n\x00") {
+		s.writeValidationProblem(w, r, "command", "a single command up to 2048 bytes is required")
+		return
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
+		return
+	}
+	change := map[string]any{"resourceVersion": input.ResourceVersion}
+	if err := s.audit(r, session.User.ID, "docker.exec", "container", id, "intent", change); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	response, err := s.agent.Do(
+		r.Context(),
+		http.MethodPost,
+		"/v1/docker/containers/"+id+"/exec",
+		"",
+		requestID(r),
+		body,
+	)
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "docker.exec", "container", id, "failure", change)
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	outcome := "failure"
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		outcome = "success"
+	}
+	_ = s.audit(r, session.User.ID, "docker.exec", "container", id, outcome, change)
 	s.writeAgentResponse(w, response)
 }
 
@@ -497,10 +561,12 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		"/api/v1/apps":                  "/v1/apps",
 		"/api/v1/app-jobs":              "/v1/app-jobs",
 		"/api/v1/docker/summary":        "/v1/docker/summary",
+		"/api/v1/docker/environment":    "/v1/docker/environment",
 		"/api/v1/docker/containers":     "/v1/docker/containers",
 		"/api/v1/docker/images":         "/v1/docker/images",
 		"/api/v1/docker/networks":       "/v1/docker/networks",
 		"/api/v1/docker/volumes":        "/v1/docker/volumes",
+		"/api/v1/docker/backups":        "/v1/docker/backups",
 		"/api/v1/docker/jobs":           "/v1/docker/jobs",
 	}
 	if path, ok := exact[publicPath]; ok {
@@ -528,11 +594,12 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		}
 	}
 	const prefix = "/api/v1/docker/containers/"
-	const suffix = "/logs"
-	if strings.HasPrefix(publicPath, prefix) && strings.HasSuffix(publicPath, suffix) {
-		id := strings.TrimSuffix(strings.TrimPrefix(publicPath, prefix), suffix)
-		if containerIDPattern.MatchString(id) {
-			return "/v1/docker/containers/" + url.PathEscape(id) + "/logs", true
+	for _, suffix := range []string{"/logs", "/stats"} {
+		if strings.HasPrefix(publicPath, prefix) && strings.HasSuffix(publicPath, suffix) {
+			id := strings.TrimSuffix(strings.TrimPrefix(publicPath, prefix), suffix)
+			if containerIDPattern.MatchString(id) {
+				return "/v1/docker/containers/" + url.PathEscape(id) + suffix, true
+			}
 		}
 	}
 	return "", false

@@ -196,7 +196,7 @@ func managedInspect(id, startedAt string, restartCount int) containerInspect {
 	raw.State.Running = true
 	raw.State.StartedAt = startedAt
 	raw.RestartCount = restartCount
-	raw.NetworkSettings.Networks = map[string]interface{}{}
+	raw.NetworkSettings.Networks = map[string]dockerNetworkEndpoint{}
 	raw.NetworkSettings.Ports = map[string][]struct {
 		HostIP   string `json:"HostIp"`
 		HostPort string `json:"HostPort"`

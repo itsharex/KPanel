@@ -102,6 +102,41 @@ func TestPruneRequiresConfirmationAndUsesFixedEndpoints(t *testing.T) {
 	}
 }
 
+func TestScopedPruneUsesOnlySelectedDockerEndpoint(t *testing.T) {
+	for action, wantPath := range map[string]string{
+		"container_prune": "/containers/prune",
+		"image_prune":     "/images/prune",
+		"network_prune":   "/networks/prune",
+		"volume_prune":    "/volumes/prune",
+	} {
+		t.Run(action, func(t *testing.T) {
+			requested := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				requested <- request.URL.RequestURI()
+				_ = json.NewEncoder(response).Encode(map[string]any{})
+			}))
+			defer server.Close()
+			client := testHTTPClient(server)
+			if err := client.ConfigureJobs(t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			job, err := client.StartMaintenance(context.Background(), MaintenanceInput{
+				Action: action, Confirmation: "PRUNE",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			job = waitForDockerJob(t, client, job.ID)
+			if job.Status != "succeeded" {
+				t.Fatalf("scoped prune job = %#v", job)
+			}
+			if path := <-requested; path != wantPath {
+				t.Fatalf("scoped prune path = %q, want %q", path, wantPath)
+			}
+		})
+	}
+}
+
 func TestMaintenanceRejectsUnsafeNamesAndProtectsPanelResources(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
@@ -285,6 +320,6 @@ func waitForDockerJob(t *testing.T, client *Client, id string) MaintenanceJob {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("Docker job did not finish")
+	t.Fatalf("Docker job did not finish: %#v", client.MaintenanceJobs())
 	return MaintenanceJob{}
 }

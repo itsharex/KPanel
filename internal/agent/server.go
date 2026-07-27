@@ -160,6 +160,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.appOperation(w, r, requestID)
 	case r.URL.Path == "/v1/docker/summary":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerSummary)
+	case r.URL.Path == "/v1/docker/environment":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerEnvironment)
 	case r.URL.Path == "/v1/docker/containers":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.containerList)
 	case r.URL.Path == "/v1/docker/images":
@@ -168,6 +170,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.networkList)
 	case r.URL.Path == "/v1/docker/volumes":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.volumeList)
+	case r.URL.Path == "/v1/docker/backups":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerBackupList)
 	case r.URL.Path == "/v1/docker/jobs":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerJobList)
 	case strings.HasPrefix(r.URL.Path, "/v1/docker/jobs/"):
@@ -267,6 +271,8 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		{ID: "docker.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "docker.logs", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "docker.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅安全识别的 Kejilion 容器可操作"), Methods: []string{"POST"}},
+		{ID: "docker.exec", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅安全识别且配置受限的运行中容器可进入"), Methods: []string{"POST"}},
+		{ID: "docker.maintenance", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET", "POST"}},
 		{ID: "sites.write", Enabled: siteWriteErr == nil, Reason: reasonIf(siteWriteErr, "安全写入条件不满足"), Methods: []string{"POST", "PATCH"}},
 		{ID: "sites.wordpress.install", Enabled: wordPressWriteErr == nil, Reason: reasonIf(wordPressWriteErr, "WordPress 一键搭建条件不满足"), Methods: []string{"POST"}},
 		{ID: "sites.recipes.install", Enabled: recipeWriteErr == nil, Reason: reasonIf(recipeWriteErr, "kejilion.sh 一键建站协议不可用"), Methods: []string{"POST"}},
@@ -617,6 +623,10 @@ func (s *Server) dockerSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, summary)
 }
 
+func (s *Server) dockerEnvironment(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.docker.Environment(r.Context()))
+}
+
 func (s *Server) containerList(w http.ResponseWriter, r *http.Request) {
 	items, err := s.docker.Containers(r.Context())
 	if err != nil {
@@ -651,6 +661,15 @@ func (s *Server) volumeList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, contract.PageResult[dockerx.VolumeSummary]{Items: items})
+}
+
+func (s *Server) dockerBackupList(w http.ResponseWriter, _ *http.Request) {
+	items, err := s.docker.DockerBackups()
+	if err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "docker_backups_unavailable", "Docker 备份列表不可用", safeDetail(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, contract.PageResult[dockerx.DockerBackup]{Items: items})
 }
 
 func (s *Server) dockerJobList(w http.ResponseWriter, _ *http.Request) {
@@ -719,6 +738,48 @@ func (s *Server) containerOperation(w http.ResponseWriter, r *http.Request, requ
 			return
 		}
 		writeJSON(w, http.StatusOK, logs)
+		return
+	}
+	if action == "stats" {
+		if r.Method != http.MethodGet || r.URL.RawPath != "" || r.URL.RawQuery != "" {
+			w.Header().Set("Allow", http.MethodGet)
+			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		stats, err := s.docker.ContainerStats(r.Context(), id)
+		if err != nil {
+			writeProblem(w, requestID, http.StatusBadGateway, "docker_stats_failed", "容器性能数据不可用", safeDetail(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, stats)
+		return
+	}
+	if action == "exec" {
+		if r.Method != http.MethodPost || r.URL.RawPath != "" || r.URL.RawQuery != "" {
+			w.Header().Set("Allow", http.MethodPost)
+			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		var input dockerx.ContainerExecInput
+		if err := decodeJSON(w, r, &input); err != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "请求格式无效", "")
+			return
+		}
+		result, err := s.docker.ContainerExec(r.Context(), id, input)
+		if err != nil {
+			status, code, title := http.StatusUnprocessableEntity, "container_exec_rejected", "容器控制台操作被拒绝"
+			switch {
+			case errors.Is(err, dockerx.ErrResourceConflict):
+				status, code, title = http.StatusConflict, "resource_conflict", "资源已被其他操作修改"
+			case errors.Is(err, dockerx.ErrReadOnlyContainer), errors.Is(err, dockerx.ErrUnsafeOrInvalidAction):
+				status, code, title = http.StatusForbidden, "container_exec_forbidden", "该容器不能使用控制台"
+			case errors.Is(err, dockerx.ErrVersionRequired):
+				status, code, title = http.StatusBadRequest, "resource_version_required", "必须提供资源版本"
+			}
+			writeProblem(w, requestID, status, code, title, safeDetail(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 	if r.Method != http.MethodPost {

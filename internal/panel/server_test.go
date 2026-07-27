@@ -588,6 +588,32 @@ func TestAllowedDockerActionPath(t *testing.T) {
 	}
 }
 
+func TestAllowedDockerReadPaths(t *testing.T) {
+	t.Parallel()
+	id := strings.Repeat("a", 64)
+	for publicPath, expected := range map[string]string{
+		"/api/v1/docker/environment":                 "/v1/docker/environment",
+		"/api/v1/docker/backups":                     "/v1/docker/backups",
+		"/api/v1/docker/containers/" + id + "/logs":  "/v1/docker/containers/" + id + "/logs",
+		"/api/v1/docker/containers/" + id + "/stats": "/v1/docker/containers/" + id + "/stats",
+	} {
+		path, ok := allowedAgentPath(publicPath)
+		if !ok || path != expected {
+			t.Fatalf("allowedAgentPath(%q) = %q, %v; want %q", publicPath, path, ok, expected)
+		}
+	}
+	for _, invalid := range []string{
+		"/api/v1/docker/environment/extra",
+		"/api/v1/docker/backups/extra",
+		"/api/v1/docker/containers/not-an-id/stats",
+		"/api/v1/docker/containers/" + id + "/stats/extra",
+	} {
+		if path, ok := allowedAgentPath(invalid); ok {
+			t.Fatalf("allowed unsafe Docker read path %q as %q", invalid, path)
+		}
+	}
+}
+
 func TestAllowedWordPressInstallationPath(t *testing.T) {
 	id := strings.Repeat("a", 32)
 	path, ok := allowedAgentPath("/api/v1/site-installations/" + id)

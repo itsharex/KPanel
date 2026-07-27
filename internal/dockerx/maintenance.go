@@ -38,18 +38,28 @@ var (
 )
 
 type MaintenanceInput struct {
-	Action                   string `json:"action"`
-	Image                    string `json:"image,omitempty"`
-	Target                   string `json:"target,omitempty"`
-	Name                     string `json:"name,omitempty"`
-	Driver                   string `json:"driver,omitempty"`
-	ContainerID              string `json:"containerId,omitempty"`
-	ContainerResourceVersion string `json:"containerResourceVersion,omitempty"`
-	ExpectedResourceVersion  string `json:"expectedResourceVersion,omitempty"`
-	Confirmation             string `json:"confirmation,omitempty"`
-	Preset                   string `json:"preset,omitempty"`
-	Enabled                  bool   `json:"enabled,omitempty"`
-	IPv6CIDR                 string `json:"ipv6Cidr,omitempty"`
+	Action                   string                 `json:"action"`
+	Image                    string                 `json:"image,omitempty"`
+	Target                   string                 `json:"target,omitempty"`
+	Name                     string                 `json:"name,omitempty"`
+	Driver                   string                 `json:"driver,omitempty"`
+	ContainerID              string                 `json:"containerId,omitempty"`
+	ContainerResourceVersion string                 `json:"containerResourceVersion,omitempty"`
+	ExpectedResourceVersion  string                 `json:"expectedResourceVersion,omitempty"`
+	Confirmation             string                 `json:"confirmation,omitempty"`
+	Preset                   string                 `json:"preset,omitempty"`
+	Enabled                  bool                   `json:"enabled,omitempty"`
+	IPv6CIDR                 string                 `json:"ipv6Cidr,omitempty"`
+	Ports                    []ContainerCreatePort  `json:"ports,omitempty"`
+	Mounts                   []ContainerCreateMount `json:"mounts,omitempty"`
+	Command                  []string               `json:"command,omitempty"`
+	Network                  string                 `json:"network,omitempty"`
+	RestartPolicy            string                 `json:"restartPolicy,omitempty"`
+	AllowedIP                string                 `json:"allowedIp,omitempty"`
+	BackupID                 string                 `json:"backupId,omitempty"`
+	MigrationHost            string                 `json:"migrationHost,omitempty"`
+	MigrationUser            string                 `json:"migrationUser,omitempty"`
+	MigrationPort            int                    `json:"migrationPort,omitempty"`
 }
 
 type MaintenanceJob struct {
@@ -148,7 +158,9 @@ func (c *Client) StartMaintenance(ctx context.Context, input MaintenanceInput) (
 	}
 	now := c.now().UTC()
 	target := input.Target
-	if input.Image != "" {
+	if input.Action == "container_create" {
+		target = input.Name
+	} else if input.Image != "" {
 		target = input.Image
 	} else if input.Name != "" {
 		target = input.Name
@@ -172,8 +184,8 @@ func (c *Client) MaintenanceJob(id string) (MaintenanceJob, error) {
 	if c.jobs == nil || !dockerJobIDPattern.MatchString(id) {
 		return MaintenanceJob{}, ErrDockerJobNotFound
 	}
-	record, err := c.jobs.read(id)
-	if err != nil {
+	record, ok := c.jobs.get(id)
+	if !ok {
 		return MaintenanceJob{}, ErrDockerJobNotFound
 	}
 	return record.MaintenanceJob, nil
@@ -193,6 +205,19 @@ func (c *Client) MaintenanceJobs() []MaintenanceJob {
 
 func (c *Client) validateMaintenanceInput(ctx context.Context, input MaintenanceInput) error {
 	switch input.Action {
+	case "container_create":
+		if _, err := c.containerCreatePayload(ctx, input); err != nil {
+			return err
+		}
+	case "container_access":
+		allowedIP := net.ParseIP(input.AllowedIP)
+		if !containerIDPattern.MatchString(input.Target) || input.ExpectedResourceVersion == "" ||
+			(input.AllowedIP != "" && (allowedIP == nil || allowedIP.To4() == nil)) {
+			return ErrInvalidDockerJob
+		}
+		if err := c.verifyContainerVersion(ctx, input.Target, input.ExpectedResourceVersion); err != nil {
+			return err
+		}
 	case "image_pull":
 		if !validImageReference(input.Image) {
 			return ErrInvalidDockerJob
@@ -237,12 +262,29 @@ func (c *Client) validateMaintenanceInput(ctx context.Context, input Maintenance
 		if err := c.verifyVolumeVersion(ctx, input.Target, input.ExpectedResourceVersion); err != nil {
 			return err
 		}
-	case "prune":
+	case "prune", "container_prune", "image_prune", "network_prune", "volume_prune":
 		if input.Confirmation != "PRUNE" {
 			return ErrInvalidDockerJob
 		}
 	case "backup_create":
 		// The backup source and destination are fixed by the Agent.
+	case "backup_restore":
+		if input.Confirmation != "RESTORE" || !dockerBackupIDPattern.MatchString(input.BackupID) {
+			return ErrInvalidDockerJob
+		}
+		if _, err := c.dockerBackupPath(input.BackupID); err != nil {
+			return err
+		}
+	case "backup_migrate":
+		if input.Confirmation != "MIGRATE" || !dockerBackupIDPattern.MatchString(input.BackupID) ||
+			!validMigrationHost(input.MigrationHost) ||
+			!migrationUserPattern.MatchString(input.MigrationUser) ||
+			input.MigrationPort < 1 || input.MigrationPort > 65535 {
+			return ErrInvalidDockerJob
+		}
+		if _, err := c.dockerBackupPath(input.BackupID); err != nil {
+			return err
+		}
 	case "daemon_mirror":
 		if input.Preset != "cn" && input.Preset != "official" {
 			return ErrInvalidDockerJob
@@ -272,6 +314,16 @@ func (c *Client) runMaintenance(record dockerJobRecord) {
 	defer cancel()
 	var err error
 	switch record.Action {
+	case "container_create":
+		err = c.createManagedContainer(ctx, record.Input)
+	case "container_access":
+		err = c.updateContainerAccess(
+			ctx,
+			record.Input.Target,
+			record.Input.ExpectedResourceVersion,
+			record.Input.Enabled,
+			record.Input.AllowedIP,
+		)
 	case "image_pull":
 		err = c.pullMaintenanceImage(ctx, record.Input.Image)
 	case "image_remove":
@@ -290,8 +342,26 @@ func (c *Client) runMaintenance(record dockerJobRecord) {
 		err = c.removeVolume(ctx, record.Input.Target)
 	case "prune":
 		err = c.prune(ctx)
+	case "container_prune":
+		err = c.pruneResource(ctx, "containers")
+	case "image_prune":
+		err = c.pruneResource(ctx, "images")
+	case "network_prune":
+		err = c.pruneResource(ctx, "networks")
+	case "volume_prune":
+		err = c.pruneResource(ctx, "volumes")
 	case "backup_create":
 		record.ResultPath, err = c.createDockerBackup(ctx)
+	case "backup_restore":
+		err = c.restoreDockerBackup(ctx, record.Input.BackupID)
+	case "backup_migrate":
+		record.ResultPath, err = c.migrateDockerBackup(
+			ctx,
+			record.Input.BackupID,
+			record.Input.MigrationHost,
+			record.Input.MigrationUser,
+			record.Input.MigrationPort,
+		)
 	case "daemon_mirror":
 		err = c.updateDaemonMirrors(ctx, record.Input.Preset)
 	case "daemon_ipv6":
@@ -537,9 +607,18 @@ func (c *Client) prune(ctx context.Context) error {
 	return nil
 }
 
+func (c *Client) pruneResource(ctx context.Context, resource string) error {
+	switch resource {
+	case "containers", "images", "networks", "volumes":
+		return c.dockerMutation(ctx, http.MethodPost, "/"+resource+"/prune", nil)
+	default:
+		return ErrInvalidDockerJob
+	}
+}
+
 func (c *Client) createDockerBackup(ctx context.Context) (string, error) {
 	sourceRoot := filepath.Clean(c.appRoot)
-	destinationRoot := filepath.Join(filepath.Clean(c.stateRoot), "docker-backups")
+	destinationRoot := c.dockerBackupRoot()
 	if !filepath.IsAbs(sourceRoot) || sourceRoot == string(filepath.Separator) ||
 		!filepath.IsAbs(destinationRoot) || destinationRoot == string(filepath.Separator) {
 		return "", errors.New("Docker backup paths are unsafe")
@@ -590,7 +669,8 @@ func (c *Client) createDockerBackup(ctx context.Context) (string, error) {
 			return nil
 		}
 		top := strings.Split(filepath.ToSlash(relative), "/")[0]
-		if top == "kpanel" {
+		if top == "kpanel" || top == ".kpanel-backups" ||
+			(relative == "kpanel_port.conf" && !info.IsDir()) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -839,6 +919,11 @@ func restartDockerDaemon(ctx context.Context) error {
 }
 
 func syncDirectoryPath(path string) error {
+	if runtime.GOOS == "windows" {
+		// Windows does not support fsync on directory handles. Linux keeps the
+		// durability barrier used by production Agent transactions.
+		return nil
+	}
 	directory, err := os.Open(path)
 	if err != nil {
 		return err
@@ -877,6 +962,10 @@ func (c *Client) dockerMutation(ctx context.Context, method, endpoint string, bo
 
 func dockerActionProgress(action string) string {
 	switch action {
+	case "container_create":
+		return "正在创建并启动 Docker 容器"
+	case "container_access":
+		return "正在更新容器外部访问规则"
 	case "image_pull":
 		return "正在拉取并校验 Docker 镜像"
 	case "image_remove":
@@ -887,8 +976,20 @@ func dockerActionProgress(action string) string {
 		return "正在更新 Docker 存储卷"
 	case "prune":
 		return "正在清理未使用的 Docker 资源"
+	case "container_prune":
+		return "正在清理已停止的 Docker 容器"
+	case "image_prune":
+		return "正在清理未使用的 Docker 镜像"
+	case "network_prune":
+		return "正在清理未使用的 Docker 网络"
+	case "volume_prune":
+		return "正在清理未使用的 Docker 存储卷"
 	case "backup_create":
 		return "正在备份 /home/docker 应用配置与持久化数据"
+	case "backup_restore":
+		return "正在校验并还原 Docker 应用数据"
+	case "backup_migrate":
+		return "正在通过已配置的 SSH 密钥迁移 Docker 备份"
 	case "daemon_mirror":
 		return "正在更新 Docker 镜像源并重启 Docker Engine"
 	case "daemon_ipv6":
@@ -900,6 +1001,10 @@ func dockerActionProgress(action string) string {
 
 func dockerActionCompleted(action string) string {
 	switch action {
+	case "container_create":
+		return "Docker 容器已创建并启动"
+	case "container_access":
+		return "容器外部访问规则已更新"
 	case "image_pull":
 		return "镜像拉取完成"
 	case "image_remove":
@@ -918,8 +1023,20 @@ func dockerActionCompleted(action string) string {
 		return "Docker 存储卷已删除"
 	case "prune":
 		return "Docker 未使用资源清理完成"
+	case "container_prune":
+		return "已停止的 Docker 容器清理完成"
+	case "image_prune":
+		return "未使用的 Docker 镜像清理完成"
+	case "network_prune":
+		return "未使用的 Docker 网络清理完成"
+	case "volume_prune":
+		return "未使用的 Docker 存储卷清理完成"
 	case "backup_create":
 		return "Docker 应用数据备份完成"
+	case "backup_restore":
+		return "Docker 应用数据已还原；现有同名目录未被覆盖"
+	case "backup_migrate":
+		return "Docker 备份已迁移到目标服务器 /tmp"
 	case "daemon_mirror":
 		return "Docker 镜像源已更新"
 	case "daemon_ipv6":
@@ -1029,6 +1146,13 @@ func (registry *dockerJobRegistry) list() []dockerJobRecord {
 		return result[i].CreatedAt.After(result[j].CreatedAt)
 	})
 	return result
+}
+
+func (registry *dockerJobRegistry) get(id string) (dockerJobRecord, bool) {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	record, ok := registry.jobs[id]
+	return record, ok
 }
 
 func (registry *dockerJobRegistry) path(id string) string {

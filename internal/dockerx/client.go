@@ -42,6 +42,8 @@ type Client struct {
 	stateRoot             string
 	daemonConfigPath      string
 	restartDocker         func(context.Context) error
+	hostCommand           func(context.Context, string, ...string) ([]byte, error)
+	iptablesRulesPath     string
 	now                   func() time.Time
 	lifecycle             sync.Mutex
 	jobs                  *dockerJobRegistry
@@ -98,14 +100,16 @@ type ActionResult struct {
 func New(socketPath, webRoot, stateRoot string) *Client {
 	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
 	client := &Client{
-		baseURL:          "http://docker",
-		webRoot:          cleanLinuxPath(webRoot, "/home/web"),
-		appRoot:          "/home/docker",
-		stateRoot:        cleanLinuxPath(stateRoot, "/var/lib/kejilion-panel"),
-		daemonConfigPath: "/etc/docker/daemon.json",
-		restartDocker:    restartDockerDaemon,
-		now:              time.Now,
-		pidFile:          "/run/docker.pid",
+		baseURL:           "http://docker",
+		webRoot:           cleanLinuxPath(webRoot, "/home/web"),
+		appRoot:           "/home/docker",
+		stateRoot:         cleanLinuxPath(stateRoot, "/var/lib/kejilion-panel"),
+		daemonConfigPath:  "/etc/docker/daemon.json",
+		restartDocker:     restartDockerDaemon,
+		hostCommand:       runFixedDockerHostCommand,
+		iptablesRulesPath: "/etc/iptables/rules.v4",
+		now:               time.Now,
+		pidFile:           "/run/docker.pid",
 	}
 	transport := &http.Transport{
 		DisableCompression: true,
@@ -432,12 +436,17 @@ type containerInspect struct {
 	} `json:"HostConfig"`
 	Mounts          []dockerMount `json:"Mounts"`
 	NetworkSettings struct {
-		Networks map[string]interface{} `json:"Networks"`
+		Networks map[string]dockerNetworkEndpoint `json:"Networks"`
 		Ports    map[string][]struct {
 			HostIP   string `json:"HostIp"`
 			HostPort string `json:"HostPort"`
 		} `json:"Ports"`
 	} `json:"NetworkSettings"`
+}
+
+type dockerNetworkEndpoint struct {
+	IPAddress         string `json:"IPAddress"`
+	GlobalIPv6Address string `json:"GlobalIPv6Address"`
 }
 
 type dockerMount struct {
@@ -526,12 +535,12 @@ func (c *Client) summaryFromInspect(raw containerInspect) contract.ContainerSumm
 		if reason := c.unsafeReason(raw); reason == "" {
 			switch raw.State.Status {
 			case "running":
-				allowed = []string{"restart", "stop"}
+				allowed = []string{"restart", "stop", "logs", "stats", "exec", "access"}
 			case "created", "exited", "dead":
 				allowed = []string{"start", "remove"}
 			}
 			if strings.EqualFold(strings.TrimPrefix(raw.Name, "/"), "kejilion-panel") {
-				allowed = removeString(allowed, "remove")
+				allowed = removeString(removeString(removeString(allowed, "remove"), "exec"), "access")
 			}
 			evidence = append(evidence, "危险配置检查通过")
 		} else {
