@@ -30,6 +30,7 @@ import LoadingState from '@/components/feedback/LoadingState.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
 import { ApiError, api } from '@/lib/api'
+import { appAccessURL, matchingAppProxySites } from '@/lib/appAccess'
 import { useToast } from '@/stores/toast'
 import type { AppInstallJob, AppMarketInventory, AppMarketItem, Site } from '@/types/api'
 
@@ -65,12 +66,9 @@ const activeJobStorageKey = 'kpanel:active-app-job'
 
 const selected = computed(() => inventory.value?.items.find((item) => item.id === selectedID.value))
 const selectedPort = computed(() => selected.value?.runtime.ports.find((port) => port.type === 'tcp' && port.publicPort))
-const selectedDomains = computed(() => {
-  const port = selectedPort.value?.publicPort
-  if (!port) return []
-  const targets = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`])
-  return sites.value.filter((site) => site.type === 'proxy' && targets.has(site.upstream || ''))
-})
+const selectedDomains = computed(() =>
+  selected.value ? matchingAppProxySites(selected.value, sites.value) : [],
+)
 
 const filteredApps = computed(() => {
   const needle = search.value.trim().toLowerCase()
@@ -427,10 +425,8 @@ async function removeDomain(site: Site): Promise<void> {
   }
 }
 
-function directURL(item: AppMarketItem): string {
-  const port = item.runtime.ports.find((entry) => entry.type === 'tcp' && entry.publicPort)?.publicPort
-  if (!port || item.runtime.accessMode === 'domain_only') return ''
-  return `http://${window.location.hostname}:${port}`
+function openURL(item: AppMarketItem): string {
+  return appAccessURL(item, sites.value, window.location.hostname)
 }
 
 onMounted(() => {
@@ -729,9 +725,9 @@ onBeforeUnmount(() => {
               <RefreshCw v-else :size="15" /> 检查更新
             </button>
             <a
-              v-if="directURL(selected)"
+              v-if="openURL(selected)"
               class="button button--primary"
-              :href="directURL(selected)"
+              :href="openURL(selected)"
               target="_blank"
               rel="noopener noreferrer"
             >
