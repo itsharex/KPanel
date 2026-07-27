@@ -59,7 +59,7 @@
 以下能力尚未完成时，应显示“缺少适配器/依赖”，不能显示“为了安全受保护”：
 
 - 系统重装的非交互任务协议及重装后结果回传；
-- NetworkManager、resolvconf 和静态 `resolv.conf` 的 DNS 写入适配器；
+- 尚未升级到固定 DNS 非交互协议的旧版 `kejilion.sh`；
 - 非 Debian/Ubuntu 的系统镜像源切换适配器；
 - 宿主机终端、交互式容器 TTY、Compose 与 `daemon.json` 通用结构化编辑器；
 - 部分应用的专属交互安装参数，以及没有主容器时的应用级生命周期动作；

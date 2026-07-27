@@ -16,7 +16,8 @@
 | `wordpress-flow` | WordPress；网站页热门入口 | `KJ_WEB_RECIPE=2`；`ldnmp_wp`、LDNMP、证书、数据库、`wordpress.com.conf` 和脚本源码地址 | Go 后台任务执行本机可信 `kejilion.sh web` 固定非交互分支，KPanel 不再维护第二套 WordPress 安装器 | **已合规（代码链路）**：发布前仍需目标机实测创建、脚本管理、面板管理与删除 |
 | `website-recipes` | Discuz、KodBox、MacCMS、独角数卡、Flarum、Typecho、LinkStack、AI Prompt | 本机可信 `kejilion.sh web` 非交互协议 | 直接执行脚本并读取 `KPANEL_PROGRESS` | **已合规（代码链路）**：发布前仍需按目标脚本版本做实机闭环 |
 | `application-market` | 应用安装、更新、卸载、域名与访问控制 | `/root/apps/*.conf`、动态应用目录及脚本非交互协议 | 部分直接脚本任务，部分 KPanel 适配器 | **待审计**：逐应用登记入口与来源后才能宣称完全对齐 |
-| `system-network` | DNS、软件源、V4/V6、内核、BBR、防火墙 | `kejilion.sh` 系统工具对应函数和远程配置 | 多个 Go 适配器独立执行 | **待审计**：凡脚本已有外联模板/远程来源的项目必须迁移为同源 |
+| `system-dns` | 概览页 DNS 设置 | `set_dns` 与 `kpanel_set_dns_noninteractive` | Go 仅校验结构化 IP 并调用本机可信 `kejilion.sh dns`；最终配置、后端选择和回滚由脚本负责 | **已合规（代码链路）**：发布前仍需在 systemd-resolved、静态文件和受网络管理器接管的主机完成双端实机闭环 |
+| `system-network` | 软件源、V4/V6、内核、BBR、防火墙 | `kejilion.sh` 系统工具对应函数和远程配置 | 多个 Go 适配器独立执行 | **待审计**：凡脚本已有外联模板/远程来源的项目必须迁移为同源 |
 | `docker-environment` | Docker 安装、换源、维护、迁移、备份与还原 | `kejilion.sh` Docker 工具函数及其远程来源 | KPanel 固定动作适配器 | **待审计**：逐动作核对，不得新增自编外联配置 |
 
 <!-- external-config-debt:website-nginx:blocked -->

@@ -146,9 +146,9 @@ grep -F 'CRITICAL: automatic failure cleanup could not be fully verified.' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -Fx 'ProtectProc=default' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
-grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE' \
+grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_LINUX_IMMUTABLE' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
-grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE' \
+grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_LINUX_IMMUTABLE' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
 grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null

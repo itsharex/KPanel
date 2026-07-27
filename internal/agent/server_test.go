@@ -164,6 +164,27 @@ func TestSitesPageEndpoint(t *testing.T) {
 	}
 }
 
+func TestSitesPageReturnsEmptyWithoutWebRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "not-created")
+	docker := dockerx.New(fakeDockerSocket(t), root, t.TempDir())
+	docker.ConfigureDaemonAccess("", true)
+	server, err := NewServer(Config{
+		Token: []byte(strings.Repeat("x", 32)), Version: "test", ProtocolVersion: "test",
+		WebRoot: root, System: systeminfo.NewCollector(),
+		Sites: sites.NewDiscoverer(root), Docker: docker,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"items":[]`) {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestSystemWriteCapabilitiesRemainExplicitlyDisabled(t *testing.T) {
 	server := testServer(t)
 	request := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)

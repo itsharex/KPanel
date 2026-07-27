@@ -46,6 +46,9 @@ func (d *Discoverer) Discover() ([]contract.SiteSummary, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
+	if d.webRootIsUninitialized() {
+		return []contract.SiteSummary{}, nil
+	}
 	now := d.Now().UTC()
 	confRoot := filepath.Join(d.WebRoot, "conf.d")
 	entries, err := os.ReadDir(confRoot)
@@ -107,6 +110,15 @@ func (d *Discoverer) Discover() ([]contract.SiteSummary, error) {
 		return result[i].PrimaryDomain < result[j].PrimaryDomain
 	})
 	return result, nil
+}
+
+func (d *Discoverer) webRootIsUninitialized() bool {
+	for _, name := range []string{"conf.d", "html", "certs"} {
+		if _, err := os.Lstat(filepath.Join(d.WebRoot, name)); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *Discoverer) fromConfig(path string, now time.Time) (contract.SiteSummary, error) {

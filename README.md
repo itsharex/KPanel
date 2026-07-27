@@ -9,7 +9,8 @@ KPanel 是 `kejilion.sh` 的现代 Web 管理形态，目标是让脚本已有�
 并让脚本、SSH、Compose 与 Web 产生的真实资源可以互相发现、修改和继续管理。
 
 KPanel 本体可在仅具备 systemd、Docker Engine 与 Compose v2 的干净 Linux 主机上独立安装；
-不要求预先运行 `kejilion.sh` 或存在 `/home/web`。未初始化网站环境时只禁用网站相关能力。
+不要求预先运行 `kejilion.sh` 或存在 `/home/web`。未初始化网站环境时网站列表为空；
+可信 `kejilion.sh` 就绪后仍可从面板创建站点，并由脚本自动初始化所需环境。
 
 ## 核心原则
 

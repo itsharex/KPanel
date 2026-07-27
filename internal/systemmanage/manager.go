@@ -31,6 +31,7 @@ var (
 	ErrConflict       = errors.New("system configuration changed or conflicts")
 	ErrRolledBack     = errors.New("system action failed and was rolled back")
 	ErrNeedsAttention = errors.New("system action needs manual attention")
+	dnsScriptLicense  = regexp.MustCompile(`(?m)^permission_granted="true"\r?$`)
 )
 
 const (
@@ -45,6 +46,7 @@ type Runner interface {
 }
 
 type CountryResolver func(context.Context) (string, error)
+type KejilionScriptFinder func() (string, error)
 
 type commandRunner struct{}
 
@@ -89,6 +91,7 @@ type Config struct {
 	Runner       Runner
 	Country      CountryResolver
 	EffectiveUID func() int
+	DNSScript    KejilionScriptFinder
 }
 
 type Manager struct {
@@ -104,6 +107,7 @@ type Manager struct {
 	runner          Runner
 	country         CountryResolver
 	effectiveUID    func() int
+	dnsScript       KejilionScriptFinder
 	rebootScheduled bool
 	mu              sync.Mutex
 }
@@ -142,6 +146,9 @@ func NewManager(config Config) *Manager {
 	if config.EffectiveUID == nil {
 		config.EffectiveUID = os.Geteuid
 	}
+	if config.DNSScript == nil {
+		config.DNSScript = findKejilionDNSScript
+	}
 	return &Manager{
 		enabled: config.Enabled, etcRoot: filepath.Clean(config.EtcRoot),
 		procRoot: filepath.Clean(config.ProcRoot), sysRoot: filepath.Clean(config.SysRoot),
@@ -149,7 +156,7 @@ func NewManager(config Config) *Manager {
 		stateDir: filepath.Clean(config.StateDir), swapPath: filepath.Clean(config.SwapPath),
 		executable: filepath.Clean(config.Executable),
 		now:        config.Now, runner: config.Runner, country: config.Country,
-		effectiveUID: config.EffectiveUID,
+		effectiveUID: config.EffectiveUID, dnsScript: config.DNSScript,
 	}
 }
 
@@ -207,8 +214,11 @@ func (m *Manager) Capabilities() []contract.Capability {
 	_, systemdRunErr := m.runner.LookPath("systemd-run")
 	_, modprobeErr := m.runner.LookPath("modprobe")
 	_, helperErr := m.backgroundExecutable()
+	_, envErr := m.runner.LookPath("env")
+	_, bashErr := m.runner.LookPath("bash")
+	_, chattrErr := m.runner.LookPath("chattr")
+	_, dnsScriptErr := m.dnsScript()
 
-	resolved := m.resolvedSupported()
 	sshConfig := regularFile(filepath.Join(m.etcRoot, "ssh", "sshd_config"))
 	packageManager := m.detectPackageManager()
 	packageSources := len(m.packageSourceFiles(packageManager.kind)) > 0
@@ -246,10 +256,23 @@ func (m *Manager) Capabilities() []contract.Capability {
 	if (packageManager.osID == "debian" || packageManager.osID == "ubuntu") && !packageSources {
 		mirrorReason = "未发现可由当前适配器修改的 APT 软件源"
 	}
+	dnsBackendErr := chattrErr
+	dnsBackendReason := "静态 resolv.conf 写入所需的 chattr 不可用"
+	if m.usesSystemdResolved() {
+		dnsBackendErr = systemctlErr
+		dnsBackendReason = "systemd-resolved 写入所需的 systemctl 不可用"
+	}
+	dnsSupported := envErr == nil && bashErr == nil && dnsScriptErr == nil && dnsBackendErr == nil
+	dnsReason := "请更新本机 kejilion.sh 以启用 KPanel DNS 非交互协议"
+	if dnsScriptErr == nil && (envErr != nil || bashErr != nil) {
+		dnsReason = "执行 kejilion.sh DNS 协议所需的 env 或 bash 不可用"
+	} else if dnsScriptErr == nil && dnsBackendErr != nil {
+		dnsReason = dnsBackendReason
+	}
 	return []contract.Capability{
 		capability("system.hostname.write", hostnamectlErr == nil, "hostnamectl 不可用"),
 		capability("system.ssh-port.write", sshdErr == nil && ssErr == nil && systemctlErr == nil && sshConfig, "OpenSSH 服务或配置不可用"),
-		capability("system.dns.write", resolved && systemctlErr == nil, "当前版本尚未实现此 DNS 管理器的写入适配器"),
+		capability("system.dns.write", dnsSupported, dnsReason),
 		capability("system.timezone.write", timedatectlErr == nil, "timedatectl 不可用"),
 		capability("system.swap.write", mkswapErr == nil && swaponErr == nil && swapoffErr == nil && fallocateErr == nil && systemdRunErr == nil && helperErr == nil, "Swap 工具、Agent 后台执行程序或 systemd 事务执行器不完整"),
 		capability("system.mirror.write", aptMirrorSupported, mirrorReason),
@@ -490,14 +513,13 @@ func removeSSHPortDirectives(data []byte) []byte {
 }
 
 func (m *Manager) setDNS(ctx context.Context, servers []string) (bool, string, string, error) {
-	if !m.resolvedSupported() {
-		return false, "", "", fmt.Errorf("%w: only systemd-resolved is supported", ErrUnsupported)
-	}
-	if len(servers) < 1 {
-		return false, "", "", fmt.Errorf("%w: at least one DNS server is required", ErrInvalidInput)
+	if len(servers) < 1 || len(servers) > 4 {
+		return false, "", "", fmt.Errorf("%w: between one and four DNS servers are required", ErrInvalidInput)
 	}
 	normalized := make([]string, 0, len(servers))
 	seen := make(map[string]bool)
+	ipv4Count := 0
+	ipv6Count := 0
 	for _, raw := range servers {
 		ip := net.ParseIP(strings.TrimSpace(raw))
 		if ip == nil || ip.IsUnspecified() || ip.IsMulticast() {
@@ -507,33 +529,72 @@ func (m *Manager) setDNS(ctx context.Context, servers []string) (bool, string, s
 		if !seen[value] {
 			seen[value] = true
 			normalized = append(normalized, value)
+			if ip.To4() != nil {
+				ipv4Count++
+			} else {
+				ipv6Count++
+			}
 		}
 	}
-	configPath := filepath.Join(m.etcRoot, "systemd", "resolved.conf.d", "90-kpanel.conf")
-	config := []byte("[Resolve]\nDNS=" + strings.Join(normalized, " ") + "\nFallbackDNS=\n")
-	if bytes.Equal(bytes.TrimSpace([]byte(readLimited(configPath))), bytes.TrimSpace(config)) {
-		return false, "", "DNS 配置没有变化", nil
+	if ipv4Count > 2 || ipv6Count > 2 {
+		return false, "", "", fmt.Errorf(
+			"%w: kejilion.sh accepts at most two IPv4 and two IPv6 DNS servers",
+			ErrInvalidInput,
+		)
 	}
-	backup, err := m.createBackup("dns", configPath)
+	script, err := m.dnsScript()
+	if err != nil {
+		return false, "", "", fmt.Errorf(
+			"%w: update kejilion.sh to enable the KPanel DNS protocol",
+			ErrUnsupported,
+		)
+	}
+	for _, command := range []string{"env", "bash"} {
+		if _, err := m.runner.LookPath(command); err != nil {
+			return false, "", "", fmt.Errorf("%w: %s is unavailable", ErrUnsupported, command)
+		}
+	}
+	backendCommand := "chattr"
+	if m.usesSystemdResolved() {
+		backendCommand = "systemctl"
+	}
+	if _, err := m.runner.LookPath(backendCommand); err != nil {
+		return false, "", "", fmt.Errorf("%w: %s is unavailable", ErrUnsupported, backendCommand)
+	}
+	backupPath, err := m.dnsBackupPath()
 	if err != nil {
 		return false, "", "", err
 	}
-	old, existed, mode, err := snapshotFile(configPath)
+	backup, err := m.createBackup("dns", backupPath)
 	if err != nil {
-		return false, backup, "", err
+		return false, "", "", err
 	}
-	if err := writeAtomic(configPath, config, 0o644); err != nil {
-		return false, backup, "", err
+	arguments := []string{
+		"KJ_DNS_NONINTERACTIVE=1",
+		"LC_ALL=C.UTF-8",
+		"LANG=C.UTF-8",
+		"bash",
+		script,
+		"dns",
 	}
-	if _, err := m.runner.Run(ctx, "systemctl", "reload-or-restart", "systemd-resolved.service"); err != nil {
-		_ = restoreFile(configPath, old, existed, mode)
-		_, rollbackErr := m.runner.Run(ctx, "systemctl", "reload-or-restart", "systemd-resolved.service")
-		if rollbackErr != nil {
-			return false, backup, "", fmt.Errorf("%w: DNS reload and rollback reload failed", ErrNeedsAttention)
+	arguments = append(arguments, normalized...)
+	output, err := m.runner.Run(ctx, "env", arguments...)
+	if err != nil {
+		if strings.Contains(err.Error(), "需要人工检查") {
+			return false, backup, "", fmt.Errorf("%w: kejilion.sh DNS transaction: %v", ErrNeedsAttention, err)
 		}
-		return false, backup, "", fmt.Errorf("%w: reload resolver: %v", ErrRolledBack, err)
+		return false, backup, "", fmt.Errorf("%w: kejilion.sh DNS transaction: %v", ErrRolledBack, err)
 	}
-	return true, backup, "DNS 已更新，systemd-resolved 已重新加载", nil
+	if strings.Contains(string(output), "KPANEL_DNS_RESULT unchanged") {
+		return false, backup, "DNS 配置没有变化", nil
+	}
+	if strings.Contains(string(output), "KPANEL_DNS_RESULT applied") {
+		return true, backup, "DNS 已由 kejilion.sh 原生事务更新并回读验证", nil
+	}
+	return false, backup, "", fmt.Errorf(
+		"%w: kejilion.sh DNS transaction did not return a result marker",
+		ErrNeedsAttention,
+	)
 }
 
 func (m *Manager) setTimezone(ctx context.Context, zone string) (bool, string, error) {
@@ -815,12 +876,72 @@ func (m *Manager) openFirewallPort(ctx context.Context, port uint16) (func() err
 	return func() error { return nil }, nil
 }
 
-func (m *Manager) resolvedSupported() bool {
+func (m *Manager) dnsBackupPath() (string, error) {
 	path := filepath.Join(m.etcRoot, "resolv.conf")
-	if target, err := os.Readlink(path); err == nil && strings.Contains(strings.ToLower(target), "systemd/resolve") {
-		return true
+	if m.usesSystemdResolved() {
+		return filepath.Join(m.etcRoot, "systemd", "resolved.conf.d", "90-kpanel.conf"), nil
 	}
-	return regularFile(filepath.Join(m.etcRoot, "systemd", "resolved.conf"))
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return path, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("%w: %s is not a regular file", ErrConflict, path)
+		}
+		return path, nil
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("%w: resolve DNS configuration target: %v", ErrConflict, err)
+	}
+	if !regularFile(target) {
+		return "", fmt.Errorf("%w: DNS configuration target is not a regular file", ErrConflict)
+	}
+	return target, nil
+}
+
+func (m *Manager) usesSystemdResolved() bool {
+	target, err := os.Readlink(filepath.Join(m.etcRoot, "resolv.conf"))
+	return err == nil && strings.Contains(strings.ToLower(target), "systemd/resolve")
+}
+
+func findKejilionDNSScript() (string, error) {
+	candidates := []string{"/usr/local/bin/k", "/usr/bin/k", "/root/kejilion.sh"}
+	if path, err := exec.LookPath("k"); err == nil {
+		candidates = append([]string{path}, candidates...)
+	}
+	seen := make(map[string]bool)
+	for _, candidate := range candidates {
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			continue
+		}
+		resolved = filepath.Clean(resolved)
+		if seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		info, err := os.Stat(resolved)
+		if err != nil || !info.Mode().IsRegular() || info.Size() < 1024 || info.Size() > 4<<20 ||
+			info.Mode().Perm()&0o022 != 0 || !dnsScriptOwnerTrusted(info) {
+			continue
+		}
+		content, err := os.ReadFile(resolved)
+		if err != nil {
+			continue
+		}
+		value := string(content)
+		if dnsScriptLicense.Match(content) &&
+			strings.Contains(value, "KJ_DNS_NONINTERACTIVE") &&
+			strings.Contains(value, "kpanel_set_dns_noninteractive") {
+			return resolved, nil
+		}
+	}
+	return "", errors.New("a trusted kejilion.sh DNS command was not found")
 }
 
 func (m *Manager) aptSourceFiles() []string {

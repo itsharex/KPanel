@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -171,6 +172,144 @@ func TestSetHostnameRollsBackWhenVerificationFails(t *testing.T) {
 	}
 	if got := readLimited(filepath.Join(etcRoot, "hosts")); got != "127.0.1.1\told-host\n" {
 		t.Fatalf("hosts rollback failed: %q", got)
+	}
+}
+
+func TestSetDNSUsesTrustedKejilionProtocolAndCreatesBackup(t *testing.T) {
+	runner := &fakeRunner{
+		run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+			if name != "env" {
+				t.Fatalf("DNS command = %s %#v", name, arguments)
+			}
+			return []byte("KPANEL_DNS_MANAGER resolv.conf\nKPANEL_DNS_RESULT applied\n"), nil
+		},
+	}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	manager.dnsScript = func() (string, error) { return "/usr/local/bin/k", nil }
+	mustWrite(t, filepath.Join(etcRoot, "resolv.conf"), "nameserver 9.9.9.9\n")
+
+	changed, backup, message, err := manager.setDNS(
+		context.Background(),
+		[]string{"1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"},
+	)
+	if err != nil || !changed || backup == "" {
+		t.Fatalf("set DNS: changed=%v backup=%q message=%q err=%v", changed, backup, message, err)
+	}
+	if !strings.Contains(message, "kejilion.sh") ||
+		!regularFile(filepath.Join(backup, "manifest.tsv")) {
+		t.Fatalf("DNS result did not report script parity/backup: message=%q backup=%q", message, backup)
+	}
+	command := strings.Join(runner.commands, "\n")
+	for _, expected := range []string{
+		"env KJ_DNS_NONINTERACTIVE=1",
+		"bash /usr/local/bin/k dns",
+		"1.1.1.1 8.8.8.8 2606:4700:4700::1111",
+	} {
+		if !strings.Contains(command, expected) {
+			t.Fatalf("DNS command missing %q:\n%s", expected, command)
+		}
+	}
+	for _, forbidden := range []string{"sh -c", "bash -c", "/etc/resolv.conf"} {
+		if strings.Contains(command, forbidden) {
+			t.Fatalf("DNS command exposed a path or shell expression %q:\n%s", forbidden, command)
+		}
+	}
+}
+
+func TestSetDNSReportsUnchangedScriptResult(t *testing.T) {
+	runner := &fakeRunner{
+		run: func(context.Context, string, ...string) ([]byte, error) {
+			return []byte("KPANEL_DNS_RESULT unchanged\n"), nil
+		},
+	}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	manager.dnsScript = func() (string, error) { return "/usr/local/bin/k", nil }
+	mustWrite(t, filepath.Join(etcRoot, "resolv.conf"), "nameserver 1.1.1.1\n")
+
+	changed, backup, message, err := manager.setDNS(context.Background(), []string{"1.1.1.1"})
+	if err != nil || changed || backup == "" || !strings.Contains(message, "没有变化") {
+		t.Fatalf("unchanged DNS: changed=%v backup=%q message=%q err=%v", changed, backup, message, err)
+	}
+}
+
+func TestSetDNSRejectsInputsOutsideKejilionContract(t *testing.T) {
+	runner := &fakeRunner{}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	manager.dnsScript = func() (string, error) { return "/usr/local/bin/k", nil }
+	mustWrite(t, filepath.Join(etcRoot, "resolv.conf"), "nameserver 9.9.9.9\n")
+
+	for _, servers := range [][]string{
+		{},
+		{"1.1.1.1", "8.8.8.8", "9.9.9.9"},
+		{"1.1.1.1", "not-an-address"},
+		{"0.0.0.0"},
+		{"ff02::1"},
+	} {
+		if _, _, _, err := manager.setDNS(context.Background(), servers); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("servers %#v error = %v", servers, err)
+		}
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("invalid DNS input reached the script: %#v", runner.commands)
+	}
+}
+
+func TestDNSCapabilityRequiresScriptProtocolAndBackendTool(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("capability policy is intentionally Linux-only")
+	}
+	runner := &fakeRunner{}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	mustWrite(t, filepath.Join(etcRoot, "resolv.conf"), "nameserver 9.9.9.9\n")
+	manager.dnsScript = func() (string, error) { return "", errors.New("old script") }
+
+	capability := findCapability(manager.Capabilities(), "system.dns.write")
+	if capability.Enabled || !strings.Contains(capability.Reason, "更新") {
+		t.Fatalf("unexpected old-script DNS capability: %#v", capability)
+	}
+
+	manager.dnsScript = func() (string, error) { return "/usr/local/bin/k", nil }
+	capability = findCapability(manager.Capabilities(), "system.dns.write")
+	if !capability.Enabled {
+		t.Fatalf("script-backed DNS capability unexpectedly disabled: %#v", capability)
+	}
+
+	runner.missing = map[string]bool{"chattr": true}
+	capability = findCapability(manager.Capabilities(), "system.dns.write")
+	if capability.Enabled || !strings.Contains(capability.Reason, "chattr") {
+		t.Fatalf("unexpected missing-chattr DNS capability: %#v", capability)
+	}
+}
+
+func TestSetDNSRejectsMissingScriptResultMarker(t *testing.T) {
+	runner := &fakeRunner{
+		run: func(context.Context, string, ...string) ([]byte, error) {
+			return []byte("unexpected output\n"), nil
+		},
+	}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	manager.dnsScript = func() (string, error) { return "/usr/local/bin/k", nil }
+	mustWrite(t, filepath.Join(etcRoot, "resolv.conf"), "nameserver 9.9.9.9\n")
+
+	changed, backup, _, err := manager.setDNS(context.Background(), []string{"1.1.1.1"})
+	if changed || backup == "" || !errors.Is(err, ErrNeedsAttention) {
+		t.Fatalf("missing DNS marker: changed=%v backup=%q err=%v", changed, backup, err)
+	}
+}
+
+func TestSetDNSReportsScriptRollback(t *testing.T) {
+	runner := &fakeRunner{
+		run: func(context.Context, string, ...string) ([]byte, error) {
+			return nil, errors.New("resolver reload failed")
+		},
+	}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	manager.dnsScript = func() (string, error) { return "/usr/local/bin/k", nil }
+	mustWrite(t, filepath.Join(etcRoot, "resolv.conf"), "nameserver 9.9.9.9\n")
+
+	changed, backup, _, err := manager.setDNS(context.Background(), []string{"1.1.1.1"})
+	if changed || backup == "" || !errors.Is(err, ErrRolledBack) {
+		t.Fatalf("failed DNS transaction: changed=%v backup=%q err=%v", changed, backup, err)
 	}
 }
 

@@ -20,8 +20,8 @@ UMask=0077
 NoNewPrivileges=true
 # Kejilion site trees may be owned by the script's invoking user. DAC override
 # remains bounded to this service and the explicit writable paths below.
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE
-AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_LINUX_IMMUTABLE
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_LINUX_IMMUTABLE
 PrivateTmp=true
 PrivateDevices=true
 ProtectClock=true

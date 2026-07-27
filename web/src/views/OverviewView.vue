@@ -228,7 +228,7 @@ const basicSettings = computed<ManagementTool[]>(() => {
       value: management.dns.servers.length ? management.dns.servers.join(' · ') : '未识别',
       detail: `解析器：${management.dns.manager || 'unknown'}`,
       capability: 'system.dns.write',
-      safety: '当前写入适配器使用 systemd-resolved；其他 DNS 管理器会明确显示缺少对应适配器。',
+      safety: '通过本机可信 kejilion.sh 的固定 DNS 协议执行；systemd-resolved 使用原生配置，其他管理器沿用脚本的 resolv.conf 写入与锁定语义。',
       icon: Network,
       tone: 'violet',
     },
@@ -545,7 +545,12 @@ const actionValid = computed(() => {
     case 'ssh-port':
       return Number.isInteger(input.port) && Number(input.port) >= 1 && Number(input.port) <= 65535
     case 'dns':
-      return Boolean(input.servers?.length)
+      return Boolean(
+        input.servers?.length &&
+        input.servers.length <= 4 &&
+        input.servers.filter((server) => server.includes(':')).length <= 2 &&
+        input.servers.filter((server) => !server.includes(':')).length <= 2,
+      )
     case 'timezone':
       return Boolean(input.timezone && !input.timezone.includes('..'))
     case 'swap':
@@ -1071,7 +1076,7 @@ onBeforeUnmount(() => {
             <label class="field">
               <span>DNS 服务器</span>
               <textarea v-model.trim="actionForm.dns" rows="4" placeholder="1.1.1.1&#10;8.8.8.8"></textarea>
-              <small>每行一个 IPv4 或 IPv6 地址；按宿主机可用的 DNS 后端应用。</small>
+              <small>每行一个地址，最多 2 个 IPv4 和 2 个 IPv6；由 kejilion.sh 按宿主机 DNS 后端应用。</small>
             </label>
           </div>
           <div v-else-if="selectedTool.id === 'timezone'" class="form-stack compact">

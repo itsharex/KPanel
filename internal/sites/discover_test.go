@@ -126,6 +126,17 @@ func TestDiscoverReportsMissingArtifactDirectory(t *testing.T) {
 	}
 }
 
+func TestDiscoverReturnsEmptyForUninitializedWebRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "web-not-created")
+	got, err := NewDiscoverer(root).Discover()
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Fatalf("Discover() = %#v, want a non-nil empty list", got)
+	}
+}
+
 func TestTLSRejectsCertificateOutsideManagedRoot(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"conf.d", "html", "certs"} {

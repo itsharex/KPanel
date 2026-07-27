@@ -28,7 +28,7 @@ Rocky 等系统分别制作 Panel 镜像。
 | 网站与 Docker | 读取宿主机 Docker Engine、`/home/web`、`/home/docker` | 依赖 Kejilion 产物布局，不依赖包管理器 |
 | 主机名、时区、Swap、IP 优先级、内核优化、BBR | 按命令和内核能力动态开放 | 缺少工具时明确显示依赖未就绪 |
 | SSH 端口 | 支持 `ssh.service`、`sshd.service`，兼容 UFW、Firewalld、iptables | 必须存在 OpenSSH 配置、reload 与监听验证能力 |
-| DNS 写入 | systemd-resolved drop-in | NetworkManager、resolvconf、静态 resolv.conf 的写入适配器尚未实现 |
+| DNS 写入 | 可信 `kejilion.sh` 非交互协议；systemd-resolved 原生配置或脚本兼容 `resolv.conf` 事务 | 本机脚本版本过旧或底层 `systemctl`/`chattr` 不可用时禁用 |
 | 软件源读取 | APT、DNF/YUM、APK、Pacman、Zypper | 页面展示实际源主机 |
 | 软件源切换 | Debian/Ubuntu APT | 其他系统的换源适配器尚未实现 |
 | 系统更新/清理 | APT、DNF/DNF5/YUM、APK、Pacman、Zypper | 固定命令；不接受 Web 传入的包名、命令或 Shell |
@@ -41,9 +41,10 @@ Rocky 等系统分别制作 Panel 镜像。
 - Docker Engine 与 Docker Compose v2。
 - 本机 Docker Socket；安装器拒绝远程 `DOCKER_HOST` 或其他 Docker Context。
 - 能运行对应架构的无 CGO Agent 二进制。
-- 网站功能需要 Kejilion 标准 `/home/web` 布局；当前生产预检要求
-  `/home/web` 根目录不是安装前置条件；根目录或子目录缺失时仅网站能力保持不可用，
-  系统、Docker 与应用市场功能仍可独立运行。
+- 网站功能沿用 Kejilion 标准 `/home/web` 布局，但 `/home/web` 不是安装前置条件。
+  全新环境尚未生成 `conf.d`、`html`、`certs` 时，网站列表返回空列表；可信
+  `kejilion.sh` 的 WordPress、反向代理和一键建站入口仍可创建站点并初始化所需环境。
+  如果只有部分受管目录缺失，则继续按环境异常处理，避免掩盖已有站点损坏。
 
 ## 发行版维护命令
 
