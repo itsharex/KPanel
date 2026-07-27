@@ -109,8 +109,13 @@ func (c *Client) ContainerStats(ctx context.Context, id string) (ContainerStats,
 	if err := c.getJSON(ctx, "/containers/"+id+"/stats?"+query.Encode(), &raw); err != nil {
 		return ContainerStats{}, err
 	}
-	cpuDelta := raw.CPUStats.CPUUsage.TotalUsage - raw.PreCPUStats.CPUUsage.TotalUsage
-	systemDelta := raw.CPUStats.SystemCPUUsage - raw.PreCPUStats.SystemCPUUsage
+	var cpuDelta, systemDelta uint64
+	if raw.CPUStats.CPUUsage.TotalUsage >= raw.PreCPUStats.CPUUsage.TotalUsage {
+		cpuDelta = raw.CPUStats.CPUUsage.TotalUsage - raw.PreCPUStats.CPUUsage.TotalUsage
+	}
+	if raw.CPUStats.SystemCPUUsage >= raw.PreCPUStats.SystemCPUUsage {
+		systemDelta = raw.CPUStats.SystemCPUUsage - raw.PreCPUStats.SystemCPUUsage
+	}
 	onlineCPUs := raw.CPUStats.OnlineCPUs
 	if onlineCPUs == 0 {
 		onlineCPUs = uint64(len(raw.CPUStats.CPUUsage.PercpuUsage))

@@ -109,19 +109,25 @@ func compactStrings(values []string) []string {
 
 func containerAccessRules(containerIP, allowedIP string) []firewallRule {
 	rules := []firewallRule{
-		{arguments: []string{"-m", "state", "--state", "ESTABLISHED,RELATED", "-d", containerIP, "-j", "ACCEPT"}},
-		{arguments: []string{"-p", "tcp", "-s", "127.0.0.0/8", "-d", containerIP, "-j", "ACCEPT"}},
-		{arguments: []string{"-p", "udp", "-s", "127.0.0.0/8", "-d", containerIP, "-j", "ACCEPT"}},
+		{arguments: []string{"-p", "tcp", "-d", containerIP, "-j", "DROP"}},
 	}
 	if allowedIP != "" {
-		rules = append(rules,
-			firewallRule{arguments: []string{"-p", "tcp", "-s", allowedIP, "-d", containerIP, "-j", "ACCEPT"}},
-			firewallRule{arguments: []string{"-p", "udp", "-s", allowedIP, "-d", containerIP, "-j", "ACCEPT"}},
-		)
+		rules = append(rules, firewallRule{
+			arguments: []string{"-p", "tcp", "-s", allowedIP, "-d", containerIP, "-j", "ACCEPT"},
+		})
+	}
+	rules = append(rules,
+		firewallRule{arguments: []string{"-p", "tcp", "-s", "127.0.0.0/8", "-d", containerIP, "-j", "ACCEPT"}},
+		firewallRule{arguments: []string{"-p", "udp", "-d", containerIP, "-j", "DROP"}},
+	)
+	if allowedIP != "" {
+		rules = append(rules, firewallRule{
+			arguments: []string{"-p", "udp", "-s", allowedIP, "-d", containerIP, "-j", "ACCEPT"},
+		})
 	}
 	return append(rules,
-		firewallRule{arguments: []string{"-p", "tcp", "-d", containerIP, "-j", "DROP"}},
-		firewallRule{arguments: []string{"-p", "udp", "-d", containerIP, "-j", "DROP"}},
+		firewallRule{arguments: []string{"-p", "udp", "-s", "127.0.0.0/8", "-d", containerIP, "-j", "ACCEPT"}},
+		firewallRule{arguments: []string{"-m", "state", "--state", "ESTABLISHED,RELATED", "-d", containerIP, "-j", "ACCEPT"}},
 	)
 }
 

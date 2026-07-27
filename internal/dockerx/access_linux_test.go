@@ -61,15 +61,24 @@ func TestContainerAccessUsesKejilionDockerUserRuleShape(t *testing.T) {
 	for _, arguments := range inserted {
 		joined += strings.Join(arguments, " ") + "\n"
 	}
-	for _, expected := range []string{
-		"-m state --state ESTABLISHED,RELATED -d 172.30.0.9 -j ACCEPT",
-		"-p tcp -s 127.0.0.0/8 -d 172.30.0.9 -j ACCEPT",
-		"-p tcp -s 203.0.113.10 -d 172.30.0.9 -j ACCEPT",
+	expectedOrder := []string{
 		"-p tcp -d 172.30.0.9 -j DROP",
+		"-p tcp -s 203.0.113.10 -d 172.30.0.9 -j ACCEPT",
+		"-p tcp -s 127.0.0.0/8 -d 172.30.0.9 -j ACCEPT",
 		"-p udp -d 172.30.0.9 -j DROP",
-	} {
+		"-p udp -s 203.0.113.10 -d 172.30.0.9 -j ACCEPT",
+		"-p udp -s 127.0.0.0/8 -d 172.30.0.9 -j ACCEPT",
+		"-m state --state ESTABLISHED,RELATED -d 172.30.0.9 -j ACCEPT",
+	}
+	if len(inserted) != len(expectedOrder) {
+		t.Fatalf("inserted rules = %d, want %d:\n%s", len(inserted), len(expectedOrder), joined)
+	}
+	for index, expected := range expectedOrder {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("missing Kejilion-compatible rule %q in:\n%s", expected, joined)
+		}
+		if actual := strings.Join(inserted[index], " "); !strings.HasSuffix(actual, expected) {
+			t.Fatalf("rule %d = %q, want script insertion order suffix %q", index, actual, expected)
 		}
 	}
 	data, err := os.ReadFile(client.iptablesRulesPath)

@@ -45,6 +45,32 @@ func TestContainerStatsReturnsBoundedSingleSample(t *testing.T) {
 	}
 }
 
+func TestContainerStatsDoesNotUnderflowAfterCounterReset(t *testing.T) {
+	id := strings.Repeat("9", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/containers/" + id + "/json":
+			_ = json.NewEncoder(response).Encode(managedInspect(id, "2026-01-01T00:00:00Z", 0))
+		case "/containers/" + id + "/stats":
+			_, _ = response.Write([]byte(`{
+				"cpu_stats":{"cpu_usage":{"total_usage":10},"system_cpu_usage":100,"online_cpus":2},
+				"precpu_stats":{"cpu_usage":{"total_usage":20},"system_cpu_usage":200}
+			}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	client := testHTTPClient(server)
+	stats, err := client.ContainerStats(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.CPUPercent != 0 {
+		t.Fatalf("CPU after counter reset = %f, want 0", stats.CPUPercent)
+	}
+}
+
 func TestContainerExecUsesFixedShellAndDoesNotReturnCommand(t *testing.T) {
 	id := strings.Repeat("b", 64)
 	execID := strings.Repeat("c", 64)
