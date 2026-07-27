@@ -40,7 +40,7 @@ git diff --cached --check
 if [[ -n "$base_ref" ]] && git cat-file -e "${base_ref}^{commit}" 2>/dev/null; then
   git diff --check "$base_ref" --
 fi
-bash scripts/check-ecosystem-policy.sh
+ECOSYSTEM_POLICY_BASE_REF="$base_ref" bash scripts/check-ecosystem-policy.sh
 
 if [[ ${#changed_files[@]} -eq 0 ]]; then
   echo "No changes require verification."

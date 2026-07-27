@@ -40,11 +40,12 @@ Agent 直接发现和管理 `kejilion.sh`、KPanel、Compose、Docker CLI 与人
 - LDNMP：Docker 中的 Nginx、MySQL、PHP 等容器。
 - 应用：Docker/Compose 实际状态与 `/home/docker` 兼容目录。
 
-Agent 不载入 Shell 函数，也不改写脚本。需要完整复用应用安装、一键建站等脚本业务时，
-Agent 通过本机脚本已经实现的非交互协议调用固定业务动作；其他操作直接使用共享文件和
-Docker Engine API。每次查询和写操作前重新读取真实状态，不依赖缓存的影子资源。
+Agent 不 `source` Shell 函数。需要写入脚本已定义的外联配置时，Agent 必须调用本机脚本的
+非交互协议、消费脚本同一权威模板，或调用双方共享生成器；直接写入共享目录不代表可以另写
+一套配置。每次查询和写操作前重新读取真实状态，不依赖缓存的影子资源。
 
-当未来开始改造脚本时，`kejilion.sh` 菜单将通过 `kpctl` 调用同一套 Agent Action。届时 CLI 和 Web 才能共享同一资源锁并获得严格串行保证。
+脚本没有机器接口时先改造 `kejilion.sh`，再开放对应 Web 写入。未来可让脚本菜单通过
+`kpctl` 调用同一套 Agent Action，使 CLI 和 Web 同时共享配置来源、事务锁和失败恢复。
 
 ## 状态规则
 

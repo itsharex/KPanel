@@ -7,6 +7,7 @@ cd "$repo_root"
 required_files=(
   "PROJECT_RULES.md"
   "docs/ecosystem-parity.md"
+  "docs/external-config-sources.md"
   "docs/operational-boundary-audit.md"
 )
 
@@ -62,5 +63,46 @@ grep -Fq '`kejilion.sh` 是 KPanel 业务行为、资源布局和兼容方式的
 grep -Fq '不得设置用户操作护栏' PROJECT_RULES.md
 grep -Fq '必须保留的攻击面与完整性防护' PROJECT_RULES.md
 grep -Fq '核验分级' PROJECT_RULES.md
+grep -Fq '`kejilion.sh` 已有的外联配置必须直接复用，禁止 KPanel 自行编写替代模板' PROJECT_RULES.md
+grep -Fq '没有稳定脚本接口时登记为适配缺口，不得先做一套 KPanel 专属实现' docs/ecosystem-parity.md
+grep -Fq '<!-- external-config-debt:website-nginx:blocked -->' docs/external-config-sources.md
+grep -Fq '<!-- external-config-debt:wordpress-flow:blocked -->' docs/external-config-sources.md
+
+policy_base="${ECOSYSTEM_POLICY_BASE_REF:-}"
+if [[ -z "$policy_base" ]]; then
+  if [[ "${CI:-}" == "true" ]] && git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+    policy_base="HEAD^"
+  else
+    policy_base="HEAD"
+  fi
+fi
+if ! git cat-file -e "${policy_base}^{commit}" 2>/dev/null; then
+  policy_base="HEAD"
+fi
+mapfile -t changed_policy_files < <(
+  {
+    git diff --name-only --diff-filter=ACMRT "$policy_base" --
+    git ls-files --others --exclude-standard
+  } | sed '/^$/d' | sort -u
+)
+
+for path in "${changed_policy_files[@]}"; do
+  case "$path" in
+    internal/sites/managed_template.go)
+      if grep -Fq '<!-- external-config-debt:website-nginx:blocked -->' docs/external-config-sources.md; then
+        echo "Blocked external-config debt changed: $path" >&2
+        echo "Migrate website Nginx generation to the kejilion.sh source before modifying this file." >&2
+        exit 1
+      fi
+      ;;
+    internal/sites/wordpress.go|internal/dockerx/wordpress.go)
+      if grep -Fq '<!-- external-config-debt:wordpress-flow:blocked -->' docs/external-config-sources.md; then
+        echo "Blocked external-config debt changed: $path" >&2
+        echo "Migrate WordPress configuration to the kejilion.sh source before modifying this file." >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
 
 echo "Ecosystem policy check passed."
