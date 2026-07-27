@@ -212,7 +212,6 @@ jobs:
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          scope: "${{ env.DOCKERHUB_IMAGE }}@push"
 
       - name: Build and push multi-architecture image
         id: image
