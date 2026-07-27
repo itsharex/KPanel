@@ -19,11 +19,21 @@
 - [x] Go 受影响包测试、Panel 写接口安全测试与 `go vet ./...`
 - [x] Web 单元测试、类型检查与生产构建
 - [x] Linux `amd64` Agent、Panel 交叉构建
-- [ ] GitHub Actions Linux 全量 CI
-- [ ] Release 工作流双架构镜像、OCI 标签与镜像内脚本摘要
-- [ ] Docker Hub `0.20.4` / `latest` manifest 核验
-- [ ] `kejilion/apps` 的 `kpanel.conf` 同步
+- [x] GitHub Actions Linux 全量 CI
+- [x] Release 工作流双架构镜像、OCI 标签与镜像内脚本摘要
+- [x] Docker Hub `0.20.4` / `latest` manifest 核验
+- [x] `kejilion/apps` 的 `kpanel.conf` 同步
 - [ ] 目标机器升级后实机复核建站、删除和交互体检
+
+## 发布证据
+
+- KPanel 发布提交：`7f668f34edc6ba94b3ea4ff1e550c53dd66acc06`
+- 主分支 CI：`https://github.com/kejilion/KPanel/actions/runs/30284344487`
+- Release：`https://github.com/kejilion/KPanel/actions/runs/30284493923`
+- GitHub Release：`https://github.com/kejilion/KPanel/releases/tag/v0.20.4`
+- Docker `0.20.4` / `latest` manifest：`sha256:4b6aad4c7e960c6088239682621bcfa4a7843fecd60a0fe793378e60993e5a3e`
+- 镜像平台：`linux/amd64`、`linux/arm64`
+- `kejilion/apps` 同步提交：`2b4ff82`
 
 ## 实机复核命令
 
