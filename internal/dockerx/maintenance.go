@@ -38,28 +38,29 @@ var (
 )
 
 type MaintenanceInput struct {
-	Action                   string                 `json:"action"`
-	Image                    string                 `json:"image,omitempty"`
-	Target                   string                 `json:"target,omitempty"`
-	Name                     string                 `json:"name,omitempty"`
-	Driver                   string                 `json:"driver,omitempty"`
-	ContainerID              string                 `json:"containerId,omitempty"`
-	ContainerResourceVersion string                 `json:"containerResourceVersion,omitempty"`
-	ExpectedResourceVersion  string                 `json:"expectedResourceVersion,omitempty"`
-	Confirmation             string                 `json:"confirmation,omitempty"`
-	Preset                   string                 `json:"preset,omitempty"`
-	Enabled                  bool                   `json:"enabled,omitempty"`
-	IPv6CIDR                 string                 `json:"ipv6Cidr,omitempty"`
-	Ports                    []ContainerCreatePort  `json:"ports,omitempty"`
-	Mounts                   []ContainerCreateMount `json:"mounts,omitempty"`
-	Command                  []string               `json:"command,omitempty"`
-	Network                  string                 `json:"network,omitempty"`
-	RestartPolicy            string                 `json:"restartPolicy,omitempty"`
-	AllowedIP                string                 `json:"allowedIp,omitempty"`
-	BackupID                 string                 `json:"backupId,omitempty"`
-	MigrationHost            string                 `json:"migrationHost,omitempty"`
-	MigrationUser            string                 `json:"migrationUser,omitempty"`
-	MigrationPort            int                    `json:"migrationPort,omitempty"`
+	Action                   string                       `json:"action"`
+	Image                    string                       `json:"image,omitempty"`
+	Target                   string                       `json:"target,omitempty"`
+	Name                     string                       `json:"name,omitempty"`
+	Driver                   string                       `json:"driver,omitempty"`
+	ContainerID              string                       `json:"containerId,omitempty"`
+	ContainerResourceVersion string                       `json:"containerResourceVersion,omitempty"`
+	ExpectedResourceVersion  string                       `json:"expectedResourceVersion,omitempty"`
+	Confirmation             string                       `json:"confirmation,omitempty"`
+	Preset                   string                       `json:"preset,omitempty"`
+	Enabled                  bool                         `json:"enabled,omitempty"`
+	IPv6CIDR                 string                       `json:"ipv6Cidr,omitempty"`
+	Ports                    []ContainerCreatePort        `json:"ports,omitempty"`
+	Mounts                   []ContainerCreateMount       `json:"mounts,omitempty"`
+	Environment              []ContainerCreateEnvironment `json:"environment,omitempty"`
+	Command                  []string                     `json:"command,omitempty"`
+	Network                  string                       `json:"network,omitempty"`
+	RestartPolicy            string                       `json:"restartPolicy,omitempty"`
+	AllowedIP                string                       `json:"allowedIp,omitempty"`
+	BackupID                 string                       `json:"backupId,omitempty"`
+	MigrationHost            string                       `json:"migrationHost,omitempty"`
+	MigrationUser            string                       `json:"migrationUser,omitempty"`
+	MigrationPort            int                          `json:"migrationPort,omitempty"`
 }
 
 type MaintenanceJob struct {
@@ -119,6 +120,7 @@ func (c *Client) ConfigureJobs(stateDir string) error {
 			record.Progress = 100
 			record.Message = "Docker 后台任务被 Agent 或服务器重启中断，请刷新资源后重试"
 			record.FinishedAt = &finished
+			record.Input = MaintenanceInput{Action: record.Action, Target: record.Target}
 			_ = registry.put(record)
 		}
 		registry.jobs[id] = record
@@ -381,6 +383,7 @@ func (c *Client) runMaintenance(record dockerJobRecord) {
 		record.Stage = "completed"
 		record.Message = dockerActionCompleted(record.Action)
 	}
+	record.Input = MaintenanceInput{Action: record.Action, Target: record.Target}
 	_ = c.jobs.put(record)
 }
 
@@ -594,7 +597,7 @@ func (c *Client) removeVolume(ctx context.Context, target string) error {
 func (c *Client) prune(ctx context.Context) error {
 	steps := []string{
 		"/containers/prune",
-		"/images/prune",
+		dockerPruneEndpoint("images"),
 		"/networks/prune",
 		"/volumes/prune",
 		"/build/prune?all=1",
@@ -610,22 +613,31 @@ func (c *Client) prune(ctx context.Context) error {
 func (c *Client) pruneResource(ctx context.Context, resource string) error {
 	switch resource {
 	case "containers", "images", "networks", "volumes":
-		return c.dockerMutation(ctx, http.MethodPost, "/"+resource+"/prune", nil)
+		return c.dockerMutation(ctx, http.MethodPost, dockerPruneEndpoint(resource), nil)
 	default:
 		return ErrInvalidDockerJob
 	}
 }
 
+func dockerPruneEndpoint(resource string) string {
+	endpoint := "/" + resource + "/prune"
+	if resource == "images" {
+		endpoint += "?" + url.Values{
+			"filters": {`{"dangling":["false"]}`},
+		}.Encode()
+	}
+	return endpoint
+}
+
 func (c *Client) createDockerBackup(ctx context.Context) (string, error) {
-	sourceRoot := filepath.Clean(c.appRoot)
+	sourceRoot, err := c.resolvedDockerAppRoot()
+	if err != nil {
+		return "", err
+	}
 	destinationRoot := c.dockerBackupRoot()
 	if !filepath.IsAbs(sourceRoot) || sourceRoot == string(filepath.Separator) ||
 		!filepath.IsAbs(destinationRoot) || destinationRoot == string(filepath.Separator) {
 		return "", errors.New("Docker backup paths are unsafe")
-	}
-	sourceInfo, err := os.Lstat(sourceRoot)
-	if err != nil || !sourceInfo.IsDir() || sourceInfo.Mode()&os.ModeSymlink != 0 {
-		return "", errors.New("Docker application root is unavailable or unsafe")
 	}
 	if err := ensureDockerJobDirectory(destinationRoot); err != nil {
 		return "", err
@@ -694,10 +706,8 @@ func (c *Client) createDockerBackup(ctx context.Context) (string, error) {
 			return err
 		}
 		header.Name = filepath.ToSlash(filepath.Join("docker", relative))
-		header.Uid = 0
-		header.Gid = 0
-		header.Uname = "root"
-		header.Gname = "root"
+		header.Uname = ""
+		header.Gname = ""
 		if err := tarWriter.WriteHeader(header); err != nil {
 			return err
 		}
@@ -810,13 +820,9 @@ func (c *Client) updateDaemonConfig(ctx context.Context, mutate func(map[string]
 	}
 	config := make(map[string]any)
 	if existed && len(bytes.TrimSpace(original)) > 0 {
-		decoder := json.NewDecoder(bytes.NewReader(original))
-		decoder.UseNumber()
-		if err := decoder.Decode(&config); err != nil {
+		config, err = parseDockerDaemonConfig(original)
+		if err != nil {
 			return errors.New("Docker daemon.json is invalid; repair it before using KPanel")
-		}
-		if config == nil {
-			config = make(map[string]any)
 		}
 	}
 	mutate(config)

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"sort"
 	"time"
 )
@@ -54,10 +56,8 @@ func (c *Client) Environment(ctx context.Context) EnvironmentInfo {
 		return result
 	}
 	result.DaemonConfig = "valid"
-	var config map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&config); err != nil {
+	config, err := parseDockerDaemonConfig(data)
+	if err != nil {
 		result.DaemonConfig = "invalid"
 		result.DaemonWarning = "Docker daemon.json 无法解析；面板不会覆盖现有配置"
 		return result
@@ -80,6 +80,23 @@ func (c *Client) Environment(ctx context.Context) EnvironmentInfo {
 		result.MirrorPreset = "custom"
 	}
 	return result
+}
+
+func parseDockerDaemonConfig(data []byte) (map[string]any, error) {
+	var config map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&config); err != nil {
+		return nil, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, errors.New("Docker daemon.json contains trailing data")
+	}
+	if config == nil {
+		config = make(map[string]any)
+	}
+	return config, nil
 }
 
 func sameStringSet(left, right []string) bool {

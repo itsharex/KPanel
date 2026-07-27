@@ -214,15 +214,11 @@ func runFixedDockerHostCommand(
 		return nil, errors.New("unsupported fixed Docker host command")
 	}
 	for _, path := range paths {
-		info, err := os.Lstat(path)
+		resolved, err := trustedDockerHostExecutable(path)
 		if err != nil {
 			continue
 		}
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 ||
-			info.Mode().Perm()&0o022 != 0 {
-			return nil, fmt.Errorf("%s is unavailable or writable by an untrusted user", path)
-		}
-		command := exec.CommandContext(ctx, path, arguments...)
+		command := exec.CommandContext(ctx, resolved, arguments...)
 		output, runErr := command.CombinedOutput()
 		if len(output) > 1<<20 {
 			output = output[:1<<20]
@@ -233,6 +229,49 @@ func runFixedDockerHostCommand(
 		return output, nil
 	}
 	return nil, fmt.Errorf("%s executable is unavailable", name)
+}
+
+func trustedDockerHostExecutable(path string) (string, error) {
+	linkInfo, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	linkUID, _, err := fileNumericOwnership(linkInfo)
+	if err != nil || linkUID != 0 {
+		return "", errors.New("executable link is not owned by root")
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	resolved = filepath.Clean(resolved)
+	trusted := false
+	for _, root := range []string{"/usr/sbin", "/usr/bin", "/sbin", "/bin"} {
+		if pathWithin(resolved, root) && resolved != root {
+			trusted = true
+			break
+		}
+	}
+	if !trusted {
+		return "", errors.New("executable resolved outside trusted system directories")
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
+		return "", errors.New("executable is unavailable or writable by an untrusted user")
+	}
+	uid, _, err := fileNumericOwnership(info)
+	if err != nil || uid != 0 {
+		return "", errors.New("executable is not owned by root")
+	}
+	parentInfo, err := os.Stat(filepath.Dir(resolved))
+	if err != nil || !parentInfo.IsDir() || parentInfo.Mode().Perm()&0o022 != 0 {
+		return "", errors.New("executable directory is not trusted")
+	}
+	parentUID, _, err := fileNumericOwnership(parentInfo)
+	if err != nil || parentUID != 0 {
+		return "", errors.New("executable directory is not owned by root")
+	}
+	return resolved, nil
 }
 
 func atomicWriteFirewallRules(path string, data []byte) error {

@@ -519,6 +519,11 @@ export interface DockerContainerCreateMount {
   readOnly?: boolean
 }
 
+export interface DockerContainerCreateEnvironment {
+  name: string
+  value: string
+}
+
 export type DockerMaintenanceAction =
   | 'container_create'
   | 'container_access'
@@ -556,6 +561,7 @@ export interface DockerMaintenanceInput {
   ipv6Cidr?: string
   ports?: DockerContainerCreatePort[]
   mounts?: DockerContainerCreateMount[]
+  environment?: DockerContainerCreateEnvironment[]
   command?: string[]
   network?: string
   restartPolicy?: 'no' | 'always' | 'unless-stopped' | 'on-failure'

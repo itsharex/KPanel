@@ -92,6 +92,26 @@ func (c *Client) dockerBackupRoot() string {
 	return filepath.Join(filepath.Clean(c.appRoot), ".kpanel-backups")
 }
 
+func (c *Client) resolvedDockerAppRoot() (string, error) {
+	root := filepath.Clean(c.appRoot)
+	if !filepath.IsAbs(root) || root == string(filepath.Separator) {
+		return "", errors.New("Docker application root is unsafe")
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", errors.New("Docker application root is unavailable or unsafe")
+	}
+	resolved = filepath.Clean(resolved)
+	if !filepath.IsAbs(resolved) || resolved == string(filepath.Separator) {
+		return "", errors.New("Docker application root resolved to an unsafe path")
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("Docker application root is unavailable or unsafe")
+	}
+	return resolved, nil
+}
+
 func (c *Client) restoreDockerBackup(ctx context.Context, id string) error {
 	archivePath, err := c.dockerBackupPath(id)
 	if err != nil {
@@ -109,13 +129,9 @@ func (c *Client) restoreDockerBackup(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	appRoot := filepath.Clean(c.appRoot)
-	if !filepath.IsAbs(appRoot) || appRoot == string(filepath.Separator) {
-		return errors.New("Docker application root is unsafe")
-	}
-	appInfo, err := os.Lstat(appRoot)
-	if err != nil || !appInfo.IsDir() || appInfo.Mode()&os.ModeSymlink != 0 {
-		return errors.New("Docker application root is unavailable or unsafe")
+	appRoot, err := c.resolvedDockerAppRoot()
+	if err != nil {
+		return err
 	}
 	skipExisting := make(map[string]bool)
 	mergeAppNo := false
@@ -234,6 +250,10 @@ func extractDockerBackup(
 		if header.Size < 0 || header.Size > 10<<30 || total+header.Size > maxDockerBackupBytes {
 			return nil, errors.New("Docker backup exceeds the restore safety limit")
 		}
+		if header.Uid < 0 || header.Gid < 0 ||
+			header.Uid > 1<<31-1 || header.Gid > 1<<31-1 {
+			return nil, errors.New("Docker backup contains invalid numeric ownership")
+		}
 		total += header.Size
 		target := filepath.Join(stageRoot, filepath.FromSlash(clean))
 		if !pathWithin(target, stageRoot) {
@@ -246,6 +266,9 @@ func extractDockerBackup(
 				mode = 0o750
 			}
 			if err := os.MkdirAll(target, mode); err != nil {
+				return nil, err
+			}
+			if err := applyNumericOwnership(target, header.Uid, header.Gid); err != nil {
 				return nil, err
 			}
 		case tar.TypeReg, tar.TypeRegA:
@@ -264,6 +287,9 @@ func extractDockerBackup(
 			closeErr := output.Close()
 			if copyErr != nil || written != header.Size || syncErr != nil || closeErr != nil {
 				return nil, errors.New("Docker backup entry could not be restored safely")
+			}
+			if err := applyNumericOwnership(target, header.Uid, header.Gid); err != nil {
+				return nil, err
 			}
 		default:
 			return nil, errors.New("Docker backup contains links or unsupported filesystem objects")
@@ -337,10 +363,10 @@ func mergeDockerAppMarkers(source, target string) error {
 		}
 	}
 	data := []byte(strings.Join(merged, "\n") + "\n")
-	return atomicWriteRestoredFile(target, data, targetInfo.Mode().Perm())
+	return atomicWriteRestoredFile(target, data, targetInfo)
 }
 
-func atomicWriteRestoredFile(path string, data []byte, mode os.FileMode) error {
+func atomicWriteRestoredFile(path string, data []byte, original os.FileInfo) error {
 	parent := filepath.Dir(filepath.Clean(path))
 	temp, err := os.CreateTemp(parent, ".kpanel-restore-*.tmp")
 	if err != nil {
@@ -348,7 +374,16 @@ func atomicWriteRestoredFile(path string, data []byte, mode os.FileMode) error {
 	}
 	tempPath := temp.Name()
 	defer os.Remove(tempPath)
-	if err := temp.Chmod(mode); err != nil {
+	if err := temp.Chmod(original.Mode().Perm()); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	uid, gid, err := fileNumericOwnership(original)
+	if err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := applyNumericOwnership(tempPath, uid, gid); err != nil {
 		_ = temp.Close()
 		return err
 	}
@@ -388,6 +423,13 @@ func copyRestoredDockerTree(source, target string) error {
 		if err := os.Mkdir(target, sourceInfo.Mode().Perm()); err != nil {
 			return err
 		}
+		uid, gid, err := fileNumericOwnership(sourceInfo)
+		if err != nil {
+			return err
+		}
+		if err := applyNumericOwnership(target, uid, gid); err != nil {
+			return err
+		}
 		entries, err := os.ReadDir(source)
 		if err != nil {
 			return err
@@ -420,7 +462,11 @@ func copyRestoredDockerTree(source, target string) error {
 	if copyErr != nil || written != sourceInfo.Size() || syncErr != nil || closeErr != nil {
 		return errors.New("restore file copy failed")
 	}
-	return nil
+	uid, gid, err := fileNumericOwnership(sourceInfo)
+	if err != nil {
+		return err
+	}
+	return applyNumericOwnership(target, uid, gid)
 }
 
 func rollbackRestoredDockerPaths(paths []string, appRoot string) {

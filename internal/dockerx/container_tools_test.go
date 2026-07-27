@@ -136,6 +136,7 @@ func TestManagedContainerCreateIsStructuredAndRollsBackStartFailure(t *testing.T
 	createdID := strings.Repeat("d", 64)
 	var payload struct {
 		Image        string            `json:"Image"`
+		Env          []string          `json:"Env"`
 		Labels       map[string]string `json:"Labels"`
 		ExposedPorts map[string]any    `json:"ExposedPorts"`
 		HostConfig   struct {
@@ -173,12 +174,14 @@ func TestManagedContainerCreateIsStructuredAndRollsBackStartFailure(t *testing.T
 		Action: "container_create", Name: "demo", Image: "nginx:alpine",
 		RestartPolicy: "unless-stopped",
 		Ports:         []ContainerCreatePort{{PrivatePort: 80, PublicPort: 8080, Protocol: "tcp", HostIP: "127.0.0.1"}},
+		Environment:   []ContainerCreateEnvironment{{Name: "APP_MODE", Value: "production"}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "rolled back") || !rollback {
 		t.Fatalf("create rollback result: err=%v rollback=%v", err, rollback)
 	}
 	if payload.Image != "nginx:alpine" ||
 		payload.Labels["io.kejilion.panel.managed"] != "true" ||
+		len(payload.Env) != 1 || payload.Env[0] != "APP_MODE=production" ||
 		payload.HostConfig.RestartPolicy.Name != "unless-stopped" ||
 		payload.HostConfig.PortBindings["80/tcp"][0]["HostIp"] != "127.0.0.1" {
 		t.Fatalf("unexpected create payload: %#v", payload)

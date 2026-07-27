@@ -68,3 +68,24 @@ func TestDockerEnvironmentPreservesCustomMirrorStatus(t *testing.T) {
 		t.Fatalf("custom mirror status was not preserved: %#v", result)
 	}
 }
+
+func TestDockerEnvironmentRejectsTrailingDaemonConfiguration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`{"ServerVersion":"28.1.1"}`))
+	}))
+	defer server.Close()
+	client := testHTTPClient(server)
+	client.daemonConfigPath = filepath.Join(t.TempDir(), "daemon.json")
+	if err := os.WriteFile(
+		client.daemonConfigPath,
+		[]byte(`{"registry-mirrors":[]} {"ipv6":true}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	result := client.Environment(context.Background())
+	if result.DaemonConfig != "invalid" || result.DaemonWarning == "" ||
+		result.IPv6Enabled || result.MirrorPreset != "official" {
+		t.Fatalf("trailing daemon data was accepted: %#v", result)
+	}
+}

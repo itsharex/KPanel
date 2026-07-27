@@ -19,6 +19,7 @@ const (
 )
 
 var containerPathPattern = regexp.MustCompile(`^/(?:[A-Za-z0-9_.-]+/?){1,16}$`)
+var containerEnvNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 
 type ContainerStats struct {
 	ContainerID   string    `json:"containerId"`
@@ -58,6 +59,11 @@ type ContainerCreateMount struct {
 	Volume   string `json:"volume"`
 	Target   string `json:"target"`
 	ReadOnly bool   `json:"readOnly,omitempty"`
+}
+
+type ContainerCreateEnvironment struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 func (c *Client) ContainerStats(ctx context.Context, id string) (ContainerStats, error) {
@@ -251,7 +257,8 @@ func (c *Client) createManagedContainer(ctx context.Context, input MaintenanceIn
 
 func (c *Client) containerCreatePayload(ctx context.Context, input MaintenanceInput) ([]byte, error) {
 	if !dockerNamePattern.MatchString(input.Name) || !validImageReference(input.Image) ||
-		len(input.Ports) > 16 || len(input.Mounts) > 16 || len(input.Command) > 32 {
+		len(input.Ports) > 16 || len(input.Mounts) > 16 ||
+		len(input.Environment) > 64 || len(input.Command) > 32 {
 		return nil, ErrInvalidDockerJob
 	}
 	switch input.RestartPolicy {
@@ -267,6 +274,22 @@ func (c *Client) containerCreatePayload(ctx context.Context, input MaintenanceIn
 			strings.ContainsAny(value, "\r\n\x00") {
 			return nil, ErrInvalidDockerJob
 		}
+	}
+	environment := make([]string, 0, len(input.Environment))
+	seenEnvironment := make(map[string]bool)
+	totalEnvironmentBytes := 0
+	for _, variable := range input.Environment {
+		name := strings.TrimSpace(variable.Name)
+		if !containerEnvNamePattern.MatchString(name) || seenEnvironment[name] ||
+			len(variable.Value) > 2048 || strings.ContainsAny(variable.Value, "\r\n\x00") {
+			return nil, ErrInvalidDockerJob
+		}
+		totalEnvironmentBytes += len(name) + len(variable.Value) + 1
+		if totalEnvironmentBytes > 32<<10 {
+			return nil, ErrInvalidDockerJob
+		}
+		seenEnvironment[name] = true
+		environment = append(environment, name+"="+variable.Value)
 	}
 	exposedPorts := make(map[string]any)
 	portBindings := make(map[string][]map[string]string)
@@ -345,6 +368,7 @@ func (c *Client) containerCreatePayload(ctx context.Context, input MaintenanceIn
 	payload := struct {
 		Image        string            `json:"Image"`
 		Cmd          []string          `json:"Cmd,omitempty"`
+		Env          []string          `json:"Env,omitempty"`
 		Labels       map[string]string `json:"Labels"`
 		ExposedPorts map[string]any    `json:"ExposedPorts,omitempty"`
 		HostConfig   struct {
@@ -358,6 +382,7 @@ func (c *Client) containerCreatePayload(ctx context.Context, input MaintenanceIn
 	}{
 		Image: input.Image,
 		Cmd:   append([]string(nil), input.Command...),
+		Env:   environment,
 		Labels: map[string]string{
 			"io.kejilion.panel.managed":    "true",
 			"io.kejilion.panel.created-by": "kpanel",

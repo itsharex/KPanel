@@ -51,6 +51,13 @@ func TestImagePullRunsAsPersistentBackgroundJob(t *testing.T) {
 	if job.Status != "succeeded" || job.Progress != 100 {
 		t.Fatalf("unexpected completed job: %#v", job)
 	}
+	record, err := client.jobs.read(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Input.Action != "image_pull" || record.Input.Image != "" {
+		t.Fatalf("completed job retained request details: %#v", record.Input)
+	}
 }
 
 func TestPruneRequiresConfirmationAndUsesFixedEndpoints(t *testing.T) {
@@ -85,7 +92,7 @@ func TestPruneRequiresConfirmationAndUsesFixedEndpoints(t *testing.T) {
 	}
 	want := []string{
 		"/containers/prune",
-		"/images/prune",
+		dockerPruneEndpoint("images"),
 		"/networks/prune",
 		"/volumes/prune",
 		"/build/prune?all=1",
@@ -105,7 +112,7 @@ func TestPruneRequiresConfirmationAndUsesFixedEndpoints(t *testing.T) {
 func TestScopedPruneUsesOnlySelectedDockerEndpoint(t *testing.T) {
 	for action, wantPath := range map[string]string{
 		"container_prune": "/containers/prune",
-		"image_prune":     "/images/prune",
+		"image_prune":     dockerPruneEndpoint("images"),
 		"network_prune":   "/networks/prune",
 		"volume_prune":    "/volumes/prune",
 	} {

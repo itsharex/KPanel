@@ -34,6 +34,7 @@ import { useToast } from '@/stores/toast'
 import type {
   DockerBackup,
   DockerContainer,
+  DockerContainerCreateEnvironment,
   DockerContainerCreateMount,
   DockerContainerCreatePort,
   DockerContainerStats,
@@ -57,6 +58,11 @@ interface CreateMountRow {
   volume: string
   target: string
   readOnly: boolean
+}
+
+interface CreateEnvironmentRow {
+  name: string
+  value: string
 }
 
 const panel = usePanelState()
@@ -107,6 +113,7 @@ const createPorts = ref<CreatePortRow[]>([
   { publicPort: '', privatePort: '', protocol: 'tcp', hostIp: '0.0.0.0' },
 ])
 const createMounts = ref<CreateMountRow[]>([])
+const createEnvironment = ref<CreateEnvironmentRow[]>([])
 
 const logsOpen = ref(false)
 const logsLoading = ref(false)
@@ -331,6 +338,7 @@ async function submitTask(input: DockerMaintenanceInput): Promise<void> {
     const job = await api.docker.task(input)
     pendingMaintenance.value = undefined
     createOpen.value = false
+    if (input.action === 'container_create') resetCreateForm()
     accessOpen.value = false
     migrationOpen.value = false
     startJobPolling(job)
@@ -451,6 +459,11 @@ function addCreateMount(): void {
   createMounts.value.push({ volume: '', target: '', readOnly: false })
 }
 
+function addCreateEnvironment(): void {
+  if (createEnvironment.value.length >= 64) return
+  createEnvironment.value.push({ name: '', value: '' })
+}
+
 function resetCreateForm(): void {
   createName.value = ''
   createImage.value = ''
@@ -459,6 +472,7 @@ function resetCreateForm(): void {
   createCommand.value = ''
   createPorts.value = [{ publicPort: '', privatePort: '', protocol: 'tcp', hostIp: '0.0.0.0' }]
   createMounts.value = []
+  createEnvironment.value = []
 }
 
 function submitContainerCreate(): void {
@@ -485,6 +499,20 @@ function submitContainerCreate(): void {
     toast.danger('存储卷挂载无效', '请选择已有存储卷，并填写绝对容器路径。')
     return
   }
+  const environment: DockerContainerCreateEnvironment[] = createEnvironment.value
+    .filter((item) => item.name.trim() || item.value)
+    .map((item) => ({ name: item.name.trim(), value: item.value }))
+  const environmentName = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/
+  const seenEnvironment = new Set<string>()
+  if (environment.some((item) => {
+    const invalid = !environmentName.test(item.name) || seenEnvironment.has(item.name) ||
+      item.value.length > 2048 || /[\r\n\u0000]/.test(item.value)
+    seenEnvironment.add(item.name)
+    return invalid
+  })) {
+    toast.danger('环境变量无效', '变量名必须规范且不能重复；变量值不能换行，单项最多 2048 字符。')
+    return
+  }
   askTask('确认创建并启动容器', `${name} · ${image}`, {
     action: 'container_create',
     name,
@@ -494,6 +522,7 @@ function submitContainerCreate(): void {
     command: createCommand.value.split('\n').map((item) => item.trim()).filter(Boolean),
     ports,
     mounts,
+    environment,
   })
 }
 
@@ -1042,6 +1071,14 @@ onBeforeUnmount(() => {
           <button class="icon-button icon-button--danger" type="button" title="移除" @click="createMounts.splice(index, 1)"><Trash2 :size="15" /></button>
         </div>
       </div>
+      <div class="form-section">
+        <header><div><strong>环境变量</strong><small>按名称和值填写；任务完成后不保留在 KPanel 任务记录中</small></div><button class="button button--ghost button--small" type="button" @click="addCreateEnvironment"><Plus :size="14" /> 添加</button></header>
+        <div v-for="(variable, index) in createEnvironment" :key="index" class="repeat-row repeat-row--environment">
+          <input v-model="variable.name" class="text-input" type="text" maxlength="128" placeholder="变量名，例如 TZ" autocomplete="off" />
+          <input v-model="variable.value" class="text-input" type="text" maxlength="2048" placeholder="变量值" autocomplete="off" />
+          <button class="icon-button icon-button--danger" type="button" title="移除" @click="createEnvironment.splice(index, 1)"><Trash2 :size="15" /></button>
+        </div>
+      </div>
       <label class="field"><span>启动参数（可选，每行一个参数）</span><textarea v-model="createCommand" class="text-area" rows="3" placeholder="--config&#10;/data/config.yml" /></label>
       <div class="inline-alert inline-alert--info">新容器会写入 KPanel 管理标签，因此 `k docker ps` 与网页端都能立即识别并继续操作。</div>
       <template #footer><button class="button button--secondary" type="button" @click="createOpen = false">取消</button><button class="button button--primary" type="button" :disabled="!createName.trim() || !createImage.trim()" @click="submitContainerCreate">检查并创建</button></template>
@@ -1178,6 +1215,7 @@ onBeforeUnmount(() => {
 .repeat-row { display: grid; gap: 8px; align-items: center; }
 .repeat-row--ports { grid-template-columns: minmax(100px, 1fr) auto minmax(100px, 1fr) 100px 110px auto; }
 .repeat-row--mounts { grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) auto auto; }
+.repeat-row--environment { grid-template-columns: minmax(150px, .7fr) minmax(180px, 1.3fr) auto; }
 .inline-check { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .log-viewer { margin: 0; min-height: 280px; max-height: 58vh; overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: #0b1020; color: #d9e2ff; padding: 15px; font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
@@ -1204,7 +1242,7 @@ onBeforeUnmount(() => {
   .card-actions { flex-wrap: wrap; }
   .compact-input { width: 100%; }
   .network-membership { grid-template-columns: 1fr; }
-  .repeat-row--ports, .repeat-row--mounts { grid-template-columns: 1fr; }
+  .repeat-row--ports, .repeat-row--mounts, .repeat-row--environment { grid-template-columns: 1fr; }
   .repeat-row--ports > span { display: none; }
 }
 </style>

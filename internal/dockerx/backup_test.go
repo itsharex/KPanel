@@ -43,6 +43,18 @@ func TestRestoreDockerBackupMergesScriptMarkersWithoutOverwritingProjects(t *tes
 	if err != nil || !strings.Contains(string(compose), "nginx:alpine") {
 		t.Fatalf("restored Compose project = %q, %v", compose, err)
 	}
+	info, err := os.Stat(filepath.Join(client.appRoot, "example", "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, gid, err := fileNumericOwnership(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedUID, expectedGID := currentNumericOwnership()
+	if uid != expectedUID || gid != expectedGID {
+		t.Fatalf("restored numeric ownership = %d:%d, want %d:%d", uid, gid, expectedUID, expectedGID)
+	}
 }
 
 func TestRestoreDockerBackupRejectsExistingProjectBeforeWriting(t *testing.T) {
@@ -106,10 +118,12 @@ func writeDockerBackupFixture(t *testing.T, path string, entries map[string]stri
 	}
 	gzipWriter := gzip.NewWriter(file)
 	tarWriter := tar.NewWriter(gzipWriter)
+	uid, gid := currentNumericOwnership()
 	for name, content := range entries {
 		data := []byte(content)
 		if err := tarWriter.WriteHeader(&tar.Header{
 			Name: name, Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(data)),
+			Uid: uid, Gid: gid,
 		}); err != nil {
 			t.Fatal(err)
 		}
