@@ -271,7 +271,9 @@ func trustedDockerHostExecutable(path string) (string, error) {
 	if err != nil || parentUID != 0 {
 		return "", errors.New("executable directory is not owned by root")
 	}
-	return resolved, nil
+	// Execute through the validated fixed entrypoint so multi-call binaries
+	// such as Debian's xtables-nft-multi still receive "iptables" as argv[0].
+	return path, nil
 }
 
 func atomicWriteFirewallRules(path string, data []byte) error {
