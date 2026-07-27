@@ -264,7 +264,8 @@ for managed_path in \
 done
 inspect_systemd_unit_absence
 
-if [ ! -d /home/web ]; then
+WEB_ROOT_KIND=$(stat -L -c %F /home/web 2>/dev/null || true)
+if [ "$WEB_ROOT_KIND" != "directory" ]; then
 	printf '%s\n' \
 		'Kejilion Web root is unavailable; KPanel will install with website management disabled.' >&2
 fi

@@ -265,15 +265,15 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
 		{ID: "apps.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
-		{ID: "apps.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅经过安全核验的应用可操作"), Methods: []string{"POST"}},
-		{ID: "apps.install", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅声明式安全适配器可安装"), Methods: []string{"POST"}},
+		{ID: "apps.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
+		{ID: "apps.install", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
 		{ID: "sites.read", Enabled: siteErr == nil, Reason: reasonIf(siteErr, "Kejilion Web 根目录不可用"), Methods: []string{"GET"}},
 		{ID: "docker.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "docker.logs", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
-		{ID: "docker.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅安全识别的 Kejilion 容器可操作"), Methods: []string{"POST"}},
-		{ID: "docker.exec", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "仅安全识别且配置受限的运行中容器可进入"), Methods: []string{"POST"}},
+		{ID: "docker.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
+		{ID: "docker.exec", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
 		{ID: "docker.maintenance", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET", "POST"}},
-		{ID: "sites.write", Enabled: siteWriteErr == nil, Reason: reasonIf(siteWriteErr, "安全写入条件不满足"), Methods: []string{"POST", "PATCH"}},
+		{ID: "sites.write", Enabled: siteWriteErr == nil, Reason: reasonIf(siteWriteErr, "网站写入依赖未就绪"), Methods: []string{"POST", "PATCH"}},
 		{ID: "sites.wordpress.install", Enabled: wordPressWriteErr == nil, Reason: reasonIf(wordPressWriteErr, "WordPress 一键搭建条件不满足"), Methods: []string{"POST"}},
 		{ID: "sites.recipes.install", Enabled: recipeWriteErr == nil, Reason: reasonIf(recipeWriteErr, "kejilion.sh 一键建站协议不可用"), Methods: []string{"POST"}},
 	}
@@ -463,7 +463,7 @@ func (s *Server) writeSiteError(w http.ResponseWriter, requestID string, err err
 	case errors.Is(err, sites.ErrInvalidInput):
 		status, code, title = http.StatusBadRequest, "invalid_site_request", "网站请求无效"
 	case errors.Is(err, sites.ErrForbidden):
-		status, code, title = http.StatusForbidden, "site_read_only", "该网站只能查看"
+		status, code, title = http.StatusUnprocessableEntity, "site_action_unsupported", "当前网站结构没有对应操作适配器"
 	case errors.Is(err, sites.ErrConflict):
 		status, code, title = http.StatusConflict, "resource_conflict", "网站资源发生冲突"
 	case errors.Is(err, sites.ErrUnprocessable):
@@ -610,8 +610,8 @@ func (s *Server) writeAppError(w http.ResponseWriter, requestID string, err erro
 	case errors.Is(err, appmarket.ErrNotFound):
 		status, code, title = http.StatusNotFound, "app_not_found", "应用不存在"
 	case errors.Is(err, appmarket.ErrForbidden), errors.Is(err, appmarket.ErrUnsupported),
-		errors.Is(err, dockerx.ErrReadOnlyContainer), errors.Is(err, dockerx.ErrUnsafeOrInvalidAction):
-		status, code, title = http.StatusForbidden, "app_action_forbidden", "该应用操作不允许"
+		errors.Is(err, dockerx.ErrRuntimeContract), errors.Is(err, dockerx.ErrActionUnsupported):
+		status, code, title = http.StatusUnprocessableEntity, "app_action_unsupported", "当前应用状态或适配器不支持此操作"
 	case errors.Is(err, dockerx.ErrVersionRequired):
 		status, code, title = http.StatusBadRequest, "resource_version_required", "必须提供资源版本"
 	case errors.Is(err, appmarket.ErrConflict),
@@ -713,8 +713,6 @@ func (s *Server) dockerTask(w http.ResponseWriter, r *http.Request) {
 			status, code, title = http.StatusConflict, "docker_task_conflict", "已有 Docker 后台任务正在运行"
 		case errors.Is(err, dockerx.ErrResourceConflict):
 			status, code, title = http.StatusConflict, "resource_conflict", "Docker 资源已发生变化"
-		case errors.Is(err, dockerx.ErrProtectedDockerResource):
-			status, code, title = http.StatusForbidden, "docker_resource_protected", "该 Docker 资源受保护"
 		case errors.Is(err, dockerx.ErrDockerJobNotFound):
 			status, code, title = http.StatusNotFound, "docker_resource_not_found", "Docker 资源不存在"
 		}
@@ -741,8 +739,8 @@ func (s *Server) containerOperation(w http.ResponseWriter, r *http.Request, requ
 		tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
 		logs, err := s.docker.ContainerLogs(r.Context(), id, tail)
 		if err != nil {
-			if errors.Is(err, dockerx.ErrReadOnlyContainer) {
-				writeProblem(w, requestID, http.StatusForbidden, "container_logs_forbidden", "该容器日志不可查看", "")
+			if errors.Is(err, dockerx.ErrRuntimeContract) {
+				writeProblem(w, requestID, http.StatusUnprocessableEntity, "container_logs_unsupported", "当前容器运行契约无法读取日志", "")
 				return
 			}
 			writeProblem(w, requestID, http.StatusBadGateway, "docker_logs_failed", "容器日志不可用", safeDetail(err))
@@ -782,8 +780,8 @@ func (s *Server) containerOperation(w http.ResponseWriter, r *http.Request, requ
 			switch {
 			case errors.Is(err, dockerx.ErrResourceConflict):
 				status, code, title = http.StatusConflict, "resource_conflict", "资源已被其他操作修改"
-			case errors.Is(err, dockerx.ErrReadOnlyContainer), errors.Is(err, dockerx.ErrUnsafeOrInvalidAction):
-				status, code, title = http.StatusForbidden, "container_exec_forbidden", "该容器不能使用控制台"
+			case errors.Is(err, dockerx.ErrRuntimeContract), errors.Is(err, dockerx.ErrActionUnsupported):
+				status, code, title = http.StatusUnprocessableEntity, "container_exec_unsupported", "当前容器状态不支持控制台"
 			case errors.Is(err, dockerx.ErrVersionRequired):
 				status, code, title = http.StatusBadRequest, "resource_version_required", "必须提供资源版本"
 			}
@@ -811,8 +809,8 @@ func (s *Server) containerOperation(w http.ResponseWriter, r *http.Request, requ
 		switch {
 		case errors.Is(err, dockerx.ErrResourceConflict):
 			status, code, title = http.StatusConflict, "resource_conflict", "资源已被其他操作修改"
-		case errors.Is(err, dockerx.ErrReadOnlyContainer), errors.Is(err, dockerx.ErrUnsafeOrInvalidAction):
-			status, code, title = http.StatusForbidden, "container_read_only", "该容器只能查看"
+		case errors.Is(err, dockerx.ErrRuntimeContract), errors.Is(err, dockerx.ErrActionUnsupported):
+			status, code, title = http.StatusUnprocessableEntity, "container_action_unsupported", "当前容器状态或运行契约不支持此操作"
 		case errors.Is(err, dockerx.ErrVersionRequired):
 			status, code, title = http.StatusBadRequest, "resource_version_required", "必须提供资源版本"
 		}

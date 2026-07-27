@@ -74,7 +74,7 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 			return "port", "port must be between 1 and 65535"
 		}
 	case "dns":
-		if len(input.Servers) < 1 || len(input.Servers) > 4 {
+		if len(input.Servers) < 1 {
 			return "servers", "one to four DNS servers are required"
 		}
 		for index, server := range input.Servers {
@@ -91,8 +91,8 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 			return "timezone", "timezone is invalid"
 		}
 	case "swap":
-		if input.SwapSizeMiB != 0 && (input.SwapSizeMiB < 256 || input.SwapSizeMiB > 65536) {
-			return "swapSizeMiB", "swapSizeMiB must be 0 or between 256 and 65536"
+		if input.SwapSizeMiB < 0 {
+			return "swapSizeMiB", "swapSizeMiB must be zero or a positive integer"
 		}
 	case "mirror":
 		switch input.MirrorPreset {
@@ -123,14 +123,11 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 			return "maintenancePolicy", "maintenancePolicy must be cache or standard"
 		}
 	case "reboot":
-		if input.Confirmation != "REBOOT" {
-			return "confirmation", "confirmation must be exactly REBOOT"
-		}
 		if input.Hostname != "" || input.Port != 0 || len(input.Servers) != 0 ||
 			input.Timezone != "" || input.SwapSizeMiB != 0 || input.MirrorPreset != "" ||
 			input.Preference != "" || input.Profile != "" || input.MaintenancePolicy != "" ||
 			input.Enabled != nil {
-			return "request", "only action and confirmation are allowed for reboot"
+			return "request", "only action is allowed for reboot"
 		}
 	default:
 		return "action", "unsupported system action"
@@ -162,7 +159,7 @@ func systemActionAuditChange(input contract.SystemActionRequest) map[string]any 
 	case "update", "cleanup":
 		change["maintenancePolicy"] = input.MaintenancePolicy
 	case "reboot":
-		change["confirmed"] = input.Confirmation == "REBOOT"
+		change["requested"] = true
 	}
 	return change
 }

@@ -232,7 +232,8 @@ func (c *Client) validateMaintenanceInput(ctx context.Context, input Maintenance
 			return err
 		}
 	case "network_create":
-		if !dockerNamePattern.MatchString(input.Name) || (input.Driver != "" && input.Driver != "bridge") {
+		if !dockerNamePattern.MatchString(input.Name) ||
+			(input.Driver != "" && !dockerNamePattern.MatchString(input.Driver)) {
 			return ErrInvalidDockerJob
 		}
 	case "network_remove":
@@ -254,7 +255,8 @@ func (c *Client) validateMaintenanceInput(ctx context.Context, input Maintenance
 			return err
 		}
 	case "volume_create":
-		if !dockerNamePattern.MatchString(input.Name) || (input.Driver != "" && input.Driver != "local") {
+		if !dockerNamePattern.MatchString(input.Name) ||
+			(input.Driver != "" && !dockerNamePattern.MatchString(input.Driver)) {
 			return ErrInvalidDockerJob
 		}
 	case "volume_remove":
@@ -265,20 +267,19 @@ func (c *Client) validateMaintenanceInput(ctx context.Context, input Maintenance
 			return err
 		}
 	case "prune", "container_prune", "image_prune", "network_prune", "volume_prune":
-		if input.Confirmation != "PRUNE" {
-			return ErrInvalidDockerJob
-		}
+		// Authentication, CSRF protection and the typed action express intent.
+		// Confirmation text is accepted for backward compatibility but is not an authorization gate.
 	case "backup_create":
 		// The backup source and destination are fixed by the Agent.
 	case "backup_restore":
-		if input.Confirmation != "RESTORE" || !dockerBackupIDPattern.MatchString(input.BackupID) {
+		if !dockerBackupIDPattern.MatchString(input.BackupID) {
 			return ErrInvalidDockerJob
 		}
 		if _, err := c.dockerBackupPath(input.BackupID); err != nil {
 			return err
 		}
 	case "backup_migrate":
-		if input.Confirmation != "MIGRATE" || !dockerBackupIDPattern.MatchString(input.BackupID) ||
+		if !dockerBackupIDPattern.MatchString(input.BackupID) ||
 			!validMigrationHost(input.MigrationHost) ||
 			!migrationUserPattern.MatchString(input.MigrationUser) ||
 			input.MigrationPort < 1 || input.MigrationPort > 65535 {
@@ -472,11 +473,6 @@ func (c *Client) verifyImageVersion(ctx context.Context, target, expected string
 			if item.ResourceVersion != expected {
 				return ErrResourceConflict
 			}
-			for _, tag := range item.RepoTags {
-				if strings.Contains(tag, "kjlion/kejilion-panel") {
-					return ErrProtectedDockerResource
-				}
-			}
 			return nil
 		}
 	}
@@ -487,7 +483,7 @@ func (c *Client) verifyNetworkVersion(ctx context.Context, target, expected stri
 	return c.verifyNetworkMutation(ctx, target, expected, true)
 }
 
-func (c *Client) verifyNetworkMutation(ctx context.Context, target, expected string, requireEmpty bool) error {
+func (c *Client) verifyNetworkMutation(ctx context.Context, target, expected string, _ bool) error {
 	items, err := c.Networks(ctx)
 	if err != nil {
 		return err
@@ -495,13 +491,6 @@ func (c *Client) verifyNetworkMutation(ctx context.Context, target, expected str
 	for _, item := range items {
 		if item.ID != target && item.Name != target {
 			continue
-		}
-		if item.Name == "bridge" || item.Name == "host" || item.Name == "none" ||
-			item.Name == "kejilion-panel-network" {
-			return ErrProtectedDockerResource
-		}
-		if requireEmpty && item.ContainerCount > 0 {
-			return ErrProtectedDockerResource
 		}
 		if item.ResourceVersion != expected {
 			return ErrResourceConflict
@@ -517,14 +506,8 @@ func (c *Client) verifyContainerVersion(ctx context.Context, id, expected string
 		return err
 	}
 	summary := c.summaryFromInspect(inspect)
-	if summary.Ownership != "kejilion" || summary.ResourceVersion != expected {
-		if summary.ResourceVersion != expected {
-			return ErrResourceConflict
-		}
-		return ErrReadOnlyContainer
-	}
-	if strings.EqualFold(summary.Name, "kejilion-panel") || c.unsafeReason(inspect) != "" {
-		return ErrProtectedDockerResource
+	if summary.ResourceVersion != expected {
+		return ErrResourceConflict
 	}
 	return nil
 }
@@ -538,9 +521,6 @@ func (c *Client) verifyVolumeVersion(ctx context.Context, target, expected strin
 		if item.Name != target {
 			continue
 		}
-		if strings.Contains(item.Name, "kejilion-panel") || strings.Contains(item.Name, "kpanel") {
-			return ErrProtectedDockerResource
-		}
 		if item.ResourceVersion != expected {
 			return ErrResourceConflict
 		}
@@ -550,7 +530,7 @@ func (c *Client) verifyVolumeVersion(ctx context.Context, target, expected strin
 }
 
 func (c *Client) removeImage(ctx context.Context, target string) error {
-	return c.dockerMutation(ctx, http.MethodDelete, "/images/"+url.PathEscape(target)+"?force=0&noprune=0", nil)
+	return c.dockerMutation(ctx, http.MethodDelete, "/images/"+url.PathEscape(target)+"?force=1&noprune=0", nil)
 }
 
 func (c *Client) createNetwork(ctx context.Context, name, driver string) error {
@@ -681,8 +661,7 @@ func (c *Client) createDockerBackup(ctx context.Context) (string, error) {
 			return nil
 		}
 		top := strings.Split(filepath.ToSlash(relative), "/")[0]
-		if top == "kpanel" || top == ".kpanel-backups" ||
-			(relative == "kpanel_port.conf" && !info.IsDir()) {
+		if top == ".kpanel-backups" {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -975,7 +954,7 @@ func dockerActionProgress(action string) string {
 	case "image_pull":
 		return "正在拉取并校验 Docker 镜像"
 	case "image_remove":
-		return "正在删除未受保护的 Docker 镜像"
+		return "正在强制删除 Docker 镜像"
 	case "network_create", "network_remove", "network_connect", "network_disconnect":
 		return "正在更新 Docker 网络"
 	case "volume_create", "volume_remove":
@@ -1186,8 +1165,7 @@ func (registry *dockerJobRegistry) pruneLocked() {
 }
 
 var (
-	ErrInvalidDockerJob        = errors.New("invalid Docker maintenance request")
-	ErrDockerJobConflict       = errors.New("another Docker maintenance job is already active")
-	ErrDockerJobNotFound       = errors.New("Docker maintenance job does not exist")
-	ErrProtectedDockerResource = errors.New("Docker resource is protected by KPanel safety policy")
+	ErrInvalidDockerJob  = errors.New("invalid Docker maintenance request")
+	ErrDockerJobConflict = errors.New("another Docker maintenance job is already active")
+	ErrDockerJobNotFound = errors.New("Docker maintenance job does not exist")
 )

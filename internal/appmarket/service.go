@@ -194,6 +194,8 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 			containerName = legacy.Service
 		}
 		if app.Source == "thirdparty" && marker {
+			scriptBacked = true
+			storageName = app.Token
 			spec, configErr := s.readThirdPartyScriptSpec(app.Token)
 			if configErr == nil {
 				containerName = spec.runtimeContainer()
@@ -201,13 +203,19 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 				scriptBacked = true
 				configVerified = true
 			} else {
-				item.Runtime.Warning = "已发现 kejilion.sh 安装标记，但应用配置无法安全确认主容器"
+				item.Runtime.Warning = "应用配置使用动态写法；KPanel 继续复用 kejilion.sh 原生管理流程"
 			}
 		}
-		container, hasContainer := byName[containerName]
+		container, hasContainer, detectedBy := resolveAppContainer(
+			app,
+			containerName,
+			containers,
+			byName,
+			marker,
+		)
 		if hasContainer {
 			item.Runtime = runtimeFromContainer(container)
-			item.Runtime.DetectedBy = append(item.Runtime.DetectedBy, "docker")
+			item.Runtime.DetectedBy = append(item.Runtime.DetectedBy, "docker", detectedBy)
 			if marker {
 				item.Runtime.DetectedBy = append(item.Runtime.DetectedBy, "appno")
 			}
@@ -221,8 +229,7 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 					item.Runtime.DetectedBy = append(item.Runtime.DetectedBy, "access_state")
 				}
 			}
-			scriptManage := marker && scriptBacked && scriptManageAvailable &&
-				(app.Source != "thirdparty" || configVerified) && app.Token != "kpanel"
+			scriptManage := marker && scriptBacked && scriptManageAvailable
 			s.applyInstalledCapabilities(&item, container, scriptManage)
 		} else if marker {
 			item.Runtime.Installed = true
@@ -230,9 +237,9 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 			item.Runtime.UpdateStatus = "unknown"
 			item.Runtime.DetectedBy = []string{"appno"}
 			if item.Runtime.Warning == "" {
-				item.Runtime.Warning = "kejilion.sh 安装标记存在，但未发现已核验的主容器"
+				item.Runtime.Warning = "kejilion.sh 安装标记存在，但 Docker Engine 中未发现运行产物"
 			}
-			disableInstalledCapabilities(&item, "未发现可安全确认的主容器")
+			disableInstalledCapabilities(&item, "Docker Engine 中没有可执行生命周期操作的容器")
 		}
 		if markerWarning != "" && item.Runtime.Warning == "" {
 			item.Runtime.Warning = markerWarning
@@ -249,6 +256,68 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 		result.Items = append(result.Items, item)
 	}
 	return result, nil
+}
+
+func resolveAppContainer(
+	app App,
+	preferredName string,
+	containers []contract.ContainerSummary,
+	byName map[string]contract.ContainerSummary,
+	allowEcosystemFallback bool,
+) (contract.ContainerSummary, bool, string) {
+	if preferredName != "" {
+		if container, ok := byName[preferredName]; ok {
+			return container, true, "configured_name"
+		}
+	}
+	if !allowEcosystemFallback {
+		return contract.ContainerSummary{}, false, ""
+	}
+
+	names := make(map[string]bool, 2)
+	for _, value := range []string{app.Token, app.Slug} {
+		if value = strings.ToLower(strings.TrimSpace(value)); value != "" {
+			names[value] = true
+		}
+	}
+	bestScore := 0
+	best := contract.ContainerSummary{}
+	bestDetector := ""
+	for _, container := range containers {
+		score, detector := appContainerMatchScore(app, container, names)
+		if score > bestScore ||
+			(score == bestScore && score > 0 && strings.Compare(container.Name, best.Name) < 0) {
+			bestScore = score
+			best = container
+			bestDetector = detector
+		}
+	}
+	return best, bestScore > 0, bestDetector
+}
+
+func appContainerMatchScore(
+	app App,
+	container contract.ContainerSummary,
+	names map[string]bool,
+) (int, string) {
+	labels := container.Labels
+	if strings.EqualFold(labels["io.kejilion.panel.app"], app.Token) ||
+		strings.EqualFold(labels["io.kejilion.app"], app.Token) {
+		return 100, "app_label"
+	}
+	for _, key := range []string{"com.docker.compose.project", "com.docker.compose.service"} {
+		if value := strings.ToLower(strings.TrimSpace(labels[key])); value != "" && names[value] {
+			return 90, "compose_label"
+		}
+	}
+	if value := strings.ToLower(strings.TrimSpace(container.Name)); value != "" && names[value] {
+		return 80, "ecosystem_name"
+	}
+	workdir := filepath.ToSlash(labels["com.docker.compose.project.working_dir"])
+	if value := strings.ToLower(strings.TrimSpace(filepath.Base(workdir))); value != "" && names[value] {
+		return 70, "compose_workdir"
+	}
+	return 0, ""
 }
 
 func installerKind(app App, legacy LegacyApp, scriptInstallAvailable bool) string {
@@ -367,7 +436,7 @@ func defaultCapabilities(
 		"update":        {Reason: "应用尚未安装"},
 		"uninstall":     {Reason: "应用尚未安装"},
 		"add_domain":    {Reason: "应用尚未安装或没有 HTTP 端口"},
-		"direct_access": {Reason: "仅声明式适配的应用支持安全切换"},
+		"direct_access": {Reason: "应用尚未安装"},
 	}
 }
 
@@ -401,7 +470,7 @@ func (s *Service) applyInstalledCapabilities(
 	if hasHTTPPort(item.Runtime.Ports) {
 		item.Capabilities["add_domain"] = Capability{Enabled: true}
 	}
-	if spec, ok := declarativeSpecs[item.Token]; ok && exactDeclarativeSummary(container, spec) {
+	if spec, ok := declarativeSpecs[item.Token]; ok && container.Name == spec.ContainerName {
 		switch container.State {
 		case "running":
 			item.Capabilities["stop"] = Capability{Enabled: true}
@@ -409,18 +478,21 @@ func (s *Service) applyInstalledCapabilities(
 		case "created", "exited", "dead":
 			item.Capabilities["start"] = Capability{Enabled: true}
 		}
-		item.Capabilities["update"] = Capability{Enabled: true}
 		item.Capabilities["uninstall"] = Capability{Enabled: true}
-		item.Capabilities["direct_access"] = Capability{Enabled: true}
+		if declarativeRuntimePort(container, spec) {
+			item.Capabilities["update"] = Capability{Enabled: true}
+			item.Capabilities["direct_access"] = Capability{Enabled: true}
+		} else {
+			reason := "未发现该应用约定的 TCP 端口映射"
+			item.Capabilities["update"] = Capability{Reason: reason}
+			item.Capabilities["direct_access"] = Capability{Reason: reason}
+		}
 	} else if scriptManage {
 		item.Capabilities["update"] = Capability{Enabled: true}
 		item.Capabilities["uninstall"] = Capability{Enabled: true}
 		item.Capabilities["direct_access"] = Capability{Enabled: true}
 	} else {
-		reason := "请更新 kejilion.sh；只有安装标记、应用配置与主容器全部核验通过后才能管理"
-		if item.Token == "kpanel" {
-			reason = "KPanel 不允许在自身进程内更新、卸载或修改自身访问策略"
-		}
+		reason := "请更新本机 kejilion.sh 以启用应用非交互管理协议"
 		item.Capabilities["update"] = Capability{Reason: reason}
 		item.Capabilities["uninstall"] = Capability{Reason: reason}
 		item.Capabilities["direct_access"] = Capability{Reason: reason}
@@ -434,27 +506,13 @@ func disableInstalledCapabilities(item *Summary, reason string) {
 	}
 }
 
-func exactDeclarativeSummary(container contract.ContainerSummary, spec declarativeSpec) bool {
-	imageMatches := normalizedImage(container.Image) == normalizedImage(spec.Image)
-	if !imageMatches && strings.HasPrefix(container.Image, "sha256:") {
-		imageMatches = container.Labels["io.kejilion.panel.managed"] == "true" &&
-			container.Labels["io.kejilion.panel.app"] == spec.Token &&
-			normalizedImage(container.Labels["io.kejilion.panel.image"]) == normalizedImage(spec.Image)
+func declarativeRuntimePort(container contract.ContainerSummary, spec declarativeSpec) bool {
+	for _, port := range container.Ports {
+		if port.PrivatePort == spec.ContainerPort && port.PublicPort > 0 && port.Type == "tcp" {
+			return true
+		}
 	}
-	if container.Name != spec.ContainerName || !imageMatches ||
-		len(container.Mounts) != 0 || len(container.Ports) != 1 {
-		return false
-	}
-	port := container.Ports[0]
-	return port.PrivatePort == spec.ContainerPort && port.PublicPort > 0 && port.Type == "tcp"
-}
-
-func normalizedImage(image string) string {
-	image = strings.TrimSpace(image)
-	if !strings.Contains(image, ":") && !strings.Contains(image, "@") {
-		image += ":latest"
-	}
-	return image
+	return false
 }
 
 func hasHTTPPort(ports []contract.PortBinding) bool {
@@ -646,22 +704,15 @@ func dockerSpec(spec declarativeSpec) dockerx.DeclarativeAppSpec {
 func (s *Service) addCompatibilityFiles(item Summary, spec declarativeSpec, hostPort uint16) error {
 	portPath := filepath.Join(s.appRoot, spec.ContainerName+"_port.conf")
 	portData := []byte(strconv.Itoa(int(hostPort)) + "\n")
-	portCreated := false
-	if info, err := os.Lstat(portPath); err == nil {
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 16 {
-			return errors.New("existing port compatibility file is unsafe")
-		}
-		existing, readErr := os.ReadFile(portPath)
-		if readErr != nil || string(existing) != string(portData) {
-			return errors.New("existing port compatibility file conflicts with the requested port")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	portBackup, portStaged, err := s.stageCompatibilityPath(portPath)
+	if err != nil {
 		return err
-	} else {
-		if err := s.writeCompatibilityFile(portPath, portData); err != nil {
-			return err
+	}
+	if err := s.writeCompatibilityFile(portPath, portData); err != nil {
+		if rollbackErr := rollbackCompatibilityPath(portPath, portBackup, portStaged); rollbackErr != nil {
+			return fmt.Errorf("%w; restore previous port artifact: %v", err, rollbackErr)
 		}
-		portCreated = true
+		return err
 	}
 	if err := s.rewriteMarkers(func(values []string) []string {
 		marker := strconv.Itoa(item.Num)
@@ -672,15 +723,21 @@ func (s *Service) addCompatibilityFiles(item Summary, spec declarativeSpec, host
 		}
 		return append(values, marker)
 	}); err != nil {
-		if portCreated {
-			_ = os.Remove(portPath)
+		if rollbackErr := rollbackCompatibilityPath(portPath, portBackup, portStaged); rollbackErr != nil {
+			return fmt.Errorf("%w; restore previous port artifact: %v", err, rollbackErr)
 		}
 		return err
 	}
+	discardCompatibilityBackup(portBackup, portStaged)
 	return nil
 }
 
 func (s *Service) removeCompatibilityFiles(item Summary, spec declarativeSpec) error {
+	path := filepath.Join(s.appRoot, spec.ContainerName+"_port.conf")
+	portBackup, portStaged, err := s.stageCompatibilityPath(path)
+	if err != nil {
+		return err
+	}
 	if err := s.rewriteMarkers(func(values []string) []string {
 		marker := strconv.Itoa(item.Num)
 		result := make([]string, 0, len(values))
@@ -691,26 +748,64 @@ func (s *Service) removeCompatibilityFiles(item Summary, spec declarativeSpec) e
 		}
 		return result
 	}); err != nil {
+		if rollbackErr := rollbackCompatibilityPath(path, portBackup, portStaged); rollbackErr != nil {
+			return fmt.Errorf("%w; restore previous port artifact: %v", err, rollbackErr)
+		}
 		return err
 	}
-	path := filepath.Join(s.appRoot, spec.ContainerName+"_port.conf")
+	discardCompatibilityBackup(portBackup, portStaged)
+	return nil
+}
+
+func (s *Service) stageCompatibilityPath(path string) (string, bool, error) {
+	if filepath.Dir(path) != s.appRoot {
+		return "", false, errors.New("invalid compatibility file path")
+	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return "", false, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 16 {
-		return errors.New("port compatibility file is no longer canonical")
-	}
-	data, err := os.ReadFile(path)
 	if err != nil {
+		return "", false, err
+	}
+	if info.IsDir() {
+		return "", false, errors.New("compatibility file path is a directory")
+	}
+	placeholder, err := os.CreateTemp(s.appRoot, ".kpanel-app-backup-*")
+	if err != nil {
+		return "", false, err
+	}
+	backupPath := placeholder.Name()
+	if err := placeholder.Close(); err != nil {
+		_ = os.Remove(backupPath)
+		return "", false, err
+	}
+	if err := os.Remove(backupPath); err != nil {
+		return "", false, err
+	}
+	if err := os.Rename(path, backupPath); err != nil {
+		return "", false, err
+	}
+	return backupPath, true, nil
+}
+
+func rollbackCompatibilityPath(path, backupPath string, staged bool) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	value := strings.TrimSpace(string(data))
-	port, parseErr := strconv.ParseUint(value, 10, 16)
-	if parseErr != nil || port < 1024 {
-		return errors.New("port compatibility file was externally changed")
+	if !staged {
+		return nil
 	}
-	return os.Remove(path)
+	return os.Rename(backupPath, path)
+}
+
+func discardCompatibilityBackup(path string, staged bool) {
+	if !staged {
+		return
+	}
+	if err := os.Remove(path); err != nil {
+		slog.Warn("application compatibility backup cleanup failed", "path", path, "error", err)
+	}
 }
 
 func (s *Service) rewriteMarkers(change func([]string) []string) error {
@@ -731,9 +826,6 @@ func (s *Service) rewriteMarkers(change func([]string) []string) error {
 		for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
 			value := strings.TrimSpace(line)
 			if value != "" {
-				if !tokenPattern.MatchString(value) {
-					return errors.New("appno.txt contains an invalid marker")
-				}
 				values = append(values, value)
 			}
 		}
@@ -803,7 +895,7 @@ func SortCapabilities(values map[string]Capability) []string {
 
 var (
 	ErrNotFound       = errors.New("application not found")
-	ErrForbidden      = errors.New("application action is not safely allowed")
+	ErrForbidden      = errors.New("application action is not available for the current runtime state")
 	ErrUnsupported    = errors.New("application action is not supported")
 	ErrConflict       = errors.New("application task conflicts with an active task")
 	ErrRolledBack     = errors.New("application action failed and was rolled back")

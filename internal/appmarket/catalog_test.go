@@ -306,6 +306,56 @@ func TestRemoteCatalogColdReadDoesNotWaitForNetwork(t *testing.T) {
 	_ = waitForCatalogState(t, service, "live", "")
 }
 
+func TestCompatibilityFilesReconcileScriptAndManualDrift(t *testing.T) {
+	root := t.TempDir()
+	service := &Service{appRoot: root}
+	spec := declarativeSpecs["speedtest"]
+	item := Summary{App: App{Num: 28, Token: spec.Token}}
+	portPath := filepath.Join(root, spec.ContainerName+"_port.conf")
+	markerPath := filepath.Join(root, "appno.txt")
+	if err := os.WriteFile(portPath, []byte("changed-by-script\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, []byte("custom marker from script\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.addCompatibilityFiles(item, spec, 18028); err != nil {
+		t.Fatal(err)
+	}
+	portData, err := os.ReadFile(portPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(portData) != "18028\n" {
+		t.Fatalf("port compatibility data = %q", portData)
+	}
+	markerData, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(markerData) != "custom marker from script\n28\n" {
+		t.Fatalf("marker compatibility data = %q", markerData)
+	}
+
+	if err := os.WriteFile(portPath, []byte("changed-again\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.removeCompatibilityFiles(item, spec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(portPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("port compatibility artifact still exists: %v", err)
+	}
+	markerData, err = os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(markerData) != "custom marker from script\n" {
+		t.Fatalf("unrelated script marker was changed: %q", markerData)
+	}
+}
+
 func waitForCatalogState(t *testing.T, service *Service, mode, warning string) catalogSnapshot {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)

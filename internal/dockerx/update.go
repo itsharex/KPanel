@@ -49,7 +49,7 @@ func (c *Client) CheckContainerImageUpdate(
 		localImage = raw.Image
 	}
 	if image == "" || strings.Contains(image, "@sha256:") || localImage == "" {
-		return ImageUpdateResult{}, ErrUnsafeOrInvalidAction
+		return ImageUpdateResult{}, ErrActionUnsupported
 	}
 	var local struct {
 		RepoDigests []string `json:"RepoDigests"`

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -151,9 +150,6 @@ func (m *Manager) applySwap(
 		!legacyPresent && bytes.Equal(oldFstab, newFstab) {
 		return false, "", "/swapfile 已经停用", nil
 	}
-	if err := m.ensureSwapoffMemory(files); err != nil {
-		return false, "", "", err
-	}
 	if err := os.MkdirAll(m.stateDir, 0o700); err != nil {
 		return false, "", "", fmt.Errorf("%w: create system state directory: %v", ErrUnsupported, err)
 	}
@@ -282,55 +278,6 @@ func (m *Manager) applySwap(
 	), nil
 }
 
-func (m *Manager) ensureSwapoffMemory(files []managedSwapFile) error {
-	var usedKiB uint64
-	for _, line := range strings.Split(m.procValue("swaps"), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 4 {
-			continue
-		}
-		sizeKiB, sizeErr := strconv.ParseUint(fields[2], 10, 64)
-		if sizeErr != nil {
-			continue
-		}
-		managed := false
-		for _, file := range files {
-			exactPath := fields[0] == file.path
-			legacyAlias := file.path == filepath.Join(m.stateDir, "swapfile") &&
-				fields[0] == m.swapPath
-			if (exactPath || legacyAlias) &&
-				(!file.existed || swapSizeMatches(file.size, sizeKiB*1024)) {
-				managed = true
-				break
-			}
-		}
-		if !managed {
-			continue
-		}
-		value, err := strconv.ParseUint(fields[3], 10, 64)
-		if err == nil {
-			usedKiB += value
-		}
-	}
-	var availableKiB uint64
-	for _, line := range strings.Split(m.procValue("meminfo"), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "MemAvailable:" {
-			availableKiB, _ = strconv.ParseUint(fields[1], 10, 64)
-			break
-		}
-	}
-	const reserveKiB = 128 * 1024
-	if availableKiB > 0 && usedKiB+reserveKiB >= availableKiB {
-		return fmt.Errorf(
-			"%w: available memory is too low to safely move %d KiB out of managed swap",
-			ErrConflict,
-			usedKiB,
-		)
-	}
-	return nil
-}
-
 func regularSwapFile(path string) (bool, int64, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -346,8 +293,8 @@ func regularSwapFile(path string) (bool, int64, error) {
 }
 
 func validateSwapSize(sizeMiB int) error {
-	if sizeMiB != 0 && (sizeMiB < 256 || sizeMiB > 65536) {
-		return fmt.Errorf("%w: swapSizeMiB must be 0 or between 256 and 65536", ErrInvalidInput)
+	if sizeMiB < 0 {
+		return fmt.Errorf("%w: swapSizeMiB must be zero or a positive integer", ErrInvalidInput)
 	}
 	return nil
 }

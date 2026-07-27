@@ -51,11 +51,12 @@ interface CreatePortRow {
   publicPort: string
   privatePort: string
   protocol: 'tcp' | 'udp'
-  hostIp: '0.0.0.0' | '127.0.0.1'
+  hostIp: string
 }
 
 interface CreateMountRow {
-  volume: string
+  type: 'volume' | 'bind'
+  source: string
   target: string
   readOnly: boolean
 }
@@ -92,14 +93,15 @@ const publicIPv4 = ref('')
 const mirrorPreset = ref<'cn' | 'official'>('cn')
 const ipv6Enabled = ref(false)
 const ipv6CIDR = ref('fd42:6b50:616e:656c::/64')
-const pruneConfirmation = ref('')
 const systemUpdatePending = ref(false)
 const systemUpdating = ref(false)
 const uninstallNoticeOpen = ref(false)
 
 const imageReference = ref('')
 const networkName = ref('')
+const networkDriver = ref('bridge')
 const volumeName = ref('')
+const volumeDriver = ref('local')
 const membershipContainerID = ref('')
 const membershipNetworkID = ref('')
 
@@ -155,23 +157,21 @@ const dockerJobActive = computed(() =>
 )
 
 const runningCount = computed(() => data.value?.containers.filter((item) => item.state === 'running').length || 0)
-const managedCount = computed(() => data.value?.containers.filter((item) => item.access === 'managed').length || 0)
+const manageableCount = computed(() => data.value?.containers.filter((item) => (item.allowedActions?.length || 0) > 0).length || 0)
 const membershipContainers = computed(() =>
   (data.value?.containers || []).filter(
-    (item) => item.access === 'managed' && item.name !== 'kejilion-panel' && item.resourceVersion,
+    (item) => item.resourceVersion,
   ),
 )
 const membershipNetworks = computed(() =>
   (data.value?.networks || []).filter(
-    (item) => item.resourceVersion && !['bridge', 'host', 'none', 'kejilion-panel-network'].includes(item.name),
+    (item) => item.resourceVersion,
   ),
 )
 const availableImageTags = computed(() =>
   (data.value?.images || []).flatMap((item) => item.tags).filter((item) => item && item !== '<none>:<none>'),
 )
-const createNetworks = computed(() =>
-  (data.value?.networks || []).filter((item) => !['host', 'none', 'kejilion-panel-network'].includes(item.name)),
-)
+const createNetworks = computed(() => data.value?.networks || [])
 
 const filteredContainers = computed(() => {
   const query = search.value.trim().toLowerCase()
@@ -355,9 +355,8 @@ function askTask(title: string, description: string, input: DockerMaintenanceInp
 }
 
 function askPrune(action: 'prune' | 'container_prune' | 'image_prune' | 'network_prune' | 'volume_prune', label: string): void {
-  askTask(`确认${label}`, '只处理 Docker 判断为未使用的资源，KPanel 自身运行资源受保护。', {
+  askTask(`确认${label}`, '直接执行 Docker Engine 对应的 prune；范围与 kejilion.sh 一致。', {
     action,
-    confirmation: 'PRUNE',
   }, true)
 }
 
@@ -392,7 +391,7 @@ function updateImage(image: DockerInventory['images'][number]): void {
 }
 
 function askImageRemoval(image: DockerInventory['images'][number]): void {
-  if (!image.resourceVersion || image.inUse) return
+  if (!image.resourceVersion) return
   askTask('确认删除镜像', image.tags.join(', ') || shortId(image.id), {
     action: 'image_remove',
     target: image.id,
@@ -402,13 +401,14 @@ function askImageRemoval(image: DockerInventory['images'][number]): void {
 
 function createDockerNetwork(): void {
   const name = networkName.value.trim()
-  if (!name) return
-  void submitTask({ action: 'network_create', name, driver: 'bridge' })
+  const driver = networkDriver.value.trim()
+  if (!name || !driver) return
+  void submitTask({ action: 'network_create', name, driver })
   networkName.value = ''
 }
 
 function askNetworkRemoval(network: DockerInventory['networks'][number]): void {
-  if (!network.resourceVersion || Number(network.containers || 0) > 0) return
+  if (!network.resourceVersion) return
   askTask('确认删除网络', network.name, {
     action: 'network_remove',
     target: network.id,
@@ -435,13 +435,14 @@ function updateNetworkMembership(action: 'network_connect' | 'network_disconnect
 
 function createDockerVolume(): void {
   const name = volumeName.value.trim()
-  if (!name) return
-  void submitTask({ action: 'volume_create', name, driver: 'local' })
+  const driver = volumeDriver.value.trim()
+  if (!name || !driver) return
+  void submitTask({ action: 'volume_create', name, driver })
   volumeName.value = ''
 }
 
 function askVolumeRemoval(volume: DockerInventory['volumes'][number]): void {
-  if (!volume.resourceVersion || volume.inUse) return
+  if (!volume.resourceVersion) return
   askTask('确认删除存储卷', volume.name, {
     action: 'volume_remove',
     target: volume.name,
@@ -456,7 +457,7 @@ function addCreatePort(): void {
 
 function addCreateMount(): void {
   if (createMounts.value.length >= 16) return
-  createMounts.value.push({ volume: '', target: '', readOnly: false })
+  createMounts.value.push({ type: 'volume', source: '', target: '', readOnly: false })
 }
 
 function addCreateEnvironment(): void {
@@ -493,10 +494,16 @@ function submitContainerCreate(): void {
     return
   }
   const mounts: DockerContainerCreateMount[] = createMounts.value
-    .filter((item) => item.volume || item.target)
-    .map((item) => ({ volume: item.volume, target: item.target.trim(), readOnly: item.readOnly }))
-  if (mounts.some((item) => !item.volume || !item.target.startsWith('/'))) {
-    toast.danger('存储卷挂载无效', '请选择已有存储卷，并填写绝对容器路径。')
+    .filter((item) => item.source.trim() || item.target.trim())
+    .map((item) => ({
+      type: item.type,
+      source: item.source.trim(),
+      target: item.target.trim(),
+      readOnly: item.readOnly,
+    }))
+  if (mounts.some((item) => !item.source || !item.target.startsWith('/') ||
+    (item.type === 'bind' && !item.source.startsWith('/')))) {
+    toast.danger('存储挂载无效', '命名卷需填写卷名；宿主机目录和容器路径需使用绝对路径。')
     return
   }
   const environment: DockerContainerCreateEnvironment[] = createEnvironment.value
@@ -674,7 +681,6 @@ function askRestore(backup: DockerBackup): void {
   askTask('确认还原 Docker 备份', `${backup.id} · ${formatBytes(backup.sizeBytes)}`, {
     action: 'backup_restore',
     backupId: backup.id,
-    confirmation: 'RESTORE',
   }, true)
 }
 
@@ -699,7 +705,6 @@ function askMigration(): void {
     migrationHost: migrationHost.value.trim(),
     migrationUser: migrationUser.value.trim(),
     migrationPort: port,
-    confirmation: 'MIGRATE',
   })
 }
 
@@ -766,7 +771,7 @@ onBeforeUnmount(() => {
         </div>
         <div>
           <span class="summary-strip__icon summary-strip__icon--blue"><ShieldCheck :size="20" /></span>
-          <span><strong>{{ managedCount }}</strong><small>可安全管理</small></span>
+          <span><strong>{{ manageableCount }}</strong><small>可直接管理</small></span>
         </div>
         <div>
           <span class="summary-strip__icon summary-strip__icon--violet"><Boxes :size="20" /></span>
@@ -825,9 +830,9 @@ onBeforeUnmount(() => {
                 </button>
               </article>
               <article class="action-card">
-                <div><strong>卸载 Docker</strong><small>卸载会同时终止 KPanel，必须交回 kejilion.sh 或 SSH</small></div>
+                <div><strong>卸载 Docker</strong><small>卸载会终止 KPanel；当前 Agent 尚缺少离线完成与结果回写适配器</small></div>
                 <button class="button button--danger button--small" type="button" @click="uninstallNoticeOpen = true">
-                  <Trash2 :size="15" /> 卸载说明
+                  <Trash2 :size="15" /> 查看实现状态
                 </button>
               </article>
             </div>
@@ -836,7 +841,7 @@ onBeforeUnmount(() => {
           <section class="workspace-card">
             <header>
               <span class="workspace-card__icon"><Download :size="20" /></span>
-              <div><strong>备份、还原与迁移</strong><small>后台归档 /home/docker，自动排除 KPanel 自身</small></div>
+              <div><strong>备份、还原与迁移</strong><small>后台归档当前适配器支持的 /home/docker 应用产物</small></div>
             </header>
             <div class="card-actions">
               <button class="button button--primary button--small" type="button" :disabled="taskRunning || panel.isReadOnly.value" @click="submitTask({ action: 'backup_create' })">
@@ -859,8 +864,8 @@ onBeforeUnmount(() => {
                 </div>
               </article>
             </div>
-            <EmptyState v-else title="还没有 Docker 备份" description="创建后可在这里执行冲突保护还原或 SSH 密钥迁移。" />
-            <p class="card-note">还原只写入不存在的应用目录，发现同名目录立即停止，不覆盖现有业务。</p>
+            <EmptyState v-else title="还没有 Docker 备份" description="创建后可在这里执行还原或 SSH 密钥迁移。" />
+            <p class="card-note">还原任务直接按备份产物恢复；路径校验、原子替换与失败回滚属于实现保障，不限制管理员选择。</p>
           </section>
 
           <section class="workspace-card">
@@ -898,9 +903,8 @@ onBeforeUnmount(() => {
               <span class="workspace-card__icon"><BrushCleaning :size="20" /></span>
               <div><strong>环境清理</strong><small>对应 kejilion.sh 的 docker system prune -af --volumes</small></div>
             </header>
-            <p>清理停止容器、未使用镜像、网络、卷和构建缓存。运行中的 KPanel 资源受保护。</p>
-            <input v-model="pruneConfirmation" class="text-input" type="text" placeholder="输入 PRUNE 确认" />
-            <button class="button button--danger button--small" type="button" :disabled="pruneConfirmation !== 'PRUNE'" @click="askPrune('prune', '完整清理未使用资源')">
+            <p>清理停止容器、未使用镜像、网络、卷和构建缓存，与 Docker Engine 的实际判定一致。</p>
+            <button class="button button--danger button--small" type="button" @click="askPrune('prune', '完整清理未使用资源')">
               <Trash2 :size="15" /> 执行完整清理
             </button>
           </section>
@@ -949,7 +953,7 @@ onBeforeUnmount(() => {
                       <button v-if="permits(container, 'restart')" class="icon-button" type="button" title="重启" @click="askAction(container, 'restart')"><RotateCw :size="16" /></button>
                       <button v-if="permits(container, 'stop')" class="icon-button icon-button--danger" type="button" title="停止" @click="askAction(container, 'stop')"><CircleStop :size="16" /></button>
                       <button v-if="permits(container, 'remove')" class="icon-button icon-button--danger" type="button" title="删除" @click="askAction(container, 'remove')"><Trash2 :size="16" /></button>
-                      <span v-if="container.access !== 'managed'" class="read-only-label">只读</span>
+                      <span v-if="!container.allowedActions?.length" class="action-unavailable-label">状态暂不可操作</span>
                     </div>
                   </td>
                 </tr>
@@ -980,7 +984,7 @@ onBeforeUnmount(() => {
                 <td><StatusBadge :status="image.inUse ? 'running' : 'stopped'" :label="image.inUse ? '使用中' : '未使用'" subtle /></td>
                 <td><div class="row-actions">
                   <button v-if="image.tags.length" class="button button--ghost button--small" type="button" @click="updateImage(image)"><RefreshCw :size="14" /> 更新</button>
-                  <button class="icon-button icon-button--danger" type="button" title="删除镜像" :disabled="image.inUse || !image.resourceVersion" @click="askImageRemoval(image)"><Trash2 :size="16" /></button>
+                  <button class="icon-button icon-button--danger" type="button" title="删除镜像" :disabled="!image.resourceVersion" @click="askImageRemoval(image)"><Trash2 :size="16" /></button>
                 </div></td>
               </tr></tbody>
             </table>
@@ -995,12 +999,13 @@ onBeforeUnmount(() => {
               <div><span class="workspace-card__icon"><Network :size="20" /></span><div><strong>网络日常管理</strong><small>网络创建、删除和容器成员关系均直接写入 Docker Engine</small></div></div>
               <div class="card-actions">
                 <input v-model="networkName" class="text-input compact-input" type="text" placeholder="新网络名称" @keyup.enter="createDockerNetwork" />
-                <button class="button button--primary button--small" type="button" :disabled="!networkName.trim()" @click="createDockerNetwork"><Plus :size="15" /> 创建网络</button>
+                <input v-model="networkDriver" class="text-input compact-input compact-input--driver" type="text" placeholder="驱动，例如 bridge" @keyup.enter="createDockerNetwork" />
+                <button class="button button--primary button--small" type="button" :disabled="!networkName.trim() || !networkDriver.trim()" @click="createDockerNetwork"><Plus :size="15" /> 创建网络</button>
                 <button class="button button--secondary button--small" type="button" @click="askPrune('network_prune', '清理未使用网络')"><BrushCleaning :size="15" /> 清理</button>
               </div>
             </header>
             <div class="network-membership">
-              <select v-model="membershipContainerID" class="select-input"><option value="">选择可管理容器</option><option v-for="item in membershipContainers" :key="item.id" :value="item.id">{{ item.name }}</option></select>
+              <select v-model="membershipContainerID" class="select-input"><option value="">选择容器</option><option v-for="item in membershipContainers" :key="item.id" :value="item.id">{{ item.name }}</option></select>
               <select v-model="membershipNetworkID" class="select-input"><option value="">选择网络</option><option v-for="item in membershipNetworks" :key="item.id" :value="item.id">{{ item.name }}</option></select>
               <button class="button button--secondary button--small" type="button" :disabled="!membershipContainerID || !membershipNetworkID" @click="updateNetworkMembership('network_connect')">加入</button>
               <button class="button button--ghost button--small" type="button" :disabled="!membershipContainerID || !membershipNetworkID" @click="updateNetworkMembership('network_disconnect')">退出</button>
@@ -1011,7 +1016,7 @@ onBeforeUnmount(() => {
                 <tbody><tr v-for="network in filteredNetworks" :key="network.id">
                   <td><strong>{{ network.name }}</strong><small class="table-sub">{{ shortId(network.id) }}</small></td>
                   <td>{{ network.driver }}</td><td>{{ network.scope || 'local' }}</td><td>{{ network.containers || 0 }}</td>
-                  <td><button class="icon-button icon-button--danger" type="button" title="删除网络" :disabled="Number(network.containers || 0) > 0 || ['bridge', 'host', 'none', 'kejilion-panel-network'].includes(network.name)" @click="askNetworkRemoval(network)"><Trash2 :size="16" /></button></td>
+                  <td><button class="icon-button icon-button--danger" type="button" title="删除网络" :disabled="!network.resourceVersion" @click="askNetworkRemoval(network)"><Trash2 :size="16" /></button></td>
                 </tr></tbody>
               </table>
             </div>
@@ -1022,10 +1027,11 @@ onBeforeUnmount(() => {
       <template v-else>
         <section class="workspace-card workspace-card--wide resource-section">
           <header class="resource-section__header">
-            <div><span class="workspace-card__icon"><HardDrive :size="20" /></span><div><strong>存储卷日常管理</strong><small>只开放 local 卷；使用中的卷和 KPanel 卷不可删除</small></div></div>
+            <div><span class="workspace-card__icon"><HardDrive :size="20" /></span><div><strong>存储卷日常管理</strong><small>所有 Docker 卷均可直接管理，执行结果由 Docker Engine 返回</small></div></div>
             <div class="card-actions">
               <input v-model="volumeName" class="text-input compact-input" type="text" placeholder="新存储卷名称" @keyup.enter="createDockerVolume" />
-              <button class="button button--primary button--small" type="button" :disabled="!volumeName.trim()" @click="createDockerVolume"><Plus :size="15" /> 创建卷</button>
+              <input v-model="volumeDriver" class="text-input compact-input compact-input--driver" type="text" placeholder="驱动，例如 local" @keyup.enter="createDockerVolume" />
+              <button class="button button--primary button--small" type="button" :disabled="!volumeName.trim() || !volumeDriver.trim()" @click="createDockerVolume"><Plus :size="15" /> 创建卷</button>
               <button class="button button--secondary button--small" type="button" @click="askPrune('volume_prune', '清理未使用存储卷')"><BrushCleaning :size="15" /> 清理</button>
             </div>
           </header>
@@ -1036,7 +1042,7 @@ onBeforeUnmount(() => {
                 <td><strong>{{ volume.name }}</strong></td><td>{{ volume.driver }}</td>
                 <td><span class="table-code" :title="volume.mountpoint">{{ volume.mountpoint || '—' }}</span></td>
                 <td><StatusBadge :status="volume.inUse ? 'running' : 'stopped'" :label="volume.inUse ? '使用中' : '未使用'" subtle /></td>
-                <td><button class="icon-button icon-button--danger" type="button" title="删除存储卷" :disabled="volume.inUse || volume.name.includes('kpanel')" @click="askVolumeRemoval(volume)"><Trash2 :size="16" /></button></td>
+                <td><button class="icon-button icon-button--danger" type="button" title="删除存储卷" :disabled="!volume.resourceVersion" @click="askVolumeRemoval(volume)"><Trash2 :size="16" /></button></td>
               </tr></tbody>
             </table>
           </div>
@@ -1052,25 +1058,28 @@ onBeforeUnmount(() => {
         <label class="field"><span>重启策略</span><select v-model="createRestartPolicy" class="select-input"><option value="unless-stopped">unless-stopped</option><option value="always">always</option><option value="on-failure">on-failure</option><option value="no">no</option></select></label>
       </div>
       <div class="form-section">
-        <header><div><strong>端口映射</strong><small>公开访问选 0.0.0.0，仅反代使用选 127.0.0.1</small></div><button class="button button--ghost button--small" type="button" @click="addCreatePort"><Plus :size="14" /> 添加</button></header>
+        <header><div><strong>端口映射</strong><small>可填写任意宿主机 IPv4/IPv6；0.0.0.0 为公开，127.0.0.1 仅供本机反代</small></div><button class="button button--ghost button--small" type="button" @click="addCreatePort"><Plus :size="14" /> 添加</button></header>
         <div v-for="(port, index) in createPorts" :key="index" class="repeat-row repeat-row--ports">
           <input v-model="port.publicPort" class="text-input" inputmode="numeric" placeholder="主机端口" />
           <span>→</span>
           <input v-model="port.privatePort" class="text-input" inputmode="numeric" placeholder="容器端口" />
           <select v-model="port.protocol" class="select-input"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
-          <select v-model="port.hostIp" class="select-input"><option value="0.0.0.0">公网</option><option value="127.0.0.1">仅本机</option></select>
+          <input v-model="port.hostIp" class="text-input" type="text" list="docker-host-ip-presets" placeholder="0.0.0.0" />
           <button class="icon-button icon-button--danger" type="button" title="移除" @click="createPorts.splice(index, 1)"><Trash2 :size="15" /></button>
         </div>
       </div>
       <div class="form-section">
-        <header><div><strong>存储卷挂载</strong><small>仅能选择已经存在的 Docker 存储卷</small></div><button class="button button--ghost button--small" type="button" @click="addCreateMount"><Plus :size="14" /> 添加</button></header>
+        <header><div><strong>存储挂载</strong><small>支持命名卷与任意宿主机绝对目录，产物与 docker run / Compose 互通</small></div><button class="button button--ghost button--small" type="button" @click="addCreateMount"><Plus :size="14" /> 添加</button></header>
         <div v-for="(mount, index) in createMounts" :key="index" class="repeat-row repeat-row--mounts">
-          <select v-model="mount.volume" class="select-input"><option value="">选择存储卷</option><option v-for="volume in data?.volumes || []" :key="volume.name" :value="volume.name">{{ volume.name }}</option></select>
+          <select v-model="mount.type" class="select-input"><option value="volume">命名卷</option><option value="bind">宿主机目录</option></select>
+          <input v-model="mount.source" class="text-input" type="text" :list="mount.type === 'volume' ? 'docker-volume-presets' : undefined" :placeholder="mount.type === 'volume' ? '卷名（不存在时由 Docker 创建）' : '/home/docker/my-app'" />
           <input v-model="mount.target" class="text-input" type="text" placeholder="/data" />
           <label class="inline-check"><input v-model="mount.readOnly" type="checkbox" /> 只读</label>
           <button class="icon-button icon-button--danger" type="button" title="移除" @click="createMounts.splice(index, 1)"><Trash2 :size="15" /></button>
         </div>
       </div>
+      <datalist id="docker-host-ip-presets"><option value="0.0.0.0" /><option value="127.0.0.1" /><option value="::" /><option value="::1" /></datalist>
+      <datalist id="docker-volume-presets"><option v-for="volume in data?.volumes || []" :key="volume.name" :value="volume.name" /></datalist>
       <div class="form-section">
         <header><div><strong>环境变量</strong><small>按名称和值填写；任务完成后不保留在 KPanel 任务记录中</small></div><button class="button button--ghost button--small" type="button" @click="addCreateEnvironment"><Plus :size="14" /> 添加</button></header>
         <div v-for="(variable, index) in createEnvironment" :key="index" class="repeat-row repeat-row--environment">
@@ -1116,7 +1125,7 @@ onBeforeUnmount(() => {
 
     <ModalDialog :open="accessOpen" :title="`${selectedContainer?.name || '容器'} 外部访问`" description="规则与 kejilion.sh 的 DOCKER-USER 方案互通，按容器 Docker IPv4 生效。" size="small" @close="accessOpen = false; selectedContainer = undefined">
       <label class="field"><span>阻止外部访问时额外允许的来源 IPv4</span><input v-model="accessAllowedIP" class="text-input" type="text" placeholder="留空则仅保留本机和已建立连接" /><small>默认使用当前服务器公网 IPv4，便于和脚本端清除规则保持一致。</small></label>
-      <div class="inline-alert inline-alert--warning">多网络、多 Docker IPv4 的容器会被安全策略拒绝，避免规则误绑到错误网络。</div>
+      <div class="inline-alert inline-alert--info">多网络容器会对每个 Docker IPv4 同步应用规则，与脚本端 DOCKER-USER 产物互通。</div>
       <template #footer><button class="button button--secondary" type="button" @click="askAccess(true)">允许外部访问</button><button class="button button--danger" type="button" @click="askAccess(false)">阻止外部访问</button></template>
     </ModalDialog>
 
@@ -1133,13 +1142,13 @@ onBeforeUnmount(() => {
     <ModalDialog :open="Boolean(pendingMaintenance)" :title="pendingMaintenance?.title || '确认 Docker 操作'" :description="pendingMaintenance?.description" size="small" @close="pendingMaintenance = undefined">
       <div class="confirm-content">
         <span class="confirm-content__icon" :class="{ 'is-danger': pendingMaintenance?.danger }"><Trash2 v-if="pendingMaintenance?.danger" :size="23" /><ShieldCheck v-else :size="23" /></span>
-        <p>Agent 会在真正执行前重新读取 Docker Engine，并核验资源版本、归属和 KPanel 保护规则。</p>
+        <p>Agent 会在执行前重新读取 Docker Engine 并核验资源版本，避免旧页面覆盖新的运行状态。</p>
       </div>
       <template #footer><button class="button button--secondary" type="button" @click="pendingMaintenance = undefined">取消</button><button class="button" :class="pendingMaintenance?.danger ? 'button--danger' : 'button--primary'" type="button" :disabled="taskRunning || !pendingMaintenance" @click="pendingMaintenance && submitTask(pendingMaintenance.input)"><LoaderCircle v-if="taskRunning" class="spin" :size="16" />{{ taskRunning ? '正在提交…' : '确认执行' }}</button></template>
     </ModalDialog>
 
     <ModalDialog :open="Boolean(pendingAction)" :title="pendingAction === 'stop' ? '确认停止容器' : pendingAction === 'restart' ? '确认重启容器' : pendingAction === 'remove' ? '确认删除容器' : '确认启动容器'" :description="selectedContainer ? `${selectedContainer.name} · ${selectedContainer.image}` : ''" size="small" @close="pendingAction = undefined; selectedContainer = undefined">
-      <div class="confirm-content"><span class="confirm-content__icon" :class="{ 'is-danger': pendingAction === 'stop' || pendingAction === 'remove' }"><Trash2 v-if="pendingAction === 'remove'" :size="23" /><CircleStop v-else-if="pendingAction === 'stop'" :size="23" /><RotateCw v-else-if="pendingAction === 'restart'" :size="23" /><Play v-else :size="23" /></span><p>{{ pendingAction === 'remove' ? '只删除已停止容器，镜像和存储卷保留。' : 'Agent 会再次验证容器身份、状态和允许动作。' }}</p></div>
+      <div class="confirm-content"><span class="confirm-content__icon" :class="{ 'is-danger': pendingAction === 'stop' || pendingAction === 'remove' }"><Trash2 v-if="pendingAction === 'remove'" :size="23" /><CircleStop v-else-if="pendingAction === 'stop'" :size="23" /><RotateCw v-else-if="pendingAction === 'restart'" :size="23" /><Play v-else :size="23" /></span><p>{{ pendingAction === 'remove' ? '将强制删除所选容器；镜像和存储卷保留。' : 'Agent 会再次验证容器资源版本和实时状态。' }}</p></div>
       <template #footer><button class="button button--secondary" type="button" @click="pendingAction = undefined; selectedContainer = undefined">取消</button><button class="button" :class="pendingAction === 'stop' || pendingAction === 'remove' ? 'button--danger' : 'button--primary'" type="button" :disabled="actionRunning" @click="runAction"><LoaderCircle v-if="actionRunning" class="spin" :size="16" />{{ actionRunning ? '正在提交…' : '确认执行' }}</button></template>
     </ModalDialog>
 
@@ -1148,9 +1157,9 @@ onBeforeUnmount(() => {
       <template #footer><button class="button button--secondary" type="button" @click="systemUpdatePending = false">取消</button><button class="button button--primary" type="button" :disabled="systemUpdating" @click="submitSystemUpdate"><LoaderCircle v-if="systemUpdating" class="spin" :size="16" />提交后台更新</button></template>
     </ModalDialog>
 
-    <ModalDialog :open="uninstallNoticeOpen" title="Docker 卸载保护" description="KPanel 自身依赖 Docker，网页端无法在卸载后继续报告结果或执行自动回滚。" size="small" @close="uninstallNoticeOpen = false">
-      <div class="inline-alert inline-alert--warning">请通过 SSH 运行 `k docker`，选择“卸载 Docker 环境”。脚本会清楚展示其将删除的容器、镜像、网络和卷，并在面板之外完成操作。</div>
-      <p class="modal-copy">这是有意保留的安全边界：面板提供安装状态、更新、清理、备份、还原、迁移和换源，但不会从自身网页中摧毁其运行基础。</p>
+    <ModalDialog :open="uninstallNoticeOpen" title="Docker 卸载适配状态" description="此能力尚缺少由宿主机 Agent 离线完成、持久化结果并在 KPanel 消失后可查询的任务协议。" size="small" @close="uninstallNoticeOpen = false">
+      <div class="inline-alert inline-alert--warning">当前版本可临时通过 SSH 运行 `k docker` 完成卸载。该缺口属于未实现的离线任务适配器，不是 KPanel 的安全策略限制。</div>
+      <p class="modal-copy">按照项目永久规范，完成适配后 Web 端必须直接提供与 kejilion.sh 相同的卸载能力，即使操作会终止 KPanel 自身。</p>
       <template #footer><button class="button button--secondary" type="button" @click="uninstallNoticeOpen = false">我知道了</button></template>
     </ModalDialog>
   </div>
@@ -1202,8 +1211,9 @@ onBeforeUnmount(() => {
 .resource-section .table-scroll, .resource-section > .empty-state { margin: 0; }
 .network-membership { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto auto; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface-raised) 70%, transparent); }
 .compact-input { width: min(240px, 34vw); }
+.compact-input--driver { width: min(170px, 24vw); }
 .table-sub { display: block; color: var(--text-muted); margin-top: 3px; }
-.read-only-label { font-size: .78rem; color: var(--text-muted); }
+.action-unavailable-label { font-size: .78rem; color: var(--text-muted); }
 .form-grid { display: grid; gap: 14px; }
 .form-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .field { display: grid; gap: 7px; }
@@ -1214,7 +1224,7 @@ onBeforeUnmount(() => {
 .form-section { display: grid; gap: 10px; margin-top: 18px; }
 .repeat-row { display: grid; gap: 8px; align-items: center; }
 .repeat-row--ports { grid-template-columns: minmax(100px, 1fr) auto minmax(100px, 1fr) 100px 110px auto; }
-.repeat-row--mounts { grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) auto auto; }
+.repeat-row--mounts { grid-template-columns: 120px minmax(180px, 1fr) minmax(150px, 1fr) auto auto; }
 .repeat-row--environment { grid-template-columns: minmax(150px, .7fr) minmax(180px, 1.3fr) auto; }
 .inline-check { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .log-viewer { margin: 0; min-height: 280px; max-height: 58vh; overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: #0b1020; color: #d9e2ff; padding: 15px; font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }

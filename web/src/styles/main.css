@@ -2331,24 +2331,6 @@ textarea:focus-visible,
   line-height: 1.55;
 }
 
-.confirmation-check {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  color: var(--text-soft);
-  cursor: pointer;
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.confirmation-check input {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  margin: 1px 0 0;
-  accent-color: var(--brand);
-}
-
 .management-dialog__section-icon {
   display: grid;
   width: 32px;

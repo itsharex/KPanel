@@ -3,7 +3,7 @@ NPM ?= npm
 VERSION := $(shell tr -d '\r\n' < VERSION)
 LDFLAGS := -s -w -X github.com/kejilion/kejilion-panel/internal/version.Version=$(VERSION)
 
-.PHONY: fmt test test-go test-web test-deploy build build-web build-linux clean
+.PHONY: fmt test test-go test-web test-deploy verify-change verify-l2 verify-release build build-web build-linux build-linux-binaries clean
 
 fmt:
 	$(GO) fmt ./...
@@ -19,6 +19,15 @@ test-web:
 test-deploy:
 	sh deploy/tests/install-safety.sh
 
+verify-change:
+	sh scripts/verify-change.sh
+
+verify-l2:
+	VERIFY_LEVEL=l2 sh scripts/verify-change.sh
+
+verify-release:
+	VERIFY_LEVEL=release sh scripts/verify-change.sh
+
 build: build-web
 	mkdir -p dist
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/paneld ./cmd/paneld
@@ -28,7 +37,9 @@ build: build-web
 build-web:
 	cd web && $(NPM) run build
 
-build-linux: build-web
+build-linux: build-web build-linux-binaries
+
+build-linux-binaries:
 	mkdir -p dist/linux-amd64 dist/linux-arm64
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/linux-amd64/paneld ./cmd/paneld
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/linux-amd64/kejilion-agent ./cmd/kejilion-agent

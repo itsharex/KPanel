@@ -1,5 +1,8 @@
 # Docker 五分区管理与互通边界
 
+> 历史版本说明：本文件记录 v0.18 初始设计。危险配置、外部目录、KPanel 自身或资源来源
+> 导致的只读/保护策略已由 [`PROJECT_RULES.md`](../PROJECT_RULES.md) 废止。
+
 KPanel 0.18 把原“Docker 工具箱”拆为环境、容器、镜像、网络和存储卷五个
 常驻子标签。每次读取和写入均以 Docker Engine、`/home/docker` 和
 `/etc/docker/daemon.json` 为事实来源，不把面板数据库作为 Docker 资源真相。

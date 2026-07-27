@@ -34,11 +34,11 @@ type mirrorSourceChange struct {
 
 var aptURLPattern = regexp.MustCompile(`https?://[A-Za-z0-9.-]+(?::[0-9]+)?/[^ \t\r\n"'<>]+`)
 
-// linuxMirrorsHosts is an audited allowlist from the mirror choices exposed by
-// LinuxMirrors. It lets KPanel safely recognize and replace distribution URLs
-// previously written by kejilion.sh, while leaving third-party repositories
-// such as Docker and NodeSource untouched.
-var linuxMirrorsHosts = stringSet(
+// knownLinuxMirrorsHosts documents the mirrors historically emitted by
+// LinuxMirrors. Source switching no longer treats this snapshot as an
+// authorization list: any Debian/Ubuntu distribution URL with the expected
+// repository path can be switched, including newly added script mirrors.
+var knownLinuxMirrorsHosts = stringSet(
 	"deb.debian.org", "security.debian.org", "ftp.debian.org",
 	"archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com",
 	"mirrors.aliyun.com", "mirrors.cloud.tencent.com", "mirrors.tencent.com",
@@ -165,7 +165,7 @@ func (m *Manager) setMirror(ctx context.Context, preset string) (bool, string, s
 	osID := strings.ToLower(osReleaseValue(filepath.Join(m.etcRoot, "os-release"), "ID"))
 	if osID != "debian" && osID != "ubuntu" {
 		return false, "", "", fmt.Errorf(
-			"%w: safe mirror switching currently supports Debian and Ubuntu",
+			"%w: mirror switching adapter currently supports Debian and Ubuntu",
 			ErrUnsupported,
 		)
 	}
@@ -287,7 +287,7 @@ func rewriteAPTSourceTarget(data []byte, osID string, target mirrorTarget) ([]by
 	recognized := 0
 	rewritten := aptURLPattern.ReplaceAllFunc(data, func(raw []byte) []byte {
 		parsed, err := url.Parse(string(raw))
-		if err != nil || !linuxMirrorsHosts[strings.ToLower(parsed.Hostname())] {
+		if err != nil {
 			return raw
 		}
 		branch, suffix, ok := aptDistributionPath(parsed.Path, osID)
@@ -310,6 +310,11 @@ func rewriteAPTSourceTarget(data []byte, osID string, target mirrorTarget) ([]by
 func aptDistributionPath(path, osID string) (string, string, bool) {
 	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	for index, segment := range segments {
+		if index > 0 && segments[index-1] == "linux" {
+			// Third-party repositories commonly use /linux/<distribution>
+			// (for example Docker CE). They are not OS mirror entries.
+			continue
+		}
 		switch osID {
 		case "debian":
 			if segment != "debian" && segment != "debian-security" {

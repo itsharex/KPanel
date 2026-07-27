@@ -33,9 +33,9 @@ func (c *Client) updateContainerAccess(
 		return err
 	}
 	if !inspect.State.Running || inspect.State.Paused || inspect.State.Restarting {
-		return ErrUnsafeOrInvalidAction
+		return ErrActionUnsupported
 	}
-	containerIP, err := singleContainerIPv4(inspect)
+	containerIPs, err := containerIPv4s(inspect)
 	if err != nil {
 		return err
 	}
@@ -47,7 +47,10 @@ func (c *Client) updateContainerAccess(
 		}
 		allowedIP = parsed.String()
 	}
-	rules := containerAccessRules(containerIP, allowedIP)
+	var rules []firewallRule
+	for _, containerIP := range containerIPs {
+		rules = append(rules, containerAccessRules(containerIP, allowedIP)...)
+	}
 	run := c.hostCommand
 	if run == nil {
 		run = runFixedDockerHostCommand
@@ -76,7 +79,7 @@ func (c *Client) updateContainerAccess(
 	return nil
 }
 
-func singleContainerIPv4(inspect containerInspect) (string, error) {
+func containerIPv4s(inspect containerInspect) ([]string, error) {
 	var addresses []string
 	for _, network := range inspect.NetworkSettings.Networks {
 		value := strings.TrimSpace(network.IPAddress)
@@ -88,10 +91,10 @@ func singleContainerIPv4(inspect containerInspect) (string, error) {
 	}
 	sort.Strings(addresses)
 	addresses = compactStrings(addresses)
-	if len(addresses) != 1 {
-		return "", errors.New("container must have exactly one Docker IPv4 address for safe access control")
+	if len(addresses) == 0 {
+		return nil, errors.New("container does not expose a Docker IPv4 address for access control")
 	}
-	return addresses[0], nil
+	return addresses, nil
 }
 
 func compactStrings(values []string) []string {

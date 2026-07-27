@@ -198,7 +198,7 @@ func (m *Manager) maintenanceSteps(
 	if !support.available() {
 		reason := support.reason
 		if reason == "" {
-			reason = "当前发行版不支持安全系统维护"
+			reason = "当前发行版没有可用的系统维护适配器"
 		}
 		return "", "", nil, fmt.Errorf("%w: %s", ErrUnsupported, reason)
 	}

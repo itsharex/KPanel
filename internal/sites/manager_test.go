@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -121,11 +122,11 @@ func TestCreateAllSupportedSiteServices(t *testing.T) {
 			wantKind: contract.SitePHP, wantTarget: "php74", indexName: "index.php",
 		},
 		{
-			name: "private proxy",
+			name: "IP and port proxy",
 			input: SiteInput{
-				PrimaryDomain: "proxy.example.com", Type: "proxy", Upstream: "http://127.0.0.1:3000",
+				PrimaryDomain: "proxy.example.com", Type: "proxy", Upstream: "http://8.8.8.8:3000",
 			},
-			wantKind: contract.SiteReverseProxy, wantTarget: "http://127.0.0.1:3000",
+			wantKind: contract.SiteReverseProxy, wantTarget: "http://8.8.8.8:3000",
 		},
 		{
 			name: "domain proxy",
@@ -204,8 +205,8 @@ func TestDeleteManagedProxyRemovesOnlyCanonicalConfig(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "conf.d", "app.example.com.conf")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("proxy config still exists: %v", err)
 	}
-	if nginx.tests != 4 || nginx.reloads != 2 {
-		t.Fatalf("nginx calls tests=%d reloads=%d, want 4/2", nginx.tests, nginx.reloads)
+	if nginx.tests != 3 || nginx.reloads != 2 {
+		t.Fatalf("nginx calls tests=%d reloads=%d, want 3/2", nginx.tests, nginx.reloads)
 	}
 }
 
@@ -279,7 +280,97 @@ func TestDeleteManagedPHPFullRemovesKWebArtifactsAndDatabase(t *testing.T) {
 	}
 }
 
-func TestDeleteRequiresExactDomainAndRollsBackFailedCandidate(t *testing.T) {
+func TestFullDeleteDoesNotRequireDatabaseAdapter(t *testing.T) {
+	manager, _, root := newTestManager(t)
+	manager.siteDataRuntime = nil
+	created, err := manager.Create(context.Background(), SiteInput{
+		PrimaryDomain: "static-no-db.example.com", Type: "static",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
+		ExpectedResourceVersion: created.ResourceVersion,
+		Mode:                    "full",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DatabaseDropped || len(result.Warnings) != 0 {
+		t.Fatalf("unexpected database result: %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, "html", created.PrimaryDomain)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("full delete was blocked without a database adapter: %v", err)
+	}
+}
+
+func TestFullDeleteReportsDatabaseFailureWithoutRestoringSite(t *testing.T) {
+	manager, nginx, root := newTestManager(t)
+	nginx.dropErr = errors.New("database offline")
+	created, err := manager.Create(context.Background(), SiteInput{
+		PrimaryDomain: "db-warning.example.com", Type: "php", PHPVersion: "latest",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
+		ExpectedResourceVersion: created.ResourceVersion,
+		Mode:                    "full",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "database offline") {
+		t.Fatalf("database cleanup warning = %#v", result.Warnings)
+	}
+	for _, path := range []string{
+		filepath.Join(root, "conf.d", created.PrimaryDomain+".conf"),
+		filepath.Join(root, "html", created.PrimaryDomain),
+	} {
+		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("database failure restored deleted site artifact %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestOrphanWebsiteArtifactCanBeDeleted(t *testing.T) {
+	manager, nginx, root := newTestManager(t)
+	orphanRoot := filepath.Join(root, "html", "orphan.example.com")
+	if err := os.Mkdir(orphanRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphanRoot, "index.html"), []byte("orphan"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	items, err := manager.discoverer.Discover()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var orphan contract.SiteSummary
+	for _, site := range items {
+		if site.PrimaryDomain == "orphan.example.com" {
+			orphan = site
+			break
+		}
+	}
+	if orphan.ID == "" || !containsString(orphan.AllowedActions, "delete") {
+		t.Fatalf("orphan artifact was not actionable: %#v", orphan)
+	}
+	if _, err := manager.DeleteWithOptions(context.Background(), orphan.ID, DeleteInput{
+		ExpectedResourceVersion: orphan.ResourceVersion,
+		Mode:                    "full",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(orphanRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("orphan website artifact still exists: %v", err)
+	}
+	if nginx.tests != 0 || nginx.reloads != 0 {
+		t.Fatalf("detached artifact deletion unnecessarily reloaded Nginx: %#v", nginx)
+	}
+}
+
+func TestDeleteDoesNotRequireTypedConfirmationAndRollsBackFailedCandidate(t *testing.T) {
 	manager, nginx, root := newTestManager(t)
 	created, err := manager.Create(context.Background(), SiteInput{
 		PrimaryDomain: "rollback-delete.example.com", Type: "static",
@@ -290,22 +381,13 @@ func TestDeleteRequiresExactDomainAndRollsBackFailedCandidate(t *testing.T) {
 	configPath := filepath.Join(root, "conf.d", created.PrimaryDomain+".conf")
 	indexPath := filepath.Join(root, "html", created.PrimaryDomain, "index.html")
 
-	_, err = manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
-		ExpectedResourceVersion: created.ResourceVersion,
-		Mode:                    "full",
-		ConfirmDomain:           "wrong.example.com",
-	})
-	if !errors.Is(err, ErrForbidden) {
-		t.Fatalf("confirmation mismatch error = %v, want ErrForbidden", err)
-	}
 	nginx.mu.Lock()
-	nginx.testErrs = make([]error, nginx.tests+2)
-	nginx.testErrs[nginx.tests+1] = errors.New("candidate rejected")
+	nginx.testErrs = make([]error, nginx.tests+1)
+	nginx.testErrs[nginx.tests] = errors.New("candidate rejected")
 	nginx.mu.Unlock()
 	_, err = manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
 		ExpectedResourceVersion: created.ResourceVersion,
 		Mode:                    "full",
-		ConfirmDomain:           created.PrimaryDomain,
 	})
 	if !errors.Is(err, ErrUnprocessable) {
 		t.Fatalf("candidate failure error = %v, want ErrUnprocessable", err)
@@ -493,7 +575,7 @@ func TestReloadFailureRestoresPreviousConfiguration(t *testing.T) {
 	}
 }
 
-func TestNonCanonicalManagedConfigCannotBeUpdated(t *testing.T) {
+func TestNonCanonicalManagedConfigCanBeUpdatedWithoutDiscardingManualDirectives(t *testing.T) {
 	manager, _, root := newTestManager(t)
 	created, err := manager.Create(context.Background(), SiteInput{
 		PrimaryDomain: "drift.example.com", Type: "proxy", Upstream: "http://127.0.0.1:8080",
@@ -517,19 +599,22 @@ func TestNonCanonicalManagedConfigCannotBeUpdated(t *testing.T) {
 	}
 	if len(discovered) != 1 || discovered[0].Origin != contract.OriginWeb ||
 		discovered[0].Consistency != contract.ConsistencyDrifted ||
-		len(discovered[0].AllowedActions) != 0 {
+		!containsString(discovered[0].AllowedActions, "update") ||
+		!containsString(discovered[0].AllowedActions, "delete") {
 		t.Fatalf("drifted Panel site ownership/action mismatch: %#v", discovered)
 	}
-	_, err = manager.Update(context.Background(), created.ID, SiteInput{
+	updated, err := manager.Update(context.Background(), created.ID, SiteInput{
 		PrimaryDomain: "drift.example.com", Type: "proxy", Upstream: "http://127.0.0.1:9090",
-		ExpectedResourceVersion: created.ResourceVersion,
+		ExpectedResourceVersion: discovered[0].ResourceVersion,
 	})
-	if !errors.Is(err, ErrForbidden) {
-		t.Fatalf("Update() error = %v, want forbidden", err)
+	if err != nil {
+		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(path)
-	if !bytes.Equal(after, drifted) {
-		t.Fatal("non-canonical config was overwritten")
+	if bytes.Equal(after, drifted) || !bytes.Contains(after, []byte("# manual edit")) ||
+		!bytes.Contains(after, []byte("http://127.0.0.1:9090")) ||
+		updated.Target != "http://127.0.0.1:9090" {
+		t.Fatalf("drifted config update mismatch: updated=%#v config=%s", updated, after)
 	}
 }
 
@@ -541,8 +626,6 @@ func TestStrictSiteInputValidation(t *testing.T) {
 		{PrimaryDomain: "example.com ", Type: "static"},
 		{PrimaryDomain: "example.com", Type: "proxy", Upstream: "http://user:pass@app:8080"},
 		{PrimaryDomain: "example.com", Type: "proxy", Upstream: "http://app:8080/path"},
-		{PrimaryDomain: "example.com", Type: "proxy", Upstream: "http://app.example:8080"},
-		{PrimaryDomain: "example.com", Type: "proxy", Upstream: "http://8.8.8.8:53"},
 		{PrimaryDomain: "example.com", Type: "proxy", Upstream: "http://127.0.0.1:0"},
 		{PrimaryDomain: "example.com", Type: "proxy_domain", Upstream: "https://127.0.0.1"},
 		{PrimaryDomain: "example.com", Type: "load_balance", Upstreams: []string{"http://10.0.0.1:80"}},
@@ -559,6 +642,8 @@ func TestStrictSiteInputValidation(t *testing.T) {
 	}
 	valid := []string{
 		"http://app:8080",
+		"http://app.example:8080",
+		"http://8.8.8.8:53",
 		"https://127.0.0.1",
 		"http://10.0.0.2:65535",
 		"http://172.16.0.2:80",

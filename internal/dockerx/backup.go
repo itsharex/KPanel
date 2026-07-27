@@ -133,65 +133,76 @@ func (c *Client) restoreDockerBackup(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	skipExisting := make(map[string]bool)
-	mergeAppNo := false
+	rollbackRoot, err := os.MkdirTemp(appRoot, ".kpanel-restore-rollback-*")
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(rollbackRoot, 0o700); err != nil {
+		_ = os.RemoveAll(rollbackRoot)
+		return err
+	}
+	var replacements []dockerRestoreReplacement
 	for _, name := range topLevels {
-		if name == "kpanel" || name == "kpanel_port.conf" || name == ".kpanel-backups" ||
+		if name == ".kpanel-backups" ||
 			name == "." || name == ".." || !dockerBackupTopPattern.MatchString(name) {
+			_ = os.RemoveAll(rollbackRoot)
 			return errors.New("Docker backup contains an unsafe top-level path")
 		}
-		source := filepath.Join(stageRoot, "docker", name)
-		target := filepath.Join(appRoot, name)
-		targetInfo, targetErr := os.Lstat(target)
-		if errors.Is(targetErr, os.ErrNotExist) {
-			continue
-		}
-		if targetErr != nil || targetInfo.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("restore conflict: /home/docker/%s is unavailable or unsafe", name)
-		}
-		sourceInfo, sourceErr := os.Lstat(source)
-		if sourceErr != nil {
-			return sourceErr
-		}
-		if name == "appno.txt" && sourceInfo.Mode().IsRegular() && targetInfo.Mode().IsRegular() {
-			mergeAppNo = true
-			continue
-		}
-		equal, compareErr := sameRegularFile(source, target)
-		if compareErr != nil || !equal {
-			return fmt.Errorf("restore conflict: /home/docker/%s already exists", name)
-		}
-		skipExisting[name] = true
 	}
-	var created []string
 	for _, name := range topLevels {
-		if skipExisting[name] || (mergeAppNo && name == "appno.txt") {
-			continue
-		}
 		select {
 		case <-ctx.Done():
-			rollbackRestoredDockerPaths(created, appRoot)
+			rollbackDockerRestore(replacements, rollbackRoot, appRoot)
 			return ctx.Err()
 		default:
 		}
 		source := filepath.Join(stageRoot, "docker", name)
 		target := filepath.Join(appRoot, name)
+		replacement := dockerRestoreReplacement{target: target}
+		if _, targetErr := os.Lstat(target); targetErr == nil {
+			replacement.previous = filepath.Join(rollbackRoot, name)
+			if err := os.Rename(target, replacement.previous); err != nil {
+				rollbackDockerRestore(replacements, rollbackRoot, appRoot)
+				return fmt.Errorf("stage existing /home/docker/%s for rollback: %w", name, err)
+			}
+		} else if !errors.Is(targetErr, os.ErrNotExist) {
+			rollbackDockerRestore(replacements, rollbackRoot, appRoot)
+			return fmt.Errorf("inspect existing /home/docker/%s: %w", name, targetErr)
+		}
+		replacements = append(replacements, replacement)
 		if err := copyRestoredDockerTree(source, target); err != nil {
-			rollbackRestoredDockerPaths(append(created, target), appRoot)
+			rollbackDockerRestore(replacements, rollbackRoot, appRoot)
 			return err
 		}
-		created = append(created, target)
 	}
-	if mergeAppNo {
-		if err := mergeDockerAppMarkers(
-			filepath.Join(stageRoot, "docker", "appno.txt"),
-			filepath.Join(appRoot, "appno.txt"),
-		); err != nil {
-			rollbackRestoredDockerPaths(created, appRoot)
-			return err
-		}
+	if err := syncDirectoryPath(appRoot); err != nil {
+		rollbackDockerRestore(replacements, rollbackRoot, appRoot)
+		return err
+	}
+	if err := os.RemoveAll(rollbackRoot); err != nil {
+		return fmt.Errorf("restore completed but previous data cleanup failed: %w", err)
 	}
 	return syncDirectoryPath(appRoot)
+}
+
+type dockerRestoreReplacement struct {
+	target   string
+	previous string
+}
+
+func rollbackDockerRestore(replacements []dockerRestoreReplacement, rollbackRoot, appRoot string) {
+	for index := len(replacements) - 1; index >= 0; index-- {
+		replacement := replacements[index]
+		if filepath.IsAbs(replacement.target) && pathWithin(replacement.target, appRoot) &&
+			replacement.target != appRoot {
+			_ = os.RemoveAll(replacement.target)
+		}
+		if replacement.previous != "" && pathWithin(replacement.previous, rollbackRoot) {
+			_ = os.Rename(replacement.previous, replacement.target)
+		}
+	}
+	_ = os.RemoveAll(rollbackRoot)
+	_ = syncDirectoryPath(appRoot)
 }
 
 func extractDockerBackup(
@@ -242,7 +253,6 @@ func extractDockerBackup(
 		parts := strings.Split(relative, "/")
 		if len(parts) == 0 || !dockerBackupTopPattern.MatchString(parts[0]) ||
 			parts[0] == "." || parts[0] == ".." ||
-			parts[0] == "kpanel" || parts[0] == "kpanel_port.conf" ||
 			parts[0] == ".kpanel-backups" {
 			return nil, errors.New("Docker backup contains an unsafe application path")
 		}
@@ -304,104 +314,6 @@ func extractDockerBackup(
 		return nil, errors.New("Docker backup does not contain application data")
 	}
 	return names, nil
-}
-
-func sameRegularFile(left, right string) (bool, error) {
-	leftInfo, err := os.Lstat(left)
-	if err != nil {
-		return false, err
-	}
-	rightInfo, err := os.Lstat(right)
-	if err != nil {
-		return false, err
-	}
-	if !leftInfo.Mode().IsRegular() || !rightInfo.Mode().IsRegular() ||
-		leftInfo.Size() != rightInfo.Size() || leftInfo.Size() > 1<<20 {
-		return false, nil
-	}
-	leftData, err := os.ReadFile(left)
-	if err != nil {
-		return false, err
-	}
-	rightData, err := os.ReadFile(right)
-	if err != nil {
-		return false, err
-	}
-	return string(leftData) == string(rightData), nil
-}
-
-func mergeDockerAppMarkers(source, target string) error {
-	sourceData, err := os.ReadFile(source)
-	if err != nil || len(sourceData) > 1<<20 {
-		return errors.New("backup appno.txt is unavailable or unsafe")
-	}
-	targetInfo, err := os.Lstat(target)
-	if err != nil || !targetInfo.Mode().IsRegular() ||
-		targetInfo.Mode()&os.ModeSymlink != 0 || targetInfo.Size() > 1<<20 {
-		return errors.New("existing appno.txt is unavailable or unsafe")
-	}
-	targetData, err := os.ReadFile(target)
-	if err != nil {
-		return err
-	}
-	seen := make(map[string]bool)
-	var merged []string
-	for _, data := range [][]byte{targetData, sourceData} {
-		for _, line := range strings.Split(string(data), "\n") {
-			value := strings.TrimSpace(line)
-			if value == "" {
-				continue
-			}
-			if !dockerBackupTopPattern.MatchString(value) || seen[value] {
-				if seen[value] {
-					continue
-				}
-				return errors.New("appno.txt contains an invalid application marker")
-			}
-			seen[value] = true
-			merged = append(merged, value)
-		}
-	}
-	data := []byte(strings.Join(merged, "\n") + "\n")
-	return atomicWriteRestoredFile(target, data, targetInfo)
-}
-
-func atomicWriteRestoredFile(path string, data []byte, original os.FileInfo) error {
-	parent := filepath.Dir(filepath.Clean(path))
-	temp, err := os.CreateTemp(parent, ".kpanel-restore-*.tmp")
-	if err != nil {
-		return err
-	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(original.Mode().Perm()); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	uid, gid, err := fileNumericOwnership(original)
-	if err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := applyNumericOwnership(tempPath, uid, gid); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if _, err := temp.Write(data); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, path); err != nil {
-		return err
-	}
-	return syncDirectoryPath(parent)
 }
 
 func pathWithin(candidate, root string) bool {
@@ -467,17 +379,6 @@ func copyRestoredDockerTree(source, target string) error {
 		return err
 	}
 	return applyNumericOwnership(target, uid, gid)
-}
-
-func rollbackRestoredDockerPaths(paths []string, appRoot string) {
-	appRoot = filepath.Clean(appRoot)
-	for index := len(paths) - 1; index >= 0; index-- {
-		path := filepath.Clean(paths[index])
-		if filepath.IsAbs(path) && path != string(filepath.Separator) &&
-			pathWithin(path, appRoot) && path != appRoot {
-			_ = os.RemoveAll(path)
-		}
-	}
 }
 
 func validMigrationHost(value string) bool {

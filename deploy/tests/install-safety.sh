@@ -224,7 +224,7 @@ if grep -R -F '127.0.0.1:18443' \
 fi
 
 : >"$DOCKER_LOG"
-PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
+PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" KP_WEB_ROOT_FAIL=1 \
 	sh "$PROJECT_DIR/deploy/preflight.sh" \
 		--public-url https://panel.example.com \
 		--network-subnet 172.29.255.240/28 \

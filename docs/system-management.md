@@ -35,34 +35,34 @@ IPinfo IPv4/IPv6 HTTPS 端点，成功结果缓存 30 分钟；外部查询超�
 本地监控照常返回，页面只把公网字段标记为不可用。可设置
 `KEJILION_PUBLIC_NETWORK_LOOKUP_ENABLED=false` 完全关闭该查询。
 
-## 功能与安全边界
+## 功能与完整性边界
 
-| 业务 | 脚本产物识别 | Web 写入开放条件 |
+| 业务 | 脚本产物识别 | Web 技术前置条件 |
 | --- | --- | --- |
 | 主机名 | kernel hostname | hostname 规则校验、原子更新、回读 |
-| SSH 端口 | `sshd_config` 与片段 | 首版只安全新增端口；`sshd -t`、防火墙放行、reload、监听探测并保留旧端口 |
-| DNS | `resolv.conf` 与管理器 | 首版只接管 systemd-resolved drop-in，不替换或锁定 `resolv.conf` |
-| 时区 | `/etc/timezone` 或 `localtime` | IANA 名称白名单、回读 |
+| SSH 端口 | `sshd_config` 与片段 | 按脚本语义切换为单一端口；`sshd -t`、防火墙放行、reload、监听探测和失败恢复 |
+| DNS | `resolv.conf` 与管理器 | 当前已实现 systemd-resolved；其他管理器明确报告缺少写入适配器 |
+| 时区 | `/etc/timezone` 或 `localtime` | 有效 IANA 时区名称、回读 |
 | 虚拟内存 | `/proc/meminfo`、`/proc/swaps`、`/swapfile` | 与 `kejilion.sh` 共用 `/swapfile`；合并旧版 KPanel Swap，不清除现有分区或第三方 swapfile |
 | 系统镜像源 | APT/RPM/APK/Pacman/Zypper 源地址 | Debian/Ubuntu 对齐脚本四种区域模式；第三方源不修改，隔离 `apt-get update` 失败回滚 |
 | V4/V6 优先 | `gai.conf` | 维护 `kejilion.sh` 同一 precedence 规则并保留其他用户配置 |
 | 内核优化 | Kejilion sysctl 产物 | 五种固定预设、内存自适应、逐项应用和版本化回滚；合法脚本产物可接管 |
 | BBR | 当前/可用拥塞算法与 qdisc | 内核能力检查、独立 sysctl 文件、回读 |
-| 系统更新 | APT/DNF/YUM/Pacman/Zypper 源与后台任务状态 | 按发行版白名单选择固定命令序列；不杀死软件包进程、不删除锁、不自动重启 |
-| 系统清理 | 软件包管理器与 journal 后台任务状态 | 缓存模式或标准安全模式；不清空日志目录、临时目录、Docker、网站和备份 |
-| 重启服务器 | systemd 能力 | 输入 `REBOOT` 并二次确认；固定延迟 15 秒执行，维护任务运行期间拒绝 |
-| 重装系统 | 不适用 | 带外控制台、备份证明、一次性恢复凭证、二次确认 |
+| 系统更新 | APT/DNF/YUM/APK/Pacman/Zypper 源与后台任务状态 | 已实现对应包管理器和 systemd 后台执行器 |
+| 系统清理 | 软件包管理器与 journal 后台任务状态 | 缓存或标准策略；动作差异必须在生态对齐矩阵中明确 |
+| 重启服务器 | systemd 能力 | 普通确认后固定延迟约 15 秒执行；维护任务不构成禁止条件 |
+| 重装系统 | 不适用 | 非交互后台执行与重装后结果回传适配器尚未实现 |
 
 ## v0.3 写入范围
 
 Agent 根据宿主机命令、配置管理器和 root/sandbox 条件动态返回 capability。
-满足条件时，登录管理员可在页面填写固定字段并二次确认；不满足条件时只展示
-真实状态和明确原因。
+满足技术条件时，登录管理员可在页面填写结构化字段并普通确认；不满足条件时展示
+真实状态和缺少的命令、服务或适配器。
 
-已开放：主机名、安全新增 SSH 端口、systemd-resolved DNS、时区、脚本兼容
+已开放：主机名、SSH 单端口切换、systemd-resolved DNS、时区、脚本兼容
 `/swapfile`、Debian/Ubuntu APT 四种区域镜像预设、地址优先级、KPanel 内核调优预设和
-BBR，以及要求双重确认的服务器重启。重装系统继续锁定；SSH 旧端口删除、静态 `resolv.conf` 接管、任意软件源
-URL、任意 sysctl 和任意 Shell 均不开放。
+BBR，以及普通确认的服务器重启。重装系统、静态 `resolv.conf`、其他发行版换源和通用
+sysctl 编辑目前缺少适配器；这不是永久产品限制。
 
 ## v0.5 后台系统维护
 
@@ -74,8 +74,8 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
   DNF/DNF5/YUM 缓存刷新与升级；Arch/Manjaro 执行 `pacman -Syu`；
   openSUSE/SLES 执行 Zypper 刷新与升级。
 - 缓存清理：只调用对应软件包管理器的固定缓存清理参数。
-- 标准清理：APT、DNF/YUM 在自身支持时额外执行 `autoremove`；Pacman 和
-  Zypper 不根据动态包名删除软件包。所有系统轮转 journal，保留最近 7 天并
+- 标准清理：APT、DNF/YUM 在自身支持时额外执行 `autoremove`；Pacman 对原生
+  孤立包输出做包名语法校验后执行删除。所有 systemd 系统轮转 journal，保留最近 7 天并
   限制到 500 MiB。
 - 后台状态持久化在
   `/var/lib/kejilion-panel/system/maintenance-state.json`；同一时间只允许
@@ -104,16 +104,16 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 - 换源动作与脚本的 `upgrade_software=false`、`clean_cache=false` 一致：不升级软件包、
   不清理缓存。Docker、NodeSource 等第三方源保持不变。
 - KPanel 的系统维护读取范围已覆盖 RPM、Pacman 和 Zypper，但本版换源写入仍只开放
-  Debian/Ubuntu。其他发行版继续显示真实源和禁用原因，不伪装为已支持。
+  Debian/Ubuntu。其他发行版继续显示真实源和缺少换源适配器的原因，不伪装为已支持。
 
 ## v0.11 服务器重启
 
-- 页面要求完整输入大写 `REBOOT` 并勾选确认；Panel 继续执行登录、Origin、CSRF 和审计校验。
-- Agent 只接受固定的 `reboot` 动作和确认值，不接受 Shell、命令参数、自定义延迟或计划时间。
+- 页面使用一次普通确认；Panel 继续执行登录、Origin、CSRF 和审计校验。
+- Agent 只接受固定的 `reboot` 动作，不要求固定确认词，也不接受 Shell、命令参数、自定义延迟或计划时间。
 - 通过 `systemd-run` 创建一次性 transient timer，固定延迟约 15 秒调用系统
   `systemctl --no-wall reboot`，让 Panel 有时间落盘成功审计并向浏览器返回结果。
-- 软件包更新或清理任务运行时拒绝重启；缺少 systemd 工具、Agent 写入开关关闭、非 Linux 或
-  Agent 非 root 时，页面显示明确的禁用原因。
+- 软件包更新或清理任务运行时仍允许管理员重启；缺少 systemd 工具、Agent 写入开关关闭、非 Linux 或
+  Agent 非 root 时，页面显示真实依赖原因。
 - 重启会短暂中断 KPanel、网站和 SSH。KPanel 不声称业务已安全停机，因此管理员仍需先确认
   数据库迁移、备份、长连接和外部任务状态。
 
@@ -122,9 +122,8 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 - 状态读取同时区分 `/swapfile`、旧版 KPanel Swap 和其他活动 Swap，页面
   的总量仍以 `/proc/meminfo` 为准。
 - 设置入口提供 `kejilion.sh` 相同的 1/2/4 GiB 常用值，并允许
-  256–65536 MiB 自定义值；脚本默认值为 1 GiB。
-- 创建或调整前先检查受管 Swap 已用空间能否安全回收到内存，再在同一文件
-  系统分配临时 swapfile。内存安全门或空间分配不通过时不触碰现状。
+  任意正整数 MiB 自定义值或 0 停用；脚本默认值为 1 GiB。
+- 创建或调整时在同一文件系统分配临时 swapfile，不以当前内存余量阻止管理员提交。
 - 事务只会 `swapoff` `/swapfile` 和旧版 KPanel 路径；不会执行 `wipefs`，
   不会停用 Swap 分区或第三方 swapfile。
 - 新文件、`fstab` 和 `swapon` 任一步失败时，恢复原文件、原 `fstab` 和原
@@ -156,9 +155,9 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 ## 多发行版维护
 
 - 优先读取 `/etc/os-release` 的 `ID` 和 `ID_LIKE` 匹配 Debian/Ubuntu、
-  RHEL/Fedora、Alpine、Arch/Manjaro 和 openSUSE/SLES；未知发行版仅在本机
-  存在受支持原生工具时按工具能力安全降级。
-- 命令白名单为 APT/dpkg、DNF/DNF5/YUM、APK、Pacman 和 Zypper；Web 仍只能提交
+  RHEL/Fedora、Alpine、Arch/Manjaro 和 openSUSE/SLES；未知发行版在本机
+  存在已实现原生工具时按工具能力运行。
+- 已实现执行器为 APT/dpkg、DNF/DNF5/YUM、APK、Pacman 和 Zypper；Web 只能提交
   `full`、`cache` 或 `standard` 枚举，不能指定命令、包名、仓库或参数。
 - 启动后台任务前确认当前 Agent 绝对路径、软件包管理器、固定步骤命令和
   `systemd-run`；软件源可位于发行版自定义目录，由原生包管理器进行最终校验。
@@ -167,7 +166,6 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 - RHEL 系识别 `/etc/yum.repos.d/*.repo`，Arch 识别
   `/etc/pacman.d/mirrorlist`，openSUSE/SLES 识别
   `/etc/zypp/repos.d/*.repo`。
-- 软件源切换仍只开放 Debian/Ubuntu 的官方源和阿里云预设。RPM、Pacman、
-  Zypper 的源只读取不改写，避免破坏订阅、模块流、镜像排序或第三方仓库。
+- 软件源切换当前只实现 Debian/Ubuntu。RPM、Pacman、Zypper 的换源适配器仍需补齐。
 - APK 更新与缓存清理已有固定命令实现，但标准 Alpine/OpenRC 尚不能运行当前
   systemd Agent 安装方式，因此不属于正式部署目标。

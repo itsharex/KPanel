@@ -195,10 +195,10 @@ curl --fail --silent --show-error https://panel.example.com/api/v1/health
 还需人工确认：
 
 - 登录、注销、失效 Session 和 CSRF 拒绝；
-- `kejilion.sh` 已有站点与容器只读发现正常；
+- `kejilion.sh` 已有站点与容器可发现并能执行对应管理动作；
 - Web 创建的测试站点产物可被脚本侧列表识别；
 - 脚本侧新增测试站点后，刷新 Web 能显示实际配置；
-- 未识别容器保持只读；
+- 无 KPanel label、带特权参数或人工创建的容器仍可按实时状态管理；
 - Agent 离线时 Web 降级且所有宿主机写操作禁用。
 
 ## 回滚

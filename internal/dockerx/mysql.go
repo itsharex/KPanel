@@ -34,9 +34,6 @@ func (c *Client) DropSiteDatabase(ctx context.Context, domain string) (bool, err
 		raw.State.Paused || raw.State.Restarting {
 		return false, errors.New("fixed MySQL container is not running normally")
 	}
-	if !managedNginxLabels(raw.Config.Labels) || c.unsafeNginxReason(raw) != "" {
-		return false, ErrReadOnlyContainer
-	}
 	password := containerEnvironmentValue(raw.Config.Env, "MYSQL_ROOT_PASSWORD")
 	if password == "" {
 		password = containerEnvironmentValue(raw.Config.Env, "MARIADB_ROOT_PASSWORD")

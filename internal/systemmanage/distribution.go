@@ -134,7 +134,7 @@ func (m *Manager) detectPackageManager() packageManagerSupport {
 		}
 		return packageManagerSupport{
 			osID:   osID,
-			reason: fmt.Sprintf("发行版 %s 尚未加入安全维护白名单", osID),
+			reason: fmt.Sprintf("发行版 %s 未识别到已实现的软件包管理器适配器", osID),
 		}
 	}
 }

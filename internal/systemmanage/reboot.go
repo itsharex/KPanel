@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	rebootConfirmation = "REBOOT"
-	rebootDelay        = 15 * time.Second
-	rebootUnitName     = "kejilion-panel-reboot"
+	rebootDelay    = 15 * time.Second
+	rebootUnitName = "kejilion-panel-reboot"
 )
 
 func (m *Manager) scheduleReboot(
@@ -21,15 +20,8 @@ func (m *Manager) scheduleReboot(
 ) (bool, string, error) {
 	if !validRebootRequest(input) {
 		return false, "", fmt.Errorf(
-			"%w: confirmation must be exactly %s and no unrelated fields are allowed",
+			"%w: reboot accepts only the typed action and no unrelated fields",
 			ErrInvalidInput,
-			rebootConfirmation,
-		)
-	}
-	if m.readMaintenance().State == "running" {
-		return false, "", fmt.Errorf(
-			"%w: a system maintenance task is still running",
-			ErrConflict,
 		)
 	}
 	if m.rebootScheduled {
@@ -68,14 +60,13 @@ func (m *Manager) scheduleReboot(
 	}
 	m.rebootScheduled = true
 	return true, fmt.Sprintf(
-		"重启任务已安全排队，服务器将在约 %d 秒后离线；正常情况下 KPanel 会随系统启动恢复",
+		"重启任务已排队，服务器将在约 %d 秒后离线；正常情况下 KPanel 会随系统启动恢复",
 		int(rebootDelay/time.Second),
 	), nil
 }
 
 func validRebootRequest(input contract.SystemActionRequest) bool {
 	return input.Action == "reboot" &&
-		input.Confirmation == rebootConfirmation &&
 		input.Hostname == "" &&
 		input.Port == 0 &&
 		len(input.Servers) == 0 &&

@@ -107,7 +107,6 @@ const mirrorPresets: Array<{
 
 const selectedTool = ref<ManagementTool>()
 const actionRunning = ref(false)
-const actionConfirmed = ref(false)
 const actionForm = reactive({
   hostname: '',
   port: 2222,
@@ -122,7 +121,6 @@ const actionForm = reactive({
   profile: 'balanced' as KernelProfile,
   bbrEnabled: true,
   maintenancePolicy: 'full' as 'full' | 'cache' | 'standard',
-  rebootConfirmation: '',
 })
 
 watch(
@@ -141,7 +139,7 @@ const agentLabel = computed(() => {
   const agent = data.value?.agent
   if (!agent?.connected) return { status: 'offline', label: 'Agent 离线' }
   if (!agent.compatible) return { status: 'incompatible', label: '版本不兼容' }
-  if (agent.readOnly) return { status: 'read_only', label: '只读模式' }
+  if (agent.readOnly) return { status: 'read_only', label: '写入依赖未就绪' }
   return { status: 'connected', label: '运行正常' }
 })
 
@@ -186,7 +184,7 @@ const basicSettings = computed<ManagementTool[]>(() => {
       value: management.ssh.ports.length ? management.ssh.ports.join('、') : '待 Agent 升级',
       detail: management.ssh.source === 'default' ? 'OpenSSH 默认端口' : '来自 sshd 配置',
       capability: 'system.ssh-port.write',
-      safety: '必须先开放并验证新端口，再保留旧会话和旧端口作为恢复通道。',
+      safety: '先开放并验证新端口，再按 kejilion.sh 语义把 SSH 配置切换为单一端口；失败自动恢复。',
       icon: KeyRound,
       tone: 'blue',
     },
@@ -197,7 +195,7 @@ const basicSettings = computed<ManagementTool[]>(() => {
       value: management.dns.servers.length ? management.dns.servers.join(' · ') : '未识别',
       detail: `解析器：${management.dns.manager || 'unknown'}`,
       capability: 'system.dns.write',
-      safety: '按 systemd-resolved、resolvconf 或静态配置分别处理，不锁定 resolv.conf。',
+      safety: '当前写入适配器使用 systemd-resolved；其他 DNS 管理器会明确显示缺少对应适配器。',
       icon: Network,
       tone: 'violet',
     },
@@ -344,11 +342,11 @@ const maintenanceTools = computed<ManagementTool[]>(() => {
     {
       id: 'system-reboot',
       title: '重启服务器',
-      description: '安全安排宿主机重启，面板和当前连接会短暂离线。',
+      description: '安排宿主机重启，面板和当前连接会短暂离线。',
       value: maintenance.rebootRequired ? '系统建议重启' : '受控延时重启',
       detail: '确认后延迟约 15 秒执行，为审计记录和页面响应预留时间。',
       capability: 'system.reboot.write',
-      safety: '只创建固定参数的 systemd 延时重启单元；维护任务运行期间禁止重启，不接受命令、时间或脚本参数。',
+      safety: '创建 systemd 延时重启单元；即使维护任务正在运行，管理员确认后也可直接重启。',
       icon: Power,
       tone: 'danger',
     },
@@ -360,9 +358,9 @@ const reinstallTool = computed<ManagementTool>(() => ({
   title: '重装系统',
   description: '对应 kejilion.sh 的“重装系统”。此操作会清除系统并导致面板离线。',
   value: '高风险操作',
-  detail: '当前版本保持锁定',
+  detail: '等待非交互任务适配器',
   capability: 'system.reinstall',
-  safety: '必须依赖带外控制台、数据备份、一次性恢复凭证和二次确认；仅有 Web 会话时不开放。',
+  safety: '当前缺少将系统镜像、发行版版本和重装后凭证传给 kejilion.sh 的非交互协议；这是待实现功能，不是产品限制。',
   icon: RefreshCcw,
   tone: 'danger',
 }))
@@ -387,7 +385,7 @@ function openTool(tool: ManagementTool): void {
     : customPreset
   const preferredSwapBytes = management?.swap.legacySizeBytes || management?.swap.fileSizeBytes || 0
   actionForm.swapSizeMiB = preferredSwapBytes
-    ? Math.max(256, Math.round(preferredSwapBytes / 1024 / 1024))
+    ? Math.max(1, Math.round(preferredSwapBytes / 1024 / 1024))
     : 1024
   actionForm.swapPreset = [1024, 2048, 4096].includes(actionForm.swapSizeMiB)
     ? String(actionForm.swapSizeMiB) as '1024' | '2048' | '4096'
@@ -400,8 +398,6 @@ function openTool(tool: ManagementTool): void {
   )
   actionForm.bbrEnabled = !management?.bbr.enabled
   actionForm.maintenancePolicy = tool.id === 'system-cleanup' ? 'standard' : 'full'
-  actionForm.rebootConfirmation = ''
-  actionConfirmed.value = false
   selectedTool.value = tool
 }
 
@@ -445,7 +441,6 @@ function applySwapPreset(): void {
 function closeTool(): void {
   if (actionRunning.value) return
   selectedTool.value = undefined
-  actionConfirmed.value = false
 }
 
 const actionInput = computed<SystemActionInput | undefined>(() => {
@@ -477,9 +472,7 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
     case 'system-cleanup':
       return { action: 'cleanup', maintenancePolicy: actionForm.maintenancePolicy }
     case 'system-reboot':
-      return actionForm.rebootConfirmation.trim() === 'REBOOT'
-        ? { action: 'reboot', confirmation: 'REBOOT' }
-        : { action: 'reboot', confirmation: undefined }
+      return { action: 'reboot' }
     default:
       return undefined
   }
@@ -488,7 +481,7 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
 const actionValid = computed(() => {
   const input = actionInput.value
   if (!input || !selectedTool.value || !capabilityState(selectedTool.value.capability).enabled) return false
-  if ((input.action === 'update' || input.action === 'cleanup' || input.action === 'reboot') && maintenanceRunning.value) {
+  if ((input.action === 'update' || input.action === 'cleanup') && maintenanceRunning.value) {
     return false
   }
   switch (input.action) {
@@ -497,13 +490,13 @@ const actionValid = computed(() => {
     case 'ssh-port':
       return Number.isInteger(input.port) && Number(input.port) >= 1 && Number(input.port) <= 65535
     case 'dns':
-      return Boolean(input.servers?.length && input.servers.length <= 4)
+      return Boolean(input.servers?.length)
     case 'timezone':
       return Boolean(input.timezone && !input.timezone.includes('..'))
     case 'swap':
-      return input.swapSizeMiB === 0 || Boolean(input.swapSizeMiB && input.swapSizeMiB >= 256 && input.swapSizeMiB <= 65536)
+      return input.swapSizeMiB === 0 || Boolean(input.swapSizeMiB && input.swapSizeMiB >= 1)
     case 'reboot':
-      return input.confirmation === 'REBOOT'
+      return true
     default:
       return true
   }
@@ -512,7 +505,7 @@ const actionValid = computed(() => {
 async function executeAction(): Promise<void> {
   const tool = selectedTool.value
   const input = actionInput.value
-  if (!tool || !input || !actionValid.value || !actionConfirmed.value || actionRunning.value) return
+  if (!tool || !input || !actionValid.value || actionRunning.value) return
   actionRunning.value = true
   try {
     const result = await api.system.action(input)
@@ -525,7 +518,6 @@ async function executeAction(): Promise<void> {
     }
     if (input.action !== 'reboot') await load(true)
     selectedTool.value = undefined
-    actionConfirmed.value = false
   } catch (reason) {
     toast.danger(`${tool.title}执行失败`, reason instanceof ApiError ? reason.message : 'Agent 未能完成该操作。')
   } finally {
@@ -792,7 +784,7 @@ onBeforeUnmount(() => {
               <span class="panel-card__icon panel-card__icon--violet"><RefreshCw :size="18" /></span>
               <div>
                 <h2>系统维护</h2>
-                <p>参考 kejilion.sh 更新与清理流程，使用独立后台任务安全执行</p>
+                <p>参考 kejilion.sh 更新与清理流程，使用独立后台任务执行</p>
               </div>
             </div>
             <span v-if="maintenanceRunning" class="management-read-state">
@@ -818,13 +810,13 @@ onBeforeUnmount(() => {
                 </span>
                 <span class="system-tool__state">
                   {{
-                    maintenanceRunning
+                    maintenanceRunning && maintenanceActionFor(tool.id)
                       ? data.management.maintenance.action === maintenanceActionFor(tool.id)
                         ? `进行中 ${data.management.maintenance.progress}%`
                         : '任务占用'
                       : capabilityState(tool.capability).enabled
                         ? '可执行'
-                        : '受保护'
+                        : '依赖未就绪'
                   }}
                 </span>
               </span>
@@ -909,7 +901,7 @@ onBeforeUnmount(() => {
                   <component :is="tool.icon" :size="19" />
                 </span>
                 <span class="system-tool__state">
-                  {{ capabilityState(tool.capability).enabled ? '可配置' : '受保护' }}
+                  {{ capabilityState(tool.capability).enabled ? '可配置' : '适配器未实现' }}
                 </span>
               </span>
               <strong>{{ tool.title }}</strong>
@@ -937,7 +929,7 @@ onBeforeUnmount(() => {
             <span class="panel-card__icon panel-card__icon--violet"><Database :size="18" /></span>
             <div>
               <h2>核心服务</h2>
-              <p>固定白名单服务状态</p>
+              <p>关键服务状态</p>
             </div>
           </div>
         </header>
@@ -970,7 +962,7 @@ onBeforeUnmount(() => {
         <div class="management-dialog__section">
           <span class="management-dialog__section-icon"><ShieldCheck :size="17" /></span>
           <div>
-            <strong>KPanel 安全执行规则</strong>
+            <strong>执行与回滚规则</strong>
             <p>{{ selectedTool.safety }}</p>
           </div>
         </div>
@@ -982,9 +974,9 @@ onBeforeUnmount(() => {
             <small>仅允许小写字母、数字、连字符和点。</small>
           </label>
           <label v-else-if="selectedTool.id === 'ssh-port'" class="field">
-            <span>新增 SSH 端口</span>
+            <span>新的 SSH 端口</span>
             <input v-model.number="actionForm.port" type="number" min="1" max="65535" inputmode="numeric" />
-            <small>新端口监听成功前不会移除任何现有端口。</small>
+            <small>成功后替换原 SSH 监听端口；当前 SSH 会话通常不会立即断开。</small>
           </label>
           <div v-else-if="selectedTool.id === 'dns'" class="form-stack compact">
             <label class="field">
@@ -1000,7 +992,7 @@ onBeforeUnmount(() => {
             <label class="field">
               <span>DNS 服务器</span>
               <textarea v-model.trim="actionForm.dns" rows="4" placeholder="1.1.1.1&#10;8.8.8.8"></textarea>
-              <small>每行一个 IP，最多 4 个；通过 systemd-resolved 原生配置应用。</small>
+              <small>每行一个 IPv4 或 IPv6 地址；按宿主机可用的 DNS 后端应用。</small>
             </label>
           </div>
           <div v-else-if="selectedTool.id === 'timezone'" class="form-stack compact">
@@ -1042,12 +1034,11 @@ onBeforeUnmount(() => {
               <input
                 v-model.number="actionForm.swapSizeMiB"
                 type="number"
-                min="256"
-                max="65536"
+                min="1"
                 step="1"
                 inputmode="numeric"
               />
-              <small>允许 256–65536 MiB；执行前会检查可用内存，避免危险的 swapoff。</small>
+              <small>允许任意正整数 MiB；按 kejilion.sh 直接调整 `/swapfile`，底层命令失败时恢复原状态。</small>
             </label>
             <div
               v-if="data?.management.swap.legacyExists || data?.management.swap.legacyActive"
@@ -1120,7 +1111,7 @@ onBeforeUnmount(() => {
             <span>清理范围</span>
             <select v-model="actionForm.maintenancePolicy">
               <option value="cache">仅清理软件包缓存</option>
-              <option value="standard">标准安全清理：无用依赖、缓存、7 天前旧日志</option>
+              <option value="standard">标准清理：无用依赖、缓存和旧日志</option>
             </select>
             <small>不会清理 Docker、网站文件、数据库、`/tmp` 或 KPanel 配置备份。</small>
           </label>
@@ -1129,33 +1120,9 @@ onBeforeUnmount(() => {
               <CircleAlert :size="17" />
               <span>重启会立即中断 SSH、网站请求和面板连接。请先确认没有正在执行的业务任务。</span>
             </div>
-            <label class="field">
-              <span>输入 REBOOT 确认</span>
-              <input
-                v-model.trim="actionForm.rebootConfirmation"
-                maxlength="6"
-                autocomplete="off"
-                autocapitalize="characters"
-                spellcheck="false"
-                placeholder="REBOOT"
-              />
-              <small>必须完整输入大写 REBOOT；执行时间固定，不能从 Web 传入命令或延迟参数。</small>
-            </label>
+            <small>执行时间固定，不能从 Web 传入任意命令或延迟参数。</small>
           </div>
 
-          <label class="confirmation-check">
-            <input v-model="actionConfirmed" type="checkbox" />
-            <span v-if="selectedTool.id === 'system-reboot'">
-              我确认重启当前宿主机，并理解 KPanel、网站和 SSH 会短暂离线。
-            </span>
-            <span v-else-if="selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup'">
-              我确认启动系统维护任务；软件包更新和清理不可自动回滚。
-            </span>
-            <span v-else-if="selectedTool.id === 'swap'">
-              我确认调整 `/swapfile`；执行期间会短暂停用受管 Swap，失败时恢复原状态。
-            </span>
-            <span v-else>我确认执行此项变更；失败时 KPanel 将自动恢复已备份的配置。</span>
-          </label>
         </div>
 
         <div
@@ -1167,8 +1134,7 @@ onBeforeUnmount(() => {
             {{
               maintenanceRunning &&
               (selectedTool.id === 'system-update' ||
-                selectedTool.id === 'system-cleanup' ||
-                selectedTool.id === 'system-reboot')
+                selectedTool.id === 'system-cleanup')
                 ? '已有系统维护任务正在后台执行，请等待完成后再提交新任务。'
                 : capabilityState(selectedTool.capability).enabled
                   ? selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup'
@@ -1186,7 +1152,7 @@ onBeforeUnmount(() => {
         <button
           class="button button--primary"
           type="button"
-          :disabled="!actionValid || !actionConfirmed || actionRunning"
+          :disabled="!actionValid || actionRunning"
           @click="executeAction"
         >
           <ShieldCheck :size="16" />

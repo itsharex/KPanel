@@ -17,6 +17,8 @@ func TestDropSiteDatabaseUsesFixedManagedContainerAndSecretEnvironment(t *testin
 	password := "root password with shell $ characters"
 	raw := managedInspect(containerID, "2026-07-25T00:00:00Z", 0)
 	raw.Name = "/mysql"
+	raw.Config.Labels = map[string]string{}
+	raw.HostConfig.Privileged = true
 	raw.Config.Env = []string{"MYSQL_ROOT_PASSWORD=" + password}
 
 	var sequence []string

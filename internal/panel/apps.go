@@ -86,8 +86,8 @@ func validateAppActionInput(action string, input appActionInput) (field, detail 
 		if input.ResourceVersion.Set {
 			return "resourceVersion", "resourceVersion is not allowed for install"
 		}
-		if input.HostPort.Set && (input.HostPort.Value < 1024 || input.HostPort.Value > 65535) {
-			return "hostPort", "hostPort must be between 1024 and 65535"
+		if input.HostPort.Set && (input.HostPort.Value < 1 || input.HostPort.Value > 65535) {
+			return "hostPort", "hostPort must be between 1 and 65535"
 		}
 		if input.AccessMode.Set && input.AccessMode.Value != "direct" && input.AccessMode.Value != "domain_only" {
 			return "accessMode", "accessMode must be direct or domain_only"

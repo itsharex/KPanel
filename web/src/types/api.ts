@@ -219,7 +219,6 @@ export interface SystemActionInput {
   preference?: 'ipv4' | 'system_default'
   profile?: 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
   maintenancePolicy?: 'full' | 'cache' | 'standard'
-  confirmation?: 'REBOOT'
   enabled?: boolean
 }
 
@@ -385,6 +384,7 @@ export interface SiteDeleteResult {
   resourceVersion: string
   removed: string[]
   databaseDropped: boolean
+  warnings?: string[]
 }
 
 export interface DockerPort {
@@ -510,11 +510,12 @@ export interface DockerContainerCreatePort {
   privatePort: number
   publicPort: number
   protocol?: 'tcp' | 'udp'
-  hostIp?: '0.0.0.0' | '127.0.0.1' | '::' | '::1'
+  hostIp?: string
 }
 
 export interface DockerContainerCreateMount {
-  volume: string
+  type?: 'volume' | 'bind'
+  source: string
   target: string
   readOnly?: boolean
 }
@@ -551,11 +552,10 @@ export interface DockerMaintenanceInput {
   image?: string
   target?: string
   name?: string
-  driver?: 'bridge' | 'local'
+  driver?: string
   containerId?: string
   containerResourceVersion?: string
   expectedResourceVersion?: string
-  confirmation?: 'PRUNE' | 'RESTORE' | 'MIGRATE'
   preset?: 'cn' | 'official'
   enabled?: boolean
   ipv6Cidr?: string

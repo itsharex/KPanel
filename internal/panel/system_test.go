@@ -60,7 +60,8 @@ func TestValidateSystemAction(t *testing.T) {
 		{"empty DNS", contract.SystemActionRequest{Action: "dns"}, false},
 		{"DNS", contract.SystemActionRequest{Action: "dns", Servers: []string{"1.1.1.1", "2606:4700:4700::1111"}}, true},
 		{"timezone traversal", contract.SystemActionRequest{Action: "timezone", Timezone: "../../etc"}, false},
-		{"swap too small", contract.SystemActionRequest{Action: "swap", SwapSizeMiB: 128}, false},
+		{"small swap", contract.SystemActionRequest{Action: "swap", SwapSizeMiB: 128}, true},
+		{"negative swap", contract.SystemActionRequest{Action: "swap", SwapSizeMiB: -1}, false},
 		{"disable swap", contract.SystemActionRequest{Action: "swap", SwapSizeMiB: 0}, true},
 		{"mainland mirror", contract.SystemActionRequest{Action: "mirror", MirrorPreset: "cn-default"}, true},
 		{"education mirror", contract.SystemActionRequest{Action: "mirror", MirrorPreset: "cn-edu"}, true},
@@ -79,8 +80,8 @@ func TestValidateSystemAction(t *testing.T) {
 		{"cache cleanup", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "cache"}, true},
 		{"standard cleanup", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "standard"}, true},
 		{"unknown cleanup policy", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "deep"}, false},
-		{"reboot", contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT"}, true},
-		{"reboot without confirmation", contract.SystemActionRequest{Action: "reboot"}, false},
+		{"reboot", contract.SystemActionRequest{Action: "reboot"}, true},
+		{"reboot with legacy confirmation", contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT"}, true},
 		{"reboot with unrelated field", contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT", Hostname: "ignored"}, false},
 		{"arbitrary command", contract.SystemActionRequest{Action: "shell"}, false},
 	}
@@ -94,11 +95,11 @@ func TestValidateSystemAction(t *testing.T) {
 	}
 }
 
-func TestSystemActionAuditChangeRecordsRebootWithoutConfirmationText(t *testing.T) {
+func TestSystemActionAuditChangeRecordsRebootIntentWithoutConfirmationText(t *testing.T) {
 	change := systemActionAuditChange(contract.SystemActionRequest{
 		Action: "reboot", Confirmation: "REBOOT",
 	})
-	if len(change) != 2 || change["action"] != "reboot" || change["confirmed"] != true {
+	if len(change) != 2 || change["action"] != "reboot" || change["requested"] != true {
 		t.Fatalf("unexpected reboot audit change: %#v", change)
 	}
 	if _, leaked := change["confirmation"]; leaked {

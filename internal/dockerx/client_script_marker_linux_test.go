@@ -29,7 +29,9 @@ func TestScriptPortMarkerMakesStandaloneContainerManageable(t *testing.T) {
 	}
 	raw.HostConfig.Privileged = true
 	summary = client.summaryFromInspect(raw)
-	if len(summary.AllowedActions) != 0 {
-		t.Fatalf("unsafe script container became writable: %#v", summary)
+	if !contains(summary.AllowedActions, "restart") ||
+		!contains(summary.AllowedActions, "logs") ||
+		!contains(summary.AllowedActions, "exec") {
+		t.Fatalf("runtime configuration drift disabled script container management: %#v", summary)
 	}
 }

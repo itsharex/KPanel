@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestExactDeclarativeContainerAccessModes(t *testing.T) {
+func TestDeclarativePortBindingAcceptsScriptCompatibleRuntimeDrift(t *testing.T) {
 	spec := DeclarativeAppSpec{
 		Token: "it-tools", ContainerName: "it-tools",
 		Image: "corentinth/it-tools:latest", ContainerPort: 80,
@@ -24,20 +24,22 @@ func TestExactDeclarativeContainerAccessModes(t *testing.T) {
 	}{
 		"80/tcp": {{HostIP: "0.0.0.0", HostPort: "8064"}},
 	}
-	port, access, ok := exactDeclarativeContainer(raw, spec)
+	port, access, ok := declarativePortBinding(raw, spec)
 	if !ok || port != 8064 || access != "direct" {
 		t.Fatalf("direct container mismatch: port=%d access=%s ok=%v", port, access, ok)
 	}
 	bindings := raw.NetworkSettings.Ports["80/tcp"]
 	bindings[0].HostIP = "127.0.0.1"
 	raw.NetworkSettings.Ports["80/tcp"] = bindings
-	_, access, ok = exactDeclarativeContainer(raw, spec)
+	_, access, ok = declarativePortBinding(raw, spec)
 	if !ok || access != "domain_only" {
 		t.Fatalf("domain-only container mismatch: access=%s ok=%v", access, ok)
 	}
 	raw.HostConfig.Privileged = true
-	if _, _, ok := exactDeclarativeContainer(raw, spec); ok {
-		t.Fatal("privileged container was accepted as declarative")
+	raw.Mounts = []dockerMount{{Source: "/data", Destination: "/data"}}
+	raw.Config.Image = "locally-customized/image:latest"
+	if _, _, ok := declarativePortBinding(raw, spec); !ok {
+		t.Fatal("runtime drift incorrectly disabled application management")
 	}
 }
 

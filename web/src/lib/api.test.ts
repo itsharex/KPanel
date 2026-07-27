@@ -167,7 +167,7 @@ describe('API client', () => {
     })
   })
 
-  it('sends an explicit site deletion scope and exact domain confirmation', async () => {
+  it('sends an explicit site deletion scope without a typed confirmation gate', async () => {
     const id = 'a'.repeat(32)
     const version = `sha256:${'b'.repeat(64)}`
     const fetchMock = vi.fn().mockResolvedValueOnce(
@@ -183,7 +183,7 @@ describe('API client', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(api.sites.remove(id, version, 'full', 'example.com')).resolves.toMatchObject({
+    await expect(api.sites.remove(id, version, 'full')).resolves.toMatchObject({
       status: 'deleted',
       mode: 'full',
       primaryDomain: 'example.com',
@@ -194,7 +194,6 @@ describe('API client', () => {
     expect(JSON.parse(String(requestInit.body))).toEqual({
       expectedResourceVersion: version,
       mode: 'full',
-      confirmDomain: 'example.com',
     })
   })
 
@@ -336,7 +335,7 @@ describe('API client', () => {
     })
   })
 
-  it('submits the fixed reboot confirmation without command parameters', async () => {
+  it('submits a typed reboot action without a confirmation password', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       jsonResponse({
         action: 'reboot',
@@ -348,12 +347,11 @@ describe('API client', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await api.system.action({ action: 'reboot', confirmation: 'REBOOT' })
+    await api.system.action({ action: 'reboot' })
 
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit
     expect(JSON.parse(String(init.body))).toEqual({
       action: 'reboot',
-      confirmation: 'REBOOT',
     })
   })
 

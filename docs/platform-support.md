@@ -14,7 +14,7 @@ Rocky 等系统分别制作 Panel 镜像。
 | 已实现，待实机准入 | Arch Linux、Manjaro | Pacman 与 systemd 路径已实现 |
 | 已实现，待实机准入 | openSUSE Leap/Tumbleweed、SLES | Zypper 与 systemd 路径已实现 |
 | 暂不支持正式安装 | Alpine Linux | 宿主机使用 OpenRC，当前 Agent 安装和事务执行依赖 systemd |
-| 安全降级 | 其他或无法识别的 systemd Linux | 检测本机 APT/dpkg、DNF/DNF5/YUM、APK、Pacman 或 Zypper；没有受支持工具时返回明确的只读原因 |
+| 工具探测适配 | 其他或无法识别的 systemd Linux | 检测本机 APT/dpkg、DNF/DNF5/YUM、APK、Pacman 或 Zypper；没有已实现工具时返回明确的缺失适配器原因 |
 
 “已实现”表示代码路径和固定命令矩阵通过自动化测试，不等于已经完成对应发行版
 的真实服务器验收。进入正式支持层级前，必须在干净实例上完成安装、更新、清理、
@@ -26,13 +26,13 @@ Rocky 等系统分别制作 Panel 镜像。
 | --- | --- | --- |
 | CPU、内存、负载、磁盘、网络、系统版本 | 读取宿主机 `/proc`、挂载点和系统文件 | 基本不依赖发行版 |
 | 网站与 Docker | 读取宿主机 Docker Engine、`/home/web`、`/home/docker` | 依赖 Kejilion 产物布局，不依赖包管理器 |
-| 主机名、时区、Swap、IP 优先级、内核优化、BBR | 按命令和内核能力动态开放 | 缺少工具时自动只读 |
-| SSH 新端口 | 支持 `ssh.service`、`sshd.service`，兼容 UFW、Firewalld、iptables | 必须存在 OpenSSH 配置和安全重载能力 |
-| DNS 写入 | systemd-resolved drop-in | NetworkManager、resolvconf、静态 resolv.conf 暂时只读 |
+| 主机名、时区、Swap、IP 优先级、内核优化、BBR | 按命令和内核能力动态开放 | 缺少工具时明确显示依赖未就绪 |
+| SSH 端口 | 支持 `ssh.service`、`sshd.service`，兼容 UFW、Firewalld、iptables | 必须存在 OpenSSH 配置、reload 与监听验证能力 |
+| DNS 写入 | systemd-resolved drop-in | NetworkManager、resolvconf、静态 resolv.conf 的写入适配器尚未实现 |
 | 软件源读取 | APT、DNF/YUM、APK、Pacman、Zypper | 页面展示实际源主机 |
-| 软件源切换 | Debian/Ubuntu APT | 其他系统只读，避免覆盖订阅和第三方仓库 |
+| 软件源切换 | Debian/Ubuntu APT | 其他系统的换源适配器尚未实现 |
 | 系统更新/清理 | APT、DNF/DNF5/YUM、APK、Pacman、Zypper | 固定命令；不接受 Web 传入的包名、命令或 Shell |
-| 重装系统 | 全部锁定 | 必须先具备带外控制台和恢复链路 |
+| 重装系统 | 非交互适配器未实现 | 需要补齐镜像参数、后台执行和重装后结果回传协议 |
 
 ## 部署前置条件
 
@@ -47,7 +47,7 @@ Rocky 等系统分别制作 Panel 镜像。
 
 ## 发行版维护命令
 
-| 系列 | 更新 | 缓存清理 | 标准安全清理 |
+| 系列 | 更新 | 缓存清理 | 标准清理 |
 | --- | --- | --- | --- |
 | Debian/Ubuntu | dpkg 恢复、APT update、full-upgrade | APT clean/autoclean | APT autoremove + 缓存 + journal |
 | RHEL/Fedora | DNF/DNF5/YUM update | clean all | autoremove + 缓存重建 + journal |

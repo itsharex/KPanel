@@ -47,7 +47,7 @@ func (c *Client) LifecycleDeclarativeApp(
 	expectedVersion string,
 ) (ActionResult, error) {
 	if action != "start" && action != "stop" && action != "restart" {
-		return ActionResult{}, ErrUnsafeOrInvalidAction
+		return ActionResult{}, ErrActionUnsupported
 	}
 	if expectedVersion == "" {
 		return ActionResult{}, ErrVersionRequired
@@ -58,15 +58,8 @@ func (c *Client) LifecycleDeclarativeApp(
 	if err != nil {
 		return ActionResult{}, err
 	}
-	switch action {
-	case "start":
-		if current.State.Status != "created" && current.State.Status != "exited" && current.State.Status != "dead" {
-			return ActionResult{}, ErrUnsafeOrInvalidAction
-		}
-	case "stop", "restart":
-		if !current.State.Running || current.State.Paused || current.State.Restarting {
-			return ActionResult{}, ErrUnsafeOrInvalidAction
-		}
+	if !contains(c.summaryFromInspect(current).AllowedActions, action) {
+		return ActionResult{}, ErrActionUnsupported
 	}
 	endpoint := "/containers/" + current.ID + "/" + action
 	if action == "stop" || action == "restart" {
@@ -157,6 +150,12 @@ func (c *Client) UpdateDeclarativeApp(
 	if err != nil {
 		return AppMutationResult{}, err
 	}
+	if hostPort == 0 {
+		return AppMutationResult{}, fmt.Errorf(
+			"%w: the application container does not expose the expected TCP port",
+			ErrAppConflict,
+		)
+	}
 	if err := c.pullImage(ctx, spec.Image); err != nil {
 		return AppMutationResult{}, err
 	}
@@ -177,7 +176,7 @@ func (c *Client) SetDeclarativeAppAccess(
 	accessMode string,
 ) (AppMutationResult, error) {
 	if accessMode != "direct" && accessMode != "domain_only" {
-		return AppMutationResult{}, ErrUnsafeOrInvalidAction
+		return AppMutationResult{}, ErrActionUnsupported
 	}
 	if expectedVersion == "" {
 		return AppMutationResult{}, ErrVersionRequired
@@ -187,6 +186,12 @@ func (c *Client) SetDeclarativeAppAccess(
 	current, _, hostPort, currentAccess, err := c.verifiedDeclarativeContainer(ctx, spec, expectedVersion)
 	if err != nil {
 		return AppMutationResult{}, err
+	}
+	if hostPort == 0 {
+		return AppMutationResult{}, fmt.Errorf(
+			"%w: the application container does not expose the expected TCP port",
+			ErrAppConflict,
+		)
 	}
 	if currentAccess == accessMode {
 		summary := c.summaryFromInspect(current)
@@ -271,64 +276,34 @@ func (c *Client) verifiedDeclarativeContainer(
 	if summary.ResourceVersion != expectedVersion {
 		return containerInspect{}, contractSummary{}, 0, "", ErrResourceConflict
 	}
-	hostPort, accessMode, ok := exactDeclarativeContainer(raw, spec)
-	if !ok {
-		return containerInspect{}, contractSummary{}, 0, "", ErrReadOnlyContainer
+	if strings.TrimPrefix(raw.Name, "/") != spec.ContainerName {
+		return containerInspect{}, contractSummary{}, 0, "", ErrAppConflict
 	}
+	hostPort, accessMode, _ := declarativePortBinding(raw, spec)
 	return raw, contractSummary{ID: summary.ID, ResourceVersion: summary.ResourceVersion}, hostPort, accessMode, nil
 }
 
-func exactDeclarativeContainer(raw containerInspect, spec DeclarativeAppSpec) (uint16, string, bool) {
-	imageMatches := normalizedAppImage(raw.Config.Image) == normalizedAppImage(spec.Image)
-	if !imageMatches && strings.HasPrefix(raw.Config.Image, "sha256:") {
-		imageMatches = raw.Config.Labels["io.kejilion.panel.managed"] == "true" &&
-			raw.Config.Labels["io.kejilion.panel.app"] == spec.Token &&
-			normalizedAppImage(raw.Config.Labels["io.kejilion.panel.image"]) == normalizedAppImage(spec.Image)
-	}
-	if strings.TrimPrefix(raw.Name, "/") != spec.ContainerName ||
-		!imageMatches ||
-		len(raw.Mounts) != 0 || raw.Config.Tty || raw.HostConfig.RestartPolicy.Name != "always" ||
-		cUnsafeReason(raw) != "" {
-		return 0, "", false
-	}
-	if len(raw.NetworkSettings.Ports) != 1 {
+func declarativePortBinding(raw containerInspect, spec DeclarativeAppSpec) (uint16, string, bool) {
+	if strings.TrimPrefix(raw.Name, "/") != spec.ContainerName {
 		return 0, "", false
 	}
 	key := strconv.Itoa(int(spec.ContainerPort)) + "/tcp"
 	bindings, ok := raw.NetworkSettings.Ports[key]
-	if !ok || len(bindings) != 1 {
+	if !ok {
 		return 0, "", false
 	}
-	port, err := strconv.ParseUint(bindings[0].HostPort, 10, 16)
-	if err != nil || port < 1 {
-		return 0, "", false
-	}
-	switch bindings[0].HostIP {
-	case "", "0.0.0.0", "::":
-		return uint16(port), "direct", true
-	case "127.0.0.1":
-		return uint16(port), "domain_only", true
-	default:
-		return 0, "", false
-	}
-}
-
-// This fixed policy mirrors Client.unsafeReason without depending on ownership.
-func cUnsafeReason(raw containerInspect) string {
-	host := raw.HostConfig
-	if host.Privileged || host.NetworkMode == "host" ||
-		host.PidMode == "host" || host.IpcMode == "host" ||
-		host.UTSMode == "host" || host.UsernsMode == "host" ||
-		len(host.CapAdd) > 0 || len(host.Devices) > 0 || len(raw.Mounts) > 0 {
-		return "unsafe container configuration"
-	}
-	for _, option := range host.SecurityOpt {
-		lower := strings.ToLower(option)
-		if strings.Contains(lower, "unconfined") || strings.Contains(lower, "disable") {
-			return "unsafe security option"
+	for _, binding := range bindings {
+		port, err := strconv.ParseUint(binding.HostPort, 10, 16)
+		if err != nil || port < 1 {
+			continue
 		}
+		hostIP := strings.TrimSpace(binding.HostIP)
+		if hostIP == "127.0.0.1" || hostIP == "::1" {
+			return uint16(port), "domain_only", true
+		}
+		return uint16(port), "direct", true
 	}
-	return ""
+	return 0, "", false
 }
 
 func (c *Client) replaceDeclarativeContainer(
@@ -388,7 +363,7 @@ func (c *Client) replaceDeclarativeContainer(
 }
 
 func accessModeFromInspect(raw containerInspect, spec DeclarativeAppSpec) string {
-	_, access, ok := exactDeclarativeContainer(raw, spec)
+	_, access, ok := declarativePortBinding(raw, spec)
 	if !ok {
 		return "direct"
 	}
@@ -520,17 +495,10 @@ func (c *Client) appDockerRequest(
 func validateDeclarativeSpec(spec DeclarativeAppSpec, hostPort uint16, accessMode string) error {
 	if !appTokenPattern.MatchString(spec.Token) || !appNamePattern.MatchString(spec.ContainerName) ||
 		!appImagePattern.MatchString(spec.Image) || spec.ContainerPort == 0 ||
-		hostPort < 1024 || (accessMode != "direct" && accessMode != "domain_only") {
-		return ErrUnsafeOrInvalidAction
+		hostPort == 0 || (accessMode != "direct" && accessMode != "domain_only") {
+		return ErrActionUnsupported
 	}
 	return nil
-}
-
-func normalizedAppImage(image string) string {
-	if !strings.Contains(image, ":") && !strings.Contains(image, "@") {
-		return image + ":latest"
-	}
-	return image
 }
 
 var (

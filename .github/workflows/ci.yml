@@ -22,6 +22,7 @@ jobs:
       - name: Check out
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Go
@@ -37,64 +38,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Install frontend dependencies
-        working-directory: web
-        run: npm ci
-
-      - name: Type-check frontend
-        working-directory: web
-        run: npm run typecheck
-
-      - name: Test frontend
-        working-directory: web
-        run: npm test
-
-      - name: Build frontend
-        working-directory: web
-        run: npm run build
-
-      - name: Test backend
-        run: go test ./...
-
-      - name: Vet backend
-        run: go vet ./...
-
-      - name: Cross-build Linux binaries
-        run: make build-linux
-
-      - name: Verify deployment safety
-        run: sh deploy/tests/install-safety.sh
-
-      - name: Build runtime image
-        run: docker build --build-arg VERSION=ci -t kejilion-panel:ci .
-
-      - name: Verify runtime image contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(docker image inspect --format '{{.Config.User}}' kejilion-panel:ci)" = "65532:65532"
-          test "$(docker image inspect --format '{{join .Config.Healthcheck.Test " "}}' kejilion-panel:ci)" = "CMD /paneld healthcheck"
-          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' kejilion-panel:ci)" = "ci"
-          container_id="$(
-            docker run --detach --rm \
-              --network none \
-              --read-only \
-              --cap-drop ALL \
-              --security-opt no-new-privileges \
-              --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777 \
-              --tmpfs /var/lib/kejilion-panel:rw,noexec,nosuid,size=16m,uid=65532,gid=65532,mode=0700 \
-              kejilion-panel:ci
-          )"
-          cleanup() {
-            docker container rm --force "$container_id" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          healthy=false
-          for _ in {1..20}; do
-            if docker exec "$container_id" /paneld healthcheck >/dev/null 2>&1; then
-              healthy=true
-              break
-            fi
-            sleep 1
-          done
-          test "$healthy" = true
+      - name: Run change-aware verification
+        env:
+          VERIFY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: make verify-change

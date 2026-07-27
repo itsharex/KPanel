@@ -29,7 +29,7 @@ import { usePanelState } from '@/stores/panel'
 import { useToast } from '@/stores/toast'
 import type { Site, SiteInput } from '@/types/api'
 
-type Filter = 'all' | 'healthy' | 'drifted' | 'read-only'
+type Filter = 'all' | 'healthy' | 'drifted' | 'config-only'
 type SiteServiceType = SiteInput['type']
 type RedirectCode = NonNullable<SiteInput['redirectCode']>
 type PHPVersion = NonNullable<SiteInput['phpVersion']>
@@ -50,7 +50,6 @@ const installProgress = ref('')
 const deleteOpen = ref(false)
 const deletingSite = ref<Site>()
 const deleteMode = ref<'configuration' | 'full'>('configuration')
-const deleteConfirmation = ref('')
 const deleteError = ref('')
 const deleting = ref(false)
 const panel = usePanelState()
@@ -172,13 +171,13 @@ const canInstallWordPress = computed(() => wordPressCapability.value?.enabled ==
 const canInstallRecipes = computed(() => recipeCapability.value?.enabled === true)
 const canCreateAny = computed(() => canCreate.value || canInstallWordPress.value || canInstallRecipes.value)
 const wordPressReason = computed(
-  () => wordPressCapability.value?.reason?.trim() || 'WordPress 一键搭建条件尚未通过 Agent 安全检查。',
+  () => wordPressCapability.value?.reason?.trim() || 'WordPress 一键搭建依赖尚未就绪。',
 )
 const siteWriteReason = computed(
   () =>
     siteWriteCapability.value?.reason?.trim() ||
     (siteWriteCapability.value
-      ? 'Agent 当前未开放网站安全写入能力。'
+      ? 'Agent 当前缺少网站写入依赖。'
       : '未从 Agent 获取网站写入能力状态，请检查 Agent 连接与版本。'),
 )
 
@@ -194,7 +193,7 @@ const filteredSites = computed(() => {
     if (!matchesQuery) return false
     if (filter.value === 'healthy') return site.health === 'healthy' && site.consistency === 'synced'
     if (filter.value === 'drifted') return site.consistency !== 'synced'
-    if (filter.value === 'read-only') return site.access !== 'managed'
+    if (filter.value === 'config-only') return !site.allowedActions?.includes('update')
     return true
   })
 })
@@ -203,7 +202,7 @@ const counts = computed(() => ({
   all: sites.value.length,
   healthy: sites.value.filter((site) => site.health === 'healthy' && site.consistency === 'synced').length,
   drifted: sites.value.filter((site) => site.consistency !== 'synced').length,
-  'read-only': sites.value.filter((site) => site.access !== 'managed').length,
+  'config-only': sites.value.filter((site) => !site.allowedActions?.includes('update')).length,
 }))
 
 const selectedService = computed(() => serviceOptions.find((option) => option.type === form.type))
@@ -401,10 +400,10 @@ async function submitSite(): Promise<void> {
     editorOpen.value = false
     toast.success(
       wasEditing
-        ? '网站已安全更新'
+        ? '网站已更新'
         : form.type === 'wordpress' || form.type === 'recipe'
           ? '一键建站已完成'
-          : '网站已安全创建',
+          : '网站已创建',
       form.type === 'wordpress' || form.type === 'recipe'
         ? `${savedSite.primaryDomain} 的源码、数据库、证书和 Nginx 产物已与 kejilion.sh 完成对账。`
         : `${savedSite.primaryDomain} 已通过 nginx -t 校验并完成同步应用。`,
@@ -421,7 +420,6 @@ async function submitSite(): Promise<void> {
 function openDelete(site: Site): void {
   deletingSite.value = site
   deleteMode.value = 'configuration'
-  deleteConfirmation.value = ''
   deleteError.value = ''
   selectedSite.value = undefined
   deleteOpen.value = true
@@ -429,7 +427,7 @@ function openDelete(site: Site): void {
 
 async function deleteSite(): Promise<void> {
   const site = deletingSite.value
-  if (!site || deleteConfirmation.value !== site.primaryDomain || deleting.value) return
+  if (!site || deleting.value) return
   deleting.value = true
   deleteError.value = ''
   try {
@@ -437,15 +435,15 @@ async function deleteSite(): Promise<void> {
       site.id,
       site.resourceVersion,
       deleteMode.value,
-      deleteConfirmation.value,
     )
     deleteOpen.value = false
     deletingSite.value = undefined
     toast.success(
       deleteMode.value === 'full' ? '站点数据已删除' : '网站配置已移除',
-      deleteMode.value === 'full'
-        ? `${result.primaryDomain} 已按 k web 业务清理；Nginx 已重新校验并加载。`
-        : `${result.primaryDomain} 的 Nginx 访问配置已移除，网站目录、证书和数据库均已保留。`,
+      (deleteMode.value === 'full'
+        ? `${result.primaryDomain} 已按 k web 业务清理。`
+        : `${result.primaryDomain} 的 Nginx 访问配置已移除，网站目录、证书和数据库均已保留。`) +
+        (result.warnings?.length ? ` ${result.warnings.join('；')}` : ''),
     )
     await load(true)
   } catch (reason) {
@@ -467,7 +465,7 @@ onBeforeUnmount(() => controller?.abort())
   <div class="page">
     <PageHeader
       title="网站管理"
-      description="从实际产物发现网站；新建站点沿用 kejilion.sh 的 /home/web 架构，并通过安全事务提交。"
+      description="从实际产物发现并管理网站；新建站点沿用 kejilion.sh 的 /home/web 架构，并通过原子事务提交。"
     >
       <template #actions>
         <button
@@ -498,7 +496,7 @@ onBeforeUnmount(() => controller?.abort())
             { key: 'all', label: '全部' },
             { key: 'healthy', label: '正常' },
             { key: 'drifted', label: '待核对' },
-            { key: 'read-only', label: '只读' },
+            { key: 'config-only', label: '仅配置操作' },
           ]"
           :key="item.key"
           type="button"
@@ -520,7 +518,7 @@ onBeforeUnmount(() => controller?.abort())
     <EmptyState
       v-else-if="!filteredSites.length"
       :title="sites.length ? '没有符合条件的网站' : '尚未发现网站'"
-      :description="sites.length ? '尝试更换搜索词或筛选条件。' : 'Agent 会安全扫描现有 Kejilion 网站产物。'"
+      :description="sites.length ? '尝试更换搜索词或筛选条件。' : 'Agent 会扫描现有 Kejilion 网站产物。'"
     />
 
     <section v-else class="table-card">
@@ -571,7 +569,7 @@ onBeforeUnmount(() => controller?.abort())
               <td>
                 <div class="table-stack">
                   <span>{{ sourceLabel(site.source) }}</span>
-                  <small>{{ site.access === 'managed' ? '面板已托管' : '仅查看' }}</small>
+                  <small>{{ site.allowedActions?.length ? '可直接管理' : '仅展示产物' }}</small>
                 </div>
               </td>
               <td>
@@ -703,7 +701,7 @@ onBeforeUnmount(() => controller?.abort())
     <ModalDialog
       :open="deleteOpen && Boolean(deletingSite)"
       :title="`删除 ${deletingSite?.primaryDomain || ''}`"
-      description="仅对当前仍与实际产物一致的网站开放；提交后会先撤下候选产物，通过 nginx -t 后才 reload。"
+      description="按当前实际配置文件执行；提交后先撤下配置，通过 nginx -t 后再 reload，失败自动恢复。"
       size="small"
       @close="!deleting && (deleteOpen = false)"
     >
@@ -735,16 +733,6 @@ onBeforeUnmount(() => controller?.abort())
           <span>完整删除不可从面板撤销。请先确认网站数据已有独立备份。</span>
         </div>
 
-        <label class="field">
-          <span>输入主域名确认</span>
-          <input
-            v-model.trim="deleteConfirmation"
-            autocomplete="off"
-            spellcheck="false"
-            :placeholder="deletingSite?.primaryDomain"
-          />
-          <small>必须完整输入 <code>{{ deletingSite?.primaryDomain }}</code></small>
-        </label>
       </form>
       <template #footer>
         <button class="button button--secondary" type="button" :disabled="deleting" @click="deleteOpen = false">
@@ -754,11 +742,11 @@ onBeforeUnmount(() => controller?.abort())
           class="button button--danger"
           type="submit"
           form="site-delete-form"
-          :disabled="deleting || deleteConfirmation !== deletingSite?.primaryDomain"
+          :disabled="deleting"
         >
           <LoaderCircle v-if="deleting" class="spin" :size="16" />
           <Trash2 v-else :size="16" />
-          {{ deleting ? '正在安全删除…' : deleteMode === 'full' ? '完整删除站点' : '移除网站配置' }}
+          {{ deleting ? '正在删除…' : deleteMode === 'full' ? '完整删除站点' : '移除网站配置' }}
         </button>
       </template>
     </ModalDialog>
@@ -935,7 +923,7 @@ onBeforeUnmount(() => controller?.abort())
             :placeholder="form.type === 'proxy_domain' ? 'https://origin.example.com' : 'http://127.0.0.1:3000'"
             required
           />
-          <small v-if="form.type === 'proxy'">仅允许本机、内网 IP 或 Docker 服务名，阻止意外代理公网地址。</small>
+          <small v-if="form.type === 'proxy'">支持本机、内网、公网 IP、域名或 Docker 服务名，与 k web 的 IP+端口反代一致。</small>
           <small v-else>填写完整域名源站，HTTPS 会自动启用上游 SNI；不接受路径、账号或查询参数。</small>
         </label>
 
@@ -980,8 +968,8 @@ onBeforeUnmount(() => controller?.abort())
         </label>
         <div class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          Agent 会直接对账 /home/web 实际产物；识别出的 kejilion.sh 站点可在原配置上安全修改域名、上游或 PHP 版本，
-          未识别或发生漂移的配置保持只读。
+          Agent 直接对账 /home/web 实际产物；kejilion.sh、KPanel 或手工调整后的站点都在同一份配置上继续管理。
+          无法解析的网站仍可移除 Nginx 配置入口。
         </div>
       </form>
       <template #footer>
@@ -996,7 +984,7 @@ onBeforeUnmount(() => controller?.abort())
                   ? 'kejilion.sh 正在后台搭建…'
                 : '正在提交…'
               : editingSite
-                ? '安全更新'
+                ? '更新设置'
                 : form.type === 'wordpress'
                   ? '一键搭建 WordPress'
                   : form.type === 'recipe'

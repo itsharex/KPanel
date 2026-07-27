@@ -361,7 +361,7 @@ async function toggleAccess(): Promise<void> {
     toast.success(next === 'domain_only' ? '已阻止 IP + 端口访问' : '已放行 IP + 端口访问')
     await load(true)
   } catch (reason) {
-    toast.danger('访问策略变更失败', reason instanceof ApiError ? reason.message : '容器端口绑定未能安全切换。')
+    toast.danger('访问策略变更失败', reason instanceof ApiError ? reason.message : '容器端口绑定未能完成切换。')
   } finally {
     operation.value = ''
   }
@@ -416,9 +416,8 @@ async function removeDomain(site: Site): Promise<void> {
       site.id,
       site.resourceVersion,
       'configuration',
-      site.primaryDomain,
     )
-    toast.success('域名已解绑', `${site.primaryDomain} 的反向代理已安全移除。`)
+    toast.success('域名已解绑', `${site.primaryDomain} 的反向代理已移除。`)
     await load(true)
   } catch (reason) {
     domainError.value = reason instanceof ApiError ? reason.message : '域名解绑失败，原配置保持不变。'
@@ -748,7 +747,7 @@ onBeforeUnmount(() => {
             <p v-else-if="capability(selected, 'install')">
               此应用已有固定镜像、端口和回滚策略，可以由 KPanel 在后台安全安装。
             </p>
-            <p v-else>{{ selected.capabilities.install?.reason || '等待安全适配。' }}</p>
+            <p v-else>{{ selected.capabilities.install?.reason || '等待专属安装适配器。' }}</p>
           </div>
           <button
             v-if="capability(selected, 'install')"
@@ -864,7 +863,7 @@ onBeforeUnmount(() => {
           <input
             v-model.number="installPort"
             type="number"
-            :min="selected?.installer === 'declarative' ? 1024 : 1"
+            min="1"
             max="65535"
             :placeholder="selected?.defaultPort ? String(selected.defaultPort) : '留空使用脚本默认端口'"
           />

@@ -20,15 +20,15 @@ const banner = computed(() => {
     return {
       tone: 'danger',
       title: 'Agent 协议版本不兼容',
-      detail: agent.reason || '为防止错误修改，面板已自动进入只读模式。',
+      detail: agent.reason || '当前 Panel 无法调用该 Agent 的写入协议，请同步升级两端版本。',
       icon: ShieldAlert,
     }
   }
   if (agent.readOnly) {
     return {
       tone: 'warning',
-      title: '面板当前为只读模式',
-      detail: agent.reason || '可以安全查看资源，但暂时不能执行变更。',
+      title: 'Agent 写入依赖未就绪',
+      detail: agent.reason || '可以查看实时资源；请按提示补齐宿主机依赖后执行变更。',
       icon: LockKeyhole,
     }
   }

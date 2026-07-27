@@ -23,7 +23,7 @@ func TestScheduleRebootUsesDelayedFixedSystemdUnit(t *testing.T) {
 	manager, _, _, _ := testManager(t, runner)
 	changed, message, err := manager.scheduleReboot(
 		context.Background(),
-		contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT"},
+		contract.SystemActionRequest{Action: "reboot"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -55,37 +55,41 @@ func TestScheduleRebootUsesDelayedFixedSystemdUnit(t *testing.T) {
 	}
 	if _, _, err := manager.scheduleReboot(
 		context.Background(),
-		contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT"},
+		contract.SystemActionRequest{Action: "reboot"},
 	); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate schedule error = %v, want ErrConflict", err)
 	}
 }
 
-func TestScheduleRebootRequiresExactIsolatedConfirmation(t *testing.T) {
+func TestScheduleRebootDoesNotUseConfirmationAsAuthorization(t *testing.T) {
 	manager, _, _, _ := testManager(t, &fakeRunner{})
-	tests := []contract.SystemActionRequest{
-		{Action: "reboot"},
-		{Action: "reboot", Confirmation: "reboot"},
-		{Action: "reboot", Confirmation: "REBOOT", Hostname: "unexpected"},
+	if _, _, err := manager.scheduleReboot(
+		context.Background(),
+		contract.SystemActionRequest{Action: "reboot", Confirmation: "anything"},
+	); err != nil {
+		t.Fatalf("confirmation text became an authorization gate: %v", err)
 	}
-	for _, input := range tests {
-		if _, _, err := manager.scheduleReboot(context.Background(), input); !errors.Is(err, ErrInvalidInput) {
-			t.Fatalf("input %#v error = %v, want ErrInvalidInput", input, err)
-		}
+
+	manager, _, _, _ = testManager(t, &fakeRunner{})
+	if _, _, err := manager.scheduleReboot(
+		context.Background(),
+		contract.SystemActionRequest{Action: "reboot", Hostname: "unexpected"},
+	); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unrelated reboot input error = %v, want ErrInvalidInput", err)
 	}
 }
 
-func TestScheduleRebootRejectsRunningMaintenance(t *testing.T) {
+func TestScheduleRebootDoesNotUseMaintenanceAsAnAuthorizationGate(t *testing.T) {
 	manager, _, _, _ := testManager(t, &fakeRunner{})
 	if err := manager.writeMaintenance(contract.SystemMaintenanceSummary{State: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err := manager.scheduleReboot(
 		context.Background(),
-		contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT"},
+		contract.SystemActionRequest{Action: "reboot"},
 	)
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("scheduleReboot() error = %v, want ErrConflict", err)
+	if err != nil {
+		t.Fatalf("running maintenance blocked an explicit reboot: %v", err)
 	}
 }
 

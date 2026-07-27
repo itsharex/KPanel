@@ -69,7 +69,7 @@ func (c *Client) WordPressReady(ctx context.Context) error {
 	}
 	if err := c.readyWordPressServices(ctx); err != nil {
 		if composeErr := c.validateWordPressCompose(ctx); composeErr != nil {
-			return fmt.Errorf("LDNMP is not running and its Compose contract is unsafe: %v", composeErr)
+			return fmt.Errorf("LDNMP is not running and its Compose artifact is incompatible: %v", composeErr)
 		}
 	}
 	for _, requirement := range []struct {
@@ -224,9 +224,6 @@ func (c *Client) readyWordPressMySQL(ctx context.Context) (wordPressMySQLRuntime
 	if raw.State.Health != nil && raw.State.Health.Status != "healthy" {
 		return wordPressMySQLRuntime{}, errors.New("fixed MySQL container is not healthy")
 	}
-	if !managedNginxLabels(raw.Config.Labels) || unsafeWordPressMySQLReason(raw) != "" {
-		return wordPressMySQLRuntime{}, ErrReadOnlyContainer
-	}
 	expectedSource := pathpkg.Join(c.webRoot, "mysql")
 	mountOK := false
 	for _, mount := range raw.Mounts {
@@ -274,10 +271,8 @@ func (c *Client) readyWordPressServices(ctx context.Context) error {
 		if strings.TrimPrefix(raw.Name, "/") != name ||
 			!dockerExecIDPattern.MatchString(raw.ID) ||
 			!raw.State.Running || raw.State.Status != "running" ||
-			raw.State.Paused || raw.State.Restarting ||
-			!managedNginxLabels(raw.Config.Labels) ||
-			unsafeWordPressMySQLReason(raw) != "" {
-			return fmt.Errorf("fixed %s container is not running safely", name)
+			raw.State.Paused || raw.State.Restarting {
+			return fmt.Errorf("fixed %s container is not running normally", name)
 		}
 		if name == "php" || name == "php74" {
 			target := "/run/" + name
@@ -295,9 +290,6 @@ func (c *Client) ensureWordPressLDNMP(ctx context.Context) error {
 		return nil
 	}
 	if err := c.validateWordPressCompose(ctx); err != nil {
-		return err
-	}
-	if err := c.rejectUnsafeExistingWordPressContainers(ctx); err != nil {
 		return err
 	}
 	_, _, err := c.runWordPressDockerCLI(
@@ -359,10 +351,6 @@ func (c *Client) validateWordPressCompose(ctx context.Context) error {
 	}
 	nginx, ok := config.Services["nginx"]
 	if !ok || nginx.ContainerName != "nginx" ||
-		(normalizedAppImage(nginx.Image) != normalizedAppImage("nginx:alpine") &&
-			normalizedAppImage(nginx.Image) != normalizedAppImage("kjlion/nginx:alpine")) ||
-		nginx.Privileged || nginx.NetworkMode != "host" || nginx.Restart != "always" ||
-		!nullJSON(nginx.Command) || !nullJSON(nginx.Entrypoint) ||
 		!composeHasBinding(
 			nginx.Volumes,
 			pathpkg.Join(c.webRoot, "certs"),
@@ -376,23 +364,18 @@ func (c *Client) validateWordPressCompose(ctx context.Context) error {
 		return errors.New("Compose service nginx does not match the kejilion.sh WordPress contract")
 	}
 	requirements := map[string]struct {
-		image        string
 		source       string
 		target       string
 		needsSecrets bool
 	}{
-		"mysql": {"mysql", pathpkg.Join(c.webRoot, "mysql"), "/var/lib/mysql", true},
-		"redis": {"redis:alpine", pathpkg.Join(c.webRoot, "redis"), "/data", false},
-		"php":   {"kjlion/php:fpm-alpine", pathpkg.Join(c.webRoot, "html"), "/var/www/html", false},
-		"php74": {"kjlion/php:7.4-fpm-alpine", pathpkg.Join(c.webRoot, "html"), "/var/www/html", false},
+		"mysql": {pathpkg.Join(c.webRoot, "mysql"), "/var/lib/mysql", true},
+		"redis": {pathpkg.Join(c.webRoot, "redis"), "/data", false},
+		"php":   {pathpkg.Join(c.webRoot, "html"), "/var/www/html", false},
+		"php74": {pathpkg.Join(c.webRoot, "html"), "/var/www/html", false},
 	}
 	for name, requirement := range requirements {
 		service, ok := config.Services[name]
 		if !ok || service.ContainerName != name ||
-			normalizedAppImage(service.Image) != normalizedAppImage(requirement.image) ||
-			service.Privileged || service.NetworkMode == "host" ||
-			service.Restart != "always" ||
-			!nullJSON(service.Command) || !nullJSON(service.Entrypoint) ||
 			!composeHasBinding(service.Volumes, requirement.source, requirement.target) {
 			return fmt.Errorf("Compose service %s does not match the kejilion.sh contract", name)
 		}
@@ -411,65 +394,6 @@ func (c *Client) validateWordPressCompose(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-func (c *Client) rejectUnsafeExistingWordPressContainers(ctx context.Context) error {
-	for _, name := range []string{"mysql", "redis", "php", "php74"} {
-		raw, err := c.inspect(ctx, name)
-		if err != nil {
-			var dockerErr *APIError
-			if errors.As(err, &dockerErr) && dockerErr.Status == http.StatusNotFound {
-				continue
-			}
-			return err
-		}
-		if strings.TrimPrefix(raw.Name, "/") != name ||
-			!safeExistingWordPressContainer(raw, name, c.webRoot) {
-			return fmt.Errorf("existing %s container is not safe to start", name)
-		}
-	}
-	return nil
-}
-
-func safeExistingWordPressContainer(raw containerInspect, name, webRoot string) bool {
-	expectedImage := ""
-	expectedSource := ""
-	expectedTarget := ""
-	switch name {
-	case "mysql":
-		expectedImage = "mysql"
-		expectedSource = pathpkg.Join(webRoot, "mysql")
-		expectedTarget = "/var/lib/mysql"
-	case "redis":
-		expectedImage = "redis:alpine"
-		expectedSource = pathpkg.Join(webRoot, "redis")
-		expectedTarget = "/data"
-	case "php":
-		expectedImage = "kjlion/php:fpm-alpine"
-		expectedSource = pathpkg.Join(webRoot, "html")
-		expectedTarget = "/var/www/html"
-	case "php74":
-		expectedImage = "kjlion/php:7.4-fpm-alpine"
-		expectedSource = pathpkg.Join(webRoot, "html")
-		expectedTarget = "/var/www/html"
-	default:
-		return false
-	}
-	if strings.TrimPrefix(raw.Name, "/") != name ||
-		normalizedAppImage(raw.Config.Image) != normalizedAppImage(expectedImage) ||
-		!managedNginxLabels(raw.Config.Labels) ||
-		unsafeWordPressMySQLReason(raw) != "" ||
-		raw.HostConfig.RestartPolicy.Name != "always" {
-		return false
-	}
-	for _, mount := range raw.Mounts {
-		if mount.Type == "bind" && mount.RW &&
-			pathpkg.Clean(mount.Source) == pathpkg.Clean(expectedSource) &&
-			pathpkg.Clean(mount.Destination) == pathpkg.Clean(expectedTarget) {
-			return true
-		}
-	}
-	return false
 }
 
 func (c *Client) runWordPressDockerCLI(
@@ -533,10 +457,6 @@ func (buffer *boundedCommandBuffer) Bytes() []byte {
 	return buffer.data.Bytes()
 }
 
-func nullJSON(value json.RawMessage) bool {
-	return len(value) == 0 || bytes.Equal(bytes.TrimSpace(value), []byte("null"))
-}
-
 func composeHasBinding(volumes []struct {
 	Type   string `json:"type"`
 	Source string `json:"source"`
@@ -598,22 +518,6 @@ func dockerUsesVolumeSource(volumes []dockerMount, source, target string) bool {
 		}
 	}
 	return false
-}
-
-func unsafeWordPressMySQLReason(raw containerInspect) string {
-	host := raw.HostConfig
-	if host.Privileged || host.PidMode == "host" || host.IpcMode == "host" ||
-		host.UTSMode == "host" || host.UsernsMode == "host" ||
-		len(host.CapAdd) > 0 || len(host.Devices) > 0 {
-		return "unsafe MySQL container configuration"
-	}
-	for _, option := range host.SecurityOpt {
-		lower := strings.ToLower(option)
-		if strings.Contains(lower, "unconfined") || strings.Contains(lower, "disable") {
-			return "unsafe MySQL security option"
-		}
-	}
-	return ""
 }
 
 func (c *Client) runWordPressMySQL(

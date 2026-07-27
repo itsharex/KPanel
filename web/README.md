@@ -25,13 +25,14 @@ npm run build
 
 静态产物输出到 `dist/`，可由 `paneld` 嵌入或直接提供。
 
-## 安全约定
+## 攻击面约定
 
 - 认证使用服务端 Session 与 `HttpOnly` Cookie。
 - CSRF Token 仅保存在运行内存，并随所有写请求通过 `X-CSRF-Token` 发送。
 - API 请求固定使用 `credentials: same-origin`，不把 Token 写入 `localStorage`。
-- Agent 离线、只读或协议不兼容时，所有写入口统一禁用。
-- 网站与容器操作由 Agent 的 `capabilities` 和资源 `allowedActions` 双重控制。
+- Agent 离线或协议不兼容时，写入口因技术依赖不可用而禁用，并显示真实原因。
+- `capabilities` 表示宿主机适配器是否存在；资源 `allowedActions` 只反映实时状态，
+  不得根据来源、label、marker 或危险配置缩减动作。
 - 日志以纯文本插值呈现，不使用 `v-html`。
 
 ## 页面
@@ -40,7 +41,7 @@ npm run build
 - `/login`：安全登录。
 - `/overview`：系统资源与 Agent 状态。
 - `/sites`：网站产物、一致性与证书。
-- `/docker`：容器、镜像、网络、卷与受控生命周期。
+- `/docker`：Docker 环境、全部容器、镜像、网络和卷管理。
 - `/jobs`：由持久化审计意图与结果聚合出的同步变更记录。
 - `/audit`：脱敏审计记录。
 - `/settings`：账户、主题和 Agent 能力信息。

@@ -145,7 +145,7 @@ func TestSiteCreateProxiesAgentProblemAndAuditsSafeMetadata(t *testing.T) {
 	}
 }
 
-func TestSiteDeleteRequiresExplicitScopeAndConfirmation(t *testing.T) {
+func TestSiteDeleteRequiresExplicitScopeWithoutConfirmationGate(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
 	version := "sha256:" + strings.Repeat("b", 64)
@@ -189,8 +189,7 @@ func TestSiteDeleteRequiresExplicitScopeAndConfirmation(t *testing.T) {
 		"/api/v1/sites/"+id,
 		[]byte(`{
 			"expectedResourceVersion":"`+version+`",
-			"mode":"full",
-			"confirmDomain":"example.com"
+			"mode":"full"
 		}`),
 		true,
 	)
@@ -207,9 +206,11 @@ func TestSiteDeleteRequiresExplicitScopeAndConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if forwarded["expectedResourceVersion"] != version ||
-		forwarded["mode"] != "full" ||
-		forwarded["confirmDomain"] != "example.com" {
+		forwarded["mode"] != "full" {
 		t.Fatalf("unexpected delete payload: %#v", forwarded)
+	}
+	if _, present := forwarded["confirmDomain"]; present {
+		t.Fatalf("delete payload still requires a typed confirmation: %#v", forwarded)
 	}
 	events, _ := server.store.ListAudit(20, "")
 	for _, event := range events {

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	pathpkg "path"
 	"regexp"
 	"strings"
 	"time"
@@ -18,7 +20,6 @@ const (
 	maxContainerCommandRun   = 20 * time.Second
 )
 
-var containerPathPattern = regexp.MustCompile(`^/(?:[A-Za-z0-9_.-]+/?){1,16}$`)
 var containerEnvNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 
 type ContainerStats struct {
@@ -56,7 +57,9 @@ type ContainerCreatePort struct {
 }
 
 type ContainerCreateMount struct {
-	Volume   string `json:"volume"`
+	Type     string `json:"type,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Volume   string `json:"volume,omitempty"`
 	Target   string `json:"target"`
 	ReadOnly bool   `json:"readOnly,omitempty"`
 }
@@ -168,7 +171,7 @@ func (c *Client) ContainerStats(ctx context.Context, id string) (ContainerStats,
 func (c *Client) ContainerExec(ctx context.Context, id string, input ContainerExecInput) (ContainerExecResult, error) {
 	command := strings.TrimSpace(input.Command)
 	if !validContainerCommand(command) {
-		return ContainerExecResult{}, ErrUnsafeOrInvalidAction
+		return ContainerExecResult{}, ErrActionUnsupported
 	}
 	if err := c.verifyContainerVersion(ctx, id, input.ResourceVersion); err != nil {
 		return ContainerExecResult{}, err
@@ -178,7 +181,7 @@ func (c *Client) ContainerExec(ctx context.Context, id string, input ContainerEx
 		return ContainerExecResult{}, err
 	}
 	if !inspect.State.Running || inspect.State.Paused || inspect.State.Restarting {
-		return ContainerExecResult{}, ErrUnsafeOrInvalidAction
+		return ContainerExecResult{}, ErrActionUnsupported
 	}
 	execContext, cancel := context.WithTimeout(ctx, maxContainerCommandRun)
 	defer cancel()
@@ -299,53 +302,64 @@ func (c *Client) containerCreatePayload(ctx context.Context, input MaintenanceIn
 		if protocol == "" {
 			protocol = "tcp"
 		}
+		hostIP := strings.TrimSpace(port.HostIP)
 		if port.PrivatePort == 0 || port.PublicPort == 0 ||
 			(protocol != "tcp" && protocol != "udp") ||
-			(port.HostIP != "" && port.HostIP != "0.0.0.0" && port.HostIP != "127.0.0.1" &&
-				port.HostIP != "::" && port.HostIP != "::1") {
+			(hostIP != "" && net.ParseIP(hostIP) == nil) {
 			return nil, ErrInvalidDockerJob
 		}
 		key := fmt.Sprintf("%d/%s", port.PrivatePort, protocol)
-		bindingKey := key + "\x00" + port.HostIP + "\x00" + fmt.Sprint(port.PublicPort)
+		bindingKey := key + "\x00" + hostIP + "\x00" + fmt.Sprint(port.PublicPort)
 		if seenPorts[bindingKey] {
 			return nil, ErrInvalidDockerJob
 		}
 		seenPorts[bindingKey] = true
 		exposedPorts[key] = struct{}{}
 		portBindings[key] = append(portBindings[key], map[string]string{
-			"HostIp": port.HostIP, "HostPort": fmt.Sprint(port.PublicPort),
+			"HostIp": hostIP, "HostPort": fmt.Sprint(port.PublicPort),
 		})
 	}
-	binds := make([]string, 0, len(input.Mounts))
-	seenTargets := make(map[string]bool)
-	existingVolumes := make(map[string]bool, len(input.Mounts))
-	if len(input.Mounts) > 0 {
-		volumes, err := c.Volumes(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, volume := range volumes {
-			existingVolumes[volume.Name] = true
-		}
+	type dockerCreateMount struct {
+		Type     string `json:"Type"`
+		Source   string `json:"Source"`
+		Target   string `json:"Target"`
+		ReadOnly bool   `json:"ReadOnly,omitempty"`
 	}
+	mounts := make([]dockerCreateMount, 0, len(input.Mounts))
+	seenTargets := make(map[string]bool)
 	for _, mount := range input.Mounts {
-		target := strings.TrimSpace(mount.Target)
-		if !dockerNamePattern.MatchString(mount.Volume) || !existingVolumes[mount.Volume] ||
-			!containerPathPattern.MatchString(target) || target == "/" ||
-			seenTargets[target] {
+		mountType := strings.ToLower(strings.TrimSpace(mount.Type))
+		source := strings.TrimSpace(mount.Source)
+		if source == "" {
+			source = strings.TrimSpace(mount.Volume)
+		}
+		if mountType == "" {
+			mountType = "volume"
+		}
+		target := pathpkg.Clean(strings.TrimSpace(mount.Target))
+		if !validContainerAbsolutePath(target) || seenTargets[target] {
+			return nil, ErrInvalidDockerJob
+		}
+		switch mountType {
+		case "volume":
+			if !dockerNamePattern.MatchString(source) {
+				return nil, ErrInvalidDockerJob
+			}
+		case "bind":
+			source = pathpkg.Clean(source)
+			if !validContainerAbsolutePath(source) {
+				return nil, ErrInvalidDockerJob
+			}
+		default:
 			return nil, ErrInvalidDockerJob
 		}
 		seenTargets[target] = true
-		binding := mount.Volume + ":" + target
-		if mount.ReadOnly {
-			binding += ":ro"
-		}
-		binds = append(binds, binding)
+		mounts = append(mounts, dockerCreateMount{
+			Type: mountType, Source: source, Target: target, ReadOnly: mount.ReadOnly,
+		})
 	}
-	if input.Network == "host" || input.Network == "none" || input.Network == "kejilion-panel-network" {
-		return nil, ErrProtectedDockerResource
-	}
-	if input.Network != "" && input.Network != "bridge" {
+	if input.Network != "" && input.Network != "bridge" &&
+		input.Network != "host" && input.Network != "none" {
 		found := false
 		networks, networkErr := c.Networks(ctx)
 		if networkErr != nil {
@@ -373,7 +387,7 @@ func (c *Client) containerCreatePayload(ctx context.Context, input MaintenanceIn
 		ExposedPorts map[string]any    `json:"ExposedPorts,omitempty"`
 		HostConfig   struct {
 			PortBindings  map[string][]map[string]string `json:"PortBindings,omitempty"`
-			Binds         []string                       `json:"Binds,omitempty"`
+			Mounts        []dockerCreateMount            `json:"Mounts,omitempty"`
 			NetworkMode   string                         `json:"NetworkMode,omitempty"`
 			RestartPolicy struct {
 				Name string `json:"Name"`
@@ -390,10 +404,15 @@ func (c *Client) containerCreatePayload(ctx context.Context, input MaintenanceIn
 		ExposedPorts: exposedPorts,
 	}
 	payload.HostConfig.PortBindings = portBindings
-	payload.HostConfig.Binds = binds
+	payload.HostConfig.Mounts = mounts
 	payload.HostConfig.NetworkMode = input.Network
 	payload.HostConfig.RestartPolicy.Name = restartPolicy
 	return jsonMarshalDocker(payload)
+}
+
+func validContainerAbsolutePath(value string) bool {
+	return len(value) > 0 && len(value) <= 4096 && strings.HasPrefix(value, "/") &&
+		!strings.ContainsAny(value, "\r\n\x00")
 }
 
 func decodeStrictDockerJSON(data []byte, target any) error {

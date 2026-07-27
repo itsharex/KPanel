@@ -60,7 +60,7 @@ func TestImagePullRunsAsPersistentBackgroundJob(t *testing.T) {
 	}
 }
 
-func TestPruneRequiresConfirmationAndUsesFixedEndpoints(t *testing.T) {
+func TestPruneDoesNotUseConfirmationAsAuthorizationAndUsesFixedEndpoints(t *testing.T) {
 	var mu sync.Mutex
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -75,13 +75,8 @@ func TestPruneRequiresConfirmationAndUsesFixedEndpoints(t *testing.T) {
 	if err := client.ConfigureJobs(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.StartMaintenance(context.Background(), MaintenanceInput{
-		Action: "prune", Confirmation: "wrong",
-	}); err != ErrInvalidDockerJob {
-		t.Fatalf("invalid confirmation error = %v", err)
-	}
 	job, err := client.StartMaintenance(context.Background(), MaintenanceInput{
-		Action: "prune", Confirmation: "PRUNE",
+		Action: "prune",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +157,7 @@ func TestMaintenanceRejectsUnsafeNamesAndProtectsPanelResources(t *testing.T) {
 	}
 }
 
-func TestDockerBackupExcludesKPanelAndCreatesPrivateArchive(t *testing.T) {
+func TestDockerBackupIncludesAllEcosystemArtifactsAndCreatesPrivateArchive(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
 	client := testHTTPClient(server)
@@ -178,6 +173,9 @@ func TestDockerBackupExcludesKPanelAndCreatesPrivateArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(client.appRoot, "kpanel", "secrets", "token"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(client.appRoot, "kpanel_port.conf"), []byte("8080\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.ConfigureJobs(filepath.Join(client.stateRoot, "jobs")); err != nil {
@@ -218,7 +216,10 @@ func TestDockerBackupExcludesKPanelAndCreatesPrivateArchive(t *testing.T) {
 		names = append(names, header.Name)
 	}
 	joined := strings.Join(names, "\n")
-	if !strings.Contains(joined, "docker/example/compose.yml") || strings.Contains(joined, "kpanel") {
+	if !strings.Contains(joined, "docker/example/compose.yml") ||
+		!strings.Contains(joined, "docker/kpanel/secrets/token") ||
+		!strings.Contains(joined, "docker/kpanel_port.conf") ||
+		strings.Contains(joined, "docker/.kpanel-backups/") {
 		t.Fatalf("unexpected backup contents:\n%s", joined)
 	}
 }

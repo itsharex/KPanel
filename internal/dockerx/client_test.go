@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func TestOwnershipAndSafety(t *testing.T) {
+func TestAllContainerOriginsExposeStateValidActions(t *testing.T) {
 	web := t.TempDir()
 	apps := t.TempDir()
 	state := t.TempDir()
@@ -45,21 +45,25 @@ func TestOwnershipAndSafety(t *testing.T) {
 	}
 
 	raw.HostConfig.Privileged = true
+	raw.Config.Labels = nil
+	raw.Name = "/external"
 	got = c.summaryFromInspect(raw)
-	if len(got.AllowedActions) != 0 {
-		t.Fatalf("privileged container must be read-only: %#v", got)
+	if got.Ownership != "external" || !contains(got.AllowedActions, "restart") ||
+		!contains(got.AllowedActions, "exec") || !contains(got.AllowedActions, "remove") {
+		t.Fatalf("external privileged container did not remain manageable: %#v", got)
 	}
 }
 
-func TestExplicitOwnershipStillRejectsDockerSocket(t *testing.T) {
+func TestDockerSocketContainerRemainsManageable(t *testing.T) {
 	root := t.TempDir()
 	c := &Client{webRoot: filepath.ToSlash(root), appRoot: "/home/docker", stateRoot: "/var/lib/kejilion-panel"}
 	var raw containerInspect
 	raw.Config.Labels = map[string]string{"io.kejilion.panel.managed": "true"}
 	raw.State.Status = "running"
 	raw.Mounts = []dockerMount{{Type: "bind", Source: "/var/run/docker.sock", Destination: "/var/run/docker.sock"}}
-	if got := c.summaryFromInspect(raw); len(got.AllowedActions) != 0 {
-		t.Fatalf("Docker Socket mount must be read-only: %#v", got)
+	if got := c.summaryFromInspect(raw); !contains(got.AllowedActions, "restart") ||
+		!contains(got.AllowedActions, "exec") {
+		t.Fatalf("Docker Socket mount incorrectly disabled container management: %#v", got)
 	}
 }
 
@@ -89,7 +93,7 @@ func TestRedactJSONAndPrefixedSecretKeys(t *testing.T) {
 	}
 }
 
-func TestContainerLogsRejectsExternalContainer(t *testing.T) {
+func TestContainerLogsSupportsExternalContainer(t *testing.T) {
 	id := strings.Repeat("a", 64)
 	logRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +104,7 @@ func TestContainerLogsRejectsExternalContainer(t *testing.T) {
 			})
 		case "/containers/" + id + "/logs":
 			logRequests++
-			_, _ = w.Write([]byte("must not be read"))
+			_, _ = w.Write([]byte("external log line\n"))
 		default:
 			http.NotFound(w, r)
 		}
@@ -108,12 +112,12 @@ func TestContainerLogsRejectsExternalContainer(t *testing.T) {
 	defer server.Close()
 
 	client := testHTTPClient(server)
-	_, err := client.ContainerLogs(context.Background(), id, 20)
-	if !errors.Is(err, ErrReadOnlyContainer) {
-		t.Fatalf("ContainerLogs() error = %v, want ErrReadOnlyContainer", err)
+	logs, err := client.ContainerLogs(context.Background(), id, 20)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if logRequests != 0 {
-		t.Fatalf("external container log endpoint was called %d times", logRequests)
+	if logRequests != 1 || strings.Join(logs.Lines, "\n") != "external log line" {
+		t.Fatalf("external container logs = %#v, requests=%d", logs, logRequests)
 	}
 }
 

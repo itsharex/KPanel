@@ -109,6 +109,67 @@ func TestThirdPartyScriptAppUsesVerifiedMainContainerAndManagementProtocol(t *te
 	}
 }
 
+func TestDynamicThirdPartyConfigDoesNotBecomeAManagementGuardrail(t *testing.T) {
+	root := t.TempDir()
+	configRoot := filepath.Join(root, "apps")
+	if err := os.Mkdir(configRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "appno.txt"),
+		[]byte("AIClient-2-API\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(configRoot, "AIClient-2-API.conf"),
+		[]byte("docker_name=\"${APP_NAME}\"\ndocker_app_plus\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	containerID := strings.Repeat("c", 64)
+	service, err := New(&fakeDocker{containers: []contract.ContainerSummary{{
+		ID: containerID, Name: "aiclient-runtime", Image: "example/aiclient:latest",
+		State: "running", Status: "Up",
+		Labels: map[string]string{
+			"com.docker.compose.project": "AIClient-2-API",
+		},
+		ResourceVersion: "sha256:" + strings.Repeat("d", 64),
+		AllowedActions:  []string{"stop", "restart", "logs", "exec"},
+	}}}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.scriptAppRoot = configRoot
+	service.fileOwnerTrusted = func(os.FileInfo) bool { return true }
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		&fakeJobRunner{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	service.scriptFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	service.scriptManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+
+	item, err := service.Find(context.Background(), "thirdparty-AIClient-2-API")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !item.Runtime.Installed || item.Runtime.ContainerID != containerID ||
+		!containsString(item.Runtime.DetectedBy, "compose_label") {
+		t.Fatalf("dynamic script product was not reconciled from Docker: %#v", item.Runtime)
+	}
+	for _, action := range []string{"update", "uninstall", "direct_access"} {
+		if !item.Capabilities[action].Enabled {
+			t.Fatalf("%s stayed disabled by config parsing: %#v", action, item.Capabilities[action])
+		}
+	}
+}
+
 func TestThirdPartyScriptConfigRejectsUnsafeOrDynamicContainerMetadata(t *testing.T) {
 	root := t.TempDir()
 	service, err := New(&fakeDocker{}, t.TempDir())

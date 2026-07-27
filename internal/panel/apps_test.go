@@ -25,10 +25,10 @@ func TestAllowedAppActionPath(t *testing.T) {
 func TestValidateAppActionInput(t *testing.T) {
 	validVersion := "sha256:" + strings.Repeat("a", 64)
 	if field, _ := validateAppActionInput("install", appActionInput{
-		HostPort:   optionalInt{Value: 8064, Set: true},
+		HostPort:   optionalInt{Value: 80, Set: true},
 		AccessMode: optionalString{Value: "domain_only", Set: true},
 	}); field != "" {
-		t.Fatalf("valid install rejected on %s", field)
+		t.Fatalf("script-compatible privileged port was rejected on %s", field)
 	}
 	if field, _ := validateAppActionInput("update", appActionInput{
 		ResourceVersion: optionalString{Value: validVersion, Set: true},

@@ -38,7 +38,8 @@ func TestDiscoverStaticLoadBalanceAndUnknown(t *testing.T) {
 		t.Fatalf("unexpected load balancing site: %#v", site)
 	}
 	if site := byDomain["unknown.example.com"]; site.Kind != contract.SiteUnknown ||
-		site.Consistency != contract.ConsistencyReadOnly || len(site.AllowedActions) != 0 {
+		site.Consistency != contract.ConsistencyReadOnly ||
+		!containsString(site.AllowedActions, "delete") {
 		t.Fatalf("unexpected unknown site: %#v", site)
 	}
 }

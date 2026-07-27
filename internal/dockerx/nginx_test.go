@@ -16,7 +16,7 @@ import (
 	"testing"
 )
 
-func TestNginxReadyRequiresManagedRunningSafeContainer(t *testing.T) {
+func TestNginxReadyUsesSharedArtifactsInsteadOfOwnershipOrRuntimePolicy(t *testing.T) {
 	id := strings.Repeat("a", 64)
 	tests := []struct {
 		name    string
@@ -40,7 +40,6 @@ func TestNginxReadyRequiresManagedRunningSafeContainer(t *testing.T) {
 			inspect: nginxInspect(id, map[string]string{
 				"com.docker.compose.project.working_dir": "/srv/external",
 			}),
-			wantErr: ErrReadOnlyContainer,
 		},
 		{
 			name: "stopped",
@@ -59,7 +58,6 @@ func TestNginxReadyRequiresManagedRunningSafeContainer(t *testing.T) {
 				raw.HostConfig.Privileged = true
 				return raw
 			}(),
-			wantErr: ErrUnsafeOrInvalidAction,
 		},
 	}
 
@@ -237,114 +235,8 @@ func TestNginxReadyRequiresExactArtifactBindingsAndInclude(t *testing.T) {
 			client := testHTTPClient(server)
 			client.webRoot = webRoot
 			err := client.NginxReady(context.Background())
-			if !errors.Is(err, ErrReadOnlyContainer) {
-				t.Fatalf("NginxReady() error = %v, want ErrReadOnlyContainer", err)
-			}
-		})
-	}
-}
-
-func TestNginxSafetyPolicyRejectsDangerousConfiguration(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
-	client := &Client{
-		webRoot:   filepath.ToSlash(root),
-		appRoot:   filepath.ToSlash(filepath.Join(root, "apps")),
-		stateRoot: filepath.ToSlash(filepath.Join(root, "state")),
-	}
-	tests := []struct {
-		name   string
-		mutate func(*containerInspect)
-	}{
-		{
-			name: "privileged",
-			mutate: func(raw *containerInspect) {
-				raw.HostConfig.Privileged = true
-			},
-		},
-		{
-			name: "host pid",
-			mutate: func(raw *containerInspect) {
-				raw.HostConfig.PidMode = "host"
-			},
-		},
-		{
-			name: "host ipc",
-			mutate: func(raw *containerInspect) {
-				raw.HostConfig.IpcMode = "host"
-			},
-		},
-		{
-			name: "host uts",
-			mutate: func(raw *containerInspect) {
-				raw.HostConfig.UTSMode = "host"
-			},
-		},
-		{
-			name: "host userns",
-			mutate: func(raw *containerInspect) {
-				raw.HostConfig.UsernsMode = "host"
-			},
-		},
-		{
-			name: "added capability",
-			mutate: func(raw *containerInspect) {
-				raw.HostConfig.CapAdd = []string{"SYS_ADMIN"}
-			},
-		},
-		{
-			name: "host device",
-			mutate: func(raw *containerInspect) {
-				raw.HostConfig.Devices = append(raw.HostConfig.Devices, struct {
-					PathOnHost string `json:"PathOnHost"`
-				}{PathOnHost: "/dev/sda"})
-			},
-		},
-		{
-			name: "unconfined security",
-			mutate: func(raw *containerInspect) {
-				raw.HostConfig.SecurityOpt = []string{"seccomp=unconfined"}
-			},
-		},
-		{
-			name: "disabled security",
-			mutate: func(raw *containerInspect) {
-				raw.HostConfig.SecurityOpt = []string{"label=disable"}
-			},
-		},
-		{
-			name: "Docker Socket",
-			mutate: func(raw *containerInspect) {
-				raw.Mounts = []dockerMount{{
-					Type:        "volume",
-					Name:        "socket",
-					Source:      "/var/lib/docker/volumes/socket/_data",
-					Destination: "/var/run/docker.sock",
-				}}
-			},
-		},
-		{
-			name: "out of bounds bind",
-			mutate: func(raw *containerInspect) {
-				raw.Mounts = []dockerMount{{
-					Type:        "bind",
-					Source:      filepath.ToSlash(outside),
-					Destination: "/etc/nginx/conf.d",
-				}}
-			},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			raw := nginxInspect(
-				strings.Repeat("9", 64),
-				map[string]string{"io.kejilion.panel.managed": "true"},
-			)
-			raw.HostConfig.NetworkMode = "host"
-			test.mutate(&raw)
-			if reason := client.unsafeNginxReason(raw); reason == "" {
-				t.Fatal("unsafeNginxReason() accepted a dangerous container")
+			if !errors.Is(err, ErrRuntimeContract) {
+				t.Fatalf("NginxReady() error = %v, want ErrRuntimeContract", err)
 			}
 		})
 	}

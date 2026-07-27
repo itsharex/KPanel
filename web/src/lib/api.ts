@@ -907,11 +907,10 @@ export const api = {
       id: string,
       expectedResourceVersion: string,
       mode: 'configuration' | 'full',
-      confirmDomain?: string,
     ) =>
       request<SiteDeleteResult>(
         `/sites/${encodeURIComponent(id)}`,
-        { method: 'DELETE', body: { expectedResourceVersion, mode, confirmDomain } },
+        { method: 'DELETE', body: { expectedResourceVersion, mode } },
       ),
   },
   apps: {

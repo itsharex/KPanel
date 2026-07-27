@@ -84,8 +84,10 @@ func (d *Discoverer) Discover() ([]contract.SiteSummary, error) {
 		for _, domain := range result[i].Domains {
 			if domainCounts[domain] > 1 {
 				result[i].Consistency = contract.ConsistencyAmbiguous
-				result[i].AllowedActions = []string{}
-				result[i].Warnings = uniqueStrings(append(result[i].Warnings, "同一域名出现在多个配置文件中，无法唯一归属"))
+				result[i].Warnings = uniqueStrings(append(
+					result[i].Warnings,
+					"同一域名出现在多个配置文件中；操作将按当前配置文件资源 ID 执行",
+				))
 				break
 			}
 		}
@@ -131,7 +133,7 @@ func (d *Discoverer) fromConfig(path string, now time.Time) (contract.SiteSummar
 	if kind == contract.SiteUnknown {
 		consistency = contract.ConsistencyReadOnly
 		health = "unknown"
-		warnings = append(warnings, "配置结构无法安全归类，保持只读")
+		warnings = append(warnings, "配置结构未能归类；仍可按实际配置文件移除 Nginx 入口")
 	}
 	tls, certArtifact, certBytes := d.discoverTLS(directives, primary)
 	configHash := hashBytes(data)
@@ -161,7 +163,7 @@ func (d *Discoverer) fromConfig(path string, now time.Time) (contract.SiteSummar
 		Origin:          contract.OriginDiscovered,
 		Consistency:     consistency,
 		ResourceVersion: hashBytes(versionInput),
-		AllowedActions:  []string{},
+		AllowedActions:  []string{"delete"},
 		Artifacts:       artifacts,
 		Warnings:        uniqueStrings(warnings),
 		ReconciledAt:    now,
@@ -169,14 +171,9 @@ func (d *Discoverer) fromConfig(path string, now time.Time) (contract.SiteSummar
 	if site.Consistency == contract.ConsistencyInSync && site.Kind != contract.SiteUnknown {
 		site.Origin = contract.OriginCLI
 		if site.Kind == contract.SiteWordPress {
-			if stem == site.PrimaryDomain {
-				site.AllowedActions = []string{"delete"}
-			}
+			site.AllowedActions = []string{"delete"}
 		} else {
-			site.AllowedActions = []string{"update"}
-			if stem == site.PrimaryDomain {
-				site.AllowedActions = append(site.AllowedActions, "delete")
-			}
+			site.AllowedActions = []string{"update", "delete"}
 		}
 	}
 	d.markManagedSite(&site, data, path)
@@ -389,9 +386,9 @@ func (d *Discoverer) unreadableConfig(path string, cause error, now time.Time) c
 		Origin:          contract.OriginDiscovered,
 		Consistency:     contract.ConsistencyReadOnly,
 		ResourceVersion: stableID("version", path, cause.Error()),
-		AllowedActions:  []string{},
+		AllowedActions:  []string{"delete"},
 		Artifacts:       []contract.Artifact{{Kind: "nginx_config", Path: path}},
-		Warnings:        []string{"配置无法安全读取：" + cause.Error()},
+		Warnings:        []string{"配置当前无法读取，可直接删除该配置产物：" + cause.Error()},
 		ReconciledAt:    now,
 	}
 }
@@ -449,7 +446,7 @@ func orphanSite(domain, kind, path string, now time.Time) contract.SiteSummary {
 		Origin:          contract.OriginDiscovered,
 		Consistency:     contract.ConsistencyReadOnly,
 		ResourceVersion: stableID("version", kind, path),
-		AllowedActions:  []string{},
+		AllowedActions:  []string{"delete"},
 		Artifacts:       []contract.Artifact{{Kind: kind, Path: path}},
 		Warnings:        []string{"存在孤立产物但未找到可关联的 Nginx 站点配置"},
 		ReconciledAt:    now,

@@ -179,14 +179,12 @@ func (c *Client) Containers(ctx context.Context) ([]contract.ContainerSummary, e
 	result := make([]contract.ContainerSummary, 0, len(raw))
 	for _, item := range raw {
 		summary := c.summaryFromList(item)
-		if summary.Ownership == "kejilion" {
-			inspect, err := c.inspect(ctx, item.ID)
-			if err == nil {
-				summary = c.summaryFromInspect(inspect)
-			} else {
-				summary.AllowedActions = []string{}
-				summary.OwnershipEvidence = append(summary.OwnershipEvidence, "安全检查失败，保持只读")
-			}
+		inspect, err := c.inspect(ctx, item.ID)
+		if err == nil {
+			summary = c.summaryFromInspect(inspect)
+		} else {
+			summary.AllowedActions = []string{}
+			summary.OwnershipEvidence = append(summary.OwnershipEvidence, "容器详情读取失败，暂时无法确定可用动作")
 		}
 		result = append(result, summary)
 	}
@@ -272,12 +270,8 @@ func (c *Client) ContainerLogs(ctx context.Context, id string, tail int) (Logs, 
 	if !containerIDPattern.MatchString(id) {
 		return Logs{}, errors.New("invalid container id")
 	}
-	inspect, err := c.inspect(ctx, id)
-	if err != nil {
+	if _, err := c.inspect(ctx, id); err != nil {
 		return Logs{}, err
-	}
-	if summary := c.summaryFromInspect(inspect); summary.Ownership != "kejilion" {
-		return Logs{}, ErrReadOnlyContainer
 	}
 	if tail <= 0 {
 		tail = 200
@@ -322,11 +316,8 @@ func (c *Client) Lifecycle(ctx context.Context, id, action, expectedVersion stri
 		return ActionResult{}, err
 	}
 	summary := c.summaryFromInspect(inspect)
-	if summary.Ownership != "kejilion" {
-		return ActionResult{}, ErrReadOnlyContainer
-	}
 	if !contains(summary.AllowedActions, action) {
-		return ActionResult{}, ErrUnsafeOrInvalidAction
+		return ActionResult{}, ErrActionUnsupported
 	}
 	if summary.ResourceVersion != expectedVersion {
 		return ActionResult{}, ErrResourceConflict
@@ -334,7 +325,7 @@ func (c *Client) Lifecycle(ctx context.Context, id, action, expectedVersion stri
 	endpoint := "/containers/" + id + "/" + action
 	method := http.MethodPost
 	if action == "remove" {
-		endpoint = "/containers/" + id + "?v=0&force=0"
+		endpoint = "/containers/" + id + "?v=0&force=1"
 		method = http.MethodDelete
 	}
 	if action == "stop" || action == "restart" {
@@ -361,11 +352,11 @@ func (c *Client) Lifecycle(ctx context.Context, id, action, expectedVersion stri
 }
 
 var (
-	ErrVersionRequired       = errors.New("resourceVersion is required")
-	ErrReadOnlyContainer     = errors.New("container ownership is not safely established")
-	ErrUnsafeOrInvalidAction = errors.New("container configuration or state does not allow this action")
-	ErrResourceConflict      = errors.New("container resourceVersion changed")
-	ErrDockerNotRunning      = errors.New("Docker daemon is not already running; socket activation is disabled")
+	ErrVersionRequired   = errors.New("resourceVersion is required")
+	ErrRuntimeContract   = errors.New("container does not match the required runtime contract")
+	ErrActionUnsupported = errors.New("container configuration or state does not support this action")
+	ErrResourceConflict  = errors.New("container resourceVersion changed")
+	ErrDockerNotRunning  = errors.New("Docker daemon is not already running; socket activation is disabled")
 )
 
 type containerListItem struct {
@@ -532,22 +523,14 @@ func (c *Client) summaryFromInspect(raw containerInspect) contract.ContainerSumm
 		raw.State.StartedAt, raw.State.FinishedAt, raw.RestartCount, raw.State.Restarting,
 		raw.Config.Labels, raw.HostConfig, raw.Mounts,
 	})
-	allowed := []string{}
-	if ownership == "kejilion" {
-		if reason := c.unsafeReason(raw); reason == "" {
-			switch raw.State.Status {
-			case "running":
-				allowed = []string{"restart", "stop", "logs", "stats", "exec", "access"}
-			case "created", "exited", "dead":
-				allowed = []string{"start", "remove"}
-			}
-			if strings.EqualFold(name, "kejilion-panel") {
-				allowed = removeString(removeString(removeString(allowed, "remove"), "exec"), "access")
-			}
-			evidence = append(evidence, "危险配置检查通过")
-		} else {
-			evidence = append(evidence, "只读："+reason)
-		}
+	allowed := []string{"logs"}
+	switch raw.State.Status {
+	case "running":
+		allowed = append(allowed, "restart", "stop", "remove", "stats", "exec", "access")
+	case "paused", "restarting":
+		allowed = append(allowed, "restart", "stop", "remove", "stats", "access")
+	case "created", "exited", "dead":
+		allowed = append(allowed, "start", "remove")
 	}
 	return contract.ContainerSummary{
 		ID: raw.ID, Name: name, Image: raw.Config.Image,
@@ -621,43 +604,6 @@ func (c *Client) provenWithin(candidate, root string, exact bool) bool {
 	}
 	relative, err := filepath.Rel(resolvedRoot, resolvedCandidate)
 	return err == nil && (relative == "." || (!strings.HasPrefix(relative, ".."+string(filepath.Separator)) && relative != ".."))
-}
-
-func (c *Client) unsafeReason(raw containerInspect) string {
-	host := raw.HostConfig
-	switch {
-	case host.Privileged:
-		return "容器使用 privileged"
-	case host.NetworkMode == "host":
-		return "容器使用 host network"
-	case host.PidMode == "host" || host.IpcMode == "host" || host.UTSMode == "host" || host.UsernsMode == "host":
-		return "容器共享宿主机命名空间"
-	case len(host.CapAdd) > 0:
-		return "容器添加了额外 capabilities"
-	case len(host.Devices) > 0:
-		return "容器映射了宿主机设备"
-	}
-	for _, option := range host.SecurityOpt {
-		lower := strings.ToLower(option)
-		if strings.Contains(lower, "unconfined") || strings.Contains(lower, "disable") {
-			return "容器禁用了安全配置"
-		}
-	}
-	for _, mount := range raw.Mounts {
-		if mount.Type != "bind" {
-			continue
-		}
-		source := pathpkg.Clean(mount.Source)
-		if strings.HasSuffix(source, "/docker.sock") {
-			return "容器挂载 Docker Socket"
-		}
-		if !c.provenWithin(source, c.webRoot, false) &&
-			!c.provenWithin(source, c.appRoot, false) &&
-			!c.provenWithin(source, c.stateRoot, false) {
-			return "容器绑定了管理范围外的宿主机路径"
-		}
-	}
-	return ""
 }
 
 func (c *Client) inspect(ctx context.Context, id string) (containerInspect, error) {
@@ -785,6 +731,9 @@ var (
 
 func redactLines(data []byte, limit int) []string {
 	rawLines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	if len(rawLines) > 0 && rawLines[len(rawLines)-1] == "" {
+		rawLines = rawLines[:len(rawLines)-1]
+	}
 	if len(rawLines) > limit {
 		rawLines = rawLines[len(rawLines)-limit:]
 	}

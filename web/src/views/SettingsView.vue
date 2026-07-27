@@ -56,7 +56,7 @@ const agentState = computed(() => {
   const agent = panel.state.agent
   if (!agent?.connected) return { status: 'offline', label: '离线' }
   if (!agent.compatible) return { status: 'incompatible', label: '不兼容' }
-  if (agent.readOnly) return { status: 'read_only', label: '只读' }
+  if (agent.readOnly) return { status: 'read_only', label: '写入依赖未就绪' }
   return { status: 'connected', label: '正常' }
 })
 
@@ -152,7 +152,7 @@ onMounted(async () => {
           <dd>{{ session.state.user?.totpEnabled ? '已启用 TOTP' : '密码登录' }}</dd>
         </div>
       </dl>
-      <p class="settings-note">TOTP 配置将在安全接口开放后显示；前端不会绕过能力白名单。</p>
+      <p class="settings-note">TOTP 配置将在账户管理接口实现后显示；宿主机能力按真实适配器状态呈现。</p>
     </section>
 
     <section class="settings-section panel-card">

@@ -127,7 +127,7 @@ func TestContainerExecRejectsMultilineCommandBeforeDocker(t *testing.T) {
 		strings.Repeat("a", 64),
 		ContainerExecInput{ResourceVersion: "sha256:" + strings.Repeat("0", 64), Command: "id\nuname"},
 	)
-	if err != ErrUnsafeOrInvalidAction {
+	if err != ErrActionUnsupported {
 		t.Fatalf("invalid command error = %v", err)
 	}
 }
@@ -140,7 +140,11 @@ func TestManagedContainerCreateIsStructuredAndRollsBackStartFailure(t *testing.T
 		Labels       map[string]string `json:"Labels"`
 		ExposedPorts map[string]any    `json:"ExposedPorts"`
 		HostConfig   struct {
-			PortBindings  map[string][]map[string]string `json:"PortBindings"`
+			PortBindings map[string][]map[string]string `json:"PortBindings"`
+			Mounts       []struct {
+				Type, Source, Target string
+				ReadOnly             bool
+			} `json:"Mounts"`
 			RestartPolicy struct {
 				Name string `json:"Name"`
 			} `json:"RestartPolicy"`
@@ -173,8 +177,12 @@ func TestManagedContainerCreateIsStructuredAndRollsBackStartFailure(t *testing.T
 	err := client.createManagedContainer(context.Background(), MaintenanceInput{
 		Action: "container_create", Name: "demo", Image: "nginx:alpine",
 		RestartPolicy: "unless-stopped",
-		Ports:         []ContainerCreatePort{{PrivatePort: 80, PublicPort: 8080, Protocol: "tcp", HostIP: "127.0.0.1"}},
-		Environment:   []ContainerCreateEnvironment{{Name: "APP_MODE", Value: "production"}},
+		Ports:         []ContainerCreatePort{{PrivatePort: 80, PublicPort: 8080, Protocol: "tcp", HostIP: "192.0.2.10"}},
+		Mounts: []ContainerCreateMount{
+			{Type: "bind", Source: "/home/docker/demo", Target: "/data"},
+			{Type: "volume", Source: "demo-cache", Target: "/cache", ReadOnly: true},
+		},
+		Environment: []ContainerCreateEnvironment{{Name: "APP_MODE", Value: "production"}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "rolled back") || !rollback {
 		t.Fatalf("create rollback result: err=%v rollback=%v", err, rollback)
@@ -183,7 +191,12 @@ func TestManagedContainerCreateIsStructuredAndRollsBackStartFailure(t *testing.T
 		payload.Labels["io.kejilion.panel.managed"] != "true" ||
 		len(payload.Env) != 1 || payload.Env[0] != "APP_MODE=production" ||
 		payload.HostConfig.RestartPolicy.Name != "unless-stopped" ||
-		payload.HostConfig.PortBindings["80/tcp"][0]["HostIp"] != "127.0.0.1" {
+		payload.HostConfig.PortBindings["80/tcp"][0]["HostIp"] != "192.0.2.10" ||
+		len(payload.HostConfig.Mounts) != 2 ||
+		payload.HostConfig.Mounts[0].Type != "bind" ||
+		payload.HostConfig.Mounts[0].Source != "/home/docker/demo" ||
+		payload.HostConfig.Mounts[1].Type != "volume" ||
+		!payload.HostConfig.Mounts[1].ReadOnly {
 		t.Fatalf("unexpected create payload: %#v", payload)
 	}
 }

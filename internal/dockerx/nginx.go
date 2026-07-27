@@ -79,8 +79,9 @@ func (operation nginxExecOperation) nameAndCommand() (string, []string, error) {
 	}
 }
 
-// NginxReady verifies that the fixed nginx container is running, managed by
-// Kejilion, and does not have a configuration that makes control unsafe.
+// NginxReady verifies that the running nginx container consumes the shared
+// kejilion.sh website artifacts. Labels and unrelated runtime options are not
+// management authorization gates.
 func (c *Client) NginxReady(ctx context.Context) error {
 	_, err := c.readyNginx(ctx)
 	return err
@@ -102,68 +103,15 @@ func (c *Client) readyNginx(ctx context.Context) (containerInspect, error) {
 		return containerInspect{}, fmt.Errorf("%w: inspect fixed container %s: %w", ErrNginxNotReady, nginxContainerName, err)
 	}
 	if strings.TrimPrefix(raw.Name, "/") != nginxContainerName || !dockerExecIDPattern.MatchString(raw.ID) {
-		return containerInspect{}, fmt.Errorf("%w: fixed nginx container identity was not established", ErrReadOnlyContainer)
+		return containerInspect{}, fmt.Errorf("%w: fixed nginx container identity was not established", ErrRuntimeContract)
 	}
 	if !raw.State.Running || raw.State.Status != "running" || raw.State.Paused || raw.State.Restarting {
 		return containerInspect{}, fmt.Errorf("%w: fixed nginx container is not running normally", ErrNginxNotReady)
-	}
-	if !managedNginxLabels(raw.Config.Labels) {
-		return containerInspect{}, fmt.Errorf("%w: nginx requires %s or %s=%s",
-			ErrReadOnlyContainer,
-			"com.docker.compose.project.working_dir=/home/web",
-			"io.kejilion.panel.managed",
-			"true",
-		)
-	}
-	if reason := c.unsafeNginxReason(raw); reason != "" {
-		return containerInspect{}, fmt.Errorf("%w: nginx container failed the safety check", ErrUnsafeOrInvalidAction)
 	}
 	if err := c.verifyNginxArtifactBindings(raw); err != nil {
 		return containerInspect{}, err
 	}
 	return raw, nil
-}
-
-func managedNginxLabels(labels map[string]string) bool {
-	if labels["io.kejilion.panel.managed"] == "true" {
-		return true
-	}
-	workdir := labels["com.docker.compose.project.working_dir"]
-	return pathpkg.IsAbs(workdir) && pathpkg.Clean(workdir) == nginxComposeWorkingDir
-}
-
-// unsafeNginxReason intentionally permits host networking because the legacy
-// Kejilion nginx service uses it. The general lifecycle safety policy remains
-// stricter and continues to reject host networking in unsafeReason.
-func (c *Client) unsafeNginxReason(raw containerInspect) string {
-	host := raw.HostConfig
-	switch {
-	case host.Privileged:
-		return "container uses privileged mode"
-	case host.PidMode == "host" || host.IpcMode == "host" || host.UTSMode == "host" || host.UsernsMode == "host":
-		return "container shares a host namespace"
-	case len(host.CapAdd) > 0:
-		return "container adds capabilities"
-	case len(host.Devices) > 0:
-		return "container maps host devices"
-	}
-	for _, option := range host.SecurityOpt {
-		lower := strings.ToLower(option)
-		if strings.Contains(lower, "unconfined") || strings.Contains(lower, "disable") {
-			return "container disables a security policy"
-		}
-	}
-	for _, mount := range raw.Mounts {
-		source := pathpkg.Clean(mount.Source)
-		destination := pathpkg.Clean(mount.Destination)
-		if pathpkg.Base(source) == "docker.sock" || pathpkg.Base(destination) == "docker.sock" {
-			return "container mounts the Docker Socket"
-		}
-		if mount.Type == "bind" && !c.provenWithin(source, c.webRoot, false) {
-			return "container binds a path outside the managed web root"
-		}
-	}
-	return ""
 }
 
 func (c *Client) verifyNginxArtifactBindings(raw containerInspect) error {
@@ -180,7 +128,7 @@ func (c *Client) verifyNginxArtifactBindings(raw containerInspect) error {
 		if !c.hasExactSafeNginxBind(raw.Mounts, requirement.hostPath, requirement.containerPath, requirement.directory) {
 			return fmt.Errorf(
 				"%w: nginx requires the exact managed bind %s -> %s",
-				ErrReadOnlyContainer,
+				ErrRuntimeContract,
 				requirement.hostPath,
 				requirement.containerPath,
 			)
@@ -191,12 +139,12 @@ func (c *Client) verifyNginxArtifactBindings(raw containerInspect) error {
 		maxNginxMainConfigBytes,
 	)
 	if err != nil {
-		return fmt.Errorf("%w: safely read managed nginx.conf: %v", ErrReadOnlyContainer, err)
+		return fmt.Errorf("%w: read shared nginx.conf artifact: %v", ErrRuntimeContract, err)
 	}
 	if !nginxConfIncludePattern.Match(mainConfig) {
 		return fmt.Errorf(
 			"%w: managed nginx.conf does not include %s/*.conf",
-			ErrReadOnlyContainer,
+			ErrRuntimeContract,
 			nginxConfDirectoryPath,
 		)
 	}
@@ -306,7 +254,7 @@ func (c *Client) runNginxExec(ctx context.Context, operation nginxExecOperation)
 
 func (c *Client) createNginxExec(ctx context.Context, containerID string, operation nginxExecOperation) (string, error) {
 	if !dockerExecIDPattern.MatchString(containerID) {
-		return "", fmt.Errorf("%w: invalid nginx container id", ErrReadOnlyContainer)
+		return "", fmt.Errorf("%w: invalid nginx container id", ErrRuntimeContract)
 	}
 	_, command, err := operation.nameAndCommand()
 	if err != nil {

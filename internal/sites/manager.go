@@ -57,6 +57,16 @@ func NewManager(webRoot string, discoverer *Discoverer, nginx NginxController) *
 }
 
 func (m *Manager) Writable(ctx context.Context) error {
+	if err := m.writePrerequisites(ctx); err != nil {
+		return err
+	}
+	if err := m.nginx.NginxTest(ctx); err != nil {
+		return fmt.Errorf("%w: existing Nginx configuration is invalid: %v", ErrUnavailable, err)
+	}
+	return nil
+}
+
+func (m *Manager) writePrerequisites(ctx context.Context) error {
 	if !atomicSiteWritesSupported() {
 		return fmt.Errorf("%w: atomic site transactions require Linux", ErrUnavailable)
 	}
@@ -78,9 +88,6 @@ func (m *Manager) Writable(ctx context.Context) error {
 	}
 	if err := m.nginx.NginxReady(ctx); err != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
-	}
-	if err := m.nginx.NginxTest(ctx); err != nil {
-		return fmt.Errorf("%w: existing Nginx configuration is invalid: %v", ErrUnavailable, err)
 	}
 	return nil
 }
@@ -220,7 +227,7 @@ func (m *Manager) Update(ctx context.Context, id string, input SiteInput) (contr
 	if err := m.checkCollisions(spec, current.ID); err != nil {
 		return contract.SiteSummary{}, err
 	}
-	if current.Origin == contract.OriginCLI {
+	if current.Origin == contract.OriginCLI || current.Consistency != contract.ConsistencyInSync {
 		return m.updateCLIConfig(ctx, current, spec, input.ExpectedResourceVersion)
 	}
 	if siteNeedsDocumentRoot(spec.Kind) {
@@ -345,6 +352,7 @@ type DeleteResult struct {
 	ResourceVersion string   `json:"resourceVersion"`
 	Removed         []string `json:"removed"`
 	DatabaseDropped bool     `json:"databaseDropped"`
+	Warnings        []string `json:"warnings,omitempty"`
 }
 
 type DeleteInput struct {
@@ -380,32 +388,31 @@ func (m *Manager) DeleteWithOptions(
 	}
 	siteWriteMutex.Lock()
 	defer siteWriteMutex.Unlock()
-	if err := m.Writable(ctx); err != nil {
+	if err := m.writePrerequisites(ctx); err != nil {
 		return DeleteResult{}, err
 	}
 	current, err := m.findActionableByID(id, "delete")
 	if err != nil {
 		return DeleteResult{}, err
 	}
-	if input.ConfirmDomain != current.PrimaryDomain {
-		return DeleteResult{}, fmt.Errorf(
-			"%w: confirmDomain must exactly match the primary domain",
-			ErrForbidden,
-		)
-	}
 	if current.ResourceVersion != input.ExpectedResourceVersion {
 		return DeleteResult{}, fmt.Errorf("%w: resource version changed", ErrConflict)
 	}
 
-	configPath, configInfo, configData, err := m.verifiedDeleteConfig(current)
-	if err != nil {
-		return DeleteResult{}, err
+	configPath, configInfo, configData, configErr := m.verifiedDeleteConfig(current)
+	reloadNginx := configErr == nil
+	var artifacts []stagedDeleteArtifact
+	if reloadNginx {
+		artifacts = []stagedDeleteArtifact{{
+			kind: "nginx_config", path: configPath, info: configInfo,
+		}}
+	} else {
+		artifacts, err = m.detachedDeleteArtifacts(current, input.Mode)
+		if err != nil {
+			return DeleteResult{}, configErr
+		}
 	}
-
-	artifacts := []stagedDeleteArtifact{{
-		kind: "nginx_config", path: configPath, info: configInfo,
-	}}
-	if input.Mode == "full" {
+	if input.Mode == "full" && reloadNginx {
 		artifacts, err = m.fullDeleteArtifacts(current, configData, artifacts)
 		if err != nil {
 			return DeleteResult{}, err
@@ -449,51 +456,38 @@ func (m *Manager) DeleteWithOptions(
 			err,
 		)
 	}
-	if err := m.nginx.NginxTest(ctx); err != nil {
-		if restoreErr := restoreDeleteArtifacts(staged); restoreErr != nil {
-			return DeleteResult{}, restoreErr
+	if reloadNginx {
+		if err := m.nginx.NginxTest(ctx); err != nil {
+			if restoreErr := restoreDeleteArtifacts(staged); restoreErr != nil {
+				return DeleteResult{}, restoreErr
+			}
+			return DeleteResult{}, fmt.Errorf(
+				"%w: delete candidate failed nginx -t; artifacts restored: %v",
+				ErrUnprocessable,
+				err,
+			)
 		}
-		return DeleteResult{}, fmt.Errorf(
-			"%w: delete candidate failed nginx -t; artifacts restored: %v",
-			ErrUnprocessable,
-			err,
-		)
-	}
-	if err := m.nginx.NginxReload(ctx); err != nil {
-		if restoreErr := restoreDeleteArtifacts(staged); restoreErr != nil {
-			return DeleteResult{}, restoreErr
+		if err := m.nginx.NginxReload(ctx); err != nil {
+			if restoreErr := restoreDeleteArtifacts(staged); restoreErr != nil {
+				return DeleteResult{}, restoreErr
+			}
+			if recoveryErr := m.validateAndReloadPrevious(ctx); recoveryErr != nil {
+				return DeleteResult{}, recoveryErr
+			}
+			return DeleteResult{}, fmt.Errorf(
+				"%w: Nginx reload failed and all site artifacts were restored: %v",
+				ErrUnavailable,
+				err,
+			)
 		}
-		if recoveryErr := m.validateAndReloadPrevious(ctx); recoveryErr != nil {
-			return DeleteResult{}, recoveryErr
-		}
-		return DeleteResult{}, fmt.Errorf(
-			"%w: Nginx reload failed and all site artifacts were restored: %v",
-			ErrUnavailable,
-			err,
-		)
 	}
 
 	databaseDropped := false
-	if input.Mode == "full" {
-		if m.siteDataRuntime == nil {
-			if restoreErr := m.restoreDeletedSite(ctx, staged); restoreErr != nil {
-				return DeleteResult{}, restoreErr
-			}
-			return DeleteResult{}, fmt.Errorf(
-				"%w: the verified MySQL runtime is unavailable; site artifacts were restored",
-				ErrUnavailable,
-			)
-		}
+	var warnings []string
+	if input.Mode == "full" && m.siteDataRuntime != nil {
 		databaseDropped, err = m.siteDataRuntime.DropSiteDatabase(ctx, current.PrimaryDomain)
 		if err != nil {
-			if restoreErr := m.restoreDeletedSite(ctx, staged); restoreErr != nil {
-				return DeleteResult{}, restoreErr
-			}
-			return DeleteResult{}, fmt.Errorf(
-				"%w: database operation failed; site artifacts were restored, but the database state must be verified: %v",
-				ErrNeedsAttention,
-				err,
-			)
+			warnings = append(warnings, "站点产物已删除，但数据库清理失败："+err.Error())
 		}
 	}
 
@@ -526,7 +520,7 @@ func (m *Manager) DeleteWithOptions(
 	return DeleteResult{
 		ID: current.ID, PrimaryDomain: current.PrimaryDomain,
 		Status: "deleted", Mode: input.Mode, ResourceVersion: current.ResourceVersion,
-		Removed: removed, DatabaseDropped: databaseDropped,
+		Removed: removed, DatabaseDropped: databaseDropped, Warnings: warnings,
 	}, nil
 }
 
@@ -535,7 +529,7 @@ func (m *Manager) verifiedDeleteConfig(
 ) (string, os.FileInfo, []byte, error) {
 	confRoot := filepath.Join(m.webRoot, "conf.d")
 	for _, artifact := range site.Artifacts {
-		if artifact.Kind != "nginx_config" || artifact.Hash == "" {
+		if artifact.Kind != "nginx_config" {
 			continue
 		}
 		path := filepath.Clean(artifact.Path)
@@ -548,11 +542,14 @@ func (m *Manager) verifiedDeleteConfig(
 		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			break
 		}
-		data, err := readRegularFile(path, maxConfigBytes)
-		if err != nil || hashBytes(data) != artifact.Hash {
-			break
+		if artifact.Hash == "" {
+			return path, info, nil, nil
 		}
-		return path, info, data, nil
+		data, err := readRegularFile(path, maxConfigBytes)
+		if err == nil && hashBytes(data) == artifact.Hash {
+			return path, info, data, nil
+		}
+		break
 	}
 	return "", nil, nil, fmt.Errorf(
 		"%w: current Nginx configuration is no longer the discovered artifact",
@@ -560,79 +557,124 @@ func (m *Manager) verifiedDeleteConfig(
 	)
 }
 
+func (m *Manager) detachedDeleteArtifacts(
+	site contract.SiteSummary,
+	mode string,
+) ([]stagedDeleteArtifact, error) {
+	roots := map[string]string{
+		"orphan_html":        filepath.Join(m.webRoot, "html"),
+		"orphan_certificate": filepath.Join(m.webRoot, "certs"),
+	}
+	var result []stagedDeleteArtifact
+	seen := make(map[string]bool)
+	appendArtifact := func(kind, candidate, root string) error {
+		candidate = filepath.Clean(candidate)
+		root = filepath.Clean(root)
+		if candidate == root || !pathWithin(candidate, root) || seen[candidate] {
+			return nil
+		}
+		info, err := os.Lstat(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		seen[candidate] = true
+		result = append(result, stagedDeleteArtifact{
+			kind: kind, path: candidate, info: info, directory: info.IsDir(),
+		})
+		return nil
+	}
+	for _, artifact := range site.Artifacts {
+		root, ok := roots[artifact.Kind]
+		if !ok {
+			continue
+		}
+		if err := appendArtifact(artifact.Kind, artifact.Path, root); err != nil {
+			return nil, err
+		}
+		if mode == "full" && artifact.Kind == "orphan_certificate" &&
+			strings.HasSuffix(artifact.Path, "_cert.pem") {
+			keyPath := strings.TrimSuffix(artifact.Path, "_cert.pem") + "_key.pem"
+			if err := appendArtifact("certificate_key", keyPath, root); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("%w: no removable site artifact was found", ErrForbidden)
+	}
+	return result, nil
+}
+
 func (m *Manager) fullDeleteArtifacts(
 	site contract.SiteSummary,
 	configData []byte,
 	artifacts []stagedDeleteArtifact,
 ) ([]stagedDeleteArtifact, error) {
-	siteRoot := filepath.Join(m.webRoot, "html", site.PrimaryDomain)
-	if siteNeedsDocumentRoot(site.Kind) {
-		expectedDocumentRoot := siteRoot
-		if site.Kind == contract.SiteWordPress {
-			expectedDocumentRoot = filepath.Join(siteRoot, "wordpress")
-		}
-		if filepath.Clean(site.DocumentRoot) != filepath.Clean(expectedDocumentRoot) {
-			return nil, fmt.Errorf(
-				"%w: document root does not match the k web site layout",
-				ErrForbidden,
-			)
-		}
+	seen := make(map[string]bool)
+	for _, artifact := range artifacts {
+		seen[filepath.Clean(artifact.path)] = true
 	}
-	directives := parseDirectives(stripComments(string(configData)))
-	certificates := uniqueStrings(directives["ssl_certificate"])
-	keys := uniqueStrings(directives["ssl_certificate_key"])
-	if len(certificates) > 0 || len(keys) > 0 {
-		expectedCertificate := filepath.Join(m.webRoot, "certs", site.PrimaryDomain+"_cert.pem")
-		expectedKey := filepath.Join(m.webRoot, "certs", site.PrimaryDomain+"_key.pem")
-		certificatePath, certificateOK := "", false
-		keyPath, keyOK := "", false
-		if len(certificates) == 1 {
-			certificatePath, certificateOK = m.discoverer.certificateHostPath(certificates[0])
+	appendCandidate := func(kind, candidate, root string) error {
+		candidate = filepath.Clean(candidate)
+		root = filepath.Clean(root)
+		if candidate == root || !pathWithin(candidate, root) || seen[candidate] {
+			return nil
 		}
-		if len(keys) == 1 {
-			keyPath, keyOK = m.discoverer.certificateHostPath(keys[0])
+		info, err := os.Lstat(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
 		}
-		if !certificateOK || !keyOK ||
-			filepath.Clean(certificatePath) != filepath.Clean(expectedCertificate) ||
-			filepath.Clean(keyPath) != filepath.Clean(expectedKey) {
-			return nil, fmt.Errorf(
-				"%w: TLS artifacts do not match the k web site layout",
-				ErrForbidden,
-			)
+		if err != nil {
+			return err
 		}
+		seen[candidate] = true
+		artifacts = append(artifacts, stagedDeleteArtifact{
+			kind: kind, path: candidate, info: info, directory: info.IsDir(),
+		})
+		return nil
 	}
 
-	candidates := []stagedDeleteArtifact{
-		{
-			kind:      "document_root",
-			path:      siteRoot,
-			directory: true,
-		},
-		{
-			kind: "certificate",
-			path: filepath.Join(m.webRoot, "certs", site.PrimaryDomain+"_cert.pem"),
-		},
-		{
-			kind: "certificate_key",
-			path: filepath.Join(m.webRoot, "certs", site.PrimaryDomain+"_key.pem"),
-		},
+	htmlRoot := filepath.Join(m.webRoot, "html")
+	documentRoot := filepath.Clean(site.DocumentRoot)
+	if site.Kind == contract.SiteWordPress && filepath.Base(documentRoot) == "wordpress" {
+		documentRoot = filepath.Dir(documentRoot)
 	}
-	for _, candidate := range candidates {
-		info, err := os.Lstat(candidate.path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
+	if site.DocumentRoot == "" {
+		documentRoot = filepath.Join(htmlRoot, site.PrimaryDomain)
+	}
+	if err := appendCandidate("document_root", documentRoot, htmlRoot); err != nil {
+		return nil, err
+	}
+
+	directives := parseDirectives(stripComments(string(configData)))
+	certRoot := filepath.Join(m.webRoot, "certs")
+	for _, raw := range uniqueStrings(directives["ssl_certificate"]) {
+		if candidate, ok := m.discoverer.certificateHostPath(raw); ok {
+			if err := appendCandidate("certificate", candidate, certRoot); err != nil {
+				return nil, err
+			}
 		}
-		if err != nil || info.Mode()&os.ModeSymlink != 0 ||
-			(candidate.directory && !info.IsDir()) ||
-			(!candidate.directory && !info.Mode().IsRegular()) {
-			return nil, fmt.Errorf(
-				"%w: %s is unavailable or unsafe",
-				ErrForbidden,
-				candidate.kind,
-			)
+	}
+	for _, raw := range uniqueStrings(directives["ssl_certificate_key"]) {
+		if candidate, ok := m.discoverer.certificateHostPath(raw); ok {
+			if err := appendCandidate("certificate_key", candidate, certRoot); err != nil {
+				return nil, err
+			}
 		}
-		candidate.info = info
-		artifacts = append(artifacts, candidate)
+	}
+	for _, candidate := range []struct {
+		kind string
+		path string
+	}{
+		{"certificate", filepath.Join(certRoot, site.PrimaryDomain+"_cert.pem")},
+		{"certificate_key", filepath.Join(certRoot, site.PrimaryDomain+"_key.pem")},
+	} {
+		if err := appendCandidate(candidate.kind, candidate.path, certRoot); err != nil {
+			return nil, err
+		}
 	}
 	return artifacts, nil
 }
@@ -764,10 +806,9 @@ func (m *Manager) findActionableByID(id, action string) (contract.SiteSummary, e
 	}
 	for _, site := range items {
 		if site.ID == id {
-			if (site.Origin != contract.OriginWeb && site.Origin != contract.OriginCLI) ||
-				!containsString(site.AllowedActions, action) {
+			if !containsString(site.AllowedActions, action) {
 				return contract.SiteSummary{}, fmt.Errorf(
-					"%w: only a recognized unchanged site can be %s",
+					"%w: the discovered artifact does not support %s",
 					ErrForbidden,
 					action,
 				)

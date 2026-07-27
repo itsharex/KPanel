@@ -31,11 +31,10 @@ func (m *Manager) updateCLIConfig(
 	spec managedSpec,
 	expectedVersion string,
 ) (contract.SiteSummary, error) {
-	if current.ResourceVersion != expectedVersion || current.Consistency != contract.ConsistencyInSync {
+	if current.ResourceVersion != expectedVersion {
 		return contract.SiteSummary{}, fmt.Errorf("%w: discovered site changed", ErrConflict)
 	}
-	configPath := filepath.Join(m.webRoot, "conf.d", current.PrimaryDomain+".conf")
-	oldConfig, err := readRegularFile(configPath, maxConfigBytes)
+	configPath, oldInfo, oldConfig, err := m.verifiedDeleteConfig(current)
 	if err != nil {
 		return contract.SiteSummary{}, fmt.Errorf("%w: read kejilion.sh site configuration: %v", ErrUnavailable, err)
 	}
@@ -61,8 +60,7 @@ func (m *Manager) updateCLIConfig(
 	if err != nil || latest.ResourceVersion != expectedVersion {
 		return contract.SiteSummary{}, fmt.Errorf("%w: discovered site changed before commit", ErrConflict)
 	}
-	oldInfo, err := os.Lstat(configPath)
-	if err != nil || !fileMatches(configPath, oldInfo, oldConfig) {
+	if !fileMatches(configPath, oldInfo, oldConfig) {
 		return contract.SiteSummary{}, fmt.Errorf("%w: discovered configuration changed before commit", ErrConflict)
 	}
 	if err := atomicExchange(candidatePath, configPath); err != nil {
@@ -165,7 +163,7 @@ func patchCLIConfig(old []byte, current contract.SiteSummary, spec managedSpec) 
 	case contract.SiteStatic:
 		// Alias-only update; product files and site rules remain untouched.
 	default:
-		return nil, fmt.Errorf("%w: discovered site type cannot be safely updated", ErrForbidden)
+		return nil, fmt.Errorf("%w: the current site structure has no update adapter", ErrForbidden)
 	}
 	return []byte(text), nil
 }

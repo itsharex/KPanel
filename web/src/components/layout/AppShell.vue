@@ -53,7 +53,7 @@ const agentStatus = computed(() => {
   const agent = panel.state.agent
   if (!agent?.connected) return { status: 'offline', label: 'Agent 离线' }
   if (!agent.compatible) return { status: 'incompatible', label: '版本不兼容' }
-  if (agent.readOnly) return { status: 'read_only', label: '只读模式' }
+  if (agent.readOnly) return { status: 'read_only', label: '写入依赖未就绪' }
   return { status: 'connected', label: 'Agent 在线' }
 })
 let agentTimer: number | undefined

@@ -188,7 +188,7 @@ func TestSiteWriteErrorStatusMapping(t *testing.T) {
 		wantCode   string
 	}{
 		{"invalid request", sites.ErrInvalidInput, http.StatusBadRequest, "invalid_site_request"},
-		{"read only", sites.ErrForbidden, http.StatusForbidden, "site_read_only"},
+		{"unsupported artifact", sites.ErrForbidden, http.StatusUnprocessableEntity, "site_action_unsupported"},
 		{"conflict", sites.ErrConflict, http.StatusConflict, "resource_conflict"},
 		{"validation", sites.ErrUnprocessable, http.StatusUnprocessableEntity, "site_validation_failed"},
 		{"needs attention", sites.ErrNeedsAttention, http.StatusServiceUnavailable, "site_needs_attention"},
@@ -272,7 +272,7 @@ func TestSiteWriteRoutesRejectMalformedRequests(t *testing.T) {
 	}
 }
 
-func TestExternalContainerLogsAreForbidden(t *testing.T) {
+func TestExternalContainerLogsReachDockerWithoutOwnershipGate(t *testing.T) {
 	if os.PathSeparator == '\\' {
 		t.Skip("Unix Socket integration test")
 	}
@@ -282,7 +282,7 @@ func TestExternalContainerLogsAreForbidden(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
+	if response.Code != http.StatusBadGateway {
 		t.Fatalf("external logs status = %d body=%s", response.Code, response.Body.String())
 	}
 }

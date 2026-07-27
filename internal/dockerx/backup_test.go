@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestRestoreDockerBackupMergesScriptMarkersWithoutOverwritingProjects(t *testing.T) {
+func TestRestoreDockerBackupReplacesExistingArtifactsFromBackup(t *testing.T) {
 	client := &Client{
 		stateRoot: t.TempDir(),
 		appRoot:   t.TempDir(),
@@ -28,6 +28,7 @@ func TestRestoreDockerBackupMergesScriptMarkersWithoutOverwritingProjects(t *tes
 	writeDockerBackupFixture(t, filepath.Join(backupRoot, id), map[string]string{
 		"docker/appno.txt":                  "101\n102\n",
 		"docker/example/docker-compose.yml": "services:\n  app:\n    image: nginx:alpine\n",
+		"docker/kpanel/data/state":          "restored",
 	})
 	if err := client.restoreDockerBackup(context.Background(), id); err != nil {
 		t.Fatal(err)
@@ -36,8 +37,8 @@ func TestRestoreDockerBackupMergesScriptMarkersWithoutOverwritingProjects(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(markers) != "kpanel\n101\n102\n" {
-		t.Fatalf("merged app markers = %q", markers)
+	if string(markers) != "101\n102\n" {
+		t.Fatalf("restored app markers = %q", markers)
 	}
 	compose, err := os.ReadFile(filepath.Join(client.appRoot, "example", "docker-compose.yml"))
 	if err != nil || !strings.Contains(string(compose), "nginx:alpine") {
@@ -55,9 +56,13 @@ func TestRestoreDockerBackupMergesScriptMarkersWithoutOverwritingProjects(t *tes
 	if uid != expectedUID || gid != expectedGID {
 		t.Fatalf("restored numeric ownership = %d:%d, want %d:%d", uid, gid, expectedUID, expectedGID)
 	}
+	if data, err := os.ReadFile(filepath.Join(client.appRoot, "kpanel", "data", "state")); err != nil ||
+		string(data) != "restored" {
+		t.Fatalf("KPanel ecosystem artifact was not restored: %q, %v", data, err)
+	}
 }
 
-func TestRestoreDockerBackupRejectsExistingProjectBeforeWriting(t *testing.T) {
+func TestRestoreDockerBackupOverwritesExistingProjectAndContinues(t *testing.T) {
 	client := &Client{stateRoot: t.TempDir(), appRoot: t.TempDir(), now: time.Now}
 	if err := os.Mkdir(filepath.Join(client.appRoot, "example"), 0o700); err != nil {
 		t.Fatal(err)
@@ -71,19 +76,21 @@ func TestRestoreDockerBackupRejectsExistingProjectBeforeWriting(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeDockerBackupFixture(t, filepath.Join(backupRoot, id), map[string]string{
-		"docker/example/new": "reject",
-		"docker/other/file":  "must not be written",
+		"docker/example/new": "restored",
+		"docker/other/file":  "restored too",
 	})
-	err := client.restoreDockerBackup(context.Background(), id)
-	if err == nil || !strings.Contains(err.Error(), "restore conflict") {
-		t.Fatalf("restore conflict error = %v", err)
+	if err := client.restoreDockerBackup(context.Background(), id); err != nil {
+		t.Fatal(err)
 	}
-	if _, statErr := os.Stat(filepath.Join(client.appRoot, "other")); !os.IsNotExist(statErr) {
-		t.Fatalf("restore wrote another project before rejecting conflict: %v", statErr)
+	if _, statErr := os.Stat(filepath.Join(client.appRoot, "other", "file")); statErr != nil {
+		t.Fatalf("restore did not continue after replacing a project: %v", statErr)
 	}
-	data, readErr := os.ReadFile(filepath.Join(client.appRoot, "example", "existing"))
-	if readErr != nil || string(data) != "keep" {
-		t.Fatalf("existing project changed: %q, %v", data, readErr)
+	if _, statErr := os.Stat(filepath.Join(client.appRoot, "example", "existing")); !os.IsNotExist(statErr) {
+		t.Fatalf("stale project artifact remained after restore: %v", statErr)
+	}
+	data, readErr := os.ReadFile(filepath.Join(client.appRoot, "example", "new"))
+	if readErr != nil || string(data) != "restored" {
+		t.Fatalf("project was not restored: %q, %v", data, readErr)
 	}
 }
 

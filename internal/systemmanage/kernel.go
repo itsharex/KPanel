@@ -82,28 +82,6 @@ func (m *Manager) setKernelTuning(ctx context.Context, profileKey string) (bool,
 	manualState := states[0]
 	autoState := states[1]
 	bbrState := states[5]
-	if manualState.existed && !recognizedManualKernelConfig(manualState.data) {
-		return false, "", "", fmt.Errorf(
-			"%w: %s is not a recognized kejilion.sh or KPanel kernel profile",
-			ErrConflict,
-			manualPath,
-		)
-	}
-	if autoState.existed && !bytes.Contains(autoState.data, []byte(kejilionAutoKernelMarker)) {
-		return false, "", "", fmt.Errorf(
-			"%w: %s is not a recognized kejilion.sh automatic tuning profile",
-			ErrConflict,
-			autoPath,
-		)
-	}
-	if profileKey != "off" && bbrState.existed &&
-		!bytes.Contains(bbrState.data, []byte(kpanelBBRMarker)) {
-		return false, "", "", fmt.Errorf(
-			"%w: %s would override the selected kernel profile",
-			ErrConflict,
-			kpanelBBRPath,
-		)
-	}
 
 	if profileKey == "off" && !manualState.existed && !autoState.existed {
 		return false, "", "Kejilion 内核优化已经停用", nil
@@ -554,21 +532,6 @@ func (m *Manager) totalMemoryMiB() (int, error) {
 		return int(memoryMiB), nil
 	}
 	return 0, fmt.Errorf("%w: cannot determine MemTotal from /proc/meminfo", ErrUnsupported)
-}
-
-func recognizedManualKernelConfig(data []byte) bool {
-	if bytes.Contains(data, []byte(kpanelKernelMarker)) {
-		return true
-	}
-	if !bytes.Contains(data, []byte(kejilionKernelConfigMarker)) {
-		return false
-	}
-	for key, name := range kernelProfileNames {
-		if bytes.Contains(data, []byte("# 模式: "+name+" | 场景: "+key)) {
-			return true
-		}
-	}
-	return false
 }
 
 func sameKernelSettings(data []byte, settings []kernelSetting) bool {

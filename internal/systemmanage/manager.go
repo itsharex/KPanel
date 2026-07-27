@@ -77,17 +77,18 @@ func (commandRunner) LookPath(name string) (string, error) {
 }
 
 type Config struct {
-	Enabled    bool
-	EtcRoot    string
-	ProcRoot   string
-	SysRoot    string
-	RunRoot    string
-	StateDir   string
-	SwapPath   string
-	Executable string
-	Now        func() time.Time
-	Runner     Runner
-	Country    CountryResolver
+	Enabled      bool
+	EtcRoot      string
+	ProcRoot     string
+	SysRoot      string
+	RunRoot      string
+	StateDir     string
+	SwapPath     string
+	Executable   string
+	Now          func() time.Time
+	Runner       Runner
+	Country      CountryResolver
+	EffectiveUID func() int
 }
 
 type Manager struct {
@@ -102,6 +103,7 @@ type Manager struct {
 	now             func() time.Time
 	runner          Runner
 	country         CountryResolver
+	effectiveUID    func() int
 	rebootScheduled bool
 	mu              sync.Mutex
 }
@@ -137,6 +139,9 @@ func NewManager(config Config) *Manager {
 	if config.Country == nil {
 		config.Country = resolvePublicCountry
 	}
+	if config.EffectiveUID == nil {
+		config.EffectiveUID = os.Geteuid
+	}
 	return &Manager{
 		enabled: config.Enabled, etcRoot: filepath.Clean(config.EtcRoot),
 		procRoot: filepath.Clean(config.ProcRoot), sysRoot: filepath.Clean(config.SysRoot),
@@ -144,6 +149,7 @@ func NewManager(config Config) *Manager {
 		stateDir: filepath.Clean(config.StateDir), swapPath: filepath.Clean(config.SwapPath),
 		executable: filepath.Clean(config.Executable),
 		now:        config.Now, runner: config.Runner, country: config.Country,
+		effectiveUID: config.EffectiveUID,
 	}
 }
 
@@ -176,7 +182,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 		disabledReason = "宿主机系统写入开关未启用"
 	} else if runtime.GOOS != "linux" {
 		disabledReason = "系统写入仅支持 Linux"
-	} else if os.Geteuid() != 0 {
+	} else if m.effectiveUID() != 0 {
 		disabledReason = "Agent 必须以受限 root 服务运行"
 	}
 	capability := func(id string, supported bool, reason string) contract.Capability {
@@ -228,22 +234,22 @@ func (m *Manager) Capabilities() []contract.Capability {
 		cleanupReason = capabilityReason(cacheCleanupPlanErr)
 	}
 	if updateReason == "" {
-		updateReason = "当前发行版不支持安全系统维护"
+		updateReason = "当前版本尚未实现此发行版的系统维护适配器"
 	}
 	if cleanupReason == "" {
-		cleanupReason = "当前发行版不支持安全系统清理"
+		cleanupReason = "当前版本尚未实现此发行版的系统清理适配器"
 	}
 	aptMirrorSupported := packageManager.kind == packageManagerAPT &&
 		(packageManager.osID == "debian" || packageManager.osID == "ubuntu") &&
 		packageSources
-	mirrorReason := "当前安全换源适配器支持 Debian/Ubuntu；其他发行版继续保持只读，避免损坏系统仓库"
+	mirrorReason := "当前版本尚未实现此发行版的软件源写入适配器"
 	if (packageManager.osID == "debian" || packageManager.osID == "ubuntu") && !packageSources {
-		mirrorReason = "未发现可安全修改的 APT 软件源"
+		mirrorReason = "未发现可由当前适配器修改的 APT 软件源"
 	}
 	return []contract.Capability{
 		capability("system.hostname.write", hostnamectlErr == nil, "hostnamectl 不可用"),
 		capability("system.ssh-port.write", sshdErr == nil && ssErr == nil && systemctlErr == nil && sshConfig, "OpenSSH 服务或配置不可用"),
-		capability("system.dns.write", resolved && systemctlErr == nil, "当前仅安全接管 systemd-resolved"),
+		capability("system.dns.write", resolved && systemctlErr == nil, "当前版本尚未实现此 DNS 管理器的写入适配器"),
 		capability("system.timezone.write", timedatectlErr == nil, "timedatectl 不可用"),
 		capability("system.swap.write", mkswapErr == nil && swaponErr == nil && swapoffErr == nil && fallocateErr == nil && systemdRunErr == nil && helperErr == nil, "Swap 工具、Agent 后台执行程序或 systemd 事务执行器不完整"),
 		capability("system.mirror.write", aptMirrorSupported, mirrorReason),
@@ -253,7 +259,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 		capability("system.update.write", updateSupported, updateReason),
 		capability("system.cleanup.write", cleanupSupported, cleanupReason),
 		capability("system.reboot.write", systemctlErr == nil && systemdRunErr == nil, "systemctl 或 systemd-run 不可用"),
-		{ID: "system.reinstall", Enabled: false, Reason: "重装系统必须使用带外控制台，Web 端保持锁定"},
+		{ID: "system.reinstall", Enabled: false, Reason: "尚未实现 kejilion.sh 重装流程的非交互参数与任务恢复协议"},
 	}
 }
 
@@ -261,7 +267,7 @@ func (m *Manager) Execute(ctx context.Context, input contract.SystemActionReques
 	if !m.enabled {
 		return contract.SystemActionResult{}, ErrDisabled
 	}
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+	if runtime.GOOS != "linux" || m.effectiveUID() != 0 {
 		return contract.SystemActionResult{}, ErrUnsupported
 	}
 	m.mu.Lock()
@@ -370,38 +376,68 @@ func (m *Manager) addSSHPort(ctx context.Context, port uint16) (bool, string, st
 		return false, "", "", fmt.Errorf("%w: port must be between 1 and 65535", ErrInvalidInput)
 	}
 	current := m.configuredSSHPorts()
-	if slices.Contains(current, port) {
-		return false, "", "SSH 已监听该配置端口", nil
+	if len(current) == 1 && current[0] == port {
+		return false, "", "SSH 已使用该端口", nil
 	}
-	if used, _ := m.portListening(ctx, port); used {
-		return false, "", "", fmt.Errorf("%w: port %d is already in use", ErrConflict, port)
+	configPath := filepath.Join(m.etcRoot, "ssh", "sshd_config")
+	fragments, err := filepath.Glob(filepath.Join(m.etcRoot, "ssh", "sshd_config.d", "*.conf"))
+	if err != nil {
+		return false, "", "", fmt.Errorf("%w: enumerate sshd configuration fragments: %v", ErrUnsupported, err)
 	}
-	configPath := filepath.Join(m.etcRoot, "ssh", "sshd_config.d", "00-kpanel-ports.conf")
-	backup, err := m.createBackup("ssh-port", configPath)
+	slices.Sort(fragments)
+	paths := append([]string{configPath}, fragments...)
+	backup, err := m.createBackup("ssh-port", paths...)
 	if err != nil {
 		return false, "", "", err
 	}
-	old, existed, mode, err := snapshotFile(configPath)
-	if err != nil {
-		return false, backup, "", err
+	type sshConfigSnapshot struct {
+		path    string
+		data    []byte
+		existed bool
+		mode    os.FileMode
 	}
-	ports := append(append([]uint16{}, current...), port)
-	slices.Sort(ports)
-	ports = slices.Compact(ports)
-	var config strings.Builder
-	config.WriteString("# Managed by KPanel. Existing ports are retained to prevent lockout.\n")
-	for _, item := range ports {
-		fmt.Fprintf(&config, "Port %d\n", item)
-	}
-	if err := writeAtomic(configPath, []byte(config.String()), 0o640); err != nil {
-		return false, backup, "", err
+	snapshots := make([]sshConfigSnapshot, 0, len(paths))
+	for _, path := range paths {
+		data, existed, mode, snapshotErr := snapshotFile(path)
+		if snapshotErr != nil {
+			return false, backup, "", snapshotErr
+		}
+		snapshots = append(snapshots, sshConfigSnapshot{
+			path: path, data: data, existed: existed, mode: mode,
+		})
 	}
 	rollback := func() error {
-		if err := restoreFile(configPath, old, existed, mode); err != nil {
-			return err
+		var rollbackErrors []error
+		for index := len(snapshots) - 1; index >= 0; index-- {
+			snapshot := snapshots[index]
+			if restoreErr := restoreFile(
+				snapshot.path,
+				snapshot.data,
+				snapshot.existed,
+				snapshot.mode,
+			); restoreErr != nil {
+				rollbackErrors = append(rollbackErrors, restoreErr)
+			}
 		}
-		_, err := m.reloadSSH(ctx)
-		return err
+		if len(rollbackErrors) > 0 {
+			return errors.Join(rollbackErrors...)
+		}
+		_, reloadErr := m.reloadSSH(ctx)
+		return reloadErr
+	}
+
+	for index, snapshot := range snapshots {
+		updated := removeSSHPortDirectives(snapshot.data)
+		if index == 0 {
+			updated = append(
+				[]byte(fmt.Sprintf("Port %d\n", port)),
+				updated...,
+			)
+		}
+		if err := writeAtomic(snapshot.path, updated, fileModeOr(snapshot.mode, 0o640)); err != nil {
+			_ = rollback()
+			return false, backup, "", fmt.Errorf("%w: update SSH port configuration: %v", ErrRolledBack, err)
+		}
 	}
 	if _, err := m.runner.Run(ctx, "sshd", "-t", "-f", filepath.Join(m.etcRoot, "ssh", "sshd_config")); err != nil {
 		_ = rollback()
@@ -431,15 +467,34 @@ func (m *Manager) addSSHPort(ctx context.Context, port uint16) (bool, string, st
 		}
 		return false, backup, "", fmt.Errorf("%w: new SSH port did not listen", ErrRolledBack)
 	}
-	return true, backup, fmt.Sprintf("已安全添加 SSH 端口 %d，原端口继续保留", port), nil
+	return true, backup, fmt.Sprintf("SSH 端口已修改为 %d，与 kejilion.sh 的单端口配置语义一致", port), nil
+}
+
+func removeSSHPortDirectives(data []byte) []byte {
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		candidate := strings.TrimSpace(line)
+		candidate = strings.TrimSpace(strings.TrimPrefix(candidate, "#"))
+		fields := strings.Fields(candidate)
+		if len(fields) >= 1 && strings.EqualFold(fields[0], "Port") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	result := strings.TrimLeft(strings.TrimRight(strings.Join(kept, "\n"), "\n"), "\n")
+	if result == "" {
+		return nil
+	}
+	return []byte(result + "\n")
 }
 
 func (m *Manager) setDNS(ctx context.Context, servers []string) (bool, string, string, error) {
 	if !m.resolvedSupported() {
 		return false, "", "", fmt.Errorf("%w: only systemd-resolved is supported", ErrUnsupported)
 	}
-	if len(servers) < 1 || len(servers) > 4 {
-		return false, "", "", fmt.Errorf("%w: one to four DNS servers are required", ErrInvalidInput)
+	if len(servers) < 1 {
+		return false, "", "", fmt.Errorf("%w: at least one DNS server is required", ErrInvalidInput)
 	}
 	normalized := make([]string, 0, len(servers))
 	seen := make(map[string]bool)
@@ -728,8 +783,33 @@ func (m *Manager) openFirewallPort(ctx context.Context, port uint16) (func() err
 			); allowedErr == nil {
 				return func() error { return nil }, nil
 			}
-			return func() error { return nil },
-				fmt.Errorf("unmanaged iptables INPUT policy is DROP; add a persistent allow rule first")
+			arguments := []string{
+				"-I", "INPUT", "-p", "tcp",
+				"--dport", strconv.Itoa(int(port)), "-j", "ACCEPT",
+			}
+			if _, insertErr := m.runner.Run(ctx, "iptables", arguments...); insertErr != nil {
+				return func() error { return nil }, insertErr
+			}
+			if _, saveErr := m.runner.LookPath("netfilter-persistent"); saveErr == nil {
+				if _, saveErr = m.runner.Run(ctx, "netfilter-persistent", "save"); saveErr != nil {
+					_, _ = m.runner.Run(
+						ctx, "iptables", "-D", "INPUT", "-p", "tcp",
+						"--dport", strconv.Itoa(int(port)), "-j", "ACCEPT",
+					)
+					return func() error { return nil }, saveErr
+				}
+			}
+			return func() error {
+				_, err := m.runner.Run(
+					ctx, "iptables", "-D", "INPUT", "-p", "tcp",
+					"--dport", strconv.Itoa(int(port)), "-j", "ACCEPT",
+				)
+				if _, saveErr := m.runner.LookPath("netfilter-persistent"); saveErr == nil {
+					_, persistErr := m.runner.Run(ctx, "netfilter-persistent", "save")
+					return errors.Join(err, persistErr)
+				}
+				return err
+			}, nil
 		}
 	}
 	return func() error { return nil }, nil

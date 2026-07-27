@@ -8,12 +8,12 @@ import LogoMark from '@/components/common/LogoMark.vue'
     <section class="auth-layout__brand">
       <LogoMark />
       <div class="auth-layout__message">
-        <span class="eyebrow"><ShieldCheck :size="16" /> 安全的宿主机管理边界</span>
-        <h1>让服务器日常管理，更直观、更安心。</h1>
-        <p>读取真实系统状态，所有变更经过白名单 Agent 校验，不执行任意 Shell。</p>
+        <span class="eyebrow"><ShieldCheck :size="16" /> kejilion.sh 同生态管理</span>
+        <h1>脚本能管理的，网页也能管理。</h1>
+        <p>直接读取宿主机真实产物，通过结构化 Agent 执行完整业务动作，不以资源来源限制管理员。</p>
         <ul>
-          <li><CheckCircle2 :size="17" /> 不修改现有 kejilion.sh</li>
-          <li><CheckCircle2 :size="17" /> Agent 离线自动降级只读</li>
+          <li><CheckCircle2 :size="17" /> 脚本与 Web 产物双向互通</li>
+          <li><CheckCircle2 :size="17" /> Agent 离线时明确显示依赖状态</li>
           <li><CheckCircle2 :size="17" /> 每项变更均有记录与审计追踪</li>
         </ul>
       </div>

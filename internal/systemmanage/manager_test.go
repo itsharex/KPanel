@@ -62,6 +62,7 @@ func testManager(t *testing.T, runner Runner) (*Manager, string, string, string)
 		StateDir: stateDir, SwapPath: filepath.Join(root, "swapfile"),
 		Executable: "/usr/local/libexec/kejilion-agent",
 		Runner:     runner, Now: func() time.Time { return time.Date(2026, 7, 26, 3, 0, 0, 0, time.UTC) },
+		EffectiveUID: func() int { return 0 },
 	})
 	return manager, etcRoot, procRoot, stateDir
 }
@@ -94,6 +95,58 @@ func TestSetHostnameUpdatesHostsAndCreatesBackup(t *testing.T) {
 	}
 	if !regularFile(filepath.Join(backup, "manifest.tsv")) {
 		t.Fatalf("backup manifest missing at %s", backup)
+	}
+}
+
+func TestSSHPortChangeUsesKejilionSinglePortSemantics(t *testing.T) {
+	reloaded := false
+	runner := &fakeRunner{}
+	runner.run = func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+		switch name {
+		case "ss":
+			if reloaded {
+				return []byte("LISTEN 0 128 0.0.0.0:2222 0.0.0.0:*\n"), nil
+			}
+			return []byte("LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n"), nil
+		case "systemctl":
+			reloaded = true
+		case "ufw":
+			if len(arguments) == 1 && arguments[0] == "status" {
+				return []byte("Status: inactive\n"), nil
+			}
+		}
+		return nil, nil
+	}
+	manager, etcRoot, _, _ := testManager(t, runner)
+	mainPath := filepath.Join(etcRoot, "ssh", "sshd_config")
+	fragmentPath := filepath.Join(etcRoot, "ssh", "sshd_config.d", "provider.conf")
+	mustWrite(
+		t,
+		mainPath,
+		"#Port 22\nInclude /etc/ssh/sshd_config.d/*.conf\nPort 22\nPasswordAuthentication no\n",
+	)
+	mustWrite(t, fragmentPath, "Port 2200\nPermitRootLogin prohibit-password\n")
+
+	changed, backup, message, err := manager.addSSHPort(context.Background(), 2222)
+	if err != nil || !changed || backup == "" {
+		t.Fatalf("SSH port change: changed=%v backup=%q message=%q err=%v", changed, backup, message, err)
+	}
+	combined := readLimited(mainPath) + readLimited(fragmentPath)
+	if strings.Count(combined, "Port 2222") != 1 ||
+		strings.Contains(combined, "Port 22\n") ||
+		strings.Contains(combined, "Port 2200") {
+		t.Fatalf("old SSH ports were retained:\n%s", combined)
+	}
+	for _, expected := range []string{
+		"PasswordAuthentication no",
+		"PermitRootLogin prohibit-password",
+	} {
+		if !strings.Contains(combined, expected) {
+			t.Fatalf("non-port SSH directive %q was lost:\n%s", expected, combined)
+		}
+	}
+	if !strings.Contains(message, "kejilion.sh") || !regularFile(filepath.Join(backup, "manifest.tsv")) {
+		t.Fatalf("SSH result did not report parity/backup: message=%q backup=%q", message, backup)
 	}
 }
 
@@ -283,7 +336,7 @@ func TestKernelProfileUsesKejilionMemoryAdaptationAndSceneExtras(t *testing.T) {
 	}
 }
 
-func TestSetKernelTuningRejectsUnknownArtifactWithoutMutation(t *testing.T) {
+func TestSetKernelTuningReplacesUnknownArtifactWithBackup(t *testing.T) {
 	runner := &fakeRunner{}
 	manager, etcRoot, procRoot, _ := testManager(t, runner)
 	mustWrite(t, filepath.Join(procRoot, "meminfo"), "MemTotal: 4194304 kB\n")
@@ -291,15 +344,17 @@ func TestSetKernelTuningRejectsUnknownArtifactWithoutMutation(t *testing.T) {
 	original := "# unrelated administrator configuration\nvm.swappiness = 5\n"
 	mustWrite(t, path, original)
 
-	_, _, _, err := manager.setKernelTuning(context.Background(), "web")
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("expected conflict, got %v", err)
+	changed, backup, _, err := manager.setKernelTuning(context.Background(), "web")
+	if err != nil || !changed || backup == "" {
+		t.Fatalf("replace unknown artifact: changed=%v backup=%q err=%v", changed, backup, err)
 	}
-	if got := readLimited(path); got != original {
-		t.Fatalf("unknown artifact changed: %q", got)
+	if got := readLimited(path); got == original ||
+		!strings.Contains(got, "# 模式: 网站搭建优化模式 | 场景: web") {
+		t.Fatalf("unknown artifact was not replaced by requested profile: %q", got)
 	}
-	if len(runner.commands) != 0 {
-		t.Fatalf("commands ran before conflict gate: %#v", runner.commands)
+	manifest := readLimited(filepath.Join(backup, "manifest.tsv"))
+	if !strings.Contains(manifest, "99-kejilion-optimize.conf") {
+		t.Fatalf("backup does not include replaced artifact: %q", manifest)
 	}
 }
 
@@ -401,12 +456,13 @@ func TestRewriteAPTSourceRecognizesKejilionLinuxMirrorsOutput(t *testing.T) {
 	input := []byte(
 		"Types: deb\n" +
 			"URIs: https://download.nus.edu.sg/mirror/debian/\n" +
+			"URIs: https://new-mirror.example/debian/\n" +
 			"Suites: bookworm bookworm-updates\n" +
 			"Components: main\n",
 	)
 	got := string(rewriteAPTSource(input, "debian", "cn-edu"))
-	if !strings.Contains(got, "URIs: https://mirrors.pku.edu.cn/debian/") {
-		t.Fatalf("LinuxMirrors URL with a path prefix was not normalized: %q", got)
+	if strings.Count(got, "URIs: https://mirrors.pku.edu.cn/debian/") != 2 {
+		t.Fatalf("dynamic LinuxMirrors URLs were not normalized: %q", got)
 	}
 }
 
@@ -497,17 +553,17 @@ func TestSetMirrorRollsBackWhenAPTValidationFails(t *testing.T) {
 	}
 }
 
-func TestSetMirrorRefusesUnrecognizedCustomDistributionSource(t *testing.T) {
+func TestSetMirrorRewritesCustomDistributionSource(t *testing.T) {
 	manager, etcRoot, _, _ := testManager(t, &fakeRunner{})
 	sourcePath := filepath.Join(etcRoot, "apt", "sources.list")
 	original := "deb https://packages.example.test/debian stable main\n"
 	mustWrite(t, sourcePath, original)
-	_, backup, _, err := manager.setMirror(context.Background(), "cn-default")
-	if !errors.Is(err, ErrConflict) || backup != "" {
-		t.Fatalf("expected conflict without backup, backup=%q err=%v", backup, err)
+	changed, backup, _, err := manager.setMirror(context.Background(), "cn-default")
+	if err != nil || !changed || backup == "" {
+		t.Fatalf("rewrite custom distribution source: changed=%v backup=%q err=%v", changed, backup, err)
 	}
-	if got := readLimited(sourcePath); got != original {
-		t.Fatalf("custom distribution source changed: %q", got)
+	if got := readLimited(sourcePath); !strings.Contains(got, "https://mirrors.aliyun.com/debian") {
+		t.Fatalf("custom distribution source was not rewritten: %q", got)
 	}
 }
 
@@ -642,21 +698,24 @@ func TestSwapActiveRecognizesLegacyNamespaceAliasBySize(t *testing.T) {
 	}
 }
 
-func TestSetSwapRefusesUnsafeSwapoffWhenMemoryIsLow(t *testing.T) {
+func TestSetSwapLetsSwapoffReportTheRealHostLimit(t *testing.T) {
 	runner := &fakeRunner{}
 	manager, etcRoot, procRoot, _ := testManager(t, runner)
 	mustSizedFile(t, manager.swapPath, 1024)
 	mustWrite(t, filepath.Join(etcRoot, "fstab"), manager.swapPath+" swap swap defaults 0 0\n")
-	mustWrite(t, filepath.Join(procRoot, "swaps"),
-		"Filename Type Size Used Priority\n"+manager.swapPath+" file 1048572 262144 -2\n")
+	active := map[string]bool{manager.swapPath: true}
+	writeSwapFixture(t, procRoot, active)
 	mustWrite(t, filepath.Join(procRoot, "meminfo"), "MemAvailable: 327680 kB\n")
+	runner.run = swapTestRunner(t, procRoot, active)
 
-	_, _, _, err := manager.setSwap(context.Background(), 2048)
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("expected low-memory conflict, got %v", err)
+	changed, _, _, err := manager.setSwap(context.Background(), 2048)
+	if err != nil || !changed {
+		t.Fatalf("swap change was blocked before the real swapoff result: changed=%v err=%v", changed, err)
 	}
-	if len(runner.commands) != 0 {
-		t.Fatalf("commands ran before memory safety gate: %#v", runner.commands)
+	if !slices.ContainsFunc(runner.commands, func(command string) bool {
+		return strings.Contains(command, "swapoff "+manager.swapPath)
+	}) {
+		t.Fatalf("swapoff was not attempted: %#v", runner.commands)
 	}
 }
 
@@ -1225,7 +1284,7 @@ func TestRunMaintenanceRejectsUnknownDistributionWithoutSupportedTools(t *testin
 	}
 }
 
-func TestCapabilitiesEnableMaintenanceButKeepMirrorReadOnlyForRocky(t *testing.T) {
+func TestCapabilitiesEnableMaintenanceAndReportMissingMirrorAdapterForRocky(t *testing.T) {
 	manager, etcRoot, _, _ := testManager(t, &fakeRunner{})
 	mustWrite(t, filepath.Join(etcRoot, "os-release"), "ID=rocky\nID_LIKE=\"rhel centos fedora\"\n")
 	mustWrite(
@@ -1241,7 +1300,7 @@ func TestCapabilitiesEnableMaintenanceButKeepMirrorReadOnlyForRocky(t *testing.T
 		}
 	}
 	mirror := findCapability(capabilities, "system.mirror.write")
-	if mirror.Enabled || !strings.Contains(mirror.Reason, "Debian/Ubuntu") {
+	if mirror.Enabled || !strings.Contains(mirror.Reason, "适配器") {
 		t.Fatalf("unexpected Rocky mirror capability: %#v", mirror)
 	}
 }

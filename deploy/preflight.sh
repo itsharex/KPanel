@@ -195,7 +195,8 @@ if validate_private_subnet "$NETWORK_SUBNET" && command -v ip >/dev/null 2>&1; t
 	fi
 fi
 
-if [ -d /home/web ] && [ -r /home/web ]; then
+WEB_ROOT_KIND=$(stat -L -c %F /home/web 2>/dev/null || true)
+if [ "$WEB_ROOT_KIND" = "directory" ] && [ -r /home/web ]; then
 	ok "Kejilion Web root is available: /home/web"
 	for web_path in /home/web/conf.d /home/web/html /home/web/certs; do
 		if [ -d "$web_path" ] && [ -r "$web_path" ]; then
