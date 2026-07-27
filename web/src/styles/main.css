@@ -2760,13 +2760,19 @@ div.resource-name {
 
 .site-background-task {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: 14px;
   align-items: center;
   padding: 16px 18px;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  box-shadow: var(--shadow-xs);
+}
+
+.site-background-task.is-failed {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
 }
 
 .site-background-task__icon {
@@ -2780,6 +2786,8 @@ div.resource-name {
 }
 
 .site-background-task__body {
+  display: grid;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -2790,10 +2798,32 @@ div.resource-name {
   gap: 10px;
 }
 
-.site-background-task__body p {
-  margin: 5px 0 0;
+.site-background-task__body small {
+  overflow: hidden;
   color: var(--muted);
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-background-task__progress {
+  display: block;
+  overflow: hidden;
+  height: 6px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.site-background-task__progress b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #8e83ff);
+  transition: width 0.35s ease;
+}
+
+.site-background-task__percent {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }
 
 .site-background-task__actions {
@@ -3675,11 +3705,15 @@ div.resource-name {
   }
 
   .site-background-task {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
   .site-background-task__actions {
     grid-column: 1 / -1;
+  }
+
+  .site-background-task__percent {
+    display: none;
   }
 
   .site-background-task__actions .button {

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   ArrowRight,
   Braces,
+  ChevronRight,
   ExternalLink,
   FileCode2,
   Flame,
@@ -651,7 +652,12 @@ onBeforeUnmount(() => {
       <span><strong>网站写入当前不可用</strong><br />{{ siteWriteReason }}</span>
     </div>
 
-    <section v-if="installProgress?.id && !editorOpen" class="site-background-task" aria-live="polite">
+    <section
+      v-if="installProgress?.id && !editorOpen"
+      class="site-background-task"
+      :class="`is-${installProgress.status}`"
+      aria-live="polite"
+    >
       <div class="site-background-task__icon">
         <LoaderCircle v-if="installTaskActive" class="spin" :size="19" />
         <ShieldCheck v-else-if="installProgress.status === 'succeeded'" :size="19" />
@@ -665,11 +671,15 @@ onBeforeUnmount(() => {
             :label="installTaskActive ? '后台运行中' : installProgress.status === 'succeeded' ? '已完成' : '执行失败'"
           />
         </div>
-        <p>{{ installStageName(installProgress.stage) }} · {{ installProgress.progress }}% · {{ installProgress.message }}</p>
+        <small>{{ installStageName(installProgress.stage) }} · {{ installProgress.message }}</small>
+        <i class="site-background-task__progress">
+          <b :style="{ width: `${installProgress.progress}%` }" />
+        </i>
       </div>
+      <strong class="site-background-task__percent">{{ installProgress.progress }}%</strong>
       <div class="site-background-task__actions">
         <button class="button button--secondary" type="button" @click="openInstallationTask">
-          查看终端
+          查看进度 <ChevronRight :size="15" />
         </button>
         <button
           v-if="!installTaskActive"

@@ -222,7 +222,7 @@ func TestDeleteManagedProxyRemovesOnlyCanonicalConfig(t *testing.T) {
 	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
 		ExpectedResourceVersion: created.ResourceVersion,
 		Mode:                    "configuration",
-		ConfirmDomain:           created.PrimaryDomain,
+		PrimaryDomain:           created.PrimaryDomain,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +249,7 @@ func TestDeleteManagedStaticConfigurationPreservesContent(t *testing.T) {
 	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
 		ExpectedResourceVersion: created.ResourceVersion,
 		Mode:                    "configuration",
-		ConfirmDomain:           created.PrimaryDomain,
+		PrimaryDomain:           created.PrimaryDomain,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +346,7 @@ func TestDeleteManagedPHPFullRemovesKWebArtifactsAndDatabase(t *testing.T) {
 	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
 		ExpectedResourceVersion: created.ResourceVersion,
 		Mode:                    "full",
-		ConfirmDomain:           created.PrimaryDomain,
+		PrimaryDomain:           created.PrimaryDomain,
 	})
 	if err != nil {
 		t.Fatal(err)
