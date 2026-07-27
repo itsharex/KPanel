@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-27
+
+### Added
+
+- Docker 管理改为环境、容器、镜像、网络和存储卷五个常驻子标签，移除功能混杂的
+  “工具箱”大弹窗；每类资源拥有独立状态、搜索、创建、维护与清理入口。
+- 容器新增结构化创建、按需性能采样、受审计的单次控制台命令，以及与
+  `kejilion.sh` `DOCKER-USER` 规则形态一致的允许/阻止外部访问。
+- Docker 备份增加持久化列表、冲突保护还原和仅使用既有 SSH 密钥及
+  `known_hosts` 的迁移；备份保存在 `/home/docker/.kpanel-backups`，KPanel
+  更新或卸载不会顺带删除。
+- Docker 环境状态直接读取 Engine 和现有 `daemon.json`，可识别官方、脚本同源和
+  自定义镜像源，并回显 IPv6、存储驱动与 Data Root。
+
+### Changed
+
+- 镜像、网络、存储卷和停止容器支持各自独立的后台清理，不再要求进入全局清理。
+- Docker 环境更新复用跨发行版系统后台维护任务；Docker 自卸载因会同步终止
+  KPanel，继续明确交回 `k docker` 或 SSH。
+- 还原只写入不存在的 `/home/docker` 顶层项目；同名目录在任何写入前拒绝，
+  `appno.txt` 使用去重合并，KPanel 自身目录和端口标记永不进入备份或还原。
+
+### Security
+
+- 新建容器只接受类型化镜像、端口、已有 local 卷、非 host 网络、重启策略和参数，
+  禁止任意 `docker run` 文本；启动失败自动删除刚创建的容器。
+- 控制台只对归属明确、无 privileged/host namespace/额外 capability/设备/
+  Docker Socket/越界 bind mount 的运行中容器开放；无 TTY、单次 20 秒、
+  输出 64 KiB/1000 行，并且命令不写入审计变化、任务状态或 API 响应元数据。
+- 访问控制执行前复核容器版本和唯一 Docker IPv4；iptables 变更或持久化失败会
+  反向恢复本次规则，不接收原始防火墙命令。
+- 还原拒绝路径穿越、链接、设备文件、超限归档和同名覆盖；SSH 迁移不接收密码、
+  不关闭主机密钥校验，目标固定为 `/tmp/<backup-id>`。
+
 ## [0.17.2] - 2026-07-27
 
 ### Fixed
