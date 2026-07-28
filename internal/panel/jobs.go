@@ -73,6 +73,8 @@ func jobsFromAppJobs(items []appmarket.AppJob) []contract.Job {
 			state = contract.JobSucceeded
 		case "failed":
 			state = contract.JobFailedNeedsAttention
+		case "cancelled":
+			state = contract.JobCancelled
 		}
 		job := contract.Job{
 			ID: item.ID, Action: "app." + item.Action, Origin: contract.OriginWeb,

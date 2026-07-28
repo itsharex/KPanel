@@ -1151,6 +1151,10 @@ export const api = {
         method: 'POST',
         body: { data },
       }),
+    cancelJob: (id: string): Promise<AppInstallJob> =>
+      request<AppInstallJob>(`/app-jobs/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+      }),
     action: (
       id: string,
       action: 'start' | 'stop' | 'restart' | 'update' | 'uninstall' | 'direct_access' | 'manage',

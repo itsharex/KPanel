@@ -146,6 +146,10 @@ func (s *Service) recoverInterruptedJobs() {
 				continue
 			}
 		}
+		if s.jobs.cancelRequested(record.ID) {
+			s.finishCancelledJob(record)
+			continue
+		}
 		finished := s.now().UTC()
 		record.Status = "failed"
 		record.Stage = "interrupted"
@@ -165,7 +169,7 @@ func (s *Service) reconcileInactiveScriptJobs() {
 	for _, record := range s.jobs.list() {
 		if record.Adapter != "kejilion" ||
 			(record.Status != "queued" && record.Status != "running") ||
-			s.now().Sub(record.CreatedAt) < appJobLaunchGrace {
+			(record.Stage != "cancelling" && s.now().Sub(record.CreatedAt) < appJobLaunchGrace) {
 			continue
 		}
 		running, known := s.scriptJobUnitState(record.ID)
@@ -174,6 +178,10 @@ func (s *Service) reconcileInactiveScriptJobs() {
 		}
 		latest, readErr := s.jobs.read(record.ID)
 		if readErr != nil || (latest.Status != "queued" && latest.Status != "running") {
+			continue
+		}
+		if s.jobs.cancelRequested(latest.ID) {
+			s.finishCancelledJob(latest)
 			continue
 		}
 		finished := s.now().UTC()
@@ -186,6 +194,21 @@ func (s *Service) reconcileInactiveScriptJobs() {
 		_ = s.jobs.put(latest)
 		_ = removeTerminalInput(s.jobs.inputPath(latest.ID))
 	}
+}
+
+func (s *Service) finishCancelledJob(record appJobRecord) {
+	finished := s.now().UTC()
+	record.Status = "cancelled"
+	record.Stage = "cancelled"
+	record.Progress = 100
+	record.Message = "交互任务已由管理员手动结束，应用状态将按宿主机实际产物重新读取"
+	record.InputOpen = false
+	record.FinishedAt = &finished
+	if err := s.jobs.put(record); err != nil {
+		return
+	}
+	_ = removeTerminalInput(s.jobs.inputPath(record.ID))
+	_ = os.Remove(s.jobs.cancelPath(record.ID))
 }
 
 func (s *Service) scriptJobUnitState(id string) (running bool, known bool) {
@@ -522,6 +545,62 @@ func (s *Service) AppJobs() []AppJob {
 		jobs = append(jobs, s.jobs.public(record))
 	}
 	return jobs
+}
+
+func (s *Service) CancelAppJob(id string) (AppJob, error) {
+	s.actions.Lock()
+	defer s.actions.Unlock()
+	if s.jobs == nil || s.jobRunner == nil || !appJobIDPattern.MatchString(id) {
+		return AppJob{}, ErrNotFound
+	}
+	s.reconcileInactiveScriptJobs()
+	record, err := s.jobs.read(id)
+	if err != nil {
+		return AppJob{}, ErrNotFound
+	}
+	if !record.Interactive || record.Adapter != "kejilion" {
+		return AppJob{}, fmt.Errorf(
+			"%w: only active interactive kejilion.sh tasks can be ended manually",
+			ErrForbidden,
+		)
+	}
+	if record.Status == "cancelled" {
+		return s.jobs.public(record), nil
+	}
+	if record.Status != "queued" && record.Status != "running" {
+		return AppJob{}, fmt.Errorf("%w: application task is no longer active", ErrConflict)
+	}
+	if record.Stage == "cancelling" && s.jobs.cancelRequested(id) {
+		return s.jobs.public(record), nil
+	}
+
+	original := record
+	if err := s.jobs.requestCancel(id); err != nil {
+		return AppJob{}, fmt.Errorf("%w: persist cancellation request: %v", ErrNeedsAttention, err)
+	}
+	record.Stage = "cancelling"
+	record.Message = "正在结束 kejilion.sh 交互任务，请等待后台进程安全退出"
+	record.InputOpen = false
+	if err := s.jobs.put(record); err != nil {
+		_ = os.Remove(s.jobs.cancelPath(id))
+		return AppJob{}, fmt.Errorf("%w: persist cancellation state: %v", ErrNeedsAttention, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := s.jobRunner.Run(
+		ctx,
+		"systemctl",
+		"stop",
+		"--no-block",
+		appJobUnitPrefix+id+".service",
+	); err != nil {
+		_ = os.Remove(s.jobs.cancelPath(id))
+		_ = s.jobs.put(original)
+		return AppJob{}, fmt.Errorf("%w: stop interactive application task: %v", ErrNeedsAttention, err)
+	}
+	_ = removeTerminalInput(s.jobs.inputPath(id))
+	return s.jobs.public(record), nil
 }
 
 func (s *Service) scriptSelector(item Summary) (string, bool) {
@@ -1011,6 +1090,7 @@ func (registry *appJobRegistry) pruneLocked() {
 		_ = os.Remove(registry.statePath(record.ID))
 		_ = os.Remove(registry.logPath(record.ID))
 		_ = removeTerminalInput(registry.inputPath(record.ID))
+		_ = os.Remove(registry.cancelPath(record.ID))
 	}
 }
 
@@ -1020,4 +1100,38 @@ func (registry *appJobRegistry) statePath(id string) string {
 
 func (registry *appJobRegistry) logPath(id string) string {
 	return filepath.Join(registry.stateDir, id+".log")
+}
+
+func (registry *appJobRegistry) cancelPath(id string) string {
+	return filepath.Join(registry.stateDir, id+".cancel")
+}
+
+func (registry *appJobRegistry) requestCancel(id string) error {
+	path := registry.cancelPath(id)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		if registry.cancelRequested(id) {
+			return nil
+		}
+		return errors.New("unsafe application cancellation marker")
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString("cancel\n"); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	return file.Close()
+}
+
+func (registry *appJobRegistry) cancelRequested(id string) bool {
+	info, err := os.Lstat(registry.cancelPath(id))
+	return err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0
 }

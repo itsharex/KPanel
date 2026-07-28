@@ -174,6 +174,51 @@ func (s *Server) handleAppJobInput(w http.ResponseWriter, r *http.Request) {
 	s.writeAgentResponse(w, r, response)
 }
 
+func (s *Server) handleAppJobCancel(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	const prefix = "/api/v1/app-jobs/"
+	const suffix = "/cancel"
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, prefix), suffix)
+	if !siteIDPattern.MatchString(id) {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	change := map[string]any{"action": "cancel"}
+	if err := s.audit(r, session.User.ID, "app.job.cancel", "application_job", id, "intent", change); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	response, err := s.agent.Do(
+		r.Context(),
+		http.MethodPost,
+		"/v1/app-jobs/"+id+"/cancel",
+		"",
+		requestID(r),
+		nil,
+	)
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "app.job.cancel", "application_job", id, "failure", change)
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	result := "failure"
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+		result = "success"
+	}
+	_ = s.audit(r, session.User.ID, "app.job.cancel", "application_job", id, result, change)
+	s.writeAgentResponse(w, r, response)
+}
+
 func allowedAppActionPath(publicPath string) (agentPath, appID, action string, allowed bool) {
 	const prefix = "/api/v1/apps/"
 	rest := strings.TrimPrefix(publicPath, prefix)

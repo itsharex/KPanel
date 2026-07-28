@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   action: vi.fn(),
   checkUpdate: vi.fn(),
   job: vi.fn(),
+  cancelJob: vi.fn(),
   publicNetwork: vi.fn(),
   toastSuccess: vi.fn(),
   toastDanger: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('@/lib/api', () => ({
       checkUpdate: mocks.checkUpdate,
       install: vi.fn(),
       job: mocks.job,
+      cancelJob: mocks.cancelJob,
       jobs: vi.fn(),
     },
     sites: {
@@ -71,6 +73,7 @@ interface AppsBindings {
   activeJob: Ref<AppInstallJob | undefined>
   jobDetailsOpen: Ref<boolean>
   confirmAction: Ref<'update' | 'uninstall' | undefined>
+  cancelJobPending: Ref<boolean>
   load: (silent?: boolean) => Promise<void>
   openDetails: (item: AppMarketInventory['items'][number]) => void
   lifecycle: (action: 'start' | 'stop' | 'restart') => Promise<void>
@@ -81,6 +84,9 @@ interface AppsBindings {
   removeDomain: (site: Site) => Promise<void>
   toggleAccess: () => Promise<void>
   openScriptManage: () => Promise<void>
+  requestCancelJob: () => void
+  confirmCancelJob: () => Promise<void>
+  dismissJob: () => void
 }
 
 function setupView(): AppsBindings {
@@ -498,6 +504,66 @@ describe('AppsView script management', () => {
 
     expect(view.activeJob.value).toBeUndefined()
     expect(window.localStorage.getItem('kpanel:active-app-job')).toBeNull()
+  })
+
+  it('ends only an active interactive job and keeps polling until systemd releases it', async () => {
+    const job: AppInstallJob = {
+      id: '0123456789abcdef0123456789abcdef',
+      appId: 'builtin-114',
+      appName: 'OpenClaw',
+      action: 'manage',
+      interactive: true,
+      inputOpen: true,
+      status: 'running',
+      stage: 'interactive',
+      progress: 5,
+      logs: [],
+      createdAt: '2026-07-28T00:00:00Z',
+    }
+    const cancelling: AppInstallJob = {
+      ...job,
+      inputOpen: false,
+      stage: 'cancelling',
+      message: '正在结束 kejilion.sh 交互任务，请等待后台进程安全退出',
+    }
+    mocks.cancelJob.mockResolvedValueOnce(cancelling)
+    mocks.job.mockResolvedValue(cancelling)
+    const view = setupView()
+    view.activeJob.value = job
+
+    view.requestCancelJob()
+    expect(view.cancelJobPending.value).toBe(true)
+    await view.confirmCancelJob()
+
+    expect(mocks.cancelJob).toHaveBeenCalledWith(job.id)
+    expect(view.cancelJobPending.value).toBe(false)
+    expect(view.activeJob.value?.stage).toBe('cancelling')
+    expect(window.localStorage.getItem('kpanel:active-app-job')).toBe(job.id)
+  })
+
+  it('dismisses a finished task record without changing a running task', () => {
+    const view = setupView()
+    const finished: AppInstallJob = {
+      id: '0123456789abcdef0123456789abcdef',
+      appId: 'builtin-114',
+      appName: 'OpenClaw',
+      action: 'manage',
+      interactive: true,
+      status: 'cancelled',
+      stage: 'cancelled',
+      progress: 100,
+      logs: [],
+      createdAt: '2026-07-28T00:00:00Z',
+    }
+    view.activeJob.value = finished
+    window.localStorage.setItem('kpanel:active-app-job', finished.id)
+    view.dismissJob()
+    expect(view.activeJob.value).toBeUndefined()
+    expect(window.localStorage.getItem('kpanel:active-app-job')).toBeNull()
+
+    view.activeJob.value = { ...finished, status: 'running', stage: 'interactive' }
+    view.dismissJob()
+    expect(view.activeJob.value?.status).toBe('running')
   })
 })
 

@@ -43,6 +43,7 @@ func RunInteractiveAppJob(ctx context.Context, stateDir, id string) error {
 		stateDir: cleanStateDir,
 		jobs:     make(map[string]appJobRecord),
 	}
+	defer os.Remove(registry.cancelPath(id))
 	if err := ensureAppJobDirectory(registry.stateDir); err != nil {
 		return err
 	}
@@ -159,6 +160,12 @@ func RunInteractiveAppJob(ctx context.Context, stateDir, id string) error {
 	record.InputOpen = false
 	record.Progress = 100
 	record.FinishedAt = &finished
+	if registry.cancelRequested(id) {
+		record.Status = "cancelled"
+		record.Stage = "cancelled"
+		record.Message = "交互任务已由管理员手动结束，应用状态将按宿主机实际产物重新读取"
+		return registry.put(record)
+	}
 	if readErr != nil && !isTerminalEnd(readErr) && waitErr == nil {
 		waitErr = readErr
 	}
@@ -293,7 +300,8 @@ func (s *Service) WriteAppJobInput(id, value string) error {
 		return ErrNotFound
 	}
 	if !record.Interactive || !record.InputOpen ||
-		(record.Status != "queued" && record.Status != "running") {
+		(record.Status != "queued" && record.Status != "running") ||
+		s.jobs.cancelRequested(id) {
 		return fmt.Errorf("%w: interactive input is not open", ErrConflict)
 	}
 	if err := writeTerminalInput(s.jobs.inputPath(id), data); err != nil {
@@ -316,7 +324,8 @@ func (s *Service) AppJobTerminal(id string, offset int64) (TerminalChunk, error)
 		return TerminalChunk{
 			NextOffset: 0,
 			InputOpen:  record.InputOpen,
-			Finished:   record.Status == "succeeded" || record.Status == "failed",
+			Finished: record.Status == "succeeded" || record.Status == "failed" ||
+				record.Status == "cancelled",
 		}, nil
 	}
 	if err != nil {
@@ -342,7 +351,8 @@ func (s *Service) AppJobTerminal(id string, offset int64) (TerminalChunk, error)
 		DataBase64: base64.StdEncoding.EncodeToString(data),
 		NextOffset: nextOffset,
 		InputOpen:  record.InputOpen,
-		Finished: (record.Status == "succeeded" || record.Status == "failed") &&
+		Finished: (record.Status == "succeeded" || record.Status == "failed" ||
+			record.Status == "cancelled") &&
 			nextOffset >= info.Size(),
 	}, nil
 }

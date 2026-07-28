@@ -331,7 +331,7 @@ export interface AppInstallJob {
   action: 'install' | 'update' | 'uninstall' | 'direct_access' | 'manage'
   interactive?: boolean
   inputOpen?: boolean
-  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   stage: string
   progress: number
   message?: string

@@ -163,6 +163,113 @@ func TestKejilionStandardAppsBecomeDirectlyInstallable(t *testing.T) {
 	}
 }
 
+func TestInteractiveApplicationJobCanBeEndedAndReleasesTaskLock(t *testing.T) {
+	root := t.TempDir()
+	service, err := New(&fakeDocker{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeJobRunner{unitState: "active"}
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		runner,
+	); err != nil {
+		t.Fatal(err)
+	}
+	id := "0123456789abcdef0123456789abcdef"
+	created := time.Now().Add(-time.Minute).UTC()
+	record := appJobRecord{
+		AppJob: AppJob{
+			ID: id, AppID: "builtin-114", AppName: "OpenClaw",
+			Action: "manage", Interactive: true, InputOpen: true,
+			Status: "running", Stage: "interactive", Progress: 5, CreatedAt: created,
+		},
+		Selector: "114", Adapter: "kejilion",
+	}
+	if err := service.jobs.put(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := createTerminalInput(service.jobs.inputPath(id)); err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := service.CancelAppJob(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "running" || job.Stage != "cancelling" || job.InputOpen {
+		t.Fatalf("cancellation request = %#v", job)
+	}
+	if !service.jobs.cancelRequested(id) {
+		t.Fatal("cancellation marker was not persisted")
+	}
+	if _, err := service.StartInstall(context.Background(), "builtin-28", InstallInput{}); !errors.Is(err, ErrTaskConflict) {
+		t.Fatalf("active cancellation did not retain task lock: %v", err)
+	}
+	runner.mu.Lock()
+	calls := append([][]string(nil), runner.calls...)
+	runner.mu.Unlock()
+	foundStop := false
+	for _, call := range calls {
+		if strings.Join(call, " ") ==
+			"systemctl stop --no-block "+appJobUnitPrefix+id+".service" {
+			foundStop = true
+			break
+		}
+	}
+	if !foundStop {
+		t.Fatalf("systemd stop call = %#v", calls)
+	}
+
+	runner.unitState = "inactive"
+	job, err = service.AppJob(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "cancelled" || job.Stage != "cancelled" ||
+		job.Progress != 100 || job.FinishedAt == nil {
+		t.Fatalf("cancelled job = %#v", job)
+	}
+	if service.jobs.hasActive() {
+		t.Fatal("cancelled task lock was not released")
+	}
+	if service.jobs.cancelRequested(id) {
+		t.Fatal("cancellation marker was not removed")
+	}
+}
+
+func TestNonInteractiveApplicationJobCannotBeEndedManually(t *testing.T) {
+	root := t.TempDir()
+	service, err := New(&fakeDocker{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeJobRunner{unitState: "active"}
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		runner,
+	); err != nil {
+		t.Fatal(err)
+	}
+	id := "fedcba9876543210fedcba9876543210"
+	if err := service.jobs.put(appJobRecord{
+		AppJob: AppJob{
+			ID: id, AppID: "thirdparty-test", AppName: "Test",
+			Action: "install", Status: "running", Stage: "installing",
+			Progress: 35, CreatedAt: time.Now().UTC(),
+		},
+		Adapter: "declarative",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.CancelAppJob(id); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-interactive cancellation error = %v", err)
+	}
+}
+
 func TestKejilionGuidedAppsUseFixedInteractiveSelector(t *testing.T) {
 	root := t.TempDir()
 	service, err := New(&fakeDocker{}, root)

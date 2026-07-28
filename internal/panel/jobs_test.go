@@ -119,11 +119,17 @@ func TestApplicationJobsMapToManagementJobs(t *testing.T) {
 			Action: "install", Status: "failed", Stage: "failed", Progress: 100,
 			Message: "port conflict", CreatedAt: now, FinishedAt: &finished,
 		},
+		{
+			ID: strings.Repeat("b", 32), AppID: "builtin-114", AppName: "OpenClaw",
+			Action: "manage", Status: "cancelled", Stage: "cancelled", Progress: 100,
+			Message: "ended by administrator", CreatedAt: now, FinishedAt: &finished,
+		},
 	})
-	if len(jobs) != 1 || jobs[0].Action != "app.install" ||
+	if len(jobs) != 2 || jobs[0].Action != "app.install" ||
 		jobs[0].State != contract.JobFailedNeedsAttention ||
 		jobs[0].TargetID != "builtin-4" || jobs[0].Error == nil ||
-		jobs[0].Error.Detail != "port conflict" {
+		jobs[0].Error.Detail != "port conflict" ||
+		jobs[1].State != contract.JobCancelled || jobs[1].Error != nil {
 		t.Fatalf("application job mapping = %#v", jobs)
 	}
 }

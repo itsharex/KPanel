@@ -138,6 +138,7 @@ func TestApplicationTerminalRoutesValidateMethodAndOffset(t *testing.T) {
 		"/v1/app-jobs/" + id + "/terminal?offset=0":                            http.StatusNotFound,
 		"/v1/app-jobs/" + id + "/terminal?offset=0&wait=1&inputOpen=false":     http.StatusNotFound,
 		"/v1/app-jobs/" + id + "/terminal?offset=0&wait=1&inputOpen=false&x=1": http.StatusBadRequest,
+		"/v1/app-jobs/" + id + "/cancel":                                       http.StatusMethodNotAllowed,
 	} {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
 		request.Header.Set("Authorization", token)
@@ -154,6 +155,14 @@ func TestApplicationTerminalRoutesValidateMethodAndOffset(t *testing.T) {
 	server.ServeHTTP(response, request)
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("terminal input GET status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v1/app-jobs/"+id+"/cancel", nil)
+	request.Header.Set("Authorization", token)
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("missing job cancellation status = %d body=%s", response.Code, response.Body.String())
 	}
 }
 

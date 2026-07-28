@@ -736,6 +736,31 @@ func (s *Server) appJobOperation(w http.ResponseWriter, r *http.Request, request
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case "cancel":
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		if r.URL.RawQuery != "" {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_app_job_request", "应用任务请求无效", "")
+			return
+		}
+		job, err := s.appMarket.CancelAppJob(id)
+		if err != nil {
+			status, code, title := http.StatusServiceUnavailable, "app_job_cancel_failed", "交互任务无法结束"
+			switch {
+			case errors.Is(err, appmarket.ErrNotFound):
+				status, code, title = http.StatusNotFound, "app_job_not_found", "应用任务不存在"
+			case errors.Is(err, appmarket.ErrForbidden):
+				status, code, title = http.StatusUnprocessableEntity, "app_job_not_cancellable", "该任务不允许手动结束"
+			case errors.Is(err, appmarket.ErrConflict):
+				status, code, title = http.StatusConflict, "app_job_not_active", "应用任务已结束"
+			}
+			writeProblem(w, requestID, status, code, title, safeDetail(err))
+			return
+		}
+		writeJSON(w, http.StatusAccepted, job)
 	default:
 		writeProblem(w, requestID, http.StatusNotFound, "not_found", "资源不存在", "")
 	}

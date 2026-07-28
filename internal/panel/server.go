@@ -145,6 +145,9 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		strings.HasSuffix(r.URL.Path, "/input"):
 		s.handleSiteInstallationInput(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/app-jobs/") &&
+		strings.HasSuffix(r.URL.Path, "/cancel"):
+		s.handleAppJobCancel(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/app-jobs/") &&
 		strings.HasSuffix(r.URL.Path, "/input"):
 		s.handleAppJobInput(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/apps/"):

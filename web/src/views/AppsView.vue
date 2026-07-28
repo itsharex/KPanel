@@ -62,6 +62,8 @@ const confirmAction = ref<ConfirmAction>()
 const checkedUpdates = ref<Record<string, 'available' | 'current'>>({})
 const activeJob = ref<AppInstallJob>()
 const jobDetailsOpen = ref(false)
+const cancelJobPending = ref(false)
+const cancellingJob = ref(false)
 const toast = useToast()
 let controller: AbortController | undefined
 let jobController: AbortController | undefined
@@ -75,6 +77,12 @@ const selectedDomains = computed(() =>
 )
 const applicationTaskActive = computed(
   () => Boolean(activeJob.value) && isActiveJob(activeJob.value),
+)
+const activeJobCancellable = computed(
+  () =>
+    Boolean(activeJob.value?.interactive) &&
+    isActiveJob(activeJob.value) &&
+    activeJob.value?.stage !== 'cancelling',
 )
 
 const filteredApps = computed(() => {
@@ -240,6 +248,9 @@ async function refreshJob(id: string): Promise<void> {
         toast.success(`后台${jobActionLabel(job.action)}完成`, `${job.appName} 已完成状态对账。`)
         if (job.action === 'uninstall' && selectedID.value === job.appId) selectedID.value = ''
         await load(true)
+      } else if (job.status === 'cancelled') {
+        toast.success('交互任务已结束', `${job.appName} 已释放应用管理锁，状态已重新读取。`)
+        await load(true)
       } else {
         toast.danger(`后台${jobActionLabel(job.action)}失败`, job.message || '请查看任务日志后重试。')
       }
@@ -291,6 +302,50 @@ async function restoreBackgroundJob(): Promise<void> {
   } catch {
     // The catalog remains usable when an older Agent has no job endpoint.
   }
+}
+
+function requestCancelJob(): void {
+  if (!activeJobCancellable.value || cancellingJob.value) return
+  cancelJobPending.value = true
+}
+
+async function confirmCancelJob(): Promise<void> {
+  const job = activeJob.value
+  if (!job?.interactive || !isActiveJob(job) || cancellingJob.value) return
+  cancellingJob.value = true
+  try {
+    const next = await api.apps.cancelJob(job.id)
+    activeJob.value = next
+    cancelJobPending.value = false
+    if (isActiveJob(next)) {
+      beginJobPolling(next.id)
+    } else {
+      stopJobPolling()
+      window.localStorage.removeItem(activeJobStorageKey)
+      await load(true)
+    }
+    toast.success('正在结束交互任务', `${job.appName} 的后台终端正在安全退出。`)
+  } catch (reason) {
+    if (reason instanceof ApiError && reason.code === 'app_job_not_active') {
+      cancelJobPending.value = false
+      await refreshJob(job.id)
+      return
+    }
+    toast.danger(
+      '结束交互任务失败',
+      reason instanceof ApiError ? reason.message : 'Agent 未能停止该交互任务。',
+    )
+  } finally {
+    cancellingJob.value = false
+  }
+}
+
+function dismissJob(): void {
+  if (isActiveJob(activeJob.value)) return
+  stopJobPolling()
+  activeJob.value = undefined
+  jobDetailsOpen.value = false
+  window.localStorage.removeItem(activeJobStorageKey)
 }
 
 function isAbortError(reason: unknown): boolean {
@@ -656,11 +711,35 @@ onBeforeUnmount(() => {
         </i>
       </div>
       <strong class="app-job-banner__percent">
-        {{ activeJob.interactive && isActiveJob(activeJob) ? '交互中' : `${activeJob.progress || 0}%` }}
+        {{
+          activeJob.stage === 'cancelling'
+            ? '结束中'
+            : activeJob.interactive && isActiveJob(activeJob)
+              ? '交互中'
+              : `${activeJob.progress || 0}%`
+        }}
       </strong>
-      <button class="button button--secondary button--small" type="button" @click="jobDetailsOpen = true">
-        查看进度 <ChevronRight :size="15" />
-      </button>
+      <div class="app-job-banner__actions">
+        <button
+          v-if="activeJobCancellable"
+          class="button button--danger button--small"
+          type="button"
+          @click="requestCancelJob"
+        >
+          <Square :size="13" /> 结束任务
+        </button>
+        <button class="button button--secondary button--small" type="button" @click="jobDetailsOpen = true">
+          查看进度 <ChevronRight :size="15" />
+        </button>
+        <button
+          v-if="!isActiveJob(activeJob)"
+          class="button button--ghost button--small"
+          type="button"
+          @click="dismissJob"
+        >
+          关闭
+        </button>
+      </div>
     </section>
 
     <section v-if="inventory" class="market-toolbar">
@@ -1133,8 +1212,56 @@ onBeforeUnmount(() => {
         </section>
       </template>
       <template #footer>
+        <button
+          v-if="activeJobCancellable"
+          class="button button--danger"
+          type="button"
+          @click="requestCancelJob"
+        >
+          <Square :size="14" /> 结束任务
+        </button>
         <button class="button button--secondary" type="button" @click="jobDetailsOpen = false">
-          后台运行
+          {{ isActiveJob(activeJob) ? '后台运行' : '关闭窗口' }}
+        </button>
+        <button
+          v-if="!isActiveJob(activeJob)"
+          class="button button--primary"
+          type="button"
+          @click="dismissJob"
+        >
+          关闭记录
+        </button>
+      </template>
+    </ModalDialog>
+
+    <ModalDialog
+      :open="cancelJobPending"
+      title="结束当前交互任务？"
+      description="这会停止当前 kejilion.sh 交互终端并释放应用管理锁；已经执行完成的脚本步骤不会自动回滚。"
+      size="small"
+      @close="cancelJobPending = false"
+    >
+      <div class="inline-alert inline-alert--warning">
+        <Activity :size="17" />
+        仅结束当前交互任务，不会删除应用；结束后 KPanel 会重新读取容器、域名和访问策略状态。
+      </div>
+      <template #footer>
+        <button
+          class="button button--secondary"
+          type="button"
+          :disabled="cancellingJob"
+          @click="cancelJobPending = false"
+        >
+          继续运行
+        </button>
+        <button
+          class="button button--danger"
+          type="button"
+          :disabled="cancellingJob"
+          @click="confirmCancelJob"
+        >
+          <LoaderCircle v-if="cancellingJob" class="spin" :size="16" />
+          <Square v-else :size="14" /> {{ cancellingJob ? '正在结束…' : '确认结束任务' }}
         </button>
       </template>
     </ModalDialog>
@@ -1946,6 +2073,13 @@ onBeforeUnmount(() => {
 .app-job-banner__percent {
   color: var(--market-accent);
   font-variant-numeric: tabular-nums;
+}
+
+.app-job-banner__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .install-more-card {

@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -53,5 +54,55 @@ func TestValidateAppActionInput(t *testing.T) {
 		AccessMode:      optionalString{Value: "public", Set: true},
 	}); field != "accessMode" {
 		t.Fatalf("unsafe access mode rejected on %q", field)
+	}
+}
+
+func TestApplicationJobCancellationRequiresSessionOriginAndCSRF(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	id := strings.Repeat("a", 32)
+
+	response := authenticatedRequest(
+		server,
+		http.MethodPost,
+		"/api/v1/app-jobs/"+id+"/cancel",
+		nil,
+		sessionCookie,
+		csrfCookie,
+		map[string]string{"X-CSRF-Token": csrfCookie.Value},
+	)
+	if response.Code != http.StatusForbidden ||
+		!strings.Contains(response.Body.String(), "origin_validation_failed") {
+		t.Fatalf("missing origin status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	response = authenticatedRequest(
+		server,
+		http.MethodPost,
+		"/api/v1/app-jobs/"+id+"/cancel",
+		nil,
+		sessionCookie,
+		csrfCookie,
+		map[string]string{"Origin": "http://panel.test"},
+	)
+	if response.Code != http.StatusForbidden ||
+		!strings.Contains(response.Body.String(), "csrf_validation_failed") {
+		t.Fatalf("missing CSRF status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	response = authenticatedRequest(
+		server,
+		http.MethodPost,
+		"/api/v1/app-jobs/not-an-id/cancel",
+		nil,
+		sessionCookie,
+		csrfCookie,
+		map[string]string{
+			"Origin":       "http://panel.test",
+			"X-CSRF-Token": csrfCookie.Value,
+		},
+	)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("invalid cancellation path status = %d body=%s", response.Code, response.Body.String())
 	}
 }
