@@ -1022,9 +1022,14 @@ export const api = {
       normalizeSiteInstallationProgress(
         await request<RawSiteInstallJob>(`/site-installations/${encodeURIComponent(id)}`, { signal }),
       ),
-    terminal: (id: string, offset = 0, signal?: AbortSignal): Promise<AppTerminalChunk> =>
+    terminal: (
+      id: string,
+      offset = 0,
+      inputOpen = false,
+      signal?: AbortSignal,
+    ): Promise<AppTerminalChunk> =>
       request<AppTerminalChunk>(`/site-installations/${encodeURIComponent(id)}/terminal`, {
-        query: { offset },
+        query: { offset, wait: 1000, inputOpen },
         signal,
       }),
     terminalInput: (id: string, data: string): Promise<{ ok: boolean }> =>
@@ -1072,9 +1077,14 @@ export const api = {
       ),
     job: (id: string, signal?: AbortSignal): Promise<WebEnvironmentJob> =>
       request<WebEnvironmentJob>(`/web-environment/jobs/${encodeURIComponent(id)}`, { signal }),
-    terminal: (id: string, offset = 0, signal?: AbortSignal): Promise<AppTerminalChunk> =>
+    terminal: (
+      id: string,
+      offset = 0,
+      inputOpen = false,
+      signal?: AbortSignal,
+    ): Promise<AppTerminalChunk> =>
       request<AppTerminalChunk>(`/web-environment/jobs/${encodeURIComponent(id)}/terminal`, {
-        query: { offset },
+        query: { offset, wait: 1000, inputOpen },
         signal,
       }),
     terminalInput: (id: string, data: string): Promise<void> =>
@@ -1102,9 +1112,14 @@ export const api = {
       request<AppInstallJob>(`/app-jobs/${encodeURIComponent(id)}`, { signal }),
     jobs: async (signal?: AbortSignal): Promise<ApiList<AppInstallJob>> =>
       normalizeList(await request<ApiList<AppInstallJob> | AppInstallJob[]>('/app-jobs', { signal })),
-    terminal: (id: string, offset: number, signal?: AbortSignal): Promise<AppTerminalChunk> =>
+    terminal: (
+      id: string,
+      offset: number,
+      inputOpen = false,
+      signal?: AbortSignal,
+    ): Promise<AppTerminalChunk> =>
       request<AppTerminalChunk>(`/app-jobs/${encodeURIComponent(id)}/terminal`, {
-        query: { offset },
+        query: { offset, wait: 1000, inputOpen },
         signal,
       }),
     terminalInput: (id: string, data: string): Promise<{ ok: boolean }> =>
@@ -1136,9 +1151,14 @@ export const api = {
       ),
     job: (id: string, signal?: AbortSignal): Promise<DiagnosticJob> =>
       request<DiagnosticJob>(`/diagnostic-jobs/${encodeURIComponent(id)}`, { signal }),
-    terminal: (id: string, offset = 0, signal?: AbortSignal): Promise<AppTerminalChunk> =>
+    terminal: (
+      id: string,
+      offset = 0,
+      inputOpen = false,
+      signal?: AbortSignal,
+    ): Promise<AppTerminalChunk> =>
       request<AppTerminalChunk>(`/diagnostic-jobs/${encodeURIComponent(id)}/terminal`, {
-        query: { offset },
+        query: { offset, wait: 1000, inputOpen },
         signal,
       }),
     terminalInput: (id: string, data: string): Promise<{ ok: boolean }> =>

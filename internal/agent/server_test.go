@@ -130,10 +130,14 @@ func TestApplicationTerminalRoutesValidateMethodAndOffset(t *testing.T) {
 	id := strings.Repeat("a", 32)
 	token := "Bearer " + strings.Repeat("x", 32)
 	for target, expected := range map[string]int{
-		"/v1/app-jobs/" + id + "/terminal":                  http.StatusBadRequest,
-		"/v1/app-jobs/" + id + "/terminal?offset=-1":        http.StatusBadRequest,
-		"/v1/app-jobs/" + id + "/terminal?offset=0&extra=1": http.StatusBadRequest,
-		"/v1/app-jobs/" + id + "/terminal?offset=0":         http.StatusNotFound,
+		"/v1/app-jobs/" + id + "/terminal":                                     http.StatusBadRequest,
+		"/v1/app-jobs/" + id + "/terminal?offset=-1":                           http.StatusBadRequest,
+		"/v1/app-jobs/" + id + "/terminal?offset=0&extra=1":                    http.StatusBadRequest,
+		"/v1/app-jobs/" + id + "/terminal?offset=0&wait=1501":                  http.StatusBadRequest,
+		"/v1/app-jobs/" + id + "/terminal?offset=0&inputOpen=invalid":          http.StatusBadRequest,
+		"/v1/app-jobs/" + id + "/terminal?offset=0":                            http.StatusNotFound,
+		"/v1/app-jobs/" + id + "/terminal?offset=0&wait=1&inputOpen=false":     http.StatusNotFound,
+		"/v1/app-jobs/" + id + "/terminal?offset=0&wait=1&inputOpen=false&x=1": http.StatusBadRequest,
 	} {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
 		request.Header.Set("Authorization", token)

@@ -496,16 +496,25 @@ func (s *Server) siteInstallation(w http.ResponseWriter, r *http.Request, reques
 			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
 			return
 		}
-		offset := int64(0)
-		if raw := r.URL.Query().Get("offset"); raw != "" {
-			var err error
-			offset, err = strconv.ParseInt(raw, 10, 64)
-			if err != nil || offset < 0 {
-				writeProblem(w, requestID, http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
-				return
-			}
+		query, err := parseTerminalReadQuery(r.URL.Query(), false)
+		if err != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
+			return
 		}
-		chunk, err := s.sitesManager.InstallationTerminal(id, offset)
+		chunk, err := waitForTerminalChunk(
+			r.Context(),
+			query.Wait,
+			func() (sites.SiteTerminalChunk, error) {
+				return s.sitesManager.InstallationTerminal(id, query.Offset)
+			},
+			func(chunk sites.SiteTerminalChunk) bool {
+				return chunk.DataBase64 != "" || chunk.Finished ||
+					(query.HasInputState && chunk.InputOpen != query.InputOpen)
+			},
+		)
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		if err != nil {
 			writeProblem(w, requestID, http.StatusNotFound, "site_terminal_not_found", "建站终端不存在", "")
 			return
@@ -674,17 +683,25 @@ func (s *Server) appJobOperation(w http.ResponseWriter, r *http.Request, request
 			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
 			return
 		}
-		values := r.URL.Query()
-		if len(values) != 1 || len(values["offset"]) != 1 {
+		query, err := parseTerminalReadQuery(r.URL.Query(), true)
+		if err != nil {
 			writeProblem(w, requestID, http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
 			return
 		}
-		offset, err := strconv.ParseInt(values.Get("offset"), 10, 64)
-		if err != nil || offset < 0 {
-			writeProblem(w, requestID, http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
+		chunk, err := waitForTerminalChunk(
+			r.Context(),
+			query.Wait,
+			func() (appmarket.TerminalChunk, error) {
+				return s.appMarket.AppJobTerminal(id, query.Offset)
+			},
+			func(chunk appmarket.TerminalChunk) bool {
+				return chunk.DataBase64 != "" || chunk.Finished ||
+					(query.HasInputState && chunk.InputOpen != query.InputOpen)
+			},
+		)
+		if errors.Is(err, context.Canceled) {
 			return
 		}
-		chunk, err := s.appMarket.AppJobTerminal(id, offset)
 		if err != nil {
 			writeProblem(w, requestID, http.StatusNotFound, "app_terminal_not_found", "交互终端不存在", "")
 			return
@@ -908,16 +925,25 @@ func (s *Server) diagnosticJob(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, requestIDFrom(w), http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
 			return
 		}
-		offset := int64(0)
-		if raw := r.URL.Query().Get("offset"); raw != "" {
-			var err error
-			offset, err = strconv.ParseInt(raw, 10, 64)
-			if err != nil || offset < 0 {
-				writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
-				return
-			}
+		query, err := parseTerminalReadQuery(r.URL.Query(), false)
+		if err != nil {
+			writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
+			return
 		}
-		chunk, err := s.diagnostics.Terminal(id, offset)
+		chunk, err := waitForTerminalChunk(
+			r.Context(),
+			query.Wait,
+			func() (diagnostics.TerminalChunk, error) {
+				return s.diagnostics.Terminal(id, query.Offset)
+			},
+			func(chunk diagnostics.TerminalChunk) bool {
+				return chunk.DataBase64 != "" || chunk.Finished ||
+					(query.HasInputState && chunk.InputOpen != query.InputOpen)
+			},
+		)
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		if err != nil {
 			writeProblem(w, requestIDFrom(w), http.StatusNotFound, "diagnostic_terminal_not_found", "体检终端不存在", "")
 			return

@@ -1,11 +1,11 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
@@ -96,16 +96,25 @@ func (s *Server) webEnvironmentJob(w http.ResponseWriter, r *http.Request, reque
 			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
 			return
 		}
-		offset, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
-		if r.URL.Query().Get("offset") == "" {
-			offset = 0
-			err = nil
-		}
-		if err != nil || offset < 0 {
+		query, err := parseTerminalReadQuery(r.URL.Query(), false)
+		if err != nil {
 			writeProblem(w, requestID, http.StatusBadRequest, "invalid_terminal_offset", "终端偏移量无效", "")
 			return
 		}
-		chunk, err := s.webEnvironment.Terminal(parts[0], offset)
+		chunk, err := waitForTerminalChunk(
+			r.Context(),
+			query.Wait,
+			func() (webenv.TerminalChunk, error) {
+				return s.webEnvironment.Terminal(parts[0], query.Offset)
+			},
+			func(chunk webenv.TerminalChunk) bool {
+				return chunk.DataBase64 != "" || chunk.Finished ||
+					(query.HasInputState && chunk.InputOpen != query.InputOpen)
+			},
+		)
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		if err != nil {
 			writeProblem(w, requestID, http.StatusNotFound, "environment_terminal_not_found", "环境终端不存在", "")
 			return

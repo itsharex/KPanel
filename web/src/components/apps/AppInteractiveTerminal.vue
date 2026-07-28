@@ -4,6 +4,10 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { api } from '@/lib/api'
+import {
+  takeTerminalInputChunk,
+  terminalInputShouldFlushImmediately,
+} from '@/lib/terminalInput'
 
 const props = defineProps<{
   jobId: string
@@ -26,6 +30,8 @@ let offset = 0
 let disposed = false
 let polling = false
 
+const inputFlushInterval = 12
+
 function decodeBase64(value: string): Uint8Array {
   const decoded = window.atob(value)
   const bytes = new Uint8Array(decoded.length)
@@ -37,11 +43,13 @@ function decodeBase64(value: string): Uint8Array {
 
 async function flushInput(): Promise<void> {
   if (inputSending || !terminalInputOpen.value || disposed) return
+  if (inputTimer) window.clearTimeout(inputTimer)
+  inputTimer = undefined
   inputSending = true
   try {
     while (inputQueue && terminalInputOpen.value && !disposed) {
-      const data = inputQueue
-      inputQueue = ''
+      const { chunk: data, rest } = takeTerminalInputChunk(inputQueue)
+      inputQueue = rest
       if (props.kind === 'site') {
         await api.sites.terminalInput(props.jobId, data)
       } else if (props.kind === 'diagnostic') {
@@ -53,6 +61,7 @@ async function flushInput(): Promise<void> {
       }
     }
   } catch {
+    inputQueue = ''
     terminal?.write('\r\n\x1b[31m[KPanel] 输入发送失败，请确认任务仍在等待输入。\x1b[0m\r\n')
   } finally {
     inputSending = false
@@ -62,12 +71,16 @@ async function flushInput(): Promise<void> {
 function queueInput(data: string): void {
   if (!terminalInputOpen.value || disposed) return
   inputQueue += data
-  if (new TextEncoder().encode(inputQueue).byteLength >= 2048) {
+  if (
+    terminalInputShouldFlushImmediately(data) ||
+    new TextEncoder().encode(inputQueue).byteLength >= 2048
+  ) {
     void flushInput()
     return
   }
-  if (inputTimer) window.clearTimeout(inputTimer)
-  inputTimer = window.setTimeout(() => void flushInput(), 25)
+  if (!inputTimer) {
+    inputTimer = window.setTimeout(() => void flushInput(), inputFlushInterval)
+  }
 }
 
 async function poll(): Promise<void> {
@@ -77,24 +90,44 @@ async function poll(): Promise<void> {
   pollController = new AbortController()
   try {
     const chunk = props.kind === 'site'
-      ? await api.sites.terminal(props.jobId, offset, pollController.signal)
+      ? await api.sites.terminal(
+          props.jobId,
+          offset,
+          terminalInputOpen.value,
+          pollController.signal,
+        )
       : props.kind === 'diagnostic'
-        ? await api.diagnostics.terminal(props.jobId, offset, pollController.signal)
+        ? await api.diagnostics.terminal(
+            props.jobId,
+            offset,
+            terminalInputOpen.value,
+            pollController.signal,
+          )
         : props.kind === 'environment'
-          ? await api.webEnvironment.terminal(props.jobId, offset, pollController.signal)
-        : await api.apps.terminal(props.jobId, offset, pollController.signal)
+          ? await api.webEnvironment.terminal(
+              props.jobId,
+              offset,
+              terminalInputOpen.value,
+              pollController.signal,
+            )
+        : await api.apps.terminal(
+            props.jobId,
+            offset,
+            terminalInputOpen.value,
+            pollController.signal,
+          )
     const data = chunk.dataBase64 ? decodeBase64(chunk.dataBase64) : undefined
     if (data) terminal?.write(data)
     offset = chunk.nextOffset
     terminalInputOpen.value = chunk.inputOpen
     connectionState.value = chunk.finished ? 'finished' : 'connected'
     if (!chunk.finished && !disposed) {
-      pollTimer = window.setTimeout(() => void poll(), data?.byteLength === 64 << 10 ? 0 : 350)
+      pollTimer = window.setTimeout(() => void poll(), 0)
     }
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
     connectionState.value = 'error'
-    if (!disposed) pollTimer = window.setTimeout(() => void poll(), 1500)
+    if (!disposed) pollTimer = window.setTimeout(() => void poll(), 500)
   } finally {
     polling = false
   }

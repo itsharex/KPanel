@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -99,8 +100,40 @@ func writePlatformInput(path string, data []byte) error {
 		return err
 	}
 	defer file.Close()
-	_, err = file.Write(data)
-	return err
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for len(data) > 0 {
+		written, writeErr := unix.Write(int(file.Fd()), data)
+		if written > 0 {
+			data = data[written:]
+		}
+		switch {
+		case writeErr == nil:
+			if written == 0 {
+				return io.ErrShortWrite
+			}
+		case errors.Is(writeErr, unix.EINTR):
+			continue
+		case errors.Is(writeErr, unix.EAGAIN):
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return errors.New("terminal input FIFO remained busy")
+			}
+			wait := min(remaining, 50*time.Millisecond)
+			ready, pollErr := unix.Poll(
+				[]unix.PollFd{{Fd: int32(file.Fd()), Events: unix.POLLOUT}},
+				int(wait.Milliseconds()),
+			)
+			if pollErr != nil && !errors.Is(pollErr, unix.EINTR) {
+				return pollErr
+			}
+			if ready == 0 {
+				continue
+			}
+		default:
+			return writeErr
+		}
+	}
+	return nil
 }
 
 func removePlatformInput(path string) error {

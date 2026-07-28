@@ -3,11 +3,15 @@
 package appmarket
 
 import (
+	"bytes"
 	"io"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestLinuxTerminalProcessSupportsInteractiveRead(t *testing.T) {
@@ -47,7 +51,7 @@ func TestLinuxTerminalInputFIFOTransfersBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	want := []byte("8998\r")
+	want := []byte(strings.Repeat("输入🙂", 180))
 	if err := writeTerminalInput(path, want); err != nil {
 		t.Fatal(err)
 	}
@@ -57,5 +61,59 @@ func TestLinuxTerminalInputFIFOTransfersBytes(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Fatalf("FIFO input = %q, want %q", got, want)
+	}
+}
+
+func TestLinuxTerminalInputWaitsForBriefBackpressure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "terminal.input")
+	if err := createTerminalInput(path); err != nil {
+		t.Fatal(err)
+	}
+	defer removeTerminalInput(path)
+	reader, err := openTerminalInput(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	capacity, err := unix.FcntlInt(reader.Fd(), unix.F_GETPIPE_SZ, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fill := bytes.Repeat([]byte{'x'}, capacity)
+	if written, err := reader.Write(fill); err != nil || written != len(fill) {
+		t.Fatalf("fill FIFO: written=%d err=%v", written, err)
+	}
+
+	want := []byte("input-after-backpressure\r")
+	result := make(chan error, 1)
+	go func() {
+		result <- writeTerminalInput(path, want)
+	}()
+	select {
+	case err := <-result:
+		t.Fatalf("FIFO write did not wait for available space: %v", err)
+	case <-time.After(40 * time.Millisecond):
+	}
+
+	released := min(capacity, 4096)
+	if _, err := io.ReadFull(reader, make([]byte, released)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FIFO write did not resume after space became available")
+	}
+
+	tail := make([]byte, capacity-released+len(want))
+	if _, err := io.ReadFull(reader, tail); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasSuffix(tail, want) {
+		t.Fatalf("FIFO tail does not contain the complete terminal input")
 	}
 }
