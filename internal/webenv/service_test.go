@@ -207,3 +207,16 @@ func TestBackupAndJobIdentifiersCannotEscape(t *testing.T) {
 		t.Fatal("unsafe backup id unexpectedly accepted")
 	}
 }
+
+func TestBackupsInEmptyDirectoryReturnsEmptySlice(t *testing.T) {
+	backups, err := backupsIn(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backups == nil {
+		t.Fatal("empty backup directory returned nil; JSON response would become null")
+	}
+	if len(backups) != 0 {
+		t.Fatalf("empty backup directory returned %d items", len(backups))
+	}
+}

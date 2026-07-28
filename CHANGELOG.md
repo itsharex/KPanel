@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- LDNMP 环境在没有备份时返回空列表，前端同时兼容旧 Agent 的 `items: null`；
+  备份或任务辅助列表读取失败不再阻断环境状态及其管理功能。
 - KPanel 应用市场配置不再硬编码 Agent 版本或 `kejilion.sh` 摘要；改为交叉校验镜像
   OCI 标签、`/release/VERSION`、Agent 自报版本和镜像内脚本实际 SHA-256，后续普通
   版本发布无需同步修改 `kejilion/apps`。

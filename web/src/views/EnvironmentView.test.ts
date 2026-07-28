@@ -1,7 +1,8 @@
 import { createSSRApp, ssrContextKey, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EnvironmentView from './EnvironmentView.vue'
-import type { WebEnvironmentJob, WebEnvironmentSummary } from '@/types/api'
+import { api } from '@/lib/api'
+import type { WebEnvironmentBackup, WebEnvironmentJob, WebEnvironmentSummary } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
   start: vi.fn(),
@@ -35,9 +36,13 @@ vi.mock('@/stores/toast', () => ({
 
 interface EnvironmentBindings {
   summary: Ref<WebEnvironmentSummary | undefined>
+  backups: Ref<WebEnvironmentBackup[]>
   jobs: Ref<WebEnvironmentJob[]>
+  error: Ref<string>
+  auxiliaryWarning: Ref<string>
   terminalOpen: Ref<boolean>
   terminalJob: Ref<WebEnvironmentJob | undefined>
+  load: (silent?: boolean) => Promise<void>
   start: (input: Record<string, unknown>) => Promise<void>
 }
 
@@ -84,6 +89,27 @@ beforeEach(() => {
 })
 
 describe('EnvironmentView background jobs', () => {
+  it('keeps environment management available when an auxiliary list fails', async () => {
+    vi.mocked(api.webEnvironment.summary).mockResolvedValueOnce(summary())
+    vi.mocked(api.webEnvironment.catalog).mockResolvedValueOnce({
+      protocolVersion: '1',
+      installProfiles: [],
+      protectionActions: [],
+      optimizationActions: [],
+      updateComponents: [],
+    })
+    vi.mocked(api.webEnvironment.backups).mockRejectedValueOnce(new Error('backup unavailable'))
+    vi.mocked(api.webEnvironment.jobs).mockResolvedValueOnce({ items: [], total: 0 })
+    const view = setupView()
+
+    await view.load()
+
+    expect(view.summary.value).toEqual(summary())
+    expect(view.error.value).toBe('')
+    expect(view.backups.value).toEqual([])
+    expect(view.auxiliaryWarning.value).toBe('备份列表暂时无法读取')
+  })
+
   it('always submits the current environment resource version and reopens the terminal', async () => {
     const job: WebEnvironmentJob = {
       id: 'b'.repeat(32),

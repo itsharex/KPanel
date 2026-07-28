@@ -849,4 +849,12 @@ describe('API client', () => {
       total: 2,
     })
   })
+
+  it('normalizes null and legacy null-item list responses', () => {
+    expect(normalizeList<string>(null)).toEqual({ items: [], total: 0 })
+    expect(normalizeList({ items: null } as unknown as { items: string[]; total: number })).toEqual({
+      items: [],
+      total: 0,
+    })
+  })
 })

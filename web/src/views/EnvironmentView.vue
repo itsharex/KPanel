@@ -55,6 +55,7 @@ const jobs = ref<WebEnvironmentJob[]>([])
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
+const auxiliaryWarning = ref('')
 const submitting = ref(false)
 const terminalOpen = ref(false)
 const terminalJob = ref<WebEnvironmentJob>()
@@ -117,17 +118,25 @@ async function load(silent = false): Promise<void> {
   if (silent) refreshing.value = true
   else loading.value = true
   try {
-    const [summaryResult, catalogResult, backupsResult, jobsResult] = await Promise.all([
+    auxiliaryWarning.value = ''
+    const [summaryResult, catalogResult, backupsResult, jobsResult] = await Promise.allSettled([
       api.webEnvironment.summary(controller.signal),
       api.webEnvironment.catalog(controller.signal),
       api.webEnvironment.backups(controller.signal),
       api.webEnvironment.jobs(controller.signal),
     ])
-    summary.value = summaryResult
-    catalog.value = catalogResult
-    backups.value = backupsResult.items
-    jobs.value = jobsResult.items
-    for (const item of catalogResult.updateComponents) {
+    if (summaryResult.status === 'rejected') throw summaryResult.reason
+    if (catalogResult.status === 'rejected') throw catalogResult.reason
+
+    summary.value = summaryResult.value
+    catalog.value = catalogResult.value
+    const auxiliaryFailures: string[] = []
+    if (backupsResult.status === 'fulfilled') backups.value = backupsResult.value.items
+    else auxiliaryFailures.push('备份列表暂时无法读取')
+    if (jobsResult.status === 'fulfilled') jobs.value = jobsResult.value.items
+    else auxiliaryFailures.push('任务记录暂时无法读取')
+    auxiliaryWarning.value = auxiliaryFailures.join('；')
+    for (const item of catalogResult.value.updateComponents) {
       updateVersions[item.id] ||= item.versions[0] || 'latest'
     }
     error.value = ''
@@ -281,6 +290,9 @@ onBeforeUnmount(() => {
     <LoadingState v-if="loading" />
     <ErrorState v-else-if="error" title="环境状态读取失败" :message="error" @retry="load()" />
     <template v-else-if="summary">
+      <div v-if="auxiliaryWarning" class="inline-alert inline-alert--warning" role="status">
+        {{ auxiliaryWarning }}，环境状态与可用管理功能不受影响。
+      </div>
       <section
         v-if="visibleJob"
         class="environment-job-banner"

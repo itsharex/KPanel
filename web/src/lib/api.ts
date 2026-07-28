@@ -464,10 +464,11 @@ async function request<T>(
   return payload as T
 }
 
-export function normalizeList<T>(value: ApiList<T> | T[] | undefined): ApiList<T> {
+export function normalizeList<T>(value: ApiList<T> | T[] | null | undefined): ApiList<T> {
   if (Array.isArray(value)) return { items: value, total: value.length }
   if (!value) return { items: [], total: 0 }
-  return { ...value, total: Number.isFinite(value.total) ? value.total : value.items.length }
+  const items = Array.isArray(value.items) ? value.items : []
+  return { ...value, items, total: Number.isFinite(value.total) ? value.total : items.length }
 }
 
 function normalizeAgent(raw: RawAgentHealth): AgentStatus {

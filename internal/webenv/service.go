@@ -629,11 +629,15 @@ func jobFinished(status string) bool {
 }
 
 func (s *Service) Backups() ([]Backup, error) {
-	entries, err := os.ReadDir("/home")
+	return backupsIn("/home")
+}
+
+func backupsIn(root string) ([]Backup, error) {
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
-	var result []Backup
+	result := []Backup{}
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !backupPattern.MatchString(entry.Name()) {
 			continue
@@ -642,12 +646,13 @@ func (s *Service) Backups() ([]Backup, error) {
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		_, sidecarErr := os.Stat(filepath.Join("/home", entry.Name()+".kpanel.json"))
+		archivePath := filepath.Join(root, entry.Name())
+		_, sidecarErr := os.Stat(archivePath + ".kpanel.json")
 		format := "legacy"
 		verified := false
 		if sidecarErr == nil {
 			format = "kejilion-ldnmp-v1"
-			verified = verifyBackupSidecar(filepath.Join("/home", entry.Name()))
+			verified = verifyBackupSidecar(archivePath)
 		}
 		result = append(result, Backup{ID: entry.Name(), SizeBytes: info.Size(),
 			CreatedAt: info.ModTime().UTC(), Verified: verified, Format: format})
