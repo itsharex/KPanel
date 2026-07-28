@@ -58,6 +58,7 @@ vi.mock('@/stores/toast', () => ({
 interface AppsBindings {
   inventory: Ref<AppMarketInventory | undefined>
   sites: Ref<Site[]>
+  status: Ref<'all' | 'installed' | 'running' | 'adapted'>
   selectedID: Ref<string>
   domain: Ref<string>
   domainError: Ref<string>
@@ -66,8 +67,12 @@ interface AppsBindings {
   checkedUpdates: Ref<Record<string, 'available' | 'current'>>
   activeJob: Ref<AppInstallJob | undefined>
   jobDetailsOpen: Ref<boolean>
+  confirmAction: Ref<'update' | 'uninstall' | undefined>
   load: (silent?: boolean) => Promise<void>
+  lifecycle: (action: 'start' | 'stop' | 'restart') => Promise<void>
   checkUpdate: () => Promise<void>
+  confirmMutation: () => Promise<void>
+  refreshJob: (id: string) => Promise<void>
   addDomain: () => Promise<void>
   openScriptManage: () => Promise<void>
 }
@@ -126,11 +131,47 @@ function inventory(resourceVersion: string): AppMarketInventory {
           add_domain: { enabled: true },
           check_update: { enabled: true },
           direct_access: { enabled: true },
-          manage: { enabled: true },
+          start: { enabled: false, reason: '当前状态不允许启动' },
+          stop: { enabled: true },
+          restart: { enabled: true },
+          update: { enabled: true },
+          uninstall: { enabled: true },
+          manage: { enabled: false, reason: '已发现应用容器，请使用面板提供的生命周期操作' },
         },
       },
     ],
   }
+}
+
+function markerOnlyInventory(resourceVersion: string): AppMarketInventory {
+  const result = inventory(resourceVersion)
+  const current = result.items[0]
+  if (!current) throw new Error('test inventory is incomplete')
+  result.running = 0
+  result.items[0] = {
+    ...current,
+    id: 'builtin-114',
+    num: 114,
+    token: 'openclaw',
+    name_zh: 'OpenClaw',
+    name_en: 'OpenClaw',
+    runtime: {
+      installed: true,
+      state: 'unknown',
+      ports: [],
+      accessMode: 'not_applicable',
+      updateStatus: 'unknown',
+      resourceVersion,
+      detectedBy: ['appno'],
+      warning: 'kejilion.sh 安装标记存在，但 Docker Engine 中未发现运行产物',
+    },
+    capabilities: {
+      add_domain: { enabled: false, reason: 'Docker Engine 中没有可执行生命周期操作的容器' },
+      direct_access: { enabled: false, reason: 'Docker Engine 中没有可执行生命周期操作的容器' },
+      manage: { enabled: true },
+    },
+  }
+  return result
 }
 
 function proxySite(): Site {
@@ -254,12 +295,45 @@ describe('AppsView update checks', () => {
   })
 })
 
+describe('AppsView stopped applications', () => {
+  it('keeps a stopped application discoverable by leaving the running-only filter', async () => {
+    const stopped = inventory('stopped-version')
+    const item = stopped.items[0]
+    if (!item) throw new Error('test inventory is incomplete')
+    stopped.running = 0
+    item.runtime.state = 'exited'
+    item.runtime.status = 'exited'
+    item.capabilities.start = { enabled: true }
+    item.capabilities.stop = { enabled: false, reason: '当前状态不允许停止' }
+    mocks.action.mockResolvedValueOnce({
+      containerId: item.runtime.containerId,
+      action: 'stop',
+      status: 'completed',
+      resourceVersion: 'stopped-version',
+    })
+    mocks.inventory.mockResolvedValueOnce(stopped)
+    mocks.publicNetwork.mockResolvedValueOnce(undefined)
+    const view = setupView()
+    view.inventory.value = inventory('running-version')
+    view.selectedID.value = 'builtin-13'
+    view.status.value = 'running'
+
+    await view.lifecycle('stop')
+
+    expect(view.status.value).toBe('installed')
+    expect(view.selectedID.value).toBe('builtin-13')
+    expect(view.inventory.value?.items[0]?.runtime.state).toBe('exited')
+    expect(view.inventory.value?.items[0]?.capabilities.update?.enabled).toBe(true)
+    expect(view.inventory.value?.items[0]?.capabilities.uninstall?.enabled).toBe(true)
+  })
+})
+
 describe('AppsView script management', () => {
   it('opens the fixed-selector interactive management job with the current resource version', async () => {
     const job: AppInstallJob = {
       id: '0123456789abcdef0123456789abcdef',
-      appId: 'builtin-13',
-      appName: 'Cloudreve',
+      appId: 'builtin-114',
+      appName: 'OpenClaw',
       action: 'manage',
       interactive: true,
       inputOpen: true,
@@ -272,19 +346,112 @@ describe('AppsView script management', () => {
     mocks.action.mockResolvedValueOnce(job)
     mocks.job.mockResolvedValue(job)
     const view = setupView()
-    view.inventory.value = inventory('fresh-version')
-    view.selectedID.value = 'builtin-13'
+    view.inventory.value = markerOnlyInventory('marker:sha256:fresh-version')
+    view.selectedID.value = 'builtin-114'
 
     await view.openScriptManage()
 
-    expect(mocks.action).toHaveBeenCalledWith('builtin-13', 'manage', {
-      resourceVersion: 'fresh-version',
+    expect(mocks.action).toHaveBeenCalledWith('builtin-114', 'manage', {
+      resourceVersion: 'marker:sha256:fresh-version',
     })
     expect(view.activeJob.value).toEqual(job)
     expect(view.jobDetailsOpen.value).toBe(true)
     expect(mocks.toastSuccess).toHaveBeenCalledWith(
       '脚本管理终端已打开',
-      'Cloudreve 正在使用固定应用编号进入 kejilion.sh 原生菜单。',
+      'OpenClaw 正在使用固定应用编号进入 kejilion.sh 原生菜单。',
     )
+  })
+
+  it('does not open recovery-only script management for an application with a container', async () => {
+    const view = setupView()
+    view.inventory.value = inventory('fresh-version')
+    view.selectedID.value = 'builtin-13'
+
+    await view.openScriptManage()
+
+    expect(mocks.action).not.toHaveBeenCalled()
+  })
+
+  it('keeps the active update job across a transient Panel restart', async () => {
+    const job: AppInstallJob = {
+      id: 'fedcba9876543210fedcba9876543210',
+      appId: 'builtin-13',
+      appName: 'KPanel',
+      action: 'update',
+      status: 'running',
+      stage: 'executing',
+      progress: 25,
+      logs: [],
+      createdAt: '2026-07-28T00:00:00Z',
+    }
+    const view = setupView()
+    view.activeJob.value = job
+    window.localStorage.setItem('kpanel:active-app-job', job.id)
+    mocks.job.mockRejectedValueOnce(new ApiError('Panel restarting', 503, 'request_failed'))
+
+    await view.refreshJob(job.id)
+
+    expect(view.activeJob.value).toEqual(job)
+    expect(window.localStorage.getItem('kpanel:active-app-job')).toBe(job.id)
+  })
+
+  it('clears an update job only when the persisted job no longer exists', async () => {
+    const job: AppInstallJob = {
+      id: '0123456789abcdef0123456789abcdef',
+      appId: 'builtin-13',
+      appName: 'KPanel',
+      action: 'update',
+      status: 'running',
+      stage: 'executing',
+      progress: 25,
+      logs: [],
+      createdAt: '2026-07-28T00:00:00Z',
+    }
+    const view = setupView()
+    view.activeJob.value = job
+    window.localStorage.setItem('kpanel:active-app-job', job.id)
+    mocks.job.mockRejectedValueOnce(new ApiError('job not found', 404, 'not_found'))
+
+    await view.refreshJob(job.id)
+
+    expect(view.activeJob.value).toBeUndefined()
+    expect(window.localStorage.getItem('kpanel:active-app-job')).toBeNull()
+  })
+})
+
+describe('AppsView application mutations', () => {
+  it('refreshes inventory and retries an update once when the container version changed', async () => {
+    const job: AppInstallJob = {
+      id: '89abcdef0123456789abcdef01234567',
+      appId: 'builtin-13',
+      appName: 'Cloudreve',
+      action: 'update',
+      status: 'queued',
+      stage: 'queued',
+      progress: 0,
+      logs: [],
+      createdAt: '2026-07-28T00:00:00Z',
+    }
+    mocks.action
+      .mockRejectedValueOnce(new ApiError('application state changed', 409, 'resource_conflict'))
+      .mockResolvedValueOnce(job)
+    mocks.inventory.mockResolvedValueOnce(inventory('fresh-version'))
+    mocks.job.mockResolvedValue(job)
+    const view = setupView()
+    view.inventory.value = inventory('stale-version')
+    view.selectedID.value = 'builtin-13'
+    view.confirmAction.value = 'update'
+
+    await view.confirmMutation()
+
+    expect(mocks.action).toHaveBeenNthCalledWith(1, 'builtin-13', 'update', {
+      resourceVersion: 'stale-version',
+    })
+    expect(mocks.action).toHaveBeenNthCalledWith(2, 'builtin-13', 'update', {
+      resourceVersion: 'fresh-version',
+    })
+    expect(view.activeJob.value).toEqual(job)
+    expect(view.confirmAction.value).toBeUndefined()
+    expect(mocks.toastDanger).not.toHaveBeenCalled()
   })
 })

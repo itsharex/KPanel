@@ -124,14 +124,25 @@ AGENT
 		esac
 		exit 0
 		;;
+	"image tag")
+		require_state
+		printf '%s|%s\n' "$3" "$4" >"$state/image-tag"
+		: >"$state/rollback-tagged"
+		exit 0
+		;;
 	"rm "*)
 		exit 0
 		;;
 	"inspect --format")
 		case "$3" in
+			*"{{.Image}}"*) printf '%s\n' \
+				'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
+			*PortBindings*) printf '%s\n' "${KPANEL_MOCK_CURRENT_PORT:-18080}" ;;
 			*NetworkSettings*) printf '%s\n' 1 ;;
 			*)
-				if [ "${KPANEL_MOCK_HEALTH_FAIL:-0}" = 1 ]; then
+				if [ "${KPANEL_MOCK_HEALTH_FAIL:-0}" = 1 ] ||
+					{ [ "${KPANEL_MOCK_UPDATE_HEALTH_FAIL:-0}" = 1 ] &&
+						[ ! -f "$state/rollback-tagged" ]; }; then
 					printf '%s\n' unhealthy
 				else
 					printf '%s\n' healthy
@@ -286,9 +297,32 @@ EOF
 	grep -Fx 'ENABLE_STATS="false"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 	grep -Fx 'canshu="CN"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 
+	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
+	if KPANEL_MOCK_AGENT_VERSION=9.9.9 docker_app_update; then
+		echo "KPanel update accepted a mismatched Agent" >&2
+		return 1
+	fi
+	grep -Fx \
+		'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|docker.io/kjlion/kejilion-panel:latest' \
+		"$MOCK_STATE/image-tag" >/dev/null
+	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
+
+	docker_port="8080"
 	docker_app_update
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 	grep -Fx 'permission_granted="true"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
+	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
+
+	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
+	if KPANEL_MOCK_UPDATE_HEALTH_FAIL=1 docker_app_update; then
+		echo "failed KPanel update unexpectedly succeeded" >&2
+		return 1
+	fi
+	grep -Fx \
+		'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|docker.io/kjlion/kejilion-panel:latest' \
+		"$MOCK_STATE/image-tag" >/dev/null
+	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
+	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 
 	docker_app_uninstall
 	[ ! -e /home/docker/kpanel ]

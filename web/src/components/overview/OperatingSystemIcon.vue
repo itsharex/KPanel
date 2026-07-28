@@ -1,38 +1,60 @@
 <script setup lang="ts">
-import almaIcon from '@/assets/os/alma.png'
-import alpineIcon from '@/assets/os/alpine.png'
-import archIcon from '@/assets/os/arch.png'
-import centosIcon from '@/assets/os/centos.png'
-import debianIcon from '@/assets/os/debian.png'
-import fedoraIcon from '@/assets/os/fedora.png'
-import linuxIcon from '@/assets/os/linux.png'
-import oracleIcon from '@/assets/os/oracle.png'
-import rockyIcon from '@/assets/os/rocky.png'
-import suseIcon from '@/assets/os/suse.png'
-import ubuntuIcon from '@/assets/os/ubuntu.png'
+import { computed } from 'vue'
+import {
+  siAlmalinux,
+  siAlpinelinux,
+  siArchlinux,
+  siCentos,
+  siDebian,
+  siFedora,
+  siLinux,
+  siOpensuse,
+  siRockylinux,
+  siUbuntu,
+  type SimpleIcon,
+} from 'simple-icons'
 
 const props = defineProps<{
   distro: string
   label: string
 }>()
 
-const icons: Record<string, string> = {
-  ubuntu: ubuntuIcon,
-  debian: debianIcon,
-  centos: centosIcon,
-  rocky: rockyIcon,
-  alma: almaIcon,
-  fedora: fedoraIcon,
-  alpine: alpineIcon,
-  arch: archIcon,
-  suse: suseIcon,
-  oracle: oracleIcon,
-  linux: linuxIcon,
+interface OperatingSystemMark {
+  icon: SimpleIcon
+  accent?: string
+  foreground?: string
 }
+
+const linuxMark: OperatingSystemMark = {
+  icon: siLinux,
+  foreground: '#141816',
+}
+
+const icons: Record<string, OperatingSystemMark> = {
+  ubuntu: { icon: siUbuntu },
+  debian: { icon: siDebian },
+  centos: { icon: siCentos },
+  rocky: { icon: siRockylinux },
+  alma: { icon: siAlmalinux },
+  fedora: { icon: siFedora },
+  alpine: { icon: siAlpinelinux },
+  arch: { icon: siArchlinux },
+  suse: { icon: siOpensuse },
+  oracle: { icon: siLinux, accent: 'C74634' },
+  linux: linuxMark,
+}
+
+const mark = computed<OperatingSystemMark>(() => icons[props.distro] || linuxMark)
+const style = computed(() => ({
+  '--os-accent': `#${mark.value.accent || mark.value.icon.hex}`,
+  '--os-foreground': mark.value.foreground || '#ffffff',
+}))
 </script>
 
 <template>
-  <span class="os-identity__mark" :title="props.label">
-    <img :src="icons[props.distro] || linuxIcon" :alt="props.label" width="28" height="28" />
+  <span class="os-identity__mark" :title="props.label" :style="style">
+    <svg viewBox="0 0 24 24" role="img" :aria-label="props.label">
+      <path :d="mark.icon.path" />
+    </svg>
   </span>
 </template>

@@ -127,7 +127,7 @@ func TestKejilionStandardAppsBecomeDirectlyInstallable(t *testing.T) {
 		) {
 		t.Fatalf("background launch = %#v", runner.calls)
 	}
-	if _, err := service.StartInstall(context.Background(), "builtin-28", InstallInput{}); !errors.Is(err, ErrConflict) {
+	if _, err := service.StartInstall(context.Background(), "builtin-28", InstallInput{}); !errors.Is(err, ErrTaskConflict) {
 		t.Fatalf("parallel install error = %v, want conflict", err)
 	}
 
@@ -357,7 +357,7 @@ func TestKejilionInteractiveCompatibilityIsExplicit(t *testing.T) {
 	}
 	managed := append(
 		append([]byte{}, compatible...),
-		[]byte("kpanel_app_interactive_manage_choice\n")...,
+		[]byte("kpanel_app_interactive_manage_choice\nKJ_APP_MARKER_RECOVERY\n")...,
 	)
 	if !isKPanelInteractiveManageCompatibleScript(managed) {
 		t.Fatal("interactive application management protocol was rejected")

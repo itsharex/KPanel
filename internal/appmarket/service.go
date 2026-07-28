@@ -3,6 +3,7 @@ package appmarket
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -176,7 +177,7 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 	}
 	scriptInstallAvailable := s.scriptInstallAvailable()
 	scriptManageAvailable := s.scriptManageAvailable()
-	scriptInteractiveManageAvailable := s.scriptInteractiveManageAvailable()
+	scriptMarkerRecoveryAvailable := s.scriptInteractiveManageAvailable()
 	for _, app := range catalogState.Catalog.Apps {
 		legacy := s.legacy[app.Num]
 		item := Summary{
@@ -197,8 +198,7 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 		if legacy.Service != "" {
 			containerName = legacy.Service
 		}
-		if app.Source == "thirdparty" && marker {
-			scriptBacked = true
+		if app.Source == "thirdparty" {
 			storageName = app.Token
 			spec, configErr := s.readThirdPartyScriptSpec(app.Token)
 			if configErr == nil {
@@ -206,7 +206,8 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 				storageName = spec.Container
 				scriptBacked = true
 				configVerified = true
-			} else {
+			} else if marker {
+				scriptBacked = true
 				item.Runtime.Warning = "应用配置使用动态写法；KPanel 继续复用 kejilion.sh 原生管理流程"
 			}
 		}
@@ -215,7 +216,7 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 			containerName,
 			containers,
 			byName,
-			marker,
+			marker || configVerified,
 		)
 		if hasContainer {
 			item.Runtime = runtimeFromContainer(container)
@@ -233,18 +234,26 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 					item.Runtime.DetectedBy = append(item.Runtime.DetectedBy, "access_state")
 				}
 			}
-			scriptManage := marker && scriptBacked && scriptManageAvailable
-			scriptInteractiveManage := marker && scriptBacked && scriptInteractiveManageAvailable
-			s.applyInstalledCapabilities(&item, container, scriptManage, scriptInteractiveManage)
+			scriptManage := scriptBacked && scriptManageAvailable
+			s.applyInstalledCapabilities(&item, container, scriptManage)
 		} else if marker {
 			item.Runtime.Installed = true
 			item.Runtime.State = "unknown"
 			item.Runtime.UpdateStatus = "unknown"
+			item.Runtime.ResourceVersion = markerResourceVersion(item.App, s.scriptSHA256)
 			item.Runtime.DetectedBy = []string{"appno"}
 			if item.Runtime.Warning == "" {
 				item.Runtime.Warning = "kejilion.sh 安装标记存在，但 Docker Engine 中未发现运行产物"
 			}
 			disableInstalledCapabilities(&item, "Docker Engine 中没有可执行生命周期操作的容器")
+			_, markerRecoveryEligible := s.scriptSelectorFor(item)
+			if markerRecoveryEligible && scriptMarkerRecoveryAvailable {
+				item.Capabilities["manage"] = Capability{Enabled: true}
+			} else if markerRecoveryEligible {
+				item.Capabilities["manage"] = Capability{
+					Reason: "请更新本机 kejilion.sh 以启用安装标记恢复协议",
+				}
+			}
 		}
 		if markerWarning != "" && item.Runtime.Warning == "" {
 			item.Runtime.Warning = markerWarning
@@ -450,7 +459,6 @@ func (s *Service) applyInstalledCapabilities(
 	item *Summary,
 	container contract.ContainerSummary,
 	scriptManage bool,
-	scriptInteractiveManage bool,
 ) {
 	item.Capabilities["install"] = Capability{Reason: "应用已安装"}
 	for _, action := range container.AllowedActions {
@@ -499,12 +507,8 @@ func (s *Service) applyInstalledCapabilities(
 		item.Capabilities["update"] = Capability{Enabled: true}
 		item.Capabilities["uninstall"] = Capability{Enabled: true}
 		item.Capabilities["direct_access"] = Capability{Enabled: true}
-		if scriptInteractiveManage {
-			item.Capabilities["manage"] = Capability{Enabled: true}
-		} else {
-			item.Capabilities["manage"] = Capability{
-				Reason: "请更新本机 kejilion.sh 以启用应用交互管理协议",
-			}
+		item.Capabilities["manage"] = Capability{
+			Reason: "已发现应用容器，请使用面板提供的生命周期操作",
 		}
 	} else {
 		reason := "请更新本机 kejilion.sh 以启用应用非交互管理协议"
@@ -522,6 +526,11 @@ func disableInstalledCapabilities(item *Summary, reason string) {
 	for _, action := range []string{"start", "stop", "restart", "check_update", "update", "uninstall", "add_domain", "direct_access", "manage"} {
 		item.Capabilities[action] = Capability{Reason: reason}
 	}
+}
+
+func markerResourceVersion(app App, scriptSHA256 string) string {
+	sum := sha256.Sum256([]byte(app.ID + "\x00" + scriptSHA256))
+	return fmt.Sprintf("marker:sha256:%x", sum)
 }
 
 func declarativeRuntimePort(container contract.ContainerSummary, spec declarativeSpec) bool {
@@ -942,8 +951,8 @@ var (
 	ErrNotFound       = errors.New("application not found")
 	ErrForbidden      = errors.New("application action is not available for the current runtime state")
 	ErrUnsupported    = errors.New("application action is not supported")
-	ErrConflict       = errors.New("application task conflicts with an active task")
-	ErrTaskConflict   = fmt.Errorf("%w: another application task is already running", ErrConflict)
+	ErrConflict       = errors.New("application state changed; refresh and retry")
+	ErrTaskConflict   = errors.New("another application task is already running")
 	ErrRolledBack     = errors.New("application action failed and was rolled back")
 	ErrNeedsAttention = errors.New("application action requires manual attention")
 )

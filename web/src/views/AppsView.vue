@@ -243,17 +243,24 @@ async function refreshJob(id: string): Promise<void> {
     }
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
-    stopJobPolling()
-    window.localStorage.removeItem(activeJobStorageKey)
+    if (reason instanceof ApiError && reason.status === 404) {
+      stopJobPolling()
+      activeJob.value = undefined
+      window.localStorage.removeItem(activeJobStorageKey)
+    }
   }
 }
 
-function startJobPolling(job: AppInstallJob): void {
+function beginJobPolling(id: string): void {
   stopJobPolling()
+  window.localStorage.setItem(activeJobStorageKey, id)
+  void refreshJob(id)
+  jobTimer = window.setInterval(() => void refreshJob(id), 2_000)
+}
+
+function startJobPolling(job: AppInstallJob): void {
   activeJob.value = job
-  window.localStorage.setItem(activeJobStorageKey, job.id)
-  void refreshJob(job.id)
-  jobTimer = window.setInterval(() => void refreshJob(job.id), 2_000)
+  beginJobPolling(job.id)
 }
 
 async function restoreBackgroundJob(): Promise<void> {
@@ -265,8 +272,13 @@ async function restoreBackgroundJob(): Promise<void> {
       if (isActiveJob(job)) startJobPolling(job)
       else window.localStorage.removeItem(activeJobStorageKey)
       return
-    } catch {
-      window.localStorage.removeItem(activeJobStorageKey)
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 404) {
+        window.localStorage.removeItem(activeJobStorageKey)
+      } else {
+        beginJobPolling(savedID)
+        return
+      }
     }
   }
   try {
@@ -355,9 +367,10 @@ async function lifecycle(action: 'start' | 'stop' | 'restart'): Promise<void> {
   if (!item?.runtime.resourceVersion || !capability(item, action)) return
   operation.value = action
   try {
-    await api.apps.action(item.id, action, { resourceVersion: item.runtime.resourceVersion })
-    toast.success(action === 'start' ? '应用已启动' : action === 'stop' ? '应用已停止' : '应用已重启')
-    await load(true)
+      await api.apps.action(item.id, action, { resourceVersion: item.runtime.resourceVersion })
+      toast.success(action === 'start' ? '应用已启动' : action === 'stop' ? '应用已停止' : '应用已重启')
+      if (action === 'stop' && status.value === 'running') status.value = 'installed'
+      await load(true)
   } catch (reason) {
     toast.danger('操作失败', reason instanceof ApiError ? reason.message : '应用状态未能变更。')
   } finally {
@@ -366,12 +379,25 @@ async function lifecycle(action: 'start' | 'stop' | 'restart'): Promise<void> {
 }
 
 async function confirmMutation(): Promise<void> {
-  const item = selected.value
+  let item = selected.value
   const action = confirmAction.value
   if (!item?.runtime.resourceVersion || !action || !capability(item, action)) return
   operation.value = action
   try {
-    const result = await api.apps.action(item.id, action, { resourceVersion: item.runtime.resourceVersion })
+    let result
+    try {
+      result = await api.apps.action(item.id, action, { resourceVersion: item.runtime.resourceVersion })
+    } catch (reason) {
+      if (!(reason instanceof ApiError) || reason.code !== 'resource_conflict') throw reason
+      const refreshedInventory = await api.apps.inventory()
+      inventory.value = refreshedInventory
+      const refreshed = refreshedInventory.items.find((candidate) => candidate.id === item?.id)
+      if (!refreshed?.runtime.resourceVersion || !capability(refreshed, action)) throw reason
+      item = refreshed
+      result = await api.apps.action(refreshed.id, action, {
+        resourceVersion: refreshed.runtime.resourceVersion,
+      })
+    }
     if (isBackgroundJob(result)) {
       confirmAction.value = undefined
       startJobPolling(result)
@@ -1542,7 +1568,7 @@ onBeforeUnmount(() => {
 
 .app-detail-grid {
   display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
+  grid-template-columns: 1fr;
   gap: 14px;
 }
 

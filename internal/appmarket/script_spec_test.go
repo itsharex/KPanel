@@ -10,7 +10,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
 
-func TestThirdPartyScriptAppUsesVerifiedMainContainerAndManagementProtocol(t *testing.T) {
+func TestThirdPartyScriptAppUsesVerifiedMainContainerAndLifecycleProtocol(t *testing.T) {
 	root := t.TempDir()
 	configRoot := filepath.Join(root, "apps")
 	if err := os.Mkdir(configRoot, 0o750); err != nil {
@@ -77,9 +77,127 @@ func TestThirdPartyScriptAppUsesVerifiedMainContainerAndManagementProtocol(t *te
 			t.Fatalf("missing detector %q: %#v", detector, item.Runtime.DetectedBy)
 		}
 	}
-	for _, action := range []string{"update", "uninstall", "direct_access", "manage"} {
+	for _, action := range []string{"update", "uninstall", "direct_access"} {
 		if !item.Capabilities[action].Enabled {
 			t.Fatalf("%s was not enabled: %#v", action, item.Capabilities[action])
+		}
+	}
+	if item.Capabilities["manage"].Enabled {
+		t.Fatalf("normal container application exposed recovery-only script management: %#v", item.Capabilities["manage"])
+	}
+	if _, scriptBacked, err := service.StartScriptMutation(
+		context.Background(),
+		item.ID,
+		"manage",
+		MutationInput{ResourceVersion: item.Runtime.ResourceVersion},
+	); !scriptBacked || err == nil {
+		t.Fatalf("normal container application accepted recovery-only script management: script=%v err=%v", scriptBacked, err)
+	}
+	if _, scriptBacked, err := service.StartScriptMutation(
+		context.Background(),
+		item.ID,
+		"uninstall",
+		MutationInput{ResourceVersion: "stale"},
+	); !scriptBacked || err == nil {
+		t.Fatalf("stale mutation was accepted: script=%v err=%v", scriptBacked, err)
+	}
+}
+
+func TestStoppedThirdPartyContainerRemainsManageableWithoutLegacyMarker(t *testing.T) {
+	root := t.TempDir()
+	configRoot := filepath.Join(root, "apps")
+	if err := os.Mkdir(configRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(configRoot, "CLIProxyAPI.conf"),
+		[]byte("docker_name=\"CLIProxyAPI\"\ndocker_app_plus\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	containerID := strings.Repeat("e", 64)
+	service, err := New(&fakeDocker{containers: []contract.ContainerSummary{{
+		ID: containerID, Name: "CLIProxyAPI", Image: "example/cliproxyapi:latest",
+		State: "exited", Status: "exited",
+		Ports: []contract.PortBinding{{
+			PrivatePort: 8317, PublicPort: 11451, IP: "0.0.0.0", Type: "tcp",
+		}},
+		ResourceVersion: "sha256:" + strings.Repeat("f", 64),
+		AllowedActions:  []string{"start"},
+	}}}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.scriptAppRoot = configRoot
+	service.fileOwnerTrusted = func(os.FileInfo) bool { return true }
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		&fakeJobRunner{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	service.scriptManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+
+	item, err := service.Find(context.Background(), "thirdparty-CLIProxyAPI")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !item.Runtime.Installed || item.Runtime.State != "exited" ||
+		item.Runtime.ContainerID != containerID {
+		t.Fatalf("stopped runtime was not retained: %#v", item.Runtime)
+	}
+	if containsString(item.Runtime.DetectedBy, "appno") ||
+		!containsString(item.Runtime.DetectedBy, "app_config") {
+		t.Fatalf("unexpected runtime evidence: %#v", item.Runtime.DetectedBy)
+	}
+	for _, action := range []string{"start", "update", "uninstall", "direct_access"} {
+		if !item.Capabilities[action].Enabled {
+			t.Fatalf("%s was disabled for a verified stopped application: %#v", action, item.Capabilities[action])
+		}
+	}
+}
+
+func TestMarkerOnlyApplicationCanOpenFixedSelectorRecoveryTerminal(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(root, "appno.txt"),
+		[]byte("114\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(&fakeDocker{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		&fakeJobRunner{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	service.scriptInteractiveManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+
+	item, err := service.Find(context.Background(), "builtin-114")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !item.Runtime.Installed || item.Runtime.State != "unknown" ||
+		item.Runtime.ContainerID != "" ||
+		!strings.HasPrefix(item.Runtime.ResourceVersion, "marker:sha256:") {
+		t.Fatalf("marker-only application state is incomplete: %#v", item.Runtime)
+	}
+	if !item.Capabilities["manage"].Enabled {
+		t.Fatalf("marker-only application did not expose script recovery: %#v", item.Capabilities["manage"])
+	}
+	for _, action := range []string{"start", "stop", "restart", "update", "uninstall", "direct_access"} {
+		if item.Capabilities[action].Enabled {
+			t.Fatalf("marker-only application exposed %s: %#v", action, item.Capabilities[action])
 		}
 	}
 
@@ -90,23 +208,15 @@ func TestThirdPartyScriptAppUsesVerifiedMainContainerAndManagementProtocol(t *te
 		MutationInput{ResourceVersion: item.Runtime.ResourceVersion},
 	)
 	if err != nil || !scriptBacked {
-		t.Fatalf("script management job = %#v script=%v err=%v", job, scriptBacked, err)
+		t.Fatalf("script recovery job = %#v script=%v err=%v", job, scriptBacked, err)
 	}
 	record, err := service.jobs.read(job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Action != "manage" || record.Selector != "AIClient-2-API" ||
-		record.ExpectedContainerID != containerID {
-		t.Fatalf("unsafe script job record: %#v", record)
-	}
-	if _, scriptBacked, err := service.StartScriptMutation(
-		context.Background(),
-		item.ID,
-		"uninstall",
-		MutationInput{ResourceVersion: "stale"},
-	); !scriptBacked || err == nil {
-		t.Fatalf("stale mutation was accepted: script=%v err=%v", scriptBacked, err)
+	if record.Action != "manage" || record.Selector != "114" ||
+		record.ExpectedContainerID != "" || !record.Interactive {
+		t.Fatalf("unsafe marker recovery job record: %#v", record)
 	}
 }
 
@@ -165,10 +275,13 @@ func TestDynamicThirdPartyConfigDoesNotBecomeAManagementGuardrail(t *testing.T) 
 		!containsString(item.Runtime.DetectedBy, "compose_label") {
 		t.Fatalf("dynamic script product was not reconciled from Docker: %#v", item.Runtime)
 	}
-	for _, action := range []string{"update", "uninstall", "direct_access", "manage"} {
+	for _, action := range []string{"update", "uninstall", "direct_access"} {
 		if !item.Capabilities[action].Enabled {
 			t.Fatalf("%s stayed disabled by config parsing: %#v", action, item.Capabilities[action])
 		}
+	}
+	if item.Capabilities["manage"].Enabled {
+		t.Fatalf("normal dynamic application exposed recovery-only script management")
 	}
 }
 
@@ -222,7 +335,7 @@ func TestManageCompatibilityRequiresExactNoninteractiveProtocol(t *testing.T) {
 	}
 	managed := append(
 		append([]byte{}, installOnly...),
-		[]byte("kpanel_run_docker_app_action\nKJ_APP_EXPECTED_CONTAINER_ID\n")...,
+		[]byte("kpanel_run_docker_app_action\nKJ_APP_EXPECTED_CONTAINER_ID\nKJ_APP_RECONCILE_MARKER\n")...,
 	)
 	if !isKPanelManageCompatibleScript(managed) {
 		t.Fatal("management-compatible script was rejected")

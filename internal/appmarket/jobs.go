@@ -357,9 +357,19 @@ func (s *Service) StartScriptMutation(
 	if !item.Capabilities[action].Enabled {
 		return AppJob{}, true, fmt.Errorf("%w: %s", ErrForbidden, item.Capabilities[action].Reason)
 	}
-	if input.ResourceVersion == "" || input.ResourceVersion != item.Runtime.ResourceVersion ||
-		!containerIDPattern.MatchString(item.Runtime.ContainerID) {
-		return AppJob{}, true, fmt.Errorf("%w: application state changed; refresh and retry", ErrConflict)
+	if input.ResourceVersion == "" || input.ResourceVersion != item.Runtime.ResourceVersion {
+		return AppJob{}, true, ErrConflict
+	}
+	expectedContainerID := item.Runtime.ContainerID
+	if action == "manage" {
+		if expectedContainerID != "" {
+			return AppJob{}, true, fmt.Errorf(
+				"%w: script recovery is available only when the application container is missing",
+				ErrConflict,
+			)
+		}
+	} else if !containerIDPattern.MatchString(expectedContainerID) {
+		return AppJob{}, true, ErrConflict
 	}
 	if action == "direct_access" && input.AccessMode != "direct" && input.AccessMode != "domain_only" {
 		return AppJob{}, true, fmt.Errorf("%w: invalid access mode", ErrForbidden)
@@ -374,7 +384,7 @@ func (s *Service) StartScriptMutation(
 		"kejilion",
 		action,
 		InstallInput{AccessMode: input.AccessMode},
-		item.Runtime.ContainerID,
+		expectedContainerID,
 	)
 	if err != nil {
 		return AppJob{}, true, err
@@ -628,7 +638,8 @@ func isKPanelManageCompatibleScript(content []byte) bool {
 	value := string(content)
 	return isKPanelCompatibleScript(content) &&
 		strings.Contains(value, "kpanel_run_docker_app_action") &&
-		strings.Contains(value, "KJ_APP_EXPECTED_CONTAINER_ID")
+		strings.Contains(value, "KJ_APP_EXPECTED_CONTAINER_ID") &&
+		strings.Contains(value, "KJ_APP_RECONCILE_MARKER")
 }
 
 func isKPanelInteractiveCompatibleScript(content []byte) bool {
@@ -641,7 +652,8 @@ func isKPanelInteractiveCompatibleScript(content []byte) bool {
 func isKPanelInteractiveManageCompatibleScript(content []byte) bool {
 	value := string(content)
 	return isKPanelInteractiveCompatibleScript(content) &&
-		strings.Contains(value, "kpanel_app_interactive_manage_choice")
+		strings.Contains(value, "kpanel_app_interactive_manage_choice") &&
+		strings.Contains(value, "KJ_APP_MARKER_RECOVERY")
 }
 
 func RunAppJob(ctx context.Context, stateDir, id string) error {

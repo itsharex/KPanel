@@ -1852,19 +1852,29 @@ textarea:focus-visible,
 }
 
 .os-identity__mark {
-  display: inline-block;
+  display: inline-flex;
   width: 28px;
   height: 28px;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--os-accent) 74%, white);
   border-radius: 9px;
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--os-accent) 84%, white),
+      var(--os-accent)
+    );
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--os-accent) 24%, transparent);
 }
 
-.os-identity__mark img {
+.os-identity__mark svg {
   display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  width: 18px;
+  height: 18px;
+  fill: var(--os-foreground);
 }
 
 .country-flag {
