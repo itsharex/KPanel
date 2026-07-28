@@ -73,6 +73,10 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 		if input.Port == 0 {
 			return "port", "port must be between 1 and 65535"
 		}
+	case "ssh-defense":
+		if input.Enabled == nil {
+			return "enabled", "enabled is required"
+		}
 	case "dns":
 		if len(input.Servers) < 1 {
 			return "servers", "one to four DNS servers are required"
@@ -142,6 +146,8 @@ func systemActionAuditChange(input contract.SystemActionRequest) map[string]any 
 		change["hostname"] = input.Hostname
 	case "ssh-port":
 		change["port"] = input.Port
+	case "ssh-defense":
+		change["enabled"] = input.Enabled != nil && *input.Enabled
 	case "dns":
 		change["servers"] = input.Servers
 	case "timezone":

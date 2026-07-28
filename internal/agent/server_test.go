@@ -205,6 +205,7 @@ func TestSystemWriteCapabilitiesRemainExplicitlyDisabled(t *testing.T) {
 	for _, required := range []string{
 		"system.hostname.write",
 		"system.ssh-port.write",
+		"system.ssh-defense.write",
 		"system.dns.write",
 		"system.timezone.write",
 		"system.swap.write",

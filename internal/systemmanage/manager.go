@@ -92,6 +92,7 @@ type Config struct {
 	Country      CountryResolver
 	EffectiveUID func() int
 	DNSScript    KejilionScriptFinder
+	F2BScript    KejilionScriptFinder
 }
 
 type Manager struct {
@@ -108,6 +109,7 @@ type Manager struct {
 	country         CountryResolver
 	effectiveUID    func() int
 	dnsScript       KejilionScriptFinder
+	f2bScript       KejilionScriptFinder
 	rebootScheduled bool
 	mu              sync.Mutex
 }
@@ -149,6 +151,9 @@ func NewManager(config Config) *Manager {
 	if config.DNSScript == nil {
 		config.DNSScript = findKejilionDNSScript
 	}
+	if config.F2BScript == nil {
+		config.F2BScript = findKejilionF2BScript
+	}
 	return &Manager{
 		enabled: config.Enabled, etcRoot: filepath.Clean(config.EtcRoot),
 		procRoot: filepath.Clean(config.ProcRoot), sysRoot: filepath.Clean(config.SysRoot),
@@ -157,6 +162,7 @@ func NewManager(config Config) *Manager {
 		executable: filepath.Clean(config.Executable),
 		now:        config.Now, runner: config.Runner, country: config.Country,
 		effectiveUID: config.EffectiveUID, dnsScript: config.DNSScript,
+		f2bScript: config.F2BScript,
 	}
 }
 
@@ -218,6 +224,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 	_, bashErr := m.runner.LookPath("bash")
 	_, chattrErr := m.runner.LookPath("chattr")
 	_, dnsScriptErr := m.dnsScript()
+	_, f2bScriptErr := m.f2bScript()
 
 	sshConfig := regularFile(filepath.Join(m.etcRoot, "ssh", "sshd_config"))
 	packageManager := m.detectPackageManager()
@@ -272,6 +279,11 @@ func (m *Manager) Capabilities() []contract.Capability {
 	return []contract.Capability{
 		capability("system.hostname.write", hostnamectlErr == nil, "hostnamectl 不可用"),
 		capability("system.ssh-port.write", sshdErr == nil && ssErr == nil && systemctlErr == nil && sshConfig, "OpenSSH 服务或配置不可用"),
+		capability(
+			"system.ssh-defense.write",
+			systemdRunErr == nil && helperErr == nil && envErr == nil && bashErr == nil && f2bScriptErr == nil,
+			"请更新本机 kejilion.sh 以启用 SSH 防御固定协议",
+		),
 		capability("system.dns.write", dnsSupported, dnsReason),
 		capability("system.timezone.write", timedatectlErr == nil, "timedatectl 不可用"),
 		capability("system.swap.write", mkswapErr == nil && swaponErr == nil && swapoffErr == nil && fallocateErr == nil && systemdRunErr == nil && helperErr == nil, "Swap 工具、Agent 后台执行程序或 systemd 事务执行器不完整"),
@@ -305,6 +317,19 @@ func (m *Manager) Execute(ctx context.Context, input contract.SystemActionReques
 		result.Changed, result.BackupPath, result.Message, err = m.setHostname(ctx, input.Hostname)
 	case "ssh-port":
 		result.Changed, result.BackupPath, result.Message, err = m.addSSHPort(ctx, input.Port)
+	case "ssh-defense":
+		if input.Enabled == nil {
+			err = fmt.Errorf("%w: enabled is required", ErrInvalidInput)
+			break
+		}
+		policy := "disable"
+		if *input.Enabled {
+			policy = "enable"
+		}
+		result.Changed, result.Message, err = m.startMaintenance(ctx, input.Action, policy)
+		if err == nil {
+			result.Status = "accepted"
+		}
 	case "dns":
 		result.Changed, result.BackupPath, result.Message, err = m.setDNS(ctx, input.Servers)
 	case "timezone":

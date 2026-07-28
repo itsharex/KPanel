@@ -94,8 +94,20 @@ type SystemMaintenanceSummary struct {
 }
 
 type SSHConfiguration struct {
-	Ports  []uint16 `json:"ports"`
-	Source string   `json:"source"`
+	Ports   []uint16         `json:"ports"`
+	Source  string           `json:"source"`
+	Defense SSHDefenseStatus `json:"defense"`
+}
+
+type SSHDefenseStatus struct {
+	Available bool   `json:"available"`
+	Installed bool   `json:"installed"`
+	Running   bool   `json:"running"`
+	Enabled   bool   `json:"enabled"`
+	Autostart bool   `json:"autostart"`
+	Jail      string `json:"jail,omitempty"`
+	Banned    int    `json:"banned"`
+	Message   string `json:"message,omitempty"`
 }
 
 type DNSConfiguration struct {

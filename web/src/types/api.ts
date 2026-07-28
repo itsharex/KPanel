@@ -109,6 +109,16 @@ export interface SystemManagement {
   ssh: {
     ports: number[]
     source: 'configured' | 'default' | 'unknown'
+    defense: {
+      available: boolean
+      installed: boolean
+      running: boolean
+      enabled: boolean
+      autostart: boolean
+      jail?: string
+      banned: number
+      message?: string
+    }
   }
   dns: {
     servers: string[]
@@ -136,8 +146,8 @@ export interface SystemManagement {
   maintenance: {
     id?: string
     state: 'idle' | 'running' | 'succeeded' | 'failed'
-    action?: 'update' | 'cleanup'
-    policy?: 'full' | 'cache' | 'standard'
+    action?: 'update' | 'cleanup' | 'ssh-defense'
+    policy?: 'full' | 'cache' | 'standard' | 'enable' | 'disable'
     stage?: string
     progress: number
     message?: string
@@ -209,6 +219,7 @@ export interface SystemActionInput {
   action:
     | 'hostname'
     | 'ssh-port'
+    | 'ssh-defense'
     | 'dns'
     | 'timezone'
     | 'swap'

@@ -156,6 +156,11 @@ func (m *Manager) startMaintenance(
 			return false, "", fmt.Errorf("%w: cleanup policy must be cache or standard", ErrInvalidInput)
 		}
 		mode = "cleanup-" + policy
+	case "ssh-defense":
+		if policy != "enable" && policy != "disable" {
+			return false, "", fmt.Errorf("%w: SSH defense policy must be enable or disable", ErrInvalidInput)
+		}
+		mode = "ssh-defense-" + policy
 	default:
 		return false, "", fmt.Errorf("%w: unknown maintenance action", ErrInvalidInput)
 	}
@@ -292,6 +297,39 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 func (m *Manager) maintenanceSteps(
 	mode string,
 ) (string, string, []maintenanceStep, error) {
+	if mode == "ssh-defense-enable" || mode == "ssh-defense-disable" {
+		script, err := m.f2bScript()
+		if err != nil {
+			return "", "", nil, fmt.Errorf(
+				"%w: update kejilion.sh to enable the SSH defense protocol",
+				ErrUnsupported,
+			)
+		}
+		for _, command := range []string{"env", "bash"} {
+			if _, err := m.runner.LookPath(command); err != nil {
+				return "", "", nil, fmt.Errorf(
+					"%w: SSH defense command %s is unavailable",
+					ErrUnsupported,
+					command,
+				)
+			}
+		}
+		policy := strings.TrimPrefix(mode, "ssh-defense-")
+		return "ssh-defense", policy, []maintenanceStep{{
+			stage:    "ssh_defense_" + policy,
+			progress: 45,
+			command:  "env",
+			arguments: []string{
+				"KJ_F2B_NONINTERACTIVE=1",
+				"LC_ALL=C.UTF-8",
+				"LANG=C.UTF-8",
+				"bash",
+				script,
+				"f2b",
+				policy,
+			},
+		}}, nil
+	}
 	support := m.detectPackageManager()
 	if !support.available() {
 		reason := support.reason
@@ -544,12 +582,22 @@ func maintenanceStageMessage(stage string) string {
 		return "正在保留最近 7 天 journal"
 	case "journal_size":
 		return "正在限制 journal 最大 500 MiB"
+	case "ssh_defense_enable":
+		return "正在安装并启用 Fail2Ban SSH 防御"
+	case "ssh_defense_disable":
+		return "正在停用 Fail2Ban SSH 防御并保留配置"
 	default:
 		return "正在执行系统维护"
 	}
 }
 
 func maintenanceSuccessMessage(action, policy string) string {
+	if action == "ssh-defense" {
+		if policy == "enable" {
+			return "SSH 防御已启用，Fail2Ban SSH jail 已验证"
+		}
+		return "SSH 防御已停用，Fail2Ban 配置仍保留"
+	}
 	if action == "update" {
 		return "系统更新已完成；如内核或核心组件变化，请按提示安排重启"
 	}

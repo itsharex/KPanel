@@ -364,6 +364,7 @@ func (s *Server) systemSummary(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "system_unavailable", "系统状态不可用", "")
 		return
 	}
+	summary.Management.SSH.Defense = s.systemManager.SSHDefenseStatus(r.Context())
 	summary.Management.Maintenance = s.systemManager.MaintenanceStatus()
 	writeJSON(w, http.StatusOK, summary)
 }

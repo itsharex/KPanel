@@ -126,6 +126,7 @@ const actionForm = reactive({
   preference: 'ipv4' as 'ipv4' | 'system_default',
   profile: 'balanced' as KernelProfile,
   bbrEnabled: true,
+  sshDefenseEnabled: true,
   maintenancePolicy: 'full' as 'full' | 'cache' | 'standard',
 })
 
@@ -231,6 +232,27 @@ const basicSettings = computed<ManagementTool[]>(() => {
       safety: '先开放并验证新端口，再按 kejilion.sh 语义把 SSH 配置切换为单一端口；失败自动恢复。',
       icon: KeyRound,
       tone: 'blue',
+    },
+    {
+      id: 'ssh-defense',
+      title: 'SSH 防御',
+      description: '对应 kejilion.sh 的 `k f2b`，使用 Fail2Ban 防止 SSH 暴力破解。',
+      value:
+        management.maintenance.state === 'running' &&
+        management.maintenance.action === 'ssh-defense'
+          ? `正在${management.maintenance.policy === 'enable' ? '开启' : '关闭'} · ${management.maintenance.progress}%`
+          : management.ssh.defense.enabled
+            ? '已开启'
+            : management.ssh.defense.installed
+              ? '已关闭'
+              : '未安装',
+      detail: management.ssh.defense.enabled
+        ? `${management.ssh.defense.jail || 'sshd'} jail · 当前封禁 ${management.ssh.defense.banned} 个 IP`
+        : management.ssh.defense.message || '开启时安装并启用 Fail2Ban，关闭时保留现有配置',
+      capability: 'system.ssh-defense.write',
+      safety: '通过可信 kejilion.sh 的固定 `k f2b enable|disable` 协议执行；后台安装不会因关闭页面中断，关闭仅停用服务和开机自启，不卸载软件或删除配置。',
+      icon: ShieldCheck,
+      tone: management.ssh.defense.enabled ? undefined : 'amber',
     },
     {
       id: 'dns',
@@ -464,13 +486,15 @@ function openTool(tool: ManagementTool): void {
     management?.kernelOptimization.profile,
   )
   actionForm.bbrEnabled = !management?.bbr.enabled
+  actionForm.sshDefenseEnabled = !management?.ssh.defense.enabled
   actionForm.maintenancePolicy = tool.id === 'system-cleanup' ? 'standard' : 'full'
   selectedTool.value = tool
 }
 
-function maintenanceActionFor(toolID: string): 'update' | 'cleanup' | undefined {
+function maintenanceActionFor(toolID: string): 'update' | 'cleanup' | 'ssh-defense' | undefined {
   if (toolID === 'system-update') return 'update'
   if (toolID === 'system-cleanup') return 'cleanup'
+  if (toolID === 'ssh-defense') return 'ssh-defense'
   return undefined
 }
 
@@ -517,6 +541,8 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
       return { action: 'hostname', hostname: actionForm.hostname.trim().toLowerCase() }
     case 'ssh-port':
       return { action: 'ssh-port', port: Number(actionForm.port) }
+    case 'ssh-defense':
+      return { action: 'ssh-defense', enabled: actionForm.sshDefenseEnabled }
     case 'dns':
       return {
         action: 'dns',
@@ -548,7 +574,12 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
 const actionValid = computed(() => {
   const input = actionInput.value
   if (!input || !selectedTool.value || !capabilityState(selectedTool.value.capability).enabled) return false
-  if ((input.action === 'update' || input.action === 'cleanup') && maintenanceRunning.value) {
+  if (
+    (input.action === 'update' ||
+      input.action === 'cleanup' ||
+      input.action === 'ssh-defense') &&
+    maintenanceRunning.value
+  ) {
     return false
   }
   switch (input.action) {
@@ -581,7 +612,11 @@ async function executeAction(): Promise<void> {
   actionRunning.value = true
   try {
     const result = await api.system.action(input)
-    if (input.action === 'update' || input.action === 'cleanup') {
+    if (
+      input.action === 'update' ||
+      input.action === 'cleanup' ||
+      input.action === 'ssh-defense'
+    ) {
       toast.success(`${tool.title}任务已提交`, result.message)
     } else if (input.action === 'reboot') {
       toast.success('服务器重启已安排', result.message)
@@ -966,8 +1001,18 @@ onBeforeUnmount(() => {
                 <small>{{ tool.detail }}</small>
               </span>
               <span class="configuration-row__action">
-                <span>{{ capabilityState(tool.capability).enabled ? '可配置' : '查看' }}</span>
-                <ChevronRight :size="16" />
+                <template v-if="tool.id === 'ssh-defense'">
+                  <span
+                    class="configuration-switch"
+                    :class="{ 'is-on': data.management.ssh.defense.enabled }"
+                    aria-hidden="true"
+                  ><span></span></span>
+                  <span>{{ data.management.ssh.defense.enabled ? '关闭' : '开启' }}</span>
+                </template>
+                <template v-else>
+                  <span>{{ capabilityState(tool.capability).enabled ? '可配置' : '查看' }}</span>
+                  <ChevronRight :size="16" />
+                </template>
               </span>
             </button>
           </div>
@@ -1073,6 +1118,16 @@ onBeforeUnmount(() => {
             <span>新的 SSH 端口</span>
             <input v-model.number="actionForm.port" type="number" min="1" max="65535" inputmode="numeric" />
             <small>成功后替换原 SSH 监听端口；当前 SSH 会话通常不会立即断开。</small>
+          </label>
+          <label v-else-if="selectedTool.id === 'ssh-defense'" class="field">
+            <span>目标状态</span>
+            <select v-model="actionForm.sshDefenseEnabled">
+              <option :value="true">开启 SSH 防御</option>
+              <option :value="false">关闭 SSH 防御并保留配置</option>
+            </select>
+            <small>
+              开启会按 `k f2b` 原生流程安装或启动 Fail2Ban，并验证 SSH jail；关闭不会删除历史配置。
+            </small>
           </label>
           <div v-else-if="selectedTool.id === 'dns'" class="form-stack compact">
             <label class="field">
@@ -1236,10 +1291,13 @@ onBeforeUnmount(() => {
             {{
               maintenanceRunning &&
               (selectedTool.id === 'system-update' ||
-                selectedTool.id === 'system-cleanup')
+                selectedTool.id === 'system-cleanup' ||
+                selectedTool.id === 'ssh-defense')
                 ? '已有系统维护任务正在后台执行，请等待完成后再提交新任务。'
                 : capabilityState(selectedTool.capability).enabled
-                  ? selectedTool.id === 'system-update' || selectedTool.id === 'system-cleanup'
+                  ? selectedTool.id === 'system-update' ||
+                    selectedTool.id === 'system-cleanup' ||
+                    selectedTool.id === 'ssh-defense'
                     ? '任务由独立 systemd 单元执行；关闭浏览器不会中断，页面将持续读取进度。'
                     : selectedTool.id === 'system-reboot'
                       ? '请求成功后，Agent 会创建固定的延时重启单元；约 15 秒后面板离线属于正常现象。'

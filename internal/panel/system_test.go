@@ -57,6 +57,8 @@ func TestValidateSystemAction(t *testing.T) {
 		{"hostname", contract.SystemActionRequest{Action: "hostname", Hostname: "web-01.example"}, true},
 		{"hostname injection", contract.SystemActionRequest{Action: "hostname", Hostname: "web;reboot"}, false},
 		{"SSH port", contract.SystemActionRequest{Action: "ssh-port", Port: 2222}, true},
+		{"enable SSH defense", contract.SystemActionRequest{Action: "ssh-defense", Enabled: &enabled}, true},
+		{"missing SSH defense state", contract.SystemActionRequest{Action: "ssh-defense"}, false},
 		{"empty DNS", contract.SystemActionRequest{Action: "dns"}, false},
 		{"DNS", contract.SystemActionRequest{Action: "dns", Servers: []string{"1.1.1.1", "2606:4700:4700::1111"}}, true},
 		{"timezone traversal", contract.SystemActionRequest{Action: "timezone", Timezone: "../../etc"}, false},
@@ -115,5 +117,15 @@ func TestSystemActionAuditChangeContainsOnlyTypedFields(t *testing.T) {
 	}
 	if _, leaked := change["hostname"]; leaked {
 		t.Fatal("audit change leaked an unrelated field")
+	}
+}
+
+func TestSystemActionAuditChangeRecordsSSHDefenseState(t *testing.T) {
+	enabled := true
+	change := systemActionAuditChange(contract.SystemActionRequest{
+		Action: "ssh-defense", Enabled: &enabled,
+	})
+	if len(change) != 2 || change["action"] != "ssh-defense" || change["enabled"] != true {
+		t.Fatalf("unexpected SSH defense audit change: %#v", change)
 	}
 }

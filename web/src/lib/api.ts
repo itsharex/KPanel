@@ -113,7 +113,20 @@ interface RawSystemSummary {
     updatedAt?: string
   }
   management?: {
-    ssh?: { ports?: number[]; source?: string }
+    ssh?: {
+      ports?: number[]
+      source?: string
+      defense?: {
+        available?: boolean
+        installed?: boolean
+        running?: boolean
+        enabled?: boolean
+        autostart?: boolean
+        jail?: string
+        banned?: number
+        message?: string
+      }
+    }
     dns?: { servers?: string[]; manager?: string }
     timezone?: string
     swap?: {
@@ -896,6 +909,16 @@ export const api = {
               system.management?.ssh?.source === 'configured' || system.management?.ssh?.source === 'default'
                 ? system.management.ssh.source
                 : 'unknown',
+            defense: {
+              available: Boolean(system.management?.ssh?.defense?.available),
+              installed: Boolean(system.management?.ssh?.defense?.installed),
+              running: Boolean(system.management?.ssh?.defense?.running),
+              enabled: Boolean(system.management?.ssh?.defense?.enabled),
+              autostart: Boolean(system.management?.ssh?.defense?.autostart),
+              jail: system.management?.ssh?.defense?.jail,
+              banned: Math.max(0, Number(system.management?.ssh?.defense?.banned) || 0),
+              message: system.management?.ssh?.defense?.message,
+            },
           },
           dns: {
             servers: system.management?.dns?.servers || [],

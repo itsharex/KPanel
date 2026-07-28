@@ -173,7 +173,7 @@ EOF
 cat >"$FAKE_BIN/sha256sum" <<'EOF'
 #!/bin/sh
 printf '%s  %s\n' \
-	'5632ee311a573b22a9c4f7fc7488ef1998119dc8225e5a583035cc4a1a5c627f' \
+	'11891afcc2a985383899d9632d2258bbf46ccfb68fdabe5bad745683ce5cae43' \
 	"$1"
 EOF
 chmod 755 "$FAKE_BIN"/*

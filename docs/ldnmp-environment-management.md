@@ -126,8 +126,8 @@ KPanel 冷备仍生成原脚本可发现的：
 
 - KPanel 回滚点：`v0.21.0` / `4b41740`。
 - 计划发布：`v0.22.0`。
-- 固定脚本：`ded5af10d04ba4f9b39ca324ae662c126c364481`；
-  SHA-256 `5632ee311a573b22a9c4f7fc7488ef1998119dc8225e5a583035cc4a1a5c627f`。
+- 固定脚本：`8ad705bc48f56eda2ce5b39e2562b3630d2dcef5`；
+  SHA-256 `11891afcc2a985383899d9632d2258bbf46ccfb68fdabe5bad745683ce5cae43`。
 - 发布顺序：先推送脚本协议，再固定脚本提交与 SHA-256，最后构建 KPanel 镜像。
 - 回滚 KPanel/Agent 不删除或覆盖 `/home/web` 与 `/home/web_*.tar.gz`。
 - 正式发布前执行 `verify-l2`、完整 `verify-release`、镜像内脚本摘要核验和独立主机实测。

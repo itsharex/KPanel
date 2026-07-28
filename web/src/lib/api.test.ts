@@ -469,6 +469,27 @@ describe('API client', () => {
     })
   })
 
+  it('submits only the typed SSH defense target state', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        action: 'ssh-defense',
+        status: 'accepted',
+        changed: true,
+        message: 'queued',
+        appliedAt: '2026-07-26T03:00:00Z',
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.system.action({ action: 'ssh-defense', enabled: true })
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(JSON.parse(String(init.body))).toEqual({
+      action: 'ssh-defense',
+      enabled: true,
+    })
+  })
+
   it('keeps the overview compatible with an older Agent without management fields', async () => {
     const collectedAt = '2026-07-25T10:00:00Z'
     const system = {
@@ -544,7 +565,18 @@ describe('API client', () => {
     expect(overview.osId).toBe('debian')
     expect(overview.osLike).toEqual(['linux'])
     expect(overview.management).toMatchObject({
-      ssh: { ports: [], source: 'unknown' },
+      ssh: {
+        ports: [],
+        source: 'unknown',
+        defense: {
+          available: false,
+          installed: false,
+          running: false,
+          enabled: false,
+          autostart: false,
+          banned: 0,
+        },
+      },
       dns: { servers: [], manager: 'unknown' },
       swap: {
         totalBytes: 256,
@@ -602,6 +634,20 @@ describe('API client', () => {
       disks: [],
       network: { receivedBytes: 100, sentBytes: 200 },
       management: {
+        ssh: {
+          ports: [22],
+          source: 'default',
+          defense: {
+            available: true,
+            installed: true,
+            running: true,
+            enabled: true,
+            autostart: true,
+            jail: 'sshd',
+            banned: 4,
+            message: 'Fail2Ban SSH jail 正在防御',
+          },
+        },
         swap: {
           activeDevices: 3,
           path: '/swapfile',
@@ -651,6 +697,16 @@ describe('API client', () => {
       legacySizeBytes: 2 * 1024 ** 3,
       otherActiveDevices: 1,
       otherSwapTotalBytes: 512 * 1024 ** 2,
+    })
+    expect(overview.management.ssh.defense).toEqual({
+      available: true,
+      installed: true,
+      running: true,
+      enabled: true,
+      autostart: true,
+      jail: 'sshd',
+      banned: 4,
+      message: 'Fail2Ban SSH jail 正在防御',
     })
   })
 
