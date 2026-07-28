@@ -313,6 +313,21 @@ func TestSetDNSReportsScriptRollback(t *testing.T) {
 	}
 }
 
+func TestTrustedDNSProtocolRequiresReadOnlySafeBootstrapGuard(t *testing.T) {
+	legacy := []byte(
+		"permission_granted=\"true\"\n" +
+			"KJ_DNS_NONINTERACTIVE=1\n" +
+			"kpanel_set_dns_noninteractive() { :; }\n",
+	)
+	if trustedKejilionDNSContent(legacy) {
+		t.Fatal("legacy DNS protocol without the read-only bootstrap guard was trusted")
+	}
+	current := append(legacy, []byte("kpanel_protocol_active() { :; }\n")...)
+	if !trustedKejilionDNSContent(current) {
+		t.Fatal("read-only-safe DNS protocol was rejected")
+	}
+}
+
 func TestIPPreferencePreservesUnrelatedConfiguration(t *testing.T) {
 	manager, etcRoot, _, _ := testManager(t, &fakeRunner{})
 	path := filepath.Join(etcRoot, "gai.conf")
@@ -925,6 +940,7 @@ func TestRunSwapViaSystemdUsesFixedHelper(t *testing.T) {
 		"systemd-run",
 		"--wait",
 		"--pipe",
+		"--property=ReadWritePaths=" + stateDir,
 		manager.executable + " swap-run --state-dir " + stateDir,
 		"--swap-path " + manager.swapPath,
 		"--size-mib 2048",
@@ -1009,6 +1025,8 @@ func TestStartMaintenanceUsesFixedSystemdUnit(t *testing.T) {
 	for _, expected := range []string{
 		"systemd-run",
 		"--unit=kejilion-panel-maintenance-",
+		"--property=ProtectHome=read-only",
+		"--property=ReadWritePaths=" + stateDir,
 		manager.executable + " maintenance-run --state-dir " + stateDir + " update",
 	} {
 		if !strings.Contains(command, expected) {

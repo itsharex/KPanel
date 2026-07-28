@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.20.8] - 2026-07-28
+
+### Fixed
+
+- DNS 固定协议跳过 `kejilion.sh` 的交互启动初始化，不再尝试改写只读的
+  `/root/kejilion.sh`、Shell 配置或全局命令别名。
+- Agent 增加 DNS 原生事务中 `cp -p` 保留属主所需的最小 `CAP_CHOWN` 能力；
+  未包含隔离协议的旧脚本会在执行前被拒绝。
+- 应用市场安装的后台维护与交换空间单元仅放行写入自己的 Agent 状态目录，修复
+  `/home/docker/kpanel/data/agent` 被 `ProtectHome=read-only` 阻止后缺少完成凭据的问题。
+
 ## [0.20.7] - 2026-07-28
 
 ### Fixed

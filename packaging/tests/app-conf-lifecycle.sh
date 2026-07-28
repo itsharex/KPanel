@@ -173,7 +173,7 @@ EOF
 cat >"$FAKE_BIN/sha256sum" <<'EOF'
 #!/bin/sh
 printf '%s  %s\n' \
-	'f664b3f4f5d06b3319ea8772025b58362be0fd0fe9f3dc2a117f82d93c2d15f7' \
+	'ae199abbf5b8a891df7294287aeadd56db4afcea93324fe87b089cc8263beafe' \
 	"$1"
 EOF
 chmod 755 "$FAKE_BIN"/*
@@ -229,9 +229,9 @@ EOF
 	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 1
 	grep -F 'ExecStart=/home/docker/kpanel/bin/kejilion-agent' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
-	grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_LINUX_IMMUTABLE' \
+	grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_CHOWN CAP_LINUX_IMMUTABLE' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
-	grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_LINUX_IMMUTABLE' \
+	grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_CHOWN CAP_LINUX_IMMUTABLE' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null

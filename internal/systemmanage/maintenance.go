@@ -194,6 +194,7 @@ func (m *Manager) startMaintenance(
 		"--property=UMask=0027",
 		"--property=PrivateTmp=yes",
 		"--property=ProtectHome=read-only",
+		"--property=ReadWritePaths=" + m.stateDir,
 		"--property=NoNewPrivileges=no",
 		"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
 		"--property=Nice=10",

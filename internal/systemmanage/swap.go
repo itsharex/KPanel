@@ -73,6 +73,7 @@ func (m *Manager) runSwapViaSystemd(
 		"--property=UMask=0077",
 		"--property=PrivateTmp=yes",
 		"--property=ProtectHome=read-only",
+		"--property=ReadWritePaths=" + m.stateDir,
 		"--property=ProtectSystem=no",
 		"--property=NoNewPrivileges=no",
 		"--property=RestrictAddressFamilies=AF_UNIX",

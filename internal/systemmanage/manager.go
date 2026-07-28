@@ -939,14 +939,19 @@ func findKejilionDNSScript() (string, error) {
 		if err != nil {
 			continue
 		}
-		value := string(content)
-		if dnsScriptLicense.Match(content) &&
-			strings.Contains(value, "KJ_DNS_NONINTERACTIVE") &&
-			strings.Contains(value, "kpanel_set_dns_noninteractive") {
+		if trustedKejilionDNSContent(content) {
 			return resolved, nil
 		}
 	}
 	return "", errors.New("a trusted kejilion.sh DNS command was not found")
+}
+
+func trustedKejilionDNSContent(content []byte) bool {
+	value := string(content)
+	return dnsScriptLicense.Match(content) &&
+		strings.Contains(value, "KJ_DNS_NONINTERACTIVE") &&
+		strings.Contains(value, "kpanel_protocol_active") &&
+		strings.Contains(value, "kpanel_set_dns_noninteractive")
 }
 
 func (m *Manager) aptSourceFiles() []string {

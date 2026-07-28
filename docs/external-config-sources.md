@@ -18,7 +18,7 @@
 | `application-market` | 应用安装、更新、卸载、域名与访问控制 | `/root/apps/*.conf`、动态应用目录及脚本非交互协议 | 部分直接脚本任务，部分 KPanel 适配器 | **待审计**：逐应用登记入口与来源后才能宣称完全对齐 |
 | `system-dns` | 概览页 DNS 设置 | `set_dns` 与 `kpanel_set_dns_noninteractive` | Go 仅校验结构化 IP 并调用本机可信 `kejilion.sh dns`；最终配置、后端选择和回滚由脚本负责 | **已合规（代码链路）**：发布前仍需在 systemd-resolved、静态文件和受网络管理器接管的主机完成双端实机闭环 |
 | `diagnostic-scripts` | 体检页 IP、线路、性能与综合测试 | `linux_test`、`kpanel_test_catalog`、`kpanel_run_remote_bash` 与 `kpanel_run_test_noninteractive` | Agent 从可信脚本读取固定目录，以 PTY 执行 `KJ_TEST_NONINTERACTIVE=1 k test run <selector>`；固定来源先下载再执行，保留 stdin 与 ANSI 颜色 | **已合规（代码链路）**：目录、拒绝未知 selector、终端偏移、输入保护、后台日志和失败状态已自动验证；各第三方来源的完整实机跑分需在目标服务器按需验收 |
-| `managed-script-runtime` | DNS、应用、建站与体检共同使用的宿主机脚本入口 | `kejilion/sh@7555b4c5d0b39a8c37c8d5a0bdefb3c0b8612c5e`；SHA-256 `f664b3f4f5d06b3319ea8772025b58362be0fd0fe9f3dc2a117f82d93c2d15f7` | 镜像构建时按提交和摘要下载到 `/release/kejilion.sh`；安装/更新后以 root:root、0700 保存到 `/home/docker/kpanel/bin/kejilion.sh`，只继承既有可信脚本已明确接受的许可及区域、统计设置 | **已合规（代码链路）**：安装、旧版升级、摘要拒绝和回滚由生命周期测试覆盖；发布镜像仍须复核 OCI 标签与镜像内摘要 |
+| `managed-script-runtime` | DNS、应用、建站与体检共同使用的宿主机脚本入口 | `kejilion/sh@a06bbc0662a426841c28bef9d692c12f13cc1d9d`；SHA-256 `ae199abbf5b8a891df7294287aeadd56db4afcea93324fe87b089cc8263beafe` | 镜像构建时按提交和摘要下载到 `/release/kejilion.sh`；安装/更新后以 root:root、0700 保存到 `/home/docker/kpanel/bin/kejilion.sh`，只继承既有可信脚本已明确接受的许可及区域、统计设置 | **已合规（代码链路）**：安装、旧版升级、摘要拒绝和回滚由生命周期测试覆盖；发布镜像仍须复核 OCI 标签与镜像内摘要 |
 | `system-network` | 软件源、V4/V6、内核、BBR、防火墙 | `kejilion.sh` 系统工具对应函数和远程配置 | 多个 Go 适配器独立执行 | **待审计**：凡脚本已有外联模板/远程来源的项目必须迁移为同源 |
 | `docker-environment` | Docker 安装、换源、维护、迁移、备份与还原 | `kejilion.sh` Docker 工具函数及其远程来源 | KPanel 固定动作适配器 | **待审计**：逐动作核对，不得新增自编外联配置 |
 
