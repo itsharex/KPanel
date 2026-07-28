@@ -2,6 +2,8 @@
 
 本文件服从仓库根目录的 [`PROJECT_RULES.md`](../PROJECT_RULES.md)。KPanel 将“防攻击”与
 “限制管理员操作”严格分开：前者必须保留，后者不得作为产品能力门槛。
+性能、稳定性、资源预算和网络入侵防护的强制开发与发布标准见
+[`development-quality-standard.md`](development-quality-standard.md)。
 
 ## 1. 授权模型
 

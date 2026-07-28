@@ -60,6 +60,7 @@ KPanel 本体可在仅具备 systemd、Docker Engine 与 Compose v2 的干净 Li
 - [架构与事实来源](docs/architecture.md)
 - [v0.1 范围与验收](docs/scope-v0.1.md)
 - [攻击面与操作边界](docs/security-model.md)
+- [性能、稳定性、资源与网络入侵安全开发规范](docs/development-quality-standard.md)
 - [操作护栏审计与适配缺口](docs/operational-boundary-audit.md)
 - [kejilion.sh 兼容基线](docs/compatibility.md)
 - [kejilion.sh 网站业务分析](docs/legacy-site-contract.md)
