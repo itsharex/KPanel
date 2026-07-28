@@ -463,6 +463,107 @@ export interface SiteDeleteResult {
   warnings?: string[]
 }
 
+export interface WebEnvironmentComponent {
+  name: 'nginx' | 'mysql' | 'php' | 'php74' | 'redis' | string
+  required: boolean
+  exists: boolean
+  running: boolean
+  state: string
+  image?: string
+  version?: string
+  repoDigest?: string
+  updateStatus: 'available' | 'current' | 'unknown' | string
+  updateReason?: string
+}
+
+export interface WebProtectionSummary {
+  fail2ban: boolean
+  waf: boolean
+  cloudflare: boolean
+  ddos: boolean
+}
+
+export interface WebOptimizationSummary {
+  mode: 'standard' | 'high' | 'custom' | string
+  gzip: boolean
+  brotli: boolean
+  zstd: boolean
+}
+
+export interface WebEnvironmentSummary {
+  protocolVersion: string
+  state: 'absent' | 'partial' | 'installed'
+  profile: 'none' | 'full' | 'nginx' | 'custom'
+  health: 'unknown' | 'healthy' | 'degraded'
+  webRoot: string
+  diskBytes: number
+  siteCount: number
+  databaseCount: number
+  certificateCount: number
+  composeValid: boolean
+  nginxValid: boolean
+  resourceVersion: string
+  scriptVersion: string
+  latestBackup?: string
+  portConflicts: string[]
+  components: WebEnvironmentComponent[]
+  protection: WebProtectionSummary
+  optimization: WebOptimizationSummary
+  observedAt: string
+}
+
+export interface WebEnvironmentCatalog {
+  protocolVersion: string
+  installProfiles: Array<{ id: 'full' | 'nginx'; label: string }>
+  protectionActions: string[]
+  optimizationActions: string[]
+  updateComponents: Array<{ id: string; versions: string[] }>
+}
+
+export interface WebEnvironmentBackup {
+  id: string
+  sizeBytes: number
+  createdAt: string
+  verified: boolean
+  format: 'kejilion-ldnmp-v1' | 'legacy' | string
+}
+
+export interface WebEnvironmentActionInput {
+  action:
+    | 'install'
+    | 'protection.configure'
+    | 'optimization.apply'
+    | 'update.component'
+    | 'update.all'
+    | 'backup.create'
+    | 'backup.delete'
+    | 'restore'
+    | 'uninstall'
+  profile?: 'full' | 'nginx'
+  operation?: string
+  component?: string
+  version?: string
+  backupId?: string
+  backupBeforeChange?: boolean
+  expectedResourceVersion: string
+  cloudflareAccount?: string
+  cloudflareToken?: string
+  cloudflareZoneId?: string
+}
+
+export interface WebEnvironmentJob {
+  id: string
+  action: WebEnvironmentActionInput['action']
+  target?: string
+  status: 'queued' | 'running' | 'waiting_input' | 'succeeded' | 'failed' | 'needs_attention'
+  stage: string
+  progress: number
+  message: string
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+}
+
 export interface DockerPort {
   privatePort: number
   publicPort?: number

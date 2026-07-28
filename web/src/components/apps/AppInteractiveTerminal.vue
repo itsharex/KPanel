@@ -8,7 +8,7 @@ import { api } from '@/lib/api'
 const props = defineProps<{
   jobId: string
   inputOpen?: boolean
-  kind?: 'app' | 'site' | 'diagnostic'
+  kind?: 'app' | 'site' | 'diagnostic' | 'environment'
 }>()
 
 const host = ref<HTMLElement>()
@@ -46,6 +46,8 @@ async function flushInput(): Promise<void> {
         await api.sites.terminalInput(props.jobId, data)
       } else if (props.kind === 'diagnostic') {
         await api.diagnostics.terminalInput(props.jobId, data)
+      } else if (props.kind === 'environment') {
+        await api.webEnvironment.terminalInput(props.jobId, data)
       } else {
         await api.apps.terminalInput(props.jobId, data)
       }
@@ -78,6 +80,8 @@ async function poll(): Promise<void> {
       ? await api.sites.terminal(props.jobId, offset, pollController.signal)
       : props.kind === 'diagnostic'
         ? await api.diagnostics.terminal(props.jobId, offset, pollController.signal)
+        : props.kind === 'environment'
+          ? await api.webEnvironment.terminal(props.jobId, offset, pollController.signal)
         : await api.apps.terminal(props.jobId, offset, pollController.signal)
     const data = chunk.dataBase64 ? decodeBase64(chunk.dataBase64) : undefined
     if (data) terminal?.write(data)
@@ -161,7 +165,16 @@ onBeforeUnmount(() => {
     <header>
       <div>
         <strong>
-          kejilion.sh {{ props.kind === 'site' ? '建站' : props.kind === 'diagnostic' ? '体检' : '应用' }}终端
+          kejilion.sh
+          {{
+            props.kind === 'site'
+              ? '建站'
+              : props.kind === 'diagnostic'
+                ? '体检'
+                : props.kind === 'environment'
+                  ? '环境管理'
+                  : '应用'
+          }}终端
         </strong>
         <small>
           {{
@@ -169,6 +182,8 @@ onBeforeUnmount(() => {
               ? '域名和固定参数已由面板传入；需要时按脚本提示继续输入。'
               : props.kind === 'diagnostic'
                 ? '保留第三方脚本原生颜色；需要安装依赖或选择测试项时可直接输入。'
+                : props.kind === 'environment'
+                  ? '保留脚本原生颜色；关闭窗口不会中断后台环境任务。'
               : '直接按脚本提示输入；窗口关闭后任务仍在后台继续。'
           }}
         </small>

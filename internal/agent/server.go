@@ -25,6 +25,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
 	"github.com/kejilion/kejilion-panel/internal/systemmanage"
+	"github.com/kejilion/kejilion-panel/internal/webenv"
 )
 
 const maxAgentRequestBytes = 64 << 10
@@ -42,6 +43,7 @@ type Config struct {
 	Docker          *dockerx.Client
 	AppMarket       *appmarket.Service
 	Diagnostics     *diagnostics.Service
+	WebEnvironment  *webenv.Service
 	Now             func() time.Time
 }
 
@@ -57,6 +59,7 @@ type Server struct {
 	docker          *dockerx.Client
 	appMarket       *appmarket.Service
 	diagnostics     *diagnostics.Service
+	webEnvironment  *webenv.Service
 	now             func() time.Time
 }
 
@@ -109,6 +112,13 @@ func NewServer(config Config) (*Server, error) {
 			return nil, fmt.Errorf("initialize application market: %w", err)
 		}
 	}
+	if config.WebEnvironment == nil && config.StateDir != "" {
+		var environmentErr error
+		config.WebEnvironment, environmentErr = webenv.New(filepath.Join(config.StateDir, "environment-jobs"))
+		if environmentErr != nil {
+			return nil, fmt.Errorf("initialize web environment service: %w", environmentErr)
+		}
+	}
 	return &Server{
 		tokenHash:       sha256.Sum256(config.Token),
 		version:         config.Version,
@@ -121,6 +131,7 @@ func NewServer(config Config) (*Server, error) {
 		docker:          config.Docker,
 		appMarket:       config.AppMarket,
 		diagnostics:     config.Diagnostics,
+		webEnvironment:  config.WebEnvironment,
 		now:             config.Now,
 	}, nil
 }
@@ -156,6 +167,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.siteInstallation(w, r, requestID)
 	case strings.HasPrefix(r.URL.Path, "/v1/sites/"):
 		s.siteOperation(w, r, requestID)
+	case r.URL.Path == "/v1/web-environment":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.webEnvironmentSummary)
+	case r.URL.Path == "/v1/web-environment/catalog":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.webEnvironmentCatalog)
+	case r.URL.Path == "/v1/web-environment/backups":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.webEnvironmentBackups)
+	case strings.HasPrefix(r.URL.Path, "/v1/web-environment/backups/"):
+		s.requireMethod(w, r, requestID, http.MethodGet, s.webEnvironmentBackupDownload)
+	case r.URL.Path == "/v1/web-environment/jobs":
+		s.webEnvironmentJobs(w, r, requestID)
+	case strings.HasPrefix(r.URL.Path, "/v1/web-environment/jobs/"):
+		s.webEnvironmentJob(w, r, requestID)
 	case r.URL.Path == "/v1/apps":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.appList)
 	case r.URL.Path == "/v1/app-jobs":
@@ -243,16 +266,18 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	var (
-		dockerAvailable   bool
-		siteErr           error
-		siteWriteErr      error
-		wordPressWriteErr error
-		proxyWriteErr     error
-		recipeWriteErr    error
-		diagnosticErr     = errors.New("体检服务未配置")
+		dockerAvailable    bool
+		siteErr            error
+		siteWriteErr       error
+		wordPressWriteErr  error
+		proxyWriteErr      error
+		recipeWriteErr     error
+		diagnosticErr      = errors.New("体检服务未配置")
+		environmentReadErr = errors.New("LDNMP 环境读取服务未配置")
+		environmentErr     = errors.New("LDNMP 环境服务未配置")
 	)
 	var checks sync.WaitGroup
-	checks.Add(7)
+	checks.Add(8)
 	go func() {
 		defer checks.Done()
 		pingContext, pingCancel := context.WithTimeout(ctx, 800*time.Millisecond)
@@ -285,6 +310,13 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 			diagnosticErr = s.diagnostics.Available()
 		}
 	}()
+	go func() {
+		defer checks.Done()
+		if s.webEnvironment != nil {
+			environmentReadErr = s.webEnvironment.Readable()
+			environmentErr = s.webEnvironment.Available()
+		}
+	}()
 	checks.Wait()
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
@@ -302,6 +334,14 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		{ID: "sites.proxy.install", Enabled: proxyWriteErr == nil, Reason: reasonIf(proxyWriteErr, "kejilion.sh IP+端口反向代理命令不可用"), Methods: []string{"POST"}},
 		{ID: "sites.recipes.install", Enabled: recipeWriteErr == nil, Reason: reasonIf(recipeWriteErr, "kejilion.sh 一键建站协议不可用"), Methods: []string{"POST"}},
 		{ID: "diagnostics.run", Enabled: diagnosticErr == nil, Reason: reasonIf(diagnosticErr, "请更新本机 kejilion.sh 以启用体检协议"), Methods: []string{"GET", "POST"}},
+		{ID: "web.environment.read", Enabled: environmentReadErr == nil, Reason: reasonIf(environmentReadErr, "请更新本机 kejilion.sh 以启用 LDNMP 环境协议"), Methods: []string{"GET"}},
+		{ID: "web.environment.install", Enabled: environmentErr == nil, Reason: reasonIf(environmentErr, "LDNMP 安装协议不可用"), Methods: []string{"POST"}},
+		{ID: "web.environment.protection.write", Enabled: environmentErr == nil, Reason: reasonIf(environmentErr, "LDNMP 防护协议不可用"), Methods: []string{"POST"}},
+		{ID: "web.environment.optimization.write", Enabled: environmentErr == nil, Reason: reasonIf(environmentErr, "LDNMP 优化协议不可用"), Methods: []string{"POST"}},
+		{ID: "web.environment.update", Enabled: environmentErr == nil, Reason: reasonIf(environmentErr, "LDNMP 更新协议不可用"), Methods: []string{"POST"}},
+		{ID: "web.environment.backup", Enabled: environmentErr == nil, Reason: reasonIf(environmentErr, "LDNMP 备份协议不可用"), Methods: []string{"GET", "POST"}},
+		{ID: "web.environment.restore", Enabled: environmentErr == nil, Reason: reasonIf(environmentErr, "LDNMP 还原协议不可用"), Methods: []string{"POST"}},
+		{ID: "web.environment.uninstall", Enabled: environmentErr == nil, Reason: reasonIf(environmentErr, "LDNMP 卸载协议不可用"), Methods: []string{"POST"}},
 	}
 	items = append(items, s.systemManager.Capabilities()...)
 	writeJSON(w, http.StatusOK, contract.PageResult[contract.Capability]{Items: items})

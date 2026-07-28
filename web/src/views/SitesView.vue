@@ -26,6 +26,7 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
+import SitesSectionTabs from '@/components/sites/SitesSectionTabs.vue'
 import { ApiError, api, isTransientAgentError } from '@/lib/api'
 import { formatDateTime, relativeTime, shortId } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
@@ -671,6 +672,8 @@ onBeforeUnmount(() => {
         </button>
       </template>
     </PageHeader>
+
+    <SitesSectionTabs />
 
     <div v-if="!canCreateAny && !loading" class="inline-alert inline-alert--info" role="status">
       <ShieldCheck :size="17" />

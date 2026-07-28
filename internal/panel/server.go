@@ -34,8 +34,9 @@ type contextKey string
 const requestIDKey contextKey = "request-id"
 
 var (
-	containerIDPattern     = regexp.MustCompile(`^[a-fA-F0-9]{12,64}$`)
-	resourceVersionPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	containerIDPattern       = regexp.MustCompile(`^[a-fA-F0-9]{12,64}$`)
+	resourceVersionPattern   = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	environmentBackupPattern = regexp.MustCompile(`^web_[0-9]{14}\.tar\.gz$`)
 )
 
 type Server struct {
@@ -148,6 +149,13 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleAppAction(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/diagnostic-jobs":
 		s.handleDiagnosticStart(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/web-environment/jobs":
+		s.handleWebEnvironmentAction(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/web-environment/jobs/") &&
+		strings.HasSuffix(r.URL.Path, "/input"):
+		s.handleWebEnvironmentInput(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/web-environment/backups/"):
+		s.handleWebEnvironmentBackupDownload(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/diagnostic-jobs/") &&
 		strings.HasSuffix(r.URL.Path, "/input"):
 		s.handleDiagnosticInput(w, r)
@@ -564,24 +572,28 @@ func allowedDockerActionPath(publicPath string) (agentPath, containerID, action 
 
 func allowedAgentPath(publicPath string) (string, bool) {
 	exact := map[string]string{
-		"/api/v1/agent/health":          "/v1/health",
-		"/api/v1/capabilities":          "/v1/capabilities",
-		"/api/v1/system/summary":        "/v1/system/summary",
-		"/api/v1/system/public-network": "/v1/system/public-network",
-		"/api/v1/sites":                 "/v1/sites",
-		"/api/v1/site-installations":    "/v1/site-installations",
-		"/api/v1/apps":                  "/v1/apps",
-		"/api/v1/app-jobs":              "/v1/app-jobs",
-		"/api/v1/diagnostics":           "/v1/diagnostics",
-		"/api/v1/diagnostic-jobs":       "/v1/diagnostic-jobs",
-		"/api/v1/docker/summary":        "/v1/docker/summary",
-		"/api/v1/docker/environment":    "/v1/docker/environment",
-		"/api/v1/docker/containers":     "/v1/docker/containers",
-		"/api/v1/docker/images":         "/v1/docker/images",
-		"/api/v1/docker/networks":       "/v1/docker/networks",
-		"/api/v1/docker/volumes":        "/v1/docker/volumes",
-		"/api/v1/docker/backups":        "/v1/docker/backups",
-		"/api/v1/docker/jobs":           "/v1/docker/jobs",
+		"/api/v1/agent/health":            "/v1/health",
+		"/api/v1/capabilities":            "/v1/capabilities",
+		"/api/v1/system/summary":          "/v1/system/summary",
+		"/api/v1/system/public-network":   "/v1/system/public-network",
+		"/api/v1/sites":                   "/v1/sites",
+		"/api/v1/site-installations":      "/v1/site-installations",
+		"/api/v1/web-environment":         "/v1/web-environment",
+		"/api/v1/web-environment/catalog": "/v1/web-environment/catalog",
+		"/api/v1/web-environment/backups": "/v1/web-environment/backups",
+		"/api/v1/web-environment/jobs":    "/v1/web-environment/jobs",
+		"/api/v1/apps":                    "/v1/apps",
+		"/api/v1/app-jobs":                "/v1/app-jobs",
+		"/api/v1/diagnostics":             "/v1/diagnostics",
+		"/api/v1/diagnostic-jobs":         "/v1/diagnostic-jobs",
+		"/api/v1/docker/summary":          "/v1/docker/summary",
+		"/api/v1/docker/environment":      "/v1/docker/environment",
+		"/api/v1/docker/containers":       "/v1/docker/containers",
+		"/api/v1/docker/images":           "/v1/docker/images",
+		"/api/v1/docker/networks":         "/v1/docker/networks",
+		"/api/v1/docker/volumes":          "/v1/docker/volumes",
+		"/api/v1/docker/backups":          "/v1/docker/backups",
+		"/api/v1/docker/jobs":             "/v1/docker/jobs",
 	}
 	if path, ok := exact[publicPath]; ok {
 		return path, true
@@ -598,6 +610,32 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		id := rest
 		if siteIDPattern.MatchString(id) {
 			return "/v1/app-jobs/" + id, true
+		}
+	}
+	const environmentJobPrefix = "/api/v1/web-environment/jobs/"
+	if strings.HasPrefix(publicPath, environmentJobPrefix) {
+		rest := strings.TrimPrefix(publicPath, environmentJobPrefix)
+		if strings.HasSuffix(rest, "/terminal") {
+			id := strings.TrimSuffix(rest, "/terminal")
+			if siteIDPattern.MatchString(id) {
+				return "/v1/web-environment/jobs/" + id + "/terminal", true
+			}
+		}
+		if strings.HasSuffix(rest, "/input") {
+			id := strings.TrimSuffix(rest, "/input")
+			if siteIDPattern.MatchString(id) {
+				return "/v1/web-environment/jobs/" + id + "/input", true
+			}
+		}
+		if siteIDPattern.MatchString(rest) {
+			return "/v1/web-environment/jobs/" + rest, true
+		}
+	}
+	const environmentBackupPrefix = "/api/v1/web-environment/backups/"
+	if strings.HasPrefix(publicPath, environmentBackupPrefix) {
+		id := strings.TrimPrefix(publicPath, environmentBackupPrefix)
+		if environmentBackupPattern.MatchString(id) {
+			return "/v1/web-environment/backups/" + url.PathEscape(id), true
 		}
 	}
 	const diagnosticJobPrefix = "/api/v1/diagnostic-jobs/"

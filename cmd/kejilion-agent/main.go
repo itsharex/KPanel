@@ -25,6 +25,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
 	"github.com/kejilion/kejilion-panel/internal/systemmanage"
 	"github.com/kejilion/kejilion-panel/internal/version"
+	"github.com/kejilion/kejilion-panel/internal/webenv"
 )
 
 func main() {
@@ -62,6 +63,9 @@ func run(arguments []string) error {
 	}
 	if len(arguments) > 0 && arguments[0] == "site-pty-run" {
 		return runSiteJob(arguments[1:])
+	}
+	if len(arguments) > 0 && arguments[0] == "environment-run" {
+		return runEnvironmentJob(arguments[1:])
 	}
 
 	flags := flag.NewFlagSet("kejilion-agent", flag.ContinueOnError)
@@ -274,6 +278,27 @@ func runDiagnosticJob(arguments []string) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Minute)
 	defer cancel()
 	return diagnostics.RunJob(ctx, *stateDir, *id)
+}
+
+func runEnvironmentJob(arguments []string) error {
+	flags := flag.NewFlagSet("kejilion-agent environment-run", flag.ContinueOnError)
+	stateDir := flags.String(
+		"state-dir",
+		env("KEJILION_AGENT_STATE_DIR", "/var/lib/kejilion-panel/environment-jobs"),
+		"environment job state directory",
+	)
+	id := flags.String("id", "", "environment job identity")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *id == "" {
+		return errors.New("environment-run requires exactly one job identity")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Minute)
+	defer cancel()
+	return webenv.RunJob(ctx, *stateDir, *id)
 }
 
 func runSiteJob(arguments []string) error {

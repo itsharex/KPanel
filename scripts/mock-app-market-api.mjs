@@ -295,6 +295,139 @@ const systemCapabilities = [
   'reboot',
 ].map((action) => ({ id: `system.${action}.write`, enabled: true, methods: ['POST'] }))
 
+const environmentResourceVersion = `sha256:${'f'.repeat(64)}`
+const environmentSummary = {
+  protocolVersion: '1',
+  state: 'installed',
+  profile: 'full',
+  health: 'healthy',
+  webRoot: '/home/web',
+  diskBytes: 8.4 * 1024 ** 3,
+  siteCount: 6,
+  databaseCount: 4,
+  certificateCount: 6,
+  composeValid: true,
+  nginxValid: true,
+  resourceVersion: environmentResourceVersion,
+  scriptVersion: '2026.07.28',
+  latestBackup: 'web_20260728103000.tar.gz',
+  portConflicts: [],
+  components: [
+    {
+      name: 'nginx',
+      required: true,
+      exists: true,
+      running: true,
+      state: 'running',
+      image: 'nginx:alpine',
+      version: '1.31.3',
+      repoDigest: 'sha256:visual-nginx',
+      updateStatus: 'current',
+      updateReason: '',
+    },
+    {
+      name: 'mysql',
+      required: true,
+      exists: true,
+      running: true,
+      state: 'running',
+      image: 'mysql:8.4',
+      version: '8.4',
+      repoDigest: 'sha256:visual-mysql',
+      updateStatus: 'unknown',
+      updateReason: 'Registry 暂时不可访问，无法判断最新版本',
+    },
+    {
+      name: 'php',
+      required: true,
+      exists: true,
+      running: true,
+      state: 'running',
+      image: 'php:8.4-fpm',
+      version: '8.4',
+      repoDigest: 'sha256:visual-php',
+      updateStatus: 'available',
+      updateReason: '',
+    },
+    {
+      name: 'php74',
+      required: false,
+      exists: true,
+      running: false,
+      state: 'exited',
+      image: 'php:7.4-fpm',
+      version: '7.4',
+      repoDigest: 'sha256:visual-php74',
+      updateStatus: 'unknown',
+      updateReason: '兼容容器按需启动',
+    },
+    {
+      name: 'redis',
+      required: true,
+      exists: true,
+      running: true,
+      state: 'running',
+      image: 'redis:alpine',
+      version: '8.2',
+      repoDigest: 'sha256:visual-redis',
+      updateStatus: 'current',
+      updateReason: '',
+    },
+  ],
+  protection: { fail2ban: true, waf: true, cloudflare: false, ddos: true },
+  optimization: { mode: 'standard', gzip: true, brotli: true, zstd: false },
+  observedAt: new Date().toISOString(),
+}
+
+const environmentCatalog = {
+  protocolVersion: '1',
+  installProfiles: [
+    { id: 'full', label: '完整 LDNMP' },
+    { id: 'nginx', label: '仅 Nginx' },
+  ],
+  protectionActions: [
+    'fail2ban-install',
+    'fail2ban-uninstall',
+    'unban-all',
+    'waf-on',
+    'waf-off',
+    'ddos-on',
+    'ddos-off',
+    'cloudflare-fail2ban',
+    'cloudflare-shield',
+  ],
+  optimizationActions: ['standard', 'high', 'gzip-on', 'gzip-off', 'brotli-on', 'brotli-off', 'zstd-on', 'zstd-off'],
+  updateComponents: [
+    { id: 'nginx', versions: ['latest', '1.31'] },
+    { id: 'mysql', versions: ['latest', '8.4', '8.0'] },
+    { id: 'php', versions: ['latest', '8.4', '8.3'] },
+    { id: 'redis', versions: ['latest', '8.2'] },
+    { id: 'all', versions: ['latest'] },
+  ],
+}
+
+const environmentVisualJob = {
+  id: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  action: 'backup.create',
+  target: 'web',
+  status: 'succeeded',
+  stage: 'complete',
+  progress: 100,
+  message: '冷备已完成并通过 SHA-256 校验',
+  createdAt: new Date(Date.now() - 180_000).toISOString(),
+  startedAt: new Date(Date.now() - 178_000).toISOString(),
+  finishedAt: new Date(Date.now() - 32_000).toISOString(),
+}
+
+const environmentVisualTerminal = [
+  '\u001b[36mKPANEL_LDNMP_PROTOCOL 1\u001b[0m',
+  'KPANEL_LDNMP_EVENT {"stage":"backup","progress":35,"message":"正在停止原先运行的组件"}',
+  '\u001b[33m正在创建 /home/web 冷备归档...\u001b[0m',
+  '\u001b[32mSHA-256 校验通过，原运行状态已恢复。\u001b[0m',
+  'KPANEL_LDNMP_RESULT {"status":"succeeded","message":"冷备创建成功"}',
+  '',
+].join('\n')
+
 function send(response, status, body) {
   const data = JSON.stringify(body)
   response.writeHead(status, {
@@ -401,11 +534,72 @@ createServer((request, response) => {
     })
     return
   }
+  if (request.method === 'GET' && url.pathname === '/api/v1/web-environment') {
+    send(response, 200, { ...environmentSummary, observedAt: new Date().toISOString() })
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/web-environment/catalog') {
+    send(response, 200, environmentCatalog)
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/web-environment/backups') {
+    send(response, 200, {
+      items: [
+        {
+          id: 'web_20260728103000.tar.gz',
+          sizeBytes: 3.2 * 1024 ** 3,
+          createdAt: new Date(Date.now() - 4_200_000).toISOString(),
+          verified: true,
+          format: 'kejilion-ldnmp-v1',
+        },
+        {
+          id: 'web_20260724181500.tar.gz',
+          sizeBytes: 3.1 * 1024 ** 3,
+          createdAt: new Date(Date.now() - 345_600_000).toISOString(),
+          verified: false,
+          format: 'legacy',
+        },
+      ],
+    })
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/web-environment/jobs') {
+    send(response, 200, { items: [environmentVisualJob] })
+    return
+  }
+  if (
+    request.method === 'GET' &&
+    url.pathname === `/api/v1/web-environment/jobs/${environmentVisualJob.id}`
+  ) {
+    send(response, 200, environmentVisualJob)
+    return
+  }
+  if (
+    request.method === 'GET' &&
+    url.pathname === `/api/v1/web-environment/jobs/${environmentVisualJob.id}/terminal`
+  ) {
+    const offset = Math.max(0, Number(url.searchParams.get('offset') || 0))
+    const data = Buffer.from(environmentVisualTerminal).subarray(offset)
+    send(response, 200, {
+      dataBase64: data.toString('base64'),
+      nextOffset: offset + data.length,
+      finished: true,
+    })
+    return
+  }
   if (request.method === 'GET' && url.pathname === '/api/v1/capabilities') {
     send(response, 200, {
       items: [
         { id: 'apps.install', enabled: true, methods: ['POST'] },
         { id: 'diagnostics.run', enabled: true, methods: ['GET', 'POST'] },
+        { id: 'web.environment.read', enabled: true, methods: ['GET'] },
+        { id: 'web.environment.install', enabled: true, methods: ['POST'] },
+        { id: 'web.environment.protection.write', enabled: true, methods: ['POST'] },
+        { id: 'web.environment.optimization.write', enabled: true, methods: ['POST'] },
+        { id: 'web.environment.update', enabled: true, methods: ['POST'] },
+        { id: 'web.environment.backup', enabled: true, methods: ['GET', 'POST'] },
+        { id: 'web.environment.restore', enabled: true, methods: ['POST'] },
+        { id: 'web.environment.uninstall', enabled: true, methods: ['POST'] },
         ...systemCapabilities,
         { id: 'system.reinstall', enabled: false, reason: '需要带外控制台' },
       ],

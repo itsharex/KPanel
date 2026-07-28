@@ -55,6 +55,33 @@ func (c *AgentClient) Get(ctx context.Context, path, rawQuery, requestID string)
 	return c.Do(ctx, http.MethodGet, path, rawQuery, requestID, nil)
 }
 
+func (c *AgentClient) Open(ctx context.Context, method, path, rawQuery, requestID string) (*http.Response, error) {
+	token, err := readSmallSecret(c.tokenFile)
+	if err != nil {
+		return nil, fmt.Errorf("read agent credential: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("create agent request: %w", err)
+	}
+	request.URL.RawQuery = rawQuery
+	request.Header.Set("Authorization", "Bearer "+token)
+	if requestID != "" {
+		request.Header.Set("X-Request-ID", requestID)
+	}
+	streamClient := &http.Client{
+		Transport: c.client.Transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := streamClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("call agent: %w", err)
+	}
+	return response, nil
+}
+
 func (c *AgentClient) Do(ctx context.Context, method, path, rawQuery, requestID string, body []byte) (AgentResponse, error) {
 	token, err := readSmallSecret(c.tokenFile)
 	if err != nil {

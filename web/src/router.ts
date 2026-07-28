@@ -44,6 +44,12 @@ export const router = createRouter({
           meta: { title: '网站' },
         },
         {
+          path: 'sites/environment',
+          name: 'sites-environment',
+          component: () => import('@/views/EnvironmentView.vue'),
+          meta: { title: '网站 · 环境管理' },
+        },
+        {
           path: 'apps',
           name: 'apps',
           component: () => import('@/views/AppsView.vue'),

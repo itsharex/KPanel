@@ -11,6 +11,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/appmarket"
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/store"
+	"github.com/kejilion/kejilion-panel/internal/webenv"
 )
 
 type auditJobGroup struct {
@@ -43,13 +44,20 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 		var page contract.PageResult[appmarket.AppJob]
 		if json.Unmarshal(response.Body, &page) == nil {
 			jobs = append(jobs, jobsFromAppJobs(page.Items)...)
-			sort.SliceStable(jobs, func(left, right int) bool {
-				return jobs[left].CreatedAt.After(jobs[right].CreatedAt)
-			})
-			if len(jobs) > limit {
-				jobs = jobs[:limit]
-			}
 		}
+	}
+	if response, err := s.agent.Get(r.Context(), "/v1/web-environment/jobs", "", requestID(r)); err == nil &&
+		response.StatusCode == http.StatusOK {
+		var page contract.PageResult[webenv.Job]
+		if json.Unmarshal(response.Body, &page) == nil {
+			jobs = append(jobs, jobsFromWebEnvironment(page.Items)...)
+		}
+	}
+	sort.SliceStable(jobs, func(left, right int) bool {
+		return jobs[left].CreatedAt.After(jobs[right].CreatedAt)
+	})
+	if len(jobs) > limit {
+		jobs = jobs[:limit]
 	}
 	s.writeJSON(w, http.StatusOK, contract.PageResult[contract.Job]{Items: jobs})
 }
@@ -76,6 +84,35 @@ func jobsFromAppJobs(items []appmarket.AppJob) []contract.Job {
 			job.Error = &contract.Problem{
 				Title: "应用安装失败", Code: "app_install_failed",
 				Detail: item.Message, Retryable: true,
+			}
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs
+}
+
+func jobsFromWebEnvironment(items []webenv.Job) []contract.Job {
+	jobs := make([]contract.Job, 0, len(items))
+	for _, item := range items {
+		state := contract.JobRunning
+		switch item.Status {
+		case "queued":
+			state = contract.JobQueued
+		case "succeeded":
+			state = contract.JobSucceeded
+		case "failed", "needs_attention":
+			state = contract.JobFailedNeedsAttention
+		}
+		job := contract.Job{
+			ID: item.ID, Action: "web.environment." + item.Action, Origin: contract.OriginWeb,
+			State: state, Stage: item.Stage, Progress: item.Progress,
+			TargetKind: "web_environment", TargetID: item.Target, TargetLabel: item.Target,
+			CreatedAt: item.CreatedAt, StartedAt: item.StartedAt, FinishedAt: item.FinishedAt,
+		}
+		if item.Status == "failed" || item.Status == "needs_attention" {
+			job.Error = &contract.Problem{
+				Title: "LDNMP 环境任务未完成", Code: "web_environment_job_failed",
+				Detail: item.Message, Retryable: item.Status == "failed",
 			}
 		}
 		jobs = append(jobs, job)
@@ -187,7 +224,8 @@ func jobsFromAudit(events []store.AuditEvent, limit int) []contract.Job {
 func managementAuditAction(action string) bool {
 	return strings.HasPrefix(action, "docker.") ||
 		strings.HasPrefix(action, "site.") ||
-		strings.HasPrefix(action, "system.")
+		strings.HasPrefix(action, "system.") ||
+		strings.HasPrefix(action, "web.environment.")
 }
 
 func jobAuditResult(result string) bool {

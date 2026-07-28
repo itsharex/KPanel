@@ -30,6 +30,11 @@ import type {
   SystemActionInput,
   SystemActionResult,
   SystemOverview,
+  WebEnvironmentActionInput,
+  WebEnvironmentBackup,
+  WebEnvironmentCatalog,
+  WebEnvironmentJob,
+  WebEnvironmentSummary,
 } from '@/types/api'
 
 type QueryValue = string | number | boolean | undefined
@@ -1046,6 +1051,41 @@ export const api = {
           },
         },
       ),
+  },
+  webEnvironment: {
+    summary: (signal?: AbortSignal): Promise<WebEnvironmentSummary> =>
+      request<WebEnvironmentSummary>('/web-environment', { signal }),
+    catalog: (signal?: AbortSignal): Promise<WebEnvironmentCatalog> =>
+      request<WebEnvironmentCatalog>('/web-environment/catalog', { signal }),
+    backups: async (signal?: AbortSignal): Promise<ApiList<WebEnvironmentBackup>> =>
+      normalizeList(
+        await request<ApiList<WebEnvironmentBackup> | WebEnvironmentBackup[]>(
+          '/web-environment/backups',
+          { signal },
+        ),
+      ),
+    jobs: async (signal?: AbortSignal): Promise<ApiList<WebEnvironmentJob>> =>
+      normalizeList(
+        await request<ApiList<WebEnvironmentJob> | WebEnvironmentJob[]>('/web-environment/jobs', {
+          signal,
+        }),
+      ),
+    job: (id: string, signal?: AbortSignal): Promise<WebEnvironmentJob> =>
+      request<WebEnvironmentJob>(`/web-environment/jobs/${encodeURIComponent(id)}`, { signal }),
+    terminal: (id: string, offset = 0, signal?: AbortSignal): Promise<AppTerminalChunk> =>
+      request<AppTerminalChunk>(`/web-environment/jobs/${encodeURIComponent(id)}/terminal`, {
+        query: { offset },
+        signal,
+      }),
+    terminalInput: (id: string, data: string): Promise<void> =>
+      request<void>(`/web-environment/jobs/${encodeURIComponent(id)}/input`, {
+        method: 'POST',
+        body: { data },
+      }),
+    start: (body: WebEnvironmentActionInput): Promise<WebEnvironmentJob> =>
+      request<WebEnvironmentJob>('/web-environment/jobs', { method: 'POST', body }),
+    backupDownloadURL: (id: string): string =>
+      buildUrl(`/web-environment/backups/${encodeURIComponent(id)}`),
   },
   apps: {
     inventory: (signal?: AbortSignal): Promise<AppMarketInventory> =>

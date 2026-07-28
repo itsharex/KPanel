@@ -11,6 +11,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/appmarket"
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/store"
+	"github.com/kejilion/kejilion-panel/internal/webenv"
 )
 
 func TestJobsBuildsManagementViewWithoutAuditChange(t *testing.T) {
@@ -124,5 +125,23 @@ func TestApplicationJobsMapToManagementJobs(t *testing.T) {
 		jobs[0].TargetID != "builtin-4" || jobs[0].Error == nil ||
 		jobs[0].Error.Detail != "port conflict" {
 		t.Fatalf("application job mapping = %#v", jobs)
+	}
+}
+
+func TestWebEnvironmentJobsMapToManagementJobs(t *testing.T) {
+	now := time.Date(2026, time.July, 28, 8, 0, 0, 0, time.UTC)
+	finished := now.Add(time.Minute)
+	jobs := jobsFromWebEnvironment([]webenv.Job{
+		{
+			ID: strings.Repeat("b", 32), Action: "restore", Target: "web_20260728080000.tar.gz",
+			Status: "needs_attention", Stage: "receipt_missing", Progress: 100,
+			Message: "completion receipt missing", CreatedAt: now, FinishedAt: &finished,
+		},
+	})
+	if len(jobs) != 1 || jobs[0].Action != "web.environment.restore" ||
+		jobs[0].State != contract.JobFailedNeedsAttention ||
+		jobs[0].TargetKind != "web_environment" || jobs[0].Error == nil ||
+		jobs[0].Error.Detail != "completion receipt missing" {
+		t.Fatalf("web environment job mapping = %#v", jobs)
 	}
 }
