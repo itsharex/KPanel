@@ -1,6 +1,7 @@
 import type {
   ApiList,
   AgentStatus,
+  AppInstallPortStatus,
   AppMarketInventory,
   AppImageUpdateResult,
   AppMutationResult,
@@ -1124,6 +1125,15 @@ export const api = {
   apps: {
     inventory: (signal?: AbortSignal): Promise<AppMarketInventory> =>
       request<AppMarketInventory>('/apps', { signal }),
+    installPort: (
+      id: string,
+      port: number,
+      signal?: AbortSignal,
+    ): Promise<AppInstallPortStatus> =>
+      request<AppInstallPortStatus>(`/apps/${encodeURIComponent(id)}/install-port`, {
+        query: { port },
+        signal,
+      }),
     install: (
       id: string,
       body: {

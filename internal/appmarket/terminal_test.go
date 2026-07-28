@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -104,5 +105,22 @@ func TestStripTerminalControlsKeepsProgressPayload(t *testing.T) {
 	got := stripTerminalControls("\x1b[2K\rKPANEL_PROGRESS 35 正在安装\x1b[0m\r\n")
 	if got != "\rKPANEL_PROGRESS 35 正在安装\r\n" {
 		t.Fatalf("stripped terminal output = %q", got)
+	}
+}
+
+func TestInteractiveInstallEnvironmentCarriesPanelSelectedPort(t *testing.T) {
+	install := interactiveAppJobEnvironment(appJobRecord{
+		AppJob:   AppJob{Action: "install"},
+		HostPort: 18081,
+	})
+	if !slices.Contains(install, "KJ_APP_PORT=18081") {
+		t.Fatalf("install environment = %#v", install)
+	}
+	update := interactiveAppJobEnvironment(appJobRecord{
+		AppJob:   AppJob{Action: "update"},
+		HostPort: 18081,
+	})
+	if slices.Contains(update, "KJ_APP_PORT=18081") {
+		t.Fatalf("update environment leaked install port: %#v", update)
 	}
 }

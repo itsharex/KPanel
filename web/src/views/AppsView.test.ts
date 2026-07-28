@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   listSites: vi.fn(),
   removeSite: vi.fn(),
   inventory: vi.fn(),
+  install: vi.fn(),
+  installPort: vi.fn(),
   action: vi.fn(),
   checkUpdate: vi.fn(),
   job: vi.fn(),
@@ -32,9 +34,10 @@ vi.mock('@/lib/api', () => ({
   api: {
     apps: {
       inventory: mocks.inventory,
+      install: mocks.install,
+      installPort: mocks.installPort,
       action: mocks.action,
       checkUpdate: mocks.checkUpdate,
-      install: vi.fn(),
       job: mocks.job,
       cancelJob: mocks.cancelJob,
       jobs: vi.fn(),
@@ -65,6 +68,8 @@ interface AppsBindings {
   sites: Ref<Site[]>
   status: Ref<'all' | 'installed' | 'running' | 'adapted'>
   selectedID: Ref<string>
+  installOpen: Ref<boolean>
+  installPort: Ref<number>
   domain: Ref<string>
   domainError: Ref<string>
   domainWarning: Ref<string>
@@ -76,6 +81,8 @@ interface AppsBindings {
   cancelJobPending: Ref<boolean>
   load: (silent?: boolean) => Promise<void>
   openDetails: (item: AppMarketInventory['items'][number]) => void
+  openInstall: (item: AppMarketInventory['items'][number]) => void
+  install: () => Promise<void>
   lifecycle: (action: 'start' | 'stop' | 'restart') => Promise<void>
   checkUpdate: () => Promise<void>
   confirmMutation: () => Promise<void>
@@ -128,6 +135,8 @@ function inventory(resourceVersion: string): AppMarketInventory {
         icon: '',
         iconSha256: 'b'.repeat(64),
         slug: 'cloudreve',
+        defaultPort: 5212,
+        installPortConfigurable: true,
         installer: 'kejilion',
         runtime: {
           installed: true,
@@ -214,12 +223,85 @@ beforeEach(() => {
     },
     setInterval: vi.fn(() => 1),
     clearInterval: vi.fn(),
+    setTimeout: vi.fn(() => 1),
+    clearTimeout: vi.fn(),
     location: { hostname: 'localhost' },
   })
 })
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('AppsView install port preflight', () => {
+  it('passes an available script application port from the panel to the install job', async () => {
+    const result = inventory('install-version')
+    const item = result.items[0]
+    if (!item) throw new Error('test inventory is incomplete')
+    item.runtime = {
+      installed: false,
+      state: 'not_installed',
+      ports: [],
+      accessMode: 'not_applicable',
+      updateStatus: 'not_installed',
+      detectedBy: [],
+    }
+    item.capabilities.install = { enabled: true }
+    const job: AppInstallJob = {
+      id: 'a'.repeat(32),
+      appId: item.id,
+      appName: item.name_zh,
+      action: 'install',
+      interactive: true,
+      status: 'queued',
+      stage: 'queued',
+      progress: 0,
+      logs: [],
+      createdAt: '2026-07-29T00:00:00Z',
+    }
+    mocks.installPort.mockResolvedValueOnce({
+      port: 15212,
+      available: true,
+      conflicts: [],
+      checkedAt: '2026-07-29T00:00:00Z',
+    })
+    mocks.install.mockResolvedValueOnce(job)
+    mocks.job.mockResolvedValue(job)
+    const view = setupView()
+    view.inventory.value = result
+    view.openInstall(item)
+    view.installPort.value = 15212
+
+    await view.install()
+
+    expect(mocks.installPort).toHaveBeenCalledWith(item.id, 15212, expect.anything())
+    expect(mocks.install).toHaveBeenCalledWith(item.id, {
+      hostPort: 15212,
+      accessMode: undefined,
+    })
+  })
+
+  it('does not start installation when the host port is occupied', async () => {
+    const result = inventory('install-version')
+    const item = result.items[0]
+    if (!item) throw new Error('test inventory is incomplete')
+    item.runtime.installed = false
+    item.runtime.state = 'not_installed'
+    item.capabilities.install = { enabled: true }
+    mocks.installPort.mockResolvedValueOnce({
+      port: 5212,
+      available: false,
+      conflicts: [{ source: 'docker', protocol: 'tcp', container: 'existing-cloud' }],
+      checkedAt: '2026-07-29T00:00:00Z',
+    })
+    const view = setupView()
+    view.inventory.value = result
+    view.openInstall(item)
+
+    await view.install()
+
+    expect(mocks.install).not.toHaveBeenCalled()
+  })
 })
 
 describe('AppsView domain binding', () => {

@@ -272,8 +272,30 @@ func (s *Service) StartInstall(
 	if item.DefaultPort < 0 || item.DefaultPort > 65535 {
 		return AppJob{}, fmt.Errorf("%w: application default port is invalid", ErrUnsupported)
 	}
-	if input.HostPort == 0 {
-		input.HostPort = uint16(item.DefaultPort)
+	if item.InstallPortConfigurable {
+		if input.HostPort == 0 {
+			input.HostPort = uint16(item.DefaultPort)
+		}
+		portStatus, portErr := s.inspectInstallPort(ctx, input.HostPort)
+		if portErr != nil {
+			return AppJob{}, fmt.Errorf(
+				"%w: host port validation failed: %v",
+				ErrNeedsAttention,
+				portErr,
+			)
+		}
+		if !portStatus.Available {
+			return AppJob{}, fmt.Errorf(
+				"%w: host port %d is already bound by another listener or container",
+				ErrPortConflict,
+				input.HostPort,
+			)
+		}
+	} else if input.HostPort != 0 {
+		return AppJob{}, fmt.Errorf(
+			"%w: this application does not expose a single configurable install port",
+			ErrUnsupported,
+		)
 	}
 	if input.AccessMode == "" {
 		input.AccessMode = "direct"

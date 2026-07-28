@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowUpRight,
   Activity,
@@ -52,6 +52,8 @@ const status = ref<StatusFilter>('installed')
 const selectedID = ref('')
 const installOpen = ref(false)
 const installPort = ref(0)
+const installPortState = ref<'idle' | 'checking' | 'available' | 'occupied' | 'error'>('idle')
+const installPortMessage = ref('')
 const installAccess = ref<'direct' | 'domain_only'>('direct')
 const domain = ref('')
 const domainError = ref('')
@@ -68,6 +70,8 @@ const toast = useToast()
 let controller: AbortController | undefined
 let jobController: AbortController | undefined
 let jobTimer: number | undefined
+let installPortController: AbortController | undefined
+let installPortTimer: number | undefined
 const activeJobStorageKey = 'kpanel:active-app-job'
 
 const selected = computed(() => inventory.value?.items.find((item) => item.id === selectedID.value))
@@ -189,8 +193,65 @@ function openDetails(item: AppMarketItem): void {
 function openInstall(item: AppMarketItem): void {
   selectedID.value = item.id
   installPort.value = item.defaultPort || 0
+  installPortState.value = 'idle'
+  installPortMessage.value = ''
   installAccess.value = 'direct'
   installOpen.value = true
+  if (item.installPortConfigurable) scheduleInstallPortCheck(0)
+}
+
+function scheduleInstallPortCheck(delay = 350): void {
+  if (installPortTimer) window.clearTimeout(installPortTimer)
+  installPortController?.abort()
+  installPortState.value = 'idle'
+  installPortMessage.value = ''
+  const item = selected.value
+  if (!item?.installPortConfigurable || installPort.value < 1 || installPort.value > 65535) {
+    return
+  }
+  installPortTimer = window.setTimeout(() => void checkInstallPort(), delay)
+}
+
+async function checkInstallPort(): Promise<boolean> {
+  const item = selected.value
+  const port = Number(installPort.value)
+  if (!item?.installPortConfigurable) return true
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    installPortState.value = 'occupied'
+    installPortMessage.value = '请输入 1-65535 之间的有效端口。'
+    return false
+  }
+  installPortController?.abort()
+  const requestController = new AbortController()
+  installPortController = requestController
+  installPortState.value = 'checking'
+  installPortMessage.value = '正在检查宿主机监听端口与 Docker 端口映射…'
+  try {
+    const result = await api.apps.installPort(item.id, port, requestController.signal)
+    if (
+      installPortController !== requestController ||
+      selected.value?.id !== item.id ||
+      Number(installPort.value) !== port
+    ) {
+      return false
+    }
+    installPortState.value = result.available ? 'available' : 'occupied'
+    if (result.available) {
+      installPortMessage.value = `端口 ${port} 可用。提交安装时会再次校验。`
+      return true
+    }
+    const container = result.conflicts.find((conflict) => conflict.container)?.container
+    installPortMessage.value = container
+      ? `端口 ${port} 已被容器 ${container} 占用，请更换端口。`
+      : `端口 ${port} 已被宿主机服务占用，请更换端口。`
+    return false
+  } catch (reason) {
+    if (isAbortError(reason)) return false
+    installPortState.value = 'error'
+    installPortMessage.value =
+      reason instanceof ApiError ? reason.message : '暂时无法检查端口，请稍后重试。'
+    return false
+  }
 }
 
 function showAllApps(): void {
@@ -402,11 +463,12 @@ async function load(silent = false): Promise<void> {
 async function install(): Promise<void> {
   const item = selected.value
   if (!item || !capability(item, 'install')) return
+  if (item.installPortConfigurable && !(await checkInstallPort())) return
   operation.value = 'install'
   try {
     const job = await api.apps.install(item.id, {
-      hostPort: item.installer === 'kejilion' ? undefined : installPort.value || undefined,
-      accessMode: item.installer === 'kejilion' ? undefined : installAccess.value,
+      hostPort: item.installPortConfigurable ? installPort.value || undefined : undefined,
+      accessMode: item.installer === 'declarative' ? installAccess.value : undefined,
     })
     installOpen.value = false
     selectedID.value = ''
@@ -655,6 +717,12 @@ onMounted(() => {
 onBeforeUnmount(() => {
   controller?.abort()
   stopJobPolling()
+  installPortController?.abort()
+  if (installPortTimer) window.clearTimeout(installPortTimer)
+})
+
+watch(installPort, () => {
+  if (installOpen.value) scheduleInstallPortCheck()
 })
 </script>
 
@@ -1126,16 +1194,28 @@ onBeforeUnmount(() => {
       @close="installOpen = false"
     >
       <form id="app-install-form" class="form-stack" @submit.prevent="install">
-        <label v-if="selected?.installer !== 'kejilion'" class="field">
+        <label v-if="selected?.installPortConfigurable" class="field">
           <span>访问端口</span>
           <input
             v-model.number="installPort"
             type="number"
             min="1"
             max="65535"
+            required
             :placeholder="selected?.defaultPort ? String(selected.defaultPort) : '留空使用脚本默认端口'"
+            @blur="checkInstallPort()"
           />
-          <small>留空时沿用 kejilion.sh 默认端口；低位系统端口和已有服务发生冲突时请换用其他端口。</small>
+          <small>端口由面板传给 kejilion.sh；提交前会再次检查宿主机监听与 Docker 映射，避免安装到一半才发现冲突。</small>
+          <span
+            v-if="installPortMessage"
+            class="install-port-status"
+            :class="`is-${installPortState}`"
+          >
+            <LoaderCircle v-if="installPortState === 'checking'" class="spin" :size="13" />
+            <CheckCircle2 v-else-if="installPortState === 'available'" :size="13" />
+            <Activity v-else :size="13" />
+            {{ installPortMessage }}
+          </span>
         </label>
         <fieldset v-if="selected?.installer === 'declarative'" class="access-options">
           <legend>初始访问方式</legend>
@@ -1158,14 +1238,25 @@ onBeforeUnmount(() => {
           <ShieldCheck :size="17" />
           {{
             selected?.installer === 'kejilion'
-              ? '提交后直接打开 kejilion.sh 网页终端；端口、域名、账号和密码均按原脚本提示输入。'
+              ? selected?.installPortConfigurable
+                ? '端口已在面板确定；提交后打开 kejilion.sh 网页终端，账号、密码等其余参数仍按原脚本提示输入。'
+                : '该应用使用自定义安装器；提交后打开 kejilion.sh 网页终端，并按原脚本提示完成必要参数。'
               : '使用固定声明式模板；容器创建失败不会写入脚本安装标记。'
           }}
         </div>
       </form>
       <template #footer>
         <button class="button button--secondary" type="button" @click="installOpen = false">取消</button>
-        <button class="button button--primary" type="submit" form="app-install-form" :disabled="Boolean(operation)">
+        <button
+          class="button button--primary"
+          type="submit"
+          form="app-install-form"
+          :disabled="
+            Boolean(operation) ||
+            installPortState === 'checking' ||
+            installPortState === 'occupied'
+          "
+        >
           <LoaderCircle v-if="operation === 'install'" class="spin" :size="16" />
           <Download v-else :size="16" /> {{ operation === 'install' ? '正在提交…' : '后台安装' }}
         </button>
@@ -1872,6 +1963,24 @@ onBeforeUnmount(() => {
   color: var(--amber);
   font-size: 11px;
   line-height: 1.5;
+}
+
+.install-port-status {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+.install-port-status.is-available {
+  color: var(--brand);
+}
+
+.install-port-status.is-occupied,
+.install-port-status.is-error {
+  color: var(--danger);
 }
 
 .muted-note {

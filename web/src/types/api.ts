@@ -297,9 +297,21 @@ export interface AppMarketItem {
   iconSha256: string
   slug: string
   defaultPort?: number
+  installPortConfigurable?: boolean
   installer: 'declarative' | 'kejilion' | 'guided'
   runtime: AppMarketRuntime
   capabilities: Record<string, AppActionCapability>
+}
+
+export interface AppInstallPortStatus {
+  port: number
+  available: boolean
+  conflicts: Array<{
+    source: 'docker' | 'listener'
+    protocol: string
+    container?: string
+  }>
+  checkedAt: string
 }
 
 export interface AppMarketInventory {

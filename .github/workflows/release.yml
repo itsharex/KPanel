@@ -160,12 +160,12 @@ jobs:
           test "$(docker image inspect --format '{{join .Config.Healthcheck.Test " "}}' kejilion-panel:release-check)" = "CMD /paneld healthcheck"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' kejilion-panel:release-check)" = "$VERSION"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' kejilion-panel:release-check)" = "$REVISION"
-          test "$(docker image inspect --format '{{index .Config.Labels "io.kejilion.script.revision"}}' kejilion-panel:release-check)" = "4ee3f96591d4f6bd9a062fb574beee03107572fc"
-          test "$(docker image inspect --format '{{index .Config.Labels "io.kejilion.script.sha256"}}' kejilion-panel:release-check)" = "d470bb436a93036f238ffd25cbe0af8e0596d986f2c4c28f9a96ce66a9a874e5"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.kejilion.script.revision"}}' kejilion-panel:release-check)" = "229355b1b6e1ce405cc97019b3755e36f2b814c1"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.kejilion.script.sha256"}}' kejilion-panel:release-check)" = "12736ab5a0c331e4752d1bfd444c49500f2736cc5c19c8595be7ad9c2d37aef0"
           release_container="$(docker create kejilion-panel:release-check)"
           docker cp "$release_container:/release/kejilion.sh" release/kejilion.sh
           docker rm "$release_container" >/dev/null
-          test "$(sha256sum release/kejilion.sh | awk '{print $1}')" = "d470bb436a93036f238ffd25cbe0af8e0596d986f2c4c28f9a96ce66a9a874e5"
+          test "$(sha256sum release/kejilion.sh | awk '{print $1}')" = "12736ab5a0c331e4752d1bfd444c49500f2736cc5c19c8595be7ad9c2d37aef0"
           container_id="$(
             docker run --detach --rm \
               --network none \

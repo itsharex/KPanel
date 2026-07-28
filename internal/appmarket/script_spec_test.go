@@ -369,6 +369,44 @@ func TestManageCompatibilityRequiresExactNoninteractiveProtocol(t *testing.T) {
 	}
 }
 
+func TestThirdPartyScriptSpecReadsFixedInstallPortWithoutExecutingConfig(t *testing.T) {
+	for name, assignment := range map[string]string{
+		"literal":  `local docker_port="8317"`,
+		"fallback": `local docker_port="${docker_port:-3000}"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			service, err := New(&fakeDocker{}, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			service.scriptAppRoot = root
+			service.fileOwnerTrusted = func(os.FileInfo) bool { return true }
+			content := strings.Join([]string{
+				`local docker_name="trusted-app"`,
+				assignment,
+				"docker_app",
+				"",
+			}, "\n")
+			if err := os.WriteFile(filepath.Join(root, "trusted.conf"), []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			spec, err := service.readThirdPartyScriptSpec("trusted")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := uint16(8317)
+			if name == "fallback" {
+				want = 3000
+			}
+			if spec.Port != want {
+				t.Fatalf("port = %d, want %d", spec.Port, want)
+			}
+		})
+	}
+}
+
 func containsString(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {

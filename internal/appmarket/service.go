@@ -54,10 +54,11 @@ type Runtime struct {
 
 type Summary struct {
 	App
-	DefaultPort  int                   `json:"defaultPort,omitempty"`
-	Installer    string                `json:"installer"`
-	Runtime      Runtime               `json:"runtime"`
-	Capabilities map[string]Capability `json:"capabilities"`
+	DefaultPort             int                   `json:"defaultPort,omitempty"`
+	InstallPortConfigurable bool                  `json:"installPortConfigurable,omitempty"`
+	Installer               string                `json:"installer"`
+	Runtime                 Runtime               `json:"runtime"`
+	Capabilities            map[string]Capability `json:"capabilities"`
 }
 
 type Inventory struct {
@@ -121,6 +122,7 @@ type Service struct {
 	scriptInteractiveManageFinder func() (string, error)
 	scriptManageFinder            func() (string, error)
 	fileOwnerTrusted              func(os.FileInfo) bool
+	listeningPorts                func(context.Context) (map[uint16][]string, error)
 }
 
 func New(docker Docker, appRoot string) (*Service, error) {
@@ -150,6 +152,7 @@ func newService(docker Docker, appRoot string, fetcher catalogFetcher) (*Service
 		scriptInteractiveManageFinder: findKejilionInteractiveManageScript,
 		scriptManageFinder:            findKejilionManageScript,
 		fileOwnerTrusted:              trustedFileOwner,
+		listeningPorts:                systemListeningPorts,
 	}, nil
 }
 
@@ -190,6 +193,12 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 			},
 			Capabilities: defaultCapabilities(app, legacy, scriptInstallAvailable),
 		}
+		if spec, ok := declarativeSpecs[app.Token]; ok {
+			item.DefaultPort = int(spec.DefaultPort)
+			item.InstallPortConfigurable = true
+		} else if legacy.UsesDockerApp && legacy.DefaultPort > 0 {
+			item.InstallPortConfigurable = true
+		}
 		marker := markers[strconv.Itoa(app.Num)] || markers[app.Token]
 		containerName := legacy.Container
 		storageName := legacy.Container
@@ -206,6 +215,10 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 				storageName = spec.Container
 				scriptBacked = true
 				configVerified = true
+				if spec.Port > 0 {
+					item.DefaultPort = int(spec.Port)
+					item.InstallPortConfigurable = true
+				}
 			} else if marker {
 				scriptBacked = true
 				item.Runtime.Warning = "应用配置使用动态写法；KPanel 继续复用 kejilion.sh 原生管理流程"
@@ -653,6 +666,21 @@ func (s *Service) Install(ctx context.Context, id string, input InstallInput) (d
 	if input.AccessMode == "" {
 		input.AccessMode = "direct"
 	}
+	portStatus, portErr := s.inspectInstallPort(ctx, input.HostPort)
+	if portErr != nil {
+		return dockerx.AppMutationResult{}, fmt.Errorf(
+			"%w: host port validation failed: %v",
+			ErrNeedsAttention,
+			portErr,
+		)
+	}
+	if !portStatus.Available {
+		return dockerx.AppMutationResult{}, fmt.Errorf(
+			"%w: host port %d is already bound by another listener or container",
+			ErrPortConflict,
+			input.HostPort,
+		)
+	}
 	result, err := s.docker.InstallDeclarativeApp(ctx, dockerSpec(spec), input.HostPort, input.AccessMode)
 	if err != nil {
 		return dockerx.AppMutationResult{}, err
@@ -952,6 +980,7 @@ var (
 	ErrForbidden      = errors.New("application action is not available for the current runtime state")
 	ErrUnsupported    = errors.New("application action is not supported")
 	ErrConflict       = errors.New("application state changed; refresh and retry")
+	ErrPortConflict   = errors.New("application port is already in use")
 	ErrTaskConflict   = errors.New("another application task is already running")
 	ErrRolledBack     = errors.New("application action failed and was rolled back")
 	ErrNeedsAttention = errors.New("application action requires manual attention")

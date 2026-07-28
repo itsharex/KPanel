@@ -91,6 +91,7 @@ const items = catalog.apps.map((app) => {
   return {
     ...app,
     defaultPort: port,
+    installPortConfigurable: Boolean(port && (isAdapted || mapping.usesDockerApp)),
     installer: isAdapted ? 'declarative' : isStandard ? 'kejilion' : 'guided',
     runtime: runtime
       ? {
@@ -498,6 +499,20 @@ createServer((request, response) => {
     return
   }
   const appInstallMatch = url.pathname.match(/^\/api\/v1\/apps\/([^/]+)\/install$/)
+  const appInstallPortMatch = url.pathname.match(/^\/api\/v1\/apps\/([^/]+)\/install-port$/)
+  if (request.method === 'GET' && appInstallPortMatch) {
+    const port = Number(url.searchParams.get('port'))
+    send(response, 200, {
+      port,
+      available: port !== 8080,
+      conflicts:
+        port === 8080
+          ? [{ source: 'listener', protocol: 'tcp' }]
+          : [],
+      checkedAt: new Date().toISOString(),
+    })
+    return
+  }
   if (request.method === 'POST' && appInstallMatch) {
     const app = items.find((item) => item.id === appInstallMatch[1])
     if (!app) {

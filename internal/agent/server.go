@@ -767,6 +767,10 @@ func (s *Server) appJobOperation(w http.ResponseWriter, r *http.Request, request
 }
 
 func (s *Server) appOperation(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method == http.MethodGet {
+		s.appInstallPortStatus(w, r, requestID)
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
@@ -850,6 +854,38 @@ func (s *Server) appOperation(w http.ResponseWriter, r *http.Request, requestID 
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) appInstallPortStatus(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+) {
+	if r.URL.RawPath != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_app_request", "应用端口检查 URL 无效", "")
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/apps/")
+	parts := strings.Split(rest, "/")
+	values := r.URL.Query()
+	if len(parts) != 2 || parts[0] == "" || parts[1] != "install-port" ||
+		len(values) != 1 || len(values["port"]) != 1 {
+		writeProblem(w, requestID, http.StatusNotFound, "not_found", "资源不存在", "")
+		return
+	}
+	port, err := strconv.ParseUint(values.Get("port"), 10, 16)
+	if err != nil || port == 0 {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_app_port", "应用端口无效", "端口必须在 1-65535 之间")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	status, err := s.appMarket.CheckInstallPort(ctx, parts[0], uint16(port))
+	if err != nil {
+		s.writeAppError(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
 func (s *Server) writeAppError(w http.ResponseWriter, requestID string, err error) {
 	status, code, title := http.StatusServiceUnavailable, "app_action_failed", "应用操作失败"
 	switch {
@@ -863,6 +899,8 @@ func (s *Server) writeAppError(w http.ResponseWriter, requestID string, err erro
 	case errors.Is(err, appmarket.ErrTaskConflict):
 		status, code, title = http.StatusConflict, "app_task_conflict", "已有应用任务正在运行"
 		err = errors.New("请先完成或关闭当前任务；若后台进程已经结束，刷新后会自动释放任务锁")
+	case errors.Is(err, appmarket.ErrPortConflict):
+		status, code, title = http.StatusConflict, "app_port_conflict", "应用安装端口已被占用"
 	case errors.Is(err, appmarket.ErrConflict),
 		errors.Is(err, dockerx.ErrResourceConflict), errors.Is(err, dockerx.ErrAppConflict):
 		status, code, title = http.StatusConflict, "resource_conflict", "应用资源已发生变化"

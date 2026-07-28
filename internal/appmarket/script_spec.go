@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -21,12 +22,16 @@ var (
 	scriptAssignmentPrefixPattern = regexp.MustCompile(
 		`^(?:local[[:space:]]+)?(docker_name|docker_app_service)[[:space:]]*=`,
 	)
+	scriptPortAssignmentPattern = regexp.MustCompile(
+		`^(?:local[[:space:]]+)?docker_port[[:space:]]*=[[:space:]]*(?:"(?:[$][{]docker_port:-)?([0-9]{1,5})(?:[}])?"|'(?:[$][{]docker_port:-)?([0-9]{1,5})(?:[}])?'|(?:[$][{]docker_port:-)?([0-9]{1,5})(?:[}])?)[[:space:]]*(?:#.*)?$`,
+	)
 )
 
 type scriptAppSpec struct {
 	Container string
 	Service   string
 	Adapter   string
+	Port      uint16
 }
 
 func (spec scriptAppSpec) runtimeContainer() string {
@@ -73,6 +78,17 @@ func (s *Service) readThirdPartyScriptSpec(token string) (scriptAppSpec, error) 
 			}
 			spec.Adapter = line
 			continue
+		}
+		if spec.Port == 0 {
+			portMatches := scriptPortAssignmentPattern.FindStringSubmatch(line)
+			if len(portMatches) == 4 {
+				rawPort := portMatches[1] + portMatches[2] + portMatches[3]
+				port, parseErr := strconv.ParseUint(rawPort, 10, 16)
+				if parseErr == nil && port > 0 {
+					spec.Port = uint16(port)
+				}
+				continue
+			}
 		}
 		matches := scriptAssignmentPattern.FindStringSubmatch(line)
 		if len(matches) == 5 {

@@ -85,30 +85,7 @@ func RunInteractiveAppJob(ctx context.Context, stateDir, id string) error {
 	}()
 
 	command := exec.CommandContext(ctx, "/bin/bash", script, "app", record.Selector)
-	command.Env = append(
-		os.Environ(),
-		"KJ_APP_INTERACTIVE=1",
-		"KJ_APP_ACTION="+record.Action,
-		"LC_ALL=C.UTF-8",
-		"LANG=C.UTF-8",
-		"TERM=xterm-256color",
-	)
-	if record.AccessMode != "" {
-		command.Env = append(command.Env, "KJ_APP_ACCESS_MODE="+record.AccessMode)
-	}
-	if record.Action == "manage" {
-		command.Env = append(command.Env, "KJ_APP_MARKER_RECOVERY=1")
-	}
-	if record.Action == "update" || record.Action == "uninstall" ||
-		record.Action == "direct_access" {
-		command.Env = append(command.Env, "KJ_APP_RECONCILE_MARKER=1")
-	}
-	if record.ExpectedContainerID != "" {
-		command.Env = append(
-			command.Env,
-			"KJ_APP_EXPECTED_CONTAINER_ID="+record.ExpectedContainerID,
-		)
-	}
+	command.Env = append(os.Environ(), interactiveAppJobEnvironment(record)...)
 	terminal, err := startTerminalProcess(command, 36, 120)
 	if err != nil {
 		return registry.fail(record, "terminal_unavailable", err)
@@ -182,6 +159,36 @@ func RunInteractiveAppJob(ctx context.Context, stateDir, id string) error {
 	record.Message = "应用" + appActionLabel(record.Action) +
 		"交互流程已结束，面板将按实际产物刷新状态"
 	return registry.put(record)
+}
+
+func interactiveAppJobEnvironment(record appJobRecord) []string {
+	result := []string{
+		"KJ_APP_INTERACTIVE=1",
+		"KJ_APP_ACTION=" + record.Action,
+		"LC_ALL=C.UTF-8",
+		"LANG=C.UTF-8",
+		"TERM=xterm-256color",
+	}
+	if record.AccessMode != "" {
+		result = append(result, "KJ_APP_ACCESS_MODE="+record.AccessMode)
+	}
+	if record.Action == "install" && record.HostPort > 0 {
+		result = append(result, "KJ_APP_PORT="+strconv.Itoa(int(record.HostPort)))
+	}
+	if record.Action == "manage" {
+		result = append(result, "KJ_APP_MARKER_RECOVERY=1")
+	}
+	if record.Action == "update" || record.Action == "uninstall" ||
+		record.Action == "direct_access" {
+		result = append(result, "KJ_APP_RECONCILE_MARKER=1")
+	}
+	if record.ExpectedContainerID != "" {
+		result = append(
+			result,
+			"KJ_APP_EXPECTED_CONTAINER_ID="+record.ExpectedContainerID,
+		)
+	}
+	return result
 }
 
 func copyTerminalOutput(

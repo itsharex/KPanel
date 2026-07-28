@@ -26,6 +26,24 @@ func TestAllowedAppActionPath(t *testing.T) {
 	}
 }
 
+func TestAllowedAppInstallPortReadPath(t *testing.T) {
+	t.Parallel()
+	const id = "builtin-13"
+	path, ok := allowedAgentPath("/api/v1/apps/" + id + "/install-port")
+	if !ok || path != "/v1/apps/"+id+"/install-port" {
+		t.Fatalf("install port path = %q, %v", path, ok)
+	}
+	for _, invalid := range []string{
+		"/api/v1/apps/not-valid/install-port",
+		"/api/v1/apps/" + id + "/install-port/extra",
+		"/api/v1/apps/" + id + "/other",
+	} {
+		if _, ok := allowedAgentPath(invalid); ok {
+			t.Fatalf("unsafe install port path was accepted: %q", invalid)
+		}
+	}
+}
+
 func TestValidateAppActionInput(t *testing.T) {
 	validVersion := "sha256:" + strings.Repeat("a", 64)
 	if field, _ := validateAppActionInput("install", appActionInput{
