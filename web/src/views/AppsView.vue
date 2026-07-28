@@ -24,6 +24,7 @@ import {
 } from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import DnsResolutionGuide from '@/components/common/DnsResolutionGuide.vue'
 import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
@@ -32,7 +33,7 @@ import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue
 import { ApiError, api } from '@/lib/api'
 import { appAccessURL, matchingAppProxySites } from '@/lib/appAccess'
 import { useToast } from '@/stores/toast'
-import type { AppInstallJob, AppMarketInventory, AppMarketItem, Site } from '@/types/api'
+import type { AppInstallJob, AppMarketInventory, AppMarketItem, PublicNetworkSummary, Site } from '@/types/api'
 
 type SourceFilter = 'all' | 'builtin' | 'thirdparty'
 type StatusFilter = 'all' | 'installed' | 'running' | 'adapted'
@@ -40,6 +41,7 @@ type ConfirmAction = 'update' | 'uninstall' | undefined
 
 const inventory = ref<AppMarketInventory>()
 const sites = ref<Site[]>([])
+const publicNetwork = ref<PublicNetworkSummary>()
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
@@ -53,6 +55,7 @@ const installPort = ref(0)
 const installAccess = ref<'direct' | 'domain_only'>('direct')
 const domain = ref('')
 const domainError = ref('')
+const domainWarning = ref('')
 const operation = ref('')
 const confirmAction = ref<ConfirmAction>()
 const checkedUpdates = ref<Record<string, 'available' | 'current'>>({})
@@ -153,6 +156,7 @@ function openDetails(item: AppMarketItem): void {
   selectedID.value = item.id
   domain.value = ''
   domainError.value = ''
+  domainWarning.value = ''
 }
 
 function openInstall(item: AppMarketItem): void {
@@ -265,9 +269,11 @@ async function load(silent = false): Promise<void> {
   error.value = ''
   try {
     const sitesPromise = api.sites.list(undefined, controller.signal).catch(() => ({ items: [], total: 0 }))
+    const publicNetworkPromise = api.system.publicNetwork(controller.signal).catch(() => undefined)
     inventory.value = await api.apps.inventory(controller.signal)
     loading.value = false
     sites.value = (await sitesPromise).items
+    publicNetwork.value = await publicNetworkPromise
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
     error.value = reason instanceof ApiError ? reason.message : '无法读取应用市场，请稍后重试。'
@@ -371,37 +377,53 @@ async function addDomain(): Promise<void> {
   const port = selectedPort.value?.publicPort
   if (!item || !port || !domain.value.trim()) return
   domainError.value = ''
+  domainWarning.value = ''
   operation.value = 'add_domain'
+  const hostname = domain.value.trim().toLowerCase()
   try {
-    const hostname = domain.value.trim().toLowerCase()
-    await api.sites.create({
+    const createdSite = await api.sites.create({
       primaryDomain: hostname,
       aliases: [],
       type: 'proxy',
       upstream: `http://127.0.0.1:${port}`,
       enabled: true,
     })
+    sites.value = [createdSite, ...sites.value.filter((site) => site.id !== createdSite.id)]
+    domain.value = ''
+  } catch (reason) {
+    domainError.value = reason instanceof ApiError ? reason.message : '域名绑定失败，请检查网站与 Nginx 状态。'
+    operation.value = ''
+    return
+  }
+
+  try {
+    const refreshedInventory = await api.apps.inventory()
+    inventory.value = refreshedInventory
+    const refreshedItem = refreshedInventory.items.find((candidate) => candidate.id === item.id)
+    if (!refreshedItem) throw new Error('应用详情暂时无法重新读取')
     if (
-      capability(item, 'direct_access') &&
-      item.runtime.accessMode !== 'domain_only' &&
-      item.runtime.resourceVersion
+      capability(refreshedItem, 'direct_access') &&
+      refreshedItem.runtime.accessMode !== 'domain_only' &&
+      refreshedItem.runtime.resourceVersion
     ) {
-      const result = await api.apps.action(item.id, 'direct_access', {
-        resourceVersion: item.runtime.resourceVersion,
+      const result = await api.apps.action(refreshedItem.id, 'direct_access', {
+        resourceVersion: refreshedItem.runtime.resourceVersion,
         accessMode: 'domain_only',
       })
       if (isBackgroundJob(result)) {
         startJobPolling(result)
         toast.success('域名已绑定', `${hostname} 已生效，IP + 端口阻止规则正在后台应用。`)
-        domain.value = ''
         return
       }
+      toast.success('域名已绑定', `${hostname} 已生效，并已阻止 IP + 端口直接访问。`)
+      await load(true)
+      return
     }
-    domain.value = ''
-    toast.success('域名已绑定', `${hostname} 已反向代理到 ${item.name_zh}。`)
-    await load(true)
+    toast.success('域名已绑定', `${hostname} 已反向代理到 ${refreshedItem.name_zh}。`)
   } catch (reason) {
-    domainError.value = reason instanceof ApiError ? reason.message : '域名绑定失败，请检查网站与 Nginx 状态。'
+    const detail = reason instanceof ApiError ? reason.message : '应用状态暂时无法刷新'
+    domainWarning.value = `域名已绑定，但 IP + 端口访问策略未调整：${detail}`
+    toast.success('域名已绑定', `${hostname} 已生效；直接访问策略可稍后单独调整。`)
   } finally {
     operation.value = ''
   }
@@ -410,6 +432,7 @@ async function addDomain(): Promise<void> {
 async function removeDomain(site: Site): Promise<void> {
   operation.value = `remove_domain:${site.id}`
   domainError.value = ''
+  domainWarning.value = ''
   try {
     await api.sites.remove(
       site.id,
@@ -793,9 +816,15 @@ onBeforeUnmount(() => {
               </button>
             </form>
             <p v-if="domainError" class="field-error">{{ domainError }}</p>
+            <p v-if="domainWarning" class="field-warning">{{ domainWarning }}</p>
             <p v-if="!capability(selected, 'add_domain')" class="muted-note">
               {{ selected.capabilities.add_domain?.reason }}
             </p>
+            <DnsResolutionGuide
+              :ipv4="publicNetwork?.ipv4"
+              :ipv6="publicNetwork?.ipv6"
+              compact
+            />
           </section>
 
           <section class="app-detail-section">
@@ -1500,6 +1529,13 @@ onBeforeUnmount(() => {
   margin: 7px 0 0;
   color: var(--danger);
   font-size: 11px;
+}
+
+.field-warning {
+  margin: 7px 0 0;
+  color: var(--amber);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .muted-note {

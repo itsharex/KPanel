@@ -23,6 +23,7 @@ import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import DnsResolutionGuide from '@/components/common/DnsResolutionGuide.vue'
 import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
@@ -31,7 +32,7 @@ import { ApiError, api, isTransientAgentError } from '@/lib/api'
 import { formatDateTime, relativeTime, shortId } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
 import { useToast } from '@/stores/toast'
-import type { Site, SiteInput, SiteInstallationProgress } from '@/types/api'
+import type { PublicNetworkSummary, Site, SiteInput, SiteInstallationProgress } from '@/types/api'
 
 type Filter = 'all' | 'healthy' | 'drifted' | 'config-only'
 type SiteServiceType = SiteInput['type']
@@ -39,6 +40,7 @@ type RedirectCode = NonNullable<SiteInput['redirectCode']>
 type PHPVersion = NonNullable<SiteInput['phpVersion']>
 
 const sites = ref<Site[]>([])
+const publicNetwork = ref<PublicNetworkSummary>()
 const capabilities = ref<Array<{ id: string; enabled: boolean; reason?: string; methods?: string[] }>>([])
 const loading = ref(true)
 const refreshing = ref(false)
@@ -355,9 +357,11 @@ async function load(silent = false): Promise<void> {
   try {
     const capabilityPromise = api.agent.capabilities(controller.signal).catch(() => [])
     const installationPromise = api.sites.installations(controller.signal).catch(() => [])
+    const publicNetworkPromise = api.system.publicNetwork(controller.signal).catch(() => undefined)
     sites.value = (await api.sites.list(undefined, controller.signal)).items
     loading.value = false
     capabilities.value = await capabilityPromise
+    publicNetwork.value = await publicNetworkPromise
     const installationJobs = await installationPromise
     const activeInstallation = installationJobs.find(
       (job) => job.status === 'queued' || job.status === 'running',
@@ -1070,6 +1074,13 @@ onBeforeUnmount(() => {
           />
           <small>{{ editingSite ? '首版更新不重命名主域名或移动网站目录。' : '不要包含协议、路径或端口。' }}</small>
         </label>
+
+        <DnsResolutionGuide
+          v-if="!editingSite"
+          :ipv4="publicNetwork?.ipv4"
+          :ipv6="publicNetwork?.ipv6"
+          compact
+        />
 
         <fieldset v-if="!editingSite" class="site-service-field site-service-field--featured">
           <legend><Flame :size="16" /> 热门搭建</legend>
