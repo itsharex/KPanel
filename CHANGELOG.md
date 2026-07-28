@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- 已安装且由 `kejilion.sh` 接管的非统一架构应用，在详情页提供“脚本管理”入口；
+  通过固定应用编号打开原生交互菜单，复用后台 PTY、ANSI 输出和安全输入通道，不开放任意 Shell。
+
 ### Fixed
 
 - LDNMP 环境在没有备份时返回空列表，前端同时兼容旧 Agent 的 `items: null`；

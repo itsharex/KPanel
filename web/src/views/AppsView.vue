@@ -194,6 +194,7 @@ function jobActionLabel(action?: AppInstallJob['action']): string {
     update: '更新',
     uninstall: '卸载',
     direct_access: '访问策略变更',
+    manage: '脚本管理',
   }
   return action ? labels[action] : '操作'
 }
@@ -341,6 +342,30 @@ async function confirmMutation(): Promise<void> {
     toast.danger(
       action === 'update' ? '更新失败' : '卸载失败',
       reason instanceof ApiError ? reason.message : 'Agent 拒绝了本次操作。',
+    )
+  } finally {
+    operation.value = ''
+  }
+}
+
+async function openScriptManage(): Promise<void> {
+  const item = selected.value
+  if (!item?.runtime.resourceVersion || !capability(item, 'manage')) return
+  operation.value = 'manage'
+  try {
+    const result = await api.apps.action(item.id, 'manage', {
+      resourceVersion: item.runtime.resourceVersion,
+    })
+    if (!isBackgroundJob(result)) {
+      throw new Error('Agent 未返回交互管理任务')
+    }
+    startJobPolling(result)
+    jobDetailsOpen.value = true
+    toast.success('脚本管理终端已打开', `${item.name_zh} 正在使用固定应用编号进入 kejilion.sh 原生菜单。`)
+  } catch (reason) {
+    toast.danger(
+      '脚本管理启动失败',
+      reason instanceof ApiError ? reason.message : 'Agent 未能打开该应用的原生管理终端。',
     )
   } finally {
     operation.value = ''
@@ -710,6 +735,17 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="app-control-panel__actions">
+            <button
+              v-if="capability(selected, 'manage')"
+              class="button button--secondary"
+              type="button"
+              :disabled="Boolean(operation)"
+              title="打开该应用对应的 kejilion.sh 原生交互菜单"
+              @click="openScriptManage"
+            >
+              <LoaderCircle v-if="operation === 'manage'" class="spin" :size="15" />
+              <Wrench v-else :size="15" /> 脚本管理
+            </button>
             <button
               v-if="capability(selected, 'start')"
               class="button button--secondary"

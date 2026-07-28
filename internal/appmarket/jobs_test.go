@@ -348,4 +348,14 @@ func TestKejilionInteractiveCompatibilityIsExplicit(t *testing.T) {
 	if !isKPanelInteractiveCompatibleScript(compatible) {
 		t.Fatal("interactive script protocol was rejected")
 	}
+	if isKPanelInteractiveManageCompatibleScript(compatible) {
+		t.Fatal("legacy interactive script unexpectedly enabled application management")
+	}
+	managed := append(
+		append([]byte{}, compatible...),
+		[]byte("kpanel_app_interactive_manage_choice\n")...,
+	)
+	if !isKPanelInteractiveManageCompatibleScript(managed) {
+		t.Fatal("interactive application management protocol was rejected")
+	}
 }

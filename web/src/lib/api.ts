@@ -1153,7 +1153,7 @@ export const api = {
       }),
     action: (
       id: string,
-      action: 'start' | 'stop' | 'restart' | 'update' | 'uninstall' | 'direct_access',
+      action: 'start' | 'stop' | 'restart' | 'update' | 'uninstall' | 'direct_access' | 'manage',
       body: { resourceVersion: string; accessMode?: 'direct' | 'domain_only' },
     ): Promise<AppMutationResult | AppInstallJob> =>
       request<AppMutationResult | AppInstallJob>(`/apps/${encodeURIComponent(id)}/${action}`, {

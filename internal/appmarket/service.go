@@ -98,27 +98,28 @@ var declarativeSpecs = map[string]declarativeSpec{
 }
 
 type Service struct {
-	catalog                 Catalog
-	legacy                  map[int]LegacyApp
-	scriptSHA256            string
-	docker                  Docker
-	appRoot                 string
-	scriptAppRoot           string
-	now                     func() time.Time
-	fetchCatalog            catalogFetcher
-	catalogMu               sync.Mutex
-	liveCatalog             *Catalog
-	catalogExpiry           time.Time
-	catalogRefreshedAt      time.Time
-	catalogWarning          string
-	catalogLoading          bool
-	actions                 sync.Mutex
-	jobs                    *appJobRegistry
-	jobExecutable           string
-	jobRunner               jobCommandRunner
-	scriptInteractiveFinder func() (string, error)
-	scriptManageFinder      func() (string, error)
-	fileOwnerTrusted        func(os.FileInfo) bool
+	catalog                       Catalog
+	legacy                        map[int]LegacyApp
+	scriptSHA256                  string
+	docker                        Docker
+	appRoot                       string
+	scriptAppRoot                 string
+	now                           func() time.Time
+	fetchCatalog                  catalogFetcher
+	catalogMu                     sync.Mutex
+	liveCatalog                   *Catalog
+	catalogExpiry                 time.Time
+	catalogRefreshedAt            time.Time
+	catalogWarning                string
+	catalogLoading                bool
+	actions                       sync.Mutex
+	jobs                          *appJobRegistry
+	jobExecutable                 string
+	jobRunner                     jobCommandRunner
+	scriptInteractiveFinder       func() (string, error)
+	scriptInteractiveManageFinder func() (string, error)
+	scriptManageFinder            func() (string, error)
+	fileOwnerTrusted              func(os.FileInfo) bool
 }
 
 func New(docker Docker, appRoot string) (*Service, error) {
@@ -144,9 +145,10 @@ func newService(docker Docker, appRoot string, fetcher catalogFetcher) (*Service
 		catalog: catalog, legacy: legacy, scriptSHA256: scriptSHA256,
 		docker: docker, appRoot: filepath.Clean(appRoot), now: time.Now,
 		scriptAppRoot: "/root/apps", fetchCatalog: fetcher,
-		scriptInteractiveFinder: findKejilionInteractiveScript,
-		scriptManageFinder:      findKejilionManageScript,
-		fileOwnerTrusted:        trustedFileOwner,
+		scriptInteractiveFinder:       findKejilionInteractiveScript,
+		scriptInteractiveManageFinder: findKejilionInteractiveManageScript,
+		scriptManageFinder:            findKejilionManageScript,
+		fileOwnerTrusted:              trustedFileOwner,
 	}, nil
 }
 
@@ -174,6 +176,7 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 	}
 	scriptInstallAvailable := s.scriptInstallAvailable()
 	scriptManageAvailable := s.scriptManageAvailable()
+	scriptInteractiveManageAvailable := s.scriptInteractiveManageAvailable()
 	for _, app := range catalogState.Catalog.Apps {
 		legacy := s.legacy[app.Num]
 		item := Summary{
@@ -231,7 +234,8 @@ func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 				}
 			}
 			scriptManage := marker && scriptBacked && scriptManageAvailable
-			s.applyInstalledCapabilities(&item, container, scriptManage)
+			scriptInteractiveManage := marker && scriptBacked && scriptInteractiveManageAvailable
+			s.applyInstalledCapabilities(&item, container, scriptManage, scriptInteractiveManage)
 		} else if marker {
 			item.Runtime.Installed = true
 			item.Runtime.State = "unknown"
@@ -438,6 +442,7 @@ func defaultCapabilities(
 		"uninstall":     {Reason: "应用尚未安装"},
 		"add_domain":    {Reason: "应用尚未安装或没有 HTTP 端口"},
 		"direct_access": {Reason: "应用尚未安装"},
+		"manage":        {Reason: "应用尚未安装"},
 	}
 }
 
@@ -445,6 +450,7 @@ func (s *Service) applyInstalledCapabilities(
 	item *Summary,
 	container contract.ContainerSummary,
 	scriptManage bool,
+	scriptInteractiveManage bool,
 ) {
 	item.Capabilities["install"] = Capability{Reason: "应用已安装"}
 	for _, action := range container.AllowedActions {
@@ -488,21 +494,32 @@ func (s *Service) applyInstalledCapabilities(
 			item.Capabilities["update"] = Capability{Reason: reason}
 			item.Capabilities["direct_access"] = Capability{Reason: reason}
 		}
+		item.Capabilities["manage"] = Capability{Reason: "该应用使用 KPanel 统一管理架构"}
 	} else if scriptManage {
 		item.Capabilities["update"] = Capability{Enabled: true}
 		item.Capabilities["uninstall"] = Capability{Enabled: true}
 		item.Capabilities["direct_access"] = Capability{Enabled: true}
+		if scriptInteractiveManage {
+			item.Capabilities["manage"] = Capability{Enabled: true}
+		} else {
+			item.Capabilities["manage"] = Capability{
+				Reason: "请更新本机 kejilion.sh 以启用应用交互管理协议",
+			}
+		}
 	} else {
 		reason := "请更新本机 kejilion.sh 以启用应用非交互管理协议"
 		item.Capabilities["update"] = Capability{Reason: reason}
 		item.Capabilities["uninstall"] = Capability{Reason: reason}
 		item.Capabilities["direct_access"] = Capability{Reason: reason}
+		item.Capabilities["manage"] = Capability{
+			Reason: "请更新本机 kejilion.sh 以启用应用交互管理协议",
+		}
 	}
 }
 
 func disableInstalledCapabilities(item *Summary, reason string) {
 	item.Capabilities["install"] = Capability{Reason: "检测到 kejilion.sh 安装标记"}
-	for _, action := range []string{"start", "stop", "restart", "check_update", "update", "uninstall", "add_domain", "direct_access"} {
+	for _, action := range []string{"start", "stop", "restart", "check_update", "update", "uninstall", "add_domain", "direct_access", "manage"} {
 		item.Capabilities[action] = Capability{Reason: reason}
 	}
 }

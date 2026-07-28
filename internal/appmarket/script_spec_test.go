@@ -61,6 +61,7 @@ func TestThirdPartyScriptAppUsesVerifiedMainContainerAndManagementProtocol(t *te
 		t.Fatal(err)
 	}
 	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	service.scriptInteractiveManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	service.scriptManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 
 	item, err := service.Find(context.Background(), "thirdparty-AIClient-2-API")
@@ -76,7 +77,7 @@ func TestThirdPartyScriptAppUsesVerifiedMainContainerAndManagementProtocol(t *te
 			t.Fatalf("missing detector %q: %#v", detector, item.Runtime.DetectedBy)
 		}
 	}
-	for _, action := range []string{"update", "uninstall", "direct_access"} {
+	for _, action := range []string{"update", "uninstall", "direct_access", "manage"} {
 		if !item.Capabilities[action].Enabled {
 			t.Fatalf("%s was not enabled: %#v", action, item.Capabilities[action])
 		}
@@ -85,17 +86,17 @@ func TestThirdPartyScriptAppUsesVerifiedMainContainerAndManagementProtocol(t *te
 	job, scriptBacked, err := service.StartScriptMutation(
 		context.Background(),
 		item.ID,
-		"update",
+		"manage",
 		MutationInput{ResourceVersion: item.Runtime.ResourceVersion},
 	)
 	if err != nil || !scriptBacked {
-		t.Fatalf("script update job = %#v script=%v err=%v", job, scriptBacked, err)
+		t.Fatalf("script management job = %#v script=%v err=%v", job, scriptBacked, err)
 	}
 	record, err := service.jobs.read(job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Action != "update" || record.Selector != "AIClient-2-API" ||
+	if record.Action != "manage" || record.Selector != "AIClient-2-API" ||
 		record.ExpectedContainerID != containerID {
 		t.Fatalf("unsafe script job record: %#v", record)
 	}
@@ -153,6 +154,7 @@ func TestDynamicThirdPartyConfigDoesNotBecomeAManagementGuardrail(t *testing.T) 
 		t.Fatal(err)
 	}
 	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	service.scriptInteractiveManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	service.scriptManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 
 	item, err := service.Find(context.Background(), "thirdparty-AIClient-2-API")
@@ -163,7 +165,7 @@ func TestDynamicThirdPartyConfigDoesNotBecomeAManagementGuardrail(t *testing.T) 
 		!containsString(item.Runtime.DetectedBy, "compose_label") {
 		t.Fatalf("dynamic script product was not reconciled from Docker: %#v", item.Runtime)
 	}
-	for _, action := range []string{"update", "uninstall", "direct_access"} {
+	for _, action := range []string{"update", "uninstall", "direct_access", "manage"} {
 		if !item.Capabilities[action].Enabled {
 			t.Fatalf("%s stayed disabled by config parsing: %#v", action, item.Capabilities[action])
 		}

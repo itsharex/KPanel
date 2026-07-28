@@ -328,7 +328,7 @@ export interface AppInstallJob {
   id: string
   appId: string
   appName: string
-  action: 'install' | 'update' | 'uninstall' | 'direct_access'
+  action: 'install' | 'update' | 'uninstall' | 'direct_access' | 'manage'
   interactive?: boolean
   inputOpen?: boolean
   status: 'queued' | 'running' | 'succeeded' | 'failed'

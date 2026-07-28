@@ -318,7 +318,8 @@ func (s *Service) StartScriptMutation(
 	id, action string,
 	input MutationInput,
 ) (AppJob, bool, error) {
-	if action != "update" && action != "uninstall" && action != "direct_access" {
+	if action != "update" && action != "uninstall" &&
+		action != "direct_access" && action != "manage" {
 		return AppJob{}, false, ErrUnsupported
 	}
 	s.actions.Lock()
@@ -337,10 +338,14 @@ func (s *Service) StartScriptMutation(
 	if s.jobs == nil {
 		return AppJob{}, true, fmt.Errorf("%w: background application jobs are unavailable", ErrUnsupported)
 	}
-	if s.scriptInteractiveFinder == nil {
+	scriptFinder := s.scriptInteractiveFinder
+	if action == "manage" {
+		scriptFinder = s.scriptInteractiveManageFinder
+	}
+	if scriptFinder == nil {
 		return AppJob{}, true, fmt.Errorf("%w: interactive kejilion.sh protocol is unavailable", ErrUnsupported)
 	}
-	if _, err := s.scriptInteractiveFinder(); err != nil {
+	if _, err := scriptFinder(); err != nil {
 		return AppJob{}, true, fmt.Errorf(
 			"%w: the installed kejilion.sh does not support KPanel interactive jobs",
 			ErrUnsupported,
@@ -543,6 +548,18 @@ func (s *Service) scriptManageAvailable() bool {
 	return err == nil
 }
 
+func (s *Service) scriptInteractiveManageAvailable() bool {
+	if s.jobs == nil || s.jobRunner == nil || s.jobExecutable == "" ||
+		s.scriptInteractiveManageFinder == nil {
+		return false
+	}
+	if _, err := s.jobRunner.LookPath("systemd-run"); err != nil {
+		return false
+	}
+	_, err := s.scriptInteractiveManageFinder()
+	return err == nil
+}
+
 func findKejilionScript() (string, error) {
 	return findKejilionScriptMatching(isKPanelCompatibleScript)
 }
@@ -553,6 +570,10 @@ func findKejilionManageScript() (string, error) {
 
 func findKejilionInteractiveScript() (string, error) {
 	return findKejilionScriptMatching(isKPanelInteractiveCompatibleScript)
+}
+
+func findKejilionInteractiveManageScript() (string, error) {
+	return findKejilionScriptMatching(isKPanelInteractiveManageCompatibleScript)
 }
 
 func findKejilionScriptMatching(compatible func([]byte) bool) (string, error) {
@@ -614,6 +635,12 @@ func isKPanelInteractiveCompatibleScript(content []byte) bool {
 		strings.Contains(value, "kpanel_app_interactive_choice")
 }
 
+func isKPanelInteractiveManageCompatibleScript(content []byte) bool {
+	value := string(content)
+	return isKPanelInteractiveCompatibleScript(content) &&
+		strings.Contains(value, "kpanel_app_interactive_manage_choice")
+}
+
 func RunAppJob(ctx context.Context, stateDir, id string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("app-run requires root")
@@ -629,7 +656,8 @@ func RunAppJob(ctx context.Context, stateDir, id string) error {
 	if err != nil {
 		return err
 	}
-	if record.Adapter != "kejilion" || !supportedScriptJobAction(record.Action) ||
+	if record.Adapter != "kejilion" || record.Action == "manage" ||
+		!supportedScriptJobAction(record.Action) ||
 		!appSelectorPattern.MatchString(record.Selector) {
 		return errors.New("application job contains an unsupported adapter request")
 	}
@@ -755,7 +783,8 @@ func RunAppJob(ctx context.Context, stateDir, id string) error {
 
 func supportedScriptJobAction(action string) bool {
 	return action == "install" || action == "update" ||
-		action == "uninstall" || action == "direct_access"
+		action == "uninstall" || action == "direct_access" ||
+		action == "manage"
 }
 
 func appActionLabel(action string) string {
@@ -768,6 +797,8 @@ func appActionLabel(action string) string {
 		return "卸载"
 	case "direct_access":
 		return "访问策略变更"
+	case "manage":
+		return "脚本管理"
 	default:
 		return "应用操作"
 	}

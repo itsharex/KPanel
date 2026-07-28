@@ -803,7 +803,8 @@ func (s *Server) appOperation(w http.ResponseWriter, r *http.Request, requestID 
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
-	if action != "update" && action != "uninstall" && action != "direct_access" {
+	if action != "update" && action != "uninstall" &&
+		action != "direct_access" && action != "manage" {
 		writeProblem(w, requestID, http.StatusNotFound, "not_found", "资源不存在", "")
 		return
 	}

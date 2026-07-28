@@ -62,7 +62,11 @@ func RunInteractiveAppJob(ctx context.Context, stateDir, id string) error {
 		record.AccessMode != "direct" && record.AccessMode != "domain_only" {
 		return errors.New("application job contains an invalid access policy")
 	}
-	script, err := findKejilionInteractiveScript()
+	scriptFinder := findKejilionInteractiveScript
+	if record.Action == "manage" {
+		scriptFinder = findKejilionInteractiveManageScript
+	}
+	script, err := scriptFinder()
 	if err != nil {
 		return registry.fail(record, "script_unavailable", err)
 	}
