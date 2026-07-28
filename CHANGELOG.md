@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-28
+
 ### Added
 
 - 应用市场中未进入 `docker_app`/`docker_app_plus` 统一管理函数的脚本内置应用，也可通过
