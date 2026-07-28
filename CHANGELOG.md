@@ -9,6 +9,12 @@
 
 ### Fixed
 
+- 应用详情读取站点列表短暂失败时保留上次成功结果并自动重试，不再把已绑定域名静默显示为空；
+  同时兼容 `localhost`、IPv4/IPv6 loopback 及带尾斜杠的等价反代上游。
+- “检查更新”作为只读操作会刷新一次容器资源版本并处理检查期间的重启竞态，不再因页面快照过期直接报
+  `container resourceVersion changed`；更新、卸载等写操作仍执行严格版本校验。
+- 应用原生交互任务的 systemd 单元允许 `AF_NETLINK`，修复 `iptables-nft` 在“允许/阻止 IP+端口访问”
+  菜单中报 `Address family not supported by protocol`，任务仍通过固定应用编号进入宿主机脚本。
 - LDNMP 环境在没有备份时返回空列表，前端同时兼容旧 Agent 的 `items: null`；
   备份或任务辅助列表读取失败不再阻断环境状态及其管理功能。
 - 应用域名绑定成功后立即更新弹窗中的域名列表，并使用重新读取的应用资源版本调整

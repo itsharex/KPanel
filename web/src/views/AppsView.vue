@@ -56,6 +56,7 @@ const installAccess = ref<'direct' | 'domain_only'>('direct')
 const domain = ref('')
 const domainError = ref('')
 const domainWarning = ref('')
+const sitesWarning = ref('')
 const operation = ref('')
 const confirmAction = ref<ConfirmAction>()
 const checkedUpdates = ref<Record<string, 'available' | 'current'>>({})
@@ -142,7 +143,22 @@ async function checkUpdate(): Promise<void> {
   if (!item?.runtime.resourceVersion || !capability(item, 'check_update')) return
   operation.value = 'check_update'
   try {
-    const result = await api.apps.checkUpdate(item.id, item.runtime.resourceVersion)
+    let result
+    try {
+      result = await api.apps.checkUpdate(item.id, item.runtime.resourceVersion)
+    } catch (reason) {
+      if (!(reason instanceof ApiError) || reason.code !== 'resource_conflict') throw reason
+      const refreshedInventory = await api.apps.inventory()
+      inventory.value = refreshedInventory
+      const refreshed = refreshedInventory.items.find((candidate) => candidate.id === item.id)
+      if (
+        !refreshed?.runtime.resourceVersion ||
+        !capability(refreshed, 'check_update')
+      ) {
+        throw reason
+      }
+      result = await api.apps.checkUpdate(refreshed.id, refreshed.runtime.resourceVersion)
+    }
     checkedUpdates.value[item.id] = result.status
     toast.success(result.updateAvailable ? '发现可用更新' : '当前已是最新镜像')
   } catch (reason) {
@@ -262,25 +278,54 @@ async function restoreBackgroundJob(): Promise<void> {
   }
 }
 
+function isAbortError(reason: unknown): boolean {
+  return reason instanceof DOMException && reason.name === 'AbortError'
+}
+
+async function loadSites(signal: AbortSignal): Promise<Site[] | undefined> {
+  try {
+    return (await api.sites.list(undefined, signal)).items
+  } catch (reason) {
+    if (isAbortError(reason)) throw reason
+    return undefined
+  }
+}
+
 async function load(silent = false): Promise<void> {
   controller?.abort()
-  controller = new AbortController()
+  const requestController = new AbortController()
+  controller = requestController
   if (silent) refreshing.value = true
   else loading.value = true
   error.value = ''
   try {
-    const sitesPromise = api.sites.list(undefined, controller.signal).catch(() => ({ items: [], total: 0 }))
-    const publicNetworkPromise = api.system.publicNetwork(controller.signal).catch(() => undefined)
-    inventory.value = await api.apps.inventory(controller.signal)
+    const sitesPromise = loadSites(requestController.signal)
+    const publicNetworkPromise = api.system.publicNetwork(requestController.signal).catch(() => undefined)
+    const nextInventory = await api.apps.inventory(requestController.signal)
+    if (controller !== requestController) return
+    inventory.value = nextInventory
     loading.value = false
-    sites.value = (await sitesPromise).items
+    let nextSites = await sitesPromise
+    if (controller !== requestController) return
+    if (nextSites === undefined) nextSites = await loadSites(requestController.signal)
+    if (controller !== requestController) return
+    if (nextSites === undefined) {
+      sitesWarning.value = sites.value.length
+        ? '域名列表暂时无法刷新，当前显示上次成功读取的结果。'
+        : '域名列表暂时无法读取，请刷新后重试；已有绑定不会因此被删除。'
+    } else {
+      sites.value = nextSites
+      sitesWarning.value = ''
+    }
     publicNetwork.value = await publicNetworkPromise
   } catch (reason) {
-    if (reason instanceof DOMException && reason.name === 'AbortError') return
+    if (isAbortError(reason)) return
     error.value = reason instanceof ApiError ? reason.message : '无法读取应用市场，请稍后重试。'
   } finally {
-    loading.value = false
-    refreshing.value = false
+    if (controller === requestController) {
+      loading.value = false
+      refreshing.value = false
+    }
   }
 }
 
@@ -851,6 +896,7 @@ onBeforeUnmount(() => {
                 <Globe2 v-else :size="15" /> 绑定
               </button>
             </form>
+            <p v-if="sitesWarning" class="field-warning">{{ sitesWarning }}</p>
             <p v-if="domainError" class="field-error">{{ domainError }}</p>
             <p v-if="domainWarning" class="field-warning">{{ domainWarning }}</p>
             <p v-if="!capability(selected, 'add_domain')" class="muted-note">

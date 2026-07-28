@@ -1,31 +1,48 @@
 import { createSSRApp, ssrContextKey, type Ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppsView from './AppsView.vue'
+import { ApiError } from '@/lib/api'
 import type { AppInstallJob, AppMarketInventory, Site } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
   createSite: vi.fn(),
+  listSites: vi.fn(),
   inventory: vi.fn(),
   action: vi.fn(),
+  checkUpdate: vi.fn(),
   job: vi.fn(),
+  publicNetwork: vi.fn(),
   toastSuccess: vi.fn(),
+  toastDanger: vi.fn(),
 }))
 
 vi.mock('@/lib/api', () => ({
-  ApiError: class MockApiError extends Error {},
+  ApiError: class MockApiError extends Error {
+    readonly status: number
+    readonly code: string
+
+    constructor(message: string, status = 0, code = 'request_failed') {
+      super(message)
+      this.status = status
+      this.code = code
+    }
+  },
   api: {
     apps: {
       inventory: mocks.inventory,
       action: mocks.action,
-      checkUpdate: vi.fn(),
+      checkUpdate: mocks.checkUpdate,
       install: vi.fn(),
       job: mocks.job,
       jobs: vi.fn(),
     },
     sites: {
       create: mocks.createSite,
-      list: vi.fn(),
+      list: mocks.listSites,
       remove: vi.fn(),
+    },
+    system: {
+      publicNetwork: mocks.publicNetwork,
     },
   },
 }))
@@ -33,7 +50,7 @@ vi.mock('@/lib/api', () => ({
 vi.mock('@/stores/toast', () => ({
   useToast: () => ({
     success: mocks.toastSuccess,
-    danger: vi.fn(),
+    danger: mocks.toastDanger,
     show: vi.fn(),
   }),
 }))
@@ -45,8 +62,12 @@ interface AppsBindings {
   domain: Ref<string>
   domainError: Ref<string>
   domainWarning: Ref<string>
+  sitesWarning: Ref<string>
+  checkedUpdates: Ref<Record<string, 'available' | 'current'>>
   activeJob: Ref<AppInstallJob | undefined>
   jobDetailsOpen: Ref<boolean>
+  load: (silent?: boolean) => Promise<void>
+  checkUpdate: () => Promise<void>
   addDomain: () => Promise<void>
   openScriptManage: () => Promise<void>
 }
@@ -103,6 +124,7 @@ function inventory(resourceVersion: string): AppMarketInventory {
         },
         capabilities: {
           add_domain: { enabled: true },
+          check_update: { enabled: true },
           direct_access: { enabled: true },
           manage: { enabled: true },
         },
@@ -172,6 +194,63 @@ describe('AppsView domain binding', () => {
       '域名已绑定',
       'cloud.example.com 已生效；直接访问策略可稍后单独调整。',
     )
+  })
+
+  it('retries a transient site-list failure without hiding the bound domain', async () => {
+    const created = proxySite()
+    mocks.inventory.mockResolvedValueOnce(inventory('current-version'))
+    mocks.listSites
+      .mockRejectedValueOnce(new Error('temporary site read failure'))
+      .mockResolvedValueOnce({ items: [created], total: 1 })
+    mocks.publicNetwork.mockResolvedValueOnce(undefined)
+    const view = setupView()
+
+    await view.load(true)
+
+    expect(mocks.listSites).toHaveBeenCalledTimes(2)
+    expect(view.sites.value).toEqual([created])
+    expect(view.sitesWarning.value).toBe('')
+  })
+
+  it('keeps the last successful domain snapshot when both site reads fail', async () => {
+    const created = proxySite()
+    mocks.inventory.mockResolvedValueOnce(inventory('current-version'))
+    mocks.listSites.mockRejectedValue(new Error('site service unavailable'))
+    mocks.publicNetwork.mockResolvedValueOnce(undefined)
+    const view = setupView()
+    view.sites.value = [created]
+
+    await view.load(true)
+
+    expect(mocks.listSites).toHaveBeenCalledTimes(2)
+    expect(view.sites.value).toEqual([created])
+    expect(view.sitesWarning.value).toContain('当前显示上次成功读取的结果')
+  })
+})
+
+describe('AppsView update checks', () => {
+  it('refreshes the inventory and retries a read-only resource conflict once', async () => {
+    mocks.checkUpdate
+      .mockRejectedValueOnce(new ApiError('container resourceVersion changed', 409, 'resource_conflict'))
+      .mockResolvedValueOnce({
+        containerId: 'a'.repeat(64),
+        image: 'cloudreve/cloudreve:latest',
+        status: 'current',
+        updateAvailable: false,
+        resourceVersion: 'fresh-version',
+        checkedAt: '2026-07-28T00:00:00Z',
+      })
+    mocks.inventory.mockResolvedValueOnce(inventory('fresh-version'))
+    const view = setupView()
+    view.inventory.value = inventory('stale-version')
+    view.selectedID.value = 'builtin-13'
+
+    await view.checkUpdate()
+
+    expect(mocks.checkUpdate).toHaveBeenNthCalledWith(1, 'builtin-13', 'stale-version')
+    expect(mocks.checkUpdate).toHaveBeenNthCalledWith(2, 'builtin-13', 'fresh-version')
+    expect(view.checkedUpdates.value['builtin-13']).toBe('current')
+    expect(mocks.toastDanger).not.toHaveBeenCalled()
   })
 })
 

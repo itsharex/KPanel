@@ -120,7 +120,11 @@ func TestKejilionStandardAppsBecomeDirectlyInstallable(t *testing.T) {
 	}
 	if len(runner.calls) != 1 || runner.calls[0][0] != "systemd-run" ||
 		!strings.Contains(strings.Join(runner.calls[0], " "), appJobUnitPrefix+job.ID) ||
-		!strings.Contains(strings.Join(runner.calls[0], " "), "app-pty-run") {
+		!strings.Contains(strings.Join(runner.calls[0], " "), "app-pty-run") ||
+		!strings.Contains(
+			strings.Join(runner.calls[0], " "),
+			"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+		) {
 		t.Fatalf("background launch = %#v", runner.calls)
 	}
 	if _, err := service.StartInstall(context.Background(), "builtin-28", InstallInput{}); !errors.Is(err, ErrConflict) {

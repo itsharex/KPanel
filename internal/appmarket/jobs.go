@@ -455,7 +455,7 @@ func (s *Service) launchScriptJob(ctx context.Context, record appJobRecord) erro
 		"--property=UMask=0027",
 		"--property=PrivateTmp=yes",
 		"--property=NoNewPrivileges=no",
-		"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+		"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
 		"--property=Nice=5",
 		"--property=CPUWeight=40",
 		"--property=IOWeight=40",

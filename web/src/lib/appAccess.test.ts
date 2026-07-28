@@ -60,10 +60,19 @@ describe('application access URL', () => {
     expect(appAccessURL(app(), [site()], '192.0.2.10')).toBe('http://app.example.com')
   })
 
-  it('falls back to the direct port when no enabled matching domain exists', () => {
+  it('keeps a disabled matching domain associated but falls back to the direct port', () => {
     const unavailable = site({ enabled: false })
-    expect(matchingAppProxySites(app(), [unavailable])).toEqual([])
+    expect(matchingAppProxySites(app(), [unavailable])).toEqual([unavailable])
     expect(appAccessURL(app(), [unavailable], '192.0.2.10')).toBe('http://192.0.2.10:18080')
+  })
+
+  it.each([
+    'http://127.0.0.1:18080/',
+    'http://localhost:18080',
+    'http://[::1]:18080',
+    '127.0.0.1:18080',
+  ])('recognizes the equivalent loopback upstream %s', (upstream) => {
+    expect(matchingAppProxySites(app(), [site({ upstream })])).toHaveLength(1)
   })
 
   it('does not expose a direct URL in domain-only mode without a matching domain', () => {
