@@ -1869,32 +1869,20 @@ textarea:focus-visible,
 }
 
 .os-identity__mark {
-  display: inline-grid;
-  width: 26px;
-  height: 26px;
+  display: inline-block;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
-  place-items: center;
-  color: #fff;
-  background: #334155;
-  border-radius: 8px;
+  overflow: hidden;
+  border-radius: 9px;
 }
 
-.os-identity__mark svg {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
+.os-identity__mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
-
-.os-identity__mark.is-ubuntu { background: #e95420; }
-.os-identity__mark.is-debian { background: #a80030; }
-.os-identity__mark.is-centos { background: #7b2d8e; }
-.os-identity__mark.is-rocky { background: #10b981; }
-.os-identity__mark.is-alma { background: #ed1c24; }
-.os-identity__mark.is-fedora { background: #294172; }
-.os-identity__mark.is-alpine { background: #0d597f; }
-.os-identity__mark.is-arch { background: #1793d1; }
-.os-identity__mark.is-suse { background: #30ba78; }
-.os-identity__mark.is-oracle { background: #c74634; }
 
 .country-flag {
   display: block;
