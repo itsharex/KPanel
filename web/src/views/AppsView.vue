@@ -443,7 +443,7 @@ onBeforeUnmount(() => {
   <div class="page app-market">
     <PageHeader
       title="应用市场"
-      description="已安装应用优先呈现；标准应用使用 kejilion.sh 原生业务函数在后台安装，并持续显示执行进度。"
+      description="已安装应用优先呈现；脚本内置与第三方应用使用 kejilion.sh 原生交互流程在后台安装。"
     >
       <template #actions>
         <a class="button button--secondary" href="https://app.kejilion.sh" target="_blank" rel="noopener noreferrer">
@@ -741,7 +741,7 @@ onBeforeUnmount(() => {
           <div>
             <strong>当前未安装</strong>
             <p v-if="capability(selected, 'install') && selected.installer === 'kejilion'">
-              此应用会在后台调用 kejilion.sh 的标准安装函数，产物与脚本端保持一致。
+              此应用会在后台打开 kejilion.sh 原生交互终端；专属安装向导、端口、域名和凭据输入均与 SSH 端一致。
             </p>
             <p v-else-if="capability(selected, 'install')">
               此应用已有固定镜像、端口和回滚策略，可以由 KPanel 在后台安全安装。

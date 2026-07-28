@@ -510,28 +510,33 @@ func (s *Service) scriptSelectorFor(item Summary) (string, bool) {
 		return item.Token, true
 	}
 	legacy, ok := s.legacy[item.Num]
-	if !ok || !legacy.UsesDockerApp {
+	if !ok || legacy.Num < 1 || legacy.Num > 115 {
 		return "", false
 	}
 	return strconv.Itoa(item.Num), true
 }
 
 func (s *Service) scriptInstallAvailable() bool {
-	if s.jobs == nil || s.jobRunner == nil || s.jobExecutable == "" || s.scriptFinder == nil {
+	if s.jobs == nil || s.jobRunner == nil || s.jobExecutable == "" ||
+		s.scriptInteractiveFinder == nil {
 		return false
 	}
 	if _, err := s.jobRunner.LookPath("systemd-run"); err != nil {
 		return false
 	}
-	_, err := s.scriptFinder()
+	_, err := s.scriptInteractiveFinder()
 	return err == nil
 }
 
 func (s *Service) scriptManageAvailable() bool {
-	if s.jobs == nil || s.jobRunner == nil || s.jobExecutable == "" || s.scriptManageFinder == nil {
+	if s.jobs == nil || s.jobRunner == nil || s.jobExecutable == "" ||
+		s.scriptInteractiveFinder == nil || s.scriptManageFinder == nil {
 		return false
 	}
 	if _, err := s.jobRunner.LookPath("systemd-run"); err != nil {
+		return false
+	}
+	if _, err := s.scriptInteractiveFinder(); err != nil {
 		return false
 	}
 	_, err := s.scriptManageFinder()

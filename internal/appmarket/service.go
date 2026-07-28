@@ -116,7 +116,6 @@ type Service struct {
 	jobs                    *appJobRegistry
 	jobExecutable           string
 	jobRunner               jobCommandRunner
-	scriptFinder            func() (string, error)
 	scriptInteractiveFinder func() (string, error)
 	scriptManageFinder      func() (string, error)
 	fileOwnerTrusted        func(os.FileInfo) bool
@@ -145,7 +144,6 @@ func newService(docker Docker, appRoot string, fetcher catalogFetcher) (*Service
 		catalog: catalog, legacy: legacy, scriptSHA256: scriptSHA256,
 		docker: docker, appRoot: filepath.Clean(appRoot), now: time.Now,
 		scriptAppRoot: "/root/apps", fetchCatalog: fetcher,
-		scriptFinder:            findKejilionScript,
 		scriptInteractiveFinder: findKejilionInteractiveScript,
 		scriptManageFinder:      findKejilionManageScript,
 		fileOwnerTrusted:        trustedFileOwner,
@@ -327,7 +325,7 @@ func installerKind(app App, legacy LegacyApp, scriptInstallAvailable bool) strin
 	if _, ok := declarativeSpecs[app.Token]; ok {
 		return "declarative"
 	}
-	if scriptInstallAvailable && (app.Source == "thirdparty" || legacy.UsesDockerApp) {
+	if scriptInstallAvailable && (app.Source == "thirdparty" || legacy.Num > 0) {
 		return "kejilion"
 	}
 	return "guided"
@@ -425,9 +423,9 @@ func defaultCapabilities(
 	if _, ok := declarativeSpecs[app.Token]; ok {
 		install = Capability{Enabled: true}
 	} else if scriptInstallAvailable &&
-		(app.Source == "thirdparty" || legacy.UsesDockerApp) {
+		(app.Source == "thirdparty" || legacy.Num > 0) {
 		install = Capability{Enabled: true}
-	} else if app.Source == "thirdparty" || legacy.UsesDockerApp {
+	} else if app.Source == "thirdparty" || legacy.Num > 0 {
 		install = Capability{Reason: "请先更新 kejilion.sh，并在终端运行一次 k 接受许可协议"}
 	}
 	return map[string]Capability{

@@ -172,7 +172,7 @@ func TestInventoryUsesDockerAppServiceAsMainContainer(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	service.scriptFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	service.scriptManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	item, err := service.Find(context.Background(), "builtin-81")
 	if err != nil {

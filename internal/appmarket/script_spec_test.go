@@ -60,7 +60,6 @@ func TestThirdPartyScriptAppUsesVerifiedMainContainerAndManagementProtocol(t *te
 	); err != nil {
 		t.Fatal(err)
 	}
-	service.scriptFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	service.scriptManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 
@@ -153,7 +152,6 @@ func TestDynamicThirdPartyConfigDoesNotBecomeAManagementGuardrail(t *testing.T) 
 	); err != nil {
 		t.Fatal(err)
 	}
-	service.scriptFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	service.scriptManageFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 

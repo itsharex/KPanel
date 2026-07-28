@@ -93,9 +93,6 @@ func TestKejilionStandardAppsBecomeDirectlyInstallable(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	service.scriptFinder = func() (string, error) {
-		return "/usr/local/bin/k", nil
-	}
 	service.scriptInteractiveFinder = func() (string, error) {
 		return "/usr/local/bin/k", nil
 	}
@@ -150,6 +147,138 @@ func TestKejilionStandardAppsBecomeDirectlyInstallable(t *testing.T) {
 	}
 }
 
+func TestKejilionGuidedAppsUseFixedInteractiveSelector(t *testing.T) {
+	root := t.TempDir()
+	service, err := New(&fakeDocker{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeJobRunner{}
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		runner,
+	); err != nil {
+		t.Fatal(err)
+	}
+	service.scriptInteractiveFinder = func() (string, error) {
+		return "/usr/local/bin/k", nil
+	}
+
+	for _, appID := range []string{
+		"builtin-1",
+		"builtin-2",
+		"builtin-3",
+		"builtin-7",
+		"builtin-9",
+		"builtin-19",
+		"builtin-38",
+		"builtin-41",
+		"builtin-51",
+		"builtin-54",
+		"builtin-55",
+		"builtin-56",
+		"builtin-66",
+		"builtin-104",
+		"builtin-114",
+		"builtin-115",
+	} {
+		item, findErr := service.Find(context.Background(), appID)
+		if findErr != nil {
+			t.Fatal(findErr)
+		}
+		if item.Installer != "kejilion" || !item.Capabilities["install"].Enabled {
+			t.Fatalf("guided application %s is not interactive: %#v", appID, item)
+		}
+	}
+
+	job, err := service.StartInstall(
+		context.Background(),
+		"builtin-7",
+		InstallInput{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := service.jobs.read(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Selector != "7" || record.Adapter != "kejilion" ||
+		!record.Interactive {
+		t.Fatalf("guided application escaped the fixed selector terminal: %#v", record)
+	}
+	if len(runner.calls) != 1 ||
+		!strings.Contains(strings.Join(runner.calls[0], " "), "app-pty-run") {
+		t.Fatalf("guided application launch = %#v", runner.calls)
+	}
+}
+
+func TestKejilionInstallCapabilityRequiresInteractiveProtocol(t *testing.T) {
+	root := t.TempDir()
+	service, err := New(&fakeDocker{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		&fakeJobRunner{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	service.scriptInteractiveFinder = func() (string, error) {
+		return "", errors.New("interactive protocol missing")
+	}
+
+	item, err := service.Find(context.Background(), "builtin-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Installer != "guided" || item.Capabilities["install"].Enabled {
+		t.Fatalf("non-interactive script enabled a terminal install: %#v", item)
+	}
+}
+
+func TestAllAuditedBuiltinAppsOfferSafeInstallPath(t *testing.T) {
+	root := t.TempDir()
+	service, err := New(&fakeDocker{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		&fakeJobRunner{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	service.scriptInteractiveFinder = func() (string, error) {
+		return "/usr/local/bin/k", nil
+	}
+
+	inventory, err := service.Inventory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	builtinCount := 0
+	for _, item := range inventory.Items {
+		if item.Source != "builtin" {
+			continue
+		}
+		builtinCount++
+		if !item.Capabilities["install"].Enabled {
+			t.Fatalf("builtin application %s has no install path: %#v", item.ID, item)
+		}
+		if item.Installer != "kejilion" && item.Installer != "declarative" {
+			t.Fatalf("builtin application %s escaped trusted installers: %#v", item.ID, item)
+		}
+	}
+	if builtinCount != 115 {
+		t.Fatalf("audited builtin application count = %d, want 115", builtinCount)
+	}
+}
+
 func TestInactiveScriptJobAutomaticallyReleasesTaskLock(t *testing.T) {
 	root := t.TempDir()
 	service, err := New(&fakeDocker{}, root)
@@ -164,7 +293,6 @@ func TestInactiveScriptJobAutomaticallyReleasesTaskLock(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	service.scriptFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
 
 	job, err := service.StartInstall(context.Background(), "builtin-4", InstallInput{})

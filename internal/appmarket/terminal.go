@@ -158,7 +158,7 @@ func RunInteractiveAppJob(ctx context.Context, stateDir, id string) error {
 	record.Status = "succeeded"
 	record.Stage = "completed"
 	record.Message = "应用" + appActionLabel(record.Action) +
-		"完成，交互式脚本产物已完成对账"
+		"交互流程已结束，面板将按实际产物刷新状态"
 	return registry.put(record)
 }
 
