@@ -19,14 +19,18 @@
 - 固定脚本：提交 `8ad705bc48f56eda2ce5b39ca324ae662c126c364481`；
   SHA-256 `11891afcc2a985383899d9632d2258bbf46ccfb68fdabe5bad745683ce5cae43`。
 
-## 发布流水线核查
+## 线上核查（2026-07-28）
 
-正式标签发布后核查：
-
-- GitHub CI 与 Release 全部成功。
-- Docker Hub `0.23.0` 与 `latest` 指向同一双架构镜像摘要。
-- GitHub Release 已发布，附件及 `SHA256SUMS` 可下载。
-- 镜像 OCI 版本、源码提交、脚本提交和脚本 SHA-256 与发布记录一致。
+- 功能分支 CI `30331625933`、主分支 CI `30331715350` 和 Release
+  `30331835729` 全部成功。
+- GitHub Release `v0.23.0` 已发布且不是草稿，包含 amd64/arm64 Agent、
+  部署包和 `SHA256SUMS`。
+- Docker Hub `0.23.0` 与 `latest` 均指向
+  `sha256:e26a35860c36acb662eca918d20e4c0758875f4b1d285f04c9e8413316bd6414`，
+  并包含 linux/amd64 与 linux/arm64。
+- 从 Docker Hub 重新拉取 linux/amd64 镜像后，OCI 版本 `0.23.0`、源码提交
+  `d7b3ca6bbb05e46ca58a20d243e40412ed10e59c`、脚本提交与脚本 SHA-256
+  均与发布记录一致；非 root 用户及只读运行时健康检查通过。
 
 ## 回滚
 
