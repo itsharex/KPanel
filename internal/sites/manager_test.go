@@ -420,6 +420,22 @@ func TestFullDeleteReportsDatabaseFailureWithoutRestoringSite(t *testing.T) {
 	}
 }
 
+func TestParseScriptDeleteOutcomeTreatsDeletedSiteWithDatabaseFailureAsPartialSuccess(t *testing.T) {
+	outcome := parseScriptDeleteOutcome(strings.Join([]string{
+		"正在删除域名: codex.example.com",
+		"正在删除数据库: codex_example_com",
+		"KPANEL_DELETE_DATABASE failed codex.example.com",
+		"KPANEL_DELETE_SITE deleted codex.example.com",
+	}, "\n"))
+
+	if !outcome.siteDeleted || outcome.databaseDropped || len(outcome.warnings) != 1 {
+		t.Fatalf("partial delete outcome = %#v", outcome)
+	}
+	if !strings.Contains(outcome.warnings[0], "数据库删除失败") {
+		t.Fatalf("partial delete warning = %#v", outcome.warnings)
+	}
+}
+
 func TestOrphanWebsiteArtifactCanBeDeleted(t *testing.T) {
 	manager, nginx, root := newTestManager(t)
 	orphanRoot := filepath.Join(root, "html", "orphan.example.com")

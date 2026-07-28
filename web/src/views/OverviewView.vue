@@ -43,6 +43,7 @@ import {
   customPreset,
   detectDNSPreset,
   detectMirrorPreset,
+  dnsServersForPreset,
   dnsPresets,
   parseDNSServers,
   timezonePresets,
@@ -157,6 +158,14 @@ const cpuFrequencyLabel = computed(() => {
 const publicLocation = computed(() => {
   const network = data.value?.publicNetwork
   return [network?.country, network?.region, network?.city].filter(Boolean).join(' · ') || '未获取'
+})
+
+const hasPublicIPv6 = computed(() => Boolean(data.value?.publicNetwork.ipv6?.includes(':')))
+
+watch(hasPublicIPv6, (available) => {
+  if (available && selectedTool.value?.id === 'dns' && actionForm.dnsPreset !== customPreset) {
+    applyDNSPreset()
+  }
 })
 
 const publicCountryCode = computed(() => {
@@ -436,6 +445,7 @@ function openTool(tool: ManagementTool): void {
   actionForm.port = nextSSHPort(management?.ssh.ports || [])
   actionForm.dns = (management?.dns.servers || []).filter((server) => server !== '127.0.0.53').join('\n')
   actionForm.dnsPreset = detectDNSPreset(actionForm.dns)
+  if (tool.id === 'dns' && actionForm.dnsPreset !== customPreset && hasPublicIPv6.value) applyDNSPreset()
   actionForm.timezone = management?.timezone || 'Asia/Shanghai'
   actionForm.timezonePreset = timezonePresets.some((preset) => preset.value === actionForm.timezone)
     ? actionForm.timezone
@@ -482,7 +492,7 @@ function detectKernelProfile(enabled = false, label = ''): KernelProfile {
 
 function applyDNSPreset(): void {
   const preset = dnsPresets.find((item) => item.value === actionForm.dnsPreset)
-  if (preset) actionForm.dns = preset.servers.join('\n')
+  if (preset) actionForm.dns = dnsServersForPreset(preset, hasPublicIPv6.value).join('\n')
 }
 
 function applyTimezonePreset(): void {
@@ -1073,7 +1083,13 @@ onBeforeUnmount(() => {
                   {{ preset.label }}
                 </option>
               </select>
-              <small>选择预设后会自动填充地址，执行前仍可检查或调整。</small>
+              <small>
+                {{
+                  hasPublicIPv6
+                    ? '已检测到公网 IPv6，预设会同时填充 2 个 IPv4 和 2 个 IPv6 地址。'
+                    : '未检测到公网 IPv6，预设仅填充 IPv4 地址。'
+                }}
+              </small>
             </label>
             <label class="field">
               <span>DNS 服务器</span>

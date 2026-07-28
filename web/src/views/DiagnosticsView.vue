@@ -223,20 +223,19 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
-    <section class="diagnostic-notice">
-      <ShieldCheck :size="21" />
-      <div>
-        <strong>命令与下载源由本机 kejilion.sh 提供</strong>
-        <p>面板只提交固定体检编号，不接受自定义 Shell。第三方脚本可能安装依赖，并消耗 CPU、磁盘或网络流量。</p>
-      </div>
-    </section>
-
     <LoadingState v-if="loading" title="正在读取体检项目" description="正在校验本机脚本协议与第三方来源。" />
     <ErrorState v-else-if="error" title="体检功能暂不可用" :message="error" @retry="load()" />
 
     <template v-else-if="catalog">
       <section class="diagnostic-workbench">
         <aside class="diagnostic-command-panel">
+          <header class="diagnostic-command-panel__header">
+            <span><ShieldCheck :size="18" /></span>
+            <div>
+              <strong>体检命令</strong>
+              <small>固定命令由本机 kejilion.sh 提供，不接受自定义 Shell</small>
+            </div>
+          </header>
           <nav class="diagnostic-tabs" aria-label="体检分类">
             <button type="button" :class="{ 'is-active': selectedCategory === 'all' }" @click="selectedCategory = 'all'">
               全部 <span>{{ catalog.items.length }}</span>
@@ -290,7 +289,7 @@ onBeforeUnmount(() => {
           <div v-if="hasActiveJob" class="diagnostic-progress" aria-label="任务进度">
             <span :style="{ width: `${activeJob?.progress || 0}%` }" />
           </div>
-          <div class="diagnostic-terminal-bar">
+          <div v-if="!activeJob?.interactive" class="diagnostic-terminal-bar">
             <span><i :class="{ 'is-live': hasActiveJob }" /> {{ hasActiveJob ? '实时输出' : '终端输出' }}</span>
             <StatusBadge v-if="activeJob" :status="activeJob.status" />
           </div>
@@ -374,11 +373,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .diagnostics-page {
   display: grid;
-  gap: 22px;
+  gap: 16px;
 }
 
-.diagnostic-notice,
-.diagnostic-result,
 .diagnostic-history {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -386,36 +383,46 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-sm);
 }
 
-.diagnostic-notice {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  padding: 17px 19px;
-  color: var(--text-secondary);
-}
-
-.diagnostic-notice > svg {
-  flex: 0 0 auto;
-  color: var(--success);
-}
-
-.diagnostic-notice strong {
-  display: block;
-  color: var(--text);
-  margin-bottom: 4px;
-}
-
-.diagnostic-notice p,
 .diagnostic-card p,
 .diagnostic-result p {
   margin: 0;
 }
 
+.diagnostic-command-panel__header {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  padding: 15px 16px 12px;
+}
+
+.diagnostic-command-panel__header > span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 11%, var(--surface));
+}
+
+.diagnostic-command-panel__header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.diagnostic-command-panel__header small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .diagnostic-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 16px;
+  gap: 6px;
+  padding: 0 14px 13px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -428,7 +435,8 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: var(--surface);
   color: var(--text-secondary);
-  padding: 9px 13px;
+  padding: 7px 10px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -445,8 +453,8 @@ onBeforeUnmount(() => {
 
 .diagnostic-workbench {
   display: grid;
-  grid-template-columns: minmax(300px, 0.72fr) minmax(0, 1.6fr);
-  min-height: 620px;
+  grid-template-columns: minmax(270px, 310px) minmax(0, 1fr);
+  height: clamp(680px, calc(100vh - 190px), 860px);
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -455,14 +463,18 @@ onBeforeUnmount(() => {
 }
 
 .diagnostic-command-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
+  min-height: 0;
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-muted) 38%, var(--surface));
 }
 
 .diagnostic-command-list {
   display: grid;
-  max-height: 550px;
+  align-content: start;
+  min-height: 0;
   overflow: auto;
   padding: 8px;
 }
@@ -551,6 +563,14 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.diagnostic-result {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+}
+
 .diagnostic-result__header,
 .diagnostic-history > header {
   display: flex;
@@ -616,8 +636,9 @@ onBeforeUnmount(() => {
 }
 
 .diagnostic-log {
-  min-height: 390px;
-  max-height: 540px;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   overflow: auto;
   margin: 0;
   padding: 18px 20px;
@@ -626,6 +647,20 @@ onBeforeUnmount(() => {
   font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.diagnostic-interactive-terminal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.diagnostic-interactive-terminal :deep(.interactive-terminal__screen) {
+  height: 100%;
+  min-height: 0;
 }
 
 .diagnostic-result footer {
@@ -719,7 +754,7 @@ onBeforeUnmount(() => {
 @media (max-width: 680px) {
   .diagnostic-workbench {
     grid-template-columns: 1fr;
-    min-height: 0;
+    height: auto;
   }
 
   .diagnostic-command-panel {
@@ -729,6 +764,11 @@ onBeforeUnmount(() => {
 
   .diagnostic-command-list {
     max-height: 300px;
+  }
+
+  .diagnostic-log,
+  .diagnostic-interactive-terminal :deep(.interactive-terminal__screen) {
+    min-height: 420px;
   }
 
   .diagnostic-result__header {

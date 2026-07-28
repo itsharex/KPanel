@@ -1201,6 +1201,9 @@ onBeforeUnmount(() => {
 .action-card > div { display: grid; gap: 4px; }
 .action-card small { color: var(--text-muted); line-height: 1.45; }
 .card-actions, .row-actions { display: flex; align-items: center; gap: 8px; }
+.workspace-card > header > .card-actions,
+.resource-section__header > .card-actions { display: flex; flex: 0 0 auto; flex-wrap: nowrap; }
+.card-actions .button { flex: 0 0 auto; white-space: nowrap; }
 .row-actions--wrap { flex-wrap: wrap; }
 .backup-list { display: grid; gap: 8px; }
 .backup-list article { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
@@ -1266,7 +1269,8 @@ onBeforeUnmount(() => {
   .docker-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workspace-grid, .workspace-grid--environment, .form-grid--two { grid-template-columns: 1fr; }
   .docker-toolbar, .resource-section__header, .backup-list article { align-items: stretch; flex-direction: column; }
-  .card-actions { flex-wrap: wrap; }
+  .workspace-card > header > .card-actions,
+  .resource-section__header > .card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
   .compact-input { width: 100%; }
   .network-membership { grid-template-columns: 1fr; }
   .repeat-row--ports, .repeat-row--mounts, .repeat-row--environment { grid-template-columns: 1fr; }

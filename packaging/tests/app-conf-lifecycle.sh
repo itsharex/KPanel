@@ -38,7 +38,7 @@ require_state() {
 	}
 }
 case "$1 ${2:-}" in
-	"compose version"|"pull docker.io/kjlion/kejilion-panel:$KPANEL_RELEASE_VERSION")
+	"compose version"|"pull docker.io/kjlion/kejilion-panel:latest")
 		exit 0
 		;;
 	"ps -a")
@@ -219,7 +219,7 @@ EOF
 		return 1
 	fi
 
-	grep -F "image: docker.io/kjlion/kejilion-panel:$RELEASE_VERSION" \
+	grep -F "image: docker.io/kjlion/kejilion-panel:latest" \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx 'KPANEL_PUBLIC_URL=http://198.51.100.25:18080' \

@@ -3,6 +3,7 @@ import {
   customPreset,
   detectDNSPreset,
   detectMirrorPreset,
+  dnsServersForPreset,
   dnsPresets,
   parseDNSServers,
   timezonePresets,
@@ -20,7 +21,19 @@ describe('system management presets', () => {
 
   it('recognizes an exact DNS preset without changing custom input', () => {
     expect(detectDNSPreset('223.5.5.5\n223.6.6.6')).toBe('alidns')
+    expect(detectDNSPreset('1.1.1.1\n1.0.0.1\n2606:4700:4700::1111\n2606:4700:4700::1001')).toBe('cloudflare')
     expect(detectDNSPreset('10.0.0.2')).toBe(customPreset)
+  })
+
+  it('only adds preset IPv6 resolvers when IPv6 is available', () => {
+    const cloudflare = dnsPresets.find((preset) => preset.value === 'cloudflare')!
+    expect(dnsServersForPreset(cloudflare)).toEqual(['1.1.1.1', '1.0.0.1'])
+    expect(dnsServersForPreset(cloudflare, true)).toEqual([
+      '1.1.1.1',
+      '1.0.0.1',
+      '2606:4700:4700::1111',
+      '2606:4700:4700::1001',
+    ])
   })
 
   it('keeps preset identifiers and timezone values unique', () => {

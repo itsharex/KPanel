@@ -35,8 +35,8 @@ const navigation: NavigationItem[] = [
   { label: '概览', to: '/overview', icon: LayoutDashboard },
   { label: '网站', to: '/sites', icon: Boxes },
   { label: '应用市场', to: '/apps', icon: Store },
-  { label: '体检', to: '/diagnostics', icon: HeartPulse },
   { label: 'Docker', to: '/docker', icon: Container },
+  { label: '体检', to: '/diagnostics', icon: HeartPulse },
   { label: '活动记录', to: '/activity', icon: ClipboardList },
   { label: '设置', to: '/settings', icon: Settings },
 ]

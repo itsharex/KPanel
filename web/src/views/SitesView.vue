@@ -609,7 +609,11 @@ async function deleteSite(): Promise<void> {
     deleteOpen.value = false
     deletingSite.value = undefined
     toast.success(
-      deleteMode.value === 'full' ? '站点数据已删除' : '网站配置已移除',
+      deleteMode.value === 'full'
+        ? result.warnings?.length
+          ? '站点已删除，存在残留项'
+          : '站点数据已删除'
+        : '网站配置已移除',
       (deleteMode.value === 'full'
         ? `${result.primaryDomain} 已按 k web 业务清理。`
         : `${result.primaryDomain} 的 Nginx 访问配置已移除，网站目录、证书和数据库均已保留。`) +
@@ -617,7 +621,13 @@ async function deleteSite(): Promise<void> {
     )
     await load(true)
   } catch (reason) {
-    deleteError.value = reason instanceof ApiError ? reason.message : '删除失败，原网站产物已尽可能恢复。'
+    const message = reason instanceof ApiError ? reason.message : '删除失败，原网站产物已尽可能恢复。'
+    if (deleteMode.value === 'full' && message.includes('KPANEL_DELETE_SITE deleted')) {
+      deleteError.value = '站点文件已删除，但数据库清理失败；站点列表已刷新，请在数据库中核对并手动清理残留。'
+      await load(true)
+    } else {
+      deleteError.value = message
+    }
   } finally {
     deleting.value = false
   }

@@ -15,6 +15,7 @@ import (
 
 type scriptDeleteOutcome struct {
 	databaseDropped bool
+	siteDeleted     bool
 	warnings        []string
 }
 
@@ -79,17 +80,21 @@ func (kejilionSiteScriptDeleter) Delete(
 	var output bytes.Buffer
 	command.Stdout = &output
 	command.Stderr = &output
-	if err := command.Run(); err != nil {
+	runErr := command.Run()
+	outcome := parseScriptDeleteOutcome(output.String())
+	if runErr != nil {
 		if errors.Is(deleteCtx.Err(), context.DeadlineExceeded) {
 			return scriptDeleteOutcome{}, fmt.Errorf("%w: k web del timed out", ErrUnavailable)
 		}
-		return scriptDeleteOutcome{}, fmt.Errorf(
-			"%w: k web del failed: %s",
-			ErrUnavailable,
-			safeScriptDeleteOutput(output.String()),
-		)
+		if !outcome.siteDeleted {
+			return scriptDeleteOutcome{}, fmt.Errorf(
+				"%w: k web del failed: %s",
+				ErrUnavailable,
+				safeScriptDeleteOutput(output.String()),
+			)
+		}
 	}
-	return parseScriptDeleteOutcome(output.String()), nil
+	return outcome, nil
 }
 
 func (m *Manager) deleteWithScript(
@@ -166,8 +171,15 @@ func parseScriptDeleteOutcome(output string) scriptDeleteOutcome {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		switch {
+		case strings.HasPrefix(line, "KPANEL_DELETE_SITE deleted "):
+			result.siteDeleted = true
 		case strings.HasPrefix(line, "KPANEL_DELETE_DATABASE dropped "):
 			result.databaseDropped = true
+		case strings.HasPrefix(line, "KPANEL_DELETE_DATABASE failed "):
+			result.warnings = append(
+				result.warnings,
+				"站点已删除，但同名数据库删除失败；请在数据库中核对并手动清理残留",
+			)
 		case strings.HasPrefix(line, "KPANEL_DELETE_DATABASE skipped "):
 			result.warnings = append(result.warnings, "未检测到 MySQL 运行环境，数据库清理已跳过")
 		case line == "KPANEL_DELETE_WARNING nginx_unavailable":

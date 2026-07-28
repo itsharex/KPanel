@@ -2,12 +2,39 @@ export const customPreset = '__custom__'
 export type MirrorPreset = 'cn-default' | 'cn-edu' | 'abroad' | 'smart'
 
 export const dnsPresets = [
-  { value: 'cloudflare', label: 'Cloudflare（全球）', servers: ['1.1.1.1', '1.0.0.1'] },
-  { value: 'google', label: 'Google Public DNS（全球）', servers: ['8.8.8.8', '8.8.4.4'] },
-  { value: 'alidns', label: '阿里云公共 DNS（中国大陆）', servers: ['223.5.5.5', '223.6.6.6'] },
-  { value: 'dnspod', label: '腾讯 DNSPod（中国大陆）', servers: ['119.29.29.29', '182.254.116.116'] },
-  { value: 'quad9', label: 'Quad9（安全拦截）', servers: ['9.9.9.9', '149.112.112.112'] },
+  {
+    value: 'cloudflare',
+    label: 'Cloudflare（全球）',
+    servers: ['1.1.1.1', '1.0.0.1'],
+    ipv6Servers: ['2606:4700:4700::1111', '2606:4700:4700::1001'],
+  },
+  {
+    value: 'google',
+    label: 'Google Public DNS（全球）',
+    servers: ['8.8.8.8', '8.8.4.4'],
+    ipv6Servers: ['2001:4860:4860::8888', '2001:4860:4860::8844'],
+  },
+  {
+    value: 'alidns',
+    label: '阿里云公共 DNS（中国大陆）',
+    servers: ['223.5.5.5', '223.6.6.6'],
+    ipv6Servers: ['2400:3200::1', '2400:3200:baba::1'],
+  },
+  {
+    value: 'dnspod',
+    label: '腾讯 DNSPod（中国大陆）',
+    servers: ['119.29.29.29', '182.254.116.116'],
+    ipv6Servers: ['2402:4e00::', '2402:4e00:1::'],
+  },
+  {
+    value: 'quad9',
+    label: 'Quad9（安全拦截）',
+    servers: ['9.9.9.9', '149.112.112.112'],
+    ipv6Servers: ['2620:fe::fe', '2620:fe::9'],
+  },
 ] as const
+
+export type DNSPreset = (typeof dnsPresets)[number]
 
 export const timezonePresets = [
   { value: 'Asia/Shanghai', label: '中国大陆 · 上海（Asia/Shanghai）' },
@@ -41,7 +68,14 @@ export function parseDNSServers(value: string): string[] {
 
 export function detectDNSPreset(value: string): string {
   const servers = parseDNSServers(value)
-  return dnsPresets.find((preset) => preset.servers.join('\n') === servers.join('\n'))?.value || customPreset
+  return dnsPresets.find((preset) =>
+    [dnsServersForPreset(preset), dnsServersForPreset(preset, true)]
+      .some((candidate) => candidate.join('\n') === servers.join('\n')),
+  )?.value || customPreset
+}
+
+export function dnsServersForPreset(preset: DNSPreset, includeIPv6 = false): string[] {
+  return includeIPv6 ? [...preset.servers, ...preset.ipv6Servers] : [...preset.servers]
 }
 
 const educationMirrorHosts = [
