@@ -311,36 +311,19 @@ textarea:focus-visible,
 }
 
 .brand__mark {
-  position: relative;
-  display: grid;
+  display: block;
   width: 38px;
   height: 38px;
   flex: 0 0 auto;
-  place-items: center;
   overflow: hidden;
-  color: #fff;
-  background: linear-gradient(145deg, #43d3ae, #087a5f);
   border-radius: 11px;
   box-shadow: 0 8px 24px rgb(19 170 132 / 24%);
 }
 
-.brand__mark::after {
-  position: absolute;
-  right: -7px;
-  bottom: -8px;
-  width: 24px;
-  height: 24px;
-  content: "";
-  background: rgb(255 255 255 / 18%);
-  border-radius: 50%;
-}
-
-.brand__mark span {
-  position: relative;
-  z-index: 1;
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: -0.05em;
+.brand__mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .brand__text {
