@@ -1,4 +1,4 @@
-import { createSSRApp, ssrContextKey, type Ref } from 'vue'
+import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppsView from './AppsView.vue'
 import { ApiError } from '@/lib/api'
@@ -7,6 +7,7 @@ import type { AppInstallJob, AppMarketInventory, Site } from '@/types/api'
 const mocks = vi.hoisted(() => ({
   createSite: vi.fn(),
   listSites: vi.fn(),
+  removeSite: vi.fn(),
   inventory: vi.fn(),
   action: vi.fn(),
   checkUpdate: vi.fn(),
@@ -39,7 +40,7 @@ vi.mock('@/lib/api', () => ({
     sites: {
       create: mocks.createSite,
       list: mocks.listSites,
-      remove: vi.fn(),
+      remove: mocks.removeSite,
     },
     system: {
       publicNetwork: mocks.publicNetwork,
@@ -57,6 +58,8 @@ vi.mock('@/stores/toast', () => ({
 
 interface AppsBindings {
   inventory: Ref<AppMarketInventory | undefined>
+  filteredApps: ComputedRef<AppMarketInventory['items']>
+  selected: ComputedRef<AppMarketInventory['items'][number] | undefined>
   sites: Ref<Site[]>
   status: Ref<'all' | 'installed' | 'running' | 'adapted'>
   selectedID: Ref<string>
@@ -69,11 +72,14 @@ interface AppsBindings {
   jobDetailsOpen: Ref<boolean>
   confirmAction: Ref<'update' | 'uninstall' | undefined>
   load: (silent?: boolean) => Promise<void>
+  openDetails: (item: AppMarketInventory['items'][number]) => void
   lifecycle: (action: 'start' | 'stop' | 'restart') => Promise<void>
   checkUpdate: () => Promise<void>
   confirmMutation: () => Promise<void>
   refreshJob: (id: string) => Promise<void>
   addDomain: () => Promise<void>
+  removeDomain: (site: Site) => Promise<void>
+  toggleAccess: () => Promise<void>
   openScriptManage: () => Promise<void>
 }
 
@@ -267,6 +273,73 @@ describe('AppsView domain binding', () => {
     expect(view.sites.value).toEqual([created])
     expect(view.sitesWarning.value).toContain('当前显示上次成功读取的结果')
   })
+
+  it('refreshes a stale site version and retries domain removal once', async () => {
+    const stale = proxySite()
+    const fresh = { ...stale, resourceVersion: 'fresh-site-version' }
+    mocks.removeSite
+      .mockRejectedValueOnce(new ApiError('site resourceVersion changed', 409, 'resource_conflict'))
+      .mockResolvedValueOnce({ primaryDomain: stale.primaryDomain })
+    mocks.listSites
+      .mockResolvedValueOnce({ items: [fresh], total: 1 })
+      .mockResolvedValueOnce({ items: [], total: 0 })
+    mocks.inventory.mockResolvedValueOnce(inventory('current-version'))
+    mocks.publicNetwork.mockResolvedValueOnce(undefined)
+    const view = setupView()
+    view.inventory.value = inventory('current-version')
+    view.selectedID.value = 'builtin-13'
+    view.sites.value = [stale]
+
+    await view.removeDomain(stale)
+
+    expect(mocks.removeSite).toHaveBeenNthCalledWith(
+      1,
+      stale.id,
+      'site-version',
+      'configuration',
+    )
+    expect(mocks.removeSite).toHaveBeenNthCalledWith(
+      2,
+      fresh.id,
+      'fresh-site-version',
+      'configuration',
+    )
+    expect(view.domainError.value).toBe('')
+  })
+
+  it('refreshes a stale application version before changing direct access', async () => {
+    const job: AppInstallJob = {
+      id: 'access-job',
+      appId: 'builtin-13',
+      appName: 'Cloudreve',
+      action: 'direct_access',
+      status: 'queued',
+      stage: 'queued',
+      progress: 0,
+      logs: [],
+      createdAt: '2026-07-28T00:00:00Z',
+    }
+    mocks.action
+      .mockRejectedValueOnce(new ApiError('container resourceVersion changed', 409, 'resource_conflict'))
+      .mockResolvedValueOnce(job)
+    mocks.inventory.mockResolvedValueOnce(inventory('fresh-version'))
+    mocks.job.mockResolvedValue(job)
+    const view = setupView()
+    view.inventory.value = inventory('stale-version')
+    view.selectedID.value = 'builtin-13'
+
+    await view.toggleAccess()
+
+    expect(mocks.action).toHaveBeenNthCalledWith(1, 'builtin-13', 'direct_access', {
+      resourceVersion: 'stale-version',
+      accessMode: 'domain_only',
+    })
+    expect(mocks.action).toHaveBeenNthCalledWith(2, 'builtin-13', 'direct_access', {
+      resourceVersion: 'fresh-version',
+      accessMode: 'domain_only',
+    })
+    expect(view.activeJob.value?.id).toBe('access-job')
+  })
 })
 
 describe('AppsView update checks', () => {
@@ -325,6 +398,15 @@ describe('AppsView stopped applications', () => {
     expect(view.inventory.value?.items[0]?.runtime.state).toBe('exited')
     expect(view.inventory.value?.items[0]?.capabilities.update?.enabled).toBe(true)
     expect(view.inventory.value?.items[0]?.capabilities.uninstall?.enabled).toBe(true)
+
+    view.selectedID.value = ''
+    const stoppedItem = view.filteredApps.value[0]
+    if (!stoppedItem) throw new Error('stopped application disappeared from the installed filter')
+    view.openDetails(stoppedItem)
+
+    expect(view.selected.value?.id).toBe('builtin-13')
+    expect(view.selected.value?.runtime.state).toBe('exited')
+    expect(view.selected.value?.capabilities.start?.enabled).toBe(true)
   })
 })
 

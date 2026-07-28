@@ -66,6 +66,14 @@ describe('application access URL', () => {
     expect(appAccessURL(app(), [unavailable], '192.0.2.10')).toBe('http://192.0.2.10:18080')
   })
 
+  it('never combines the KPanel reverse-proxy hostname with an application port', () => {
+    expect(appAccessURL(app(), [], 'kpanel.example.com')).toBe('')
+  })
+
+  it('formats a source IPv6 address for direct access', () => {
+    expect(appAccessURL(app(), [], '2001:db8::10')).toBe('http://[2001:db8::10]:18080')
+  })
+
   it.each([
     'http://127.0.0.1:18080/',
     'http://localhost:18080',

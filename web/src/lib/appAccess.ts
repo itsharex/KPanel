@@ -31,7 +31,25 @@ export function matchingAppProxySites(item: AppMarketItem, sites: Site[]): Site[
   )
 }
 
-export function appAccessURL(item: AppMarketItem, sites: Site[], panelHostname: string): string {
+function directIPAddress(value: string): string {
+  const candidate = value.trim().replace(/^\[|\]$/g, '')
+  const octets = candidate.split('.')
+  if (
+    octets.length === 4 &&
+    octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)
+  ) {
+    return candidate
+  }
+  if (!candidate.includes(':')) return ''
+  try {
+    const parsed = new URL(`http://[${candidate}]/`)
+    return parsed.hostname ? `[${candidate}]` : ''
+  } catch {
+    return ''
+  }
+}
+
+export function appAccessURL(item: AppMarketItem, sites: Site[], directHost: string): string {
   const domain = matchingAppProxySites(item, sites).find((site) => site.enabled)
   if (domain) {
     const secure = domain.certificate?.status === 'valid' || domain.certificate?.status === 'expiring'
@@ -40,5 +58,6 @@ export function appAccessURL(item: AppMarketItem, sites: Site[], panelHostname: 
 
   const port = appPublicPort(item)
   if (!port || item.runtime.accessMode === 'domain_only') return ''
-  return `http://${panelHostname}:${port}`
+  const address = directIPAddress(directHost)
+  return address ? `http://${address}:${port}` : ''
 }

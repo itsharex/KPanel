@@ -2151,6 +2151,21 @@
       "iconSha256": "bf62c1ad991c80fd6fb74b3f953df360ff1fb4bb53c496d9e2204c31a7b98435"
     },
     {
+      "id": "thirdparty-kpanel",
+      "source": "thirdparty",
+      "cmd": "k app kpanel",
+      "token": "kpanel",
+      "name_zh": "KPanel",
+      "name_en": "KPanel",
+      "desc_zh": "贴合 kejilion.sh 的现代化 Linux Web 管理面板。",
+      "desc_en": "Modern Linux web admin panel tailored for kejilion.sh workflows.",
+      "cat": "ops",
+      "url": "https://hub.docker.com/r/kjlion/kejilion-panel",
+      "icon": "/app-icons/kpanel.webp",
+      "slug": "kpanel",
+      "iconSha256": "19ca9151548dcb4b82bbc48d4dc4bec62e8ef9d4bdaa90c27040281803253088"
+    },
+    {
       "id": "thirdparty-lsky-pro",
       "source": "thirdparty",
       "cmd": "k app lsky-pro",

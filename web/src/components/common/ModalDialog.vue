@@ -7,7 +7,7 @@ const props = withDefaults(
     open: boolean
     title: string
     description?: string
-    size?: 'small' | 'medium' | 'large'
+    size?: 'small' | 'medium' | 'large' | 'wide'
     allowFullscreen?: boolean
   }>(),
   {

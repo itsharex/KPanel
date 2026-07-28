@@ -141,16 +141,8 @@ func (s *Service) recoverInterruptedJobs() {
 			continue
 		}
 		if record.Adapter == "kejilion" {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			output, err := s.jobRunner.Run(
-				ctx,
-				"systemctl",
-				"is-active",
-				appJobUnitPrefix+record.ID+".service",
-			)
-			cancel()
-			state := strings.TrimSpace(string(output))
-			if err == nil && (state == "active" || state == "activating" || state == "reloading") {
+			running, known := s.scriptJobUnitState(record.ID)
+			if running || !known {
 				continue
 			}
 		}
@@ -176,16 +168,8 @@ func (s *Service) reconcileInactiveScriptJobs() {
 			s.now().Sub(record.CreatedAt) < appJobLaunchGrace {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		output, err := s.jobRunner.Run(
-			ctx,
-			"systemctl",
-			"is-active",
-			appJobUnitPrefix+record.ID+".service",
-		)
-		cancel()
-		state := strings.TrimSpace(string(output))
-		if err == nil && (state == "active" || state == "activating" || state == "reloading") {
+		running, known := s.scriptJobUnitState(record.ID)
+		if running || !known {
 			continue
 		}
 		latest, readErr := s.jobs.read(record.ID)
@@ -201,6 +185,33 @@ func (s *Service) reconcileInactiveScriptJobs() {
 		latest.FinishedAt = &finished
 		_ = s.jobs.put(latest)
 		_ = removeTerminalInput(s.jobs.inputPath(latest.ID))
+	}
+}
+
+func (s *Service) scriptJobUnitState(id string) (running bool, known bool) {
+	if s.jobRunner == nil || !appJobIDPattern.MatchString(id) {
+		return false, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	output, err := s.jobRunner.Run(
+		ctx,
+		"systemctl",
+		"show",
+		"--property=ActiveState",
+		"--value",
+		appJobUnitPrefix+id+".service",
+	)
+	if err != nil {
+		return false, false
+	}
+	switch strings.TrimSpace(string(output)) {
+	case "active", "activating", "reloading", "deactivating":
+		return true, true
+	case "inactive", "failed", "dead":
+		return false, true
+	default:
+		return false, false
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 )
 
 var appIDPattern = regexp.MustCompile(`^(?:builtin|thirdparty)-[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+var markerResourceVersionPattern = regexp.MustCompile(`^marker:sha256:[a-f0-9]{64}$`)
 
 type appActionInput struct {
 	HostPort        optionalInt    `json:"hostPort"`
@@ -99,6 +100,14 @@ func validateAppActionInput(action string, input appActionInput) (field, detail 
 		if input.HostPort.Set || input.AccessMode.Set {
 			return "request", "only resourceVersion is allowed for this action"
 		}
+	case "manage":
+		if !input.ResourceVersion.Set ||
+			!markerResourceVersionPattern.MatchString(input.ResourceVersion.Value) {
+			return "resourceVersion", "a valid marker resourceVersion is required"
+		}
+		if input.HostPort.Set || input.AccessMode.Set {
+			return "request", "only resourceVersion is allowed for this action"
+		}
 	case "direct_access":
 		if !input.ResourceVersion.Set || !resourceVersionPattern.MatchString(input.ResourceVersion.Value) {
 			return "resourceVersion", "a valid resourceVersion is required"
@@ -176,7 +185,7 @@ func allowedAppActionPath(publicPath string) (agentPath, appID, action string, a
 		return "", "", "", false
 	}
 	switch parts[1] {
-	case "install", "start", "stop", "restart", "check_update", "update", "uninstall", "direct_access":
+	case "install", "start", "stop", "restart", "check_update", "update", "uninstall", "direct_access", "manage":
 		return "/v1/apps/" + parts[0] + "/" + parts[1], parts[0], parts[1], true
 	default:
 		return "", "", "", false

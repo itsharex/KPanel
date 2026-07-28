@@ -7,9 +7,12 @@ import (
 
 func TestAllowedAppActionPath(t *testing.T) {
 	id := "builtin-64"
-	path, gotID, action, ok := allowedAppActionPath("/api/v1/apps/" + id + "/install")
-	if !ok || gotID != id || action != "install" || path != "/v1/apps/"+id+"/install" {
-		t.Fatalf("valid app path rejected: %q %q %q %v", path, gotID, action, ok)
+	for _, expectedAction := range []string{"install", "manage"} {
+		path, gotID, action, ok := allowedAppActionPath("/api/v1/apps/" + id + "/" + expectedAction)
+		if !ok || gotID != id || action != expectedAction ||
+			path != "/v1/apps/"+id+"/"+expectedAction {
+			t.Fatalf("valid app path rejected: %q %q %q %v", path, gotID, action, ok)
+		}
 	}
 	for _, value := range []string{
 		"/api/v1/apps/not valid/install",
@@ -34,6 +37,16 @@ func TestValidateAppActionInput(t *testing.T) {
 		ResourceVersion: optionalString{Value: validVersion, Set: true},
 	}); field != "" {
 		t.Fatalf("valid update rejected on %s", field)
+	}
+	if field, _ := validateAppActionInput("manage", appActionInput{
+		ResourceVersion: optionalString{Value: "marker:" + validVersion, Set: true},
+	}); field != "" {
+		t.Fatalf("valid script management request rejected on %s", field)
+	}
+	if field, _ := validateAppActionInput("manage", appActionInput{
+		ResourceVersion: optionalString{Value: validVersion, Set: true},
+	}); field != "resourceVersion" {
+		t.Fatalf("container resourceVersion was accepted for marker recovery on %q", field)
 	}
 	if field, _ := validateAppActionInput("direct_access", appActionInput{
 		ResourceVersion: optionalString{Value: validVersion, Set: true},

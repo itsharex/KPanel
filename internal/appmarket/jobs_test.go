@@ -11,8 +11,10 @@ import (
 )
 
 type fakeJobRunner struct {
-	mu    sync.Mutex
-	calls [][]string
+	mu        sync.Mutex
+	calls     [][]string
+	unitState string
+	unitErr   error
 }
 
 func (runner *fakeJobRunner) Run(_ context.Context, name string, arguments ...string) ([]byte, error) {
@@ -20,6 +22,16 @@ func (runner *fakeJobRunner) Run(_ context.Context, name string, arguments ...st
 	defer runner.mu.Unlock()
 	call := append([]string{name}, arguments...)
 	runner.calls = append(runner.calls, call)
+	if name == "systemctl" {
+		if runner.unitErr != nil {
+			return nil, runner.unitErr
+		}
+		state := runner.unitState
+		if state == "" {
+			state = "inactive"
+		}
+		return []byte(state + "\n"), nil
+	}
 	return nil, nil
 }
 
@@ -319,6 +331,86 @@ func TestInactiveScriptJobAutomaticallyReleasesTaskLock(t *testing.T) {
 	}
 	if service.jobs.hasActive() {
 		t.Fatal("stale task still blocked a new install")
+	}
+}
+
+func TestActivatingScriptJobRemainsActivePastLaunchGrace(t *testing.T) {
+	root := t.TempDir()
+	service, err := New(&fakeDocker{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeJobRunner{unitState: "activating"}
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		runner,
+	); err != nil {
+		t.Fatal(err)
+	}
+	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+
+	job, err := service.StartInstall(context.Background(), "builtin-4", InstallInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := service.jobs.read(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.CreatedAt = service.now().Add(-appJobLaunchGrace - time.Second)
+	if err := service.jobs.put(record); err != nil {
+		t.Fatal(err)
+	}
+
+	history := service.AppJobs()
+	if len(history) != 1 ||
+		(history[0].Status != "queued" && history[0].Status != "running") {
+		t.Fatalf("activating systemd job was interrupted: %#v", history)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	lastCall := runner.calls[len(runner.calls)-1]
+	if strings.Join(lastCall, " ") !=
+		"systemctl show --property=ActiveState --value "+appJobUnitPrefix+job.ID+".service" {
+		t.Fatalf("systemd state probe = %#v", lastCall)
+	}
+}
+
+func TestUnknownScriptJobUnitStateDoesNotInterruptTask(t *testing.T) {
+	root := t.TempDir()
+	service, err := New(&fakeDocker{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeJobRunner{}
+	if err := service.configureJobs(
+		filepath.Join(root, "jobs"),
+		filepath.Join(root, "kejilion-agent"),
+		runner,
+	); err != nil {
+		t.Fatal(err)
+	}
+	service.scriptInteractiveFinder = func() (string, error) { return "/usr/local/bin/k", nil }
+
+	job, err := service.StartInstall(context.Background(), "builtin-4", InstallInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := service.jobs.read(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.CreatedAt = service.now().Add(-appJobLaunchGrace - time.Second)
+	if err := service.jobs.put(record); err != nil {
+		t.Fatal(err)
+	}
+	runner.unitErr = errors.New("temporary systemd D-Bus failure")
+
+	history := service.AppJobs()
+	if len(history) != 1 ||
+		(history[0].Status != "queued" && history[0].Status != "running") {
+		t.Fatalf("unknown systemd state interrupted the task: %#v", history)
 	}
 }
 

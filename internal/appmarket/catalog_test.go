@@ -83,14 +83,15 @@ func TestEmbeddedCatalogMatchesAuditedApplicationMarket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Apps) != 146 || len(legacy) != 115 {
-		t.Fatalf("catalog counts = %d/%d, want 146/115", len(catalog.Apps), len(legacy))
+	if len(catalog.Apps) != 147 || len(legacy) != 115 {
+		t.Fatalf("catalog counts = %d/%d, want 147/115", len(catalog.Apps), len(legacy))
 	}
 	if !strings.HasPrefix(catalog.Source, "https://app.kejilion.sh") ||
 		len(scriptSHA256) != 64 {
 		t.Fatalf("catalog provenance is incomplete: source=%q hash=%q", catalog.Source, scriptSHA256)
 	}
 	icons := make(map[string]bool, len(catalog.Apps))
+	foundKPanel := false
 	for _, app := range catalog.Apps {
 		if !strings.HasPrefix(app.Icon, "/app-icons/") || len(app.IconSHA256) != 64 {
 			t.Fatalf("invalid local icon metadata for %s", app.ID)
@@ -99,6 +100,13 @@ func TestEmbeddedCatalogMatchesAuditedApplicationMarket(t *testing.T) {
 			t.Fatalf("duplicate icon path %s", app.Icon)
 		}
 		icons[app.Icon] = true
+		if app.Token == "kpanel" {
+			foundKPanel = app.Icon == "/app-icons/kpanel.webp" &&
+				app.IconSHA256 == "19ca9151548dcb4b82bbc48d4dc4bec62e8ef9d4bdaa90c27040281803253088"
+		}
+	}
+	if !foundKPanel {
+		t.Fatal("KPanel local application icon is missing or has an unexpected digest")
 	}
 }
 
@@ -122,7 +130,7 @@ func TestInventoryCombinesDockerTruthAndScriptMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inventory.Items) != 146 || inventory.Installed != 2 || inventory.Running != 1 {
+	if len(inventory.Items) != 147 || inventory.Installed != 2 || inventory.Running != 1 {
 		t.Fatalf("inventory counts are wrong: %#v", inventory)
 	}
 	var speedtest, itTools Summary

@@ -73,6 +73,9 @@ const selectedPort = computed(() => selected.value?.runtime.ports.find((port) =>
 const selectedDomains = computed(() =>
   selected.value ? matchingAppProxySites(selected.value, sites.value) : [],
 )
+const applicationTaskActive = computed(
+  () => Boolean(activeJob.value) && isActiveJob(activeJob.value),
+)
 
 const filteredApps = computed(() => {
   const needle = search.value.trim().toLowerCase()
@@ -444,15 +447,38 @@ async function openScriptManage(): Promise<void> {
 }
 
 async function toggleAccess(): Promise<void> {
-  const item = selected.value
-  if (!item?.runtime.resourceVersion || !capability(item, 'direct_access')) return
+  let item = selected.value
+  if (
+    applicationTaskActive.value ||
+    !item?.runtime.resourceVersion ||
+    !capability(item, 'direct_access')
+  ) return
   const next = item.runtime.accessMode === 'domain_only' ? 'direct' : 'domain_only'
   operation.value = 'direct_access'
   try {
-    const result = await api.apps.action(item.id, 'direct_access', {
-      resourceVersion: item.runtime.resourceVersion,
-      accessMode: next,
-    })
+    let result
+    try {
+      result = await api.apps.action(item.id, 'direct_access', {
+        resourceVersion: item.runtime.resourceVersion,
+        accessMode: next,
+      })
+    } catch (reason) {
+      if (!(reason instanceof ApiError) || reason.code !== 'resource_conflict') throw reason
+      const refreshedInventory = await api.apps.inventory()
+      inventory.value = refreshedInventory
+      const refreshed = refreshedInventory.items.find((candidate) => candidate.id === item?.id)
+      if (
+        !refreshed?.runtime.resourceVersion ||
+        !capability(refreshed, 'direct_access')
+      ) {
+        throw reason
+      }
+      item = refreshed
+      result = await api.apps.action(refreshed.id, 'direct_access', {
+        resourceVersion: refreshed.runtime.resourceVersion,
+        accessMode: next,
+      })
+    }
     if (isBackgroundJob(result)) {
       startJobPolling(result)
       jobDetailsOpen.value = true
@@ -471,7 +497,7 @@ async function toggleAccess(): Promise<void> {
 async function addDomain(): Promise<void> {
   const item = selected.value
   const port = selectedPort.value?.publicPort
-  if (!item || !port || !domain.value.trim()) return
+  if (applicationTaskActive.value || !item || !port || !domain.value.trim()) return
   domainError.value = ''
   domainWarning.value = ''
   operation.value = 'add_domain'
@@ -526,15 +552,30 @@ async function addDomain(): Promise<void> {
 }
 
 async function removeDomain(site: Site): Promise<void> {
+  if (applicationTaskActive.value) return
   operation.value = `remove_domain:${site.id}`
   domainError.value = ''
   domainWarning.value = ''
   try {
-    await api.sites.remove(
-      site.id,
-      site.resourceVersion,
-      'configuration',
-    )
+    let removed = false
+    try {
+      await api.sites.remove(site.id, site.resourceVersion, 'configuration')
+      removed = true
+    } catch (reason) {
+      if (!(reason instanceof ApiError) || reason.code !== 'resource_conflict') throw reason
+      const refreshed = await api.sites.list()
+      sites.value = refreshed.items
+      const current = refreshed.items.find(
+        (candidate) =>
+          candidate.id === site.id ||
+          candidate.primaryDomain === site.primaryDomain,
+      )
+      if (current) {
+        await api.sites.remove(current.id, current.resourceVersion, 'configuration')
+      }
+      removed = true
+    }
+    if (!removed) return
     toast.success('域名已解绑', `${site.primaryDomain} 的反向代理已移除。`)
     await load(true)
   } catch (reason) {
@@ -545,7 +586,11 @@ async function removeDomain(site: Site): Promise<void> {
 }
 
 function openURL(item: AppMarketItem): string {
-  return appAccessURL(item, sites.value, window.location.hostname)
+  const directHost =
+    publicNetwork.value?.ipv4 ||
+    publicNetwork.value?.ipv6 ||
+    window.location.hostname
+  return appAccessURL(item, sites.value, directHost)
 }
 
 onMounted(() => {
@@ -687,7 +732,9 @@ onBeforeUnmount(() => {
         :class="{ 'is-installed': item.runtime.installed }"
       >
         <button class="app-card__main" type="button" @click="openDetails(item)">
-          <span class="app-card__icon"><img :src="item.icon" :alt="`${item.name_zh} 图标`" loading="lazy" /></span>
+          <span class="app-card__icon">
+            <img :src="item.icon" :alt="`${item.name_zh} 图标`" width="128" height="128" loading="lazy" />
+          </span>
           <span class="app-card__body">
             <span class="app-card__title">
               <strong>{{ item.name_zh }}</strong>
@@ -753,12 +800,14 @@ onBeforeUnmount(() => {
       :open="Boolean(selected) && !installOpen && !confirmAction"
       :title="selected?.name_zh || '应用详情'"
       :description="selected?.desc_zh"
-      size="large"
+      size="wide"
       @close="selectedID = ''"
     >
       <template v-if="selected">
         <div class="app-detail-head">
-          <span class="app-detail-head__icon"><img :src="selected.icon" alt="" /></span>
+          <span class="app-detail-head__icon">
+            <img :src="selected.icon" alt="" width="128" height="128" />
+          </span>
           <div>
             <span class="app-detail-head__badges">
               <StatusBadge
@@ -810,7 +859,7 @@ onBeforeUnmount(() => {
               v-if="capability(selected, 'manage')"
               class="button button--secondary"
               type="button"
-              :disabled="Boolean(operation)"
+              :disabled="Boolean(operation) || applicationTaskActive"
               title="打开该应用对应的 kejilion.sh 原生交互菜单"
               @click="openScriptManage"
             >
@@ -821,7 +870,7 @@ onBeforeUnmount(() => {
               v-if="capability(selected, 'start')"
               class="button button--secondary"
               type="button"
-              :disabled="Boolean(operation)"
+              :disabled="Boolean(operation) || applicationTaskActive"
               @click="lifecycle('start')"
             >
               <Play :size="15" /> 启动
@@ -830,7 +879,7 @@ onBeforeUnmount(() => {
               v-if="capability(selected, 'stop')"
               class="button button--secondary"
               type="button"
-              :disabled="Boolean(operation)"
+              :disabled="Boolean(operation) || applicationTaskActive"
               @click="lifecycle('stop')"
             >
               <Square :size="14" /> 停止
@@ -839,7 +888,7 @@ onBeforeUnmount(() => {
               v-if="capability(selected, 'restart')"
               class="button button--secondary"
               type="button"
-              :disabled="Boolean(operation)"
+              :disabled="Boolean(operation) || applicationTaskActive"
               @click="lifecycle('restart')"
             >
               <RotateCw :size="15" /> 重启
@@ -848,7 +897,7 @@ onBeforeUnmount(() => {
               v-if="capability(selected, 'check_update')"
               class="button button--secondary"
               type="button"
-              :disabled="Boolean(operation)"
+              :disabled="Boolean(operation) || applicationTaskActive"
               @click="checkUpdate"
             >
               <LoaderCircle v-if="operation === 'check_update'" class="spin" :size="15" />
@@ -889,7 +938,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-if="selected.runtime.installed" class="app-detail-grid">
-          <section class="app-detail-section">
+          <section class="app-detail-section app-detail-section--domain">
             <header><Globe2 :size="18" /><div><strong>域名访问</strong><small>复用 KPanel 网站反向代理</small></div></header>
             <div v-if="selectedDomains.length" class="domain-list">
               <div
@@ -903,7 +952,7 @@ onBeforeUnmount(() => {
                 <button
                   class="icon-button icon-button--small icon-button--danger"
                   type="button"
-                  :disabled="Boolean(operation)"
+                  :disabled="Boolean(operation) || applicationTaskActive"
                   aria-label="解绑域名"
                   @click="removeDomain(site)"
                 >
@@ -917,7 +966,11 @@ onBeforeUnmount(() => {
                 <span>添加域名</span>
                 <input v-model.trim="domain" placeholder="app.example.com" autocomplete="off" required />
               </label>
-              <button class="button button--secondary" type="submit" :disabled="operation === 'add_domain' || !domain">
+              <button
+                class="button button--secondary"
+                type="submit"
+                :disabled="operation === 'add_domain' || applicationTaskActive || !domain"
+              >
                 <LoaderCircle v-if="operation === 'add_domain'" class="spin" :size="15" />
                 <Globe2 v-else :size="15" /> 绑定
               </button>
@@ -935,7 +988,7 @@ onBeforeUnmount(() => {
             />
           </section>
 
-          <section class="app-detail-section">
+          <section class="app-detail-section app-detail-section--access">
             <header><Network :size="18" /><div><strong>IP + 端口访问</strong><small>通过容器监听地址切换，不写入全局防火墙</small></div></header>
             <div class="access-card">
               <span :class="selected.runtime.accessMode === 'domain_only' ? 'is-locked' : 'is-open'">
@@ -949,7 +1002,7 @@ onBeforeUnmount(() => {
               <button
                 class="button button--secondary button--small"
                 type="button"
-                :disabled="!capability(selected, 'direct_access') || Boolean(operation)"
+                :disabled="!capability(selected, 'direct_access') || Boolean(operation) || applicationTaskActive"
                 :title="selected.capabilities.direct_access?.reason"
                 @click="toggleAccess"
               >
@@ -967,7 +1020,7 @@ onBeforeUnmount(() => {
           <button
             class="button button--secondary"
             type="button"
-            :disabled="!capability(selected, 'update') || Boolean(operation)"
+            :disabled="!capability(selected, 'update') || Boolean(operation) || applicationTaskActive"
             :title="selected.capabilities.update?.reason"
             @click="confirmAction = 'update'"
           >
@@ -976,7 +1029,7 @@ onBeforeUnmount(() => {
           <button
             class="button button--danger"
             type="button"
-            :disabled="!capability(selected, 'uninstall') || Boolean(operation)"
+            :disabled="!capability(selected, 'uninstall') || Boolean(operation) || applicationTaskActive"
             :title="selected.capabilities.uninstall?.reason"
             @click="confirmAction = 'uninstall'"
           >
@@ -1479,15 +1532,15 @@ onBeforeUnmount(() => {
 .app-detail-head {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  gap: 15px;
+  gap: 12px;
   align-items: center;
-  margin-bottom: 18px;
+  margin-bottom: 10px;
 }
 
 .app-detail-head__icon {
-  width: 66px;
-  height: 66px;
-  border-radius: 18px;
+  width: 56px;
+  height: 56px;
+  border-radius: 15px;
 }
 
 .app-detail-head > div {
@@ -1510,8 +1563,10 @@ onBeforeUnmount(() => {
 }
 
 .app-control-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   overflow: hidden;
-  margin-bottom: 18px;
+  margin-bottom: 10px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--surface-muted);
@@ -1525,7 +1580,7 @@ onBeforeUnmount(() => {
 .app-control-panel__status > div {
   display: grid;
   gap: 5px;
-  padding: 16px;
+  padding: 10px 12px;
 }
 
 .app-control-panel__status > div + div {
@@ -1540,11 +1595,18 @@ onBeforeUnmount(() => {
 
 .app-control-panel__actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  padding: 11px;
-  border-top: 1px solid var(--border);
+  padding: 9px 10px;
+  border-left: 1px solid var(--border);
   background: var(--surface);
+}
+
+.app-control-panel__actions .button {
+  min-height: 34px;
+  padding: 7px 10px;
 }
 
 .app-install-state {
@@ -1569,11 +1631,11 @@ onBeforeUnmount(() => {
 .app-detail-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 14px;
+  gap: 9px;
 }
 
 .app-detail-section {
-  padding: 16px;
+  padding: 11px 12px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--surface);
@@ -1583,7 +1645,7 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 10px;
   align-items: center;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
   color: var(--market-accent);
 }
 
@@ -1602,17 +1664,56 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
+.app-detail-section--domain {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.36fr) minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: end;
+}
+
+.app-detail-section--domain > header {
+  align-self: center;
+  margin-bottom: 0;
+}
+
+.app-detail-section--domain > .domain-list,
+.app-detail-section--domain > .domain-form {
+  grid-column: 2;
+}
+
+.app-detail-section--domain > .domain-list {
+  margin-bottom: 0;
+}
+
+.app-detail-section--domain > :deep(.dns-guide),
+.app-detail-section--domain > .field-warning,
+.app-detail-section--domain > .field-error,
+.app-detail-section--domain > .muted-note {
+  grid-column: 1 / -1;
+}
+
+.app-detail-section--access {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.55fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.app-detail-section--access > header {
+  margin-bottom: 0;
+}
+
 .domain-list {
   display: grid;
   gap: 6px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .domain-list__item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px 10px;
+  padding: 6px 9px;
   border-radius: 10px;
   background: var(--surface-muted);
 }
@@ -1658,15 +1759,15 @@ onBeforeUnmount(() => {
   grid-template-columns: auto 1fr auto;
   gap: 10px;
   align-items: center;
-  padding: 12px;
+  padding: 8px 10px;
   border-radius: 12px;
   background: var(--surface-muted);
 }
 
 .access-card > span {
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   place-items: center;
   border-radius: 11px;
 }
@@ -1696,8 +1797,8 @@ onBeforeUnmount(() => {
   grid-template-columns: 1fr auto auto;
   gap: 9px;
   align-items: center;
-  margin-top: 14px;
-  padding-top: 14px;
+  margin-top: 9px;
+  padding-top: 9px;
   border-top: 1px solid var(--border);
 }
 
@@ -1972,6 +2073,34 @@ onBeforeUnmount(() => {
 
   .app-detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .app-control-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .app-control-panel__actions {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .app-detail-section--domain,
+  .app-detail-section--access {
+    grid-template-columns: 1fr;
+  }
+
+  .app-detail-section--domain > header,
+  .app-detail-section--access > header {
+    margin-bottom: 8px;
+  }
+
+  .app-detail-section--domain > .domain-list,
+  .app-detail-section--domain > .domain-form,
+  .app-detail-section--domain > :deep(.dns-guide),
+  .app-detail-section--domain > .field-warning,
+  .app-detail-section--domain > .field-error,
+  .app-detail-section--domain > .muted-note {
+    grid-column: 1;
   }
 }
 

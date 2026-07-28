@@ -213,10 +213,38 @@ async function copy(value: string): Promise<void> {
 }
 
 .dns-guide--compact {
-  padding: 12px;
+  grid-template-columns: minmax(190px, 0.8fr) minmax(0, 1.2fr);
+  gap: 7px 10px;
+  padding: 9px 10px;
+}
+
+.dns-guide--compact header {
+  grid-row: 1 / span 2;
+}
+
+.dns-guide--compact .dns-guide__records,
+.dns-guide--compact nav {
+  grid-column: 2;
+}
+
+.dns-guide--compact .dns-guide__records button,
+.dns-guide--compact nav a {
+  min-height: 28px;
+  padding: 3px 7px;
 }
 
 @media (max-width: 640px) {
+  .dns-guide--compact {
+    grid-template-columns: 1fr;
+  }
+
+  .dns-guide--compact header,
+  .dns-guide--compact .dns-guide__records,
+  .dns-guide--compact nav {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
   .dns-guide__records button {
     flex: 1 1 100%;
   }

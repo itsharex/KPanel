@@ -101,6 +101,33 @@ func TestThirdPartyScriptAppUsesVerifiedMainContainerAndLifecycleProtocol(t *tes
 	); !scriptBacked || err == nil {
 		t.Fatalf("stale mutation was accepted: script=%v err=%v", scriptBacked, err)
 	}
+	job, scriptBacked, err := service.StartScriptMutation(
+		context.Background(),
+		item.ID,
+		"direct_access",
+		MutationInput{
+			ResourceVersion: item.Runtime.ResourceVersion,
+			AccessMode:      "direct",
+		},
+	)
+	if err != nil || !scriptBacked {
+		t.Fatalf("direct access mutation was rejected: script=%v err=%v", scriptBacked, err)
+	}
+	record, err := service.jobs.read(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.Interactive || record.AccessMode != "direct" ||
+		record.ExpectedContainerID != containerID {
+		t.Fatalf("direct access job lost its verified target: %#v", record)
+	}
+	if len(runner.calls) != 1 ||
+		!strings.Contains(
+			strings.Join(runner.calls[0], " "),
+			"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+		) {
+		t.Fatalf("direct access job cannot use iptables-nft netlink: %#v", runner.calls)
+	}
 }
 
 func TestStoppedThirdPartyContainerRemainsManageableWithoutLegacyMarker(t *testing.T) {

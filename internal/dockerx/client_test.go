@@ -31,8 +31,10 @@ func TestContainersBoundsParallelInspectWork(t *testing.T) {
 	var active atomic.Int32
 	var maximum atomic.Int32
 	var inspections atomic.Int32
+	var includedStopped atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/containers/json" {
+			includedStopped.Store(r.URL.Query().Get("all") == "1")
 			_ = json.NewEncoder(w).Encode(items)
 			return
 		}
@@ -64,6 +66,9 @@ func TestContainersBoundsParallelInspectWork(t *testing.T) {
 	}
 	if maximum.Load() <= 1 || maximum.Load() > 4 {
 		t.Fatalf("maximum parallel inspections = %d; want 2..4", maximum.Load())
+	}
+	if !includedStopped.Load() {
+		t.Fatal("container inventory did not request stopped containers")
 	}
 }
 
