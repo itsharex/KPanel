@@ -164,7 +164,7 @@ func (s *Server) handleSiteInstallationInput(w http.ResponseWriter, r *http.Requ
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
 		return
 	}
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func (s *Server) handleDiagnosticInput(w http.ResponseWriter, r *http.Request) {
@@ -213,7 +213,7 @@ func (s *Server) handleDiagnosticInput(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
 		return
 	}
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
@@ -316,7 +316,7 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 		result = "success"
 	}
 	_ = s.audit(r, session.User.ID, "site.delete", "site", siteID, result, change)
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func (s *Server) handleSiteWrite(
@@ -377,7 +377,7 @@ func (s *Server) handleSiteWrite(
 		result = "success"
 	}
 	_ = s.audit(r, session.User.ID, action, "site", targetID, result, change)
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func validateSiteWriteInput(input *siteWriteInput, create bool) (field, detail string) {

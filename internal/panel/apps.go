@@ -77,7 +77,7 @@ func (s *Server) handleAppAction(w http.ResponseWriter, r *http.Request) {
 		result = "success"
 	}
 	_ = s.audit(r, session.User.ID, "app."+action, "application", appID, result, change)
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func validateAppActionInput(action string, input appActionInput) (field, detail string) {
@@ -162,7 +162,7 @@ func (s *Server) handleAppJobInput(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
 		return
 	}
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func allowedAppActionPath(publicPath string) (agentPath, appID, action string, allowed bool) {

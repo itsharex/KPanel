@@ -2,13 +2,14 @@
 
 ARG BUILDPLATFORM
 
-FROM --platform=$BUILDPLATFORM node:24.17.0-alpine@sha256:156b55f92e98ccd5ef49578a8cea0df4679826564bad1c9d4ef04462b9f0ded6 AS web-build
+FROM --platform=$BUILDPLATFORM node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS web-build
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     --mount=type=secret,id=https_proxy,required=false \
     sh -eu -c 'if [ -f /run/secrets/https_proxy ]; then export HTTPS_PROXY="$(cat /run/secrets/https_proxy)"; fi; npm ci'
 COPY web/index.html web/tsconfig.json web/vite.config.ts ./
+COPY web/scripts/ ./scripts/
 COPY web/src/ ./src/
 COPY web/public/ ./public/
 RUN npm run build

@@ -3,7 +3,7 @@ NPM ?= npm
 VERSION := $(shell tr -d '\r\n' < VERSION)
 LDFLAGS := -s -w -X github.com/kejilion/kejilion-panel/internal/version.Version=$(VERSION)
 
-.PHONY: fmt test test-go test-web test-deploy verify-change verify-l2 verify-release build build-web build-linux build-linux-binaries clean
+.PHONY: fmt test test-go test-web test-deploy security-audit verify-change verify-l2 verify-release build build-web build-linux build-linux-binaries clean
 
 fmt:
 	$(GO) fmt ./...
@@ -18,6 +18,10 @@ test-web:
 
 test-deploy:
 	sh deploy/tests/install-safety.sh
+
+security-audit:
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+	$(NPM) audit --prefix web --audit-level=high
 
 verify-change:
 	bash scripts/verify-change.sh

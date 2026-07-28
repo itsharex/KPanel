@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,12 +19,57 @@ type AgentClient struct {
 	tokenFile  string
 	maxBytes   int64
 	client     *http.Client
+	reads      agentReadGroup
 }
 
 type AgentResponse struct {
 	StatusCode  int
 	ContentType string
 	Body        []byte
+}
+
+type agentReadCall struct {
+	done     chan struct{}
+	response AgentResponse
+	err      error
+}
+
+// agentReadGroup coalesces identical in-flight reads without caching their
+// result. This avoids repeated Docker inspections during parallel UI refreshes
+// while ensuring every new refresh still observes live state.
+type agentReadGroup struct {
+	mu    sync.Mutex
+	calls map[string]*agentReadCall
+}
+
+func (g *agentReadGroup) do(
+	ctx context.Context,
+	key string,
+	read func() (AgentResponse, error),
+) (AgentResponse, error, bool) {
+	g.mu.Lock()
+	if g.calls == nil {
+		g.calls = make(map[string]*agentReadCall)
+	}
+	if call, ok := g.calls[key]; ok {
+		g.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.response, call.err, true
+		case <-ctx.Done():
+			return AgentResponse{}, ctx.Err(), true
+		}
+	}
+	call := &agentReadCall{done: make(chan struct{})}
+	g.calls[key] = call
+	g.mu.Unlock()
+
+	call.response, call.err = read()
+	g.mu.Lock()
+	delete(g.calls, key)
+	close(call.done)
+	g.mu.Unlock()
+	return call.response, call.err, false
 }
 
 func NewAgentClient(socketPath, tokenFile string, maxBytes int64) *AgentClient {
@@ -52,7 +98,16 @@ func NewAgentClient(socketPath, tokenFile string, maxBytes int64) *AgentClient {
 }
 
 func (c *AgentClient) Get(ctx context.Context, path, rawQuery, requestID string) (AgentResponse, error) {
-	return c.Do(ctx, http.MethodGet, path, rawQuery, requestID, nil)
+	key := path + "?" + rawQuery
+	response, err, shared := c.reads.do(ctx, key, func() (AgentResponse, error) {
+		return c.Do(ctx, http.MethodGet, path, rawQuery, requestID, nil)
+	})
+	// Agent problem documents carry the originating request ID. Retry a shared
+	// failure so each caller receives an independently traceable error.
+	if shared && (err != nil || response.StatusCode >= http.StatusBadRequest) {
+		return c.Do(ctx, http.MethodGet, path, rawQuery, requestID, nil)
+	}
+	return response, err
 }
 
 func (c *AgentClient) Open(ctx context.Context, method, path, rawQuery, requestID string) (*http.Response, error) {

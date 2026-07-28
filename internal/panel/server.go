@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -86,7 +88,7 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.setSecurityHeaders(w)
+	s.setSecurityHeaders(w, r)
 	requestID := newRequestID()
 	w.Header().Set("X-Request-ID", requestID)
 	r = r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
@@ -220,7 +222,7 @@ func (s *Server) handleDockerAction(w http.ResponseWriter, r *http.Request) {
 		result = "success"
 	}
 	_ = s.audit(r, session.User.ID, "docker."+action, "container", containerID, result, change)
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func (s *Server) handleDockerExec(w http.ResponseWriter, r *http.Request) {
@@ -281,7 +283,7 @@ func (s *Server) handleDockerExec(w http.ResponseWriter, r *http.Request) {
 		outcome = "success"
 	}
 	_ = s.audit(r, session.User.ID, "docker.exec", "container", id, outcome, change)
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func (s *Server) handleDockerTask(w http.ResponseWriter, r *http.Request) {
@@ -313,7 +315,7 @@ func (s *Server) handleDockerTask(w http.ResponseWriter, r *http.Request) {
 		outcome = "failure"
 	}
 	_ = s.audit(r, session.User.ID, "docker."+input.Action, "docker", input.Target, outcome, nil)
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
@@ -543,11 +545,28 @@ func (s *Server) handleAgentProxy(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
 		return
 	}
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
-func (s *Server) writeAgentResponse(w http.ResponseWriter, response AgentResponse) {
+func (s *Server) writeAgentResponse(w http.ResponseWriter, r *http.Request, response AgentResponse) {
 	w.Header().Set("Content-Type", response.ContentType)
+	if len(response.Body) >= 1024 &&
+		r.Method != http.MethodHead &&
+		r.Header.Get("Range") == "" &&
+		acceptsGzip(r.Header.Get("Accept-Encoding")) &&
+		isCompressibleContentType(response.ContentType) {
+		var compressed bytes.Buffer
+		writer, err := gzip.NewWriterLevel(&compressed, gzip.BestSpeed)
+		if err == nil {
+			_, writeErr := writer.Write(response.Body)
+			closeErr := writer.Close()
+			if writeErr == nil && closeErr == nil && compressed.Len() < len(response.Body) {
+				addVary(w.Header(), "Accept-Encoding")
+				w.Header().Set("Content-Encoding", "gzip")
+				response.Body = compressed.Bytes()
+			}
+		}
+	}
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(response.Body)
 }
@@ -905,12 +924,19 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func (s *Server) setSecurityHeaders(w http.ResponseWriter) {
+func (s *Server) setSecurityHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	if r.TLS != nil {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+	} else if _, trustedProxyHTTPS := s.trustedProxyHTTPSOrigin(r); trustedProxyHTTPS {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+	}
 }
 
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
@@ -936,12 +962,7 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if regular {
-		if filepath.Base(candidate) == "index.html" {
-			w.Header().Set("Cache-Control", "no-cache")
-		} else {
-			w.Header().Set("Cache-Control", "public, max-age=3600")
-		}
-		http.ServeFile(w, r, candidate)
+		s.serveStaticFile(w, r, root, candidate, requestPath)
 		return
 	}
 	index := filepath.Join(root, "index.html")
@@ -950,8 +971,87 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-cache")
-	http.ServeFile(w, r, index)
+	s.serveStaticFile(w, r, root, index, "index.html")
+}
+
+func (s *Server) serveStaticFile(
+	w http.ResponseWriter,
+	r *http.Request,
+	root string,
+	candidate string,
+	requestPath string,
+) {
+	if filepath.Base(candidate) == "index.html" {
+		w.Header().Set("Cache-Control", "no-cache")
+	} else if strings.HasPrefix(filepath.ToSlash(requestPath), "assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+	}
+	if r.Header.Get("Range") == "" && acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		compressed := candidate + ".gz"
+		if regular, err := staticRegularFile(root, compressed); err == nil && regular {
+			if contentType := mime.TypeByExtension(filepath.Ext(candidate)); contentType != "" {
+				w.Header().Set("Content-Type", contentType)
+			}
+			addVary(w.Header(), "Accept-Encoding")
+			w.Header().Set("Content-Encoding", "gzip")
+			http.ServeFile(w, r, compressed)
+			return
+		}
+	}
+	http.ServeFile(w, r, candidate)
+}
+
+func acceptsGzip(header string) bool {
+	var wildcard bool
+	for _, part := range strings.Split(header, ",") {
+		fields := strings.Split(part, ";")
+		encoding := strings.ToLower(strings.TrimSpace(fields[0]))
+		quality := 1.0
+		for _, parameter := range fields[1:] {
+			key, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+			if ok && strings.EqualFold(strings.TrimSpace(key), "q") {
+				parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+				if err != nil {
+					quality = 0
+				} else {
+					quality = parsed
+				}
+			}
+		}
+		switch encoding {
+		case "gzip":
+			return quality > 0
+		case "*":
+			wildcard = quality > 0
+		}
+	}
+	return wildcard
+}
+
+func isCompressibleContentType(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(mediaType, "text/") ||
+		mediaType == "application/json" ||
+		mediaType == "application/problem+json" ||
+		mediaType == "application/javascript" ||
+		mediaType == "image/svg+xml" ||
+		strings.HasSuffix(mediaType, "+json")
+}
+
+func addVary(header http.Header, value string) {
+	for _, existing := range header.Values("Vary") {
+		for _, candidate := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(candidate), value) {
+				return
+			}
+		}
+	}
+	header.Add("Vary", value)
 }
 
 func staticRegularFile(root, candidate string) (bool, error) {

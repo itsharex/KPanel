@@ -56,7 +56,7 @@ func (s *Server) handleSystemAction(w http.ResponseWriter, r *http.Request) {
 		result = "success"
 	}
 	_ = s.audit(r, session.User.ID, action, "system", input.Action, result, change)
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func validateSystemAction(input *contract.SystemActionRequest) (string, string) {

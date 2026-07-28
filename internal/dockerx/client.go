@@ -176,18 +176,42 @@ func (c *Client) Containers(ctx context.Context) ([]contract.ContainerSummary, e
 	if err := c.getJSON(ctx, "/containers/json?all=1&size=0", &raw); err != nil {
 		return nil, err
 	}
-	result := make([]contract.ContainerSummary, 0, len(raw))
-	for _, item := range raw {
-		summary := c.summaryFromList(item)
-		inspect, err := c.inspect(ctx, item.ID)
-		if err == nil {
-			summary = c.summaryFromInspect(inspect)
-		} else {
-			summary.AllowedActions = []string{}
-			summary.OwnershipEvidence = append(summary.OwnershipEvidence, "容器详情读取失败，暂时无法确定可用动作")
-		}
-		result = append(result, summary)
+	result := make([]contract.ContainerSummary, len(raw))
+	workers := min(4, len(raw))
+	if workers == 0 {
+		return result, nil
 	}
+	indexes := make(chan int)
+	var group sync.WaitGroup
+	group.Add(workers)
+	for range workers {
+		go func() {
+			defer group.Done()
+			for index := range indexes {
+				item := raw[index]
+				summary := c.summaryFromList(item)
+				inspect, err := c.inspect(ctx, item.ID)
+				if err == nil {
+					summary = c.summaryFromInspect(inspect)
+				} else {
+					summary.AllowedActions = []string{}
+					summary.OwnershipEvidence = append(summary.OwnershipEvidence, "容器详情读取失败，暂时无法确定可用动作")
+				}
+				result[index] = summary
+			}
+		}()
+	}
+	for index := range raw {
+		select {
+		case indexes <- index:
+		case <-ctx.Done():
+			close(indexes)
+			group.Wait()
+			return nil, ctx.Err()
+		}
+	}
+	close(indexes)
+	group.Wait()
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil
 }

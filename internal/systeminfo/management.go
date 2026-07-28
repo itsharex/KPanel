@@ -127,11 +127,11 @@ func (c *Collector) readTimezone() string {
 
 func (c *Collector) readSwapConfiguration() contract.SwapConfiguration {
 	out := contract.SwapConfiguration{Path: c.SwapPath}
-	if info, err := os.Lstat(c.SwapPath); err == nil && info.Mode().IsRegular() {
+	if info, err := os.Lstat(c.SwapPath); err == nil && info.Mode().IsRegular() && info.Size() >= 0 {
 		out.FileExists = true
 		out.FileSizeBytes = uint64(info.Size())
 	}
-	if info, err := os.Lstat(c.LegacySwapPath); err == nil && info.Mode().IsRegular() {
+	if info, err := os.Lstat(c.LegacySwapPath); err == nil && info.Mode().IsRegular() && info.Size() >= 0 {
 		out.LegacyExists = true
 		out.LegacySizeBytes = uint64(info.Size())
 	}

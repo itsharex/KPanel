@@ -67,5 +67,5 @@ func (s *Server) handleDiagnosticStart(w http.ResponseWriter, r *http.Request) {
 		result = "success"
 	}
 	_ = s.audit(r, session.User.ID, "diagnostic.run", "diagnostic", input.CheckID, result, change)
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }

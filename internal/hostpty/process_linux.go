@@ -119,8 +119,12 @@ func writePlatformInput(path string, data []byte) error {
 				return errors.New("terminal input FIFO remained busy")
 			}
 			wait := min(remaining, 50*time.Millisecond)
+			fd := file.Fd()
+			if fd > uintptr(1<<31-1) {
+				return errors.New("terminal input FIFO descriptor is out of range")
+			}
 			ready, pollErr := unix.Poll(
-				[]unix.PollFd{{Fd: int32(file.Fd()), Events: unix.POLLOUT}},
+				[]unix.PollFd{{Fd: int32(fd), Events: unix.POLLOUT}},
 				int(wait.Milliseconds()),
 			)
 			if pollErr != nil && !errors.Is(pollErr, unix.EINTR) {

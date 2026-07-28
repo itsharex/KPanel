@@ -101,7 +101,9 @@ func LoadCatalog() (Catalog, map[int]LegacyApp, string, error) {
 	}
 	legacyByNumber := make(map[int]LegacyApp, len(legacy.Apps))
 	for _, item := range legacy.Apps {
-		if item.Num < 1 || item.Num > 115 || legacyByNumber[item.Num].Num != 0 {
+		if item.Num < 1 || item.Num > 115 ||
+			item.DefaultPort < 0 || item.DefaultPort > 65535 ||
+			legacyByNumber[item.Num].Num != 0 {
 			return Catalog{}, nil, "", errors.New("embedded legacy application map is invalid")
 		}
 		legacyByNumber[item.Num] = item

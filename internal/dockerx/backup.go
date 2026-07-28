@@ -260,9 +260,10 @@ func extractDockerBackup(
 		if header.Size < 0 || header.Size > 10<<30 || total+header.Size > maxDockerBackupBytes {
 			return nil, errors.New("Docker backup exceeds the restore safety limit")
 		}
-		if header.Uid < 0 || header.Gid < 0 ||
+		if header.Mode < 0 || header.Mode > int64(^uint32(0)) ||
+			header.Uid < 0 || header.Gid < 0 ||
 			header.Uid > 1<<31-1 || header.Gid > 1<<31-1 {
-			return nil, errors.New("Docker backup contains invalid numeric ownership")
+			return nil, errors.New("Docker backup contains invalid numeric metadata")
 		}
 		total += header.Size
 		target := filepath.Join(stageRoot, filepath.FromSlash(clean))

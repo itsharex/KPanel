@@ -67,7 +67,7 @@ func (s *Server) handleWebEnvironmentAction(w http.ResponseWriter, r *http.Reque
 		result = "accepted"
 	}
 	_ = s.audit(r, session.User.ID, "web.environment."+input.Action, "web_environment", target, result, change)
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }
 
 func (s *Server) handleWebEnvironmentBackupDownload(w http.ResponseWriter, r *http.Request) {
@@ -130,5 +130,5 @@ func (s *Server) handleWebEnvironmentInput(w http.ResponseWriter, r *http.Reques
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
 		return
 	}
-	s.writeAgentResponse(w, response)
+	s.writeAgentResponse(w, r, response)
 }

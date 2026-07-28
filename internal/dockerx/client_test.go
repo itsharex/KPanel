@@ -6,14 +6,66 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestContainersBoundsParallelInspectWork(t *testing.T) {
+	const count = 12
+	items := make([]containerListItem, 0, count)
+	for index := range count {
+		id := fmt.Sprintf("%064x", index+1)
+		items = append(items, containerListItem{
+			ID: id, Names: []string{"/container-" + strconv.Itoa(index)},
+			Image: "example:latest", State: "running",
+		})
+	}
+	var active atomic.Int32
+	var maximum atomic.Int32
+	var inspections atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/containers/json" {
+			_ = json.NewEncoder(w).Encode(items)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/containers/") && strings.HasSuffix(r.URL.Path, "/json") {
+			current := active.Add(1)
+			defer active.Add(-1)
+			for {
+				observed := maximum.Load()
+				if current <= observed || maximum.CompareAndSwap(observed, current) {
+					break
+				}
+			}
+			inspections.Add(1)
+			time.Sleep(20 * time.Millisecond)
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/containers/"), "/json")
+			_ = json.NewEncoder(w).Encode(managedInspect(id, "2026-07-28T00:00:00Z", 0))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	got, err := testHTTPClient(server).Containers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != count || inspections.Load() != count {
+		t.Fatalf("containers=%d inspections=%d; want %d", len(got), inspections.Load(), count)
+	}
+	if maximum.Load() <= 1 || maximum.Load() > 4 {
+		t.Fatalf("maximum parallel inspections = %d; want 2..4", maximum.Load())
+	}
+}
 
 func TestAllContainerOriginsExposeStateValidActions(t *testing.T) {
 	web := t.TempDir()

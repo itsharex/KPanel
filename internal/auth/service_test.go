@@ -12,6 +12,24 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/store"
 )
 
+func TestDefaultPasswordHashConcurrencyPreservesMemoryHeadroom(t *testing.T) {
+	directory := t.TempDir()
+	storage, err := store.Open(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	service, err := NewService(storage, testHasher(t), Config{
+		BootstrapTokenPath: filepath.Join(directory, "bootstrap.token"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cap(service.hashSlots); got != 1 {
+		t.Fatalf("default password hash concurrency = %d; want 1", got)
+	}
+}
+
 func TestBootstrapLoginSessionAndLogout(t *testing.T) {
 	directory := t.TempDir()
 	storage, err := store.Open(filepath.Join(directory, "state.json"))

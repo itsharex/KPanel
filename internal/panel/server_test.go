@@ -420,6 +420,9 @@ func TestTrustedHTTPSProxyAllowsKFDOriginAndSecureCookies(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("trusted HTTPS proxy was rejected: %d %s", response.Code, response.Body.String())
 	}
+	if got := response.Header().Get("Strict-Transport-Security"); got != "max-age=31536000" {
+		t.Fatalf("trusted HTTPS response HSTS = %q", got)
+	}
 	for _, cookie := range response.Result().Cookies() {
 		if !cookie.Secure {
 			t.Fatalf("proxy HTTPS cookie is not Secure: %#v", cookie)

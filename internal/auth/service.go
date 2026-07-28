@@ -108,7 +108,9 @@ func NewService(storage *store.Store, hasher PasswordHasher, config Config) (*Se
 		config.MaxLoginFailures = 5
 	}
 	if config.MaxConcurrentHashes <= 0 {
-		config.MaxConcurrentHashes = 2
+		// Argon2id intentionally uses 64 MiB per verification. One default slot
+		// keeps headroom inside the production 256 MiB cgroup during login bursts.
+		config.MaxConcurrentHashes = 1
 	}
 	if config.MaxConcurrentHashes > 8 {
 		return nil, errors.New("max concurrent password hashes must not exceed 8")

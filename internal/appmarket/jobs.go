@@ -235,6 +235,9 @@ func (s *Service) StartInstall(
 	if !item.Capabilities["install"].Enabled {
 		return AppJob{}, fmt.Errorf("%w: %s", ErrForbidden, item.Capabilities["install"].Reason)
 	}
+	if item.DefaultPort < 0 || item.DefaultPort > 65535 {
+		return AppJob{}, fmt.Errorf("%w: application default port is invalid", ErrUnsupported)
+	}
 	if input.HostPort == 0 {
 		input.HostPort = uint16(item.DefaultPort)
 	}

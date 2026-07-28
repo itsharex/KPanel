@@ -94,7 +94,7 @@ func (h *Argon2idHasher) Verify(password, encoded string) (bool, error) {
 		params.Iterations,
 		params.MemoryKiB,
 		params.Threads,
-		uint32(len(expected)),
+		params.KeyLength,
 	)
 	return subtle.ConstantTimeCompare(actual, expected) == 1, nil
 }
@@ -133,6 +133,9 @@ func parseArgon2id(encoded string) (Argon2idParams, []byte, []byte, error) {
 	}
 	key, err := encoding.DecodeString(parts[5])
 	if err != nil {
+		return Argon2idParams{}, nil, nil, ErrInvalidPasswordHash
+	}
+	if len(salt) < 16 || len(salt) > 64 || len(key) < 16 || len(key) > 64 {
 		return Argon2idParams{}, nil, nil, ErrInvalidPasswordHash
 	}
 
