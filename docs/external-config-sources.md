@@ -25,6 +25,17 @@
 
 <!-- external-config-debt:website-nginx:blocked -->
 
+## KPanel 与 kejilion.sh 发布关系
+
+- KPanel 与 `kejilion.sh` 按协议兼容，不要求版本号同步。
+- KPanel 仅修改前端、Go 服务或不涉及脚本协议的功能时，继续固定上一份已验证脚本；
+  不提交或发布新的 `kejilion.sh`。
+- KPanel 新增或修改脚本协议时，先发布 `kejilion.sh`，再在 KPanel 固定脚本提交和
+  SHA-256，并完成双端协议测试。
+- `kejilion/apps/kpanel.conf` 不跟随普通 KPanel 或脚本版本发布；它从镜像 OCI 标签、
+  `/release/VERSION` 和产物本身读取并交叉验证版本、源码提交、脚本提交及脚本摘要。
+- 只有应用安装协议、镜像产物路径或 OCI 契约发生变化时，才修改应用市场配置。
+
 ## 每项迁移完成的证据
 
 1. 脚本菜单/函数、模板 URL 或共享生成器的准确版本与 SHA-256；

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- KPanel 应用市场配置不再硬编码 Agent 版本或 `kejilion.sh` 摘要；改为交叉校验镜像
+  OCI 标签、`/release/VERSION`、Agent 自报版本和镜像内脚本实际 SHA-256，后续普通
+  版本发布无需同步修改 `kejilion/apps`。
+
 ## [0.23.0] - 2026-07-28
 
 ### Added

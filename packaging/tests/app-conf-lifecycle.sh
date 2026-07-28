@@ -62,6 +62,12 @@ case "$1 ${2:-}" in
 	"cp "*)
 		destination=$3
 		case "$2" in
+			*:/release/VERSION)
+				printf '%s\n' \
+					"${KPANEL_MOCK_RELEASE_FILE_VERSION:-${KPANEL_RELEASE_VERSION:?}}" \
+					>"$destination"
+				exit 0
+				;;
 			*:/release/kejilion.sh)
 				cat >"$destination" <<'SCRIPT'
 #!/usr/bin/env bash
@@ -81,7 +87,10 @@ SCRIPT
 		cat >"$destination" <<'AGENT'
 #!/bin/sh
 case "${1:-}" in
-	version) printf '%s v1alpha1\n' "${KPANEL_RELEASE_VERSION:?}" ;;
+	version)
+		printf '%s v1alpha1\n' \
+			"${KPANEL_MOCK_AGENT_VERSION:-${KPANEL_RELEASE_VERSION:?}}"
+		;;
 	healthcheck)
 		[ -f "${KEJILION_AGENT_TOKEN_FILE:?}" ]
 		[ "$(stat -c '%a' "$KEJILION_AGENT_TOKEN_FILE")" = 640 ]
@@ -91,6 +100,28 @@ case "${1:-}" in
 esac
 AGENT
 		chmod 755 "$destination"
+		exit 0
+		;;
+	"image inspect")
+		case "$4" in
+			*org.opencontainers.image.version*)
+				printf '%s\n' \
+					"${KPANEL_MOCK_IMAGE_VERSION:-${KPANEL_RELEASE_VERSION:?}}"
+				;;
+			*org.opencontainers.image.revision*)
+				printf '%s\n' \
+					"${KPANEL_MOCK_IMAGE_REVISION:-2222222222222222222222222222222222222222}"
+				;;
+			*io.kejilion.script.revision*)
+				printf '%s\n' \
+					"${KPANEL_MOCK_SCRIPT_REVISION:-4444444444444444444444444444444444444444}"
+				;;
+			*io.kejilion.script.sha256*)
+				printf '%s\n' \
+					"${KPANEL_MOCK_SCRIPT_SHA256:-1111111111111111111111111111111111111111111111111111111111111111}"
+				;;
+			*) exit 2 ;;
+		esac
 		exit 0
 		;;
 	"rm "*)
@@ -173,7 +204,7 @@ EOF
 cat >"$FAKE_BIN/sha256sum" <<'EOF'
 #!/bin/sh
 printf '%s  %s\n' \
-	'11891afcc2a985383899d9632d2258bbf46ccfb68fdabe5bad745683ce5cae43' \
+	"${KPANEL_MOCK_SCRIPT_SHA256_ACTUAL:-1111111111111111111111111111111111111111111111111111111111111111}" \
 	"$1"
 EOF
 chmod 755 "$FAKE_BIN"/*
@@ -346,6 +377,63 @@ run_unmanaged_guard() {
 	rm -rf /home/docker/kpanel
 }
 
+run_release_contract_guards() {
+	local candidate_agent="$TEST_DIR/release-contract-agent"
+	local candidate_script="$TEST_DIR/release-contract-script"
+
+	# shellcheck source=/dev/null
+	. "$PROJECT_DIR/packaging/kejilion-app/kpanel.conf"
+
+	if grep -Eq '"[0-9]+\.[0-9]+\.[0-9]+ v1alpha1"' \
+		"$PROJECT_DIR/packaging/kejilion-app/kpanel.conf"; then
+		echo "KPanel app config still hard-codes an Agent release version" >&2
+		return 1
+	fi
+	if grep -Eq 'local script_sha256="[0-9a-f]{64}"' \
+		"$PROJECT_DIR/packaging/kejilion-app/kpanel.conf"; then
+		echo "KPanel app config still hard-codes a script release digest" >&2
+		return 1
+	fi
+
+	if (
+		export KPANEL_MOCK_IMAGE_VERSION=9.9.9
+		kpanel_extract_release mock-image "$candidate_agent" "$candidate_script"
+	); then
+		echo "release VERSION mismatch was accepted" >&2
+		return 1
+	fi
+	if (
+		export KPANEL_MOCK_AGENT_VERSION=9.9.9
+		kpanel_extract_release mock-image "$candidate_agent" "$candidate_script"
+	); then
+		echo "Agent version mismatch was accepted" >&2
+		return 1
+	fi
+	if (
+		export KPANEL_MOCK_SCRIPT_SHA256=3333333333333333333333333333333333333333333333333333333333333333
+		kpanel_extract_release mock-image "$candidate_agent" "$candidate_script"
+	); then
+		echo "script digest mismatch was accepted" >&2
+		return 1
+	fi
+	if (
+		export KPANEL_MOCK_IMAGE_REVISION=invalid
+		kpanel_extract_release mock-image "$candidate_agent" "$candidate_script"
+	); then
+		echo "invalid image revision was accepted" >&2
+		return 1
+	fi
+	if (
+		export KPANEL_MOCK_SCRIPT_REVISION=invalid
+		kpanel_extract_release mock-image "$candidate_agent" "$candidate_script"
+	); then
+		echo "invalid script revision was accepted" >&2
+		return 1
+	fi
+	[ ! -e "$candidate_agent" ]
+	[ ! -e "$candidate_script" ]
+}
+
 export PATH="$FAKE_BIN:$PATH"
 export KPANEL_MOCK_STATE="$MOCK_STATE"
 export KPANEL_MOCK_SYSTEMCTL_LOG="$TEST_DIR/systemctl.log"
@@ -360,4 +448,5 @@ fi
 run_failed_install
 run_missing_bootstrap_token
 run_unmanaged_guard
+run_release_contract_guards
 printf '%s\n' "app_conf_lifecycle=pass"
