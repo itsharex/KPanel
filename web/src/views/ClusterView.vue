@@ -62,10 +62,22 @@ const selected = ref<ClusterHost>()
 const addOriginInput = ref<HTMLInputElement>()
 const addForm = reactive({ name: '', origin: '', pairingCode: '' })
 const editName = ref('')
+const originError = ref('')
 let loadInFlight = false
 let loadController: AbortController | undefined
 let pollTimer: number | undefined
 const delayedRefreshes = new Set<number>()
+
+type OriginSecurityMode = 'empty' | 'tls' | 'e2e_http' | 'invalid'
+
+interface OriginSecurityAssessment {
+  mode: OriginSecurityMode
+  message: string
+}
+
+const originAssessment = computed<OriginSecurityAssessment>(() =>
+  assessOriginSecurity(addForm.origin),
+)
 
 const filteredHosts = computed(() => {
   const term = search.value.trim().toLocaleLowerCase()
@@ -99,16 +111,103 @@ const attentionCount = computed(
 function friendlyError(reason: unknown, fallback: string): string {
   if (!(reason instanceof ApiError)) return fallback
   const messages: Record<string, string> = {
-    cluster_origin_invalid: '主机 URL 必须是没有路径和参数的 HTTPS 地址。',
+    cluster_origin_invalid: '请输入 HTTPS 根地址，或 http://IP:端口。不能包含路径、参数或账号信息。',
     cluster_origin_blocked: '该地址被网络安全策略拒绝；私网地址需由部署管理员加入 CIDR 白名单。',
     cluster_pairing_failed: '授权码无效、已过期或已被使用，请在目标 KPanel 重新生成。',
     cluster_duplicate: '该 KPanel 已经添加到主机列表。',
     cluster_host_limit: '已达到 100 台主机上限。',
     cluster_remote_tls_error: '目标 KPanel 的 HTTPS 证书校验失败。',
+    cluster_remote_authentication_failed: '加密响应校验失败，连接已拒绝。',
+    federation_incompatible: '目标 KPanel 不支持当前加密直连协议，请更新目标面板或改用 HTTPS。',
+    federation_identity_changed: '目标主机加密身份发生变化，已停止连接；确认服务器未被替换后请重新配对。',
     cluster_remote_unreachable: '暂时无法连接目标 KPanel，请检查域名、证书和网络。',
     cluster_resource_changed: '主机信息已变化，请刷新后重试。',
   }
   return messages[reason.code] || reason.message || fallback
+}
+
+function assessOriginSecurity(raw: string): OriginSecurityAssessment {
+  const value = raw.trim()
+  if (!value) {
+    return {
+      mode: 'empty',
+      message: '支持证书 HTTPS；无域名时可使用 http://IP:端口，集群数据由 KPanel 端到端加密。',
+    }
+  }
+  if (value.length > 512 || /[\r\n\t\u0000]/.test(value)) {
+    return { mode: 'invalid', message: '主机 URL 格式无效。' }
+  }
+
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return { mode: 'invalid', message: '请输入完整的主机 URL。' }
+  }
+  const authorityAndSuffix = value.slice(value.indexOf('//') + 2)
+  const hasSuffix =
+    authorityAndSuffix.includes('/') ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    parsed.username !== '' ||
+    parsed.password !== ''
+  if (hasSuffix) {
+    return { mode: 'invalid', message: '主机 URL 只能填写根地址，不能包含路径、参数或账号信息。' }
+  }
+
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '')
+  if (value.startsWith('https://') && validHTTPSHost(hostname)) {
+    return { mode: 'tls', message: 'HTTPS：验证目标证书并使用 TLS 加密。' }
+  }
+  if (
+    value.startsWith('http://') &&
+    parsed.port !== '' &&
+    parsed.port !== '80' &&
+    isLiteralIPAddress(hostname)
+  ) {
+    return {
+      mode: 'e2e_http',
+      message: 'IP 加密直连：集群数据端到端加密；浏览器打开管理页面仍是普通 HTTP。',
+    }
+  }
+  if (value.startsWith('http://')) {
+    return {
+      mode: 'invalid',
+      message: 'HTTP 加密直连仅支持明确的 IP 和非 80 端口，例如 http://203.0.113.10:8080。',
+    }
+  }
+  return {
+    mode: 'invalid',
+    message: '请输入 HTTPS 根地址，或 http://IP:端口。',
+  }
+}
+
+function validHTTPSHost(hostname: string): boolean {
+  if (isLiteralIPAddress(hostname)) return true
+  if (
+    hostname.length < 1 ||
+    hostname.length > 253 ||
+    !hostname.includes('.') ||
+    !/^[a-z0-9.-]+$/i.test(hostname)
+  ) {
+    return false
+  }
+  return hostname.split('.').every(
+    (label) =>
+      label.length > 0 &&
+      label.length <= 63 &&
+      !label.startsWith('-') &&
+      !label.endsWith('-'),
+  )
+}
+
+function isLiteralIPAddress(hostname: string): boolean {
+  if (hostname.includes(':')) return /^[0-9a-f:.]+$/i.test(hostname)
+  const parts = hostname.split('.')
+  return (
+    parts.length === 4 &&
+    parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) >= 0 && Number(part) <= 255)
+  )
 }
 
 async function load(silent = false): Promise<void> {
@@ -144,10 +243,17 @@ function closeAdd(): void {
   addForm.name = ''
   addForm.origin = ''
   addForm.pairingCode = ''
+  originError.value = ''
 }
 
 async function addHost(): Promise<void> {
   if (adding.value || !addForm.origin.trim() || !addForm.pairingCode.trim()) return
+  if (originAssessment.value.mode === 'invalid') {
+    originError.value = originAssessment.value.message
+    void nextTick(() => addOriginInput.value?.focus())
+    return
+  }
+  originError.value = ''
   adding.value = true
   try {
     const host = await api.cluster.add({
@@ -157,10 +263,23 @@ async function addHost(): Promise<void> {
     })
     adding.value = false
     closeAdd()
-    toast.success('主机已加入集群', `${host.name} 已完成只读配对。`)
+    toast.success(
+      '主机已加入集群',
+      host.state === 'pairing'
+        ? `${host.name} 的安全配对正在后台继续。`
+        : `${host.name} 已完成只读配对。`,
+    )
     await load(true)
   } catch (reason) {
-    toast.danger('添加主机失败', friendlyError(reason, '请检查目标 KPanel 和授权码后重试。'))
+    const message = friendlyError(reason, '请检查目标 KPanel 和授权码后重试。')
+    if (
+      reason instanceof ApiError &&
+      ['cluster_origin_invalid', 'cluster_origin_blocked'].includes(reason.code)
+    ) {
+      originError.value = message
+      void nextTick(() => addOriginInput.value?.focus())
+    }
+    toast.danger('添加主机失败', message)
   } finally {
     adding.value = false
   }
@@ -274,6 +393,15 @@ async function removeHost(): Promise<void> {
     }
   } catch (reason) {
     toast.danger('移除失败', friendlyError(reason, '请刷新后重试。'))
+    await load(true)
+    const fresh = inventory.value?.items.find((item) => item.id === host.id)
+    if (fresh) {
+      selected.value = fresh
+      editName.value = fresh.name
+    } else {
+      manageOpen.value = false
+      selected.value = undefined
+    }
   } finally {
     deleting.value = false
   }
@@ -303,11 +431,38 @@ function upsertHost(host: ClusterHost): void {
 }
 
 function openPanel(host: ClusterHost): void {
+  if (
+    !host.isLocal &&
+    host.transportSecurity === 'e2e_http' &&
+    !window.confirm(
+      '集群监控数据已端到端加密，但这个管理页面仍通过普通 HTTP 打开，登录密码和 Session 不受加密直连保护。建议先为目标面板配置 HTTPS。仍然打开？',
+    )
+  ) {
+    return
+  }
   window.open(displayOrigin(host), '_blank', 'noopener,noreferrer')
 }
 
 function displayOrigin(host: ClusterHost): string {
   return host.isLocal ? window.location.origin : host.origin
+}
+
+function transportSecurityLabel(host: ClusterHost): string {
+  if (host.isLocal) return '本机 Agent'
+  return host.transportSecurity === 'e2e_http' ? '加密直连' : 'HTTPS'
+}
+
+function transportSecurityDescription(host: ClusterHost): string {
+  if (host.isLocal) return '本机通过 Unix Socket 读取 Agent 摘要'
+  if (host.transportSecurity === 'e2e_http') {
+    return '集群监控数据端到端加密；普通浏览器管理页面仍是 HTTP'
+  }
+  return '验证目标证书并通过 TLS 加密集群连接'
+}
+
+function shortFingerprint(value?: string): string {
+  if (!value || value.length <= 26) return value || ''
+  return `${value.slice(0, 16)}…${value.slice(-8)}`
 }
 
 function onVisibilityChange(): void {
@@ -405,11 +560,41 @@ onBeforeUnmount(() => {
             <span>
               <strong>{{ host.name }}</strong>
               <em v-if="host.isLocal" class="cluster-card__local">本机</em>
+              <em
+                v-else
+                class="cluster-card__transport"
+                :class="`is-${host.transportSecurity}`"
+                :title="transportSecurityDescription(host)"
+              >
+                {{ transportSecurityLabel(host) }}
+              </em>
               <StatusBadge :status="host.state" subtle />
             </span>
-            <a :href="displayOrigin(host)" target="_blank" rel="noopener noreferrer">
+            <a
+              v-if="host.isLocal || host.transportSecurity === 'tls'"
+              class="cluster-card__origin"
+              :href="displayOrigin(host)"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               {{ displayOrigin(host) }} <ArrowUpRight :size="12" />
             </a>
+            <button
+              v-else
+              class="cluster-card__origin"
+              type="button"
+              :title="transportSecurityDescription(host)"
+              @click="openPanel(host)"
+            >
+              {{ displayOrigin(host) }} <ArrowUpRight :size="12" />
+            </button>
+            <small
+              v-if="!host.isLocal && host.peerFingerprint"
+              class="cluster-card__fingerprint"
+              :title="host.peerFingerprint"
+            >
+              身份指纹 {{ shortFingerprint(host.peerFingerprint) }}
+            </small>
           </div>
           <button
             class="icon-button icon-button--small"
@@ -552,12 +737,28 @@ onBeforeUnmount(() => {
             ref="addOriginInput"
             v-model="addForm.origin"
             type="url"
+            inputmode="url"
             required
             maxlength="512"
-            placeholder="https://panel.example.com"
+            placeholder="https://panel.example.com 或 http://203.0.113.10:8080"
             autocomplete="url"
+            spellcheck="false"
+            aria-describedby="cluster-origin-help"
+            :aria-invalid="originError || originAssessment.mode === 'invalid' ? 'true' : undefined"
+            @input="originError = ''"
           />
-          <small>必须是可验证证书的 HTTPS 根地址，不能包含路径或参数。</small>
+          <small
+            id="cluster-origin-help"
+            class="cluster-origin-help"
+            :class="{
+              'is-danger': originError || originAssessment.mode === 'invalid',
+              'is-secure':
+                !originError && ['tls', 'e2e_http'].includes(originAssessment.mode),
+            }"
+            :role="originError || originAssessment.mode === 'invalid' ? 'alert' : undefined"
+          >
+            {{ originError || originAssessment.message }}
+          </small>
         </label>
         <label class="field">
           一次性授权码
@@ -565,7 +766,7 @@ onBeforeUnmount(() => {
             v-model="addForm.pairingCode"
             type="password"
             required
-            maxlength="81"
+            maxlength="1024"
             autocomplete="off"
             placeholder="粘贴目标 KPanel 生成的授权码"
           />
@@ -578,7 +779,12 @@ onBeforeUnmount(() => {
           class="button button--primary"
           type="submit"
           form="cluster-add-form"
-          :disabled="adding || !addForm.origin.trim() || !addForm.pairingCode.trim()"
+          :disabled="
+            adding ||
+            !addForm.origin.trim() ||
+            !addForm.pairingCode.trim() ||
+            originAssessment.mode === 'invalid'
+          "
         >
           <LoaderCircle v-if="adding" class="spin" :size="16" />
           <Plus v-else :size="16" />
@@ -678,6 +884,10 @@ onBeforeUnmount(() => {
         </label>
         <div class="cluster-manage__identity">
           <span>目标地址</span><code>{{ selected.origin }}</code>
+          <span>连接方式</span><code>{{ transportSecurityLabel(selected) }}</code>
+          <template v-if="selected.peerFingerprint">
+            <span>身份指纹</span><code>{{ selected.peerFingerprint }}</code>
+          </template>
           <span>节点 ID</span><code>{{ selected.remoteNodeId }}</code>
           <span>Panel / Agent</span>
           <code>{{ selected.panelVersion || '未知' }} / {{ selected.lastSnapshot?.telemetry.agentVersion || '未知' }}</code>
@@ -849,19 +1059,30 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.cluster-card__local {
+.cluster-card__local,
+.cluster-card__transport {
   flex: 0 0 auto;
   padding: 2px 7px;
-  color: var(--brand);
   font-size: 10px;
   font-style: normal;
   font-weight: 800;
-  background: var(--brand-soft);
-  border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border));
   border-radius: 999px;
 }
 
-.cluster-card__header a {
+.cluster-card__local,
+.cluster-card__transport.is-tls {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border));
+}
+
+.cluster-card__transport.is-e2e_http {
+  color: var(--blue);
+  background: var(--blue-soft);
+  border: 1px solid color-mix(in srgb, var(--blue) 22%, var(--border));
+}
+
+.cluster-card__origin {
   display: inline-flex;
   max-width: 100%;
   align-items: center;
@@ -873,6 +1094,37 @@ onBeforeUnmount(() => {
   text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cluster-card__origin:is(button) {
+  padding: 0;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.cluster-card__origin:hover {
+  color: var(--brand);
+}
+
+.cluster-card__fingerprint {
+  display: block;
+  max-width: 100%;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cluster-origin-help.is-secure {
+  color: var(--brand);
+}
+
+.cluster-origin-help.is-danger {
+  color: var(--danger);
 }
 
 .cluster-card__metrics {

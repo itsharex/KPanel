@@ -1061,7 +1061,7 @@ export const api = {
         method: 'POST',
       }),
     createPairingCode: (): Promise<ClusterPairingCode> =>
-      request<ClusterPairingCode>('/cluster/pairing-codes', { method: 'POST' }),
+      request<ClusterPairingCode>('/cluster/pairing-codes/v2', { method: 'POST' }),
     controllers: async (signal?: AbortSignal): Promise<ApiList<ClusterController>> =>
       normalizeList(
         await request<ApiList<ClusterController> | ClusterController[]>(

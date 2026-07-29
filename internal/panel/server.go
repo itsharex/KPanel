@@ -109,7 +109,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	if r.URL.Path != "/api/v1/health" && !s.checkHost(w, r) {
+	if r.URL.Path != "/api/v1/health" &&
+		!isFederationV2Request(r) &&
+		!s.checkHost(w, r) {
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -122,6 +124,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case isFederationV2Request(r):
+		s.handleFederationV2(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/federation/pair":
 		s.handleFederationPair(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/federation/summary":
@@ -196,6 +200,21 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleAgentProxy(w, r)
 	default:
 		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+	}
+}
+
+func isFederationV2Request(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	switch r.URL.Path {
+	case "/api/v2/federation/pair",
+		"/api/v2/federation/commit",
+		"/api/v2/federation/summary",
+		"/api/v2/federation/revoke":
+		return true
+	default:
+		return false
 	}
 }
 

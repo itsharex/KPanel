@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   controllers: vi.fn(),
   revokeController: vi.fn(),
   open: vi.fn(),
+  confirm: vi.fn(),
   toastSuccess: vi.fn(),
   toastDanger: vi.fn(),
 }))
@@ -54,13 +55,18 @@ vi.mock('@/stores/toast', () => ({
 interface ClusterBindings {
   inventory: Ref<ClusterHostList | undefined>
   filteredHosts: ComputedRef<ClusterHost[]>
+  originAssessment: ComputedRef<{ mode: string; message: string }>
   search: Ref<string>
   manageOpen: Ref<boolean>
   selected: Ref<ClusterHost | undefined>
+  addForm: { name: string; origin: string; pairingCode: string }
   load: (silent?: boolean) => Promise<void>
+  addHost: () => Promise<void>
   openManage: (host: ClusterHost) => void
   removeHost: () => Promise<void>
   openPanel: (host: ClusterHost) => void
+  transportSecurityLabel: (host: ClusterHost) => string
+  shortFingerprint: (value?: string) => string
 }
 
 function setupView(): ClusterBindings {
@@ -83,6 +89,8 @@ function host(id: string, isLocal: boolean, origin: string): ClusterHost {
     isLocal,
     name: isLocal ? '当前 KPanel' : '香港节点',
     origin,
+    transportSecurity: origin.startsWith('http://') ? 'e2e_http' : 'tls',
+    peerFingerprint: isLocal ? undefined : `sha256:${'a'.repeat(64)}`,
     remoteNodeId: isLocal ? 'local-node' : 'remote-node',
     federationProtocol: 'v1',
     panelVersion: '0.27.0',
@@ -159,7 +167,7 @@ beforeEach(() => {
   vi.stubGlobal('window', {
     location: { origin: 'https://center.example.com' },
     open: mocks.open,
-    confirm: vi.fn().mockReturnValue(true),
+    confirm: mocks.confirm.mockReturnValue(true),
   })
 })
 
@@ -206,6 +214,77 @@ describe('ClusterView inventory and navigation', () => {
       'https://center.example.com',
       '_blank',
       'noopener,noreferrer',
+    )
+    expect(mocks.confirm).not.toHaveBeenCalled()
+  })
+
+  it('warns before opening an HTTP management page while preserving the exact IP and port', () => {
+    const view = setupView()
+    const remote = host('direct', false, 'http://198.51.100.20:8080')
+
+    mocks.confirm.mockReturnValueOnce(false)
+    view.openPanel(remote)
+    expect(mocks.open).not.toHaveBeenCalled()
+    expect(mocks.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('管理页面仍通过普通 HTTP 打开'),
+    )
+
+    mocks.confirm.mockReturnValueOnce(true)
+    view.openPanel(remote)
+    expect(mocks.open).toHaveBeenCalledWith(
+      'http://198.51.100.20:8080',
+      '_blank',
+      'noopener,noreferrer',
+    )
+  })
+
+  it('classifies HTTPS and encrypted HTTP IP origins before submission', () => {
+    const view = setupView()
+    const cases = [
+      ['https://panel.example.com:8443', 'tls'],
+      ['http://198.51.100.20:8080', 'e2e_http'],
+      ['http://[2606:4700:4700::1111]:8080', 'e2e_http'],
+      ['http://panel.example.com:8080', 'invalid'],
+      ['http://198.51.100.20', 'invalid'],
+      ['http://198.51.100.20:80', 'invalid'],
+      ['http://198.51.100.20:8080/admin', 'invalid'],
+      ['https://panel.example.com/admin', 'invalid'],
+    ] as const
+
+    for (const [origin, expected] of cases) {
+      view.addForm.origin = origin
+      expect(view.originAssessment.value.mode, origin).toBe(expected)
+    }
+  })
+
+  it('describes the negotiated transport and shortens long peer fingerprints', () => {
+    const view = setupView()
+    const httpsHost = host('tls', false, 'https://hk.example.com')
+    const directHost = host('direct', false, 'http://198.51.100.20:8080')
+
+    expect(view.transportSecurityLabel(httpsHost)).toBe('HTTPS')
+    expect(view.transportSecurityLabel(directHost)).toBe('加密直连')
+    expect(view.shortFingerprint(directHost.peerFingerprint)).toMatch(/^sha256:a+…a{8}$/)
+  })
+
+  it('does not report an unfinished two-phase pairing as complete', async () => {
+    const view = setupView()
+    const pending = host('pending', false, 'http://198.51.100.20:8080')
+    pending.state = 'pairing'
+    mocks.add.mockResolvedValueOnce(pending)
+    mocks.hosts.mockResolvedValueOnce(inventory())
+    view.addForm.origin = pending.origin
+    view.addForm.pairingCode = `kp2.${'a'.repeat(180)}`
+
+    await view.addHost()
+
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      '主机已加入集群',
+      expect.stringContaining('安全配对正在后台继续'),
+    )
+    expect(mocks.toastSuccess).not.toHaveBeenCalledWith(
+      '主机已加入集群',
+      expect.stringContaining('已完成只读配对'),
     )
   })
 

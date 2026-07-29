@@ -68,8 +68,12 @@ type runtimeState struct {
 type Service struct {
 	store           *Store
 	secrets         *secretStore
+	storeV2         *storeV2
+	secretsV2       *secretStoreV2
 	remote          remoteAPI
+	remoteV2        remoteV2API
 	telemetry       TelemetrySource
+	nodeIdentityV2  nodeIdentityV2
 	panelVersion    string
 	hostname        string
 	now             func() time.Time
@@ -79,19 +83,21 @@ type Service struct {
 	jitter          func(time.Duration) time.Duration
 	sem             chan struct{}
 
-	mutationMu sync.Mutex
-	mu         sync.RWMutex
-	runtime    map[string]runtimeState
-	localHost  runtimeState
-	started    bool
-	ctx        context.Context
-	cancel     context.CancelFunc
-	kick       chan struct{}
-	wg         sync.WaitGroup
+	mutationMu      sync.Mutex
+	v2SecretStateMu sync.Mutex
+	mu              sync.RWMutex
+	runtime         map[string]runtimeState
+	localHost       runtimeState
+	started         bool
+	ctx             context.Context
+	cancel          context.CancelFunc
+	kick            chan struct{}
+	wg              sync.WaitGroup
 
-	replays        *replayGuard
-	pairLimiter    *fixedWindowLimiter
-	requestLimiter *fixedWindowLimiter
+	replays         *replayGuard
+	pairLimiter     *fixedWindowLimiter
+	v2SourceLimiter *fixedWindowLimiter
+	requestLimiter  *fixedWindowLimiter
 
 	localMu       sync.Mutex
 	localValue    contract.HostTelemetry
@@ -159,6 +165,35 @@ func NewService(config ServiceConfig) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	storeV2, err := openStoreV2(filepath.Join(config.DataDir, clusterStateV2FileName))
+	if err != nil {
+		return nil, err
+	}
+	if err := storeV2.EnsureNodeID(store.NodeID()); err != nil {
+		return nil, err
+	}
+	secretsV2, err := openSecretStoreV2(
+		filepath.Join(config.DataDir, clusterSecretsV2DirectoryName),
+	)
+	if err != nil {
+		return nil, err
+	}
+	nodeIdentity, err := secretsV2.ReadNodeIdentity()
+	if errors.Is(err, os.ErrNotExist) {
+		key, keyErr := v2NoiseSuite.GenerateKeypair(rand.Reader)
+		if keyErr != nil {
+			return nil, fmt.Errorf("generate cluster v2 node identity: %w", keyErr)
+		}
+		nodeIdentity = nodeIdentityV2{
+			PrivateKey: append([]byte(nil), key.Private...),
+			PublicKey:  append([]byte(nil), key.Public...),
+		}
+		if err := secretsV2.WriteNodeIdentity(nodeIdentity); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
 	referencedCredentials := make(map[string]struct{}, len(store.Hosts()))
 	for _, record := range store.Hosts() {
 		referencedCredentials[record.CredentialFile] = struct{}{}
@@ -166,19 +201,39 @@ func NewService(config ServiceConfig) (*Service, error) {
 	if err := secrets.RemoveOrphans(referencedCredentials); err != nil {
 		return nil, err
 	}
+	if err := secretsV2.RemoveOrphans(storeV2.CredentialReferences()); err != nil {
+		return nil, err
+	}
+	remoteV2, _ := config.Remote.(remoteV2API)
 	now := config.Now().UTC()
 	service := &Service{
-		store: store, secrets: secrets, remote: config.Remote, telemetry: config.Telemetry,
-		panelVersion: cleanDisplayText(config.PanelVersion, 64), hostname: config.Hostname,
+		store: store, secrets: secrets,
+		storeV2: storeV2, secretsV2: secretsV2,
+		remote: config.Remote, remoteV2: remoteV2, telemetry: config.Telemetry,
+		nodeIdentityV2: cloneNodeIdentityV2(nodeIdentity),
+		panelVersion:   cleanDisplayText(config.PanelVersion, 64), hostname: config.Hostname,
 		now: config.Now, pollInterval: config.PollInterval,
 		schedulerTick: config.SchedulerTick, checkpointEvery: config.CheckpointEvery,
 		jitter: config.Jitter, sem: make(chan struct{}, config.MaxConcurrency),
 		runtime: make(map[string]runtimeState), kick: make(chan struct{}, 1),
-		replays:        newReplayGuard(4096, 5*time.Minute),
-		pairLimiter:    newFixedWindowLimiter(20, time.Minute, 1024),
-		requestLimiter: newFixedWindowLimiter(30, time.Minute, 512),
+		replays:         newReplayGuard(4096, 5*time.Minute),
+		pairLimiter:     newFixedWindowLimiter(20, time.Minute, 1024),
+		v2SourceLimiter: newFixedWindowLimiter(120, time.Minute, 2048),
+		requestLimiter:  newFixedWindowLimiter(30, time.Minute, 512),
 	}
 	for _, record := range store.Hosts() {
+		service.runtime[record.ID] = runtimeState{
+			snapshot:            cloneSnapshot(record.LastSnapshot),
+			lastAttemptAt:       cloneTime(record.LastAttemptAt),
+			lastSuccessAt:       cloneTime(record.LastSuccessAt),
+			consecutiveFailures: record.ConsecutiveFailures,
+			lastErrorCode:       record.LastErrorCode,
+			lastError:           record.LastError,
+			panelVersion:        record.PanelVersion,
+			nextPollAt:          now.Add(config.Jitter(config.PollInterval / 10)),
+		}
+	}
+	for _, record := range storeV2.Hosts() {
 		service.runtime[record.ID] = runtimeState{
 			snapshot:            cloneSnapshot(record.LastSnapshot),
 			lastAttemptAt:       cloneTime(record.LastAttemptAt),
@@ -229,16 +284,21 @@ func (s *Service) NodeID() string {
 
 func (s *Service) Hosts(ctx context.Context) HostList {
 	records := s.store.Hosts()
-	items := make([]Host, 0, len(records)+1)
+	recordsV2 := s.storeV2.Hosts()
+	items := make([]Host, 0, len(records)+len(recordsV2)+1)
 	items = append(items, s.localHostSummary(ctx))
 	now := s.now().UTC()
 	s.mu.RLock()
 	for _, record := range records {
 		items = append(items, publicHost(record, s.runtime[record.ID], now))
 	}
+	for _, record := range recordsV2 {
+		items = append(items, publicHostV2(record, s.runtime[record.ID], now))
+	}
 	s.mu.RUnlock()
 	return HostList{
-		Items: items, Total: len(items), RemoteTotal: len(records), MaxHosts: MaxHosts,
+		Items: items, Total: len(items),
+		RemoteTotal: len(records) + len(recordsV2), MaxHosts: MaxHosts,
 		PollIntervalSeconds: max(1, int(s.pollInterval/time.Second)),
 		NodeID:              s.store.NodeID(),
 	}
@@ -249,19 +309,29 @@ func (s *Service) Host(ctx context.Context, id string) (Host, error) {
 		return s.localHostSummary(ctx), nil
 	}
 	record, err := s.store.Host(id)
-	if err != nil {
+	if err == nil {
+		s.mu.RLock()
+		current := s.runtime[id]
+		s.mu.RUnlock()
+		return publicHost(record, current, s.now().UTC()), nil
+	}
+	recordV2, v2Err := s.storeV2.Host(id)
+	if v2Err != nil {
 		return Host{}, err
 	}
 	s.mu.RLock()
 	current := s.runtime[id]
 	s.mu.RUnlock()
-	return publicHost(record, current, s.now().UTC()), nil
+	return publicHostV2(recordV2, current, s.now().UTC()), nil
 }
 
 func (s *Service) AddHost(ctx context.Context, input AddHostInput) (Host, error) {
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 
+	if strings.HasPrefix(strings.TrimSpace(input.PairingCode), v2PairingCodePrefix) {
+		return s.addHostV2Locked(ctx, input)
+	}
 	origin, err := NormalizeOrigin(input.Origin)
 	if err != nil {
 		return Host{}, err
@@ -275,10 +345,16 @@ func (s *Service) AddHost(ctx context.Context, input AddHostInput) (Host, error)
 		return Host{}, ErrPairingCode
 	}
 	existing := s.store.Hosts()
-	if len(existing) >= MaxHosts {
+	existingV2 := s.storeV2.Hosts()
+	if len(existing)+len(existingV2) >= MaxHosts {
 		return Host{}, ErrHostLimit
 	}
 	for _, item := range existing {
+		if strings.EqualFold(item.Origin, origin) {
+			return Host{}, ErrDuplicate
+		}
+	}
+	for _, item := range existingV2 {
 		if strings.EqualFold(item.Origin, origin) {
 			return Host{}, ErrDuplicate
 		}
@@ -310,6 +386,12 @@ func (s *Service) AddHost(ctx context.Context, input AddHostInput) (Host, error)
 		return Host{}, ErrDuplicate
 	}
 	for _, item := range existing {
+		if item.RemoteNodeID == response.NodeID {
+			_ = s.remote.Revoke(ctx, origin, controllerID, response.NodeID, privateKey, s.now().UTC())
+			return Host{}, ErrDuplicate
+		}
+	}
+	for _, item := range existingV2 {
 		if item.RemoteNodeID == response.NodeID {
 			_ = s.remote.Revoke(ctx, origin, controllerID, response.NodeID, privateKey, s.now().UTC())
 			return Host{}, ErrDuplicate
@@ -363,13 +445,31 @@ func (s *Service) RenameHost(id string, input UpdateHostInput) (Host, error) {
 	record, err := s.store.RenameHost(
 		id, name, input.ExpectedResourceVersion, s.now().UTC(),
 	)
+	if err == nil {
+		s.mu.RLock()
+		current := s.runtime[id]
+		s.mu.RUnlock()
+		return publicHost(record, current, s.now().UTC()), nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Host{}, err
+	}
+	recordV2, err := s.storeV2.Host(id)
+	if err != nil {
+		return Host{}, err
+	}
+	recordV2.Name = name
+	recordV2.UpdatedAt = s.now().UTC()
+	recordV2, err = s.storeV2.UpdateHost(
+		recordV2, input.ExpectedResourceVersion,
+	)
 	if err != nil {
 		return Host{}, err
 	}
 	s.mu.RLock()
 	current := s.runtime[id]
 	s.mu.RUnlock()
-	return publicHost(record, current, s.now().UTC()), nil
+	return publicHostV2(recordV2, current, s.now().UTC()), nil
 }
 
 func (s *Service) DeleteHost(
@@ -386,6 +486,9 @@ func (s *Service) DeleteHost(
 		return DeleteHostResult{}, ErrConflict
 	}
 	record, err := s.store.Host(id)
+	if errors.Is(err, ErrNotFound) {
+		return s.deleteHostV2Locked(ctx, id, input)
+	}
 	if err != nil {
 		return DeleteHostResult{}, err
 	}
@@ -423,7 +526,12 @@ func (s *Service) Refresh(ctx context.Context, id string) (Host, error) {
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 	if _, err := s.store.Host(id); err != nil {
-		return Host{}, err
+		if !errors.Is(err, ErrNotFound) {
+			return Host{}, err
+		}
+		if _, v2Err := s.storeV2.Host(id); v2Err != nil {
+			return Host{}, v2Err
+		}
 	}
 	s.mu.Lock()
 	current := s.runtime[id]
@@ -441,13 +549,30 @@ func (s *Service) CreatePairingCode() (PairingCode, error) {
 	return s.store.CreatePairingCode(s.now().UTC())
 }
 
+func (s *Service) CreatePairingCodeV2() (PairingCode, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+	return s.createPairingCodeV2()
+}
+
 func (s *Service) Controllers() []Controller {
 	records := s.store.Controllers()
-	result := make([]Controller, 0, len(records))
+	recordsV2 := s.storeV2.Controllers()
+	result := make([]Controller, 0, len(records)+len(recordsV2))
 	for _, item := range records {
 		result = append(result, Controller{
 			ID: item.ID, Name: item.Name, Fingerprint: item.Fingerprint,
 			Scope: item.Scope, CreatedAt: item.CreatedAt, LastSeenAt: cloneTime(item.LastSeenAt),
+		})
+	}
+	for _, item := range recordsV2 {
+		if item.State != controllerStateV2Active {
+			continue
+		}
+		result = append(result, Controller{
+			ID: item.ID, Name: item.Name, Fingerprint: item.Fingerprint,
+			Scope: item.Scope, CreatedAt: item.CreatedAt,
+			LastSeenAt: cloneTime(item.LastSeenAt),
 		})
 	}
 	return result
@@ -457,7 +582,23 @@ func (s *Service) DeleteController(id string) error {
 	if !validID(id) {
 		return ErrNotFound
 	}
-	return s.store.DeleteController(id)
+	if err := s.store.DeleteController(id); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	record, err := s.storeV2.Controller(id)
+	if err != nil {
+		return err
+	}
+	now := s.now().UTC()
+	_, err = s.storeV2.RevokeController(
+		id,
+		record.TransactionID,
+		now,
+		now.Add(v2RevocationRetain),
+	)
+	return err
 }
 
 func (s *Service) AcceptPair(source string, input PairRequest) (PairResponse, error) {
@@ -605,12 +746,17 @@ func (s *Service) launchDue() {
 			select {
 			case s.sem <- struct{}{}:
 				defer func() { <-s.sem }()
+				if ctx.Err() != nil {
+					s.clearInFlight(id)
+					return
+				}
 				s.poll(ctx, id)
 			case <-ctx.Done():
 				s.clearInFlight(id)
 			}
 		}(record.ID)
 	}
+	s.launchDueV2(now)
 }
 
 func (s *Service) poll(ctx context.Context, id string) {
@@ -704,6 +850,8 @@ func (s *Service) signal() {
 }
 
 func (s *Service) checkpoint() error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	s.mu.RLock()
 	runtime := make(map[string]runtimeState, len(s.runtime))
 	for id, current := range s.runtime {
@@ -713,7 +861,11 @@ func (s *Service) checkpoint() error {
 		runtime[id] = current
 	}
 	s.mu.RUnlock()
-	return s.store.Checkpoint(runtime)
+	checkpointErr := errors.Join(
+		s.store.Checkpoint(runtime),
+		s.storeV2.Checkpoint(runtime),
+	)
+	return errors.Join(checkpointErr, s.cleanupV2(s.now().UTC()))
 }
 
 func (s *Service) localHostSummary(ctx context.Context) Host {
@@ -829,7 +981,8 @@ func localPublicHost(
 	resourceHash := sha256.Sum256([]byte(nodeID + "\x00" + name))
 	return Host{
 		ID: LocalHostID, IsLocal: true, Name: name,
-		RemoteNodeID: nodeID, FederationProtocol: FederationProtocol,
+		TransportSecurity: TransportSecurityTLS,
+		RemoteNodeID:      nodeID, FederationProtocol: FederationProtocol,
 		PanelVersion: panelVersion, State: hostState(current, now),
 		LastSnapshot:        cloneSnapshot(current.snapshot),
 		LastAttemptAt:       cloneTime(current.lastAttemptAt),
@@ -852,7 +1005,9 @@ func publicHost(record hostRecord, current runtimeState, now time.Time) Host {
 	}
 	return Host{
 		ID: record.ID, Name: record.Name, Origin: record.Origin,
-		RemoteNodeID: record.RemoteNodeID, FederationProtocol: record.FederationProtocol,
+		TransportSecurity: TransportSecurityTLS,
+		PeerFingerprint:   "",
+		RemoteNodeID:      record.RemoteNodeID, FederationProtocol: record.FederationProtocol,
 		PanelVersion: panelVersion, State: hostState(current, now),
 		LastSnapshot:        cloneSnapshot(current.snapshot),
 		LastAttemptAt:       cloneTime(current.lastAttemptAt),

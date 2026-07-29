@@ -61,6 +61,8 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, s.cluster.Hosts(r.Context()))
 	case r.URL.Path == "/api/v1/cluster/hosts" && r.Method == http.MethodPost:
 		s.handleClusterHostAdd(w, r)
+	case r.URL.Path == "/api/v1/cluster/pairing-codes/v2" && r.Method == http.MethodPost:
+		s.handleClusterPairingCodeV2(w, r)
 	case r.URL.Path == "/api/v1/cluster/pairing-codes" && r.Method == http.MethodPost:
 		s.handleClusterPairingCode(w, r)
 	case r.URL.Path == "/api/v1/cluster/controllers" && r.Method == http.MethodGet:
@@ -218,6 +220,18 @@ func (s *Server) handleClusterHostRefresh(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleClusterPairingCode(w http.ResponseWriter, r *http.Request) {
+	s.handleClusterPairingCodeProtocol(w, r, false)
+}
+
+func (s *Server) handleClusterPairingCodeV2(w http.ResponseWriter, r *http.Request) {
+	s.handleClusterPairingCodeProtocol(w, r, true)
+}
+
+func (s *Server) handleClusterPairingCodeProtocol(
+	w http.ResponseWriter,
+	r *http.Request,
+	v2 bool,
+) {
 	session, ok := s.requireClusterMutation(w, r)
 	if !ok {
 		return
@@ -235,7 +249,13 @@ func (s *Server) handleClusterPairingCode(w http.ResponseWriter, r *http.Request
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
 	}
-	code, err := s.cluster.CreatePairingCode()
+	var code cluster.PairingCode
+	var err error
+	if v2 {
+		code, err = s.cluster.CreatePairingCodeV2()
+	} else {
+		code, err = s.cluster.CreatePairingCode()
+	}
 	if err != nil {
 		_ = s.audit(r, session.User.ID, "cluster.pairing-code.create", "cluster-node", s.cluster.NodeID(), "failure", nil)
 		s.writeClusterError(w, r, err)
@@ -312,6 +332,56 @@ func (s *Server) handleFederationRevoke(w http.ResponseWriter, r *http.Request) 
 	}
 	_ = s.audit(r, "", "cluster.federation.revoke", "cluster-controller", controllerID, "success", nil)
 	s.writeJSON(w, http.StatusOK, map[string]bool{"revoked": true})
+}
+
+func (s *Server) handleFederationV2(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusBadRequest, "invalid_federation_request", "Invalid federation request", "")
+		return
+	}
+	var envelope cluster.FederationEnvelopeV2
+	if err := decodeLimitedJSON(
+		w,
+		r,
+		cluster.MaxFederationV2Bytes,
+		&envelope,
+	); err != nil {
+		return
+	}
+	response, err := s.cluster.HandleFederationV2(
+		r.Context(),
+		s.remoteIP(r),
+		r.URL.Path,
+		envelope,
+	)
+	if err != nil {
+		s.auditAuthFailure(r, "cluster.federation.v2")
+		s.writeClusterError(w, r, err)
+		return
+	}
+	action := "cluster.federation.v2.summary"
+	status := http.StatusOK
+	switch r.URL.Path {
+	case "/api/v2/federation/pair":
+		action = "cluster.federation.v2.pair"
+		status = http.StatusCreated
+	case "/api/v2/federation/commit":
+		action = "cluster.federation.v2.commit"
+	case "/api/v2/federation/revoke":
+		action = "cluster.federation.v2.revoke"
+	}
+	if r.URL.Path != "/api/v2/federation/summary" {
+		_ = s.audit(
+			r,
+			"",
+			action,
+			"cluster-controller",
+			envelope.ControllerID,
+			"success",
+			map[string]any{"protocol": cluster.FederationProtocolV2},
+		)
+	}
+	s.writeJSON(w, status, response)
 }
 
 func (s *Server) requireClusterMutation(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {

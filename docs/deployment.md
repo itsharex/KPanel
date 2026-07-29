@@ -141,8 +141,8 @@ Panel 容器不发布宿主端口。需要在宿主机或 host-network Nginx 中
 
 - `kejilion-panel-internal`：固定 `/28` 内部网段，只承载宿主机反向代理到 Panel
   的入口。
-- `kejilion-panel-egress`：普通 bridge，只供 Panel 主动访问经过校验的 HTTPS
-  集群节点及固定外部服务。
+- `kejilion-panel-egress`：普通 bridge，只供 Panel 主动访问经过校验的 HTTPS 或 Noise
+  加密 `IP + 端口` 集群节点及固定外部服务。
 
 Panel 仍只信任 loopback 与内部 `/28` 的代理头，egress 网络不加入可信代理范围。
 如果预检发现冲突，通过 `--network-subnet` 选择另一个对齐的私网 `/28`；安装器会
@@ -150,7 +150,9 @@ Panel 仍只信任 loopback 与内部 `/28` 的代理头，egress 网络不加�
 Nginx 必须与 Panel 同处一台宿主机或能安全路由到该内部网段；不要把 Panel 私网地址
 暴露到公网路由。
 
-集群主机默认只接受公网 HTTPS 根地址。确需访问私有管理网时，在
+集群主机接受公网 HTTPS 根地址；无域名时，v2 也接受 `http://字面量IP:非80端口`，联邦
+正文由 Noise 端到端加密。该能力不加密浏览器打开的管理页面，公网日常管理仍应配置 HTTPS。
+确需访问私有管理网时，在
 `/opt/kejilion-panel/.env` 的 `KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS` 中填写精确
 CIDR（逗号分隔）后重建 Panel 容器。loopback、link-local、组播和云元数据地址始终
 拒绝；不要填写覆盖范围过大的网段。

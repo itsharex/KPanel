@@ -3,6 +3,7 @@ package panel
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -131,7 +132,7 @@ func TestClusterPairingCodeSecretIsNotAudited(t *testing.T) {
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
 
 	response := authenticatedRequest(
-		server, http.MethodPost, "/api/v1/cluster/pairing-codes", nil,
+		server, http.MethodPost, "/api/v1/cluster/pairing-codes/v2", nil,
 		sessionCookie, csrfCookie, map[string]string{
 			"Origin":       "http://panel.test",
 			"X-CSRF-Token": csrfCookie.Value,
@@ -146,6 +147,9 @@ func TestClusterPairingCodeSecretIsNotAudited(t *testing.T) {
 	}
 	if code.Code == "" {
 		t.Fatal("pairing code response is empty")
+	}
+	if !strings.HasPrefix(code.Code, "kp2.") {
+		t.Fatalf("pairing code does not use the encrypted v2 protocol: %q", code.Code)
 	}
 
 	events, _ := server.store.ListAudit(200, "")
@@ -169,5 +173,126 @@ func TestClusterPairingCodeSecretIsNotAudited(t *testing.T) {
 	}
 	if !intent || !success {
 		t.Fatalf("pairing code audit intent/success missing: %#v", events)
+	}
+}
+
+func TestLegacyPairingCodeAPIStillIssuesV1Code(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	response := authenticatedRequest(
+		server,
+		http.MethodPost,
+		"/api/v1/cluster/pairing-codes",
+		nil,
+		sessionCookie,
+		csrfCookie,
+		map[string]string{
+			"Origin":       "http://panel.test",
+			"X-CSRF-Token": csrfCookie.Value,
+		},
+	)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("legacy pairing code status = %d; body=%s", response.Code, response.Body.String())
+	}
+	var code cluster.PairingCode
+	if err := json.Unmarshal(response.Body.Bytes(), &code); err != nil {
+		t.Fatalf("decode legacy pairing code: %v", err)
+	}
+	if len(code.Code) != 81 || strings.HasPrefix(code.Code, "kp2.") {
+		t.Fatalf("legacy pairing endpoint returned an incompatible code: %q", code.Code)
+	}
+}
+
+func TestFederationV2BypassesPublicHostCheckButStillAuthenticates(t *testing.T) {
+	server, _ := newTestServer(t)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://8.8.8.8:1801/api/v2/federation/pair",
+		strings.NewReader(`{}`),
+	)
+	request.Host = "8.8.8.8:1801"
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"unauthenticated v2 federation status = %d, want %d; body=%s",
+			response.Code,
+			http.StatusUnauthorized,
+			response.Body.String(),
+		)
+	}
+	if strings.Contains(response.Body.String(), "host_header_rejected") {
+		t.Fatalf("v2 federation request was rejected by the browser Host policy: %s", response.Body.String())
+	}
+}
+
+func TestFederationV2RejectsWrongMethodAndQuery(t *testing.T) {
+	server, _ := newTestServer(t)
+	for _, test := range []struct {
+		name   string
+		method string
+		target string
+		status int
+	}{
+		{
+			name:   "wrong method",
+			method: http.MethodGet,
+			target: "http://8.8.8.8:1801/api/v2/federation/pair",
+			status: http.StatusMisdirectedRequest,
+		},
+		{
+			name:   "query",
+			method: http.MethodPost,
+			target: "http://8.8.8.8:1801/api/v2/federation/pair?unexpected=1",
+			status: http.StatusBadRequest,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.target, strings.NewReader(`{}`))
+			request.Host = "8.8.8.8:1801"
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+
+			server.ServeHTTP(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf(
+					"invalid v2 federation status = %d, want %d; body=%s",
+					response.Code,
+					test.status,
+					response.Body.String(),
+				)
+			}
+		})
+	}
+}
+
+func TestFederationV2RejectsOversizedEnvelope(t *testing.T) {
+	server, _ := newTestServer(t)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://8.8.8.8:1801/api/v2/federation/pair",
+		strings.NewReader(
+			`{"message":"`+
+				strings.Repeat("x", cluster.MaxFederationV2Bytes+1)+
+				`"}`,
+		),
+	)
+	request.Host = "8.8.8.8:1801"
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf(
+			"oversized v2 federation status = %d, want %d; body=%s",
+			response.Code,
+			http.StatusRequestEntityTooLarge,
+			response.Body.String(),
+		)
 	}
 }

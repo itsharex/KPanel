@@ -923,7 +923,7 @@ describe('API client', () => {
       if (url === '/api/v1/cluster/controllers' && (init?.method || 'GET') === 'GET') {
         return jsonResponse([])
       }
-      if (url === '/api/v1/cluster/pairing-codes') {
+      if (url === '/api/v1/cluster/pairing-codes/v2') {
         return jsonResponse({
           code: 'pair.secret',
           scope: 'cluster.summary.read',
@@ -965,7 +965,7 @@ describe('API client', () => {
       `/api/v1/cluster/hosts/${encodedHostID}`,
       `/api/v1/cluster/hosts/${encodedHostID}`,
       `/api/v1/cluster/hosts/${encodedHostID}/refresh`,
-      '/api/v1/cluster/pairing-codes',
+      '/api/v1/cluster/pairing-codes/v2',
       '/api/v1/cluster/controllers',
       `/api/v1/cluster/controllers/${encodedControllerID}`,
     ])

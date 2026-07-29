@@ -28,6 +28,8 @@ const statusMap: Record<string, { label: string; tone: string }> = {
   restarting: { label: '重启中', tone: 'warning' },
   queued: { label: '排队中', tone: 'info' },
   pending: { label: '处理中', tone: 'info' },
+  pairing: { label: '配对中', tone: 'info' },
+  revoking: { label: '撤销中', tone: 'warning' },
   running_job: { label: '执行中', tone: 'info' },
   observed: { label: '已观测', tone: 'info' },
   static: { label: '静态站点', tone: 'info' },

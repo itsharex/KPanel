@@ -101,6 +101,8 @@ export interface PublicNetworkSummary {
 
 export type ClusterHostState =
   | 'unknown'
+  | 'pairing'
+  | 'revoking'
   | 'online'
   | 'degraded'
   | 'stale'
@@ -108,6 +110,8 @@ export type ClusterHostState =
   | 'auth_failed'
   | 'tls_error'
   | 'incompatible'
+
+export type ClusterTransportSecurity = 'tls' | 'e2e_http'
 
 export interface ClusterTelemetry {
   agentVersion: string
@@ -160,6 +164,8 @@ export interface ClusterHost {
   isLocal: boolean
   name: string
   origin: string
+  transportSecurity: ClusterTransportSecurity
+  peerFingerprint?: string
   remoteNodeId: string
   federationProtocol: string
   panelVersion?: string

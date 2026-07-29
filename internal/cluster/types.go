@@ -8,12 +8,21 @@ import (
 )
 
 const (
-	FederationProtocol = "v1"
-	SummaryScope       = "cluster.summary.read"
-	LocalHostID        = "local"
-	MaxHosts           = 100
-	MaxSummaryBytes    = 64 << 10
-	MaxPairBytes       = 16 << 10
+	FederationProtocol   = "v1"
+	FederationProtocolV2 = "v2"
+	SummaryScope         = "cluster.summary.read"
+	LocalHostID          = "local"
+	MaxHosts             = 100
+	MaxSummaryBytes      = 64 << 10
+	MaxPairBytes         = 16 << 10
+	MaxFederationV2Bytes = 96 << 10
+)
+
+type TransportSecurity string
+
+const (
+	TransportSecurityTLS           TransportSecurity = "tls"
+	TransportSecurityEncryptedHTTP TransportSecurity = "e2e_http"
 )
 
 var (
@@ -36,6 +45,8 @@ type HostState string
 
 const (
 	HostUnknown      HostState = "unknown"
+	HostPairing      HostState = "pairing"
+	HostRevoking     HostState = "revoking"
 	HostOnline       HostState = "online"
 	HostDegraded     HostState = "degraded"
 	HostStale        HostState = "stale"
@@ -54,25 +65,27 @@ type HostSnapshot struct {
 }
 
 type Host struct {
-	ID                  string        `json:"id"`
-	IsLocal             bool          `json:"isLocal"`
-	Name                string        `json:"name"`
-	Origin              string        `json:"origin"`
-	RemoteNodeID        string        `json:"remoteNodeId"`
-	FederationProtocol  string        `json:"federationProtocol"`
-	PanelVersion        string        `json:"panelVersion,omitempty"`
-	State               HostState     `json:"state"`
-	LastSnapshot        *HostSnapshot `json:"lastSnapshot,omitempty"`
-	LastAttemptAt       *time.Time    `json:"lastAttemptAt,omitempty"`
-	LastSuccessAt       *time.Time    `json:"lastSuccessAt,omitempty"`
-	ConsecutiveFailures int           `json:"consecutiveFailures"`
-	LastErrorCode       string        `json:"lastErrorCode,omitempty"`
-	LastError           string        `json:"lastError,omitempty"`
-	Polling             bool          `json:"polling"`
-	NextPollAt          *time.Time    `json:"nextPollAt,omitempty"`
-	ResourceVersion     string        `json:"resourceVersion"`
-	CreatedAt           time.Time     `json:"createdAt"`
-	UpdatedAt           time.Time     `json:"updatedAt"`
+	ID                  string            `json:"id"`
+	IsLocal             bool              `json:"isLocal"`
+	Name                string            `json:"name"`
+	Origin              string            `json:"origin"`
+	TransportSecurity   TransportSecurity `json:"transportSecurity"`
+	PeerFingerprint     string            `json:"peerFingerprint,omitempty"`
+	RemoteNodeID        string            `json:"remoteNodeId"`
+	FederationProtocol  string            `json:"federationProtocol"`
+	PanelVersion        string            `json:"panelVersion,omitempty"`
+	State               HostState         `json:"state"`
+	LastSnapshot        *HostSnapshot     `json:"lastSnapshot,omitempty"`
+	LastAttemptAt       *time.Time        `json:"lastAttemptAt,omitempty"`
+	LastSuccessAt       *time.Time        `json:"lastSuccessAt,omitempty"`
+	ConsecutiveFailures int               `json:"consecutiveFailures"`
+	LastErrorCode       string            `json:"lastErrorCode,omitempty"`
+	LastError           string            `json:"lastError,omitempty"`
+	Polling             bool              `json:"polling"`
+	NextPollAt          *time.Time        `json:"nextPollAt,omitempty"`
+	ResourceVersion     string            `json:"resourceVersion"`
+	CreatedAt           time.Time         `json:"createdAt"`
+	UpdatedAt           time.Time         `json:"updatedAt"`
 }
 
 type AddHostInput struct {
