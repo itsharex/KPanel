@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-07-29
+
+### Added
+
+- 网站列表通过 KPanel 同源接口加载站点实际 favicon，并使用 Agent 磁盘缓存、浏览器 7 天缓存和低优先级懒加载，避免阻塞列表与重复访问外站。
+- 补齐 Rocky Linux、AlmaLinux、RHEL、Oracle Linux、Manjaro、openSUSE 和 SUSE Linux Enterprise 的发行版身份与品牌图标映射。
+
+### Fixed
+
+- 修复应用市场安装时把探测到的公网 IPv4 固定为 `PublicURL`，导致内网、NAT、端口映射或无公网环境无法通过实际 IP 打开 KPanel 的问题；IPv4/IPv6 字面地址保持同源校验，域名仍需显式配置或通过可信 `k fd` 代理访问。
+- 修复 Rocky Linux 等衍生发行版被 `ID_LIKE` 错误显示为 CentOS 或其他兼容家族品牌的问题。
+
 ## [0.27.0] - 2026-07-29
 
 ### Added
