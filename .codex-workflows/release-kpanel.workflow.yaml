@@ -74,6 +74,7 @@ git diff -- VERSION internal/version/version.go web/package.json \
 在 Linux、WSL 或 CI 等支持 Bash、Go、Node 和 Docker 的环境执行：
 
 ```bash
+npm ci --prefix web
 make verify-release
 docker run --rm \
   -e KPANEL_APP_CONF_TEST_ROOTFS=1 \
