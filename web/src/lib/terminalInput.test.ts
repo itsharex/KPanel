@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   takeTerminalInputChunk,
   terminalInputShouldFlushImmediately,
+  terminalLineSubmission,
 } from './terminalInput'
 
 describe('terminal input transport', () => {
@@ -10,6 +11,12 @@ describe('terminal input transport', () => {
     expect(terminalInputShouldFlushImmediately('\u001b[A')).toBe(true)
     expect(terminalInputShouldFlushImmediately('\u0003')).toBe(true)
     expect(terminalInputShouldFlushImmediately('普通输入')).toBe(false)
+  })
+
+  it('submits a precomposed line as one payload terminated by Enter', () => {
+    expect(terminalLineSubmission('echo ready')).toBe('echo ready\r')
+    expect(terminalLineSubmission('中文输入')).toBe('中文输入\r')
+    expect(terminalLineSubmission('')).toBe('\r')
   })
 
   it('chunks UTF-8 input without splitting characters', () => {

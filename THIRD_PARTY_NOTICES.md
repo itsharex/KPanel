@@ -13,6 +13,7 @@ KPanel.
 | `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause | [`LICENSES/golang-x-sys-BSD-3-Clause.txt`](LICENSES/golang-x-sys-BSD-3-Clause.txt) |
 | `@lucide/vue` | `1.26.0` | ISC and bundled icon notices | [`LICENSES/lucide-ISC.txt`](LICENSES/lucide-ISC.txt) |
 | `@xterm/addon-fit` | `0.11.0` | MIT | [`LICENSES/xterm-addon-fit-MIT.txt`](LICENSES/xterm-addon-fit-MIT.txt) |
+| `@xterm/addon-web-links` | `0.12.0` | MIT | [`LICENSES/xterm-addon-web-links-MIT.txt`](LICENSES/xterm-addon-web-links-MIT.txt) |
 | `@xterm/xterm` | `6.0.0` | MIT | [`LICENSES/xterm-MIT.txt`](LICENSES/xterm-MIT.txt) |
 | `circle-flags` | `2.8.3` | MIT | [`LICENSES/circle-flags-MIT.txt`](LICENSES/circle-flags-MIT.txt) |
 | `simple-icons` | `16.27.1` | CC0-1.0; referenced brands retain their trademark rights | [`LICENSES/simple-icons-CC0-1.0.txt`](LICENSES/simple-icons-CC0-1.0.txt) |

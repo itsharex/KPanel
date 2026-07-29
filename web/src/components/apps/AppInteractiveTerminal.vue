@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { api } from '@/lib/api'
+import { openTerminalURL } from '@/lib/terminalLinks'
 import {
   takeTerminalInputChunk,
   terminalInputShouldFlushImmediately,
+  terminalLineSubmission,
 } from '@/lib/terminalInput'
 
 const props = defineProps<{
@@ -18,6 +21,7 @@ const props = defineProps<{
 const host = ref<HTMLElement>()
 const connectionState = ref<'connecting' | 'connected' | 'finished' | 'error'>('connecting')
 const terminalInputOpen = ref(Boolean(props.inputOpen))
+const pendingLine = ref('')
 let terminal: Terminal | undefined
 let fitAddon: FitAddon | undefined
 let resizeObserver: ResizeObserver | undefined
@@ -83,6 +87,13 @@ function queueInput(data: string): void {
   }
 }
 
+function submitPendingLine(): void {
+  if (!terminalInputOpen.value || disposed) return
+  const data = terminalLineSubmission(pendingLine.value)
+  pendingLine.value = ''
+  queueInput(data)
+}
+
 async function poll(): Promise<void> {
   if (polling || disposed) return
   polling = true
@@ -138,6 +149,7 @@ function resetTerminal(): void {
   polling = false
   offset = 0
   terminal?.reset()
+  pendingLine.value = ''
   terminalInputOpen.value = Boolean(props.inputOpen)
   connectionState.value = 'connecting'
   if (pollTimer) window.clearTimeout(pollTimer)
@@ -170,6 +182,7 @@ onMounted(() => {
   })
   fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
+  terminal.loadAddon(new WebLinksAddon((_event, uri) => void openTerminalURL(uri)))
   // A remote script may print OSC 52; never allow it to write the browser clipboard.
   terminal.parser.registerOscHandler(52, () => true)
   terminal.onData(queueInput)
@@ -236,6 +249,24 @@ onBeforeUnmount(() => {
       </span>
     </header>
     <div ref="host" class="interactive-terminal__screen" @click="terminal?.focus()" />
+    <form
+      v-if="terminalInputOpen"
+      class="interactive-terminal__composer"
+      @submit.prevent="submitPendingLine"
+    >
+      <input
+        v-model="pendingLine"
+        type="text"
+        aria-label="预输入终端内容"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        maxlength="8192"
+        placeholder="在此预输入，按 Enter 整行发送"
+        @keydown.enter.prevent="submitPendingLine"
+      />
+      <button type="submit">发送</button>
+    </form>
   </section>
 </template>
 
@@ -299,5 +330,43 @@ onBeforeUnmount(() => {
 
 .interactive-terminal__screen :deep(.xterm) {
   height: 100%;
+}
+
+.interactive-terminal__composer {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid #202a3b;
+  background: #111827;
+}
+
+.interactive-terminal__composer input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid #314057;
+  border-radius: 9px;
+  padding: 9px 11px;
+  color: #e7edf7;
+  background: #090d18;
+  font: 13px/1.2 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+
+.interactive-terminal__composer input:focus {
+  border-color: #6d5dfc;
+  outline: 2px solid #6d5dfc33;
+}
+
+.interactive-terminal__composer button {
+  border: 1px solid #6d5dfc;
+  border-radius: 9px;
+  padding: 8px 16px;
+  color: #fff;
+  background: #6d5dfc;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.interactive-terminal__composer button:hover {
+  background: #7c6dff;
 }
 </style>

@@ -8,6 +8,10 @@ export function terminalInputShouldFlushImmediately(data: string): boolean {
   return false
 }
 
+export function terminalLineSubmission(value: string): string {
+  return `${value}\r`
+}
+
 export function takeTerminalInputChunk(
   value: string,
   maxBytes = 2048,
