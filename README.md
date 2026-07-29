@@ -1,75 +1,115 @@
-# KPanel
+<p align="center">
+  <img src=".github/assets/kpanel-logo.png" alt="KPanel" width="520">
+</p>
 
-> 项目长期原则：KPanel 与 `kejilion.sh` 属于同一生态，脚本业务是首要真源，双端产物必须互认并可继续管理。
-> 资源来源或操作风险不得成为禁用管理员功能的理由；登录、抗注入、路径完整性、供应链和回滚防护必须保留。
-> 详见 [PROJECT_RULES.md](PROJECT_RULES.md)、[生态互通基线](docs/ecosystem-parity.md) 与
-> [操作边界审计](docs/operational-boundary-audit.md)。
+<p align="center">
+  与 <code>kejilion.sh</code> 双向互通的现代 Linux 服务器管理面板
+</p>
 
-KPanel 是 `kejilion.sh` 的现代 Web 管理形态，目标是让脚本已有业务在 Web 端等价执行，
-并让脚本、SSH、Compose 与 Web 产生的真实资源可以互相发现、修改和继续管理。
+<p align="center">
+  <a href="https://github.com/kejilion/KPanel/releases/latest"><img src="https://img.shields.io/github/v/release/kejilion/KPanel?display_name=tag" alt="Latest release"></a>
+  <a href="https://github.com/kejilion/KPanel/actions/workflows/ci.yml"><img src="https://github.com/kejilion/KPanel/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/github/go-mod/go-version/kejilion/KPanel" alt="Go version"></a>
+</p>
 
-KPanel 本体可在仅具备 systemd、Docker Engine 与 Compose v2 的干净 Linux 主机上独立安装；
-不要求预先运行 `kejilion.sh` 或存在 `/home/web`。未初始化网站环境时网站列表为空；
-可信 `kejilion.sh` 就绪后仍可从面板创建站点，并由脚本自动初始化所需环境。
+<p align="center">
+  <a href="#功能概览">功能概览</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="docs/deployment.md">部署文档</a> ·
+  <a href="docs/session-collaboration.md">协作说明</a> ·
+  <a href="CHANGELOG.md">更新记录</a>
+</p>
 
-## 核心原则
+KPanel 将 `kejilion.sh` 的服务器运维能力带到 Web 端。脚本、SSH、Compose
+和 KPanel 创建的真实资源可以互相发现、修改并继续管理，避免因为换了管理入口
+就失去对现有网站、容器和配置的控制。
 
-- 不修改、覆盖或 `source` 现有 `kejilion.sh`；需要复用脚本业务时，通过版本化的非交互协议调用对应动作。
-- 宿主机实际状态是事实来源，面板数据库不是系统资源的唯一真相。
-- Web/API 进程无特权运行，不挂载 Docker Socket 或宿主机根目录。
-- 所有宿主机操作通过本地 Unix Socket 连接到结构化 Agent。
-- 资源来源、KPanel label、脚本 marker、人工修改、危险运行参数或 KPanel 自身身份不构成管理授权条件。
-- 配置写入具备校验、审计和失败回滚；不可逆的软件包维护任务明确标注并持久化进度与结果。
+KPanel 可以安装在仅具备 systemd、Docker Engine 与 Compose v2 的干净 Linux
+主机上，不要求预先运行 `kejilion.sh` 或存在 `/home/web`。接入可信
+`kejilion.sh` 后，还可以复用其网站和应用业务。
 
-## 首版范围
+## 功能概览
 
-- 首次初始化、安全登录、服务端 Session、CSRF、登录限速。
-- 与 `k info` 对齐的 CPU、内存、磁盘、1/5/15 分钟负载、连接数、累计流量、
-  公网地址、ISP、位置、宿主机时间和服务状态。
-- `/home/web` 现有站点、证书和 Nginx 状态发现。
-- 与 `kejilion.sh` 产物布局一致的静态站、PHP 站、IP/端口反代、域名反代、
-  负载均衡和域名重定向创建与更新；Web 使用直观卡片选择服务。
-- 脚本、Panel、人工修改及孤立网站产物均可按真实资源 ID 管理和删除；完整删除处理
-  实际站点目录、域名证书与同名数据库，Nginx 变更失败时回滚，数据库清理失败时明确告警。
-- WordPress 与 IP+端口反代通过独立后台任务执行 `kejilion.sh web` 固定非交互分支，脚本原生负责
-  LDNMP、源码、数据库、Redis、TLS、官方 Nginx 模板及端口访问控制，Web 负责进度和产物对账。
-- Discuz、Kodbox、MacCMS、独角数卡、Flarum、Typecho、LinkStack 和 AI Prompt
-  通过 `kejilion.sh` 固定非交互协议在后台一键搭建，直接复用脚本业务分支和真实产物。
-- Docker 环境、容器、镜像、网络、卷五分区管理；全部容器均按实时状态支持启动、
-  停止、重启、强制删除、有界日志、性能采样、单次控制台与脚本兼容访问控制。
-- 结构化创建容器、镜像拉取/更新/删除、网络成员关系、local 卷、分类/完整清理、
-  脚本同源镜像组、Docker IPv6，以及 `/home/docker` 后台备份、覆盖式事务还原和
-  SSH 密钥迁移。
-- 与 `app.kejilion.sh` 动态对齐的应用目录、本地图标、脚本安装状态、容器状态、镜像更新检查、
-  域名绑定/解绑和访问策略；已审计的标准应用支持持久化后台安装与实时进度，声明式应用额外支持
-  更新、卸载与失败回滚。
-- 独立“体检”页面直接读取 `kejilion.sh` 测试目录，以固定协议运行 IP/解锁、网络线路、
-  硬件性能和综合测评，持续显示第三方脚本来源、资源影响、后台日志与跑分历史。
-- 主机名、SSH 新端口、DNS、时区、与 `kejilion.sh` 共用的 `/swapfile`、APT 镜像、IP 优先级、
-  五种内存自适应内核预设、BBR 和确认式服务器重启的类型化管理。
-- Debian/Ubuntu、RHEL/Fedora、Arch/Manjaro 和 openSUSE/SLES 的系统更新，
-  以及不触碰 Docker、网站和备份的系统清理。
-- 管理变更记录、审计、资源版本冲突检测，以及依赖不可用时的明确状态。
+- **主机总览与系统管理**：查看 CPU、内存、磁盘、负载、网络、服务状态，管理主机名、
+  SSH 端口、DNS、时区、Swap、软件源、内核预设、BBR、系统更新与安全重启。
+- **网站管理**：发现现有站点、证书与 Nginx 状态，创建和管理静态站、PHP 站、
+  反向代理、负载均衡、域名重定向及常用建站程序。
+- **Docker 管理**：统一管理容器、镜像、网络和卷，支持日志、性能采样、更新检查、
+  备份还原、IPv6 及脚本兼容的访问控制。
+- **应用市场**：动态对齐 `app.kejilion.sh`，展示真实安装和容器状态，并为已审计应用
+  提供后台安装、更新、卸载与失败回滚。
+- **服务器体检**：运行 IP/解锁、网络线路、硬件性能和综合测评，持续显示脚本来源、
+  资源影响、实时日志和历史结果。
+- **审计与恢复**：记录管理变更，检测资源版本冲突；配置写入前校验，失败时回滚并明确
+  报告未完成的清理项。
 
-当前尚缺少通用宿主机终端、Compose/daemon.json 通用编辑器、系统重装非交互
-适配器和部分发行版 DNS/换源适配器。这些是待实现能力，不是以“高风险”为由永久关闭的产品限制；
-实现时仍须经过鉴权、结构化输入、路径约束、并发控制、审计和失败恢复。
+## 为什么是 KPanel
 
-## 文档
+- **与脚本互认**：宿主机实际状态是事实来源，面板数据库不是资源的唯一真相。
+- **不接管现有环境**：安装器不会修改 `kejilion.sh`、`/home/web`、Nginx、防火墙
+  或现有站点。
+- **权限边界清晰**：Web/API 进程无特权运行，不挂载 Docker Socket 或宿主机根目录；
+  宿主机操作由本地 Unix Socket 上的结构化 Agent 执行。
+- **来源不限制管理**：脚本、KPanel、Compose 或人工创建的资源，都可以按实际状态
+  继续管理。
 
-- [架构与事实来源](docs/architecture.md)
-- [v0.1 范围与验收](docs/scope-v0.1.md)
-- [攻击面与操作边界](docs/security-model.md)
-- [性能、稳定性、资源与网络入侵安全开发规范](docs/development-quality-standard.md)
-- [操作护栏审计与适配缺口](docs/operational-boundary-audit.md)
-- [kejilion.sh 兼容基线](docs/compatibility.md)
-- [kejilion.sh 网站业务分析](docs/legacy-site-contract.md)
-- [应用市场对齐](docs/application-market.md)
-- [体检与第三方测试协议](docs/diagnostics.md)
-- [v0.17 业务对齐与加载策略](docs/business-alignment-v0.17.md)
-- [v0.18 Docker 五分区管理与互通边界](docs/docker-management-v0.18.md)
-- [构建、发布与部署](docs/deployment.md)
-- [宿主机系统兼容矩阵](docs/platform-support.md)
-- [版本变更记录](CHANGELOG.md)
+## 快速开始
 
-详细设计见 [架构说明](docs/architecture.md)、[兼容基线](docs/compatibility.md)、[安全模型](docs/security-model.md) 和 [v0.1 范围](docs/scope-v0.1.md)。
+支持 `amd64` 和 `arm64`。正式部署目标为使用 systemd 的 Debian/Ubuntu、
+RHEL/Fedora、Arch/Manjaro 与 openSUSE/SLES；详细验收范围见
+[宿主机系统兼容矩阵](docs/platform-support.md)。
+
+1. 从 [最新 Release](https://github.com/kejilion/KPanel/releases/latest) 下载部署包、
+   与主机架构匹配的 `kejilion-agent` 和 `SHA256SUMS`。
+2. 使用 `SHA256SUMS` 校验下载文件，并从 Release 说明复制固定的镜像 digest。
+3. 解压部署包，先运行只读预检：
+
+   ```sh
+   ./deploy/preflight.sh \
+     --public-url https://panel.example.com \
+     --network-subnet 172.29.255.240/28
+   ```
+
+4. 按[完整部署文档](docs/deployment.md)先执行安装器的 `--dry-run`，确认检查结果后
+   再正式安装并配置 HTTPS 反向代理。
+
+> [!IMPORTANT]
+> KPanel 的 Agent 具备宿主机管理能力，因此不提供跳过校验的 `curl | bash`
+> 安装方式。生产部署应使用已校验的 Agent、固定镜像 digest 和 HTTPS。
+
+> [!NOTE]
+> 当前安装器仅支持全新安装；发现既有 KPanel 文件、同名容器或同名网络时会拒绝继续。
+> Alpine/OpenRC 暂不属于正式部署目标。
+
+## 设计与安全
+
+- 不修改、覆盖或 `source` 现有 `kejilion.sh`；需要复用脚本业务时，通过版本化的
+  非交互协议调用对应动作。
+- 登录、服务端 Session、CSRF、登录限速、路径约束与供应链校验属于基础能力。
+- 资源来源、KPanel label、脚本 marker、人工修改、危险运行参数或 KPanel 自身身份，
+  均不构成管理授权条件。
+- 配置写入具备校验、审计和失败回滚；不可逆任务会明确标注并持久化进度与结果。
+
+完整原则见 [PROJECT_RULES.md](PROJECT_RULES.md)、[生态互通基线](docs/ecosystem-parity.md)
+与[操作边界审计](docs/operational-boundary-audit.md)。
+
+## 当前边界
+
+通用宿主机终端、Compose/`daemon.json` 通用编辑器、系统重装非交互适配器，以及部分
+发行版的 DNS/换源适配器仍在规划中。这些是待实现能力；后续实现仍需经过鉴权、
+结构化输入、路径约束、并发控制、审计和失败恢复。
+
+## 项目文档
+
+- 入门与部署：[构建、发布与部署](docs/deployment.md)、
+  [宿主机系统兼容矩阵](docs/platform-support.md)
+- 架构与安全：[架构与事实来源](docs/architecture.md)、
+  [攻击面与操作边界](docs/security-model.md)、
+  [性能、稳定性、资源与网络入侵安全开发规范](docs/development-quality-standard.md)
+- 生态兼容：[kejilion.sh 兼容基线](docs/compatibility.md)、
+  [网站业务分析](docs/legacy-site-contract.md)、
+  [应用市场对齐](docs/application-market.md)
+- 功能设计：[体检与第三方测试协议](docs/diagnostics.md)、
+  [Docker 管理与互通边界](docs/docker-management-v0.18.md)
+- 协作规范：[Codex 会话协作](docs/session-collaboration.md)
+- 版本信息：[版本变更记录](CHANGELOG.md)
