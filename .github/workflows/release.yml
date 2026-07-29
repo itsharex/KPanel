@@ -211,8 +211,9 @@ jobs:
           printf 'Docker image publication is still in progress.\n' > release/DRAFT_NOTES.md
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             draft="$(
-              gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
-                --jq '.draft'
+              gh release view "$GITHUB_REF_NAME" \
+                --json isDraft \
+                --jq '.isDraft'
             )"
             test "$draft" = true || {
               echo "Refusing to replace an already-published release" >&2
@@ -273,19 +274,44 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          version_digest="$(
-            docker buildx imagetools inspect "$IMAGE:$VERSION" \
+          manifest_digest() {
+            docker buildx imagetools inspect "$1" \
               --format '{{json .Manifest}}' | jq -r '.digest'
-          )"
+          }
+          retry() {
+            local attempt
+            for attempt in {1..5}; do
+              if "$@"; then
+                return 0
+              fi
+              if (( attempt == 5 )); then
+                return 1
+              fi
+              sleep $((attempt * 5))
+            done
+          }
+          retry_capture() {
+            local result_var="$1"
+            local attempt output
+            shift
+            for attempt in {1..5}; do
+              if output="$("$@")"; then
+                printf -v "$result_var" '%s' "$output"
+                return 0
+              fi
+              if (( attempt == 5 )); then
+                return 1
+              fi
+              sleep $((attempt * 5))
+            done
+          }
+          retry_capture version_digest manifest_digest "$IMAGE:$VERSION"
           test "$version_digest" = "$IMAGE_DIGEST"
-          docker buildx imagetools inspect "$IMAGE@$IMAGE_DIGEST" >/dev/null
-          docker buildx imagetools create \
+          retry docker buildx imagetools inspect "$IMAGE@$IMAGE_DIGEST" >/dev/null
+          retry docker buildx imagetools create \
             --tag "$IMAGE:latest" \
             "$IMAGE@$IMAGE_DIGEST"
-          latest_digest="$(
-            docker buildx imagetools inspect "$IMAGE:latest" \
-              --format '{{json .Manifest}}' | jq -r '.digest'
-          )"
+          retry_capture latest_digest manifest_digest "$IMAGE:latest"
           test "$latest_digest" = "$IMAGE_DIGEST"
 
       - name: Publish GitHub release
