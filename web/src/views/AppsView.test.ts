@@ -1,4 +1,5 @@
 import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
+import { renderToString, type SSRContext } from 'vue/server-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppsView from './AppsView.vue'
 import { ApiError } from '@/lib/api'
@@ -105,6 +106,38 @@ function setupView(): AppsBindings {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
   try {
     return app.runWithContext(() => component.setup({}, { expose: () => undefined }))
+  } finally {
+    warn.mockRestore()
+  }
+}
+
+async function renderView(
+  currentInventory: AppMarketInventory,
+  selectedID: string,
+): Promise<string> {
+  const component = AppsView as unknown as {
+    setup: (
+      props: Record<string, never>,
+      context: { expose: () => void },
+    ) => AppsBindings
+  }
+  const renderable = {
+    ...AppsView,
+    setup(props: Record<string, never>, context: { expose: () => void }) {
+      const bindings = component.setup(props, context)
+      bindings.inventory.value = currentInventory
+      bindings.selectedID.value = selectedID
+      return bindings
+    },
+  }
+  const context: SSRContext = {}
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  try {
+    const html = await renderToString(
+      createSSRApp(renderable as unknown as typeof AppsView),
+      context,
+    )
+    return [html, ...Object.values(context.teleports || {})].join('')
   } finally {
     warn.mockRestore()
   }
@@ -225,6 +258,8 @@ beforeEach(() => {
     clearInterval: vi.fn(),
     setTimeout: vi.fn(() => 1),
     clearTimeout: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
     location: { hostname: 'localhost' },
   })
 })
@@ -457,6 +492,29 @@ describe('AppsView update checks', () => {
 })
 
 describe('AppsView stopped applications', () => {
+  it.each([
+    ['exited', '已停止'],
+    ['restarting', '重启中'],
+    ['paused', '已暂停'],
+  ])('renders %s application details when a legacy inventory returns null ports', async (state, label) => {
+    const stopped = inventory('stopped-version')
+    const item = stopped.items[0]
+    if (!item) throw new Error('test inventory is incomplete')
+    stopped.running = 0
+    item.runtime.state = state
+    item.runtime.status = state
+    item.runtime.ports = null as unknown as AppMarketInventory['items'][number]['runtime']['ports']
+    item.capabilities.start = { enabled: true }
+    item.capabilities.stop = { enabled: false, reason: '当前状态不允许停止' }
+
+    const html = await renderView(stopped, item.id)
+
+    expect(html).toContain('role="dialog"')
+    expect(html).toContain('aria-label="Cloudreve"')
+    expect(html).toContain(label)
+    expect(html).toContain('没有可用 HTTP 端口')
+  })
+
   it('keeps a stopped application discoverable by leaving the running-only filter', async () => {
     const stopped = inventory('stopped-version')
     const item = stopped.items[0]

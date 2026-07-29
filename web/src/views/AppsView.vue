@@ -75,7 +75,9 @@ let installPortTimer: number | undefined
 const activeJobStorageKey = 'kpanel:active-app-job'
 
 const selected = computed(() => inventory.value?.items.find((item) => item.id === selectedID.value))
-const selectedPort = computed(() => selected.value?.runtime.ports.find((port) => port.type === 'tcp' && port.publicPort))
+const selectedPort = computed(() =>
+  selected.value?.runtime.ports?.find((port) => port.type === 'tcp' && port.publicPort),
+)
 const selectedDomains = computed(() =>
   selected.value ? matchingAppProxySites(selected.value, sites.value) : [],
 )
@@ -131,6 +133,7 @@ function stateLabel(item: AppMarketItem): string {
   if (!item.runtime.installed) return '未安装'
   const labels: Record<string, string> = {
     running: '运行中',
+    paused: '已暂停',
     exited: '已停止',
     created: '待启动',
     restarting: '重启中',

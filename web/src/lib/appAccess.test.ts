@@ -86,4 +86,12 @@ describe('application access URL', () => {
   it('does not expose a direct URL in domain-only mode without a matching domain', () => {
     expect(appAccessURL(app('domain_only'), [], '192.0.2.10')).toBe('')
   })
+
+  it('treats legacy null ports as no public application endpoint', () => {
+    const legacy = app()
+    legacy.runtime.ports = null as unknown as AppMarketItem['runtime']['ports']
+
+    expect(matchingAppProxySites(legacy, [site()])).toEqual([])
+    expect(appAccessURL(legacy, [], '192.0.2.10')).toBe('')
+  })
 })

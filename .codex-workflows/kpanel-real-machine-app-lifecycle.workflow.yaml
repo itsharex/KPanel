@@ -1,0 +1,327 @@
+---
+name: kpanel-real-machine-app-lifecycle
+description: "用隔离候选 KPanel 和真实 Chrome 验证应用在运行、停止、重启、暂停状态下均可打开详情，并完整恢复真机现场"
+version: "1.0"
+author: "Codex"
+tags: [kpanel, real-machine, chrome, app-market, lifecycle, regression]
+params: [ssh_host, expected_version, candidate_commit, candidate_image, candidate_container, candidate_port, local_tunnel_port, agent_contract, test_app_name, test_app_container, evidence_dir]
+created: "2026-07-29T08:19:18Z"
+updated: "2026-07-29T08:31:16Z"
+---
+
+# KPanel 应用详情真机生命周期验收
+
+## Purpose
+
+在不替换生产 KPanel、不推送镜像仓库的前提下，从指定提交构建隔离候选实例，复用真机
+Agent 读取同一 Docker 事实，并用真实 Chrome 验证应用详情在 `running`、`exited`、
+`restarting`、`paused` 状态下可打开。该流程专门防止“只测 `setup()`、未渲染详情弹窗”
+导致的漏测。
+
+## Prerequisites
+
+- 用户已明确授权对 `${{test_app_container}}` 执行停止、启动、重启、暂停和恢复。
+- `${{test_app_container}}` 是可中断、可原地恢复的测试应用；不得选择数据库、
+  `kejilion-panel`、Cloudreve、n8n 或其他未获授权服务。命中保护名单立即停止。
+- 生产 KPanel、Agent 和测试应用在开始前均健康；候选实例仅监听远端回环地址。
+- 本地仓库提交 `${{candidate_commit}}` 已通过相关单元测试、类型检查和构建。
+- SSH 别名 `${{ssh_host}}` 可用，远端具备 Docker；本地具备 Git、SSH 和可控的真实 Chrome。
+- 候选 Panel 使用全新数据目录和一次性管理员，不复制生产 `panel-state.json`。一次性密码和
+  bootstrap token 不写入 workflow、截图文件名、终端日志或 Git。
+- `${{evidence_dir}}` 必须位于当前工作树的忽略目录（建议 `.codex-tmp/`），证据不得包含
+  Cookie、CSRF Token、Agent Token、密码或完整 `panel-state.json`。
+
+## Steps
+
+### 1. 锁定授权范围和回滚基线
+
+在任何写操作前，通过 SSH 只读检查生产 Panel、Agent 和测试容器。记录：
+
+- 生产 Panel 容器 ID、镜像 ID、版本、健康状态；
+- Agent 版本和 `systemctl is-active`；
+- 所有现有业务容器的 `name → id → state → health`；
+- 测试容器的完整 ID、restart policy、当前状态、健康状态和 `StartedAt`；
+- `${{candidate_port}}` 在远端、`${{local_tunnel_port}}` 在本地均未占用。
+
+必须满足：
+
+```text
+Panel version == ${{expected_version}}
+Panel health == healthy
+Agent == active
+test container == running
+test container != production Panel
+```
+
+若测试应用无健康检查，可用其原生 HTTP/TCP 探针代替，并记录探针。任一前置条件不满足立即
+停止，不得自行改换其他业务应用。
+
+**Expected output:** 一份脱敏基线，包含可用于结束时比对的容器 ID 和状态。
+
+### 2. 准备可追溯候选源码
+
+确认提交存在且工作树中的修复已进入该提交：
+
+```powershell
+git rev-parse --verify "${{candidate_commit}}^{commit}"
+git show --stat --oneline "${{candidate_commit}}"
+git diff --check "${{candidate_commit}}^" "${{candidate_commit}}"
+```
+
+使用 `git archive` 生成源码归档；不要复制 `.git`、本地凭据或用户未提交文件。将归档上传到
+远端由 `mktemp -d /tmp/kpanel-app-lifecycle.XXXXXX` 创建的目录。记住这个由 `mktemp`
+返回的绝对路径，后续禁止重新计算或使用通配符代替。
+
+**Expected output:** 候选源码 HEAD 等于 `${{candidate_commit}}`，远端临时目录位于
+`/tmp/kpanel-app-lifecycle.*`。
+
+### 3. 在真机执行代码和镜像核验
+
+在远端候选源码目录运行：
+
+```bash
+docker run --rm \
+  -v "$CANDIDATE_SOURCE:/src" \
+  -w /src \
+  golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 \
+  sh -eu -c 'apk add --no-cache bash >/dev/null && go test ./...'
+
+docker build \
+  --build-arg VERSION="${{expected_version}}" \
+  --build-arg REVISION="${{candidate_commit}}" \
+  --label io.kejilion.test-scope=app-lifecycle \
+  --tag "${{candidate_image}}" \
+  "$CANDIDATE_SOURCE"
+```
+
+校验镜像标签中的 version、revision 和 test-scope。不得 `docker push`，不得覆盖
+`docker.io/kjlion/kejilion-panel:latest`。
+
+**Expected output:** Go 全量测试通过；候选镜像仅存在于 `${{ssh_host}}` 本机，revision
+等于 `${{candidate_commit}}`。
+
+### 4. 启动隔离候选 Panel
+
+只读检查生产 Panel 的挂载、网络和附加组，得到：
+
+- Agent socket 目录；
+- Agent token 文件；
+- Panel 网络名；
+- Agent socket 的组 GID。
+
+在 `mktemp` 目录下创建全新、空的 `panel-data`，权限设为 `0700`、所有者
+`65532:65532`。严禁复制或挂载生产 `panel-state.json`。应用清单来自 Agent，不依赖生产
+Panel 登录数据。
+
+使用固定、唯一的候选容器名，并加入测试标签：
+
+```bash
+docker run -d \
+  --name "${{candidate_container}}" \
+  --label io.kejilion.test-scope=app-lifecycle \
+  --label "io.kejilion.source-commit=${{candidate_commit}}" \
+  --restart no \
+  --user 65532:65532 \
+  --network "$PANEL_NETWORK" \
+  --group-add "$PANEL_GROUP_GID" \
+  --read-only \
+  --pids-limit 128 \
+  --memory 256m \
+  --cpus 1 \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --tmpfs /tmp:size=16m,mode=1777 \
+  -p "127.0.0.1:${{candidate_port}}:8080" \
+  -e KEJILION_PANEL_LISTEN=:8080 \
+  -e KEJILION_PANEL_DATA_DIR=/var/lib/kejilion-panel \
+  -e KEJILION_PANEL_AGENT_SOCKET=/run/kejilion-panel/agent.sock \
+  -e KEJILION_PANEL_AGENT_TOKEN_FILE=/run/secrets/agent-token \
+  -e KEJILION_PANEL_WEB_ROOT=/app/web \
+  -e KEJILION_PANEL_PUBLIC_URL="http://127.0.0.2:${{local_tunnel_port}}" \
+  -e KEJILION_PANEL_SECURE_COOKIE=false \
+  -e KEJILION_PANEL_COOKIE_NAME=kpanel_candidate_session \
+  -e KEJILION_PANEL_TRUSTED_PROXY_CIDRS="127.0.0.0/8,::1/128" \
+  --mount "type=bind,src=$CANDIDATE_DATA,dst=/var/lib/kejilion-panel" \
+  --mount "type=bind,src=$AGENT_RUN_DIR,dst=/run/kejilion-panel,readonly" \
+  --mount "type=bind,src=$AGENT_TOKEN_FILE,dst=/run/secrets/agent-token,readonly" \
+  "${{candidate_image}}"
+```
+
+通过候选容器自身执行 `/paneld agent-healthcheck`，等待候选 `/api/v1/health` 和 Docker
+health 成功，并再次确认生产 Panel 容器 ID、状态和端口均未变化。候选失败时仅删除带
+`io.kejilion.test-scope=app-lifecycle` 标签的精确容器，不得重启生产 Panel。
+
+**Expected output:** 生产 Panel 仍健康；候选 Panel 在远端
+`127.0.0.1:${{candidate_port}}` 健康，版本为 `${{expected_version}}`。
+
+### 5. 建立仅回环 SSH 隧道并使用真实 Chrome
+
+建立本地回环隧道：
+
+```powershell
+ssh -o ExitOnForwardFailure=yes -N `
+  -L "127.0.0.2:${{local_tunnel_port}}:127.0.0.1:${{candidate_port}}" `
+  "${{ssh_host}}"
+```
+
+该命令应作为可跟踪的长运行会话启动，结束时按会话 ID关闭。使用 Chrome 控制能力新建标签页，
+打开 `http://127.0.0.2:${{local_tunnel_port}}/setup`。`127.0.0.2` 和独立 Cookie 名用来
+隔离此前可能存在的生产 Panel 会话。必须操作真实 DOM，禁止用 HTTP
+请求、`setup()` 测试或模拟点击替代本步骤。
+
+通过受信方式取得候选数据目录中的一次性 bootstrap token，在真实 Chrome 完成临时管理员
+初始化；密码仅保存在当前测试会话，清理候选数据后失效。确认页面版本和候选镜像 revision 后
+进入“应用市场”，切换到“已安装”，定位 `${{test_app_name}}`。
+
+**Expected output:** Chrome 中显示候选 Panel，应用卡片与 SSH 读取到的真实容器状态一致。
+
+### 6. 验证运行态详情
+
+点击 `${{test_app_name}}` 卡片并验证：
+
+- 页面存在且仅存在一个 `[role="dialog"]`；
+- 对话框标题为测试应用；
+- `document.body.classList.contains('has-modal') === true`；
+- 详情含状态、访问方式和端口；
+- 浏览器控制台没有 `TypeError` 或未处理 Promise 错误。
+
+关闭详情后验证对话框数量为 0 且 `has-modal === false`。
+
+**Expected output:** `running` 详情可重复打开和关闭，滚动锁不残留。
+
+### 7. 验证停止后重新打开详情
+
+从详情页执行“停止”，完成普通确认，等待 SSH 和页面均显示容器 `exited`。刷新一次库存后，
+用页面自身登录会话读取 `/api/v1/apps`，记录测试应用的真实返回形态：
+
+```text
+runtime.state == "exited"
+agent_contract == "legacy-null" -> runtime.ports == null
+agent_contract == "fixed-array" -> Array.isArray(runtime.ports) && runtime.ports.length == 0
+```
+
+`${{agent_contract}}` 必须为 `legacy-null` 或 `fixed-array`，实际形态与所选模式不符即失败。
+复用未替换的生产 0.26.0 Agent 时应选择 `legacy-null`；这证明候选前端对旧响应兼容。只有运行
+包含后端修复的 Agent 或完成正式更新后，才选择 `fixed-array`。重新点击 stopped 卡片并验证：
+
+- 对话框真实存在；
+- 状态为“已停止”；
+- 文案为“没有可用 HTTP 端口”；
+- “启动”可用；
+- 控制台没有 `Cannot read properties of null (reading 'find')`；
+- 关闭后 `has-modal` 被清除。
+
+**Expected output:** stopped 详情可打开，所选 Agent 返回形态与前端兼容防线同时通过。
+
+### 8. 验证启动与重启
+
+通过候选 Panel 点击“启动”，等待测试容器恢复 `running` 和原健康状态；重新打开详情。随后从
+候选 Panel 点击“重启”，在操作期间和完成后各尝试打开或保持详情，并验证：
+
+- 瞬态可为 `restarting`，最终必须回到 `running`；
+- 详情始终可见或可重新打开；
+- 无空白遮罩、无 `has-modal` 残留、无 `null.find`；
+- 测试容器 ID 未变化。
+- `StartedAt` 已更新。
+
+`restarting` 是瞬态，真机未捕获到时不得声称已验证该瞬态，也不得为了捕获它故意杀进程；
+由确定性组件测试的 `state=restarting + ports:null` 用例补足该分支。
+
+**Expected output:** start/restart 不会使详情页进入不可恢复形态；明确记录是否实际观察到
+`restarting`。
+
+### 9. 验证真实 paused 状态
+
+仅对步骤 1 记录的已授权测试容器完整 ID执行：
+
+```bash
+docker pause "$TEST_CONTAINER_ID"
+```
+
+刷新候选 Panel，确认卡片状态来自 Docker 真值 `paused`，打开详情并验证状态显示“已暂停”、
+对话框存在且控制台无错误。关闭详情后执行：
+
+```bash
+docker unpause "$TEST_CONTAINER_ID"
+```
+
+等待应用恢复原健康状态。若 unpause 后健康检查未恢复，允许对同一测试容器执行一次
+`docker restart` 作为恢复动作，并将此事实写入证据。
+
+**Expected output:** paused 详情可打开；应用最终回到 `running` 和原健康状态。
+
+### 10. 强制恢复、清理和比对
+
+无论测试成功或失败，都按以下顺序执行：
+
+1. 若测试容器仍 paused，先 unpause；
+2. 若未 running，start；若健康未恢复，对同一测试容器 restart 一次；
+3. 关闭 Chrome 候选标签和 SSH 隧道；
+4. 核对 `${{candidate_container}}` 具有测试标签后，按精确名称删除候选容器；
+5. 校验远端临时路径以 `/tmp/kpanel-app-lifecycle.` 开头后再递归删除该精确路径；
+6. 可删除精确候选镜像 `${{candidate_image}}`，不得删除生产镜像；
+7. 与步骤 1 基线比对所有生产容器。
+
+整个流程禁止执行 `docker compose down`、`docker system prune`、`docker builder prune`，
+也禁止自动删除或重建测试应用。
+
+最终必须满足：
+
+```text
+production Panel id == baseline
+production Panel health == healthy
+Agent == active
+test application id == baseline
+test application state == running
+test application health == baseline
+all non-test business container ids == baseline
+candidate container absent
+SSH tunnel absent
+```
+
+任何一项不满足都属于未完成，继续恢复或明确报告阻塞，不得宣称通过。
+
+## Parameters
+
+- `${{ssh_host}}`：SSH 配置别名，例如 `arena-154`。
+- `${{expected_version}}`：候选 Panel 与现有 Agent 的兼容版本，例如 `0.26.0`。
+- `${{candidate_commit}}`：包含修复、测试和本 workflow 的完整 Git 提交。
+- `${{candidate_image}}`：仅真机本地使用的唯一镜像标签，例如
+  `local/kpanel:0.26.0-app-details-candidate`。
+- `${{candidate_container}}`：唯一候选容器名，例如
+  `kpanel-app-lifecycle-candidate-a1b2c3d`。
+- `${{candidate_port}}`：候选 Panel 的远端回环端口，例如 `18082`。
+- `${{local_tunnel_port}}`：真实 Chrome 访问的本地回环端口，例如 `18082`。
+- `${{agent_contract}}`：停止态端口契约；复用旧 Agent 用 `legacy-null`，运行已修复 Agent
+  或正式更新后用 `fixed-array`。
+- `${{test_app_name}}`：应用市场中显示的测试应用名，例如 `Bomb Party`。
+- `${{test_app_container}}`：与该卡片对应的 Docker 容器名，例如 `bomb-party`。
+- `${{evidence_dir}}`：脱敏证据目录，例如
+  `.codex-tmp/app-lifecycle-20260729T083000Z`。
+
+## Verification
+
+工作流成功必须同时具备：
+
+- 修复前测试能稳定复现 `runtime.ports = null` 的渲染异常，修复后同一测试通过；
+- 真机 Docker 中的 Go 测试证明 stopped runtime JSON 为 `"ports":[]`；
+- 真实 Chrome 完成 running → exited → running → restart → paused → running；
+- 真机实际到达的状态都创建 `[role="dialog"]`，并检查 `has-modal` 和控制台；
+- 若未观察到瞬态 `restarting`，确定性组件测试必须覆盖
+  `state=restarting + ports:null`；
+- 生产 Panel 从未被替换或重启，Docker Hub 从未被推送；
+- 所有业务容器恢复基线，候选资源和隧道已清理；
+- `${{evidence_dir}}` 中仅保留脱敏状态、截图、测试摘要和提交/镜像标识。
+
+## Notes
+
+- `exited` 的本质变化是 Docker 不再返回已发布端口；旧版 Agent 把空切片序列化为 `null`。
+  `paused` 通常保留端口，`restarting` 可能短暂变化，因此必须验证所有形态。
+- 候选 Panel 共享的是只读 Agent socket/token 挂载和真实 Docker 状态，面板数据全新创建。
+  候选 Panel 发出的生命周期操作仍会作用于真机测试应用，所以授权范围不能省略。
+- `internal/appmarket` 运行在 Agent。复用生产 Agent 的隔离候选模式只实机验证前端对旧
+  `ports:null` 的兼容；后端 `ports:[]` 由步骤 3 的 Go 测试验证。未经额外授权不得临时启动
+  具有 Docker 写权限的第二个 Agent，也不得据此冒充后端已完成浏览器实机覆盖。
+- HTTPS、域名、反向代理或证书问题不属于本 workflow；使用 SSH 回环隧道隔离这些变量。
+- 失败证据比“最终恢复成功”同样重要：必须记录失败发生的状态、DOM 数量、控制台首个异常和
+  API `ports` 形态。
