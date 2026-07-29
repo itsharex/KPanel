@@ -4,7 +4,7 @@ description: "完成 KPanel 版本准备、CI、GitHub Release、Docker Hub、�
 version: "1.1"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
-params: [version, previous_version, image, apps_repo]
+params: [project_dir, version, previous_version, image, apps_repo]
 created: "2026-07-27T13:00:00Z"
 updated: "2026-07-29T09:17:57Z"
 ---
@@ -20,7 +20,8 @@ updated: "2026-07-29T09:17:57Z"
 ## Prerequisites
 
 - 已阅读 `AGENTS.md` 和 `PROJECT_RULES.md`，并取得用户对本次发布、推送的明确授权。
-- KPanel 仓库为 `C:\GitHub\kejilion-panel`，远端为 `kejilion/KPanel`。
+- `${{project_dir}}` 是本次发布使用的独立、干净 KPanel 工作树，远端为
+  `kejilion/KPanel`；不得切换到其他并发会话的工作树执行。
 - `${{apps_repo}}` 指向 `kejilion/apps` 本地仓库，默认 `C:\GitHub\kejilion\apps`；只有
   `packaging/kejilion-app/kpanel.conf` 的安装/更新契约发生变化时才需要写入该仓库。
 - GitHub 仓库已配置 `DOCKERHUB_TOKEN` Secret；Token 对 `${{image}}` 具有 Read & Write 权限。
@@ -203,6 +204,7 @@ KPANEL_EXPECTED_VERSION="${{version}}" \
 
 ## Parameters
 
+- `${{project_dir}}`：本次发布候选所在的独立 KPanel 工作树绝对路径。
 - `${{version}}`：不含 `v` 的目标语义版本，例如 `0.20.2`。
 - `${{previous_version}}`：发布前稳定源码或镜像版本，用于回滚说明。
 - `${{image}}`：完整镜像仓库，默认 `docker.io/kjlion/kejilion-panel`。
@@ -212,9 +214,10 @@ KPANEL_EXPECTED_VERSION="${{version}}" \
 
 ```bash
 py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
-  validate release-kpanel --project-dir C:/GitHub/kejilion-panel
+  validate release-kpanel --project-dir "${{project_dir}}"
 py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
-  run release-kpanel --project-dir C:/GitHub/kejilion-panel \
+  run release-kpanel --project-dir "${{project_dir}}" \
+  --param project_dir="${{project_dir}}" \
   --param version=0.0.0-test \
   --param previous_version=0.0.0 \
   --param image=docker.io/example/kpanel \
