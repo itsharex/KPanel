@@ -72,6 +72,7 @@ func newTestServer(t *testing.T) (*Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = server.Close() })
 	return server, config.BootstrapTokenPath
 }
 

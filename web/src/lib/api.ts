@@ -8,6 +8,10 @@ import type {
   AuditEvent,
   AuthSession,
   AuthStatus,
+  ClusterController,
+  ClusterHost,
+  ClusterHostList,
+  ClusterPairingCode,
   DockerInventory,
   DockerActionResult,
   DockerBackup,
@@ -1028,6 +1032,47 @@ export const api = {
       ])
       return build()
     },
+  },
+  cluster: {
+    hosts: (signal?: AbortSignal): Promise<ClusterHostList> =>
+      request<ClusterHostList>('/cluster/hosts', { signal }),
+    host: (id: string, signal?: AbortSignal): Promise<ClusterHost> =>
+      request<ClusterHost>(`/cluster/hosts/${encodeURIComponent(id)}`, { signal }),
+    add: (body: { name?: string; origin: string; pairingCode: string }): Promise<ClusterHost> =>
+      request<ClusterHost>('/cluster/hosts', { method: 'POST', body }),
+    rename: (
+      id: string,
+      body: { name: string; expectedResourceVersion: string },
+    ): Promise<ClusterHost> =>
+      request<ClusterHost>(`/cluster/hosts/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body,
+      }),
+    remove: (
+      id: string,
+      expectedResourceVersion: string,
+    ): Promise<{ deleted: boolean; remoteRevoked: boolean; credentialRemoved?: boolean }> =>
+      request<{ deleted: boolean; remoteRevoked: boolean; credentialRemoved?: boolean }>(
+        `/cluster/hosts/${encodeURIComponent(id)}`,
+        { method: 'DELETE', body: { expectedResourceVersion } },
+      ),
+    refresh: (id: string): Promise<ClusterHost> =>
+      request<ClusterHost>(`/cluster/hosts/${encodeURIComponent(id)}/refresh`, {
+        method: 'POST',
+      }),
+    createPairingCode: (): Promise<ClusterPairingCode> =>
+      request<ClusterPairingCode>('/cluster/pairing-codes', { method: 'POST' }),
+    controllers: async (signal?: AbortSignal): Promise<ApiList<ClusterController>> =>
+      normalizeList(
+        await request<ApiList<ClusterController> | ClusterController[]>(
+          '/cluster/controllers',
+          { signal },
+        ),
+      ),
+    revokeController: (id: string): Promise<{ deleted: boolean }> =>
+      request<{ deleted: boolean }>(`/cluster/controllers/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
   },
   system: {
     action: (body: SystemActionInput): Promise<SystemActionResult> =>

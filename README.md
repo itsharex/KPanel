@@ -71,6 +71,8 @@ bash <(curl -sL kejilion.sh) app kpanel
 
 - **主机总览与系统管理**：查看 CPU、内存、磁盘、负载、网络、服务状态，管理主机名、
   SSH 端口与防御、DNS、时区、Swap、软件源、内核预设、BBR、系统更新与系统清理。
+- **集群监控**：每台 KPanel 都可同时作为中心端和被控端；主机列表自动包含本机，并通过
+  一次性授权码接入其他 KPanel，集中查看 CPU、内存、磁盘、网络、系统和地区概要。
 - **网站管理**：发现现有站点、证书与 Nginx 状态，创建和管理静态站、PHP 站、
   反向代理、负载均衡、域名重定向及常用建站程序；管理 LDNMP 环境的防护、优化、
   更新、备份、还原和卸载。
@@ -123,7 +125,8 @@ bash <(curl -sL kejilion.sh) app kpanel
   [网站业务分析](docs/legacy-site-contract.md)、
   [应用市场对齐](docs/application-market.md)
 - 功能设计：[体检与第三方测试协议](docs/diagnostics.md)、
-  [Docker 管理与互通边界](docs/docker-management-v0.18.md)
+  [Docker 管理与互通边界](docs/docker-management-v0.18.md)、
+  [集群监控与联邦只读协议](docs/cluster-monitoring.md)
 - 协作规范：[Codex 会话协作](docs/session-collaboration.md)
 - 版本信息：[版本变更记录](CHANGELOG.md)
 

@@ -398,9 +398,11 @@ docker_local info >/dev/null 2>&1 ||
 if docker_local container inspect kejilion-panel >/dev/null 2>&1; then
 	fail "Docker container name kejilion-panel is already in use"
 fi
-if docker_local network inspect kejilion-panel-internal >/dev/null 2>&1; then
-	fail "Docker network name kejilion-panel-internal is already in use"
-fi
+for panel_network in kejilion-panel-internal kejilion-panel-egress; do
+	if docker_local network inspect "$panel_network" >/dev/null 2>&1; then
+		fail "Docker network name $panel_network is already in use"
+	fi
+done
 PROJECT_CONTAINERS=$(docker_local container ls --all --quiet \
 	--filter label=com.docker.compose.project=kejilion-panel) ||
 	fail "cannot enumerate existing Panel Compose containers"
@@ -490,6 +492,7 @@ TEMP_ENV=$(mktemp "$OPT_DIR/.env.XXXXXX")
 	printf 'KEJILION_PANEL_SECURE_COOKIE=true\n'
 	printf 'KEJILION_PANEL_NETWORK_SUBNET=%s\n' "$NETWORK_SUBNET"
 	printf 'KEJILION_PANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,%s\n' "$NETWORK_SUBNET"
+	printf 'KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS=\n'
 } >"$TEMP_ENV"
 install -o root -g root -m 0600 "$TEMP_ENV" "$ENV_TARGET"
 rm -f -- "$TEMP_ENV"
@@ -528,6 +531,9 @@ docker_local compose --project-name kejilion-panel \
 	--format '{{.Internal}}' kejilion-panel-internal)" = "true" ] ||
 	fail "Panel Docker network is not internal"
 [ "$(docker_local network inspect \
+	--format '{{.Internal}}' kejilion-panel-egress)" = "false" ] ||
+	fail "Panel egress network is unexpectedly internal"
+[ "$(docker_local network inspect \
 	--format '{{(index .IPAM.Config 0).Subnet}}' \
 	kejilion-panel-internal)" = "$NETWORK_SUBNET" ] ||
 	fail "Panel Docker network subnet does not match $NETWORK_SUBNET"
@@ -544,6 +550,12 @@ ACTUAL_PANEL_IPV4=$(docker_local container inspect \
 	fail "cannot inspect the Panel private IPv4 address"
 [ "$ACTUAL_PANEL_IPV4" = "$PANEL_IPV4" ] ||
 	fail "Panel private IPv4 mismatch: expected $PANEL_IPV4, got $ACTUAL_PANEL_IPV4"
+PANEL_EGRESS_IPV4=$(docker_local container inspect \
+	--format '{{with index .NetworkSettings.Networks "kejilion-panel-egress"}}{{.IPAddress}}{{end}}' \
+	kejilion-panel) ||
+	fail "cannot inspect the Panel egress network attachment"
+[ -n "$PANEL_EGRESS_IPV4" ] ||
+	fail "Panel container is not attached to the egress network"
 
 healthy=false
 attempt=0

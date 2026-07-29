@@ -1,0 +1,407 @@
+package panel
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"mime"
+	"net/http"
+	"strings"
+
+	"github.com/kejilion/kejilion-panel/internal/auth"
+	"github.com/kejilion/kejilion-panel/internal/cluster"
+	"github.com/kejilion/kejilion-panel/internal/contract"
+)
+
+type clusterTelemetrySource struct {
+	agent agentAPI
+}
+
+func (s clusterTelemetrySource) Telemetry(ctx context.Context) (contract.HostTelemetry, error) {
+	response, err := s.agent.Get(ctx, "/v1/system/telemetry", "", newRequestID())
+	if err != nil {
+		return contract.HostTelemetry{}, err
+	}
+	if response.StatusCode != http.StatusOK {
+		return contract.HostTelemetry{}, errors.New("Agent telemetry is unavailable")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(response.Body))
+	decoder.DisallowUnknownFields()
+	var telemetry contract.HostTelemetry
+	if err := decoder.Decode(&telemetry); err != nil {
+		return contract.HostTelemetry{}, errors.New("Agent telemetry response is invalid")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return contract.HostTelemetry{}, errors.New("Agent telemetry response has multiple JSON values")
+	}
+	return telemetry, nil
+}
+
+func (s *Server) StartBackground(ctx context.Context) {
+	s.cluster.Start(ctx)
+}
+
+func (s *Server) Close() error {
+	return s.cluster.Close()
+}
+
+func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusBadRequest, "invalid_cluster_request", "Invalid cluster request", "")
+		return
+	}
+	switch {
+	case r.URL.Path == "/api/v1/cluster/hosts" && r.Method == http.MethodGet:
+		if _, _, ok := s.requireSession(w, r); !ok {
+			return
+		}
+		s.writeJSON(w, http.StatusOK, s.cluster.Hosts(r.Context()))
+	case r.URL.Path == "/api/v1/cluster/hosts" && r.Method == http.MethodPost:
+		s.handleClusterHostAdd(w, r)
+	case r.URL.Path == "/api/v1/cluster/pairing-codes" && r.Method == http.MethodPost:
+		s.handleClusterPairingCode(w, r)
+	case r.URL.Path == "/api/v1/cluster/controllers" && r.Method == http.MethodGet:
+		if _, _, ok := s.requireSession(w, r); !ok {
+			return
+		}
+		items := s.cluster.Controllers()
+		s.writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+	case strings.HasPrefix(r.URL.Path, "/api/v1/cluster/controllers/") &&
+		r.Method == http.MethodDelete:
+		s.handleClusterControllerDelete(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/v1/cluster/hosts/"):
+		s.handleClusterHost(w, r)
+	default:
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+	}
+}
+
+func (s *Server) handleClusterHostAdd(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireClusterMutation(w, r)
+	if !ok {
+		return
+	}
+	var input cluster.AddHostInput
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	change := map[string]any{
+		"name": strings.TrimSpace(input.Name), "origin": strings.TrimSpace(input.Origin),
+	}
+	if err := s.audit(r, session.User.ID, "cluster.host.add", "cluster-host", "", "intent", change); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	host, err := s.cluster.AddHost(r.Context(), input)
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "cluster.host.add", "cluster-host", "", "failure", change)
+		s.writeClusterError(w, r, err)
+		return
+	}
+	_ = s.audit(r, session.User.ID, "cluster.host.add", "cluster-host", host.ID, "success", change)
+	s.writeJSON(w, http.StatusCreated, host)
+}
+
+func (s *Server) handleClusterHost(w http.ResponseWriter, r *http.Request) {
+	const prefix = "/api/v1/cluster/hosts/"
+	rest := strings.TrimPrefix(r.URL.Path, prefix)
+	if rest == r.URL.Path || rest == "" {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	if strings.HasSuffix(rest, "/refresh") {
+		id := strings.TrimSuffix(rest, "/refresh")
+		if strings.Contains(id, "/") || r.Method != http.MethodPost {
+			s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+			return
+		}
+		s.handleClusterHostRefresh(w, r, id)
+		return
+	}
+	if strings.Contains(rest, "/") {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		if _, _, ok := s.requireSession(w, r); !ok {
+			return
+		}
+		host, err := s.cluster.Host(r.Context(), rest)
+		if err != nil {
+			s.writeClusterError(w, r, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, host)
+	case http.MethodPatch:
+		s.handleClusterHostRename(w, r, rest)
+	case http.MethodDelete:
+		s.handleClusterHostDelete(w, r, rest)
+	default:
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+	}
+}
+
+func (s *Server) handleClusterHostRename(w http.ResponseWriter, r *http.Request, id string) {
+	session, ok := s.requireClusterMutation(w, r)
+	if !ok {
+		return
+	}
+	var input cluster.UpdateHostInput
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	change := map[string]any{
+		"name":                    strings.TrimSpace(input.Name),
+		"expectedResourceVersion": input.ExpectedResourceVersion,
+	}
+	if err := s.audit(r, session.User.ID, "cluster.host.rename", "cluster-host", id, "intent", change); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	host, err := s.cluster.RenameHost(id, input)
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "cluster.host.rename", "cluster-host", id, "failure", change)
+		s.writeClusterError(w, r, err)
+		return
+	}
+	_ = s.audit(r, session.User.ID, "cluster.host.rename", "cluster-host", id, "success", change)
+	s.writeJSON(w, http.StatusOK, host)
+}
+
+func (s *Server) handleClusterHostDelete(w http.ResponseWriter, r *http.Request, id string) {
+	session, ok := s.requireClusterMutation(w, r)
+	if !ok {
+		return
+	}
+	var input cluster.DeleteHostInput
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	change := map[string]any{"expectedResourceVersion": input.ExpectedResourceVersion}
+	if err := s.audit(r, session.User.ID, "cluster.host.delete", "cluster-host", id, "intent", change); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	result, err := s.cluster.DeleteHost(r.Context(), id, input)
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "cluster.host.delete", "cluster-host", id, "failure", change)
+		s.writeClusterError(w, r, err)
+		return
+	}
+	change["remoteRevoked"] = result.RemoteRevoked
+	change["credentialRemoved"] = result.CredentialRemoved
+	_ = s.audit(r, session.User.ID, "cluster.host.delete", "cluster-host", id, "success", change)
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleClusterHostRefresh(w http.ResponseWriter, r *http.Request, id string) {
+	session, ok := s.requireClusterMutation(w, r)
+	if !ok {
+		return
+	}
+	if err := s.audit(r, session.User.ID, "cluster.host.refresh", "cluster-host", id, "intent", nil); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	host, err := s.cluster.Refresh(r.Context(), id)
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "cluster.host.refresh", "cluster-host", id, "failure", nil)
+		s.writeClusterError(w, r, err)
+		return
+	}
+	_ = s.audit(r, session.User.ID, "cluster.host.refresh", "cluster-host", id, "success", nil)
+	s.writeJSON(w, http.StatusAccepted, host)
+}
+
+func (s *Server) handleClusterPairingCode(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireClusterMutation(w, r)
+	if !ok {
+		return
+	}
+	if r.ContentLength > 0 {
+		var input struct{}
+		if err := s.decodeJSON(w, r, &input); err != nil {
+			return
+		}
+	}
+	if err := s.audit(
+		r, session.User.ID, "cluster.pairing-code.create",
+		"cluster-node", s.cluster.NodeID(), "intent", nil,
+	); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	code, err := s.cluster.CreatePairingCode()
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "cluster.pairing-code.create", "cluster-node", s.cluster.NodeID(), "failure", nil)
+		s.writeClusterError(w, r, err)
+		return
+	}
+	_ = s.audit(r, session.User.ID, "cluster.pairing-code.create", "cluster-node", s.cluster.NodeID(), "success", nil)
+	s.writeJSON(w, http.StatusCreated, code)
+}
+
+func (s *Server) handleClusterControllerDelete(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireClusterMutation(w, r)
+	if !ok {
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/v1/cluster/controllers/")
+	if id == "" || strings.Contains(id, "/") {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
+	if err := s.audit(r, session.User.ID, "cluster.controller.revoke", "cluster-controller", id, "intent", nil); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	if err := s.cluster.DeleteController(id); err != nil {
+		_ = s.audit(r, session.User.ID, "cluster.controller.revoke", "cluster-controller", id, "failure", nil)
+		s.writeClusterError(w, r, err)
+		return
+	}
+	_ = s.audit(r, session.User.ID, "cluster.controller.revoke", "cluster-controller", id, "success", nil)
+	s.writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
+func (s *Server) handleFederationPair(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusBadRequest, "invalid_federation_request", "Invalid federation request", "")
+		return
+	}
+	var input cluster.PairRequest
+	if err := decodeLimitedJSON(w, r, cluster.MaxPairBytes, &input); err != nil {
+		return
+	}
+	response, err := s.cluster.AcceptPair(s.remoteIP(r), input)
+	if err != nil {
+		s.auditAuthFailure(r, "cluster.federation.pair")
+		s.writeClusterError(w, r, err)
+		return
+	}
+	if err := s.audit(
+		r, "", "cluster.federation.pair",
+		"cluster-controller", input.ControllerID, "intent", nil,
+	); err != nil {
+		_ = s.cluster.DeleteController(input.ControllerID)
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	_ = s.audit(r, "", "cluster.federation.pair", "cluster-controller", input.ControllerID, "success", nil)
+	s.writeJSON(w, http.StatusCreated, response)
+}
+
+func (s *Server) handleFederationSummary(w http.ResponseWriter, r *http.Request) {
+	response, err := s.cluster.SignedSummary(r.Context(), r)
+	if err != nil {
+		s.writeClusterError(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleFederationRevoke(w http.ResponseWriter, r *http.Request) {
+	controllerID := strings.TrimSpace(r.Header.Get("X-KPanel-Controller-ID"))
+	if err := s.cluster.SignedRevoke(r); err != nil {
+		s.writeClusterError(w, r, err)
+		return
+	}
+	_ = s.audit(r, "", "cluster.federation.revoke", "cluster-controller", controllerID, "success", nil)
+	s.writeJSON(w, http.StatusOK, map[string]bool{"revoked": true})
+}
+
+func (s *Server) requireClusterMutation(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
+	if !s.checkOrigin(w, r) {
+		return auth.Session{}, false
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return auth.Session{}, false
+	}
+	return session, true
+}
+
+func (s *Server) writeClusterError(w http.ResponseWriter, r *http.Request, err error) {
+	status := http.StatusInternalServerError
+	code := "cluster_operation_failed"
+	title := "Cluster operation failed"
+	switch {
+	case errors.Is(err, cluster.ErrNotFound):
+		status, code, title = http.StatusNotFound, "cluster_not_found", "Cluster resource not found"
+	case errors.Is(err, cluster.ErrConflict):
+		status, code, title = http.StatusConflict, "cluster_resource_changed", "Cluster resource changed"
+	case errors.Is(err, cluster.ErrDuplicate):
+		status, code, title = http.StatusConflict, "cluster_duplicate", "Cluster host already exists"
+	case errors.Is(err, cluster.ErrHostLimit):
+		status, code, title = http.StatusConflict, "cluster_host_limit", "Cluster host limit reached"
+	case errors.Is(err, cluster.ErrLocalHost):
+		status, code, title = http.StatusConflict, "cluster_local_host", "Local cluster host cannot be modified"
+	case errors.Is(err, cluster.ErrInvalidOrigin):
+		status, code, title = http.StatusUnprocessableEntity, "cluster_origin_invalid", "Cluster origin is invalid"
+	case errors.Is(err, cluster.ErrPrivateOrigin):
+		status, code, title = http.StatusUnprocessableEntity, "cluster_origin_blocked", "Cluster origin is blocked"
+	case errors.Is(err, cluster.ErrPairingCode):
+		status, code, title = http.StatusUnauthorized, "cluster_pairing_failed", "Cluster pairing failed"
+	case errors.Is(err, cluster.ErrAuthentication):
+		status, code, title = http.StatusUnauthorized, "federation_authentication_failed", "Federation authentication failed"
+	case errors.Is(err, cluster.ErrReplay):
+		status, code, title = http.StatusConflict, "federation_replay_rejected", "Federation request rejected"
+	case errors.Is(err, cluster.ErrRateLimited):
+		status, code, title = http.StatusTooManyRequests, "federation_rate_limited", "Federation request rate limited"
+	case errors.Is(err, cluster.ErrProtocolMismatch):
+		status, code, title = http.StatusUpgradeRequired, "federation_incompatible", "Federation protocol incompatible"
+	case errors.Is(err, cluster.ErrIdentityMismatch):
+		status, code, title = http.StatusConflict, "federation_identity_changed", "Federation identity changed"
+	default:
+		var remote *cluster.RemoteError
+		if errors.As(err, &remote) {
+			status = http.StatusBadGateway
+			code = "cluster_remote_" + remote.Code
+			title = "Remote KPanel request failed"
+			if remote.Code == "authentication_failed" {
+				status = http.StatusUnauthorized
+			}
+		}
+	}
+	if status == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", "60")
+	}
+	s.writeProblem(w, r, status, code, title, "")
+}
+
+func decodeLimitedJSON(w http.ResponseWriter, r *http.Request, limit int64, target any) error {
+	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
+		writeProblemJSON(w, contract.Problem{
+			Type: "about:blank", Title: "JSON request body required",
+			Status: http.StatusUnsupportedMediaType, Code: "json_required",
+		})
+		return errors.New("invalid content type")
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		var tooLarge *http.MaxBytesError
+		status, code, title := http.StatusBadRequest, "invalid_json", "Invalid JSON"
+		if errors.As(err, &tooLarge) {
+			status, code, title = http.StatusRequestEntityTooLarge, "request_too_large", "Request body too large"
+		}
+		writeProblemJSON(w, contract.Problem{
+			Type: "about:blank", Title: title, Status: status, Code: code,
+		})
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		writeProblemJSON(w, contract.Problem{
+			Type: "about:blank", Title: "Invalid JSON",
+			Status: http.StatusBadRequest, Code: "invalid_json",
+		})
+		return errors.New("multiple JSON values")
+	}
+	return nil
+}

@@ -77,6 +77,7 @@ func run(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	defer handler.Close()
 	server := &http.Server{
 		Addr:              config.Listen,
 		Handler:           handler,
@@ -89,6 +90,7 @@ func run(arguments []string) error {
 
 	shutdownSignal, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	handler.StartBackground(shutdownSignal)
 	go func() {
 		<-shutdownSignal.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

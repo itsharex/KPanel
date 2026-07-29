@@ -155,6 +155,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.capabilities)
 	case r.URL.Path == "/v1/system/summary":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemSummary)
+	case r.URL.Path == "/v1/system/telemetry":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemTelemetry)
 	case r.URL.Path == "/v1/system/public-network":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.publicNetwork)
 	case r.URL.Path == "/v1/system/actions":
@@ -373,6 +375,36 @@ func (s *Server) systemSummary(w http.ResponseWriter, r *http.Request) {
 	summary.Management.SSH.Defense = s.systemManager.SSHDefenseStatus(r.Context())
 	summary.Management.Maintenance = s.systemManager.MaintenanceStatus()
 	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *Server) systemTelemetry(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.system.Collect(r.Context())
+	if err != nil && summary.Hostname == "" {
+		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "system_unavailable", "系统状态不可用", "")
+		return
+	}
+	disk := contract.DiskCapacitySummary{}
+	if len(summary.Disks) > 0 {
+		selected := summary.Disks[0]
+		for _, candidate := range summary.Disks {
+			if candidate.MountPoint == "/" ||
+				(selected.MountPoint != "/" && candidate.TotalBytes > selected.TotalBytes) {
+				selected = candidate
+			}
+		}
+		disk = contract.DiskCapacitySummary{
+			TotalBytes: selected.TotalBytes, UsedBytes: selected.UsedBytes,
+			UsagePercent: selected.UsagePercent,
+		}
+	}
+	writeJSON(w, http.StatusOK, contract.HostTelemetry{
+		AgentVersion: s.version, AgentProtocolVersion: s.protocolVersion,
+		Hostname: summary.Hostname, OS: summary.OS, OSID: summary.OSID,
+		OSLike: summary.OSLike, Kernel: summary.Kernel, Architecture: summary.Architecture,
+		UptimeSeconds: summary.UptimeSeconds, Load: summary.Load, CPU: summary.CPU,
+		Memory: summary.Memory, Disk: disk, Network: summary.Network,
+		PublicNetwork: summary.PublicNetwork, CollectedAt: summary.CollectedAt,
+	})
 }
 
 func (s *Server) publicNetwork(w http.ResponseWriter, r *http.Request) {

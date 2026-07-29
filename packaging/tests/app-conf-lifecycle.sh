@@ -268,6 +268,8 @@ EOF
 		/home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.30.0.0/16' \
 		/home/docker/kpanel/.env >/dev/null
+	grep -F 'KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS: ${KPANEL_CLUSTER_PRIVATE_CIDRS:-}' \
+		/home/docker/kpanel/docker-compose.yml >/dev/null
 	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 1
 	grep -F 'ExecStart=/home/docker/kpanel/bin/kejilion-agent' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null

@@ -32,6 +32,17 @@ kejilion-agent（宿主机 systemd 服务）
 
 `paneld` 负责认证、公开 API 和前端静态资源。`kejilion-agent` 是唯一宿主机管理入口，只监听 `/run/kejilion-panel/agent.sock`，不开放 TCP。
 
+## 集群监控边界
+
+每台 KPanel 都可以同时作为中心端和被控端。中心端通过 HTTPS 与远端 `paneld` 的固定联邦
+只读接口通信，远端 `paneld` 再通过本机 Unix Socket 读取 Agent 的窄化主机摘要。Agent
+Token、管理员 Session 和宿主机写入能力不会跨主机传递。
+
+当前面板自动作为“本机”节点显示，直接读取本地 Agent；远端节点使用一次性授权码和每主机
+独立 Ed25519 密钥配对。浏览器只读取当前中心端缓存，不直接请求远端，也不共享远端登录态。
+协议、SSRF/TLS 控制、资源上限和状态语义见
+[集群监控与联邦只读协议](cluster-monitoring.md)。
+
 ## 与 kejilion.sh 的关系
 
 Agent 直接发现和管理 `kejilion.sh`、KPanel、Compose、Docker CLI 与人工维护生成的实际产物：

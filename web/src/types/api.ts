@@ -99,6 +99,108 @@ export interface PublicNetworkSummary {
   updatedAt?: string
 }
 
+export type ClusterHostState =
+  | 'unknown'
+  | 'online'
+  | 'degraded'
+  | 'stale'
+  | 'offline'
+  | 'auth_failed'
+  | 'tls_error'
+  | 'incompatible'
+
+export interface ClusterTelemetry {
+  agentVersion: string
+  agentProtocolVersion: string
+  hostname: string
+  os: string
+  osId?: string
+  osLike?: string[]
+  kernel?: string
+  architecture?: string
+  uptimeSeconds: number
+  load: { one: number; five: number; fifteen: number }
+  cpu: {
+    model?: string
+    cores: number
+    frequencyMHz?: number
+    usagePercent: number
+  }
+  memory: {
+    totalBytes: number
+    availableBytes: number
+    usedBytes: number
+    usagePercent: number
+  }
+  disk: {
+    totalBytes: number
+    usedBytes: number
+    usagePercent: number
+  }
+  network: {
+    receivedBytes: number
+    sentBytes: number
+    tcpConnections: number
+    udpConnections: number
+  }
+  publicNetwork: PublicNetworkSummary
+  collectedAt: string
+}
+
+export interface ClusterHostSnapshot {
+  telemetry: ClusterTelemetry
+  receivedAt: string
+  latencyMilliseconds: number
+  receiveBytesPerSecond: number
+  transmitBytesPerSecond: number
+}
+
+export interface ClusterHost {
+  id: string
+  isLocal: boolean
+  name: string
+  origin: string
+  remoteNodeId: string
+  federationProtocol: string
+  panelVersion?: string
+  state: ClusterHostState
+  lastSnapshot?: ClusterHostSnapshot
+  lastAttemptAt?: string
+  lastSuccessAt?: string
+  consecutiveFailures: number
+  lastErrorCode?: string
+  lastError?: string
+  polling: boolean
+  nextPollAt?: string
+  resourceVersion: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ClusterHostList {
+  items: ClusterHost[]
+  total: number
+  remoteTotal: number
+  maxHosts: number
+  pollIntervalSeconds: number
+  nodeId: string
+}
+
+export interface ClusterPairingCode {
+  code: string
+  scope: 'cluster.summary.read'
+  expiresAt: string
+}
+
+export interface ClusterController {
+  id: string
+  name?: string
+  fingerprint: string
+  scope: string
+  createdAt: string
+  lastSeenAt?: string
+}
+
 export interface CapabilityState {
   enabled: boolean
   reason?: string

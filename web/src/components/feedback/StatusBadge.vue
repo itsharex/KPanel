@@ -16,8 +16,10 @@ const statusMap: Record<string, { label: string; tone: string }> = {
   synced: { label: '已同步', tone: 'success' },
   managed: { label: '可管理', tone: 'success' },
   connected: { label: '已连接', tone: 'success' },
+  online: { label: '在线', tone: 'success' },
   warning: { label: '需关注', tone: 'warning' },
   degraded: { label: '异常', tone: 'warning' },
+  stale: { label: '数据过期', tone: 'warning' },
   expiring: { label: '即将过期', tone: 'warning' },
   drifted: { label: '存在漂移', tone: 'warning' },
   ambiguous: { label: '待确认', tone: 'warning' },
@@ -50,6 +52,8 @@ const statusMap: Record<string, { label: string; tone: string }> = {
   missing: { label: '缺失', tone: 'danger' },
   dead: { label: '异常退出', tone: 'danger' },
   offline: { label: '离线', tone: 'danger' },
+  auth_failed: { label: '授权失效', tone: 'danger' },
+  tls_error: { label: '证书异常', tone: 'danger' },
   incompatible: { label: '版本不兼容', tone: 'danger' },
 }
 

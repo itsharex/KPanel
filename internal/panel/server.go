@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/auth"
+	"github.com/kejilion/kejilion-panel/internal/cluster"
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/store"
@@ -50,6 +51,7 @@ type Server struct {
 	auditMu             sync.Mutex
 	lastAuthAudit       map[string]time.Time
 	lastGlobalAuthAudit time.Time
+	cluster             *cluster.Service
 }
 
 type agentAPI interface {
@@ -80,8 +82,17 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 	if err != nil {
 		return nil, err
 	}
+	clusterService, err := cluster.NewService(cluster.ServiceConfig{
+		DataDir: config.DataDir, PanelVersion: version.Version,
+		PrivateCIDRs: config.ClusterPrivateCIDRs,
+		Telemetry:    clusterTelemetrySource{agent: agent},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize cluster service: %w", err)
+	}
 	return &Server{
 		config: config, auth: authService, store: storage, agent: agent,
+		cluster:        clusterService,
 		trustedProxies: trustedProxies,
 		lastAuthAudit:  make(map[string]time.Time),
 	}, nil
@@ -111,6 +122,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/federation/pair":
+		s.handleFederationPair(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/federation/summary":
+		s.handleFederationSummary(w, r)
+	case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/federation/revoke":
+		s.handleFederationRevoke(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/health":
 		s.writeJSON(w, http.StatusOK, map[string]any{
 			"status":          "ok",
@@ -133,6 +150,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handlePasswordChange(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit":
 		s.handleAudit(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/v1/cluster/"):
+		s.handleCluster(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs":
 		s.handleJobs(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sites":

@@ -895,6 +895,117 @@ describe('API client', () => {
     })
   })
 
+  it('uses the typed cluster endpoints and protects every cluster mutation with CSRF', async () => {
+    const hostID = 'host id/1'
+    const encodedHostID = encodeURIComponent(hostID)
+    const controllerID = 'controller id/1'
+    const encodedControllerID = encodeURIComponent(controllerID)
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/v1/auth/bootstrap') return jsonResponse({ required: false })
+      if (url === '/api/v1/auth/session') {
+        return jsonResponse({
+          user: { id: 'user-1', username: 'admin', role: 'administrator' },
+          csrfToken: 'cluster-csrf-secret',
+          expiresAt: '2026-07-29T12:00:00Z',
+        })
+      }
+      if (url === '/api/v1/cluster/hosts' && (init?.method || 'GET') === 'GET') {
+        return jsonResponse({
+          items: [],
+          total: 0,
+          remoteTotal: 0,
+          maxHosts: 100,
+          pollIntervalSeconds: 30,
+          nodeId: 'local-node',
+        })
+      }
+      if (url === '/api/v1/cluster/controllers' && (init?.method || 'GET') === 'GET') {
+        return jsonResponse([])
+      }
+      if (url === '/api/v1/cluster/pairing-codes') {
+        return jsonResponse({
+          code: 'pair.secret',
+          scope: 'cluster.summary.read',
+          expiresAt: '2026-07-29T12:05:00Z',
+        })
+      }
+      if (url.endsWith('/refresh')) return jsonResponse({ id: hostID, polling: true })
+      if (url.includes('/cluster/controllers/')) return jsonResponse({ deleted: true })
+      if (url.includes('/cluster/hosts/') && init?.method === 'DELETE') {
+        return jsonResponse({ deleted: true, remoteRevoked: true })
+      }
+      return jsonResponse({ id: hostID })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.auth.status()
+    await api.cluster.hosts()
+    await api.cluster.host(hostID)
+    await api.cluster.add({
+      name: '香港节点',
+      origin: 'https://hk.example.com',
+      pairingCode: 'pair.secret',
+    })
+    await api.cluster.rename(hostID, {
+      name: '香港生产节点',
+      expectedResourceVersion: 'host-version-1',
+    })
+    await api.cluster.remove(hostID, 'host-version-2')
+    await api.cluster.refresh(hostID)
+    await api.cluster.createPairingCode()
+    await api.cluster.controllers()
+    await api.cluster.revokeController(controllerID)
+
+    const clusterCalls = fetchMock.mock.calls.slice(2)
+    expect(clusterCalls.map(([url]) => url)).toEqual([
+      '/api/v1/cluster/hosts',
+      `/api/v1/cluster/hosts/${encodedHostID}`,
+      '/api/v1/cluster/hosts',
+      `/api/v1/cluster/hosts/${encodedHostID}`,
+      `/api/v1/cluster/hosts/${encodedHostID}`,
+      `/api/v1/cluster/hosts/${encodedHostID}/refresh`,
+      '/api/v1/cluster/pairing-codes',
+      '/api/v1/cluster/controllers',
+      `/api/v1/cluster/controllers/${encodedControllerID}`,
+    ])
+
+    expect(clusterCalls.map(([, init]) => (init as RequestInit).method)).toEqual([
+      'GET',
+      'GET',
+      'POST',
+      'PATCH',
+      'DELETE',
+      'POST',
+      'POST',
+      'GET',
+      'DELETE',
+    ])
+    expect(JSON.parse(String((clusterCalls[2]?.[1] as RequestInit).body))).toEqual({
+      name: '香港节点',
+      origin: 'https://hk.example.com',
+      pairingCode: 'pair.secret',
+    })
+    expect(JSON.parse(String((clusterCalls[3]?.[1] as RequestInit).body))).toEqual({
+      name: '香港生产节点',
+      expectedResourceVersion: 'host-version-1',
+    })
+    expect(JSON.parse(String((clusterCalls[4]?.[1] as RequestInit).body))).toEqual({
+      expectedResourceVersion: 'host-version-2',
+    })
+    expect((clusterCalls[5]?.[1] as RequestInit).body).toBeUndefined()
+    expect((clusterCalls[6]?.[1] as RequestInit).body).toBeUndefined()
+
+    const mutationCalls = clusterCalls.filter(
+      ([, init]) => (init as RequestInit).method !== 'GET',
+    )
+    mutationCalls.forEach(([, init]) => {
+      expect(new Headers((init as RequestInit).headers).get('x-csrf-token')).toBe(
+        'cluster-csrf-secret',
+      )
+    })
+  })
+
   it('normalizes list responses without a total field', () => {
     expect(normalizeList({ items: ['a', 'b'] } as { items: string[]; total: number })).toEqual({
       items: ['a', 'b'],

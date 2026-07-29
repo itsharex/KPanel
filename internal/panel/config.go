@@ -18,24 +18,25 @@ import (
 var cookieNamePattern = regexp.MustCompile(`^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$`)
 
 type Config struct {
-	Listen             string        `json:"listen"`
-	DataDir            string        `json:"dataDir"`
-	StorePath          string        `json:"storePath"`
-	BootstrapTokenPath string        `json:"bootstrapTokenPath"`
-	AgentSocket        string        `json:"agentSocket"`
-	AgentTokenFile     string        `json:"agentTokenFile"`
-	WebRoot            string        `json:"webRoot"`
-	PublicURL          string        `json:"publicUrl"`
-	SecureCookie       bool          `json:"secureCookie"`
-	CookieName         string        `json:"cookieName"`
-	SessionTTL         time.Duration `json:"-"`
-	SessionTTLText     string        `json:"sessionTtl"`
-	LoginWindow        time.Duration `json:"-"`
-	LoginWindowText    string        `json:"loginWindow"`
-	MaxLoginFailures   int           `json:"maxLoginFailures"`
-	MaxRequestBytes    int64         `json:"maxRequestBytes"`
-	MaxAgentBytes      int64         `json:"maxAgentBytes"`
-	TrustedProxyCIDRs  []string      `json:"trustedProxyCidrs"`
+	Listen              string        `json:"listen"`
+	DataDir             string        `json:"dataDir"`
+	StorePath           string        `json:"storePath"`
+	BootstrapTokenPath  string        `json:"bootstrapTokenPath"`
+	AgentSocket         string        `json:"agentSocket"`
+	AgentTokenFile      string        `json:"agentTokenFile"`
+	WebRoot             string        `json:"webRoot"`
+	PublicURL           string        `json:"publicUrl"`
+	SecureCookie        bool          `json:"secureCookie"`
+	CookieName          string        `json:"cookieName"`
+	SessionTTL          time.Duration `json:"-"`
+	SessionTTLText      string        `json:"sessionTtl"`
+	LoginWindow         time.Duration `json:"-"`
+	LoginWindowText     string        `json:"loginWindow"`
+	MaxLoginFailures    int           `json:"maxLoginFailures"`
+	MaxRequestBytes     int64         `json:"maxRequestBytes"`
+	MaxAgentBytes       int64         `json:"maxAgentBytes"`
+	TrustedProxyCIDRs   []string      `json:"trustedProxyCidrs"`
+	ClusterPrivateCIDRs []string      `json:"clusterPrivateCidrs"`
 }
 
 func DefaultConfig() Config {
@@ -92,6 +93,9 @@ func LoadConfig(path string) (Config, error) {
 	applyStringEnv("KEJILION_PANEL_LOGIN_WINDOW", &config.LoginWindowText)
 	if value := strings.TrimSpace(os.Getenv("KEJILION_PANEL_TRUSTED_PROXY_CIDRS")); value != "" {
 		config.TrustedProxyCIDRs = splitCommaSeparated(value)
+	}
+	if value := strings.TrimSpace(os.Getenv("KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS")); value != "" {
+		config.ClusterPrivateCIDRs = splitCommaSeparated(value)
 	}
 
 	if value := strings.TrimSpace(os.Getenv("KEJILION_PANEL_SECURE_COOKIE")); value != "" {
@@ -204,6 +208,17 @@ func (c Config) Validate() error {
 		}
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return fmt.Errorf("invalid trusted proxy CIDR %q", cidr)
+		}
+	}
+	if len(c.ClusterPrivateCIDRs) > 32 {
+		return errors.New("clusterPrivateCidrs must contain at most 32 entries")
+	}
+	for _, cidr := range c.ClusterPrivateCIDRs {
+		if strings.TrimSpace(cidr) == "" {
+			return errors.New("clusterPrivateCidrs must not contain empty entries")
+		}
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("invalid cluster private CIDR %q", cidr)
 		}
 	}
 	if c.PublicURL != "" {

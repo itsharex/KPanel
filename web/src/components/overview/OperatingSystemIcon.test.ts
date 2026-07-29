@@ -25,4 +25,15 @@ describe('OperatingSystemIcon', () => {
     expect(html).toContain('--os-accent:#FCC624')
     expect(html).toContain('--os-foreground:#141816')
   })
+
+  it.each(['__proto__', 'constructor'])(
+    'treats inherited object keys such as %s as an unknown distribution',
+    async (distro) => {
+      const html = await render(distro, 'Untrusted Linux')
+
+      expect(html).toContain('aria-label="Untrusted Linux"')
+      expect(html).toContain('--os-accent:#FCC624')
+      expect(html).toContain('--os-foreground:#141816')
+    },
+  )
 })

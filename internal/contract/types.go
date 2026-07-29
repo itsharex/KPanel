@@ -222,6 +222,35 @@ type PublicNetworkSummary struct {
 	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
 }
 
+// HostTelemetry is the deliberately narrow, read-only host snapshot used by
+// KPanel federation. It excludes system configuration, site, application and
+// Docker details so a monitoring controller never receives management state
+// or credentials.
+type HostTelemetry struct {
+	AgentVersion         string               `json:"agentVersion"`
+	AgentProtocolVersion string               `json:"agentProtocolVersion"`
+	Hostname             string               `json:"hostname"`
+	OS                   string               `json:"os"`
+	OSID                 string               `json:"osId,omitempty"`
+	OSLike               []string             `json:"osLike,omitempty"`
+	Kernel               string               `json:"kernel,omitempty"`
+	Architecture         string               `json:"architecture,omitempty"`
+	UptimeSeconds        uint64               `json:"uptimeSeconds"`
+	Load                 LoadSummary          `json:"load"`
+	CPU                  CPUSummary           `json:"cpu"`
+	Memory               MemorySummary        `json:"memory"`
+	Disk                 DiskCapacitySummary  `json:"disk"`
+	Network              NetworkSummary       `json:"network"`
+	PublicNetwork        PublicNetworkSummary `json:"publicNetwork"`
+	CollectedAt          time.Time            `json:"collectedAt"`
+}
+
+type DiskCapacitySummary struct {
+	TotalBytes   uint64  `json:"totalBytes"`
+	UsedBytes    uint64  `json:"usedBytes"`
+	UsagePercent float64 `json:"usagePercent"`
+}
+
 type Origin string
 
 const (

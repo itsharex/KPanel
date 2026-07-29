@@ -38,6 +38,12 @@ export const router = createRouter({
           meta: { title: '概览' },
         },
         {
+          path: 'cluster',
+          name: 'cluster',
+          component: () => import('@/views/ClusterView.vue'),
+          meta: { title: '集群' },
+        },
+        {
           path: 'sites',
           name: 'sites',
           component: () => import('@/views/SitesView.vue'),

@@ -4,7 +4,8 @@
 
 KPanel 使用两个独立进程：
 
-- `paneld` 以非 root Docker 容器运行，只接入专用 `internal` 网络，不发布宿主端口。
+- `paneld` 以非 root Docker 容器运行，入口使用专用 `internal` 网络，联邦监控使用
+  独立出站网络，默认不发布宿主端口。
 - `kejilion-agent` 以受限 systemd 服务运行，只接受本机 Unix Socket 上的类型化请求。
 
 宿主机必须使用 systemd。当前发行版代码路径覆盖 Debian/Ubuntu、
@@ -14,11 +15,12 @@ RHEL/Fedora、Arch/Manjaro 和 openSUSE/SLES；具体实机验收层级见
 安装器只管理 `/etc/kejilion-panel`、`/opt/kejilion-panel`、
 `/var/lib/kejilion-panel`、`/run/kejilion-panel`、
 `/usr/local/libexec/kejilion-agent`、对应 systemd unit、专用
-`kejilion-panel` 容器与 `kejilion-panel-internal` 网络。安装器还会把固定
+`kejilion-panel` 容器，以及 `kejilion-panel-internal`、`kejilion-panel-egress`
+两张网络。安装器还会把固定
 digest 的 Panel 镜像拉入本机缓存。安装器不会执行或修改 `kejilion.sh`，也不会
 改动 `/home/web`、现有 Nginx 配置、防火墙和站点。
 
-v0.1 安装器只支持全新安装。发现任何既有 Panel 文件、同名容器或同名网络时
+v0.1 安装器只支持全新安装。发现任何既有 Panel 文件、同名容器或任一同名网络时
 会拒绝继续，不会把未知资源当作可升级对象。后续版本必须在具备事务化升级和自动
 回滚后再开放原地升级。
 
@@ -135,11 +137,23 @@ Panel 容器不发布宿主端口。需要在宿主机或 host-network Nginx 中
 的同名请求头。反向代理来源必须显式加入 Panel 的可信代理 CIDR；不要信任整个
 公网或所有私网。
 
-默认 Compose 使用专用内部网段 `172.29.255.240/28`，并只信任 loopback 与
-该网段。如果预检发现冲突，通过 `--network-subnet` 选择另一个对齐的私网
-`/28`；安装器会同时写入网络、网关、Panel 私网地址和可信代理 CIDR，不能在
-安装后手工改其中一项。Nginx 必须与 Panel 同处一台宿主机或能安全路由到该
-内部网段；不要把 Panel 私网地址暴露到公网路由。
+默认 Compose 同时使用两张职责分离的网络：
+
+- `kejilion-panel-internal`：固定 `/28` 内部网段，只承载宿主机反向代理到 Panel
+  的入口。
+- `kejilion-panel-egress`：普通 bridge，只供 Panel 主动访问经过校验的 HTTPS
+  集群节点及固定外部服务。
+
+Panel 仍只信任 loopback 与内部 `/28` 的代理头，egress 网络不加入可信代理范围。
+如果预检发现冲突，通过 `--network-subnet` 选择另一个对齐的私网 `/28`；安装器会
+同时写入内部网络、网关、Panel 私网地址和可信代理 CIDR，不能在安装后手工改其中一项。
+Nginx 必须与 Panel 同处一台宿主机或能安全路由到该内部网段；不要把 Panel 私网地址
+暴露到公网路由。
+
+集群主机默认只接受公网 HTTPS 根地址。确需访问私有管理网时，在
+`/opt/kejilion-panel/.env` 的 `KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS` 中填写精确
+CIDR（逗号分隔）后重建 Panel 容器。loopback、link-local、组播和云元数据地址始终
+拒绝；不要填写覆盖范围过大的网段。
 
 反向代理配置属于目标机业务配置，安装器不会自动写入。上线时应单独备份、新增
 独立域名配置、执行 `nginx -t`，成功后才 reload；验证失败时不得 reload。
@@ -162,9 +176,8 @@ docker --host unix:///var/run/docker.sock compose \
 ```
 
 `KEJILION_PANEL_PUBLIC_URL` 必须与浏览器访问的来源完全一致。直接 HTTP 会禁用
-Secure Cookie，仅建议用于受控测试环境。覆盖文件会把原来的专用 Panel 网络改为
-可发布端口的普通 bridge；Panel 仍只加入这一张网络，避免 `kejilion.sh` 的端口访问
-策略读取到多个容器 IP。正式公网环境仍建议使用 HTTPS。
+Secure Cookie，仅建议用于受控测试环境。覆盖文件会把入口网络改为可发布端口的普通
+bridge；独立 egress 网络仍只承担受限出站访问。正式公网环境仍建议使用 HTTPS。
 
 直接端口部署完成后，可以使用 `kejilion.sh` 的标准反代入口：
 

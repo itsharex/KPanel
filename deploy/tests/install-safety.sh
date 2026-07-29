@@ -199,6 +199,9 @@ PANEL_START_ATTEMPT_LINE=$(grep -n '^PANEL_START_ATTEMPTED=true$' \
 	exit 1
 }
 grep -F 'internal: true' "$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
+test "$(grep -c 'internal: true' "$PROJECT_DIR/deploy/compose/compose.yml")" = 1
+grep -F 'panel-egress:' "$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
+grep -F 'name: kejilion-panel-egress' "$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
 grep -F 'ipv4_address: ${KEJILION_PANEL_IPV4:' \
 	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
 grep -F 'gateway: ${KEJILION_PANEL_GATEWAY:' \
@@ -216,6 +219,9 @@ if grep -F 'panel-public' "$PROJECT_DIR/deploy/compose/direct-port.yml" >/dev/nu
 fi
 grep -F "{{len .HostConfig.PortBindings}}" "$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F "{{(index .IPAM.Config 0).Subnet}}" "$PROJECT_DIR/deploy/install.sh" >/dev/null
+grep -F "'{{.Internal}}' kejilion-panel-egress" "$PROJECT_DIR/deploy/install.sh" >/dev/null
+grep -F '"kejilion-panel-egress"}}{{.IPAddress}}' "$PROJECT_DIR/deploy/install.sh" >/dev/null
+grep -F 'KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS=' "$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F "{{.State.Health.Status}}" "$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F '"http://$PANEL_IPV4:8080/api/v1/health"' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null

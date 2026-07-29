@@ -44,7 +44,9 @@ const icons: Record<string, OperatingSystemMark> = {
   linux: linuxMark,
 }
 
-const mark = computed<OperatingSystemMark>(() => icons[props.distro] || linuxMark)
+const mark = computed<OperatingSystemMark>(() =>
+  Object.prototype.hasOwnProperty.call(icons, props.distro) ? icons[props.distro]! : linuxMark,
+)
 const style = computed(() => ({
   '--os-accent': `#${mark.value.accent || mark.value.icon.hex}`,
   '--os-foreground': mark.value.foreground || '#ffffff',
