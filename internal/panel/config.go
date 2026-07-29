@@ -26,6 +26,7 @@ type Config struct {
 	AgentTokenFile      string        `json:"agentTokenFile"`
 	WebRoot             string        `json:"webRoot"`
 	PublicURL           string        `json:"publicUrl"`
+	AllowIPHosts        bool          `json:"allowIpHosts"`
 	SecureCookie        bool          `json:"secureCookie"`
 	CookieName          string        `json:"cookieName"`
 	SessionTTL          time.Duration `json:"-"`
@@ -104,6 +105,13 @@ func LoadConfig(path string) (Config, error) {
 			return Config{}, fmt.Errorf("parse KEJILION_PANEL_SECURE_COOKIE: %w", err)
 		}
 		config.SecureCookie = parsed
+	}
+	if value := strings.TrimSpace(os.Getenv("KEJILION_PANEL_ALLOW_IP_HOSTS")); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse KEJILION_PANEL_ALLOW_IP_HOSTS: %w", err)
+		}
+		config.AllowIPHosts = parsed
 	}
 	if value := strings.TrimSpace(os.Getenv("KEJILION_PANEL_MAX_LOGIN_FAILURES")); value != "" {
 		parsed, err := strconv.Atoi(value)

@@ -177,8 +177,11 @@ docker --host unix:///var/run/docker.sock compose \
   -f /opt/kejilion-panel/direct-port.yml up -d
 ```
 
-`KEJILION_PANEL_PUBLIC_URL` 必须与浏览器访问的来源完全一致。直接 HTTP 会禁用
-Secure Cookie，仅建议用于受控测试环境。覆盖文件会把入口网络改为可发布端口的普通
+默认情况下，`KEJILION_PANEL_PUBLIC_URL` 必须与浏览器访问的来源完全一致。应用市场的
+直连端口安装会设置 `KEJILION_PANEL_ALLOW_IP_HOSTS=true`，允许浏览器通过任意合法的
+IPv4/IPv6 字面地址访问，以兼容内网、NAT 和端口映射；写请求的 `Origin` 仍必须与当前
+IP Host 完全同源，普通域名也仍受 `KEJILION_PANEL_PUBLIC_URL` 限制。直接 HTTP 会禁用
+Secure Cookie，仅建议用于受控环境。覆盖文件会把入口网络改为可发布端口的普通
 bridge；独立 egress 网络仍只承担受限出站访问。正式公网环境仍建议使用 HTTPS。
 
 直接端口部署完成后，可以使用 `kejilion.sh` 的标准反代入口：

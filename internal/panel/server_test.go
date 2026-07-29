@@ -398,6 +398,63 @@ func TestRejectsMissingOriginAndUnexpectedHost(t *testing.T) {
 	}
 }
 
+func TestAllowIPHostsSupportsNATWithoutAllowingDNSHosts(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	server.config.AllowIPHosts = true
+
+	for _, host := range []string{
+		"192.168.1.7:18080",
+		"198.51.100.25:18080",
+		"[fd00::25]:18080",
+	} {
+		response := performRequest(server, http.MethodGet, "/api/v1/auth/bootstrap", nil, map[string]string{
+			"Host": host,
+		})
+		if response.Code != http.StatusOK {
+			t.Fatalf("IP Host %q returned %d %s", host, response.Code, response.Body.String())
+		}
+	}
+	for _, host := range []string{
+		"panel.lan:18080",
+		"192.168.1.7:65536",
+		"192.168.1.7@evil.test",
+	} {
+		response := performRequest(server, http.MethodGet, "/api/v1/auth/bootstrap", nil, map[string]string{
+			"Host": host,
+		})
+		if response.Code != http.StatusMisdirectedRequest {
+			t.Fatalf("unsafe Host %q returned %d %s", host, response.Code, response.Body.String())
+		}
+	}
+
+	token, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]string{
+		"token": string(token), "username": "admin", "password": "a-strong-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossOrigin := performRequest(server, http.MethodPost, "/api/v1/auth/bootstrap", body, map[string]string{
+		"Content-Type": "application/json",
+		"Host":         "192.168.1.7:18080",
+		"Origin":       "http://198.51.100.25:18080",
+	})
+	if crossOrigin.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin NAT request returned %d %s", crossOrigin.Code, crossOrigin.Body.String())
+	}
+	sameOrigin := performRequest(server, http.MethodPost, "/api/v1/auth/bootstrap", body, map[string]string{
+		"Content-Type": "application/json",
+		"Host":         "192.168.1.7:18080",
+		"Origin":       "http://192.168.1.7:18080",
+	})
+	if sameOrigin.Code != http.StatusCreated {
+		t.Fatalf("same-origin NAT request returned %d %s", sameOrigin.Code, sameOrigin.Body.String())
+	}
+}
+
 func TestTrustedHTTPSProxyAllowsKFDOriginAndSecureCookies(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	token, err := os.ReadFile(tokenPath)

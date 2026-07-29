@@ -2,6 +2,23 @@ package panel
 
 import "testing"
 
+func TestLoadConfigAllowIPHostsEnvironment(t *testing.T) {
+	t.Setenv("KEJILION_PANEL_CONFIG", "")
+	t.Setenv("KEJILION_PANEL_ALLOW_IP_HOSTS", "true")
+	config, err := LoadConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.AllowIPHosts {
+		t.Fatal("KEJILION_PANEL_ALLOW_IP_HOSTS did not enable literal IP hosts")
+	}
+
+	t.Setenv("KEJILION_PANEL_ALLOW_IP_HOSTS", "invalid")
+	if _, err := LoadConfig(""); err == nil {
+		t.Fatal("invalid KEJILION_PANEL_ALLOW_IP_HOSTS was accepted")
+	}
+}
+
 func TestConfigRejectsNonOriginPublicURLs(t *testing.T) {
 	t.Parallel()
 	for _, publicURL := range []string{

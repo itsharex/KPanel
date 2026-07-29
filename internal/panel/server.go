@@ -798,6 +798,11 @@ func (s *Server) checkOrigin(w http.ResponseWriter, r *http.Request) bool {
 	expected, trustedProxyOrigin := s.trustedProxyHTTPSOrigin(r)
 	if !trustedProxyOrigin {
 		expected = s.config.PublicURL
+		if s.config.AllowIPHosts {
+			if ipOrigin, ok := directIPOrigin(r); ok {
+				expected = ipOrigin
+			}
+		}
 	}
 	if expected == "" {
 		scheme := "http"
@@ -821,11 +826,41 @@ func (s *Server) checkHost(w http.ResponseWriter, r *http.Request) bool {
 	hostMatchesPublicURL := err == nil &&
 		secureStringEqual(strings.ToLower(strings.TrimSpace(r.Host)), strings.ToLower(publicURL.Host))
 	_, trustedProxyOrigin := s.trustedProxyHTTPSOrigin(r)
-	if !hostMatchesPublicURL && !trustedProxyOrigin {
+	_, allowedIPHost := directIPOrigin(r)
+	if !hostMatchesPublicURL && !trustedProxyOrigin &&
+		!(s.config.AllowIPHosts && allowedIPHost) {
 		s.writeProblem(w, r, http.StatusMisdirectedRequest, "host_validation_failed", "Host validation failed", "")
 		return false
 	}
 	return true
+}
+
+// directIPOrigin returns an origin only for a literal IPv4 or IPv6 Host. It
+// supports servers reached through LAN addresses or NAT without accepting
+// arbitrary DNS names, which would weaken the fixed PublicURL Host boundary.
+func directIPOrigin(r *http.Request) (string, bool) {
+	host := strings.TrimSpace(r.Host)
+	if host == "" || strings.ContainsAny(host, "/\\?#@,;%") {
+		return "", false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	origin := scheme + "://" + host
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != scheme || parsed.Host != host ||
+		parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" ||
+		parsed.Fragment != "" || net.ParseIP(parsed.Hostname()) == nil {
+		return "", false
+	}
+	if port := parsed.Port(); port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			return "", false
+		}
+	}
+	return origin, true
 }
 
 // trustedProxyHTTPSOrigin returns the browser-facing origin only when the
