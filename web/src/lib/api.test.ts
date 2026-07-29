@@ -14,6 +14,15 @@ afterEach(() => {
 })
 
 describe('API client', () => {
+  it('builds a same-origin, path-safe site icon URL', () => {
+    expect(api.sites.iconURL('a'.repeat(32))).toBe(
+      `/api/v1/sites/${'a'.repeat(32)}/icon`,
+    )
+    expect(api.sites.iconURL('site/id ?')).toBe(
+      '/api/v1/sites/site%2Fid%20%3F/icon',
+    )
+  })
+
   it('detects a server that still requires bootstrap', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ required: true }))
     vi.stubGlobal('fetch', fetchMock)

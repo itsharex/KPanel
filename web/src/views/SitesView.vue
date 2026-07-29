@@ -28,6 +28,7 @@ import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import SitesSectionTabs from '@/components/sites/SitesSectionTabs.vue'
+import SiteFavicon from '@/components/sites/SiteFavicon.vue'
 import { ApiError, api, isTransientAgentError } from '@/lib/api'
 import { formatDateTime, relativeTime, shortId } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
@@ -44,6 +45,7 @@ const publicNetwork = ref<PublicNetworkSummary>()
 const capabilities = ref<Array<{ id: string; enabled: boolean; reason?: string; methods?: string[] }>>([])
 const loading = ref(true)
 const refreshing = ref(false)
+const siteIconRefreshKey = ref(0)
 const error = ref('')
 const search = ref('')
 const filter = ref<Filter>('all')
@@ -390,6 +392,7 @@ async function load(silent = false): Promise<void> {
     const installationPromise = api.sites.installations(controller.signal).catch(() => [])
     const publicNetworkPromise = api.system.publicNetwork(controller.signal).catch(() => undefined)
     sites.value = (await api.sites.list(undefined, controller.signal)).items
+    siteIconRefreshKey.value += 1
     loading.value = false
     capabilities.value = await capabilityPromise
     publicNetwork.value = await publicNetworkPromise
@@ -820,7 +823,11 @@ onBeforeUnmount(() => {
                   rel="noopener noreferrer"
                   :title="`访问 ${site.primaryDomain}`"
                 >
-                  <span class="resource-name__icon"><Globe2 :size="18" /></span>
+                  <SiteFavicon
+                    :site-id="site.id"
+                    :domain="site.primaryDomain"
+                    :refresh-key="siteIconRefreshKey"
+                  />
                   <span>
                     <strong>{{ site.primaryDomain }} <ExternalLink :size="11" /></strong>
                     <small>{{ site.enabled ? '已启用' : '已停用' }} · {{ site.domains.length }} 个域名</small>

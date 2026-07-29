@@ -36,6 +36,7 @@ import LoadingState from '@/components/feedback/LoadingState.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import MetricCard from '@/components/overview/MetricCard.vue'
 import OperatingSystemIcon from '@/components/overview/OperatingSystemIcon.vue'
+import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import { ApiError, api } from '@/lib/api'
 import { clampPercent, formatBytes, formatDateTime, formatDuration, formatHostDateTime, formatPercent } from '@/lib/format'
@@ -176,28 +177,7 @@ const publicCountryCode = computed(() => {
   return code
 })
 
-const osIdentity = computed(() => {
-  const summary = data.value
-  const tokens = [summary?.osId, ...(summary?.osLike || []), summary?.os]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
-  const distros = [
-    { match: 'ubuntu', key: 'ubuntu', label: 'Ubuntu' },
-    { match: 'debian', key: 'debian', label: 'Debian' },
-    { match: 'centos', key: 'centos', label: 'CentOS' },
-    { match: 'rocky', key: 'rocky', label: 'Rocky Linux' },
-    { match: 'almalinux', key: 'alma', label: 'AlmaLinux' },
-    { match: 'fedora', key: 'fedora', label: 'Fedora' },
-    { match: 'alpine', key: 'alpine', label: 'Alpine Linux' },
-    { match: 'arch', key: 'arch', label: 'Arch Linux' },
-    { match: 'opensuse', key: 'suse', label: 'openSUSE' },
-    { match: 'suse', key: 'suse', label: 'SUSE' },
-    { match: 'oracle', key: 'oracle', label: 'Oracle Linux' },
-  ]
-  return distros.find((distro) => tokens.includes(distro.match)) ||
-    { key: 'linux', label: 'Linux' }
-})
+const osIdentity = computed(() => detectOperatingSystemIdentity(data.value))
 
 const networkAlgorithm = computed(() => {
   const bbr = data.value?.management.bbr

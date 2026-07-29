@@ -1,0 +1,1080 @@
+---
+name: kpanel-site-icon-cache-validation
+description: "用隔离 Agent/Panel、真实回环网站入口和真实 Chrome 验证 KPanel 网站图标缓存、性能边界与系统发行版图标"
+version: "1.3"
+author: "Codex"
+tags: [kpanel, site, favicon, cache, security, performance, chrome, regression]
+params: [project_dir, project_linux_dir, go_module_cache_linux_dir, candidate_commit, candidate_image, candidate_container, candidate_agent_unit, candidate_port, local_tunnel_port, ssh_host, validation_run_id, site_id, site_domain, evidence_dir]
+created: "2026-07-29T13:28:40Z"
+updated: "2026-07-29T16:00:00Z"
+---
+
+# KPanel 网站图标缓存与系统图标验收
+
+## Purpose
+
+在不替换生产 KPanel、不修改真实网站、不推送镜像的前提下，验证：
+
+- 网站列表只通过 KPanel 同源接口加载实际 favicon；
+- Agent 实际连接目标固定为本机 Nginx，缓存跨 Agent 重启仍可复用；
+- 图标请求为低优先级懒加载，不阻塞网站列表；
+- 缓存头、ETag、失败回退和资源上限符合契约；
+- Rocky、AlmaLinux、RHEL、Oracle、Manjaro、openSUSE、SLES 不再被 `ID_LIKE`
+  误映射成其他发行版。
+
+## Prerequisites
+
+- `${{candidate_commit}}` 必须是当前独立工作树中已提交、可追溯的候选提交。
+- `${{project_dir}}` 是 Windows 工作树路径；`${{project_linux_dir}}` 是同一目录在 WSL
+  中的绝对路径；`${{go_module_cache_linux_dir}}` 是已填充且只读挂载的 WSL Go module
+  缓存目录。用 Windows Git 校验提交；用关键文件 SHA-256 校验 Windows/WSL 看到的是
+  同一份源码。module cache 只校验目录存在，并始终只读挂载，不把它当成源码仓库。
+- 用户已授权对 `${{ssh_host}}` 启动隔离的临时 Agent/Panel；本流程不授权发布、替换生产
+  容器、修改 `/home/web`、重启 Nginx 或操作业务容器。
+- `${{site_id}}` 必须是 32 位小写十六进制站点 ID；`${{site_domain}}` 必须是该 ID 对应、
+  已由 Agent 发现且当前可读的既有主域名；测试只发送 GET。
+- `${{validation_run_id}}` 必须是本次执行新生成的 32 位小写十六进制随机值；它与提交共同
+  写入 root-only 远端会话 marker，用来隔离同一提交的并发验收。
+- 候选 Agent 使用独立 socket、token、状态目录和 systemd transient unit；Docker socket
+  指向不存在的测试路径，防止生命周期写操作。
+- `${{evidence_dir}}` 位于当前工作树的忽略目录，不能保存 Cookie、CSRF、Agent token、
+  bootstrap token 或密码。
+- 真实 Chrome 通过回环 SSH 隧道访问候选 Panel，使用独立 Cookie 名和全新 Panel 数据目录。
+
+## Steps
+
+### 1. 锁定代码、网站与生产基线
+
+```powershell
+$ErrorActionPreference = "Stop"
+$candidateCommit = "${{candidate_commit}}"
+if ($candidateCommit -notmatch '^[0-9a-f]{40}$') {
+  throw "candidate_commit must be a full lowercase Git SHA"
+}
+if ("${{site_id}}" -notmatch '^[0-9a-f]{32}$') {
+  throw "site_id must be 32 lowercase hexadecimal characters"
+}
+if ("${{validation_run_id}}" -notmatch '^[0-9a-f]{32}$') {
+  throw "validation_run_id must be 32 lowercase hexadecimal characters"
+}
+$head = (git -C "${{project_dir}}" rev-parse HEAD).Trim()
+if ($head -ne $candidateCommit) {
+  throw "Windows worktree HEAD does not match candidate_commit"
+}
+$dirty = @(git -C "${{project_dir}}" status --porcelain)
+if ($dirty.Count -ne 0) {
+  throw "candidate worktree must be clean"
+}
+git -C "${{project_dir}}" check-ignore --quiet -- "${{evidence_dir}}"
+if ($LASTEXITCODE -ne 0) {
+  throw "evidence_dir must be inside a Git-ignored path such as .codex-tmp"
+}
+git -C "${{project_dir}}" show --stat --oneline "${{candidate_commit}}"
+git -C "${{project_dir}}" diff --check "${{candidate_commit}}^" "${{candidate_commit}}"
+
+$criticalFiles = @(
+  "go.mod",
+  "internal/sites/icon_cache.go",
+  "internal/agent/server.go",
+  "internal/panel/site_icons.go",
+  "web/src/components/sites/SiteFavicon.vue",
+  "web/src/lib/operatingSystem.ts"
+)
+foreach ($relativePath in $criticalFiles) {
+  $windowsPath = Join-Path "${{project_dir}}" $relativePath
+  $linuxPath = "${{project_linux_dir}}/" + $relativePath.Replace("\", "/")
+  $windowsHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $windowsPath).Hash.ToLowerInvariant()
+  $linuxOutput = wsl.exe -u root -- sha256sum $linuxPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "WSL cannot read $linuxPath"
+  }
+  $linuxHash = ($linuxOutput -split '\s+')[0].ToLowerInvariant()
+  if ($windowsHash -ne $linuxHash) {
+    throw "Windows/WSL source mismatch: $relativePath"
+  }
+}
+wsl.exe -u root -- test -d "${{go_module_cache_linux_dir}}"
+if ($LASTEXITCODE -ne 0) {
+  throw "Go module cache directory is missing"
+}
+```
+
+通过 SSH 只读记录生产 Panel 容器 ID/健康状态、生产 Agent unit/版本、Nginx 状态，以及
+`${{site_domain}}` 对应的 32 位站点 ID、TLS 状态和当前 favicon URL。确认
+`${{candidate_port}}` 只在远端回环使用，`${{local_tunnel_port}}` 本地未占用。任何生产基线
+异常都应停止，不得用本流程顺手修复。
+
+**Expected output:** 候选提交唯一；生产资源和测试站点均有脱敏基线。
+
+### 2. 运行确定性和真实回环测试
+
+在 `${{project_dir}}` 运行：
+
+```powershell
+Set-Location "${{project_dir}}"
+npm.cmd --prefix web test
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+wsl.exe -u root -- bash -lc "cd '${{project_linux_dir}}' && bash deploy/tests/install-safety.sh"
+
+wsl.exe -u root -- docker run --rm --network none `
+  -v "${{project_linux_dir}}:/src:ro" `
+  -v "${{go_module_cache_linux_dir}}:/go/pkg/mod:ro" `
+  -w /src golang:1.26.5-bookworm go test ./... -count=1
+
+wsl.exe -u root -- docker run --rm --network none `
+  -v "${{project_linux_dir}}:/src:ro" `
+  -v "${{go_module_cache_linux_dir}}:/go/pkg/mod:ro" `
+  -w /src golang:1.26.5-bookworm `
+  go test -race ./internal/sites ./internal/agent ./internal/panel -count=1
+```
+
+在隔离 Linux network namespace 中，以 root 运行真实回环测试：
+
+```bash
+docker run --rm --network none \
+  -e KPANEL_SITE_ICON_LOOPBACK_TEST=1 \
+  -v "${{project_linux_dir}}:/src:ro" \
+  -v "${{go_module_cache_linux_dir}}:/go/pkg/mod:ro" \
+  -w /src \
+  golang:1.26.5-bookworm \
+  go test ./internal/sites \
+    -run TestIconCacheDefaultTransportUsesRealLoopbackHTTP \
+    -count=1 -v
+```
+
+该测试会在容器自身 `127.0.0.1:80` 启动一次性 HTTP fixture；即使设置了错误环境代理，
+默认 Transport 仍必须成功，证明域名没有通过 DNS/代理外联。
+
+**Expected output:** 单元、race、构建和真实 loopback 测试全部通过。
+
+### 3. 准备隔离候选 Agent 和 Panel
+
+使用 `git archive` 上传 `${{candidate_commit}}` 到远端 `mktemp -d` 返回的精确目录，构建
+`${{candidate_image}}`，但不得 push 或覆盖 `latest`。从候选镜像提取同提交
+`/release/kejilion-agent`。
+
+先在控制端执行以下 PowerShell。源码归档只来自锁定提交；远端构建脚本用 `EXIT` trap
+清理源码和完整归档。上传中断产生的部分文件只会留在本次 root-only 会话目录中，并由
+步骤 7 按唯一 session marker 清理：
+
+```powershell
+$ErrorActionPreference = "Stop"
+$candidateCommit = "${{candidate_commit}}"
+$candidateImage = "${{candidate_image}}"
+$runId = "${{validation_run_id}}"
+if ($candidateCommit -notmatch '^[0-9a-f]{40}$') {
+  throw "candidate_commit must be a full lowercase Git SHA"
+}
+if ($runId -notmatch '^[0-9a-f]{32}$') {
+  throw "validation_run_id must be 32 lowercase hexadecimal characters"
+}
+if ($candidateImage -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*$') {
+  throw "candidate_image must be a unique local tag, not a digest or latest"
+}
+if ($candidateImage.EndsWith(":latest")) {
+  throw "candidate_image must not use latest"
+}
+
+New-Item -ItemType Directory -Force -Path "${{evidence_dir}}" | Out-Null
+$archiveName = "kpanel-site-icon-source-$runId.tar"
+$localArchive = Join-Path "${{evidence_dir}}" $archiveName
+if (Test-Path -LiteralPath $localArchive) {
+  throw "candidate archive already exists: $localArchive"
+}
+
+function ConvertTo-RemoteBash([string] $script) {
+  $normalized = $script.Replace("`r`n", "`n")
+  return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($normalized))
+}
+
+$initializeScript = @'
+set -Eeuo pipefail
+
+COMMIT="$1"
+RUN_ID="$2"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]
+[[ "$RUN_ID" =~ ^[0-9a-f]{32}$ ]]
+
+SESSION_ROOT=""
+cleanup_failed_initialization() {
+  status=$?
+  [ "$status" -eq 0 ] && return
+  trap - EXIT
+  if [ -n "$SESSION_ROOT" ]; then
+    case "$SESSION_ROOT" in
+      /var/tmp/kpanel-site-icon-session.*)
+        if [ -d "$SESSION_ROOT" ] && [ ! -L "$SESSION_ROOT" ] &&
+          [ "$(stat -Lc '%u:%a' "$SESSION_ROOT")" = 0:700 ]; then
+          rm -rf -- "$SESSION_ROOT"
+        fi
+        ;;
+    esac
+  fi
+  exit "$status"
+}
+trap cleanup_failed_initialization EXIT
+
+SESSION_ROOT="$(mktemp -d /var/tmp/kpanel-site-icon-session.XXXXXX)"
+chmod 0700 "$SESSION_ROOT"
+printf '%s\n%s\n' "$COMMIT" "$RUN_ID" >"$SESSION_ROOT/.candidate-session"
+chmod 0600 "$SESSION_ROOT/.candidate-session"
+printf '%s\n' "$SESSION_ROOT"
+trap - EXIT
+'@
+
+$remoteSession = ""
+try {
+  git -C "${{project_dir}}" archive `
+    --format=tar `
+    --output="$localArchive" `
+    $candidateCommit
+  if ($LASTEXITCODE -ne 0) {
+    throw "git archive failed"
+  }
+  $archiveHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $localArchive).Hash.ToLowerInvariant()
+
+  $initializeEncoded = ConvertTo-RemoteBash $initializeScript
+  $sessionOutput = & ssh "${{ssh_host}}" `
+    "printf '%s' '$initializeEncoded' | base64 --decode | bash -s -- '$candidateCommit' '$runId'"
+  $sessionExitCode = $LASTEXITCODE
+  $remoteSession = [string]($sessionOutput | Select-Object -Last 1)
+  $remoteSession = $remoteSession.Trim()
+  if ($sessionExitCode -ne 0 -or
+      $remoteSession -notmatch '^/var/tmp/kpanel-site-icon-session\.[A-Za-z0-9]+$') {
+    throw "failed to create a private remote validation session"
+  }
+  Write-Output "REMOTE_SESSION=$remoteSession"
+
+  scp -- $localArchive "${{ssh_host}}:$remoteSession/source.tar.part"
+  if ($LASTEXITCODE -ne 0) {
+    throw "candidate archive upload failed; run step 7 with this validation_run_id"
+  }
+
+  $buildScript = @'
+set -Eeuo pipefail
+
+SESSION_ROOT="$1"
+COMMIT="$2"
+RUN_ID="$3"
+IMAGE="$4"
+EXPECTED_ARCHIVE_SHA="$5"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]
+[[ "$RUN_ID" =~ ^[0-9a-f]{32}$ ]]
+[[ "$IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+[[ "$IMAGE" != *:latest ]]
+case "$SESSION_ROOT" in
+  /var/tmp/kpanel-site-icon-session.*) ;;
+  *) echo "unexpected session root" >&2; exit 1 ;;
+esac
+[ -d "$SESSION_ROOT" ] && [ ! -L "$SESSION_ROOT" ]
+[ "$(stat -Lc '%u:%a' "$SESSION_ROOT")" = 0:700 ]
+mapfile -t SESSION_MARKER <"$SESSION_ROOT/.candidate-session"
+[ "${SESSION_MARKER[0]:-}" = "$COMMIT" ]
+[ "${SESSION_MARKER[1]:-}" = "$RUN_ID" ]
+[ "${#SESSION_MARKER[@]}" -eq 2 ]
+
+ARCHIVE="$SESSION_ROOT/source.tar.part"
+[ -f "$ARCHIVE" ] && [ ! -L "$ARCHIVE" ]
+[ "$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" = "$EXPECTED_ARCHIVE_SHA" ]
+! docker image inspect "$IMAGE" >/dev/null 2>&1
+
+SOURCE_ROOT="$SESSION_ROOT/source"
+cleanup_source() {
+  status=$?
+  trap - EXIT
+  if [ -e "$SOURCE_ROOT" ]; then
+    mapfile -t SOURCE_MARKER <"$SOURCE_ROOT/.candidate-source" 2>/dev/null || true
+    if [ "${SOURCE_MARKER[0]:-}" = "$COMMIT" ] &&
+      [ "${SOURCE_MARKER[1]:-}" = "$RUN_ID" ] &&
+      [ "${#SOURCE_MARKER[@]}" -eq 2 ]; then
+      rm -rf -- "$SOURCE_ROOT"
+    elif [ "$SOURCE_ROOT" = "$SESSION_ROOT/source" ] &&
+      [ -d "$SOURCE_ROOT" ] && [ ! -L "$SOURCE_ROOT" ]; then
+      # The already-validated, root-only session marker still proves
+      # ownership if creating the child marker itself was the failure.
+      rm -rf -- "$SOURCE_ROOT"
+    else
+      echo "source marker mismatch; preserving $SOURCE_ROOT" >&2
+      status=1
+    fi
+  fi
+  if [ -f "$ARCHIVE" ] && [ ! -L "$ARCHIVE" ] &&
+    [ "$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" = "$EXPECTED_ARCHIVE_SHA" ]; then
+    rm -f -- "$ARCHIVE"
+  else
+    echo "archive identity mismatch; preserving $ARCHIVE" >&2
+    status=1
+  fi
+  exit "$status"
+}
+trap cleanup_source EXIT
+
+[ ! -e "$SOURCE_ROOT" ]
+install -d -o root -g root -m 0700 "$SOURCE_ROOT"
+printf '%s\n%s\n' "$COMMIT" "$RUN_ID" >"$SOURCE_ROOT/.candidate-source"
+chmod 0600 "$SOURCE_ROOT/.candidate-source"
+
+tar --extract --file "$ARCHIVE" --directory "$SOURCE_ROOT" \
+  --no-same-owner --no-same-permissions
+VERSION="$(tr -d '\r\n' <"$SOURCE_ROOT/VERSION")"
+[ -n "$VERSION" ]
+docker build \
+  --label io.kejilion.test-scope=site-icon-cache \
+  --label "io.kejilion.source-commit=$COMMIT" \
+  --label "io.kejilion.validation-run=$RUN_ID" \
+  --build-arg "VERSION=$VERSION" \
+  --build-arg "REVISION=$COMMIT" \
+  --tag "$IMAGE" \
+  "$SOURCE_ROOT"
+
+[ "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  "$IMAGE")" = "$COMMIT" ]
+[ "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' \
+  "$IMAGE")" = "$VERSION" ]
+[ "$(docker image inspect -f '{{index .Config.Labels "io.kejilion.test-scope"}}' \
+  "$IMAGE")" = site-icon-cache ]
+[ "$(docker image inspect -f '{{index .Config.Labels "io.kejilion.source-commit"}}' \
+  "$IMAGE")" = "$COMMIT" ]
+[ "$(docker image inspect -f '{{index .Config.Labels "io.kejilion.validation-run"}}' \
+  "$IMAGE")" = "$RUN_ID" ]
+'@
+  $buildEncoded = ConvertTo-RemoteBash $buildScript
+  & ssh "${{ssh_host}}" `
+    "printf '%s' '$buildEncoded' | base64 --decode | bash -s -- '$remoteSession' '$candidateCommit' '$runId' '$candidateImage' '$archiveHash'"
+  if ($LASTEXITCODE -ne 0) {
+    throw "remote candidate image build failed; run step 7 with this validation_run_id"
+  }
+}
+finally {
+  if (Test-Path -LiteralPath $localArchive) {
+    Remove-Item -LiteralPath $localArchive
+  }
+}
+```
+
+在 root-only 会话目录中，用 `mktemp -d <session>/runtime.XXXXXX` 创建运行目录，并在其中创建：
+
+- `agent-state`、`run`、`secrets`：`root:kejilion-panel`，目录不宽于 `0750`；
+- `panel-data`：`65532:65532 / 0700`；
+- 32 字节以上的一次性 Agent token：`root:kejilion-panel / 0640`；
+- marker：包含 `${{candidate_commit}}`，权限 `0600`。
+
+用 `${{candidate_agent_unit}}` 启动 transient Agent，关键参数固定为：
+
+```text
+--socket <temporary-root>/run/agent.sock
+--token-file <temporary-root>/secrets/agent.token
+--state-dir <temporary-root>/agent-state
+--web-root /home/web
+--docker-socket <temporary-root>/missing-docker.sock
+--allow-docker-socket-activation=false
+--enable-system-writes=false
+--public-network-lookup=false
+```
+
+systemd 必须限制为只读宿主文件系统，仅允许临时 `agent-state/run` 写入，网络地址族只保留
+`AF_UNIX AF_INET AF_INET6`。Docker socket 故意不存在；Agent 可报告 Docker degraded，
+但网站列表和图标 GET 必须工作。
+
+以下命令是候选 Agent/Panel 的完整启动契约。它按提交与 `validation_run_id` 唯一发现会话；
+`TEST_ROOT` 必须直接使用 `mktemp` 的返回值，不得手工拼接；命令执行期间不能输出 token 内容：
+
+```bash
+set -Eeuo pipefail
+
+COMMIT="${{candidate_commit}}"
+RUN_ID="${{validation_run_id}}"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]
+[[ "$RUN_ID" =~ ^[0-9a-f]{32}$ ]]
+
+SESSION_ROOT=""
+while IFS= read -r -d '' candidate_session; do
+  marker="$candidate_session/.candidate-session"
+  [ -f "$marker" ] && [ ! -L "$marker" ] || continue
+  mapfile -t SESSION_MARKER <"$marker"
+  if [ "${SESSION_MARKER[0]:-}" = "$COMMIT" ] &&
+    [ "${SESSION_MARKER[1]:-}" = "$RUN_ID" ] &&
+    [ "${#SESSION_MARKER[@]}" -eq 2 ]; then
+    [ -z "$SESSION_ROOT" ]
+    SESSION_ROOT="$candidate_session"
+  fi
+done < <(find /var/tmp -mindepth 1 -maxdepth 1 -type d \
+  -name 'kpanel-site-icon-session.*' -print0)
+[ -n "$SESSION_ROOT" ]
+case "$SESSION_ROOT" in
+  /var/tmp/kpanel-site-icon-session.*) ;;
+  *) echo "unexpected session root" >&2; exit 1 ;;
+esac
+[ ! -L "$SESSION_ROOT" ]
+[ "$(stat -Lc '%u:%a' "$SESSION_ROOT")" = 0:700 ]
+
+CONTROL_FILE="$SESSION_ROOT/runtime.path"
+TEST_ROOT=""
+EXTRACT_CONTAINER="${{candidate_container}}-extract"
+
+cleanup_failed_setup() {
+  status=$?
+  [ "$status" -eq 0 ] && return
+  trap - EXIT
+  set +e
+  cleanup_residual=false
+
+  if docker inspect "${{candidate_container}}" >/dev/null 2>&1; then
+    if [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.test-scope"}}' \
+        "${{candidate_container}}")" = site-icon-cache ] &&
+      [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.source-commit"}}' \
+        "${{candidate_container}}")" = "$COMMIT" ] &&
+      [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.validation-run"}}' \
+        "${{candidate_container}}")" = "$RUN_ID" ]; then
+      docker rm -f "${{candidate_container}}" >/dev/null
+    else
+      cleanup_residual=true
+    fi
+  fi
+  if docker inspect "${{candidate_container}}" >/dev/null 2>&1; then
+    cleanup_residual=true
+  fi
+
+  unit_state="$(systemctl show "${{candidate_agent_unit}}.service" \
+    -p LoadState --value 2>/dev/null)"
+  if [ "$unit_state" != not-found ]; then
+    if [ -n "$TEST_ROOT" ] &&
+      [ "$(systemctl show "${{candidate_agent_unit}}.service" -p Description --value)" = \
+        "KPanel site-icon candidate $COMMIT run $RUN_ID" ] &&
+      systemctl show "${{candidate_agent_unit}}.service" -p ExecStart --value |
+        grep -F -- "$TEST_ROOT/bin/kejilion-agent" >/dev/null; then
+      systemctl stop "${{candidate_agent_unit}}.service"
+      systemctl reset-failed "${{candidate_agent_unit}}.service" >/dev/null 2>&1
+    else
+      cleanup_residual=true
+    fi
+    for _ in $(seq 1 20); do
+      [ "$(systemctl show "${{candidate_agent_unit}}.service" \
+        -p LoadState --value 2>/dev/null)" = not-found ] && break
+      sleep 0.1
+    done
+    if [ "$(systemctl show "${{candidate_agent_unit}}.service" \
+      -p LoadState --value 2>/dev/null)" != not-found ]; then
+      cleanup_residual=true
+    fi
+  fi
+
+  if docker inspect "$EXTRACT_CONTAINER" >/dev/null 2>&1; then
+    if [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.test-scope"}}' \
+        "$EXTRACT_CONTAINER")" = site-icon-cache ] &&
+      [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.source-commit"}}' \
+        "$EXTRACT_CONTAINER")" = "$COMMIT" ] &&
+      [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.validation-run"}}' \
+        "$EXTRACT_CONTAINER")" = "$RUN_ID" ]; then
+      docker rm -f "$EXTRACT_CONTAINER" >/dev/null
+    else
+      cleanup_residual=true
+    fi
+  fi
+  if docker inspect "$EXTRACT_CONTAINER" >/dev/null 2>&1; then
+    cleanup_residual=true
+  fi
+
+  test_root_removed=false
+  if [ "$cleanup_residual" = false ] && [ -n "$TEST_ROOT" ]; then
+    case "$TEST_ROOT" in
+      "$SESSION_ROOT"/runtime.*)
+        mapfile -t RUNTIME_MARKER <"$TEST_ROOT/.candidate-runtime" 2>/dev/null || true
+        if [ "${RUNTIME_MARKER[0]:-}" = "$COMMIT" ] &&
+          [ "${RUNTIME_MARKER[1]:-}" = "$RUN_ID" ] &&
+          [ "${#RUNTIME_MARKER[@]}" -eq 2 ]; then
+          rm -rf -- "$TEST_ROOT"
+          [ ! -e "$TEST_ROOT" ] && test_root_removed=true
+        elif [ -d "$TEST_ROOT" ] && [ ! -L "$TEST_ROOT" ]; then
+          # The parent session marker was already validated before the
+          # runtime directory was created.
+          rm -rf -- "$TEST_ROOT"
+          [ ! -e "$TEST_ROOT" ] && test_root_removed=true
+        fi
+        ;;
+      *) cleanup_residual=true ;;
+    esac
+  fi
+  if [ "$test_root_removed" = true ] &&
+    [ -f "$CONTROL_FILE" ] && [ ! -L "$CONTROL_FILE" ] &&
+    [ "$(cat "$CONTROL_FILE")" = "$TEST_ROOT" ]; then
+    rm -f -- "$CONTROL_FILE"
+  fi
+  if [ -e "$CONTROL_FILE" ] || [ "$cleanup_residual" = true ]; then
+    echo "candidate cleanup left residual resources; preserving runtime control" >&2
+  fi
+  exit "$status"
+}
+trap cleanup_failed_setup EXIT
+
+PANEL_GROUP_GID="$(getent group kejilion-panel | cut -d: -f3)"
+[ -n "$PANEL_GROUP_GID" ]
+! docker inspect "${{candidate_container}}" >/dev/null 2>&1
+! docker inspect "$EXTRACT_CONTAINER" >/dev/null 2>&1
+[ "$(systemctl show "${{candidate_agent_unit}}.service" \
+  -p LoadState --value 2>/dev/null || true)" = not-found ]
+! ss -H -ltn "sport = :${{candidate_port}}" | grep -q .
+[ "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  "${{candidate_image}}")" = "$COMMIT" ]
+[ "$(docker image inspect -f '{{index .Config.Labels "io.kejilion.validation-run"}}' \
+  "${{candidate_image}}")" = "$RUN_ID" ]
+
+if [ -e "$CONTROL_FILE" ]; then
+  [ -f "$CONTROL_FILE" ] && [ ! -L "$CONTROL_FILE" ]
+  stale_test_root="$(cat "$CONTROL_FILE")"
+  case "$stale_test_root" in
+    "$SESSION_ROOT"/runtime.*) ;;
+    *) echo "unexpected stale runtime path" >&2; exit 1 ;;
+  esac
+  [ ! -e "$stale_test_root" ]
+  rm -f -- "$CONTROL_FILE"
+fi
+
+TEST_ROOT="$(mktemp -d "$SESSION_ROOT/runtime.XXXXXX")"
+printf '%s\n%s\n' "$COMMIT" "$RUN_ID" >"$TEST_ROOT/.candidate-runtime"
+chmod 0600 "$TEST_ROOT/.candidate-runtime"
+(umask 0077; printf '%s\n' "$TEST_ROOT" >"$CONTROL_FILE")
+printf 'TEST_ROOT=%s\n' "$TEST_ROOT"
+
+if [ ! -f "$CONTROL_FILE" ] || [ -L "$CONTROL_FILE" ] ||
+  [ "$(cat "$CONTROL_FILE")" != "$TEST_ROOT" ]; then
+  exit 1
+fi
+case "$TEST_ROOT" in
+  "$SESSION_ROOT"/runtime.*) ;;
+  *) echo "unexpected TEST_ROOT" >&2; exit 1 ;;
+esac
+
+install -d -o root -g "$PANEL_GROUP_GID" -m 0750 \
+  "$TEST_ROOT/agent-state" "$TEST_ROOT/run" "$TEST_ROOT/secrets" "$TEST_ROOT/bin"
+install -d -o 65532 -g 65532 -m 0700 "$TEST_ROOT/panel-data"
+umask 0077
+openssl rand -hex 32 >"$TEST_ROOT/secrets/agent.token"
+chown root:"$PANEL_GROUP_GID" "$TEST_ROOT/secrets/agent.token"
+chmod 0640 "$TEST_ROOT/secrets/agent.token"
+
+docker create \
+  --name "$EXTRACT_CONTAINER" \
+  --label io.kejilion.test-scope=site-icon-cache \
+  --label "io.kejilion.source-commit=${{candidate_commit}}" \
+  --label "io.kejilion.validation-run=$RUN_ID" \
+  "${{candidate_image}}" >/dev/null
+docker cp "$EXTRACT_CONTAINER:/release/kejilion-agent" "$TEST_ROOT/bin/kejilion-agent"
+docker rm "$EXTRACT_CONTAINER" >/dev/null
+chown root:root "$TEST_ROOT/bin/kejilion-agent"
+chmod 0755 "$TEST_ROOT/bin/kejilion-agent"
+
+systemd-run \
+  --unit="${{candidate_agent_unit}}" \
+  --description="KPanel site-icon candidate ${{candidate_commit}} run $RUN_ID" \
+  --collect \
+  --service-type=exec \
+  --property=User=root \
+  --property=Group=kejilion-panel \
+  --property=UMask=0077 \
+  --property=Restart=no \
+  --property=NoNewPrivileges=true \
+  --property=PrivateDevices=true \
+  --property=ProtectSystem=strict \
+  --property=ProtectHome=read-only \
+  --property="ReadOnlyPaths=$TEST_ROOT/panel-data" \
+  --property="ReadWritePaths=$TEST_ROOT/agent-state $TEST_ROOT/run" \
+  --property="RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" \
+  --property=RestrictNamespaces=true \
+  --property=RestrictRealtime=true \
+  --property=RestrictSUIDSGID=true \
+  --property=LockPersonality=true \
+  --property=MemoryDenyWriteExecute=true \
+  --property=SystemCallArchitectures=native \
+  --property="SystemCallFilter=@system-service" \
+  --property=SystemCallErrorNumber=EPERM \
+  "$TEST_ROOT/bin/kejilion-agent" \
+  --socket "$TEST_ROOT/run/agent.sock" \
+  --socket-group kejilion-panel \
+  --token-file "$TEST_ROOT/secrets/agent.token" \
+  --state-dir "$TEST_ROOT/agent-state" \
+  --web-root /home/web \
+  --docker-socket "$TEST_ROOT/missing-docker.sock" \
+  --allow-docker-socket-activation=false \
+  --enable-system-writes=false \
+  --public-network-lookup=false
+
+for _ in $(seq 1 50); do
+  systemctl is-active --quiet "${{candidate_agent_unit}}.service" &&
+    [ -S "$TEST_ROOT/run/agent.sock" ] && break
+  sleep 0.2
+done
+systemctl is-active --quiet "${{candidate_agent_unit}}.service"
+[ "$(stat -Lc '%u:%g:%a' "$TEST_ROOT/run/agent.sock")" = "0:${PANEL_GROUP_GID}:660" ]
+
+docker run -d \
+  --name "${{candidate_container}}" \
+  --label io.kejilion.test-scope=site-icon-cache \
+  --label "io.kejilion.source-commit=${{candidate_commit}}" \
+  --label "io.kejilion.validation-run=$RUN_ID" \
+  --restart no \
+  --user 65532:65532 \
+  --group-add "$PANEL_GROUP_GID" \
+  --network bridge \
+  --read-only \
+  --pids-limit 128 \
+  --memory 256m \
+  --cpus 1 \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --tmpfs /tmp:size=16m,mode=1777 \
+  -p "127.0.0.1:${{candidate_port}}:8080" \
+  -e KEJILION_PANEL_LISTEN=:8080 \
+  -e KEJILION_PANEL_DATA_DIR=/var/lib/kejilion-panel \
+  -e KEJILION_PANEL_AGENT_SOCKET=/run/kejilion-panel/agent.sock \
+  -e KEJILION_PANEL_AGENT_TOKEN_FILE=/run/secrets/agent-token \
+  -e KEJILION_PANEL_WEB_ROOT=/app/web \
+  -e "KEJILION_PANEL_PUBLIC_URL=http://127.0.0.2:${{local_tunnel_port}}" \
+  -e KEJILION_PANEL_SECURE_COOKIE=false \
+  -e KEJILION_PANEL_COOKIE_NAME=kpanel_site_icon_candidate_session \
+  -e KEJILION_PANEL_TRUSTED_PROXY_CIDRS="127.0.0.0/8,::1/128" \
+  --mount "type=bind,src=$TEST_ROOT/panel-data,dst=/var/lib/kejilion-panel" \
+  --mount "type=bind,src=$TEST_ROOT/run,dst=/run/kejilion-panel,readonly" \
+  --mount "type=bind,src=$TEST_ROOT/secrets/agent.token,dst=/run/secrets/agent-token,readonly" \
+  "${{candidate_image}}" >/dev/null
+
+for _ in $(seq 1 90); do
+  [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' \
+    "${{candidate_container}}")" = healthy ] && break
+  sleep 1
+done
+[ "$(docker inspect -f '{{.State.Health.Status}}' "${{candidate_container}}")" = healthy ]
+curl --noproxy '*' -fsS \
+  "http://127.0.0.1:${{candidate_port}}/api/v1/health" >/dev/null
+trap - EXIT
+```
+
+后续每个远端命令都先按提交与 `validation_run_id` 唯一发现 root-only 会话，再从会话内
+`CONTROL_FILE` 读取 `TEST_ROOT`，不能重新推导目录。启动脚本若任一步失败，`EXIT` trap
+会按容器标签、unit Description/ExecStart 和 marker 精确清理；定位文件只在确认运行目录
+已删除后才移除。不得挂载生产 Panel 数据。
+
+**Expected output:** 候选 Panel/Agent 的 revision 均为 `${{candidate_commit}}`；生产 Panel、
+Agent、Nginx 和网站未变化。
+
+### 4. 验证 Agent 真实抓取与磁盘缓存
+
+在远端执行以下 Bash。curl 的认证 header 写入 `0600` 配置文件，token 不出现在命令行、
+终端或证据中：
+
+```bash
+set -Eeuo pipefail
+
+COMMIT="${{candidate_commit}}"
+RUN_ID="${{validation_run_id}}"
+SITE_ID="${{site_id}}"
+SITE_DOMAIN="${{site_domain}}"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]
+[[ "$RUN_ID" =~ ^[0-9a-f]{32}$ ]]
+[[ "$SITE_ID" =~ ^[0-9a-f]{32}$ ]]
+[[ "$SITE_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]
+
+SESSION_ROOT=""
+while IFS= read -r -d '' candidate_session; do
+  marker="$candidate_session/.candidate-session"
+  [ -f "$marker" ] && [ ! -L "$marker" ] || continue
+  mapfile -t SESSION_MARKER <"$marker"
+  if [ "${SESSION_MARKER[0]:-}" = "$COMMIT" ] &&
+    [ "${SESSION_MARKER[1]:-}" = "$RUN_ID" ] &&
+    [ "${#SESSION_MARKER[@]}" -eq 2 ]; then
+    [ -z "$SESSION_ROOT" ]
+    SESSION_ROOT="$candidate_session"
+  fi
+done < <(find /var/tmp -mindepth 1 -maxdepth 1 -type d \
+  -name 'kpanel-site-icon-session.*' -print0)
+[ -n "$SESSION_ROOT" ]
+[ "$(stat -Lc '%u:%a' "$SESSION_ROOT")" = 0:700 ]
+
+CONTROL_FILE="$SESSION_ROOT/runtime.path"
+[ -f "$CONTROL_FILE" ] && [ ! -L "$CONTROL_FILE" ]
+TEST_ROOT="$(cat "$CONTROL_FILE")"
+case "$TEST_ROOT" in
+  "$SESSION_ROOT"/runtime.*) ;;
+  *) echo "unexpected TEST_ROOT" >&2; exit 1 ;;
+esac
+mapfile -t RUNTIME_MARKER <"$TEST_ROOT/.candidate-runtime"
+[ "${RUNTIME_MARKER[0]:-}" = "$COMMIT" ]
+[ "${RUNTIME_MARKER[1]:-}" = "$RUN_ID" ]
+[ "${#RUNTIME_MARKER[@]}" -eq 2 ]
+
+SOCKET="$TEST_ROOT/run/agent.sock"
+TOKEN_FILE="$TEST_ROOT/secrets/agent.token"
+CACHE_DIR="$TEST_ROOT/agent-state/site-icons"
+AUTH_CONFIG="$TEST_ROOT/secrets/agent-curl.conf"
+SITES_BODY="$TEST_ROOT/sites.json"
+FIRST_BODY="$TEST_ROOT/icon-first.bin"
+SECOND_BODY="$TEST_ROOT/icon-second.bin"
+THIRD_BODY="$TEST_ROOT/icon-third.bin"
+FIRST_HEADERS="$TEST_ROOT/icon-first.headers"
+SECOND_HEADERS="$TEST_ROOT/icon-second.headers"
+THIRD_HEADERS="$TEST_ROOT/icon-third.headers"
+
+umask 0077
+TOKEN="$(cat "$TOKEN_FILE")"
+printf 'silent\nshow-error\nfail-with-body\nheader = "Authorization: Bearer %s"\n' \
+  "$TOKEN" >"$AUTH_CONFIG"
+unset TOKEN
+chmod 0600 "$AUTH_CONFIG"
+
+agent_get() {
+  path="$1"
+  body="$2"
+  headers="$3"
+  curl --config "$AUTH_CONFIG" \
+    --unix-socket "$SOCKET" \
+    --dump-header "$headers" \
+    --output "$body" \
+    "http://localhost$path"
+}
+
+agent_get "/v1/sites" "$SITES_BODY" "$TEST_ROOT/sites.headers"
+grep -F -- "\"id\":\"$SITE_ID\"" "$SITES_BODY" >/dev/null
+grep -F -- "\"primaryDomain\":\"$SITE_DOMAIN\"" "$SITES_BODY" >/dev/null
+
+agent_get "/v1/sites/$SITE_ID/icon" "$FIRST_BODY" "$FIRST_HEADERS"
+[ -s "$FIRST_BODY" ]
+[ "$(stat -Lc '%s' "$FIRST_BODY")" -le 262144 ]
+FIRST_TYPE="$(awk '
+  BEGIN { IGNORECASE=1 }
+  /^Content-Type:/ {
+    sub(/\r$/, "")
+    sub(/^[^:]+:[[:space:]]*/, "")
+    print tolower($0)
+  }
+' "$FIRST_HEADERS" | tail -n 1)"
+case "$FIRST_TYPE" in
+  image/png|image/jpeg|image/gif|image/vnd.microsoft.icon|image/webp) ;;
+  *) echo "unsupported icon Content-Type: $FIRST_TYPE" >&2; exit 1 ;;
+esac
+
+ICON_FILE="$CACHE_DIR/$SITE_ID.icon"
+META_FILE="$CACHE_DIR/$SITE_ID.meta.json"
+[ -d "$CACHE_DIR" ] && [ ! -L "$CACHE_DIR" ]
+[ "$(stat -Lc '%a' "$CACHE_DIR")" = 700 ]
+for cache_file in "$ICON_FILE" "$META_FILE"; do
+  [ -f "$cache_file" ] && [ ! -L "$cache_file" ]
+  [ "$(stat -Lc '%a' "$cache_file")" = 600 ]
+done
+[ "$(stat -Lc '%s' "$META_FILE")" -le 4096 ]
+
+ICON_SHA="$(sha256sum "$ICON_FILE" | cut -d' ' -f1)"
+FIRST_SHA="$(sha256sum "$FIRST_BODY" | cut -d' ' -f1)"
+[ "$ICON_SHA" = "$FIRST_SHA" ]
+grep -Eq '"sourceKey":"[0-9a-f]{64}"' "$META_FILE"
+grep -F -- "\"contentSha256\":\"$ICON_SHA\"" "$META_FILE" >/dev/null
+grep -F -- '"fetchedAt":' "$META_FILE" >/dev/null
+ICON_MTIME="$(stat -Lc '%y' "$ICON_FILE")"
+META_MTIME="$(stat -Lc '%y' "$META_FILE")"
+META_SHA="$(sha256sum "$META_FILE" | cut -d' ' -f1)"
+
+agent_get "/v1/sites/$SITE_ID/icon" "$SECOND_BODY" "$SECOND_HEADERS"
+cmp --silent "$FIRST_BODY" "$SECOND_BODY"
+[ "$(stat -Lc '%y' "$ICON_FILE")" = "$ICON_MTIME" ]
+[ "$(stat -Lc '%y' "$META_FILE")" = "$META_MTIME" ]
+[ "$(sha256sum "$META_FILE" | cut -d' ' -f1)" = "$META_SHA" ]
+
+ENTRY_COUNT="$(find "$CACHE_DIR" -maxdepth 1 -type f -name '*.meta.json' -printf '.' | wc -c)"
+ICON_BYTES="$(find "$CACHE_DIR" -maxdepth 1 -type f -name '*.icon' -printf '%s\n' |
+  awk '{ total += $1 } END { print total + 0 }')"
+[ "$ENTRY_COUNT" -le 256 ]
+[ "$ICON_BYTES" -le 33554432 ]
+
+systemctl restart "${{candidate_agent_unit}}.service"
+for _ in $(seq 1 50); do
+  systemctl is-active --quiet "${{candidate_agent_unit}}.service" &&
+    [ -S "$SOCKET" ] && break
+  sleep 0.2
+done
+systemctl is-active --quiet "${{candidate_agent_unit}}.service"
+agent_get "/v1/sites/$SITE_ID/icon" "$THIRD_BODY" "$THIRD_HEADERS"
+cmp --silent "$FIRST_BODY" "$THIRD_BODY"
+[ "$(stat -Lc '%y' "$ICON_FILE")" = "$ICON_MTIME" ]
+[ "$(stat -Lc '%y' "$META_FILE")" = "$META_MTIME" ]
+[ "$(sha256sum "$META_FILE" | cut -d' ' -f1)" = "$META_SHA" ]
+
+rm -f -- \
+  "$AUTH_CONFIG" "$SITES_BODY" "$TEST_ROOT/sites.headers" \
+  "$FIRST_BODY" "$SECOND_BODY" "$THIRD_BODY" \
+  "$FIRST_HEADERS" "$SECOND_HEADERS" "$THIRD_HEADERS"
+```
+
+不要通过停止 Nginx、修改网站或清理生产缓存来制造失败。
+
+**Expected output:** 实际站点 favicon 已通过本机入口获取，第二次和 Agent 重启后均命中磁盘缓存。
+
+### 5. 用真实 Chrome 验证页面与效率
+
+建立隧道：
+
+```powershell
+ssh -o ExitOnForwardFailure=yes -N `
+  -L "127.0.0.2:${{local_tunnel_port}}:127.0.0.1:${{candidate_port}}" `
+  "${{ssh_host}}"
+```
+
+在真实 Chrome 的新标签页打开候选 Panel，完成一次性初始化后进入网站列表。禁止用 HTTP
+脚本、SSR 字符串或组件 `setup()` 代替本步骤。
+
+对 `${{site_domain}}` 校验：
+
+- 图标元素 URL 精确为 `/api/v1/sites/<site-id>/icon`，不能含目标站点远程 URL；
+- `loading=lazy`、`fetchpriority=low`、固定宽高存在；
+- 返回 `Cache-Control: private, max-age=604800, stale-if-error=604800`、`ETag` 和正确位图 MIME；
+- 图标显示后，网站列表 API 已先完成，页面点击/筛选无等待；
+- 普通重复进入页面不产生新的图标网络传输，或资源 timing 明确显示浏览器缓存；
+- DevTools 控制台无 CSP、mixed-content、CORS、未处理 Promise 或 Vue 错误。
+
+若选择一个已知没有图标的站点，只验证它回退 `Globe2` 且没有连续请求循环；不得改网站来
+构造缺失状态。
+
+**Expected output:** 真实浏览器显示实际图标，缓存命中且不阻塞列表；失败站点安全降级。
+
+### 6. 验证系统发行版品牌
+
+在候选概览页读取 API 的 `osId`、`osLike` 和显示文本，再检查 DOM 中系统图标颜色/路径。
+若真机为 Rocky：
+
+```text
+osId == rocky
+osLike may include rhel, centos, fedora
+rendered identity == rocky
+accent == #10B981
+rendered identity != centos
+```
+
+真机只能证明自身发行版；其余 AlmaLinux、RHEL、Oracle、Manjaro、openSUSE、SLES 矩阵由
+`operatingSystem.test.ts` 的确定性用例验收。未知衍生版必须是通用 Linux，不能根据
+`ID_LIKE` 冒充兼容家族品牌。
+
+**Expected output:** 真机发行版与图标一致，完整矩阵测试通过。
+
+### 7. 强制清理并恢复基线
+
+无论成功或失败都按顺序：
+
+1. 关闭 Chrome 候选标签和 SSH 隧道；
+2. 核对 `${{candidate_container}}` 的测试标签与 revision 后删除该精确候选容器；
+3. 核对 `${{candidate_agent_unit}}` 的 Description 和 ExecStart 位于临时根目录后停止 unit；
+4. 核对临时根目录前缀和 marker 均正确后，才删除该精确目录；
+5. 可删除精确候选镜像，不得 prune、不得删除生产镜像；
+6. 对比步骤 1 的生产 Panel/Agent/Nginx/站点和所有业务容器基线。
+
+禁止 `docker system prune`、`docker compose down`、通配符删除、重启生产 Nginx/Panel/Agent，
+也禁止操作任意业务容器。
+
+候选资源使用以下精确清理门禁；先关闭浏览器标签和本地 SSH 隧道，再在远端执行：
+
+```bash
+set -Eeuo pipefail
+
+COMMIT="${{candidate_commit}}"
+RUN_ID="${{validation_run_id}}"
+IMAGE="${{candidate_image}}"
+EXTRACT_CONTAINER="${{candidate_container}}-extract"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]
+[[ "$RUN_ID" =~ ^[0-9a-f]{32}$ ]]
+
+SESSION_ROOT=""
+while IFS= read -r -d '' candidate_session; do
+  marker="$candidate_session/.candidate-session"
+  [ -f "$marker" ] && [ ! -L "$marker" ] || continue
+  mapfile -t SESSION_MARKER <"$marker"
+  if [ "${SESSION_MARKER[0]:-}" = "$COMMIT" ] &&
+    [ "${SESSION_MARKER[1]:-}" = "$RUN_ID" ] &&
+    [ "${#SESSION_MARKER[@]}" -eq 2 ]; then
+    [ -z "$SESSION_ROOT" ]
+    SESSION_ROOT="$candidate_session"
+  fi
+done < <(find /var/tmp -mindepth 1 -maxdepth 1 -type d \
+  -name 'kpanel-site-icon-session.*' -print0)
+[ -n "$SESSION_ROOT" ]
+case "$SESSION_ROOT" in
+  /var/tmp/kpanel-site-icon-session.*) ;;
+  *) echo "unexpected session root" >&2; exit 1 ;;
+esac
+[ ! -L "$SESSION_ROOT" ]
+[ "$(stat -Lc '%u:%a' "$SESSION_ROOT")" = 0:700 ]
+
+CONTROL_FILE="$SESSION_ROOT/runtime.path"
+TEST_ROOT=""
+
+if [ -e "$CONTROL_FILE" ]; then
+  [ -f "$CONTROL_FILE" ] && [ ! -L "$CONTROL_FILE" ]
+  TEST_ROOT="$(cat "$CONTROL_FILE")"
+  case "$TEST_ROOT" in
+    "$SESSION_ROOT"/runtime.*) ;;
+    *) echo "unexpected TEST_ROOT" >&2; exit 1 ;;
+  esac
+  if [ -e "$TEST_ROOT" ]; then
+    [ -d "$TEST_ROOT" ] && [ ! -L "$TEST_ROOT" ]
+    [ -f "$TEST_ROOT/.candidate-runtime" ] &&
+      [ ! -L "$TEST_ROOT/.candidate-runtime" ]
+    mapfile -t RUNTIME_MARKER <"$TEST_ROOT/.candidate-runtime"
+    [ "${RUNTIME_MARKER[0]:-}" = "$COMMIT" ]
+    [ "${RUNTIME_MARKER[1]:-}" = "$RUN_ID" ]
+    [ "${#RUNTIME_MARKER[@]}" -eq 2 ]
+  fi
+fi
+
+if docker inspect "${{candidate_container}}" >/dev/null 2>&1; then
+  [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.test-scope"}}' \
+    "${{candidate_container}}")" = site-icon-cache ]
+  [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.source-commit"}}' \
+    "${{candidate_container}}")" = "$COMMIT" ]
+  [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.validation-run"}}' \
+    "${{candidate_container}}")" = "$RUN_ID" ]
+  docker rm -f "${{candidate_container}}" >/dev/null
+fi
+
+if [ "$(systemctl show "${{candidate_agent_unit}}.service" \
+  -p LoadState --value 2>/dev/null || true)" != not-found ]; then
+  [ -n "$TEST_ROOT" ]
+  [ "$(systemctl show "${{candidate_agent_unit}}.service" -p Description --value)" = \
+    "KPanel site-icon candidate $COMMIT run $RUN_ID" ]
+  systemctl show "${{candidate_agent_unit}}.service" -p ExecStart --value |
+    grep -F -- "$TEST_ROOT/bin/kejilion-agent" >/dev/null
+  systemctl stop "${{candidate_agent_unit}}.service"
+  systemctl reset-failed "${{candidate_agent_unit}}.service" >/dev/null 2>&1 || true
+fi
+
+if docker inspect "$EXTRACT_CONTAINER" >/dev/null 2>&1; then
+  [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.test-scope"}}' \
+    "$EXTRACT_CONTAINER")" = site-icon-cache ]
+  [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.source-commit"}}' \
+    "$EXTRACT_CONTAINER")" = "$COMMIT" ]
+  [ "$(docker inspect -f '{{index .Config.Labels "io.kejilion.validation-run"}}' \
+    "$EXTRACT_CONTAINER")" = "$RUN_ID" ]
+  docker rm -f "$EXTRACT_CONTAINER" >/dev/null
+fi
+
+if [ -n "$TEST_ROOT" ]; then
+  rm -rf -- "$TEST_ROOT"
+  [ ! -e "$TEST_ROOT" ]
+  rm -f -- "$CONTROL_FILE"
+else
+  [ -z "$(docker ps -aq --filter "name=^/${{candidate_container}}$")" ]
+  [ -z "$(docker ps -aq --filter "name=^/${EXTRACT_CONTAINER}$")" ]
+  [ "$(systemctl show "${{candidate_agent_unit}}.service" \
+    -p LoadState --value 2>/dev/null || true)" = not-found ]
+fi
+
+while IFS= read -r -d '' runtime_root; do
+  case "$runtime_root" in
+    "$SESSION_ROOT"/runtime.*) ;;
+    *) echo "unexpected runtime root" >&2; exit 1 ;;
+  esac
+  [ -d "$runtime_root" ] && [ ! -L "$runtime_root" ]
+  if [ -e "$runtime_root/.candidate-runtime" ]; then
+    [ -f "$runtime_root/.candidate-runtime" ] &&
+      [ ! -L "$runtime_root/.candidate-runtime" ]
+    mapfile -t ORPHAN_RUNTIME_MARKER <"$runtime_root/.candidate-runtime"
+    [ "${ORPHAN_RUNTIME_MARKER[0]:-}" = "$COMMIT" ]
+    [ "${ORPHAN_RUNTIME_MARKER[1]:-}" = "$RUN_ID" ]
+    [ "${#ORPHAN_RUNTIME_MARKER[@]}" -eq 2 ]
+  fi
+  rm -rf -- "$runtime_root"
+done < <(find "$SESSION_ROOT" -mindepth 1 -maxdepth 1 -type d \
+  -name 'runtime.*' -print0)
+
+SOURCE_ROOT="$SESSION_ROOT/source"
+if [ -e "$SOURCE_ROOT" ]; then
+  [ -d "$SOURCE_ROOT" ] && [ ! -L "$SOURCE_ROOT" ]
+  if [ -e "$SOURCE_ROOT/.candidate-source" ]; then
+    [ -f "$SOURCE_ROOT/.candidate-source" ] &&
+      [ ! -L "$SOURCE_ROOT/.candidate-source" ]
+    mapfile -t SOURCE_MARKER <"$SOURCE_ROOT/.candidate-source"
+    [ "${SOURCE_MARKER[0]:-}" = "$COMMIT" ]
+    [ "${SOURCE_MARKER[1]:-}" = "$RUN_ID" ]
+    [ "${#SOURCE_MARKER[@]}" -eq 2 ]
+  fi
+  # If interruption preceded the child marker, the already-validated
+  # root-only session marker and this exact child path remain authoritative.
+  rm -rf -- "$SOURCE_ROOT"
+fi
+
+ARCHIVE="$SESSION_ROOT/source.tar.part"
+if [ -e "$ARCHIVE" ]; then
+  [ -f "$ARCHIVE" ] && [ ! -L "$ARCHIVE" ]
+  rm -f -- "$ARCHIVE"
+fi
+
+if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  [ "$(docker image inspect -f '{{index .Config.Labels "io.kejilion.test-scope"}}' \
+    "$IMAGE")" = site-icon-cache ]
+  [ "$(docker image inspect -f '{{index .Config.Labels "io.kejilion.source-commit"}}' \
+    "$IMAGE")" = "$COMMIT" ]
+  [ "$(docker image inspect -f '{{index .Config.Labels "io.kejilion.validation-run"}}' \
+    "$IMAGE")" = "$RUN_ID" ]
+  docker image rm "$IMAGE" >/dev/null
+fi
+
+[ -z "$(docker ps -aq --filter "name=^/${{candidate_container}}$")" ]
+[ -z "$(docker ps -aq --filter "name=^/${EXTRACT_CONTAINER}$")" ]
+for _ in $(seq 1 20); do
+  [ "$(systemctl show "${{candidate_agent_unit}}.service" \
+    -p LoadState --value 2>/dev/null || true)" = not-found ] && break
+  sleep 0.1
+done
+[ "$(systemctl show "${{candidate_agent_unit}}.service" \
+  -p LoadState --value 2>/dev/null || true)" = not-found ]
+! docker image inspect "$IMAGE" >/dev/null 2>&1
+! ss -H -ltn "sport = :${{candidate_port}}" | grep -q .
+
+[ "$(find "$SESSION_ROOT" -mindepth 1 -maxdepth 1 -printf '%f\n')" = \
+  ".candidate-session" ]
+rm -rf -- "$SESSION_ROOT"
+[ ! -e "$SESSION_ROOT" ]
+```
+
+最后重新执行步骤 1 的全部只读生产基线命令；任一标签、marker 或路径门禁不匹配时立即
+停止并报告，不得扩大删除范围。
+
+**Expected output:** 候选容器、unit、目录和隧道均不存在；全部生产 ID、状态和健康值与基线一致。
+
+## Parameters
+
+- `${{project_dir}}`：当前独立 KPanel 工作树绝对路径。
+- `${{project_linux_dir}}`：同一工作树在 WSL/Linux 中的绝对路径，例如
+  `/mnt/c/GitHub/kejilion-panel-feature`。
+- `${{go_module_cache_linux_dir}}`：已填充的 WSL/Linux Go module 缓存绝对路径，只读挂载
+  到测试容器。
+- `${{candidate_commit}}`：包含实现、测试、文档和本 workflow 的提交。
+- `${{candidate_image}}`：仅真机本地使用的唯一候选镜像标签。
+- `${{candidate_container}}`：唯一候选 Panel 容器名。
+- `${{candidate_agent_unit}}`：唯一 transient Agent unit 名。
+- `${{candidate_port}}`：远端候选 Panel 回环端口。
+- `${{local_tunnel_port}}`：本地 Chrome 回环端口。
+- `${{ssh_host}}`：已配置的 SSH 主机别名。
+- `${{validation_run_id}}`：本次执行新生成的 32 位小写十六进制随机值，不得复用。
+- `${{site_id}}`：与现有站点主域名对应的 32 位小写十六进制 ID。
+- `${{site_domain}}`：只读验证的既有站点主域名。
+- `${{evidence_dir}}`：当前工作树内被忽略的脱敏证据目录。
+
+## Verification
+
+- Linux 全量 Go、race、前端测试/typecheck/build 和隔离 loopback 测试通过。
+- 真实 Agent 首取、二次读取、Agent 重启后的图标 SHA-256 一致。
+- Chrome 只请求 KPanel 同源接口，实际图标显示，7 天缓存头正确且重复页面无额外传输。
+- 图标失败显示 Globe，不出现请求循环或控制台错误。
+- 真机系统发行版品牌正确；完整发行版矩阵确定性测试通过。
+- 没有修改 `/home/web`、Nginx、生产 Panel/Agent、业务容器或远端镜像仓库。
+- 清理后生产基线完全一致，证据目录不含秘密。
+
+## Notes
+
+- CSP 仅允许 `img-src 'self' data:`；浏览器直接加载外站 favicon 既会失败，也会泄露访问者
+  IP，因此不是可接受的替代方案。
+- `ID_LIKE` 是兼容家族，不是品牌。它可用于包管理能力判断，不能用于发行版图标。
+- 首次真实站点请求可能经过反向代理上游；4 是全局抓取并发硬上限，可能阻塞的站点发现等待、
+  抓取排队和网络请求共用 4 秒预算，首页和单个图标各有 256 KiB 上限。测试不得为了观察失败
+  而停止真实上游。
+- 浏览器 7 天缓存意味着普通 reload 不一定发请求；需要检验条件请求时，只在候选环境使用
+  DevTools 的临时 Disable cache，完成后恢复。不得把禁用缓存当作正常性能结果。
+- 生产 Agent 版本不含图标端点时，候选 Panel 会得到 404 并安全显示 Globe；这只能验证
+  兼容降级，不能声称实际图标链路已通过。

@@ -44,7 +44,12 @@ type Config struct {
 	AppMarket       *appmarket.Service
 	Diagnostics     *diagnostics.Service
 	WebEnvironment  *webenv.Service
+	SiteIcons       siteIconProvider
 	Now             func() time.Time
+}
+
+type siteIconProvider interface {
+	Get(context.Context, string) (sites.SiteIcon, error)
 }
 
 type Server struct {
@@ -60,6 +65,7 @@ type Server struct {
 	appMarket       *appmarket.Service
 	diagnostics     *diagnostics.Service
 	webEnvironment  *webenv.Service
+	siteIcons       siteIconProvider
 	now             func() time.Time
 }
 
@@ -119,6 +125,16 @@ func NewServer(config Config) (*Server, error) {
 			return nil, fmt.Errorf("initialize web environment service: %w", environmentErr)
 		}
 	}
+	if config.SiteIcons == nil && config.StateDir != "" {
+		var iconErr error
+		config.SiteIcons, iconErr = sites.NewIconCache(
+			filepath.Join(config.StateDir, "site-icons"),
+			config.Sites.Discover,
+		)
+		if iconErr != nil {
+			return nil, fmt.Errorf("initialize site icon cache: %w", iconErr)
+		}
+	}
 	return &Server{
 		tokenHash:       sha256.Sum256(config.Token),
 		version:         config.Version,
@@ -132,6 +148,7 @@ func NewServer(config Config) (*Server, error) {
 		appMarket:       config.AppMarket,
 		diagnostics:     config.Diagnostics,
 		webEnvironment:  config.WebEnvironment,
+		siteIcons:       config.SiteIcons,
 		now:             config.Now,
 	}, nil
 }
@@ -609,12 +626,31 @@ func (s *Server) siteInstallation(w http.ResponseWriter, r *http.Request, reques
 }
 
 func (s *Server) siteOperation(w http.ResponseWriter, r *http.Request, requestID string) {
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/sites/")
+	parts := strings.Split(rest, "/")
+	if len(parts) == 2 && parts[1] == "icon" {
+		if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_site_icon_request", "网站图标 URL 无效", "")
+			return
+		}
+		if !validSiteID(parts[0]) {
+			writeProblem(w, requestID, http.StatusNotFound, "not_found", "网站图标不存在", "")
+			return
+		}
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		s.siteIcon(w, r, requestID, parts[0])
+		return
+	}
 	if (r.Method == http.MethodPatch || r.Method == http.MethodDelete) &&
 		(r.URL.RawPath != "" || r.URL.RawQuery != "") {
 		writeProblem(w, requestID, http.StatusBadRequest, "invalid_site_request", "网站写入 URL 无效", "")
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/v1/sites/")
+	id := rest
 	if !validSiteID(id) {
 		writeProblem(w, requestID, http.StatusNotFound, "not_found", "资源不存在", "")
 		return
@@ -649,6 +685,42 @@ func (s *Server) siteOperation(w http.ResponseWriter, r *http.Request, requestID
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) siteIcon(w http.ResponseWriter, r *http.Request, requestID, id string) {
+	if s.siteIcons == nil {
+		writeProblem(w, requestID, http.StatusServiceUnavailable, "site_icon_unavailable", "网站图标暂不可用", "")
+		return
+	}
+	icon, err := s.siteIcons.Get(r.Context(), id)
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	if err != nil {
+		if errors.Is(err, sites.ErrSiteIconNotFound) {
+			writeProblem(w, requestID, http.StatusNotFound, "site_icon_not_found", "网站未提供可用图标", "")
+			return
+		}
+		writeProblem(w, requestID, http.StatusServiceUnavailable, "site_icon_unavailable", "网站图标暂不可用", "")
+		return
+	}
+	if len(icon.Data) == 0 || len(icon.Data) > 256<<10 || !validSiteIconContentType(icon.ContentType) {
+		writeProblem(w, requestID, http.StatusBadGateway, "invalid_site_icon", "网站图标响应无效", "")
+		return
+	}
+	w.Header().Set("Content-Type", icon.ContentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(icon.Data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(icon.Data)
+}
+
+func validSiteIconContentType(value string) bool {
+	switch value {
+	case "image/png", "image/jpeg", "image/gif", "image/vnd.microsoft.icon", "image/webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) writeSiteError(w http.ResponseWriter, requestID string, err error) {
