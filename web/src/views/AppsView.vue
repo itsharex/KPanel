@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowUpRight,
   Activity,
@@ -64,6 +64,8 @@ const confirmAction = ref<ConfirmAction>()
 const checkedUpdates = ref<Record<string, 'available' | 'current'>>({})
 const activeJob = ref<AppInstallJob>()
 const jobDetailsOpen = ref(false)
+const appGrid = ref<HTMLElement>()
+const recentInstalledID = ref('')
 const cancelJobPending = ref(false)
 const cancellingJob = ref(false)
 const toast = useToast()
@@ -72,6 +74,7 @@ let jobController: AbortController | undefined
 let jobTimer: number | undefined
 let installPortController: AbortController | undefined
 let installPortTimer: number | undefined
+let recentInstalledTimer: number | undefined
 const activeJobStorageKey = 'kpanel:active-app-job'
 
 const selected = computed(() => inventory.value?.items.find((item) => item.id === selectedID.value))
@@ -110,6 +113,8 @@ const filteredApps = computed(() => {
       .filter(Boolean)
       .some((value) => value!.toLowerCase().includes(needle))
   }).sort((left, right) => {
+    if (left.id === recentInstalledID.value) return -1
+    if (right.id === recentInstalledID.value) return 1
     if (left.runtime.installed !== right.runtime.installed) return left.runtime.installed ? -1 : 1
     return (left.num || 9999) - (right.num || 9999)
   })
@@ -264,6 +269,20 @@ function showAllApps(): void {
   search.value = ''
 }
 
+async function revealInstalledApp(appID: string): Promise<void> {
+  recentInstalledID.value = appID
+  search.value = ''
+  category.value = 'all'
+  source.value = 'all'
+  status.value = 'installed'
+  await nextTick()
+  appGrid.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  if (recentInstalledTimer) window.clearTimeout(recentInstalledTimer)
+  recentInstalledTimer = window.setTimeout(() => {
+    if (recentInstalledID.value === appID) recentInstalledID.value = ''
+  }, 8_000)
+}
+
 function isActiveJob(job?: AppInstallJob): boolean {
   return job?.status === 'queued' || job?.status === 'running'
 }
@@ -312,6 +331,7 @@ async function refreshJob(id: string): Promise<void> {
         toast.success(`后台${jobActionLabel(job.action)}完成`, `${job.appName} 已完成状态对账。`)
         if (job.action === 'uninstall' && selectedID.value === job.appId) selectedID.value = ''
         await load(true)
+        if (job.action === 'install') await revealInstalledApp(job.appId)
       } else if (job.status === 'cancelled') {
         toast.success('交互任务已结束', `${job.appName} 已释放应用管理锁，状态已重新读取。`)
         await load(true)
@@ -722,6 +742,7 @@ onBeforeUnmount(() => {
   stopJobPolling()
   installPortController?.abort()
   if (installPortTimer) window.clearTimeout(installPortTimer)
+  if (recentInstalledTimer) window.clearTimeout(recentInstalledTimer)
 })
 
 watch(installPort, () => {
@@ -874,12 +895,15 @@ watch(installPort, () => {
       description="尝试清除搜索词或切换分类与状态筛选。"
     />
 
-    <section v-else class="app-grid" aria-live="polite">
+    <section v-else ref="appGrid" class="app-grid" aria-live="polite">
       <article
         v-for="item in filteredApps"
         :key="item.id"
         class="app-card"
-        :class="{ 'is-installed': item.runtime.installed }"
+        :class="{
+          'is-installed': item.runtime.installed,
+          'is-recently-installed': recentInstalledID === item.id,
+        }"
       >
         <button class="app-card__main" type="button" @click="openDetails(item)">
           <span class="app-card__icon">
@@ -888,6 +912,7 @@ watch(installPort, () => {
           <span class="app-card__body">
             <span class="app-card__title">
               <strong>{{ item.name_zh }}</strong>
+              <em v-if="recentInstalledID === item.id" class="app-card__recent">刚刚安装</em>
               <StatusBadge
                 v-if="item.runtime.installed"
                 :status="item.runtime.state"
@@ -1613,6 +1638,33 @@ watch(installPort, () => {
 
 .app-card.is-installed {
   border-color: color-mix(in srgb, var(--success) 26%, var(--border));
+}
+
+.app-card.is-recently-installed {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent), var(--shadow-sm);
+  animation: recent-app-pulse 1.4s ease-out 2;
+}
+
+.app-card__recent {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 999px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+@keyframes recent-app-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 28%, transparent), var(--shadow-sm);
+  }
+
+  100% {
+    box-shadow: 0 0 0 8px transparent, var(--shadow-sm);
+  }
 }
 
 .app-card__main {

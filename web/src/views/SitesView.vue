@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   ArrowRight,
   Braces,
+  ChevronDown,
   ChevronRight,
   ExternalLink,
   FileCode2,
@@ -55,6 +56,9 @@ const editingSite = ref<Site>()
 const submitting = ref(false)
 const formError = ref('')
 const installProgress = ref<SiteInstallationProgress>()
+const showMoreTemplates = ref(false)
+const siteList = ref<HTMLElement>()
+const recentCreatedDomain = ref('')
 const deleteOpen = ref(false)
 const deletingSite = ref<Site>()
 const deleteMode = ref<'configuration' | 'full'>('configuration')
@@ -64,6 +68,7 @@ const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
 let installationMonitor: ReturnType<typeof setTimeout> | undefined
+let recentCreatedTimer: ReturnType<typeof setTimeout> | undefined
 
 const installStageLabels: Record<string, string> = {
   submitting: '提交配置',
@@ -266,6 +271,10 @@ const filteredSites = computed(() => {
     if (filter.value === 'drifted') return site.consistency !== 'synced'
     if (filter.value === 'config-only') return !site.allowedActions?.includes('update')
     return true
+  }).sort((left, right) => {
+    if (left.primaryDomain === recentCreatedDomain.value) return -1
+    if (right.primaryDomain === recentCreatedDomain.value) return 1
+    return 0
   })
 })
 
@@ -283,6 +292,12 @@ const scriptedTemplateCreate = computed(
 )
 const featuredServiceOptions = computed(() => serviceOptions.filter((option) => option.featured))
 const standardServiceOptions = computed(() => serviceOptions.filter((option) => !option.featured))
+const popularRecipeOptions = computed(() =>
+  recipeOptions.filter((option) => ['discuz', 'kodbox', 'typecho'].includes(option.recipe)),
+)
+const additionalRecipeOptions = computed(() =>
+  recipeOptions.filter((option) => !['discuz', 'kodbox', 'typecho'].includes(option.recipe)),
+)
 const canSubmit = computed(
   () =>
     formValid.value &&
@@ -437,6 +452,7 @@ function openCreate(): void {
   form.phpVersion = 'latest'
   formError.value = ''
   installProgress.value = undefined
+  showMoreTemplates.value = isScriptedTemplateType(form.type)
   editorOpen.value = true
 }
 
@@ -446,6 +462,22 @@ function openInstallationTask(): void {
 
 function closeEditor(): void {
   editorOpen.value = false
+  showMoreTemplates.value = false
+}
+
+async function revealCreatedSite(domain: string): Promise<void> {
+  const normalizedDomain = domain.trim().toLowerCase()
+  recentCreatedDomain.value = normalizedDomain
+  search.value = ''
+  filter.value = 'all'
+  editorOpen.value = false
+  showMoreTemplates.value = false
+  await nextTick()
+  siteList.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  if (recentCreatedTimer) clearTimeout(recentCreatedTimer)
+  recentCreatedTimer = setTimeout(() => {
+    if (recentCreatedDomain.value === normalizedDomain) recentCreatedDomain.value = ''
+  }, 8_000)
 }
 
 function dismissInstallationTask(): void {
@@ -470,6 +502,7 @@ function monitorInstallation(id?: string): void {
       if (progress.status === 'succeeded') {
         toast.success('后台建站已完成', `${progress.domain || '网站'} 已完成脚本执行与产物对账。`)
         await load(true)
+        await revealCreatedSite(progress.domain || form.primaryDomain)
       }
     } catch (reason) {
       if (isTransientAgentError(reason)) {
@@ -521,6 +554,7 @@ function openEdit(site: Site): void {
   form.phpVersion = site.type === 'php' && site.upstream === 'php74' ? '7.4' : 'latest'
   formError.value = ''
   installProgress.value = undefined
+  showMoreTemplates.value = false
   selectedSite.value = undefined
   editorOpen.value = true
 }
@@ -591,6 +625,7 @@ async function submitSite(): Promise<void> {
         : `${savedSite.primaryDomain} 已通过 nginx -t 校验并完成同步应用。`,
     )
     await load(true)
+    if (!wasEditing) await revealCreatedSite(savedSite.primaryDomain)
   } catch (reason) {
     const message = reason instanceof ApiError ? reason.message : '操作失败，请稍后重试。'
     formError.value = message
@@ -693,6 +728,7 @@ onMounted(() => void load())
 onBeforeUnmount(() => {
   controller?.abort()
   if (installationMonitor) clearTimeout(installationMonitor)
+  if (recentCreatedTimer) clearTimeout(recentCreatedTimer)
 })
 </script>
 
@@ -799,7 +835,7 @@ onBeforeUnmount(() => {
       :description="sites.length ? '尝试更换搜索词或筛选条件。' : 'Agent 会扫描现有 Kejilion 网站产物。'"
     />
 
-    <section v-else class="table-card">
+    <section v-else ref="siteList" class="table-card">
       <div class="table-scroll">
         <table class="data-table">
           <thead>
@@ -814,7 +850,11 @@ onBeforeUnmount(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="site in filteredSites" :key="site.id">
+            <tr
+              v-for="site in filteredSites"
+              :key="site.id"
+              :class="{ 'is-recently-created': site.primaryDomain === recentCreatedDomain }"
+            >
               <td>
                 <a
                   class="resource-name resource-name--link"
@@ -829,7 +869,10 @@ onBeforeUnmount(() => {
                     :refresh-key="siteIconRefreshKey"
                   />
                   <span>
-                    <strong>{{ site.primaryDomain }} <ExternalLink :size="11" /></strong>
+                    <strong>
+                      {{ site.primaryDomain }} <ExternalLink :size="11" />
+                      <em v-if="site.primaryDomain === recentCreatedDomain" class="site-recent-badge">刚刚创建</em>
+                    </strong>
                     <small>{{ site.enabled ? '已启用' : '已停用' }} · {{ site.domains.length }} 个域名</small>
                   </span>
                 </a>
@@ -1165,14 +1208,13 @@ onBeforeUnmount(() => {
               </span>
             </button>
           </div>
-          <small>WordPress 对齐脚本完整产物；IP + 端口反代适合 Docker 与本机服务，是最常用的两个入口。</small>
         </fieldset>
 
-        <fieldset v-if="!editingSite" class="site-service-field">
-          <legend><Globe2 :size="16" /> kejilion.sh 一键成品站</legend>
+        <fieldset v-if="!editingSite" class="site-service-field site-service-field--popular">
+          <legend><Globe2 :size="16" /> 热门成品站</legend>
           <div class="site-service-grid">
             <button
-              v-for="option in recipeOptions"
+              v-for="option in popularRecipeOptions"
               :key="option.recipe"
               class="site-service-card"
               :class="{ 'is-active': form.type === 'recipe' && form.recipe === option.recipe }"
@@ -1193,11 +1235,51 @@ onBeforeUnmount(() => {
               </span>
             </button>
           </div>
-          <small>直接调用 kejilion.sh 固定编号的原生业务流程，Web 不复制另一套建站逻辑，因此脚本与面板共用同一份产物。</small>
         </fieldset>
 
-        <fieldset class="site-service-field">
-          <legend>{{ editingSite ? '站点服务' : '更多建站方式' }}</legend>
+        <button
+          v-if="!editingSite"
+          class="site-template-toggle"
+          type="button"
+          :aria-expanded="showMoreTemplates"
+          @click="showMoreTemplates = !showMoreTemplates"
+        >
+          <span>
+            <strong>更多模板与建站方式</strong>
+            <small>{{ additionalRecipeOptions.length + standardServiceOptions.length }} 个选项按需展开</small>
+          </span>
+          <ChevronDown :size="18" :class="{ 'is-open': showMoreTemplates }" />
+        </button>
+
+        <fieldset v-if="!editingSite && showMoreTemplates" class="site-service-field">
+          <legend><Globe2 :size="16" /> 更多 kejilion.sh 成品站</legend>
+          <div class="site-service-grid">
+            <button
+              v-for="option in additionalRecipeOptions"
+              :key="option.recipe"
+              class="site-service-card"
+              :class="{ 'is-active': form.type === 'recipe' && form.recipe === option.recipe }"
+              type="button"
+              :disabled="!canInstallRecipes"
+              :aria-pressed="form.type === 'recipe' && form.recipe === option.recipe"
+              :title="!canInstallRecipes ? recipeCapability?.reason : ''"
+              @click="form.type = 'recipe'; form.recipe = option.recipe"
+            >
+              <span class="site-service-card__icon"><component :is="option.icon" :size="20" /></span>
+              <span class="site-service-card__content">
+                <span class="site-service-card__heading">
+                  <strong>{{ option.title }}</strong>
+                  <span class="site-service-card__badge">一键成品</span>
+                </span>
+                <small>{{ option.summary }}</small>
+                <em>{{ option.detail }}</em>
+              </span>
+            </button>
+          </div>
+        </fieldset>
+
+        <fieldset v-if="editingSite || showMoreTemplates" class="site-service-field">
+          <legend>{{ editingSite ? '站点服务' : '其他建站方式' }}</legend>
           <div class="site-service-grid">
             <button
               v-for="option in editingSite ? serviceOptions : standardServiceOptions"
@@ -1232,31 +1314,19 @@ onBeforeUnmount(() => {
 
         <div v-if="form.type === 'wordpress'" class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          <span>
-            后台执行 kejilion.sh 的 WordPress 固定非交互分支，由脚本原生流程完成 LDNMP、数据库、
-            证书、官方 Nginx 模板和 WordPress 源码部署；KPanel 只负责显示进度并对账最终产物。
-          </span>
+          <span>后台复用 kejilion.sh 原生 WordPress 流程，关闭窗口不会中断，可从任务进度重新进入。</span>
         </div>
         <div v-if="form.type === 'proxy' && !editingSite" class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          <span>
-            后台执行 kejilion.sh 的 IP+端口反向代理固定非交互分支，官方反向代理模板、证书、
-            Nginx 重载及端口访问控制均沿用脚本原生流程。
-          </span>
+          <span>后台调用 k fd 同源反向代理流程，沿用脚本证书、Nginx 模板与端口访问控制。</span>
         </div>
         <div v-if="form.type === 'recipe'" class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          <span>
-            任务由宿主机上的 <code>kejilion.sh</code> 原生菜单流程在后台执行，沿用其 LDNMP、数据库、证书、
-            Nginx 模板和目录结构。面板不会记录脚本输出中的数据库密码，也不会覆盖同域名现有产物。
-          </span>
+          <span>后台执行对应 kejilion.sh 成品站流程，不记录数据库密码，也不会覆盖同域名现有产物。</span>
         </div>
         <div v-if="scriptedTemplateCreate" class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          <span>
-            面板只收集并校验首个域名；提交后由 <code>kejilion.sh</code> 原生交互流程继续询问源码、
-            入口路径、上游或跳转目标。任务在后台运行，关闭窗口不会中断，可随时重新打开终端。
-          </span>
+          <span>域名由面板校验，其余参数在 kejilion.sh 交互终端填写；关闭窗口不会中断任务。</span>
         </div>
 
         <fieldset v-if="form.type === 'php' && !scriptedTemplateCreate" class="field site-inline-options">
@@ -1335,8 +1405,7 @@ onBeforeUnmount(() => {
         </label>
         <div class="inline-alert inline-alert--info">
           <ShieldCheck :size="17" />
-          Agent 直接对账 /home/web 实际产物；kejilion.sh、KPanel 或手工调整后的站点都在同一份配置上继续管理。
-          无法解析的网站仍可移除 Nginx 配置入口。
+          Agent 直接对账 /home/web 实际产物，脚本与面板始终管理同一份配置。
         </div>
       </form>
       <template #footer>

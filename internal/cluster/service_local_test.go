@@ -110,11 +110,12 @@ func TestHostsAlwaysIncludeLocalNodeWithoutPersistingIt(t *testing.T) {
 	}
 }
 
-func TestLocalNodeUsesCachedTelemetryAndCannotBeMutated(t *testing.T) {
+func TestLocalNodeUsesCachedTelemetryAllowsRenameAndRejectsDelete(t *testing.T) {
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	source := &localNodeTestTelemetry{value: validLocalNodeTelemetry(now)}
+	dataDir := t.TempDir()
 	service, err := NewService(ServiceConfig{
-		DataDir: t.TempDir(), PanelVersion: "0.27.0", Hostname: "fallback-host",
+		DataDir: dataDir, PanelVersion: "0.27.0", Hostname: "fallback-host",
 		Telemetry: source, Remote: localNodeTestRemote{}, Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -130,13 +131,28 @@ func TestLocalNodeUsesCachedTelemetryAndCannotBeMutated(t *testing.T) {
 	if first.ResourceVersion != second.ResourceVersion {
 		t.Fatalf("local resource version changed: %q != %q", first.ResourceVersion, second.ResourceVersion)
 	}
-	if _, err := service.RenameHost(LocalHostID, UpdateHostInput{
-		Name: "renamed", ExpectedResourceVersion: first.ResourceVersion,
-	}); !errors.Is(err, ErrLocalHost) {
-		t.Fatalf("RenameHost(local) error = %v, want ErrLocalHost", err)
+	renamed, err := service.RenameHost(LocalHostID, UpdateHostInput{
+		Name: "控制中心", ExpectedResourceVersion: first.ResourceVersion,
+	})
+	if err != nil {
+		t.Fatalf("RenameHost(local) error = %v", err)
+	}
+	if !renamed.IsLocal || renamed.Name != "控制中心" ||
+		renamed.ResourceVersion == first.ResourceVersion {
+		t.Fatalf("unexpected renamed local host: %#v", renamed)
+	}
+	if got := service.Hosts(context.Background()).Items[0].Name; got != "控制中心" {
+		t.Fatalf("local host name after rename = %q", got)
+	}
+	persisted, err := OpenStore(filepath.Join(dataDir, "cluster-state.json"))
+	if err != nil {
+		t.Fatalf("OpenStore() after rename error = %v", err)
+	}
+	if got := persisted.LocalName(); got != "控制中心" {
+		t.Fatalf("persisted local name = %q", got)
 	}
 	if _, err := service.DeleteHost(context.Background(), LocalHostID, DeleteHostInput{
-		ExpectedResourceVersion: first.ResourceVersion,
+		ExpectedResourceVersion: renamed.ResourceVersion,
 	}); !errors.Is(err, ErrLocalHost) {
 		t.Fatalf("DeleteHost(local) error = %v, want ErrLocalHost", err)
 	}

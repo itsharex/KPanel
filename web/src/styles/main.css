@@ -640,19 +640,68 @@ textarea:focus-visible,
 }
 
 .site-service-field--featured .site-service-card {
-  min-height: 124px;
+  min-height: 104px;
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--brand) 7%, transparent), transparent 62%),
     var(--surface);
 }
 
+.site-service-field--popular .site-service-card {
+  min-height: 88px;
+}
+
+.site-template-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 13px;
+  color: var(--text-soft);
+  text-align: left;
+  background: var(--surface-subtle);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.site-template-toggle:hover,
+.site-template-toggle:focus-visible {
+  color: var(--brand);
+  border-color: color-mix(in srgb, var(--brand) 46%, var(--border));
+  outline: none;
+}
+
+.site-template-toggle span {
+  display: grid;
+  gap: 2px;
+}
+
+.site-template-toggle strong {
+  font-size: 13px;
+}
+
+.site-template-toggle small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.site-template-toggle svg {
+  flex: 0 0 auto;
+  transition: transform 160ms ease;
+}
+
+.site-template-toggle svg.is-open {
+  transform: rotate(180deg);
+}
+
 .site-service-card {
   display: flex;
   min-width: 0;
-  min-height: 112px;
+  min-height: 96px;
   align-items: flex-start;
   gap: 11px;
-  padding: 14px;
+  padding: 12px;
   color: var(--text);
   text-align: left;
   background: var(--surface);
@@ -2587,6 +2636,35 @@ textarea:focus-visible,
 
 .data-table tbody tr:hover {
   background: color-mix(in srgb, var(--surface-subtle) 72%, transparent);
+}
+
+.data-table tbody tr.is-recently-created {
+  background: color-mix(in srgb, var(--brand) 9%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--brand);
+  animation: recent-site-pulse 1.4s ease-out 2;
+}
+
+.site-recent-badge {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 2px 6px;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 999px;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+  vertical-align: middle;
+}
+
+@keyframes recent-site-pulse {
+  0% {
+    background: color-mix(in srgb, var(--brand) 18%, var(--surface));
+  }
+
+  100% {
+    background: color-mix(in srgb, var(--brand) 9%, var(--surface));
+  }
 }
 
 .data-table td > strong {

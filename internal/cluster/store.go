@@ -59,6 +59,7 @@ type pairingCodeRecord struct {
 type persistedState struct {
 	SchemaVersion int                 `json:"schemaVersion"`
 	NodeID        string              `json:"nodeId"`
+	LocalName     string              `json:"localName,omitempty"`
 	Hosts         []hostRecord        `json:"hosts"`
 	Controllers   []controllerRecord  `json:"controllers"`
 	PairingCodes  []pairingCodeRecord `json:"pairingCodes"`
@@ -131,6 +132,24 @@ func (s *Store) NodeID() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.state.NodeID
+}
+
+func (s *Store) LocalName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state.LocalName
+}
+
+func (s *Store) SetLocalName(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := cloneState(s.state)
+	s.state.LocalName = name
+	if err := s.persistLocked(); err != nil {
+		s.state = previous
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Hosts() []hostRecord {
@@ -454,7 +473,7 @@ func hostResourceVersion(record hostRecord) string {
 
 func cloneState(source persistedState) persistedState {
 	return persistedState{
-		SchemaVersion: source.SchemaVersion, NodeID: source.NodeID,
+		SchemaVersion: source.SchemaVersion, NodeID: source.NodeID, LocalName: source.LocalName,
 		Hosts:        cloneHosts(source.Hosts),
 		Controllers:  append([]controllerRecord(nil), source.Controllers...),
 		PairingCodes: append([]pairingCodeRecord(nil), source.PairingCodes...),
@@ -510,6 +529,12 @@ func validID(value string) bool {
 }
 
 func validatePersistedState(state persistedState) error {
+	if state.LocalName != "" {
+		name, err := validateRequiredName(state.LocalName)
+		if err != nil || name != state.LocalName {
+			return errors.New("cluster store contains an invalid local name")
+		}
+	}
 	hostIDs := make(map[string]struct{}, len(state.Hosts))
 	origins := make(map[string]struct{}, len(state.Hosts))
 	nodes := make(map[string]struct{}, len(state.Hosts))

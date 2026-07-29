@@ -1,7 +1,7 @@
 import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ClusterView from './ClusterView.vue'
-import type { ClusterHost, ClusterHostList } from '@/types/api'
+import type { ClusterHost, ClusterHostList, ClusterPairingCode } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
   hosts: vi.fn(),
@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   toastDanger: vi.fn(),
   clipboardWriteText: vi.fn(),
+  execCommand: vi.fn(),
   localStorageGetItem: vi.fn(),
   localStorageSetItem: vi.fn(),
 }))
@@ -62,16 +63,23 @@ interface ClusterBindings {
   panelOrigin: ComputedRef<string>
   search: Ref<string>
   viewMode: Ref<'list' | 'card'>
+  hostOrder: Ref<string[]>
+  accessOpen: Ref<boolean>
   manageOpen: Ref<boolean>
   selected: Ref<ClusterHost | undefined>
+  pairingCode: Ref<ClusterPairingCode | undefined>
+  editName: Ref<string>
   addForm: { name: string; origin: string; pairingCode: string }
   load: (silent?: boolean) => Promise<void>
   addHost: () => Promise<void>
   openManage: (host: ClusterHost) => void
+  saveName: () => Promise<void>
   removeHost: () => Promise<void>
   openPanel: (host: ClusterHost) => void
   copyPanelOrigin: () => Promise<void>
+  copyPairingCode: () => Promise<void>
   setViewMode: (mode: 'list' | 'card') => void
+  moveHost: (hostID: string, offset: number) => void
   transportSecurityLabel: (host: ClusterHost) => string
   shortFingerprint: (value?: string) => string
 }
@@ -171,6 +179,7 @@ function inventory(): ClusterHostList {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.controllers.mockResolvedValue({ items: [] })
   vi.stubGlobal('window', {
     location: { origin: 'https://center.example.com' },
     open: mocks.open,
@@ -247,6 +256,20 @@ describe('ClusterView inventory and navigation', () => {
     )
   })
 
+  it('reorders the same host inventory and persists the preference locally', () => {
+    const view = setupView()
+    view.inventory.value = inventory()
+    view.hostOrder.value = ['local', 'remote']
+
+    view.moveHost('remote', -1)
+
+    expect(view.filteredHosts.value.map((item) => item.id)).toEqual(['remote', 'local'])
+    expect(mocks.localStorageSetItem).toHaveBeenCalledWith(
+      'kpanel:cluster-host-order',
+      JSON.stringify(['remote', 'local']),
+    )
+  })
+
   it('copies the browser-visible local panel origin for controller onboarding', async () => {
     const view = setupView()
 
@@ -255,6 +278,43 @@ describe('ClusterView inventory and navigation', () => {
 
     expect(mocks.clipboardWriteText).toHaveBeenCalledWith('https://center.example.com')
     expect(mocks.toastSuccess).toHaveBeenCalledWith('主机 URL 已复制')
+  })
+
+  it('falls back to a temporary selection when the Clipboard API is blocked', async () => {
+    const view = setupView()
+    const input = {
+      value: '',
+      readOnly: false,
+      style: {} as Record<string, string>,
+      setAttribute: vi.fn(),
+      focus: vi.fn(),
+      select: vi.fn(),
+      setSelectionRange: vi.fn(),
+      remove: vi.fn(),
+    }
+    const appendChild = vi.fn()
+    const createElement = vi.fn(() => input)
+    mocks.clipboardWriteText.mockRejectedValue(new Error('clipboard permission denied'))
+    mocks.execCommand.mockReturnValue(true)
+    vi.stubGlobal('document', {
+      body: { appendChild },
+      createElement,
+      execCommand: mocks.execCommand,
+    })
+
+    await view.copyPanelOrigin()
+    view.pairingCode.value = {
+      code: 'kp2.one-time-code',
+      scope: 'cluster.summary.read',
+      expiresAt: '2026-07-29T10:05:00Z',
+    }
+    await view.copyPairingCode()
+
+    expect(mocks.execCommand).toHaveBeenCalledTimes(2)
+    expect(mocks.toastSuccess).toHaveBeenNthCalledWith(1, '主机 URL 已复制')
+    expect(mocks.toastSuccess).toHaveBeenNthCalledWith(2, '授权码已复制')
+    expect(input.remove).toHaveBeenCalledTimes(2)
+    expect(mocks.toastDanger).not.toHaveBeenCalled()
   })
 
   it('warns before opening an HTTP management page while preserving the exact IP and port', () => {
@@ -327,7 +387,7 @@ describe('ClusterView inventory and navigation', () => {
     )
   })
 
-  it('keeps the local node visibly marked and outside remote removal management', async () => {
+  it('lets the local node update its display name while keeping removal unavailable', async () => {
     const view = setupView()
     const list = inventory()
     const local = list.items[0]
@@ -338,11 +398,19 @@ describe('ClusterView inventory and navigation', () => {
     expect(view.filteredHosts.value).toHaveLength(1)
     expect(view.filteredHosts.value[0]).toMatchObject({ id: 'local', isLocal: true })
 
+    const renamed = { ...local, name: '控制中心', resourceVersion: 'local-renamed-version' }
+    mocks.rename.mockResolvedValueOnce(renamed)
     view.openManage(local)
+    view.editName.value = renamed.name
+    await view.saveName()
     await view.removeHost()
 
-    expect(view.manageOpen.value).toBe(false)
-    expect(view.selected.value).toBeUndefined()
+    expect(view.manageOpen.value).toBe(true)
+    expect(view.selected.value).toMatchObject({ id: 'local', name: '控制中心' })
+    expect(mocks.rename).toHaveBeenCalledWith('local', {
+      name: '控制中心',
+      expectedResourceVersion: local.resourceVersion,
+    })
     expect(mocks.remove).not.toHaveBeenCalled()
     expect(view.inventory.value?.items.some((item) => item.isLocal)).toBe(true)
   })

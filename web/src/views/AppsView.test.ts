@@ -67,7 +67,12 @@ interface AppsBindings {
   filteredApps: ComputedRef<AppMarketInventory['items']>
   selected: ComputedRef<AppMarketInventory['items'][number] | undefined>
   sites: Ref<Site[]>
+  search: Ref<string>
+  category: Ref<string>
+  source: Ref<'all' | 'builtin' | 'thirdparty'>
   status: Ref<'all' | 'installed' | 'running' | 'adapted'>
+  appGrid: Ref<HTMLElement | undefined>
+  recentInstalledID: Ref<string>
   selectedID: Ref<string>
   installOpen: Ref<boolean>
   installPort: Ref<number>
@@ -88,6 +93,7 @@ interface AppsBindings {
   checkUpdate: () => Promise<void>
   confirmMutation: () => Promise<void>
   refreshJob: (id: string) => Promise<void>
+  revealInstalledApp: (appID: string) => Promise<void>
   addDomain: () => Promise<void>
   removeDomain: (site: Site) => Promise<void>
   toggleAccess: () => Promise<void>
@@ -269,6 +275,25 @@ afterEach(() => {
 })
 
 describe('AppsView install port preflight', () => {
+  it('returns to the installed application list and highlights the completed install', async () => {
+    const view = setupView()
+    const scrollIntoView = vi.fn()
+    view.search.value = 'cloud'
+    view.category.value = 'storage'
+    view.source.value = 'thirdparty'
+    view.status.value = 'all'
+    view.appGrid.value = { scrollIntoView } as unknown as HTMLElement
+
+    await view.revealInstalledApp('builtin-13')
+
+    expect(view.search.value).toBe('')
+    expect(view.category.value).toBe('all')
+    expect(view.source.value).toBe('all')
+    expect(view.status.value).toBe('installed')
+    expect(view.recentInstalledID.value).toBe('builtin-13')
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+  })
+
   it('passes an available script application port from the panel to the install job', async () => {
     const result = inventory('install-version')
     const item = result.items[0]

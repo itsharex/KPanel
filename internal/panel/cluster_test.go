@@ -89,6 +89,47 @@ func TestClusterMutationsRequireOriginAndCSRF(t *testing.T) {
 	}
 }
 
+func TestClusterLocalHostCanBeRenamed(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+
+	list := authenticatedRequest(
+		server, http.MethodGet, "/api/v1/cluster/hosts", nil,
+		sessionCookie, csrfCookie, nil,
+	)
+	if list.Code != http.StatusOK {
+		t.Fatalf("cluster hosts status = %d; body=%s", list.Code, list.Body.String())
+	}
+	var inventory cluster.HostList
+	if err := json.Unmarshal(list.Body.Bytes(), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(cluster.UpdateHostInput{
+		Name: "控制中心", ExpectedResourceVersion: inventory.Items[0].ResourceVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := authenticatedRequest(
+		server, http.MethodPatch, "/api/v1/cluster/hosts/local", body,
+		sessionCookie, csrfCookie, map[string]string{
+			"Content-Type": "application/json",
+			"Origin":       "http://panel.test",
+			"X-CSRF-Token": csrfCookie.Value,
+		},
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("local rename returned %d %s", response.Code, response.Body.String())
+	}
+	var renamed cluster.Host
+	if err := json.Unmarshal(response.Body.Bytes(), &renamed); err != nil {
+		t.Fatal(err)
+	}
+	if !renamed.IsLocal || renamed.Name != "控制中心" {
+		t.Fatalf("unexpected renamed local host: %#v", renamed)
+	}
+}
+
 func TestClusterLocalHostCannotBeDeleted(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)

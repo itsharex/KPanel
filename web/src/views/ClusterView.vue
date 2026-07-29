@@ -5,6 +5,7 @@ import {
   Check,
   Copy,
   Gauge,
+  GripVertical,
   KeyRound,
   LayoutGrid,
   LayoutList,
@@ -29,6 +30,7 @@ import OperatingSystemIcon from '@/components/overview/OperatingSystemIcon.vue'
 import { ApiError, api } from '@/lib/api'
 import {
   clampPercent,
+  formatBytes,
   formatDateTime,
   formatDuration,
   formatPercent,
@@ -67,7 +69,11 @@ const editName = ref('')
 const originError = ref('')
 type HostViewMode = 'list' | 'card'
 const hostViewModeStorageKey = 'kpanel:cluster-host-view'
+const hostOrderStorageKey = 'kpanel:cluster-host-order'
 const viewMode = ref<HostViewMode>('list')
+const hostOrder = ref<string[]>([])
+const draggedHostId = ref('')
+const dragOverHostId = ref('')
 let loadInFlight = false
 let loadController: AbortController | undefined
 let pollTimer: number | undefined
@@ -87,10 +93,28 @@ const panelOrigin = computed(() =>
   typeof window === 'undefined' ? '' : window.location.origin,
 )
 
+const orderedHosts = computed(() => {
+  const items = inventory.value?.items || []
+  const positions = new Map(hostOrder.value.map((id, index) => [id, index]))
+  return items
+    .map((host, originalIndex) => ({ host, originalIndex }))
+    .sort((left, right) => {
+      const leftPosition = positions.get(left.host.id)
+      const rightPosition = positions.get(right.host.id)
+      if (leftPosition === undefined && rightPosition === undefined) {
+        return left.originalIndex - right.originalIndex
+      }
+      if (leftPosition === undefined) return 1
+      if (rightPosition === undefined) return -1
+      return leftPosition - rightPosition
+    })
+    .map(({ host }) => host)
+})
+
 const filteredHosts = computed(() => {
   const term = search.value.trim().toLocaleLowerCase()
-  if (!term) return inventory.value?.items || []
-  return (inventory.value?.items || []).filter((host) => {
+  if (!term) return orderedHosts.value
+  return orderedHosts.value.filter((host) => {
     const telemetry = host.lastSnapshot?.telemetry
     return [
       host.name,
@@ -226,6 +250,7 @@ async function load(silent = false): Promise<void> {
   loadController = new AbortController()
   try {
     inventory.value = await api.cluster.hosts(loadController.signal)
+    reconcileHostOrder(inventory.value.items)
     loadError.value = ''
     refreshWarning.value = ''
   } catch (reason) {
@@ -336,11 +361,51 @@ async function copyPanelOrigin(): Promise<void> {
 }
 
 async function copyToClipboard(value: string, success: string, fallback: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(value)
+  if (await writeClipboardText(value)) {
     toast.success(success)
+    return
+  }
+  toast.danger('复制失败', fallback)
+}
+
+async function writeClipboardText(value: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value)
+      return true
+    } catch {
+      // HTTP IP、WebView 或浏览器拒绝剪贴板权限时，继续使用兼容复制。
+    }
+  }
+  return legacyCopyText(value)
+}
+
+function legacyCopyText(value: string): boolean {
+  if (
+    typeof document === 'undefined' ||
+    typeof document.createElement !== 'function' ||
+    typeof document.execCommand !== 'function'
+  ) {
+    return false
+  }
+
+  const input = document.createElement('textarea')
+  input.value = value
+  input.readOnly = true
+  input.setAttribute('aria-hidden', 'true')
+  input.style.position = 'fixed'
+  input.style.inset = '0 auto auto -9999px'
+  input.style.opacity = '0'
+  document.body.appendChild(input)
+  try {
+    input.focus()
+    input.select()
+    input.setSelectionRange(0, input.value.length)
+    return document.execCommand('copy')
   } catch {
-    toast.danger('复制失败', fallback)
+    return false
+  } finally {
+    input.remove()
   }
 }
 
@@ -362,6 +427,88 @@ function restoreViewMode(): void {
   }
 }
 
+function persistHostOrder(): void {
+  try {
+    window.localStorage.setItem(hostOrderStorageKey, JSON.stringify(hostOrder.value))
+  } catch {
+    // 隐私模式或存储被禁用时仍保留本次页面顺序。
+  }
+}
+
+function restoreHostOrder(): void {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(hostOrderStorageKey) || '[]')
+    if (
+      Array.isArray(stored) &&
+      stored.length <= 101 &&
+      stored.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 128)
+    ) {
+      hostOrder.value = [...new Set(stored)]
+    }
+  } catch {
+    hostOrder.value = []
+  }
+}
+
+function reconcileHostOrder(items: ClusterHost[]): void {
+  const validIDs = new Set(items.map((host) => host.id))
+  const next = hostOrder.value.filter((id) => validIDs.has(id))
+  for (const host of items) {
+    if (!next.includes(host.id)) next.push(host.id)
+  }
+  if (
+    next.length !== hostOrder.value.length ||
+    next.some((id, index) => id !== hostOrder.value[index])
+  ) {
+    hostOrder.value = next
+    persistHostOrder()
+  }
+}
+
+function moveHost(hostID: string, offset: number): void {
+  if (search.value.trim()) return
+  const ids = orderedHosts.value.map((host) => host.id)
+  const current = ids.indexOf(hostID)
+  const target = Math.max(0, Math.min(ids.length - 1, current + offset))
+  if (current < 0 || current === target) return
+  ids.splice(current, 1)
+  ids.splice(target, 0, hostID)
+  hostOrder.value = ids
+  persistHostOrder()
+}
+
+function startHostDrag(event: DragEvent, hostID: string): void {
+  if (search.value.trim()) {
+    event.preventDefault()
+    return
+  }
+  draggedHostId.value = hostID
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', hostID)
+  }
+}
+
+function dropHost(targetID: string): void {
+  const sourceID = draggedHostId.value
+  dragOverHostId.value = ''
+  draggedHostId.value = ''
+  if (!sourceID || sourceID === targetID || search.value.trim()) return
+  const ids = orderedHosts.value.map((host) => host.id)
+  const source = ids.indexOf(sourceID)
+  const target = ids.indexOf(targetID)
+  if (source < 0 || target < 0) return
+  ids.splice(source, 1)
+  ids.splice(target, 0, sourceID)
+  hostOrder.value = ids
+  persistHostOrder()
+}
+
+function finishHostDrag(): void {
+  draggedHostId.value = ''
+  dragOverHostId.value = ''
+}
+
 async function revokeController(controller: ClusterController): Promise<void> {
   if (!window.confirm(`撤销 ${controller.name || controller.fingerprint} 的只读访问授权？`)) return
   try {
@@ -374,7 +521,6 @@ async function revokeController(controller: ClusterController): Promise<void> {
 }
 
 function openManage(host: ClusterHost): void {
-  if (host.isLocal) return
   selected.value = host
   editName.value = host.name
   manageOpen.value = true
@@ -407,7 +553,7 @@ async function saveName(): Promise<void> {
 
 async function removeHost(): Promise<void> {
   const host = selected.value
-  if (!host || deleting.value) return
+  if (!host || host.isLocal || deleting.value) return
   if (!window.confirm(`从当前 KPanel 移除 ${host.name}？目标主机业务不会受到影响。`)) return
   deleting.value = true
   try {
@@ -506,6 +652,7 @@ function onVisibilityChange(): void {
 
 onMounted(() => {
   restoreViewMode()
+  restoreHostOrder()
   void load()
   pollTimer = window.setInterval(() => {
     if (!document.hidden) void load(true)
@@ -525,7 +672,7 @@ onBeforeUnmount(() => {
   <div class="page cluster-page">
     <PageHeader
       title="集群监控"
-      description="每台 KPanel 都能同时作为中心端与被控端；集中查看只读主机概要，管理操作仍在目标面板独立登录完成。"
+      description="集中查看本机与已接入主机概况；“管理”维护接入关系，“打开面板”进入对应 KPanel。"
     >
       <template #actions>
         <button class="button button--secondary" type="button" @click="openAccess">
@@ -543,8 +690,8 @@ onBeforeUnmount(() => {
     <section class="cluster-hero">
       <div>
         <span class="cluster-hero__eyebrow"><Network :size="15" /> KPanel Federation</span>
-        <h2>一处观察，独立管理</h2>
-        <p>浏览器只读取当前中心端缓存；远端轮询由后端按固定协议完成，不共享登录态和 Agent 凭据。</p>
+        <h2>统一观察，各自管理</h2>
+        <p>本机与远程主机使用一致的操作布局；监控链路不共享登录态，打开目标面板后独立登录管理。</p>
       </div>
       <div class="cluster-stats">
         <div><strong>{{ inventory?.total || 0 }}</strong><span>全部节点</span></div>
@@ -614,8 +761,30 @@ onBeforeUnmount(() => {
       :aria-busy="refreshing"
       :aria-label="viewMode === 'list' ? '集群主机行列表' : '集群主机卡片列表'"
     >
-      <article v-for="host in filteredHosts" :key="host.id" class="cluster-card">
+      <article
+        v-for="host in filteredHosts"
+        :key="host.id"
+        class="cluster-card"
+        :class="{ 'is-drag-over': dragOverHostId === host.id }"
+        @dragenter.prevent="dragOverHostId = host.id"
+        @dragover.prevent
+        @drop.prevent="dropHost(host.id)"
+      >
         <header class="cluster-card__header">
+          <button
+            class="cluster-card__drag"
+            type="button"
+            :draggable="!search.trim()"
+            :disabled="Boolean(search.trim())"
+            :title="search.trim() ? '清除搜索后可调整顺序' : '拖拽调整顺序；也可使用上下方向键'"
+            :aria-label="`调整 ${host.name} 的显示顺序`"
+            @dragstart="startHostDrag($event, host.id)"
+            @dragend="finishHostDrag"
+            @keydown.up.prevent="moveHost(host.id, -1)"
+            @keydown.down.prevent="moveHost(host.id, 1)"
+          >
+            <GripVertical :size="15" />
+          </button>
           <OperatingSystemIcon
             :distro="host.lastSnapshot?.telemetry.osId || 'linux'"
             :label="host.lastSnapshot?.telemetry.os || 'Linux'"
@@ -685,6 +854,7 @@ onBeforeUnmount(() => {
             >
               <b :style="{ width: `${clampPercent(host.lastSnapshot.telemetry.cpu.usagePercent)}%` }" />
             </i>
+            <small>{{ host.lastSnapshot.telemetry.cpu.cores }} 核</small>
           </div>
           <div>
             <span><MemoryStick :size="14" /> 内存</span>
@@ -698,6 +868,10 @@ onBeforeUnmount(() => {
             >
               <b :style="{ width: `${clampPercent(host.lastSnapshot.telemetry.memory.usagePercent)}%` }" />
             </i>
+            <small>
+              {{ formatBytes(host.lastSnapshot.telemetry.memory.usedBytes) }} /
+              {{ formatBytes(host.lastSnapshot.telemetry.memory.totalBytes) }}
+            </small>
           </div>
           <div>
             <span><Server :size="14" /> 磁盘</span>
@@ -711,6 +885,10 @@ onBeforeUnmount(() => {
             >
               <b :style="{ width: `${clampPercent(host.lastSnapshot.telemetry.disk.usagePercent)}%` }" />
             </i>
+            <small>
+              {{ formatBytes(host.lastSnapshot.telemetry.disk.usedBytes) }} /
+              {{ formatBytes(host.lastSnapshot.telemetry.disk.totalBytes) }}
+            </small>
           </div>
         </div>
 
@@ -767,7 +945,6 @@ onBeforeUnmount(() => {
           </span>
           <div>
             <button
-              v-if="!host.isLocal"
               class="button button--ghost button--small"
               type="button"
               @click="openManage(host)"
@@ -894,7 +1071,7 @@ onBeforeUnmount(() => {
             <Server :size="20" />
             <span>
               <strong>本机主机 URL</strong>
-              <small>在中心端添加主机时粘贴此地址；反向代理访问时会显示当前域名。</small>
+              <small>在中心端添加主机时粘贴此地址；反向代理访问时显示当前域名，HTTP 访问会自动兼容复制。</small>
             </span>
           </div>
           <div class="cluster-access__value">
@@ -982,7 +1159,11 @@ onBeforeUnmount(() => {
     <ModalDialog
       :open="manageOpen"
       :title="selected ? `管理 ${selected.name}` : '管理主机'"
-      description="修改仅影响当前中心端显示；移除不会停止目标主机业务。"
+      :description="
+        selected?.isLocal
+          ? '修改本机在集群列表中的显示名称；本机节点始终保留。'
+          : '修改仅影响当前中心端显示；移除不会停止目标主机业务。'
+      "
       size="small"
       @close="closeManage"
     >
@@ -992,7 +1173,7 @@ onBeforeUnmount(() => {
           <input v-model="editName" maxlength="80" autocomplete="off" />
         </label>
         <div class="cluster-manage__identity">
-          <span>目标地址</span><code>{{ selected.origin }}</code>
+          <span>目标地址</span><code>{{ displayOrigin(selected) }}</code>
           <span>连接方式</span><code>{{ transportSecurityLabel(selected) }}</code>
           <template v-if="selected.peerFingerprint">
             <span>身份指纹</span><code>{{ selected.peerFingerprint }}</code>
@@ -1003,7 +1184,13 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <template #footer>
-        <button class="button button--danger" type="button" :disabled="saving || deleting" @click="removeHost">
+        <button
+          v-if="selected && !selected.isLocal"
+          class="button button--danger"
+          type="button"
+          :disabled="saving || deleting"
+          @click="removeHost"
+        >
           <LoaderCircle v-if="deleting" class="spin" :size="16" />
           <Trash2 v-else :size="16" /> 移除主机
         </button>
@@ -1188,6 +1375,11 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-sm);
 }
 
+.cluster-card.is-drag-over {
+  border-color: color-mix(in srgb, var(--brand) 56%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
+}
+
 .cluster-grid.is-list .cluster-card {
   grid-template-columns:
     minmax(260px, 1.4fr)
@@ -1253,11 +1445,39 @@ onBeforeUnmount(() => {
 
 .cluster-card__header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   padding: 16px;
   border-bottom: 1px solid var(--border);
+}
+
+.cluster-card__drag {
+  display: grid;
+  width: 26px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  background: transparent;
+  cursor: grab;
+}
+
+.cluster-card__drag:hover,
+.cluster-card__drag:focus-visible {
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.cluster-card__drag:active {
+  cursor: grabbing;
+}
+
+.cluster-card__drag:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .cluster-card__header > div {
@@ -1371,6 +1591,14 @@ onBeforeUnmount(() => {
 
 .cluster-card__metrics strong {
   font-size: 17px;
+}
+
+.cluster-card__metrics small {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cluster-card__metrics i {

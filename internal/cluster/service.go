@@ -430,9 +430,6 @@ func (s *Service) AddHost(ctx context.Context, input AddHostInput) (Host, error)
 }
 
 func (s *Service) RenameHost(id string, input UpdateHostInput) (Host, error) {
-	if id == LocalHostID {
-		return Host{}, ErrLocalHost
-	}
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 	name, err := validateRequiredName(input.Name)
@@ -441,6 +438,26 @@ func (s *Service) RenameHost(id string, input UpdateHostInput) (Host, error) {
 	}
 	if !validResourceVersion(input.ExpectedResourceVersion) {
 		return Host{}, ErrConflict
+	}
+	if id == LocalHostID {
+		s.mu.RLock()
+		current := s.localHost
+		s.mu.RUnlock()
+		now := s.now().UTC()
+		local := localPublicHost(
+			s.store.NodeID(), s.hostname, s.store.LocalName(),
+			s.panelVersion, current, now,
+		)
+		if local.ResourceVersion != input.ExpectedResourceVersion {
+			return Host{}, ErrConflict
+		}
+		if err := s.store.SetLocalName(name); err != nil {
+			return Host{}, err
+		}
+		return localPublicHost(
+			s.store.NodeID(), s.hostname, name,
+			s.panelVersion, current, now,
+		), nil
 	}
 	record, err := s.store.RenameHost(
 		id, name, input.ExpectedResourceVersion, s.now().UTC(),
@@ -916,7 +933,8 @@ func (s *Service) localHostSummary(ctx context.Context) Host {
 	}
 	s.localHost = current
 	public := localPublicHost(
-		s.store.NodeID(), s.hostname, s.panelVersion, current, finishedAt,
+		s.store.NodeID(), s.hostname, s.store.LocalName(),
+		s.panelVersion, current, finishedAt,
 	)
 	s.mu.Unlock()
 	return public
@@ -970,12 +988,16 @@ func (s *Service) localTelemetry(ctx context.Context) (contract.HostTelemetry, e
 func localPublicHost(
 	nodeID string,
 	hostname string,
+	localName string,
 	panelVersion string,
 	current runtimeState,
 	now time.Time,
 ) Host {
-	name := hostname
-	if current.snapshot != nil && current.snapshot.Telemetry.Hostname != "" {
+	name := localName
+	if name == "" {
+		name = hostname
+	}
+	if localName == "" && current.snapshot != nil && current.snapshot.Telemetry.Hostname != "" {
 		name = current.snapshot.Telemetry.Hostname
 	}
 	resourceHash := sha256.Sum256([]byte(nodeID + "\x00" + name))
