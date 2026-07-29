@@ -6,6 +6,8 @@ import {
   Copy,
   Gauge,
   KeyRound,
+  LayoutGrid,
+  LayoutList,
   LoaderCircle,
   MemoryStick,
   Network,
@@ -63,6 +65,9 @@ const addOriginInput = ref<HTMLInputElement>()
 const addForm = reactive({ name: '', origin: '', pairingCode: '' })
 const editName = ref('')
 const originError = ref('')
+type HostViewMode = 'list' | 'card'
+const hostViewModeStorageKey = 'kpanel:cluster-host-view'
+const viewMode = ref<HostViewMode>('list')
 let loadInFlight = false
 let loadController: AbortController | undefined
 let pollTimer: number | undefined
@@ -77,6 +82,9 @@ interface OriginSecurityAssessment {
 
 const originAssessment = computed<OriginSecurityAssessment>(() =>
   assessOriginSecurity(addForm.origin),
+)
+const panelOrigin = computed(() =>
+  typeof window === 'undefined' ? '' : window.location.origin,
 )
 
 const filteredHosts = computed(() => {
@@ -319,11 +327,38 @@ async function createPairingCode(): Promise<void> {
 
 async function copyPairingCode(): Promise<void> {
   if (!pairingCode.value) return
+  await copyToClipboard(pairingCode.value.code, '授权码已复制', '请手动选择授权码复制。')
+}
+
+async function copyPanelOrigin(): Promise<void> {
+  if (!panelOrigin.value) return
+  await copyToClipboard(panelOrigin.value, '主机 URL 已复制', '请手动选择主机 URL 复制。')
+}
+
+async function copyToClipboard(value: string, success: string, fallback: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(pairingCode.value.code)
-    toast.success('授权码已复制')
+    await navigator.clipboard.writeText(value)
+    toast.success(success)
   } catch {
-    toast.danger('复制失败', '请手动选择授权码复制。')
+    toast.danger('复制失败', fallback)
+  }
+}
+
+function setViewMode(mode: HostViewMode): void {
+  viewMode.value = mode
+  try {
+    window.localStorage.setItem(hostViewModeStorageKey, mode)
+  } catch {
+    // 浏览器禁止持久化时仍保留本次页面选择。
+  }
+}
+
+function restoreViewMode(): void {
+  try {
+    const stored = window.localStorage.getItem(hostViewModeStorageKey)
+    if (stored === 'list' || stored === 'card') viewMode.value = stored
+  } catch {
+    // 隐私模式或存储被禁用时使用默认行列表。
   }
 }
 
@@ -470,6 +505,7 @@ function onVisibilityChange(): void {
 }
 
 onMounted(() => {
+  restoreViewMode()
   void load()
   pollTimer = window.setInterval(() => {
     if (!document.hidden) void load(true)
@@ -522,15 +558,37 @@ onBeforeUnmount(() => {
       {{ refreshWarning }}
     </div>
 
-    <label v-if="inventory?.items.length" class="cluster-search">
-      <Server :size="17" />
-      <input
-        v-model="search"
-        type="search"
-        aria-label="搜索集群主机"
-        placeholder="搜索名称、系统、地区或运营商…"
-      />
-    </label>
+    <div v-if="inventory?.items.length" class="cluster-toolbar">
+      <label class="cluster-search">
+        <Server :size="17" />
+        <input
+          v-model="search"
+          type="search"
+          aria-label="搜索集群主机"
+          placeholder="搜索名称、系统、地区或运营商…"
+        />
+      </label>
+      <div class="cluster-view-switch" role="group" aria-label="主机排列方式">
+        <button
+          type="button"
+          :class="{ 'is-active': viewMode === 'list' }"
+          :aria-pressed="viewMode === 'list'"
+          title="行列表"
+          @click="setViewMode('list')"
+        >
+          <LayoutList :size="15" /> 列表
+        </button>
+        <button
+          type="button"
+          :class="{ 'is-active': viewMode === 'card' }"
+          :aria-pressed="viewMode === 'card'"
+          title="卡片排列"
+          @click="setViewMode('card')"
+        >
+          <LayoutGrid :size="15" /> 卡片
+        </button>
+      </div>
+    </div>
 
     <LoadingState v-if="loading" title="正在读取集群主机…" />
     <ErrorState v-else-if="loadError && !inventory" :message="loadError" @retry="load()" />
@@ -549,7 +607,13 @@ onBeforeUnmount(() => {
       description="请清除搜索词后重试。"
     />
 
-    <section v-else class="cluster-grid" :aria-busy="refreshing">
+    <section
+      v-else
+      class="cluster-grid"
+      :class="`is-${viewMode}`"
+      :aria-busy="refreshing"
+      :aria-label="viewMode === 'list' ? '集群主机行列表' : '集群主机卡片列表'"
+    >
       <article v-for="host in filteredHosts" :key="host.id" class="cluster-card">
         <header class="cluster-card__header">
           <OperatingSystemIcon
@@ -725,10 +789,24 @@ onBeforeUnmount(() => {
       size="small"
       @close="closeAdd"
     >
-      <form id="cluster-add-form" class="form-stack" @submit.prevent="addHost">
+      <form
+        id="cluster-add-form"
+        class="form-stack"
+        autocomplete="off"
+        data-form-type="other"
+        @submit.prevent="addHost"
+      >
         <label class="field">
           主机名称（可选）
-          <input v-model="addForm.name" maxlength="80" placeholder="例如：香港生产机" autocomplete="off" />
+          <input
+            v-model="addForm.name"
+            name="cluster-host-label"
+            maxlength="80"
+            placeholder="例如：香港生产机"
+            autocomplete="off"
+            data-1p-ignore
+            data-lpignore="true"
+          />
           <small>留空时使用目标主机名。</small>
         </label>
         <label class="field">
@@ -736,13 +814,16 @@ onBeforeUnmount(() => {
           <input
             ref="addOriginInput"
             v-model="addForm.origin"
+            name="cluster-host-origin"
             type="url"
             inputmode="url"
             required
             maxlength="512"
             placeholder="https://panel.example.com 或 http://203.0.113.10:8080"
-            autocomplete="url"
+            autocomplete="off"
             spellcheck="false"
+            data-1p-ignore
+            data-lpignore="true"
             aria-describedby="cluster-origin-help"
             :aria-invalid="originError || originAssessment.mode === 'invalid' ? 'true' : undefined"
             @input="originError = ''"
@@ -764,10 +845,17 @@ onBeforeUnmount(() => {
           一次性授权码
           <input
             v-model="addForm.pairingCode"
-            type="password"
+            name="cluster-pairing-code"
+            type="text"
+            inputmode="text"
             required
             maxlength="1024"
-            autocomplete="off"
+            autocomplete="one-time-code"
+            autocapitalize="off"
+            spellcheck="false"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore
             placeholder="粘贴目标 KPanel 生成的授权码"
           />
           <small>仅用于本次配对，不会保存在浏览器或审计日志中。</small>
@@ -801,6 +889,27 @@ onBeforeUnmount(() => {
       @close="closeAccess"
     >
       <div class="cluster-access">
+        <section class="cluster-access__origin">
+          <div>
+            <Server :size="20" />
+            <span>
+              <strong>本机主机 URL</strong>
+              <small>在中心端添加主机时粘贴此地址；反向代理访问时会显示当前域名。</small>
+            </span>
+          </div>
+          <div class="cluster-access__value">
+            <code>{{ panelOrigin }}</code>
+            <button
+              class="icon-button icon-button--small"
+              type="button"
+              aria-label="复制本机主机 URL"
+              @click="copyPanelOrigin"
+            >
+              <Copy :size="15" />
+            </button>
+          </div>
+        </section>
+
         <section class="cluster-access__code">
           <div>
             <KeyRound :size="20" />
@@ -990,6 +1099,13 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
+.cluster-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .cluster-search {
   display: flex;
   width: min(520px, 100%);
@@ -1016,10 +1132,50 @@ onBeforeUnmount(() => {
   outline: 0;
 }
 
+.cluster-view-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.cluster-view-switch button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--muted);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 3px);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.cluster-view-switch button:hover {
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+.cluster-view-switch button.is-active {
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
 .cluster-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
+}
+
+.cluster-grid.is-list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
 }
 
 .cluster-card {
@@ -1030,6 +1186,69 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
+}
+
+.cluster-grid.is-list .cluster-card {
+  grid-template-columns:
+    minmax(260px, 1.4fr)
+    minmax(270px, 1.1fr)
+    minmax(360px, 1.5fr)
+    minmax(210px, 0.8fr);
+  grid-template-areas:
+    "header metrics details footer"
+    "warning warning warning warning";
+  align-items: stretch;
+}
+
+.cluster-grid.is-list .cluster-card__header {
+  grid-area: header;
+  border-right: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.cluster-grid.is-list .cluster-card__metrics {
+  grid-area: metrics;
+  border-right: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.cluster-grid.is-list .cluster-card__metrics > div {
+  place-content: center;
+}
+
+.cluster-grid.is-list .cluster-card__details {
+  grid-area: details;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-content: center;
+  border-right: 1px solid var(--border);
+}
+
+.cluster-grid.is-list .cluster-card__empty {
+  grid-area: 1 / 2 / 2 / 4;
+  min-height: 92px;
+  border-right: 1px solid var(--border);
+}
+
+.cluster-grid.is-list .cluster-card__warning {
+  grid-area: warning;
+}
+
+.cluster-grid.is-list .cluster-card__footer {
+  grid-area: footer;
+  align-items: stretch;
+  justify-content: center;
+  flex-direction: column;
+  margin-top: 0;
+  border-top: 0;
+}
+
+.cluster-grid.is-list .cluster-card__footer > div,
+.cluster-grid.is-list .cluster-card__footer .button {
+  width: 100%;
+}
+
+.cluster-grid.is-list .cluster-card__footer .button {
+  justify-content: center;
 }
 
 .cluster-card__header {
@@ -1263,6 +1482,7 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.cluster-access__origin,
 .cluster-access__code,
 .cluster-access__controllers {
   padding: 16px;
@@ -1271,6 +1491,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-md);
 }
 
+.cluster-access__origin > div:first-child,
 .cluster-access__code > div:first-child,
 .cluster-access__controllers header {
   display: flex;
@@ -1279,11 +1500,13 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.cluster-access__origin > div:first-child,
 .cluster-access__code > div:first-child {
   justify-content: flex-start;
   margin-bottom: 14px;
 }
 
+.cluster-access__origin span,
 .cluster-access__code span,
 .cluster-access__controllers header div,
 .cluster-access__controllers article span {
@@ -1298,6 +1521,7 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
+.cluster-access__value,
 .cluster-access__token {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1305,6 +1529,7 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+.cluster-access__value code,
 .cluster-access__token code {
   padding: 10px;
   overflow: auto hidden;
@@ -1316,6 +1541,7 @@ onBeforeUnmount(() => {
   user-select: all;
 }
 
+.cluster-access__value small,
 .cluster-access__token small {
   grid-column: 1 / -1;
 }
@@ -1371,6 +1597,40 @@ onBeforeUnmount(() => {
   .cluster-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .cluster-grid.is-list .cluster-card {
+    grid-template-columns: minmax(280px, 1fr) minmax(240px, 0.8fr);
+    grid-template-areas:
+      "header footer"
+      "metrics metrics"
+      "details details"
+      "warning warning";
+  }
+
+  .cluster-grid.is-list .cluster-card__header,
+  .cluster-grid.is-list .cluster-card__metrics,
+  .cluster-grid.is-list .cluster-card__details,
+  .cluster-grid.is-list .cluster-card__empty {
+    border-right: 0;
+  }
+
+  .cluster-grid.is-list .cluster-card__header {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .cluster-grid.is-list .cluster-card__footer {
+    align-items: flex-end;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .cluster-grid.is-list .cluster-card__footer > div,
+  .cluster-grid.is-list .cluster-card__footer .button {
+    width: auto;
+  }
+
+  .cluster-grid.is-list .cluster-card__empty {
+    grid-area: 2 / 1 / 4 / -1;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1386,6 +1646,15 @@ onBeforeUnmount(() => {
 
   .cluster-hero {
     padding: 21px;
+  }
+
+  .cluster-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cluster-view-switch {
+    align-self: flex-end;
   }
 
   .cluster-stats {
@@ -1413,6 +1682,27 @@ onBeforeUnmount(() => {
 
   .cluster-card__footer .button {
     flex: 1 1 0;
+  }
+
+  .cluster-grid.is-list .cluster-card {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "header"
+      "metrics"
+      "details"
+      "footer"
+      "warning";
+  }
+
+  .cluster-grid.is-list .cluster-card__footer {
+    align-items: flex-start;
+    border-top: 1px solid var(--border);
+    border-bottom: 0;
+  }
+
+  .cluster-grid.is-list .cluster-card__footer > div,
+  .cluster-grid.is-list .cluster-card__footer .button {
+    width: 100%;
   }
 }
 </style>

@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   toastSuccess: vi.fn(),
   toastDanger: vi.fn(),
+  clipboardWriteText: vi.fn(),
+  localStorageGetItem: vi.fn(),
+  localStorageSetItem: vi.fn(),
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -56,7 +59,9 @@ interface ClusterBindings {
   inventory: Ref<ClusterHostList | undefined>
   filteredHosts: ComputedRef<ClusterHost[]>
   originAssessment: ComputedRef<{ mode: string; message: string }>
+  panelOrigin: ComputedRef<string>
   search: Ref<string>
+  viewMode: Ref<'list' | 'card'>
   manageOpen: Ref<boolean>
   selected: Ref<ClusterHost | undefined>
   addForm: { name: string; origin: string; pairingCode: string }
@@ -65,6 +70,8 @@ interface ClusterBindings {
   openManage: (host: ClusterHost) => void
   removeHost: () => Promise<void>
   openPanel: (host: ClusterHost) => void
+  copyPanelOrigin: () => Promise<void>
+  setViewMode: (mode: 'list' | 'card') => void
   transportSecurityLabel: (host: ClusterHost) => string
   shortFingerprint: (value?: string) => string
 }
@@ -168,6 +175,15 @@ beforeEach(() => {
     location: { origin: 'https://center.example.com' },
     open: mocks.open,
     confirm: mocks.confirm.mockReturnValue(true),
+    localStorage: {
+      getItem: mocks.localStorageGetItem.mockReturnValue(null),
+      setItem: mocks.localStorageSetItem,
+    },
+  })
+  vi.stubGlobal('navigator', {
+    clipboard: {
+      writeText: mocks.clipboardWriteText.mockResolvedValue(undefined),
+    },
   })
 })
 
@@ -216,6 +232,29 @@ describe('ClusterView inventory and navigation', () => {
       'noopener,noreferrer',
     )
     expect(mocks.confirm).not.toHaveBeenCalled()
+  })
+
+  it('defaults to the row list and persists an explicit card preference', () => {
+    const view = setupView()
+
+    expect(view.viewMode.value).toBe('list')
+    view.setViewMode('card')
+
+    expect(view.viewMode.value).toBe('card')
+    expect(mocks.localStorageSetItem).toHaveBeenCalledWith(
+      'kpanel:cluster-host-view',
+      'card',
+    )
+  })
+
+  it('copies the browser-visible local panel origin for controller onboarding', async () => {
+    const view = setupView()
+
+    expect(view.panelOrigin.value).toBe('https://center.example.com')
+    await view.copyPanelOrigin()
+
+    expect(mocks.clipboardWriteText).toHaveBeenCalledWith('https://center.example.com')
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('主机 URL 已复制')
   })
 
   it('warns before opening an HTTP management page while preserving the exact IP and port', () => {
