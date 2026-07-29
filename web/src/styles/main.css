@@ -636,7 +636,7 @@ textarea:focus-visible,
 }
 
 .site-service-field--featured .site-service-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .site-service-field--featured .site-service-card {
@@ -644,10 +644,6 @@ textarea:focus-visible,
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--brand) 7%, transparent), transparent 62%),
     var(--surface);
-}
-
-.site-service-field--popular .site-service-card {
-  min-height: 88px;
 }
 
 .site-template-toggle {
@@ -798,28 +794,18 @@ textarea:focus-visible,
   color: var(--text-soft);
 }
 
-.site-service-summary {
-  display: flex;
+.site-create-footnote {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  color: var(--brand);
-  background: var(--brand-soft);
-  border-radius: var(--radius-sm);
-}
-
-.site-service-summary span {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  color: var(--text-soft);
+  gap: 6px;
+  color: var(--muted);
   font-size: 11px;
+  line-height: 1.4;
 }
 
-.site-service-summary strong {
-  color: var(--text);
-  font-size: 12px;
+.site-create-footnote svg {
+  flex: 0 0 auto;
+  color: var(--brand);
 }
 
 .choice-pills {

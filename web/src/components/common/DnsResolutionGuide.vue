@@ -213,8 +213,8 @@ async function copy(value: string): Promise<void> {
 }
 
 .dns-guide--compact {
-  grid-template-columns: minmax(190px, 0.8fr) minmax(0, 1.2fr);
-  gap: 7px 10px;
+  grid-template-columns: minmax(172px, 0.6fr) minmax(0, 1.6fr);
+  gap: 6px 8px;
   padding: 9px 10px;
 }
 
@@ -229,8 +229,30 @@ async function copy(value: string): Promise<void> {
 
 .dns-guide--compact .dns-guide__records button,
 .dns-guide--compact nav a {
-  min-height: 28px;
-  padding: 3px 7px;
+  min-height: 26px;
+  padding: 2px 5px;
+}
+
+.dns-guide--compact .dns-guide__records,
+.dns-guide--compact nav {
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+.dns-guide--compact nav > span,
+.dns-guide--compact nav a {
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.dns-guide--compact nav svg,
+.dns-guide--compact nav i {
+  width: 13px;
+  height: 13px;
+}
+
+.dns-guide--compact nav a {
+  gap: 4px;
 }
 
 @media (max-width: 640px) {
@@ -243,6 +265,7 @@ async function copy(value: string): Promise<void> {
   .dns-guide--compact nav {
     grid-column: 1;
     grid-row: auto;
+    flex-wrap: wrap;
   }
 
   .dns-guide__records button {

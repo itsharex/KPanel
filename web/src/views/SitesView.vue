@@ -129,7 +129,7 @@ const serviceOptions = [
     summary: 'HTML、图片与前端构建产物',
     detail: '脚本交互上传 ZIP 并选择入口',
     icon: FileCode2,
-    featured: false,
+    featured: true,
     badges: [],
   },
   {
@@ -292,12 +292,6 @@ const scriptedTemplateCreate = computed(
 )
 const featuredServiceOptions = computed(() => serviceOptions.filter((option) => option.featured))
 const standardServiceOptions = computed(() => serviceOptions.filter((option) => !option.featured))
-const popularRecipeOptions = computed(() =>
-  recipeOptions.filter((option) => ['discuz', 'kodbox', 'typecho'].includes(option.recipe)),
-)
-const additionalRecipeOptions = computed(() =>
-  recipeOptions.filter((option) => !['discuz', 'kodbox', 'typecho'].includes(option.recipe)),
-)
 const canSubmit = computed(
   () =>
     formValid.value &&
@@ -452,7 +446,7 @@ function openCreate(): void {
   form.phpVersion = 'latest'
   formError.value = ''
   installProgress.value = undefined
-  showMoreTemplates.value = isScriptedTemplateType(form.type)
+  showMoreTemplates.value = !featuredServiceOptions.value.some((option) => option.type === form.type)
   editorOpen.value = true
 }
 
@@ -1178,7 +1172,8 @@ onBeforeUnmount(() => {
               type="button"
               :disabled="
                 (option.type === 'wordpress' && !canInstallWordPress) ||
-                (option.type === 'proxy' && !canInstallProxy)
+                (option.type === 'proxy' && !canInstallProxy) ||
+                (option.type === 'static' && !canInstallTemplates)
               "
               :aria-pressed="form.type === option.type"
               :title="
@@ -1186,6 +1181,8 @@ onBeforeUnmount(() => {
                   ? wordPressReason
                   : option.type === 'proxy' && !canInstallProxy
                     ? proxyCapability?.reason
+                    : option.type === 'static' && !canInstallTemplates
+                      ? templateCapability?.reason
                     : ''
               "
               @click="form.type = option.type"
@@ -1210,33 +1207,6 @@ onBeforeUnmount(() => {
           </div>
         </fieldset>
 
-        <fieldset v-if="!editingSite" class="site-service-field site-service-field--popular">
-          <legend><Globe2 :size="16" /> 热门成品站</legend>
-          <div class="site-service-grid">
-            <button
-              v-for="option in popularRecipeOptions"
-              :key="option.recipe"
-              class="site-service-card"
-              :class="{ 'is-active': form.type === 'recipe' && form.recipe === option.recipe }"
-              type="button"
-              :disabled="!canInstallRecipes"
-              :aria-pressed="form.type === 'recipe' && form.recipe === option.recipe"
-              :title="!canInstallRecipes ? recipeCapability?.reason : ''"
-              @click="form.type = 'recipe'; form.recipe = option.recipe"
-            >
-              <span class="site-service-card__icon"><component :is="option.icon" :size="20" /></span>
-              <span class="site-service-card__content">
-                <span class="site-service-card__heading">
-                  <strong>{{ option.title }}</strong>
-                  <span class="site-service-card__badge">一键成品</span>
-                </span>
-                <small>{{ option.summary }}</small>
-                <em>{{ option.detail }}</em>
-              </span>
-            </button>
-          </div>
-        </fieldset>
-
         <button
           v-if="!editingSite"
           class="site-template-toggle"
@@ -1246,16 +1216,16 @@ onBeforeUnmount(() => {
         >
           <span>
             <strong>更多模板与建站方式</strong>
-            <small>{{ additionalRecipeOptions.length + standardServiceOptions.length }} 个选项按需展开</small>
+            <small>{{ recipeOptions.length + standardServiceOptions.length }} 个选项按需展开</small>
           </span>
           <ChevronDown :size="18" :class="{ 'is-open': showMoreTemplates }" />
         </button>
 
         <fieldset v-if="!editingSite && showMoreTemplates" class="site-service-field">
-          <legend><Globe2 :size="16" /> 更多 kejilion.sh 成品站</legend>
+          <legend><Globe2 :size="16" /> 热门成品站</legend>
           <div class="site-service-grid">
             <button
-              v-for="option in additionalRecipeOptions"
+              v-for="option in recipeOptions"
               :key="option.recipe"
               class="site-service-card"
               :class="{ 'is-active': form.type === 'recipe' && form.recipe === option.recipe }"
@@ -1302,32 +1272,6 @@ onBeforeUnmount(() => {
           </div>
           <small v-if="editingSite">服务类型保持不变，避免遗留目录或意外改变现有流量路径。</small>
         </fieldset>
-
-        <div v-if="selectedService" class="site-service-summary">
-          <component :is="selectedService.icon" :size="18" />
-          <span><strong>{{ selectedService.title }}</strong>{{ selectedService.summary }}</span>
-        </div>
-        <div v-if="form.type === 'recipe' && selectedRecipe" class="site-service-summary">
-          <component :is="selectedRecipe.icon" :size="18" />
-          <span><strong>{{ selectedRecipe.title }}</strong>{{ selectedRecipe.summary }}</span>
-        </div>
-
-        <div v-if="form.type === 'wordpress'" class="inline-alert inline-alert--info">
-          <ShieldCheck :size="17" />
-          <span>后台复用 kejilion.sh 原生 WordPress 流程，关闭窗口不会中断，可从任务进度重新进入。</span>
-        </div>
-        <div v-if="form.type === 'proxy' && !editingSite" class="inline-alert inline-alert--info">
-          <ShieldCheck :size="17" />
-          <span>后台调用 k fd 同源反向代理流程，沿用脚本证书、Nginx 模板与端口访问控制。</span>
-        </div>
-        <div v-if="form.type === 'recipe'" class="inline-alert inline-alert--info">
-          <ShieldCheck :size="17" />
-          <span>后台执行对应 kejilion.sh 成品站流程，不记录数据库密码，也不会覆盖同域名现有产物。</span>
-        </div>
-        <div v-if="scriptedTemplateCreate" class="inline-alert inline-alert--info">
-          <ShieldCheck :size="17" />
-          <span>域名由面板校验，其余参数在 kejilion.sh 交互终端填写；关闭窗口不会中断任务。</span>
-        </div>
 
         <fieldset v-if="form.type === 'php' && !scriptedTemplateCreate" class="field site-inline-options">
           <legend>PHP 运行环境</legend>
@@ -1403,10 +1347,10 @@ onBeforeUnmount(() => {
           <textarea v-model="form.aliases" rows="3" placeholder="www.example.com&#10;api.example.com" />
           <small>每行一个域名，最多 20 个；主域名不要重复填写。</small>
         </label>
-        <div class="inline-alert inline-alert--info">
-          <ShieldCheck :size="17" />
-          Agent 直接对账 /home/web 实际产物，脚本与面板始终管理同一份配置。
-        </div>
+        <small v-if="!editingSite" class="site-create-footnote">
+          <ShieldCheck :size="14" />
+          建站任务在后台执行，关闭窗口不会中断。
+        </small>
       </form>
       <template #footer>
         <button class="button button--secondary" type="button" @click="closeEditor">

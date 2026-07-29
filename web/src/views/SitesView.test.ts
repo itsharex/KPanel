@@ -41,8 +41,9 @@ interface SitesBindings {
   showMoreTemplates: Ref<boolean>
   siteList: Ref<HTMLElement | undefined>
   recentCreatedDomain: Ref<string>
-  popularRecipeOptions: ComputedRef<Array<{ recipe: string }>>
-  additionalRecipeOptions: ComputedRef<Array<{ recipe: string }>>
+  featuredServiceOptions: ComputedRef<Array<{ type: string }>>
+  standardServiceOptions: ComputedRef<Array<{ type: string }>>
+  recipeOptions: Array<{ recipe: string }>
   revealCreatedSite: (domain: string) => Promise<void>
 }
 
@@ -84,16 +85,22 @@ afterEach(() => {
 })
 
 describe('SitesView creation experience', () => {
-  it('keeps a concise popular set visible and folds the remaining templates', () => {
+  it('keeps only the three primary website types visible and folds every recipe', () => {
     const view = setupView()
 
     expect(view.showMoreTemplates.value).toBe(false)
-    expect(view.popularRecipeOptions.value.map((item) => item.recipe)).toEqual([
-      'discuz',
-      'kodbox',
-      'typecho',
+    expect(view.featuredServiceOptions.value.map((item) => item.type)).toEqual([
+      'wordpress',
+      'proxy',
+      'static',
     ])
-    expect(view.additionalRecipeOptions.value).toHaveLength(7)
+    expect(view.standardServiceOptions.value.map((item) => item.type)).toEqual([
+      'php',
+      'proxy_domain',
+      'load_balance',
+      'redirect',
+    ])
+    expect(view.recipeOptions).toHaveLength(10)
   })
 
   it('returns to the list and highlights the newly created website first', async () => {
