@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
-description: "完成 KPanel 版本准备、CI、GitHub Release、Docker Hub、应用市场同步和公开镜像验收"
-version: "1.0"
+description: "完成 KPanel 版本准备、CI、GitHub Release、Docker Hub、应用市场契约核对和公开镜像验收"
+version: "1.1"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [version, previous_version, image, apps_repo]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-07-27T13:00:00Z"
+updated: "2026-07-29T09:17:57Z"
 ---
 
 # Release KPanel
@@ -14,14 +14,15 @@ updated: "2026-07-27T13:00:00Z"
 ## Purpose
 
 把 KPanel 的 L3 发布链路固化为可重复执行、可验证、可回滚的流程。链路包括版本准备、
-主仓库 CI、GitHub Release、Docker Hub 多架构镜像、`latest` 提升、`kejilion/apps`
-应用市场同步和公开镜像端到端验收。
+发布候选与主仓库 CI、GitHub Release、Docker Hub 多架构镜像、`latest` 提升、
+`kejilion/apps` 应用市场契约核对和公开镜像端到端验收。
 
 ## Prerequisites
 
 - 已阅读 `AGENTS.md` 和 `PROJECT_RULES.md`，并取得用户对本次发布、推送的明确授权。
 - KPanel 仓库为 `C:\GitHub\kejilion-panel`，远端为 `kejilion/KPanel`。
-- `${{apps_repo}}` 指向 `kejilion/apps` 本地仓库，默认 `C:\GitHub\kejilion\apps`。
+- `${{apps_repo}}` 指向 `kejilion/apps` 本地仓库，默认 `C:\GitHub\kejilion\apps`；只有
+  `packaging/kejilion-app/kpanel.conf` 的安装/更新契约发生变化时才需要写入该仓库。
 - GitHub 仓库已配置 `DOCKERHUB_TOKEN` Secret；Token 对 `${{image}}` 具有 Read & Write 权限。
 - GitHub 仓库变量 `DOCKERHUB_IMAGE`、`DOCKERHUB_USERNAME` 与目标 Docker Hub 仓库一致。
 - `release.yml` 的 Docker 登录不得限定仅 push 的 Buildx `scope`，因为 `latest` 提升同时需要
@@ -43,7 +44,8 @@ git tag --list "v${{version}}"
 ```
 
 同时检查 GitHub Release、Actions 和 Docker Hub 标签。不得覆盖已经发布的 Release、镜像或
-可追溯版本；若版本已占用，必须提升版本号。
+可追溯版本；若版本已占用，必须提升版本号。把 `origin/main` 的提交记为发布基线；
+正式推送前若远端已前移，必须停止并重新审计，不得顺带合入其他会话或功能的代码。
 
 **Expected output:** 发布基线明确，目标版本未占用，记录 `${{previous_version}}` 对应源码和镜像回滚点。
 
@@ -55,14 +57,13 @@ git tag --list "v${{version}}"
 - `internal/version/version.go`（开发态使用 `${{version}}-dev`）
 - `web/package.json`
 - `web/package-lock.json`
-- `packaging/kejilion-app/kpanel.conf` 中所有镜像和 Agent 版本引用
 
 检查：
 
 ```bash
 git diff --check
 git diff -- VERSION internal/version/version.go web/package.json \
-  web/package-lock.json packaging/kejilion-app/kpanel.conf CHANGELOG.md
+  web/package-lock.json CHANGELOG.md
 ```
 
 **Expected output:** 所有发行版本字段均为 `${{version}}`，没有空白错误或无关修改。
@@ -86,21 +87,28 @@ sh packaging/tests/app-conf-lifecycle.sh
 
 **Expected output:** L3 测试、构建、安装安全、应用配置生命周期和工作流静态检查全部通过。
 
-### 4. 提交主仓库并等待 CI
+### 4. 提交发布候选并等待 CI
 
-仅暂存发布范围文件，提交后直接推送 `main`：
+仅暂存发布范围文件，提交后先推送 `feature/release-v${{version}}-candidate`，让 Linux CI
+独立验证准确的待发布提交：
 
 ```bash
 git add VERSION CHANGELOG.md internal/version/version.go \
-  web/package.json web/package-lock.json packaging/kejilion-app/kpanel.conf
+  web/package.json web/package-lock.json
 git commit -m "chore: prepare KPanel ${{version}}"
-git push origin HEAD:main
+git push origin HEAD:refs/heads/feature/release-v${{version}}-candidate
 ```
 
 如果发布工作流本身需要修复，应将 `.github/workflows/release.yml` 纳入同一独立修复提交。
-等待 `main` 的 CI 成功，不得只依据本地测试继续发布。
+等待候选 CI 成功，不得只依据本地测试继续发布。随后再次读取远端 `main`；只有它仍与步骤 1
+记录的基线完全一致，才允许安全快进并等待 `main` CI：
 
-**Expected output:** `main` CI 成功，远端提交哈希与本地待发布提交一致。
+```bash
+git push origin HEAD:main
+```
+
+**Expected output:** 候选与 `main` CI 均成功，远端提交哈希与本地待发布提交一致，未夹带
+其他会话的提交。
 
 ### 5. 创建不可变版本标签并监控 Release
 
@@ -139,11 +147,15 @@ attestation，不能误判为架构缺失。
 
 **Expected output:** Release 附件完整，版本镜像与 `latest` 指向同一摘要，双架构齐全。
 
-### 7. 同步应用市场
+### 7. 核对应用市场契约，必要时同步
 
-只有正式 Release 和镜像验证成功后，才更新 `${{apps_repo}}/kpanel.conf` 中全部版本引用。
-将其与本仓库 `packaging/kejilion-app/kpanel.conf` 归一化对比，运行 Bash 语法和生命周期检查，
-然后在 `kejilion/apps` 仓库独立提交并推送：
+当前 `kpanel.conf` 使用 `latest`，并从镜像 OCI 标签和内置 `/release/VERSION` 动态校验
+Panel/Agent 版本；普通 KPanel 版本发布不再同步硬编码版本。先把本仓库
+`packaging/kejilion-app/kpanel.conf` 与 `${{apps_repo}}/kpanel.conf` 归一化对比：
+
+- 若安装/更新契约没有变化，记录“无需应用市场提交”，禁止制造空提交；
+- 若契约发生变化，只有正式 Release 和镜像验证成功后，才同步配置、运行 Bash 语法和
+  生命周期检查，并在 `kejilion/apps` 仓库独立提交推送：
 
 ```bash
 git add kpanel.conf
@@ -151,7 +163,8 @@ git commit -m "chore: update KPanel to ${{version}}"
 git push origin HEAD:main
 ```
 
-**Expected output:** 应用市场配置与发布配置一致，`kejilion/apps` 的 `main` 已更新且工作树干净。
+**Expected output:** 应用市场配置与发布契约一致；无变化时工作树干净且无提交，有变化时
+`kejilion/apps` 的 `main` 已更新且工作树干净。
 
 ### 8. 从公开仓库完成最终验收
 
@@ -175,7 +188,7 @@ KPANEL_EXPECTED_VERSION="${{version}}" \
 - CI、Release run、GitHub Release、Docker Hub 链接；
 - 版本镜像和 `latest` 摘要；
 - 支持的平台；
-- `kejilion/apps` 提交；
+- `kejilion/apps` 契约核对结果，以及有变更时的提交；
 - 公开镜像 E2E 结果；
 - 保留的无关本地改动；
 - `${{previous_version}}` 回滚点及任何未验证风险。
