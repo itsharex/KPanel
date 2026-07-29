@@ -74,7 +74,11 @@ git diff -- VERSION internal/version/version.go web/package.json \
 
 ```bash
 make verify-release
-sh packaging/tests/app-conf-lifecycle.sh
+docker run --rm \
+  -e KPANEL_APP_CONF_TEST_ROOTFS=1 \
+  -v "$PWD:/src:ro" \
+  bash:5.2.37-alpine3.22@sha256:3bee76a96d86d5d2d5efc7c1c570e5a7c95db22348a26944e0e546fa174e3324 \
+  bash /src/packaging/tests/app-conf-lifecycle.sh /src
 ```
 
 另外解析 `.github/workflows/ci.yml` 和 `.github/workflows/release.yml`，确认 YAML 有效，并复核：
@@ -176,9 +180,11 @@ KPANEL_EXPECTED_VERSION="${{version}}" \
   sh packaging/tests/image-e2e.sh "${{image}}:${{version}}"
 ```
 
-再次核对 GitHub Release 页面、Actions 结果、Docker Hub 摘要和应用市场提交。
+再次核对 GitHub Release 页面、Actions 结果、Docker Hub 摘要和应用市场契约；只有步骤 7
+实际产生配置差异时才核对 `kejilion/apps` 提交。
 
-**Expected output:** 输出 `image_e2e=pass`，四个线上状态均与 `${{version}}` 一致。
+**Expected output:** 输出 `image_e2e=pass`，Release、Actions 和 Docker Hub 均与
+`${{version}}` 一致；应用市场为“同哈希且无需提交”或“配置已同步并提交”。
 
 ### 9. 统一交付并记录证据
 
