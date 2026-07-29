@@ -15,7 +15,8 @@
 
 <p align="center">
   <a href="#功能概览">功能概览</a> ·
-  <a href="#快速开始">快速开始</a> ·
+  <a href="#一键部署">一键部署</a> ·
+  <a href="#界面预览">界面预览</a> ·
   <a href="docs/deployment.md">部署文档</a> ·
   <a href="docs/session-collaboration.md">协作说明</a> ·
   <a href="#开源许可">开源许可</a> ·
@@ -26,20 +27,57 @@ KPanel 将 `kejilion.sh` 的服务器运维能力带到 Web 端。脚本、SSH�
 和 KPanel 创建的真实资源可以互相发现、修改并继续管理，避免因为换了管理入口
 就失去对现有网站、容器和配置的控制。
 
-KPanel 可以安装在仅具备 systemd、Docker Engine 与 Compose v2 的干净 Linux
-主机上，不要求预先运行 `kejilion.sh` 或存在 `/home/web`。接入可信
-`kejilion.sh` 后，还可以复用其网站和应用业务。
+KPanel 官方推荐通过 `kejilion.sh` 应用入口一键部署，无需在宿主机安装 Go
+或从源码构建。安装完成后，仍可继续使用脚本、SSH 或 Compose 管理同一批真实资源。
+
+## 一键部署
+
+准备一台 Linux 服务器，使用 `root` 用户执行：
+
+```bash
+bash <(curl -sL kejilion.sh) app kpanel
+```
+
+脚本会自动完成所需组件和 KPanel 的部署。安装完成后，根据终端提示打开面板，
+并完成管理员账户初始化。
+
+> [!TIP]
+> 图文步骤、功能介绍和使用建议见
+> [KPanel 官方部署教程](https://blog.kejilion.pro/kpanel-kejilion-web-server-panel/)。
+
+支持 `amd64` 和 `arm64`。正式支持范围及发行版差异见
+[宿主机系统兼容矩阵](docs/platform-support.md)。需要审查构建产物、固定镜像 digest
+或进行开发者部署时，请使用[完整部署文档](docs/deployment.md)。
+
+> [!IMPORTANT]
+> KPanel 具备宿主机管理能力。请只在可信服务器上使用官方部署入口，并在操作重要网站、
+> 数据库和容器前做好备份。
+
+## 界面预览
+
+### 系统监控与管理
+
+![KPanel 系统监控与服务器状态概览](.github/assets/screenshots/overview.webp)
+
+### 系统维护与基础设置
+
+![KPanel 系统维护、SSH 防御、DNS、网络与性能设置](.github/assets/screenshots/system-settings.webp)
+
+### 应用市场
+
+![KPanel 应用市场与 kejilion.sh 应用生态](.github/assets/screenshots/app-market.webp)
 
 ## 功能概览
 
 - **主机总览与系统管理**：查看 CPU、内存、磁盘、负载、网络、服务状态，管理主机名、
-  SSH 端口、DNS、时区、Swap、软件源、内核预设、BBR、系统更新与安全重启。
+  SSH 端口与防御、DNS、时区、Swap、软件源、内核预设、BBR、系统更新与系统清理。
 - **网站管理**：发现现有站点、证书与 Nginx 状态，创建和管理静态站、PHP 站、
-  反向代理、负载均衡、域名重定向及常用建站程序。
+  反向代理、负载均衡、域名重定向及常用建站程序；管理 LDNMP 环境的防护、优化、
+  更新、备份、还原和卸载。
 - **Docker 管理**：统一管理容器、镜像、网络和卷，支持日志、性能采样、更新检查、
-  备份还原、IPv6 及脚本兼容的访问控制。
+  备份还原、SSH 迁移、IPv6 及脚本兼容的访问控制。
 - **应用市场**：动态对齐 `app.kejilion.sh`，展示真实安装和容器状态，并为已审计应用
-  提供后台安装、更新、卸载与失败回滚。
+  提供后台安装、实时进度、更新、卸载与失败回滚；专属流程可继续使用脚本交互终端。
 - **服务器体检**：运行 IP/解锁、网络线路、硬件性能和综合测评，持续显示脚本来源、
   资源影响、实时日志和历史结果。
 - **审计与恢复**：记录管理变更，检测资源版本冲突；配置写入前校验，失败时回滚并明确
@@ -54,34 +92,6 @@ KPanel 可以安装在仅具备 systemd、Docker Engine 与 Compose v2 的干净
   宿主机操作由本地 Unix Socket 上的结构化 Agent 执行。
 - **来源不限制管理**：脚本、KPanel、Compose 或人工创建的资源，都可以按实际状态
   继续管理。
-
-## 快速开始
-
-支持 `amd64` 和 `arm64`。正式部署目标为使用 systemd 的 Debian/Ubuntu、
-RHEL/Fedora、Arch/Manjaro 与 openSUSE/SLES；详细验收范围见
-[宿主机系统兼容矩阵](docs/platform-support.md)。
-
-1. 从 [最新 Release](https://github.com/kejilion/KPanel/releases/latest) 下载部署包、
-   与主机架构匹配的 `kejilion-agent` 和 `SHA256SUMS`。
-2. 使用 `SHA256SUMS` 校验下载文件，并从 Release 说明复制固定的镜像 digest。
-3. 解压部署包，先运行只读预检：
-
-   ```sh
-   ./deploy/preflight.sh \
-     --public-url https://panel.example.com \
-     --network-subnet 172.29.255.240/28
-   ```
-
-4. 按[完整部署文档](docs/deployment.md)先执行安装器的 `--dry-run`，确认检查结果后
-   再正式安装并配置 HTTPS 反向代理。
-
-> [!IMPORTANT]
-> KPanel 的 Agent 具备宿主机管理能力，因此不提供跳过校验的 `curl | bash`
-> 安装方式。生产部署应使用已校验的 Agent、固定镜像 digest 和 HTTPS。
-
-> [!NOTE]
-> 当前安装器仅支持全新安装；发现既有 KPanel 文件、同名容器或同名网络时会拒绝继续。
-> Alpine/OpenRC 暂不属于正式部署目标。
 
 ## 设计与安全
 
@@ -103,7 +113,8 @@ RHEL/Fedora、Arch/Manjaro 与 openSUSE/SLES；详细验收范围见
 
 ## 项目文档
 
-- 入门与部署：[构建、发布与部署](docs/deployment.md)、
+- 入门与部署：[官方一键部署教程](https://blog.kejilion.pro/kpanel-kejilion-web-server-panel/)、
+  [高级构建、发布与部署](docs/deployment.md)、
   [宿主机系统兼容矩阵](docs/platform-support.md)
 - 架构与安全：[架构与事实来源](docs/architecture.md)、
   [攻击面与操作边界](docs/security-model.md)、
