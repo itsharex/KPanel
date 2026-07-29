@@ -3475,6 +3475,7 @@ div.resource-name {
   padding: 22px;
   background: rgb(3 15 12 / 57%);
   backdrop-filter: blur(5px);
+  animation: modal-backdrop-in 160ms ease-out both;
 }
 
 .modal-panel {
@@ -3487,6 +3488,7 @@ div.resource-name {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
+  animation: modal-panel-in 180ms ease-out both;
 }
 
 .modal-panel--small {
@@ -3574,24 +3576,16 @@ div.resource-name {
   border-top: 1px solid var(--border);
 }
 
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 180ms ease;
+@keyframes modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
 }
 
-.modal-enter-active .modal-panel,
-.modal-leave-active .modal-panel {
-  transition: transform 180ms ease;
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-
-.modal-enter-from .modal-panel,
-.modal-leave-to .modal-panel {
-  transform: translateY(10px) scale(0.985);
+@keyframes modal-panel-in {
+  from {
+    transform: translateY(10px) scale(0.985);
+  }
 }
 
 .fade-enter-active,
