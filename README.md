@@ -10,6 +10,7 @@
   <a href="https://github.com/kejilion/KPanel/releases/latest"><img src="https://img.shields.io/github/v/release/kejilion/KPanel?display_name=tag" alt="Latest release"></a>
   <a href="https://github.com/kejilion/KPanel/actions/workflows/ci.yml"><img src="https://github.com/kejilion/KPanel/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/github/go-mod/go-version/kejilion/KPanel" alt="Go version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg" alt="AGPL-3.0-only"></a>
 </p>
 
 <p align="center">
@@ -17,6 +18,7 @@
   <a href="#快速开始">快速开始</a> ·
   <a href="docs/deployment.md">部署文档</a> ·
   <a href="docs/session-collaboration.md">协作说明</a> ·
+  <a href="#开源许可">开源许可</a> ·
   <a href="CHANGELOG.md">更新记录</a>
 </p>
 
@@ -113,3 +115,16 @@ RHEL/Fedora、Arch/Manjaro 与 openSUSE/SLES；详细验收范围见
   [Docker 管理与互通边界](docs/docker-management-v0.18.md)
 - 协作规范：[Codex 会话协作](docs/session-collaboration.md)
 - 版本信息：[版本变更记录](CHANGELOG.md)
+
+## 开源许可
+
+KPanel 源代码采用
+[GNU Affero General Public License v3.0 only](LICENSE)（SPDX：
+`AGPL-3.0-only`）。通过网络向用户提供修改版 KPanel 服务时，应按该协议向这些用户
+提供对应源码。
+
+Copyright © 2026 kejilion and KPanel contributors.
+
+随 KPanel 分发的 `kejilion.sh` 和其他第三方组件继续使用各自的原始许可，详见
+[第三方许可声明](THIRD_PARTY_NOTICES.md)。KPanel 名称和 Logo 的使用边界见
+[品牌说明](TRADEMARKS.md)。

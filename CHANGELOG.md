@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Licensing
+
+- KPanel 源代码正式采用 `AGPL-3.0-only`，并在设置页提供源码和许可协议入口。
+- Release 部署包与运行镜像携带 KPanel 许可、第三方许可及品牌说明；OCI 镜像增加
+  标准源码地址和许可证标签。
+- 保留随发行版分发的 `kejilion.sh` 及前后端运行时依赖的原始许可与版权声明。
+
 ## [0.24.4] - 2026-07-29
 
 ### Added

@@ -44,6 +44,8 @@ ARG REVISION=unknown
 LABEL org.opencontainers.image.title="KPanel" \
       org.opencontainers.image.description="Safe web management plane for kejilion.sh hosts" \
       org.opencontainers.image.url="https://hub.docker.com/r/kjlion/kejilion-panel" \
+      org.opencontainers.image.source="https://github.com/kejilion/KPanel" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \
       io.kejilion.script.revision="229355b1b6e1ce405cc97019b3755e36f2b814c1" \
@@ -55,6 +57,11 @@ ADD --checksum=sha256:12736ab5a0c331e4752d1bfd444c49500f2736cc5c19c8595be7ad9c2d
     /release/kejilion.sh
 COPY --from=web-build /src/web/dist /app/web
 COPY VERSION /release/VERSION
+COPY LICENSE /licenses/LICENSE
+COPY NOTICE /licenses/NOTICE
+COPY LICENSES/ /licenses/third-party/
+COPY THIRD_PARTY_NOTICES.md /licenses/THIRD_PARTY_NOTICES.md
+COPY TRADEMARKS.md /licenses/TRADEMARKS.md
 COPY deploy/compose/compose.yml /release/compose.yml
 COPY deploy/compose/direct-port.yml /release/direct-port.yml
 COPY deploy/compose/.env.example /release/panel.env.example

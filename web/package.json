@@ -2,6 +2,7 @@
   "name": "@kejilion/panel-web",
   "private": true,
   "version": "0.24.4",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"

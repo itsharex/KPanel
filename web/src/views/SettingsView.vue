@@ -4,11 +4,13 @@ import { useRouter } from 'vue-router'
 import {
   Check,
   Clock3,
+  ExternalLink,
   KeyRound,
   LoaderCircle,
   Monitor,
   Moon,
   RefreshCw,
+  Scale,
   Server,
   ShieldCheck,
   Sun,
@@ -267,6 +269,34 @@ onMounted(async () => {
         Web 容器不挂载 Docker Socket 或宿主机根目录；Agent 只通过本地 Unix Socket 接收类型化动作。
       </p>
     </section>
+
+    <section class="settings-section panel-card">
+      <header class="settings-section__header">
+        <span><Scale :size="19" /></span>
+        <div><h2>开源许可</h2><p>GNU AGPL v3.0 only</p></div>
+      </header>
+      <p class="settings-note">
+        KPanel 源代码采用 AGPL-3.0-only；第三方组件继续使用各自的原始许可。
+      </p>
+      <div class="license-actions">
+        <a
+          class="button button--ghost"
+          href="https://github.com/kejilion/KPanel"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          查看源码 <ExternalLink :size="15" />
+        </a>
+        <a
+          class="button button--ghost"
+          href="https://github.com/kejilion/KPanel/blob/main/LICENSE"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          查看许可协议 <ExternalLink :size="15" />
+        </a>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -281,12 +311,23 @@ onMounted(async () => {
   min-width: 132px;
 }
 
+.license-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
 @media (max-width: 640px) {
   .password-form {
     max-width: none;
   }
 
   .password-form > .button {
+    width: 100%;
+  }
+
+  .license-actions .button {
     width: 100%;
   }
 }

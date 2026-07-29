@@ -119,7 +119,8 @@ jobs:
             go build -trimpath -ldflags "$ldflags" \
             -o release/kejilion-agent-linux-arm64 ./cmd/kejilion-agent
           git archive --format=tar HEAD \
-            deploy docs README.md CHANGELOG.md VERSION |
+            deploy docs README.md CHANGELOG.md VERSION \
+            LICENSE NOTICE LICENSES THIRD_PARTY_NOTICES.md TRADEMARKS.md |
             gzip -n > "release/kejilion-panel-deploy-$VERSION.tar.gz"
           (
             cd release
@@ -160,12 +161,22 @@ jobs:
           test "$(docker image inspect --format '{{join .Config.Healthcheck.Test " "}}' kejilion-panel:release-check)" = "CMD /paneld healthcheck"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' kejilion-panel:release-check)" = "$VERSION"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' kejilion-panel:release-check)" = "$REVISION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' kejilion-panel:release-check)" = "https://github.com/kejilion/KPanel"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.licenses"}}' kejilion-panel:release-check)" = "AGPL-3.0-only"
           test "$(docker image inspect --format '{{index .Config.Labels "io.kejilion.script.revision"}}' kejilion-panel:release-check)" = "229355b1b6e1ce405cc97019b3755e36f2b814c1"
           test "$(docker image inspect --format '{{index .Config.Labels "io.kejilion.script.sha256"}}' kejilion-panel:release-check)" = "12736ab5a0c331e4752d1bfd444c49500f2736cc5c19c8595be7ad9c2d37aef0"
           release_container="$(docker create kejilion-panel:release-check)"
           docker cp "$release_container:/release/kejilion.sh" release/kejilion.sh
+          docker cp "$release_container:/licenses/LICENSE" release/IMAGE_LICENSE
+          docker cp "$release_container:/licenses/NOTICE" release/IMAGE_NOTICE
+          docker cp "$release_container:/licenses/THIRD_PARTY_NOTICES.md" release/IMAGE_THIRD_PARTY_NOTICES.md
+          docker cp "$release_container:/licenses/third-party/Apache-2.0.txt" release/IMAGE_APACHE_LICENSE
           docker rm "$release_container" >/dev/null
           test "$(sha256sum release/kejilion.sh | awk '{print $1}')" = "12736ab5a0c331e4752d1bfd444c49500f2736cc5c19c8595be7ad9c2d37aef0"
+          cmp LICENSE release/IMAGE_LICENSE
+          cmp NOTICE release/IMAGE_NOTICE
+          cmp THIRD_PARTY_NOTICES.md release/IMAGE_THIRD_PARTY_NOTICES.md
+          cmp LICENSES/Apache-2.0.txt release/IMAGE_APACHE_LICENSE
           container_id="$(
             docker run --detach --rm \
               --network none \
@@ -214,7 +225,9 @@ jobs:
               release/kejilion-agent-linux-amd64 \
               release/kejilion-agent-linux-arm64 \
               "release/kejilion-panel-deploy-$VERSION.tar.gz" \
-              release/SHA256SUMS
+              release/SHA256SUMS \
+              LICENSE \
+              THIRD_PARTY_NOTICES.md
           else
             gh release create "$GITHUB_REF_NAME" \
               --verify-tag \
@@ -224,7 +237,9 @@ jobs:
               release/kejilion-agent-linux-amd64 \
               release/kejilion-agent-linux-arm64 \
               "release/kejilion-panel-deploy-$VERSION.tar.gz" \
-              release/SHA256SUMS
+              release/SHA256SUMS \
+              LICENSE \
+              THIRD_PARTY_NOTICES.md
           fi
 
       - name: Log in to Docker Hub
