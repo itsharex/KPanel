@@ -63,8 +63,8 @@ const controllersLoading = ref(false)
 const pairingCode = ref<ClusterPairingCode>()
 const controllers = ref<ClusterController[]>([])
 const selected = ref<ClusterHost>()
-const addOriginInput = ref<HTMLInputElement>()
-const addForm = reactive({ name: '', origin: '', pairingCode: '' })
+const addAccessInput = ref<HTMLTextAreaElement>()
+const addForm = reactive({ name: '', accessCredential: '' })
 const editName = ref('')
 const originError = ref('')
 type HostViewMode = 'list' | 'card'
@@ -86,11 +86,26 @@ interface OriginSecurityAssessment {
   message: string
 }
 
+interface ClusterAccessCredential {
+  origin: string
+  pairingCode: string
+}
+
+const clusterAccessCredentialPrefix = 'KPANEL_CLUSTER_ACCESS_V1'
+
+const parsedAccessCredential = computed(() =>
+  parseClusterAccessCredential(addForm.accessCredential),
+)
 const originAssessment = computed<OriginSecurityAssessment>(() =>
-  assessOriginSecurity(addForm.origin),
+  assessOriginSecurity(parsedAccessCredential.value?.origin || ''),
 )
 const panelOrigin = computed(() =>
   typeof window === 'undefined' ? '' : window.location.origin,
+)
+const accessCredentialText = computed(() =>
+  pairingCode.value && panelOrigin.value
+    ? formatClusterAccessCredential(panelOrigin.value, pairingCode.value.code)
+    : '',
 )
 
 const orderedHosts = computed(() => {
@@ -267,23 +282,28 @@ async function load(silent = false): Promise<void> {
 
 function openAdd(): void {
   addOpen.value = true
-  void nextTick(() => addOriginInput.value?.focus())
+  void nextTick(() => addAccessInput.value?.focus())
 }
 
 function closeAdd(): void {
   if (adding.value) return
   addOpen.value = false
   addForm.name = ''
-  addForm.origin = ''
-  addForm.pairingCode = ''
+  addForm.accessCredential = ''
   originError.value = ''
 }
 
 async function addHost(): Promise<void> {
-  if (adding.value || !addForm.origin.trim() || !addForm.pairingCode.trim()) return
+  if (adding.value) return
+  const accessCredential = parsedAccessCredential.value
+  if (!accessCredential) {
+    originError.value = '接入凭据格式无效，请完整粘贴目标 KPanel 生成的三行内容。'
+    void nextTick(() => addAccessInput.value?.focus())
+    return
+  }
   if (originAssessment.value.mode === 'invalid') {
     originError.value = originAssessment.value.message
-    void nextTick(() => addOriginInput.value?.focus())
+    void nextTick(() => addAccessInput.value?.focus())
     return
   }
   originError.value = ''
@@ -291,8 +311,8 @@ async function addHost(): Promise<void> {
   try {
     const host = await api.cluster.add({
       name: addForm.name.trim() || undefined,
-      origin: addForm.origin.trim(),
-      pairingCode: addForm.pairingCode.trim(),
+      origin: accessCredential.origin,
+      pairingCode: accessCredential.pairingCode,
     })
     adding.value = false
     closeAdd()
@@ -310,7 +330,7 @@ async function addHost(): Promise<void> {
       ['cluster_origin_invalid', 'cluster_origin_blocked'].includes(reason.code)
     ) {
       originError.value = message
-      void nextTick(() => addOriginInput.value?.focus())
+      void nextTick(() => addAccessInput.value?.focus())
     }
     toast.danger('添加主机失败', message)
   } finally {
@@ -350,14 +370,37 @@ async function createPairingCode(): Promise<void> {
   }
 }
 
-async function copyPairingCode(): Promise<void> {
-  if (!pairingCode.value) return
-  await copyToClipboard(pairingCode.value.code, '授权码已复制', '请手动选择授权码复制。')
+function formatClusterAccessCredential(origin: string, code: string): string {
+  return [clusterAccessCredentialPrefix, origin.trim(), code.trim()].join('\n')
 }
 
-async function copyPanelOrigin(): Promise<void> {
-  if (!panelOrigin.value) return
-  await copyToClipboard(panelOrigin.value, '主机 URL 已复制', '请手动选择主机 URL 复制。')
+function parseClusterAccessCredential(raw: string): ClusterAccessCredential | undefined {
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (lines[0] === clusterAccessCredentialPrefix) lines.shift()
+  if (lines.length !== 2) return undefined
+  const [origin, pairingCode] = lines
+  if (
+    !origin ||
+    origin.length > 512 ||
+    !pairingCode ||
+    pairingCode.length > 1024 ||
+    /\s/.test(pairingCode)
+  ) {
+    return undefined
+  }
+  return { origin, pairingCode }
+}
+
+async function copyAccessCredential(): Promise<void> {
+  if (!accessCredentialText.value) return
+  await copyToClipboard(
+    accessCredentialText.value,
+    '接入凭据已复制',
+    '请手动选择完整接入凭据复制。',
+  )
 }
 
 async function copyToClipboard(value: string, success: string, fallback: string): Promise<void> {
@@ -962,7 +1005,7 @@ onBeforeUnmount(() => {
     <ModalDialog
       :open="addOpen"
       title="添加 KPanel 主机"
-      description="在目标 KPanel 的“集群 → 接入授权”生成一次性授权码。"
+      description="在目标 KPanel 的“集群 → 接入授权”复制接入凭据，然后在此整段粘贴。"
       size="small"
       @close="closeAdd"
     >
@@ -987,20 +1030,21 @@ onBeforeUnmount(() => {
           <small>留空时使用目标主机名。</small>
         </label>
         <label class="field">
-          主机 URL
-          <input
-            ref="addOriginInput"
-            v-model="addForm.origin"
-            name="cluster-host-origin"
-            type="url"
-            inputmode="url"
+          接入凭据
+          <textarea
+            ref="addAccessInput"
+            v-model="addForm.accessCredential"
+            name="cluster-access-credential"
+            rows="4"
             required
-            maxlength="512"
-            placeholder="https://panel.example.com 或 http://203.0.113.10:8080"
-            autocomplete="off"
+            maxlength="1600"
+            placeholder="在目标 KPanel 一键复制，然后完整粘贴到这里"
+            autocomplete="one-time-code"
+            autocapitalize="off"
             spellcheck="false"
             data-1p-ignore
             data-lpignore="true"
+            data-bwignore
             aria-describedby="cluster-origin-help"
             :aria-invalid="originError || originAssessment.mode === 'invalid' ? 'true' : undefined"
             @input="originError = ''"
@@ -1015,27 +1059,13 @@ onBeforeUnmount(() => {
             }"
             :role="originError || originAssessment.mode === 'invalid' ? 'alert' : undefined"
           >
-            {{ originError || originAssessment.message }}
+            {{
+              originError ||
+              (parsedAccessCredential
+                ? originAssessment.message
+                : '凭据同时包含主机 URL 与一次性授权码，不会保存到浏览器或审计日志。')
+            }}
           </small>
-        </label>
-        <label class="field">
-          一次性授权码
-          <input
-            v-model="addForm.pairingCode"
-            name="cluster-pairing-code"
-            type="text"
-            inputmode="text"
-            required
-            maxlength="1024"
-            autocomplete="one-time-code"
-            autocapitalize="off"
-            spellcheck="false"
-            data-1p-ignore
-            data-lpignore="true"
-            data-bwignore
-            placeholder="粘贴目标 KPanel 生成的授权码"
-          />
-          <small>仅用于本次配对，不会保存在浏览器或审计日志中。</small>
         </label>
       </form>
       <template #footer>
@@ -1046,8 +1076,7 @@ onBeforeUnmount(() => {
           form="cluster-add-form"
           :disabled="
             adding ||
-            !addForm.origin.trim() ||
-            !addForm.pairingCode.trim() ||
+            !parsedAccessCredential ||
             originAssessment.mode === 'invalid'
           "
         >
@@ -1066,33 +1095,12 @@ onBeforeUnmount(() => {
       @close="closeAccess"
     >
       <div class="cluster-access">
-        <section class="cluster-access__origin">
-          <div>
-            <Server :size="20" />
-            <span>
-              <strong>本机主机 URL</strong>
-              <small>在中心端添加主机时粘贴此地址；反向代理访问时显示当前域名，HTTP 访问会自动兼容复制。</small>
-            </span>
-          </div>
-          <div class="cluster-access__value">
-            <code>{{ panelOrigin }}</code>
-            <button
-              class="icon-button icon-button--small"
-              type="button"
-              aria-label="复制本机主机 URL"
-              @click="copyPanelOrigin"
-            >
-              <Copy :size="15" />
-            </button>
-          </div>
-        </section>
-
         <section class="cluster-access__code">
           <div>
             <KeyRound :size="20" />
             <span>
-              <strong>一次性授权码</strong>
-              <small>有效期 5 分钟、只能使用一次、权限固定为只读主机摘要。</small>
+              <strong>本机接入凭据</strong>
+              <small>同时包含当前主机 URL 与一次性授权码；5 分钟内只能使用一次，权限固定为只读主机摘要。</small>
             </span>
           </div>
           <button
@@ -1103,12 +1111,17 @@ onBeforeUnmount(() => {
             @click="createPairingCode"
           >
             <LoaderCircle v-if="generatingCode" class="spin" :size="16" />
-            <KeyRound v-else :size="16" /> 生成授权码
+            <KeyRound v-else :size="16" /> 生成接入凭据
           </button>
           <div v-else class="cluster-access__token">
-            <code>{{ pairingCode.code }}</code>
-            <button class="icon-button icon-button--small" type="button" aria-label="复制授权码" @click="copyPairingCode">
-              <Copy :size="15" />
+            <pre>{{ accessCredentialText }}</pre>
+            <button
+              class="button button--secondary button--small"
+              type="button"
+              aria-label="复制完整接入凭据"
+              @click="copyAccessCredential"
+            >
+              <Copy :size="14" /> 复制接入凭据
             </button>
             <small>到期时间：{{ formatDateTime(pairingCode.expiresAt) }}</small>
           </div>
@@ -1710,7 +1723,6 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
-.cluster-access__origin,
 .cluster-access__code,
 .cluster-access__controllers {
   padding: 16px;
@@ -1719,7 +1731,6 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-md);
 }
 
-.cluster-access__origin > div:first-child,
 .cluster-access__code > div:first-child,
 .cluster-access__controllers header {
   display: flex;
@@ -1728,13 +1739,11 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
-.cluster-access__origin > div:first-child,
 .cluster-access__code > div:first-child {
   justify-content: flex-start;
   margin-bottom: 14px;
 }
 
-.cluster-access__origin span,
 .cluster-access__code span,
 .cluster-access__controllers header div,
 .cluster-access__controllers article span {
@@ -1749,7 +1758,6 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
-.cluster-access__value,
 .cluster-access__token {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1757,19 +1765,22 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.cluster-access__value code,
-.cluster-access__token code {
+.cluster-access__token pre {
+  min-width: 0;
+  margin: 0;
   padding: 10px;
-  overflow: auto hidden;
+  overflow: auto;
   color: var(--brand);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   user-select: all;
 }
 
-.cluster-access__value small,
 .cluster-access__token small {
   grid-column: 1 / -1;
 }

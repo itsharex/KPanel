@@ -61,6 +61,8 @@ interface ClusterBindings {
   filteredHosts: ComputedRef<ClusterHost[]>
   originAssessment: ComputedRef<{ mode: string; message: string }>
   panelOrigin: ComputedRef<string>
+  parsedAccessCredential: ComputedRef<{ origin: string; pairingCode: string } | undefined>
+  accessCredentialText: ComputedRef<string>
   search: Ref<string>
   viewMode: Ref<'list' | 'card'>
   hostOrder: Ref<string[]>
@@ -69,15 +71,18 @@ interface ClusterBindings {
   selected: Ref<ClusterHost | undefined>
   pairingCode: Ref<ClusterPairingCode | undefined>
   editName: Ref<string>
-  addForm: { name: string; origin: string; pairingCode: string }
+  addForm: { name: string; accessCredential: string }
   load: (silent?: boolean) => Promise<void>
   addHost: () => Promise<void>
   openManage: (host: ClusterHost) => void
   saveName: () => Promise<void>
   removeHost: () => Promise<void>
   openPanel: (host: ClusterHost) => void
-  copyPanelOrigin: () => Promise<void>
-  copyPairingCode: () => Promise<void>
+  copyAccessCredential: () => Promise<void>
+  formatClusterAccessCredential: (origin: string, pairingCode: string) => string
+  parseClusterAccessCredential: (
+    raw: string,
+  ) => { origin: string; pairingCode: string } | undefined
   setViewMode: (mode: 'list' | 'card') => void
   moveHost: (hostID: string, offset: number) => void
   transportSecurityLabel: (host: ClusterHost) => string
@@ -270,14 +275,24 @@ describe('ClusterView inventory and navigation', () => {
     )
   })
 
-  it('copies the browser-visible local panel origin for controller onboarding', async () => {
+  it('combines the browser-visible URL and one-time code into one copyable credential', async () => {
     const view = setupView()
+    view.pairingCode.value = {
+      code: 'kp2.one-time-code',
+      scope: 'cluster.summary.read',
+      expiresAt: '2026-07-29T10:05:00Z',
+    }
 
     expect(view.panelOrigin.value).toBe('https://center.example.com')
-    await view.copyPanelOrigin()
+    expect(view.accessCredentialText.value).toBe(
+      'KPANEL_CLUSTER_ACCESS_V1\nhttps://center.example.com\nkp2.one-time-code',
+    )
+    await view.copyAccessCredential()
 
-    expect(mocks.clipboardWriteText).toHaveBeenCalledWith('https://center.example.com')
-    expect(mocks.toastSuccess).toHaveBeenCalledWith('主机 URL 已复制')
+    expect(mocks.clipboardWriteText).toHaveBeenCalledWith(
+      'KPANEL_CLUSTER_ACCESS_V1\nhttps://center.example.com\nkp2.one-time-code',
+    )
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('接入凭据已复制')
   })
 
   it('falls back to a temporary selection when the Clipboard API is blocked', async () => {
@@ -302,18 +317,16 @@ describe('ClusterView inventory and navigation', () => {
       execCommand: mocks.execCommand,
     })
 
-    await view.copyPanelOrigin()
     view.pairingCode.value = {
       code: 'kp2.one-time-code',
       scope: 'cluster.summary.read',
       expiresAt: '2026-07-29T10:05:00Z',
     }
-    await view.copyPairingCode()
+    await view.copyAccessCredential()
 
-    expect(mocks.execCommand).toHaveBeenCalledTimes(2)
-    expect(mocks.toastSuccess).toHaveBeenNthCalledWith(1, '主机 URL 已复制')
-    expect(mocks.toastSuccess).toHaveBeenNthCalledWith(2, '授权码已复制')
-    expect(input.remove).toHaveBeenCalledTimes(2)
+    expect(mocks.execCommand).toHaveBeenCalledTimes(1)
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('接入凭据已复制')
+    expect(input.remove).toHaveBeenCalledTimes(1)
     expect(mocks.toastDanger).not.toHaveBeenCalled()
   })
 
@@ -351,9 +364,40 @@ describe('ClusterView inventory and navigation', () => {
     ] as const
 
     for (const [origin, expected] of cases) {
-      view.addForm.origin = origin
+      view.addForm.accessCredential = view.formatClusterAccessCredential(
+        origin,
+        'kp2.one-time-code',
+      )
       expect(view.originAssessment.value.mode, origin).toBe(expected)
     }
+  })
+
+  it('parses one combined paste and rejects incomplete or malformed credentials', () => {
+    const view = setupView()
+    const bundled = view.formatClusterAccessCredential(
+      'https://panel.example.com',
+      'kp2.one-time-code',
+    )
+
+    view.addForm.accessCredential = bundled
+    expect(view.parsedAccessCredential.value).toEqual({
+      origin: 'https://panel.example.com',
+      pairingCode: 'kp2.one-time-code',
+    })
+    expect(
+      view.parseClusterAccessCredential(
+        'https://legacy.example.com\nkp2.legacy-one-time-code',
+      ),
+    ).toEqual({
+      origin: 'https://legacy.example.com',
+      pairingCode: 'kp2.legacy-one-time-code',
+    })
+    expect(view.parseClusterAccessCredential('https://panel.example.com')).toBeUndefined()
+    expect(
+      view.parseClusterAccessCredential(
+        'https://panel.example.com\nkp2.invalid code',
+      ),
+    ).toBeUndefined()
   })
 
   it('describes the negotiated transport and shortens long peer fingerprints', () => {
@@ -372,11 +416,18 @@ describe('ClusterView inventory and navigation', () => {
     pending.state = 'pairing'
     mocks.add.mockResolvedValueOnce(pending)
     mocks.hosts.mockResolvedValueOnce(inventory())
-    view.addForm.origin = pending.origin
-    view.addForm.pairingCode = `kp2.${'a'.repeat(180)}`
+    view.addForm.accessCredential = view.formatClusterAccessCredential(
+      pending.origin,
+      `kp2.${'a'.repeat(180)}`,
+    )
 
     await view.addHost()
 
+    expect(mocks.add).toHaveBeenCalledWith({
+      name: undefined,
+      origin: pending.origin,
+      pairingCode: `kp2.${'a'.repeat(180)}`,
+    })
     expect(mocks.toastSuccess).toHaveBeenCalledWith(
       '主机已加入集群',
       expect.stringContaining('安全配对正在后台继续'),
