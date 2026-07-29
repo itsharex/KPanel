@@ -158,6 +158,11 @@ attestation，不能误判为架构缺失。
 Panel/Agent 版本；普通 KPanel 版本发布不再同步硬编码版本。先把本仓库
 `packaging/kejilion-app/kpanel.conf` 与 `${{apps_repo}}/kpanel.conf` 归一化对比：
 
+```bash
+git diff --quiet "v${{previous_version}}..HEAD" -- \
+  packaging/kejilion-app/kpanel.conf
+```
+
 - 若安装/更新契约没有变化，记录“无需应用市场提交”，禁止制造空提交；
 - 若契约发生变化，只有正式 Release 和镜像验证成功后，才同步配置、运行 Bash 语法和
   生命周期检查，并在 `kejilion/apps` 仓库独立提交推送：
