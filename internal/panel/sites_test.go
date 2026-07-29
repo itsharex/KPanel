@@ -368,12 +368,13 @@ func TestSiteWriteCatalogValidationAndForwarding(t *testing.T) {
 		body string
 	}{
 		{name: "wordpress", body: `{"primaryDomain":"blog.example.com","type":"wordpress"}`},
+		{name: "recipe", body: `{"primaryDomain":"forum.example.com","type":"recipe","recipe":"discuz"}`},
 		{name: "static", body: `{"primaryDomain":"static.example.com","type":"static"}`},
-		{name: "php", body: `{"primaryDomain":"php.example.com","type":"php","phpVersion":"7.4"}`},
+		{name: "php", body: `{"primaryDomain":"php.example.com","type":"php"}`},
 		{name: "private proxy", body: `{"primaryDomain":"proxy.example.com","type":"proxy","upstream":"http://127.0.0.1:3000"}`},
-		{name: "domain proxy", body: `{"primaryDomain":"edge.example.com","type":"proxy_domain","upstream":"https://origin.example.net"}`},
-		{name: "load balance", body: `{"primaryDomain":"balanced.example.com","type":"load_balance","upstreams":["http://10.0.0.1:80","http://10.0.0.2:80"]}`},
-		{name: "redirect", body: `{"primaryDomain":"old.example.com","type":"redirect","redirectTarget":"https://new.example.com","redirectCode":308}`},
+		{name: "domain proxy", body: `{"primaryDomain":"edge.example.com","type":"proxy_domain"}`},
+		{name: "load balance", body: `{"primaryDomain":"balanced.example.com","type":"load_balance"}`},
+		{name: "redirect", body: `{"primaryDomain":"old.example.com","type":"redirect"}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -401,6 +402,24 @@ func TestSiteWriteCatalogValidationAndForwarding(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestScriptedSiteCreateRejectsDetailsThatBelongInTerminal(t *testing.T) {
+	for _, body := range []string{
+		`{"primaryDomain":"static.example.com","type":"static","aliases":["www.example.com"]}`,
+		`{"primaryDomain":"php.example.com","type":"php","phpVersion":"7.4"}`,
+		`{"primaryDomain":"edge.example.com","type":"proxy_domain","upstream":"https://origin.example.net"}`,
+		`{"primaryDomain":"balanced.example.com","type":"load_balance","upstreams":["http://10.0.0.1:80","http://10.0.0.2:80"]}`,
+		`{"primaryDomain":"old.example.com","type":"redirect","redirectTarget":"https://new.example.com","redirectCode":308}`,
+	} {
+		var input siteWriteInput
+		if err := json.Unmarshal([]byte(body), &input); err != nil {
+			t.Fatal(err)
+		}
+		if field, _ := validateSiteWriteInput(&input, true); field == "" {
+			t.Fatalf("scripted create details were accepted: %s", body)
+		}
 	}
 }
 

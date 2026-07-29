@@ -35,13 +35,17 @@ func (runner *fakeRecipeJobRunner) Run(
 }
 
 func TestNormalizeRecipeInputUsesFixedKejilionSelectors(t *testing.T) {
-	domain, selector, err := normalizeRecipeInput(SiteInput{
-		PrimaryDomain: "forum.example.com",
-		Type:          "recipe",
-		Recipe:        "discuz",
-	})
-	if err != nil || domain != "forum.example.com" || selector != "3" {
-		t.Fatalf("normalizeRecipeInput() = %q, %q, %v", domain, selector, err)
+	for recipe, expected := range map[string]string{
+		"discuz": "3", "bitwarden": "25", "halo": "26",
+	} {
+		domain, selector, err := normalizeRecipeInput(SiteInput{
+			PrimaryDomain: recipe + ".example.com",
+			Type:          "recipe",
+			Recipe:        recipe,
+		})
+		if err != nil || domain != recipe+".example.com" || selector != expected {
+			t.Fatalf("normalizeRecipeInput(%q) = %q, %q, %v", recipe, domain, selector, err)
+		}
 	}
 	for _, input := range []SiteInput{
 		{PrimaryDomain: "forum.example.com", Type: "recipe", Recipe: "unknown"},
@@ -147,6 +151,53 @@ func TestDirectWebsiteInvocationsUseKejilionCommands(t *testing.T) {
 	}
 }
 
+func TestScriptedTemplatesUseFixedInteractiveKejilionCommands(t *testing.T) {
+	tests := []struct {
+		siteType string
+		command  string
+		selector string
+		kind     contract.SiteKind
+	}{
+		{siteType: "static", command: "static-site", selector: "30", kind: contract.SiteStatic},
+		{siteType: "php", command: "php-site", selector: "20", kind: contract.SitePHP},
+		{siteType: "proxy_domain", command: "domain-proxy", selector: "24", kind: contract.SiteDomainProxy},
+		{siteType: "load_balance", command: "loadbalance-site", selector: "28", kind: contract.SiteLoadBalance},
+		{siteType: "redirect", command: "redirect-site", selector: "22", kind: contract.SiteRedirect},
+	}
+	for _, test := range tests {
+		t.Run(test.siteType, func(t *testing.T) {
+			domain := strings.ReplaceAll(test.siteType, "_", "-") + ".example.com"
+			domain, definition, err := normalizeTemplateInput(SiteInput{
+				PrimaryDomain: domain,
+				Type:          test.siteType,
+			})
+			if err != nil || definition.kind != test.kind {
+				t.Fatalf("normalizeTemplateInput() = %q, %#v, %v", domain, definition, err)
+			}
+			invocation := templateInvocation(domain, definition)
+			if !reflect.DeepEqual(invocation.arguments, []string{test.command, domain}) ||
+				!containsAll(strings.Join(invocation.environment, "\n"), []string{
+					"KJ_WEB_NONINTERACTIVE=1",
+					"KJ_WEB_INTERACTIVE=1",
+					"KJ_WEB_RECIPE=" + test.selector,
+					"KJ_WEB_DOMAIN=" + domain,
+				}) {
+				t.Fatalf("template invocation = %#v", invocation)
+			}
+		})
+	}
+	for _, input := range []SiteInput{
+		{PrimaryDomain: "static.example.com", Type: "static", Aliases: []string{"www.example.com"}},
+		{PrimaryDomain: "php.example.com", Type: "php", PHPVersion: "7.4"},
+		{PrimaryDomain: "proxy.example.com", Type: "proxy_domain", Upstream: "https://origin.example.com"},
+		{PrimaryDomain: "bad.example.com", Type: "unknown"},
+	} {
+		if _, _, err := normalizeTemplateInput(input); err == nil {
+			t.Fatalf("unsafe scripted template input was accepted: %#v", input)
+		}
+	}
+}
+
 func TestSiteWorkerSystemdArgumentsDetachFromAgent(t *testing.T) {
 	job := RecipeJob{ID: "0123456789abcdef0123456789abcdef"}
 	arguments := siteWorkerSystemdArguments(
@@ -203,6 +254,14 @@ func TestInvocationForRecipeJobRestoresValidatedCommands(t *testing.T) {
 		{
 			job:  RecipeJob{Domain: "forum.example.com", Recipe: "discuz"},
 			want: []string{"discuz", "forum.example.com"},
+		},
+		{
+			job:  RecipeJob{Domain: "static.example.com", Recipe: "static-site"},
+			want: []string{"static-site", "static.example.com"},
+		},
+		{
+			job:  RecipeJob{Domain: "redirect.example.com", Recipe: "redirect-site"},
+			want: []string{"redirect-site", "redirect.example.com"},
 		},
 	} {
 		invocation, err := invocationForRecipeJob(test.job)

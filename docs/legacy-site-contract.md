@@ -115,23 +115,22 @@ IP + 端口反代入口位于 `kejilion.sh:3499`。它使用
 | Web 选择 | `kejilion.sh` 对应业务 | Panel 产物与限制 |
 | --- | --- | --- |
 | WordPress | `ldnmp_wp` / `KJ_WEB_RECIPE=2` | 后台执行脚本固定非交互分支；源码、数据库、Redis、TLS 与 Nginx 产物均由脚本生成 |
-| 静态网站 | 自定义静态站点 | `<domain>.conf`、`html/<domain>/index.html` |
-| PHP 网站 | 自定义 PHP 网站 | `<domain>.conf`、`html/<domain>/index.php`；可选 `php` / `php74` Socket |
+| 静态网站 | `k static-site <domain>` / `KJ_WEB_RECIPE=30` | 面板先收域名；脚本终端继续接收 ZIP 下载地址和 `index.html` 入口路径 |
+| PHP 网站 | `k php-site <domain>` / `KJ_WEB_RECIPE=20` | 面板先收域名；脚本终端继续接收源码、入口、PHP 版本、扩展与数据库配置 |
 | IP / 端口反代 | `ldnmp_Proxy` / `KJ_WEB_RECIPE=23` | 后台执行脚本固定非交互分支，并对账脚本生成的官方反代配置 |
-| 域名反代 | 反向代理-域名 | 固定上游 Host 与 HTTPS SNI；不复用脚本模板中的业务特定内容替换 |
-| 负载均衡 | `ldnmp_Proxy_backend` | 2–8 个 HTTP origin、稳定 upstream 名称、按来源 IP 一致性哈希 |
-| 域名重定向 | 站点重定向 | 固定 301 / 302 / 307 / 308，保留原请求 URI |
+| 域名反代 | `k domain-proxy <domain>` / `KJ_WEB_RECIPE=24` | 脚本终端继续接收目标域名并生成官方 SNI 反代模板 |
+| 负载均衡 | `k loadbalance-site <domain>` / `KJ_WEB_RECIPE=28` | 脚本终端继续接收后端节点并生成官方 upstream 配置 |
+| 域名重定向 | `k redirect-site <domain>` / `KJ_WEB_RECIPE=22` | 脚本终端继续接收跳转目标并生成官方重定向模板 |
 
 所有类型仍写入脚本可发现的 `/home/web/conf.d/<domain>.conf`；静态和 PHP
 目录映射保持 `/home/web/html/<domain>` → `/var/www/html/<domain>`。
-WordPress 与 IP+端口反代任务统一持久化到
+所有新建任务统一持久化到
 `/var/lib/kejilion-panel/site-recipe-jobs`。Agent 通过独立 systemd 后台单元执行
 脚本原生命令，允许脚本按自身流程安装缺失的 Docker、Certbot 或 LDNMP 环境；
-KPanel 不再维护第二套 WordPress 安装器或反向代理模板。静态站、PHP、域名反代、
-负载均衡、重定向与 Nginx Stream 仍待迁移到脚本同源入口或共享生成器。
+KPanel 不再为新建站点维护第二套 WordPress、静态站、PHP、反向代理、负载均衡或
+重定向模板。Nginx Stream 不属于域名站点创建，继续由脚本专用入口管理。
 
-这些尚未适配的脚本产物会继续被保守发现和显示；在拥有固定版本、凭据生命周期、
-备份与回滚契约前，不伪装成普通站点创建能力。
+历史结构化编辑仍保留旧模板兼容，但处于冻结状态；新建链路不再调用该生成器。
 
 ## 固定模板摘要
 

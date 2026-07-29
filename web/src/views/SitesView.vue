@@ -120,7 +120,7 @@ const serviceOptions = [
     type: 'static',
     title: '静态网站',
     summary: 'HTML、图片与前端构建产物',
-    detail: '创建独立站点目录与默认首页',
+    detail: '脚本交互上传 ZIP 并选择入口',
     icon: FileCode2,
     featured: false,
     badges: [],
@@ -129,7 +129,7 @@ const serviceOptions = [
     type: 'php',
     title: 'PHP 网站',
     summary: '动态网站与自建 PHP 程序',
-    detail: '使用 kejilion.sh 同款 PHP-FPM Socket',
+    detail: '脚本交互配置源码、PHP 与数据库',
     icon: Braces,
     featured: false,
     badges: [],
@@ -138,7 +138,7 @@ const serviceOptions = [
     type: 'proxy_domain',
     title: '域名反代',
     summary: '代理另一域名提供的 HTTPS 服务',
-    detail: '自动配置上游 SNI',
+    detail: '脚本交互填写上游域名',
     icon: Globe2,
     featured: false,
     badges: [],
@@ -147,7 +147,7 @@ const serviceOptions = [
     type: 'load_balance',
     title: '负载均衡',
     summary: '将请求分配到多个后端节点',
-    detail: '支持 2–8 个 HTTP 上游',
+    detail: '脚本交互填写后端节点',
     icon: Waypoints,
     featured: false,
     badges: [],
@@ -156,7 +156,7 @@ const serviceOptions = [
     type: 'redirect',
     title: '域名重定向',
     summary: '将访问跳转到另一个域名',
-    detail: '支持 301、302、307、308',
+    detail: '脚本交互填写跳转目标',
     icon: ArrowRight,
     featured: false,
     badges: [],
@@ -171,6 +171,18 @@ const serviceOptions = [
   badges: readonly string[]
 }>
 
+const scriptedTemplateTypes = new Set<SiteServiceType>([
+  'static',
+  'php',
+  'proxy_domain',
+  'load_balance',
+  'redirect',
+])
+
+function isScriptedTemplateType(type: SiteServiceType): boolean {
+  return scriptedTemplateTypes.has(type)
+}
+
 const recipeOptions = [
   { recipe: 'discuz', title: 'Discuz 论坛', summary: '成熟中文社区论坛', detail: 'k discuz <域名>', icon: Globe2 },
   { recipe: 'kodbox', title: '可道云 Kodbox', summary: '私有云盘与在线桌面', detail: 'k kodbox <域名>', icon: FileCode2 },
@@ -180,6 +192,8 @@ const recipeOptions = [
   { recipe: 'typecho', title: 'Typecho', summary: '轻量博客系统', detail: 'k typecho <域名>', icon: Braces },
   { recipe: 'linkstack', title: 'LinkStack', summary: '共享链接主页', detail: 'k linkstack <域名>', icon: Waypoints },
   { recipe: 'ai-prompt', title: 'AI 提示词生成器', summary: '脚本原生静态成品站', detail: 'k ai-prompt <域名>', icon: FileCode2 },
+  { recipe: 'bitwarden', title: 'Bitwarden', summary: '自托管密码管理平台', detail: 'k bitwarden-site <域名>', icon: ShieldCheck },
+  { recipe: 'halo', title: 'Halo 博客', summary: '现代化开源博客系统', detail: 'k halo-site <域名>', icon: Globe2 },
 ] as const satisfies ReadonlyArray<{
   recipe: NonNullable<SiteInput['recipe']>
   title: string
@@ -210,12 +224,20 @@ const proxyCapability = computed(() =>
 const recipeCapability = computed(() =>
   capabilities.value.find((capability) => capability.id === 'sites.recipes.install'),
 )
+const templateCapability = computed(() =>
+  capabilities.value.find((capability) => capability.id === 'sites.templates.install'),
+)
 const canCreate = computed(() => siteWriteCapability.value?.enabled === true)
 const canInstallWordPress = computed(() => wordPressCapability.value?.enabled === true)
 const canInstallProxy = computed(() => proxyCapability.value?.enabled === true)
 const canInstallRecipes = computed(() => recipeCapability.value?.enabled === true)
+const canInstallTemplates = computed(() => templateCapability.value?.enabled === true)
 const canCreateAny = computed(
-  () => canCreate.value || canInstallWordPress.value || canInstallProxy.value || canInstallRecipes.value,
+  () =>
+    canInstallWordPress.value ||
+    canInstallProxy.value ||
+    canInstallRecipes.value ||
+    canInstallTemplates.value,
 )
 const wordPressReason = computed(
   () => wordPressCapability.value?.reason?.trim() || 'WordPress 一键搭建依赖尚未就绪。',
@@ -254,6 +276,9 @@ const counts = computed(() => ({
 
 const selectedService = computed(() => serviceOptions.find((option) => option.type === form.type))
 const selectedRecipe = computed(() => recipeOptions.find((option) => option.recipe === form.recipe))
+const scriptedTemplateCreate = computed(
+  () => !editingSite.value && isScriptedTemplateType(form.type),
+)
 const featuredServiceOptions = computed(() => serviceOptions.filter((option) => option.featured))
 const standardServiceOptions = computed(() => serviceOptions.filter((option) => !option.featured))
 const canSubmit = computed(
@@ -262,12 +287,18 @@ const canSubmit = computed(
     (form.type !== 'wordpress' || canInstallWordPress.value) &&
     (form.type !== 'proxy' || canInstallProxy.value) &&
     (form.type !== 'recipe' || canInstallRecipes.value) &&
-    (form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe' || canCreate.value),
+    (!scriptedTemplateCreate.value || canInstallTemplates.value) &&
+    (form.type === 'wordpress' ||
+      form.type === 'proxy' ||
+      form.type === 'recipe' ||
+      scriptedTemplateCreate.value ||
+      canCreate.value),
 )
 
 const formValid = computed(() => {
   const domain = form.primaryDomain.trim()
   if (!isDomain(domain)) return false
+  if (scriptedTemplateCreate.value) return true
   if (form.type === 'proxy' || form.type === 'proxy_domain') return isOrigin(form.upstream)
   if (form.type === 'load_balance') {
     const upstreams = splitUpstreams(form.upstreams)
@@ -392,7 +423,7 @@ function openCreate(): void {
     ? 'wordpress'
     : canInstallProxy.value
       ? 'proxy'
-      : canCreate.value
+      : canInstallTemplates.value
         ? 'static'
         : 'recipe'
   form.recipe = 'discuz'
@@ -509,6 +540,10 @@ async function submitSite(): Promise<void> {
     formError.value = recipeCapability.value?.reason || '当前 Agent 尚未启用 kejilion.sh 一键建站协议。'
     return
   }
+  if (scriptedTemplateCreate.value && !canInstallTemplates.value) {
+    formError.value = templateCapability.value?.reason || '当前 Agent 尚未启用 kejilion.sh 交互建站模板。'
+    return
+  }
 
   submitting.value = true
   installProgress.value = {
@@ -519,17 +554,17 @@ async function submitSite(): Promise<void> {
   }
   const input: SiteInput = {
     primaryDomain: form.primaryDomain.trim().toLowerCase(),
-    aliases: form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe' ? [] : form.aliases
+    aliases: form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe' || scriptedTemplateCreate.value ? [] : form.aliases
       .split(/[\n,]/)
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
     type: form.type,
     recipe: form.type === 'recipe' ? form.recipe : undefined,
-    upstream: form.type === 'proxy' || form.type === 'proxy_domain' ? form.upstream.trim() : undefined,
-    upstreams: form.type === 'load_balance' ? splitUpstreams(form.upstreams) : undefined,
-    redirectTarget: form.type === 'redirect' ? form.redirectTarget.trim() : undefined,
-    redirectCode: form.type === 'redirect' ? form.redirectCode : undefined,
-    phpVersion: form.type === 'php' ? form.phpVersion : undefined,
+    upstream: !scriptedTemplateCreate.value && (form.type === 'proxy' || form.type === 'proxy_domain') ? form.upstream.trim() : undefined,
+    upstreams: !scriptedTemplateCreate.value && form.type === 'load_balance' ? splitUpstreams(form.upstreams) : undefined,
+    redirectTarget: !scriptedTemplateCreate.value && form.type === 'redirect' ? form.redirectTarget.trim() : undefined,
+    redirectCode: !scriptedTemplateCreate.value && form.type === 'redirect' ? form.redirectCode : undefined,
+    phpVersion: !scriptedTemplateCreate.value && form.type === 'php' ? form.phpVersion : undefined,
     enabled: true,
     expectedResourceVersion: editingSite.value?.resourceVersion,
   }
@@ -545,10 +580,10 @@ async function submitSite(): Promise<void> {
     toast.success(
       wasEditing
         ? '网站已更新'
-        : form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe'
+        : form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe' || scriptedTemplateCreate.value
           ? '一键建站已完成'
           : '网站已创建',
-      form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe'
+      form.type === 'wordpress' || form.type === 'proxy' || form.type === 'recipe' || scriptedTemplateCreate.value
         ? `${savedSite.primaryDomain} 的原生建站产物已与 kejilion.sh 完成对账。`
         : `${savedSite.primaryDomain} 已通过 nginx -t 校验并完成同步应用。`,
     )
@@ -1163,7 +1198,8 @@ onBeforeUnmount(() => {
               class="site-service-card"
               :class="{ 'is-active': form.type === option.type }"
               type="button"
-              :disabled="Boolean(editingSite)"
+              :disabled="Boolean(editingSite) || (!editingSite && !canInstallTemplates)"
+              :title="!editingSite && !canInstallTemplates ? templateCapability?.reason : ''"
               :aria-pressed="form.type === option.type"
               @click="form.type = option.type"
             >
@@ -1208,8 +1244,15 @@ onBeforeUnmount(() => {
             Nginx 模板和目录结构。面板不会记录脚本输出中的数据库密码，也不会覆盖同域名现有产物。
           </span>
         </div>
+        <div v-if="scriptedTemplateCreate" class="inline-alert inline-alert--info">
+          <ShieldCheck :size="17" />
+          <span>
+            面板只收集并校验首个域名；提交后由 <code>kejilion.sh</code> 原生交互流程继续询问源码、
+            入口路径、上游或跳转目标。任务在后台运行，关闭窗口不会中断，可随时重新打开终端。
+          </span>
+        </div>
 
-        <fieldset v-if="form.type === 'php'" class="field site-inline-options">
+        <fieldset v-if="form.type === 'php' && !scriptedTemplateCreate" class="field site-inline-options">
           <legend>PHP 运行环境</legend>
           <div class="choice-pills">
             <button
@@ -1232,7 +1275,7 @@ onBeforeUnmount(() => {
           <small>分别对应脚本架构中的 php 与 php74 PHP-FPM 服务。</small>
         </fieldset>
 
-        <label v-if="form.type === 'proxy' || form.type === 'proxy_domain'" class="field">
+        <label v-if="(form.type === 'proxy' || form.type === 'proxy_domain') && !scriptedTemplateCreate" class="field">
           <span>上游地址</span>
           <input
             v-model.trim="form.upstream"
@@ -1244,7 +1287,7 @@ onBeforeUnmount(() => {
           <small v-else>填写完整域名源站，HTTPS 会自动启用上游 SNI；不接受路径、账号或查询参数。</small>
         </label>
 
-        <label v-if="form.type === 'load_balance'" class="field">
+        <label v-if="form.type === 'load_balance' && !scriptedTemplateCreate" class="field">
           <span>后端节点</span>
           <textarea
             v-model="form.upstreams"
@@ -1255,7 +1298,7 @@ onBeforeUnmount(() => {
           <small>每行一个 HTTP 源站，2–8 个；与 kejilion.sh 的 HTTP upstream 架构一致。</small>
         </label>
 
-        <template v-if="form.type === 'redirect'">
+        <template v-if="form.type === 'redirect' && !scriptedTemplateCreate">
           <label class="field">
             <span>跳转目标</span>
             <input v-model.trim="form.redirectTarget" type="url" placeholder="https://www.example.com" required />
@@ -1278,7 +1321,7 @@ onBeforeUnmount(() => {
           </fieldset>
         </template>
 
-        <label v-if="form.type !== 'wordpress' && form.type !== 'proxy' && form.type !== 'recipe'" class="field">
+        <label v-if="form.type !== 'wordpress' && form.type !== 'proxy' && form.type !== 'recipe' && !scriptedTemplateCreate" class="field">
           <span>附加域名（可选）</span>
           <textarea v-model="form.aliases" rows="3" placeholder="www.example.com&#10;api.example.com" />
           <small>每行一个域名，最多 20 个；主域名不要重复填写。</small>
@@ -1299,7 +1342,7 @@ onBeforeUnmount(() => {
             submitting
               ? form.type === 'wordpress'
                 ? '正在搭建 WordPress…'
-                : form.type === 'proxy' || form.type === 'recipe'
+                : form.type === 'proxy' || form.type === 'recipe' || scriptedTemplateCreate
                   ? 'kejilion.sh 正在后台搭建…'
                 : '正在提交…'
               : editingSite
@@ -1310,7 +1353,9 @@ onBeforeUnmount(() => {
                     ? '一键创建反向代理'
                   : form.type === 'recipe'
                     ? `一键搭建 ${selectedRecipe?.title || '成品站'}`
-                  : '创建网站'
+                  : scriptedTemplateCreate
+                    ? `使用脚本搭建 ${selectedService?.title || '网站'}`
+                    : '创建网站'
           }}
         </button>
       </template>

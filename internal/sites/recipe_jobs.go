@@ -48,6 +48,8 @@ var (
 		"typecho":   "8",
 		"linkstack": "9",
 		"ai-prompt": "27",
+		"bitwarden": "25",
+		"halo":      "26",
 	}
 	recipeCommands = map[string]string{
 		"discuz":    "discuz",
@@ -58,8 +60,34 @@ var (
 		"typecho":   "typecho",
 		"linkstack": "linkstack",
 		"ai-prompt": "ai-prompt",
+		"bitwarden": "bitwarden-site",
+		"halo":      "halo-site",
+	}
+	scriptTemplateDefinitions = map[string]scriptTemplateDefinition{
+		"static": {
+			recipe: "static-site", selector: "30", command: "static-site", kind: contract.SiteStatic,
+		},
+		"php": {
+			recipe: "php-site", selector: "20", command: "php-site", kind: contract.SitePHP,
+		},
+		"proxy_domain": {
+			recipe: "domain-proxy", selector: "24", command: "domain-proxy", kind: contract.SiteDomainProxy,
+		},
+		"load_balance": {
+			recipe: "loadbalance-site", selector: "28", command: "loadbalance-site", kind: contract.SiteLoadBalance,
+		},
+		"redirect": {
+			recipe: "redirect-site", selector: "22", command: "redirect-site", kind: contract.SiteRedirect,
+		},
 	}
 )
+
+type scriptTemplateDefinition struct {
+	recipe   string
+	selector string
+	command  string
+	kind     contract.SiteKind
+}
 
 type RecipeJob struct {
 	ID          string                `json:"id"`
@@ -211,6 +239,21 @@ func (m *Manager) ProxyWritable() error {
 	)
 }
 
+func (m *Manager) TemplateWritable() error {
+	return m.directSiteWritable(
+		"KJ_WEB_NONINTERACTIVE",
+		"KJ_WEB_INTERACTIVE",
+		"KJ_WEB_RECIPE",
+		"KJ_WEB_DOMAIN",
+		"kpanel_run_web_recipe_cli()",
+		"php-site)",
+		"redirect-site)",
+		"domain-proxy)",
+		"loadbalance-site)",
+		"static-site)",
+	)
+}
+
 func (m *Manager) directSiteWritable(required ...string) error {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("%w: kejilion.sh website commands require Linux", ErrUnavailable)
@@ -302,6 +345,21 @@ func (m *Manager) StartProxy(input SiteInput) (RecipeJob, error) {
 	)
 }
 
+func (m *Manager) StartTemplate(input SiteInput) (RecipeJob, error) {
+	domain, definition, err := normalizeTemplateInput(input)
+	if err != nil {
+		return RecipeJob{}, err
+	}
+	if err := m.TemplateWritable(); err != nil {
+		return RecipeJob{}, err
+	}
+	return m.startDirectSiteJob(
+		managedSpec{Primary: domain, Kind: definition.kind},
+		definition.recipe,
+		templateInvocation(domain, definition),
+	)
+}
+
 func wordPressInvocation(domain string) scriptSiteInvocation {
 	return scriptSiteInvocation{
 		arguments:   []string{"wp", domain},
@@ -340,6 +398,27 @@ func proxyInvocation(domain, host, port string) scriptSiteInvocation {
 			`ldnmp_Proxy "$@"`,
 		},
 		timeout: 45 * time.Minute,
+	}
+}
+
+func templateInvocation(domain string, definition scriptTemplateDefinition) scriptSiteInvocation {
+	return scriptSiteInvocation{
+		arguments: []string{definition.command, domain},
+		environment: []string{
+			"KJ_WEB_NONINTERACTIVE=1",
+			"KJ_WEB_INTERACTIVE=1",
+			"KJ_WEB_RECIPE=" + definition.selector,
+			"KJ_WEB_DOMAIN=" + domain,
+		},
+		required: []string{
+			"KJ_WEB_NONINTERACTIVE",
+			"KJ_WEB_INTERACTIVE",
+			"KJ_WEB_RECIPE",
+			"KJ_WEB_DOMAIN",
+			"kpanel_run_web_recipe_cli()",
+			definition.command + ")",
+		},
+		timeout: 60 * time.Minute,
 	}
 }
 
@@ -404,6 +483,39 @@ func normalizeRecipeInput(input SiteInput) (string, string, error) {
 		return "", "", fmt.Errorf("%w: recipe does not accept generic site settings", ErrUnprocessable)
 	}
 	return domain, selector, nil
+}
+
+func normalizeTemplateInput(input SiteInput) (string, scriptTemplateDefinition, error) {
+	definition, ok := scriptTemplateDefinitions[input.Type]
+	if !ok {
+		return "", scriptTemplateDefinition{}, fmt.Errorf("%w: unsupported scripted website template", ErrUnprocessable)
+	}
+	domain, err := normalizeFQDN(input.PrimaryDomain)
+	if err != nil {
+		return "", scriptTemplateDefinition{}, err
+	}
+	if input.Enabled != nil && !*input.Enabled {
+		return "", scriptTemplateDefinition{}, fmt.Errorf("%w: disabling sites is not supported", ErrUnprocessable)
+	}
+	if len(input.Aliases) > 0 || input.Recipe != "" || input.Upstream != "" ||
+		len(input.Upstreams) > 0 || input.RedirectTarget != "" ||
+		input.RedirectCode != 0 || input.PHPVersion != "" ||
+		input.ExpectedResourceVersion != "" {
+		return "", scriptTemplateDefinition{}, fmt.Errorf(
+			"%w: scripted website details must be entered in the interactive terminal",
+			ErrInvalidInput,
+		)
+	}
+	return domain, definition, nil
+}
+
+func scriptTemplateByRecipe(recipe string) (scriptTemplateDefinition, bool) {
+	for _, definition := range scriptTemplateDefinitions {
+		if definition.recipe == recipe {
+			return definition, true
+		}
+	}
+	return scriptTemplateDefinition{}, false
 }
 
 func normalizeWordPressInput(input SiteInput) (managedSpec, error) {
@@ -765,6 +877,13 @@ func invocationForRecipeJob(job RecipeJob) (scriptSiteInvocation, error) {
 		}
 		return proxyInvocation(job.Domain, host, port), nil
 	default:
+		if definition, ok := scriptTemplateByRecipe(job.Recipe); ok {
+			domain, err := normalizeFQDN(job.Domain)
+			if err != nil {
+				return scriptSiteInvocation{}, err
+			}
+			return templateInvocation(domain, definition), nil
+		}
 		domain, selector, err := normalizeRecipeInput(SiteInput{
 			PrimaryDomain: job.Domain,
 			Type:          "recipe",
@@ -979,6 +1098,16 @@ func scriptSiteLabel(recipe string) string {
 		return " WordPress 建站"
 	case "reverse-proxy":
 		return " IP+端口反向代理"
+	case "static-site":
+		return "静态站点"
+	case "php-site":
+		return "PHP 动态站点"
+	case "domain-proxy":
+		return "域名反向代理"
+	case "loadbalance-site":
+		return "负载均衡站点"
+	case "redirect-site":
+		return "站点重定向"
 	default:
 		return "一键建站"
 	}

@@ -345,6 +345,58 @@ describe('API client', () => {
     })
   })
 
+  it('treats scripted static templates as background installation jobs', async () => {
+    const jobID = 'a'.repeat(32)
+    const siteID = 'b'.repeat(32)
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse(
+        {
+          id: jobID,
+          domain: 'static.example.com',
+          recipe: 'static-site',
+          status: 'succeeded',
+          stage: 'completed',
+          progress: 100,
+          message: 'completed',
+          site: {
+            id: siteID,
+            primaryDomain: 'static.example.com',
+            domains: ['static.example.com'],
+            kind: 'static',
+            enabled: true,
+            health: 'healthy',
+            documentRoot: '/home/web/html/static.example.com',
+            origin: 'web',
+            consistency: 'in_sync',
+            resourceVersion: `sha256:${'c'.repeat(64)}`,
+            allowedActions: [],
+            artifacts: [],
+            warnings: [],
+          },
+          createdAt: '2026-07-29T04:00:00Z',
+          startedAt: '2026-07-29T04:00:01Z',
+          finishedAt: '2026-07-29T04:00:10Z',
+        },
+        { status: 202 },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      api.sites.create({
+        primaryDomain: 'static.example.com',
+        aliases: [],
+        type: 'static',
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({
+      id: siteID,
+      primaryDomain: 'static.example.com',
+      type: 'static',
+      rootPath: '/home/web/html/static.example.com',
+    })
+  })
+
   it('surfaces safe site installation events and the script failure reason', async () => {
     const jobID = 'c'.repeat(32)
     const events = [

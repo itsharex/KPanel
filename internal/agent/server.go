@@ -272,12 +272,13 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		wordPressWriteErr  error
 		proxyWriteErr      error
 		recipeWriteErr     error
+		templateWriteErr   error
 		diagnosticErr      = errors.New("体检服务未配置")
 		environmentReadErr = errors.New("LDNMP 环境读取服务未配置")
 		environmentErr     = errors.New("LDNMP 环境服务未配置")
 	)
 	var checks sync.WaitGroup
-	checks.Add(8)
+	checks.Add(9)
 	go func() {
 		defer checks.Done()
 		pingContext, pingCancel := context.WithTimeout(ctx, 800*time.Millisecond)
@@ -303,6 +304,10 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer checks.Done()
 		recipeWriteErr = s.sitesManager.RecipeWritable()
+	}()
+	go func() {
+		defer checks.Done()
+		templateWriteErr = s.sitesManager.TemplateWritable()
 	}()
 	go func() {
 		defer checks.Done()
@@ -333,6 +338,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		{ID: "sites.wordpress.install", Enabled: wordPressWriteErr == nil, Reason: reasonIf(wordPressWriteErr, "WordPress 一键搭建条件不满足"), Methods: []string{"POST"}},
 		{ID: "sites.proxy.install", Enabled: proxyWriteErr == nil, Reason: reasonIf(proxyWriteErr, "kejilion.sh IP+端口反向代理命令不可用"), Methods: []string{"POST"}},
 		{ID: "sites.recipes.install", Enabled: recipeWriteErr == nil, Reason: reasonIf(recipeWriteErr, "kejilion.sh 一键建站协议不可用"), Methods: []string{"POST"}},
+		{ID: "sites.templates.install", Enabled: templateWriteErr == nil, Reason: reasonIf(templateWriteErr, "kejilion.sh 交互建站模板不可用"), Methods: []string{"POST"}},
 		{ID: "diagnostics.run", Enabled: diagnosticErr == nil, Reason: reasonIf(diagnosticErr, "请更新本机 kejilion.sh 以启用体检协议"), Methods: []string{"GET", "POST"}},
 		{ID: "web.environment.read", Enabled: environmentReadErr == nil, Reason: reasonIf(environmentReadErr, "请更新本机 kejilion.sh 以启用 LDNMP 环境协议"), Methods: []string{"GET"}},
 		{ID: "web.environment.install", Enabled: environmentErr == nil, Reason: reasonIf(environmentErr, "LDNMP 安装协议不可用"), Methods: []string{"POST"}},
@@ -452,6 +458,16 @@ func (s *Server) siteCollection(w http.ResponseWriter, r *http.Request, requestI
 		}
 		if input.Type == "proxy" {
 			job, err := s.sitesManager.StartProxy(input)
+			if err != nil {
+				s.writeSiteError(w, requestID, err)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, job)
+			return
+		}
+		if input.Type == "static" || input.Type == "php" || input.Type == "proxy_domain" ||
+			input.Type == "load_balance" || input.Type == "redirect" {
+			job, err := s.sitesManager.StartTemplate(input)
 			if err != nil {
 				s.writeSiteError(w, requestID, err)
 				return

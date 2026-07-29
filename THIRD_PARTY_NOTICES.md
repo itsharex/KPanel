@@ -8,7 +8,7 @@ KPanel.
 
 | Component | Version or revision | License | License text |
 | --- | --- | --- | --- |
-| `kejilion.sh` | `229355b1b6e1ce405cc97019b3755e36f2b814c1` | Apache-2.0 | [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt) |
+| `kejilion.sh` | `f031d1206224de3743845d2fc81c4801ecda32f4` | Apache-2.0 | [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt) |
 | `golang.org/x/crypto` | `v0.54.0` | BSD-3-Clause | [`LICENSES/golang-x-crypto-BSD-3-Clause.txt`](LICENSES/golang-x-crypto-BSD-3-Clause.txt) |
 | `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause | [`LICENSES/golang-x-sys-BSD-3-Clause.txt`](LICENSES/golang-x-sys-BSD-3-Clause.txt) |
 | `@lucide/vue` | `1.26.0` | ISC and bundled icon notices | [`LICENSES/lucide-ISC.txt`](LICENSES/lucide-ISC.txt) |

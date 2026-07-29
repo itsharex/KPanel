@@ -520,8 +520,18 @@ async function createSite(
     message: '正在提交建站配置并检查现有产物。',
   })
   const result = await request<RawSite | RawSiteInstallJob>('/sites', { method: 'POST', body })
+  const backgroundTypes: SiteInput['type'][] = [
+    'wordpress',
+    'recipe',
+    'proxy',
+    'static',
+    'php',
+    'proxy_domain',
+    'load_balance',
+    'redirect',
+  ]
   if (
-    (body.type !== 'wordpress' && body.type !== 'proxy' && body.type !== 'recipe') ||
+    !backgroundTypes.includes(body.type) ||
     !('status' in result) ||
     !('id' in result)
   ) {

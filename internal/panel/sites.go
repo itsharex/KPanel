@@ -96,6 +96,7 @@ type siteWriteInput struct {
 	PrimaryDomain           optionalString  `json:"primaryDomain"`
 	Aliases                 optionalStrings `json:"aliases"`
 	Type                    optionalString  `json:"type"`
+	Recipe                  optionalString  `json:"recipe"`
 	Upstream                optionalString  `json:"upstream"`
 	Upstreams               optionalStrings `json:"upstreams"`
 	RedirectTarget          optionalString  `json:"redirectTarget"`
@@ -109,6 +110,7 @@ type siteAgentPayload struct {
 	PrimaryDomain           *string   `json:"primaryDomain,omitempty"`
 	Aliases                 *[]string `json:"aliases,omitempty"`
 	Type                    *string   `json:"type,omitempty"`
+	Recipe                  *string   `json:"recipe,omitempty"`
 	Upstream                *string   `json:"upstream,omitempty"`
 	Upstreams               *[]string `json:"upstreams,omitempty"`
 	RedirectTarget          *string   `json:"redirectTarget,omitempty"`
@@ -432,7 +434,10 @@ func validateSiteWriteInput(input *siteWriteInput, create bool) (field, detail s
 		}
 	}
 	if input.Type.Set && !validPanelSiteType(input.Type.Value) {
-		return "type", "type must be wordpress, static, php, proxy, proxy_domain, load_balance, or redirect"
+		return "type", "type must be wordpress, recipe, static, php, proxy, proxy_domain, load_balance, or redirect"
+	}
+	if input.Recipe.Set && input.Recipe.Value != "" && !validPanelSiteRecipe(input.Recipe.Value) {
+		return "recipe", "recipe is not supported"
 	}
 	if input.Upstream.Set {
 		if len(input.Upstream.Value) > maxSiteUpstreamLength || hasControlCharacter(input.Upstream.Value) {
@@ -484,17 +489,38 @@ func validateSiteWriteInput(input *siteWriteInput, create bool) (field, detail s
 			input.RedirectCode.Set || input.PHPVersion.Value != "" {
 			return "type", "WordPress accepts only one primary domain"
 		}
+	case "recipe":
+		if !create {
+			return "type", "one-click recipe settings cannot be edited as a generic site"
+		}
+		if !input.Recipe.Set || input.Recipe.Value == "" {
+			return "recipe", "recipe is required"
+		}
+		if len(input.Aliases.Value) != 0 || input.Upstream.Value != "" ||
+			len(input.Upstreams.Value) != 0 || input.RedirectTarget.Value != "" ||
+			input.RedirectCode.Set || input.PHPVersion.Value != "" {
+			return "type", "one-click recipes accept only one primary domain"
+		}
 	case "static":
+		if create {
+			return validateScriptedTemplateFields(input)
+		}
 		if input.Upstream.Value != "" || len(input.Upstreams.Value) != 0 ||
 			input.RedirectTarget.Value != "" || input.RedirectCode.Set || input.PHPVersion.Value != "" {
 			return "type", "static sites cannot define runtime, upstream, or redirect settings"
 		}
 	case "php":
+		if create {
+			return validateScriptedTemplateFields(input)
+		}
 		if input.Upstream.Value != "" || len(input.Upstreams.Value) != 0 ||
 			input.RedirectTarget.Value != "" || input.RedirectCode.Set {
 			return "type", "php sites cannot define upstream or redirect settings"
 		}
 	case "proxy", "proxy_domain":
+		if create && input.Type.Value == "proxy_domain" {
+			return validateScriptedTemplateFields(input)
+		}
 		if !input.Upstream.Set || input.Upstream.Value == "" {
 			return "upstream", "upstream is required for proxy sites"
 		}
@@ -506,6 +532,9 @@ func validateSiteWriteInput(input *siteWriteInput, create bool) (field, detail s
 			return "type", "proxy sites cannot define load balancing, redirect, or PHP settings"
 		}
 	case "load_balance":
+		if create {
+			return validateScriptedTemplateFields(input)
+		}
 		if !input.Upstreams.Set || len(input.Upstreams.Value) < 2 {
 			return "upstreams", "2 to 8 upstreams are required for load balancing"
 		}
@@ -519,6 +548,9 @@ func validateSiteWriteInput(input *siteWriteInput, create bool) (field, detail s
 			}
 		}
 	case "redirect":
+		if create {
+			return validateScriptedTemplateFields(input)
+		}
 		if !input.RedirectTarget.Set || input.RedirectTarget.Value == "" {
 			return "redirectTarget", "redirectTarget is required for redirect sites"
 		}
@@ -533,6 +565,16 @@ func validateSiteWriteInput(input *siteWriteInput, create bool) (field, detail s
 	return "", ""
 }
 
+func validateScriptedTemplateFields(input *siteWriteInput) (field, detail string) {
+	if len(input.Aliases.Value) != 0 || input.Recipe.Value != "" ||
+		input.Upstream.Value != "" || len(input.Upstreams.Value) != 0 ||
+		input.RedirectTarget.Value != "" || input.RedirectCode.Set ||
+		input.PHPVersion.Value != "" {
+		return "type", "scripted website details must be entered in the interactive terminal"
+	}
+	return "", ""
+}
+
 func (input siteWriteInput) agentPayload() siteAgentPayload {
 	var payload siteAgentPayload
 	if input.PrimaryDomain.Set {
@@ -543,6 +585,9 @@ func (input siteWriteInput) agentPayload() siteAgentPayload {
 	}
 	if input.Type.Set {
 		payload.Type = &input.Type.Value
+	}
+	if input.Recipe.Set {
+		payload.Recipe = &input.Recipe.Value
 	}
 	if input.Upstream.Set {
 		payload.Upstream = &input.Upstream.Value
@@ -570,7 +615,16 @@ func (input siteWriteInput) agentPayload() siteAgentPayload {
 
 func validPanelSiteType(value string) bool {
 	switch value {
-	case "wordpress", "static", "php", "proxy", "proxy_domain", "load_balance", "redirect":
+	case "wordpress", "recipe", "static", "php", "proxy", "proxy_domain", "load_balance", "redirect":
+		return true
+	default:
+		return false
+	}
+}
+
+func validPanelSiteRecipe(value string) bool {
+	switch value {
+	case "discuz", "kodbox", "maccms", "dujiaoka", "flarum", "typecho", "linkstack", "ai-prompt", "bitwarden", "halo":
 		return true
 	default:
 		return false
