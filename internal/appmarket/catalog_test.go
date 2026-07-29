@@ -192,6 +192,29 @@ func TestInventoryUsesDockerAppServiceAsMainContainer(t *testing.T) {
 	}
 }
 
+func TestRuntimeFromStoppedContainerSerializesPortsAsArray(t *testing.T) {
+	runtime := runtimeFromContainer(contract.ContainerSummary{
+		ID: strings.Repeat("e", 64), Name: "stopped-app",
+		Image: "example/stopped-app:latest", State: "exited", Status: "Exited (0)",
+	})
+	if runtime.Ports == nil {
+		t.Fatal("stopped container ports must be an initialized empty slice")
+	}
+	encoded, err := json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Ports json.RawMessage `json:"ports"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload.Ports) != "[]" {
+		t.Fatalf("runtime JSON ports = %s, want []", payload.Ports)
+	}
+}
+
 func TestRemoteCatalogDynamicallyReplacesThirdPartyEntries(t *testing.T) {
 	embedded, _, _, err := LoadCatalog()
 	if err != nil {

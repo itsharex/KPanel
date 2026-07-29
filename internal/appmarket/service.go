@@ -434,7 +434,7 @@ func runtimeFromContainer(container contract.ContainerSummary) Runtime {
 	return Runtime{
 		Installed: true, State: container.State, Status: container.Status,
 		ContainerID: container.ID, ContainerName: container.Name, Image: container.Image,
-		Ports: append([]contract.PortBinding(nil), container.Ports...), AccessMode: access,
+		Ports: append([]contract.PortBinding{}, container.Ports...), AccessMode: access,
 		UpdateStatus: "check_required", ResourceVersion: container.ResourceVersion,
 	}
 }

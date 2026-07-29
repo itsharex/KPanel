@@ -1,7 +1,7 @@
 import type { AppMarketItem, Site } from '@/types/api'
 
 function appPublicPort(item: AppMarketItem): number | undefined {
-  return item.runtime.ports.find((entry) => entry.type === 'tcp' && entry.publicPort)?.publicPort
+  return item.runtime.ports?.find((entry) => entry.type === 'tcp' && entry.publicPort)?.publicPort
 }
 
 function proxyUpstreamPort(upstream: string): number | undefined {
