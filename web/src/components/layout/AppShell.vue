@@ -14,6 +14,8 @@ import {
   Menu,
   Moon,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   Store,
   Sun,
@@ -31,6 +33,7 @@ import {
   prefetchNavigationRoute,
   routeNavigationState,
 } from '@/lib/navigation'
+import { readSidebarCollapsed, writeSidebarCollapsed } from '@/lib/sidebarPreference'
 
 interface NavigationItem {
   label: string
@@ -58,6 +61,7 @@ const theme = useTheme()
 const toast = useToast()
 const menuOpen = ref(false)
 const signingOut = ref(false)
+const sidebarCollapsed = ref(readSidebarCollapsed())
 
 const pageTitle = computed(() => String(route.meta.title || 'KPanel'))
 const agentStatus = computed(() => {
@@ -73,6 +77,11 @@ let navigationWarmupCancelled = false
 
 function closeMenu(): void {
   menuOpen.value = false
+}
+
+function toggleSidebar(): void {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  writeSidebarCollapsed(sidebarCollapsed.value)
 }
 
 function navigationItemPending(path: string): boolean {
@@ -160,9 +169,26 @@ watch(
       <button v-if="menuOpen" class="mobile-overlay" type="button" aria-label="关闭导航" @click="closeMenu" />
     </Transition>
 
-    <aside class="sidebar" :class="{ 'sidebar--open': menuOpen }">
+    <aside
+      class="sidebar"
+      :class="{
+        'sidebar--open': menuOpen,
+        'sidebar--collapsed': sidebarCollapsed,
+      }"
+    >
       <div class="sidebar__brand">
         <LogoMark />
+        <button
+          class="icon-button sidebar__collapse"
+          type="button"
+          :aria-label="sidebarCollapsed ? '展开侧栏' : '收起侧栏'"
+          :aria-expanded="!sidebarCollapsed"
+          :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'"
+          @click="toggleSidebar"
+        >
+          <PanelLeftOpen v-if="sidebarCollapsed" :size="17" />
+          <PanelLeftClose v-else :size="17" />
+        </button>
         <button class="icon-button sidebar__close" type="button" aria-label="关闭导航" @click="closeMenu">
           <X :size="19" />
         </button>
@@ -175,6 +201,8 @@ watch(
           :to="item.to"
           class="sidebar__link"
           :class="{ 'sidebar__link--pending': navigationItemPending(item.to) }"
+          :aria-label="item.label"
+          :title="sidebarCollapsed ? item.label : undefined"
           @pointerenter="prefetchNavigation(item.to)"
           @focus="prefetchNavigation(item.to)"
           @touchstart.passive="prefetchNavigation(item.to)"
@@ -192,11 +220,17 @@ watch(
       </nav>
 
       <div class="sidebar__footer">
-        <div class="sidebar__agent">
+        <div class="sidebar__agent" :title="sidebarCollapsed ? agentStatus.label : undefined">
           <StatusBadge :status="agentStatus.status" :label="agentStatus.label" subtle />
           <small v-if="panel.state.agent?.version">v{{ panel.state.agent.version }}</small>
         </div>
-        <button class="sidebar__user" type="button" :disabled="signingOut" @click="signOut">
+        <button
+          class="sidebar__user"
+          type="button"
+          :disabled="signingOut"
+          :title="sidebarCollapsed ? '退出登录' : undefined"
+          @click="signOut"
+        >
           <span class="avatar">{{ session.state.user?.username?.slice(0, 1).toUpperCase() || 'A' }}</span>
           <span>
             <strong>{{ session.state.user?.displayName || session.state.user?.username || '管理员' }}</strong>
@@ -207,7 +241,10 @@ watch(
       </div>
     </aside>
 
-    <div class="app-shell__main">
+    <div
+      class="app-shell__main"
+      :class="{ 'app-shell__main--sidebar-collapsed': sidebarCollapsed }"
+    >
       <Transition name="fade">
         <div
           v-if="routeNavigationState.pending"
