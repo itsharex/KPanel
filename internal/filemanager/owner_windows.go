@@ -8,6 +8,6 @@ func fileOwner(os.FileInfo) (string, string) {
 	return "", ""
 }
 
-func preserveOwnership(_ string, _ os.FileInfo) error {
+func preserveFileOwnership(_ *os.File, _ os.FileInfo) error {
 	return nil
 }

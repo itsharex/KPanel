@@ -379,6 +379,11 @@ func testFileManager(t *testing.T) *filemanager.Manager {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := manager.Close(); err != nil {
+			t.Errorf("close file manager: %v", err)
+		}
+	})
 	return manager
 }
 

@@ -26,6 +26,11 @@ func newTestManager(t *testing.T) (*Manager, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := manager.Close(); err != nil {
+			t.Errorf("close manager: %v", err)
+		}
+	})
 	return manager, root
 }
 
@@ -67,6 +72,36 @@ func TestRejectsTraversalProtectedPathsAndSymlinks(t *testing.T) {
 	}
 	if _, err := manager.List(context.Background(), "/escape", 10); !errors.Is(err, ErrSymlink) {
 		t.Fatalf("expected symlink rejection, got %v", err)
+	}
+	if _, err := manager.Upload(
+		context.Background(), "/escape", "outside.txt",
+		strings.NewReader("blocked"), 7, false,
+	); !errors.Is(err, ErrSymlink) {
+		t.Fatalf("expected upload through symlink to be rejected, got %v", err)
+	}
+}
+
+func TestProtectedDirectoryCannotBeChangedThroughAnAncestor(t *testing.T) {
+	manager, root := newTestManager(t)
+	mustMkdirAll(t, filepath.Join(root, "docker", "kpanel"))
+	mustWrite(t, filepath.Join(root, "docker", "kpanel", "state.db"), "protected")
+
+	for _, action := range []contract.FileActionRequest{
+		{Action: "trash", Sources: []string{"/docker"}},
+		{Action: "copy", Sources: []string{"/docker"}, Target: "/"},
+		{Action: "chmod", Sources: []string{"/docker"}, Mode: "700"},
+	} {
+		result, err := manager.Action(context.Background(), action)
+		if err != nil {
+			t.Fatalf("%s returned top-level error: %v", action.Action, err)
+		}
+		if len(result.Failed) != 1 || !strings.Contains(result.Failed[0].Detail, ErrProtected.Error()) {
+			t.Fatalf("%s should reject protected ancestor: %#v", action.Action, result)
+		}
+	}
+	content, err := os.ReadFile(filepath.Join(root, "docker", "kpanel", "state.db"))
+	if err != nil || string(content) != "protected" {
+		t.Fatalf("protected content changed: %q, err=%v", content, err)
 	}
 }
 
@@ -153,6 +188,27 @@ func TestUploadCopyMoveChmodAndTrash(t *testing.T) {
 	trashEntries, err := os.ReadDir(filepath.Join(root, ".kpanel-trash", "files"))
 	if err != nil || len(trashEntries) != 1 {
 		t.Fatalf("unexpected trash: %#v, err=%v", trashEntries, err)
+	}
+}
+
+func TestRenameDoesNotReplaceExistingTarget(t *testing.T) {
+	manager, root := newTestManager(t)
+	mustWrite(t, filepath.Join(root, "source.txt"), "source")
+	mustWrite(t, filepath.Join(root, "target.txt"), "target")
+
+	source, err := manager.Stat("/source.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "rename", Sources: []string{"/source.txt"}, Target: "/target.txt",
+		ExpectedResourceVersion: source.ResourceVersion,
+	}); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("expected existing-target rejection, got %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "target.txt"))
+	if err != nil || string(content) != "target" {
+		t.Fatalf("target was modified: %q, err=%v", content, err)
 	}
 }
 

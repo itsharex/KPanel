@@ -16,8 +16,9 @@
 
 ### Security
 
-- 文件能力固定根目录为 `/home`，隔离 KPanel 数据与内部回收站，拒绝路径穿越、符号链接逃逸、
-  任意 Shell 和活动 HTML/SVG；写操作继续要求 Session、Origin、CSRF、固定动作与审计记录。
+- 文件能力使用根目录句柄固定在 `/home`，隔离 KPanel 数据、保护目录祖先与内部回收站，
+  拒绝路径穿越、符号链接竞态逃逸、任意 Shell 和活动 HTML/SVG；写操作继续要求
+  Session、Origin、CSRF、固定动作与审计记录。
 - 文本读取限制为 2 MiB 的 UTF-8 内容并拒绝 NUL 字节；下载禁用私有缓存，上传限制为
   512 MiB，复制限制为 10,000 个条目或 10 GiB。
 

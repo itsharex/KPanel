@@ -24,10 +24,10 @@ func fileOwner(info os.FileInfo) (string, string) {
 	return uid, gid
 }
 
-func preserveOwnership(target string, info os.FileInfo) error {
+func preserveFileOwnership(file *os.File, info os.FileInfo) error {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return nil
 	}
-	return os.Chown(target, int(stat.Uid), int(stat.Gid))
+	return file.Chown(int(stat.Uid), int(stat.Gid))
 }

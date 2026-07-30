@@ -22,6 +22,7 @@ func TestFileEndpointsListWriteUploadAndRejectProtectedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = manager.Close() })
 	server.files = manager
 	if err := os.WriteFile(filepath.Join(root, "hello.txt"), []byte("old"), 0644); err != nil {
 		t.Fatal(err)
@@ -68,6 +69,7 @@ func TestFileTextModeRejectsBinaryContentAndMapsBodyLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = manager.Close() })
 	server.files = manager
 	if err := os.WriteFile(filepath.Join(root, "binary.txt"), []byte{0xff, 0x00, 0xfe}, 0644); err != nil {
 		t.Fatal(err)
@@ -94,6 +96,7 @@ func TestFileEndpointsRejectUnknownQueryAndOversizedBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = manager.Close() })
 	server.files = manager
 	response := fileRequest(server, http.MethodGet, "/v1/files?path=%2F&extra=1", "")
 	if response.Code != http.StatusBadRequest {
@@ -117,6 +120,7 @@ func TestFileActionReturnsMultiStatusForPartialResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = manager.Close() })
 	server.files = manager
 	if err := os.WriteFile(filepath.Join(root, "keep.txt"), []byte("keep"), 0644); err != nil {
 		t.Fatal(err)
