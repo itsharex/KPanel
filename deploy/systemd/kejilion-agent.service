@@ -33,7 +33,11 @@ ProtectKernelTunables=false
 # Docker socket activation guard verifies /run/docker.pid against /proc/<pid>/comm.
 ProtectProc=default
 ProtectSystem=strict
-ProtectHome=read-only
+# The file manager is deliberately rooted at /home. ProtectHome=read-only wins
+# over ReadWritePaths=/home on some systemd releases and makes every audited
+# file mutation fail with EROFS. Keep the service root and protected data paths
+# constrained below instead of making its managed root read-only.
+ProtectHome=false
 ReadOnlyPaths=/var/lib/kejilion-panel/panel
 # System actions need atomic rename transactions below /etc. The application
 # market and file manager write only through audited, fixed Agent adapters.

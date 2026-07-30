@@ -287,6 +287,8 @@ EOF
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	grep -Fx 'ProtectHome=false' \
+		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -F 'kpanel_report_failed_install' \
 		"$PROJECT_DIR/packaging/kejilion-app/kpanel.conf" >/dev/null
 	if grep -F '请运行：systemctl status kejilion-agent' \

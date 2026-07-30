@@ -164,6 +164,13 @@ if grep -Eq '^StateDirectory=kejilion-panel(/.*)?$' \
 fi
 grep -Fx 'ReadOnlyPaths=/var/lib/kejilion-panel/panel' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
+grep -Fx 'ProtectHome=false' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
+if grep -Fx 'ProtectHome=read-only' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null; then
+	echo "Agent unit makes the file manager root read-only" >&2
+	exit 1
+fi
 if grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F '/var/lib/kejilion-panel/panel' >/dev/null; then
 	echo "Agent unit can write the Panel authentication and audit data tree" >&2
