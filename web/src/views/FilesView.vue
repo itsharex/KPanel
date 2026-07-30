@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   Archive,
   ChevronRight,
+  ClipboardPaste,
   Code2,
   Copy,
   Download,
@@ -16,11 +17,11 @@ import {
   FolderOpen,
   HardDrive,
   MoreHorizontal,
-  Move,
   Pencil,
   Plus,
   RefreshCw,
   Save,
+  Scissors,
   Search,
   ShieldCheck,
   Trash2,
@@ -33,8 +34,14 @@ import { ApiError, api } from '@/lib/api'
 import { useToast } from '@/stores/toast'
 import type { FileActionInput, FileDirectory, FileEntry } from '@/types/api'
 
-type DialogAction = 'mkdir' | 'rename' | 'copy' | 'move' | 'chmod' | 'trash'
+type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'trash'
 type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
+type ClipboardMode = 'copy' | 'move'
+
+interface FileClipboard {
+  mode: ClipboardMode
+  entries: FileEntry[]
+}
 
 const toast = useToast()
 const directory = ref<FileDirectory>()
@@ -50,7 +57,10 @@ const uploadProgress = ref<Record<string, number>>({})
 const dialogAction = ref<DialogAction>()
 const dialogValue = ref('')
 const dialogBusy = ref(false)
+const dialogEntries = ref<FileEntry[]>([])
 const contextMenu = ref<{ entry: FileEntry; x: number; y: number }>()
+const clipboard = ref<FileClipboard>()
+const pasteBusy = ref(false)
 const previewEntry = ref<FileEntry>()
 const previewContent = ref('')
 const previewLoading = ref(false)
@@ -116,10 +126,8 @@ const dialogTitle = computed(() => {
   const titles: Record<DialogAction, string> = {
     mkdir: '新建文件夹',
     rename: '重命名',
-    copy: selectedEntries.value.length > 1 ? `复制 ${selectedEntries.value.length} 项` : '复制到',
-    move: selectedEntries.value.length > 1 ? `移动 ${selectedEntries.value.length} 项` : '移动到',
-    chmod: selectedEntries.value.length > 1 ? `修改 ${selectedEntries.value.length} 项权限` : '修改权限',
-    trash: selectedEntries.value.length > 1 ? `移入回收站（${selectedEntries.value.length} 项）` : '移入回收站',
+    chmod: dialogEntries.value.length > 1 ? `修改 ${dialogEntries.value.length} 项权限` : '修改权限',
+    trash: dialogEntries.value.length > 1 ? `移入回收站（${dialogEntries.value.length} 项）` : '移入回收站',
   }
   return dialogAction.value ? titles[dialogAction.value] : '文件操作'
 })
@@ -227,35 +235,80 @@ function toggleAll(): void {
   selected.value = next
 }
 
-function selectForContext(entry: FileEntry): void {
-  if (selected.value.has(entry.path)) return
-  selected.value = new Set([entry.path])
-}
-
 function showContext(event: MouseEvent, entry: FileEntry): void {
   event.preventDefault()
-  selectForContext(entry)
   contextMenu.value = {
     entry,
-    x: Math.min(event.clientX, window.innerWidth - 210),
-    y: Math.min(event.clientY, window.innerHeight - 310),
+    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 210)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 360)),
   }
 }
 
 function openDialog(action: DialogAction, entry?: FileEntry): void {
   contextMenu.value = undefined
-  if (entry) selected.value = new Set([entry.path])
+  dialogEntries.value = entry ? [entry] : [...selectedEntries.value]
   dialogAction.value = action
   if (action === 'mkdir') dialogValue.value = ''
-  else if (action === 'rename') dialogValue.value = entry?.name || selectedEntries.value[0]?.name || ''
+  else if (action === 'rename') dialogValue.value = dialogEntries.value[0]?.name || ''
   else if (action === 'chmod') dialogValue.value = '644'
-  else dialogValue.value = currentPath.value
 }
 
 function closeDialog(): void {
   if (dialogBusy.value) return
   dialogAction.value = undefined
   dialogValue.value = ''
+  dialogEntries.value = []
+}
+
+function setClipboard(mode: ClipboardMode, entry?: FileEntry): void {
+  contextMenu.value = undefined
+  const entriesToStore = entry ? [entry] : [...selectedEntries.value]
+  if (!entriesToStore.length) return
+  clipboard.value = { mode, entries: entriesToStore }
+  toast.success(
+    mode === 'copy' ? '已复制到文件剪贴板' : '已剪切到文件剪贴板',
+    `${entriesToStore.length} 项，进入目标文件夹后点击“粘贴”`,
+  )
+}
+
+function clearClipboard(): void {
+  clipboard.value = undefined
+}
+
+async function pasteClipboard(target = currentPath.value): Promise<void> {
+  const stored = clipboard.value
+  if (!stored?.entries.length || pasteBusy.value) return
+  contextMenu.value = undefined
+  pasteBusy.value = true
+  try {
+    const result = await api.files.action({
+      action: stored.mode,
+      sources: stored.entries.map((entry) => entry.path),
+      target,
+    })
+    if (stored.mode === 'move') {
+      const failed = new Set(result.failed.map((item) => item.path))
+      const remaining = stored.entries.filter((entry) => failed.has(entry.path))
+      clipboard.value = remaining.length ? { mode: 'move', entries: remaining } : undefined
+    }
+    if (result.failed.length) {
+      toast.danger(
+        result.succeeded.length ? '部分文件未粘贴' : '粘贴未完成',
+        `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`,
+      )
+    } else {
+      toast.success(
+        stored.mode === 'copy' ? '复制完成' : '移动完成',
+        `${result.succeeded.length} 项已粘贴到 ${target}`,
+      )
+    }
+    await loadDirectory()
+  } catch (error) {
+    toast.danger('粘贴失败', errorMessage(error))
+    await loadDirectory()
+  } finally {
+    pasteBusy.value = false
+  }
 }
 
 async function submitDialog(): Promise<void> {
@@ -267,7 +320,7 @@ async function submitDialog(): Promise<void> {
     if (action === 'mkdir') {
       input = { action, target: currentPath.value, name: dialogValue.value.trim() }
     } else if (action === 'rename') {
-      const entry = selectedEntries.value[0]
+      const entry = dialogEntries.value[0]
       if (!entry) throw new Error('请选择需要重命名的文件。')
       const parent = entry.path.slice(0, Math.max(entry.path.lastIndexOf('/'), 1))
       input = {
@@ -277,19 +330,16 @@ async function submitDialog(): Promise<void> {
         expectedResourceVersion: entry.resourceVersion,
       }
     } else if (action === 'trash') {
-      input = { action, sources: selectedEntries.value.map((entry) => entry.path) }
+      input = { action, sources: dialogEntries.value.map((entry) => entry.path) }
     } else if (action === 'chmod') {
       input = {
         action,
-        sources: selectedEntries.value.map((entry) => entry.path),
+        sources: dialogEntries.value.map((entry) => entry.path),
         mode: dialogValue.value.trim(),
       }
     } else {
-      input = {
-        action,
-        sources: selectedEntries.value.map((entry) => entry.path),
-        target: dialogValue.value.trim(),
-      }
+      const unsupportedAction: never = action
+      throw new Error(`不支持的文件操作：${unsupportedAction}`)
     }
     const result = await api.files.action(input)
     if (result.failed.length) {
@@ -305,6 +355,7 @@ async function submitDialog(): Promise<void> {
     }
     dialogAction.value = undefined
     dialogValue.value = ''
+    dialogEntries.value = []
     await loadDirectory()
   } catch (error) {
     toast.danger('文件操作失败', errorMessage(error))
@@ -427,13 +478,41 @@ function handleWindowClick(event: MouseEvent): void {
   if (!target.closest('.file-context-menu')) contextMenu.value = undefined
 }
 
+function handleFileShortcut(event: KeyboardEvent): void {
+  const target = event.target as HTMLElement | null
+  if (
+    previewEntry.value ||
+    target?.matches('input, textarea, select, [contenteditable="true"]')
+  ) {
+    return
+  }
+  const key = event.key.toLocaleLowerCase()
+  if ((event.ctrlKey || event.metaKey) && key === 'c' && selectedEntries.value.length) {
+    event.preventDefault()
+    setClipboard('copy')
+  } else if ((event.ctrlKey || event.metaKey) && key === 'x' && selectedEntries.value.length) {
+    event.preventDefault()
+    setClipboard('move')
+  } else if ((event.ctrlKey || event.metaKey) && key === 'v' && clipboard.value?.entries.length) {
+    event.preventDefault()
+    void pasteClipboard()
+  } else if (event.key === 'Delete' && selectedEntries.value.length) {
+    event.preventDefault()
+    openDialog('trash')
+  } else if (event.key === 'Escape') {
+    contextMenu.value = undefined
+  }
+}
+
 onMounted(() => {
   window.addEventListener('click', handleWindowClick)
+  window.addEventListener('keydown', handleFileShortcut)
   void loadDirectory('/')
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('click', handleWindowClick)
+  window.removeEventListener('keydown', handleFileShortcut)
 })
 </script>
 
@@ -509,13 +588,33 @@ onBeforeUnmount(() => {
             type="button"
             @click="downloadSelected"
           ><Download :size="15" />下载</button>
-          <button type="button" @click="openDialog('copy')"><Copy :size="15" />复制</button>
-          <button type="button" @click="openDialog('move')"><Move :size="15" />移动</button>
+          <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
+          <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
           <button type="button" @click="openDialog('chmod')"><ShieldCheck :size="15" />权限</button>
           <button class="danger-link" type="button" @click="openDialog('trash')">
             <Trash2 :size="15" />回收站
           </button>
           <button type="button" @click="selected = new Set()">取消选择</button>
+        </div>
+      </Transition>
+
+      <Transition name="slide">
+        <div v-if="clipboard?.entries.length" class="clipboard-bar">
+          <span class="clipboard-bar__icon">
+            <Copy v-if="clipboard.mode === 'copy'" :size="17" />
+            <Scissors v-else :size="17" />
+          </span>
+          <span>
+            <strong>{{ clipboard.mode === 'copy' ? '已复制' : '已剪切' }} {{ clipboard.entries.length }} 项</strong>
+            <small>
+              {{ clipboard.entries[0]?.name }}
+              <template v-if="clipboard.entries.length > 1"> 等 {{ clipboard.entries.length }} 项</template>
+            </small>
+          </span>
+          <button type="button" :disabled="pasteBusy" @click="pasteClipboard()">
+            <ClipboardPaste :size="15" />{{ pasteBusy ? '粘贴中…' : `粘贴到 ${currentPath}` }}
+          </button>
+          <button type="button" :disabled="pasteBusy" @click="clearClipboard">取消</button>
         </div>
       </Transition>
 
@@ -616,8 +715,14 @@ onBeforeUnmount(() => {
       <button type="button" @click="openDialog('rename', contextMenu!.entry)">
         <Pencil :size="15" />重命名
       </button>
-      <button type="button" @click="openDialog('copy', contextMenu!.entry)"><Copy :size="15" />复制到</button>
-      <button type="button" @click="openDialog('move', contextMenu!.entry)"><Move :size="15" />移动到</button>
+      <button type="button" @click="setClipboard('copy', contextMenu!.entry)"><Copy :size="15" />复制</button>
+      <button type="button" @click="setClipboard('move', contextMenu!.entry)"><Scissors :size="15" />剪切</button>
+      <button
+        v-if="clipboard?.entries.length && contextMenu.entry.kind === 'directory'"
+        type="button"
+        :disabled="pasteBusy"
+        @click="pasteClipboard(contextMenu!.entry.path)"
+      ><ClipboardPaste :size="15" />粘贴到此文件夹</button>
       <button type="button" @click="openDialog('chmod', contextMenu!.entry)">
         <ShieldCheck :size="15" />修改权限
       </button>
@@ -657,7 +762,7 @@ onBeforeUnmount(() => {
       </div>
       <div v-else class="trash-summary">
         <Trash2 :size="24" />
-        <strong>确认移动 {{ selectedEntries.length }} 项？</strong>
+        <strong>确认移动 {{ dialogEntries.length }} 项？</strong>
         <span>回收区不显示在文件列表中，首版暂不提供面板内恢复入口。</span>
       </div>
       <div class="dialog-actions">
@@ -874,6 +979,73 @@ onBeforeUnmount(() => {
 .batch-bar button:hover {
   color: var(--text);
   background: var(--surface);
+}
+
+.clipboard-bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 15px;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border));
+  background: color-mix(in srgb, var(--brand) 7%, var(--surface));
+}
+
+.clipboard-bar__icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+}
+
+.clipboard-bar > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.clipboard-bar small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clipboard-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.clipboard-bar button:first-of-type {
+  color: #fff;
+  background: var(--brand);
+}
+
+.clipboard-bar button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.clipboard-bar button:first-of-type:hover:not(:disabled) {
+  color: #fff;
+  background: var(--brand-strong);
+}
+
+.clipboard-bar button:disabled {
+  opacity: .6;
+  cursor: wait;
 }
 
 .danger-link {
@@ -1324,6 +1496,16 @@ onBeforeUnmount(() => {
   .batch-bar button,
   .batch-bar strong {
     flex: 0 0 auto;
+  }
+
+  .clipboard-bar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .clipboard-bar button:first-of-type {
+    grid-column: 1 / -1;
+    justify-content: center;
+    grid-row: 2;
   }
 
   .file-row {

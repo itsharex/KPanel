@@ -33,28 +33,59 @@ vi.mock('@/stores/toast', () => ({
 interface FileBindings {
   loadDirectory: (path?: string) => Promise<void>
   submitDialog: () => Promise<void>
+  pasteClipboard: (target?: string) => Promise<void>
+  setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
+  showContext: (event: MouseEvent, entry: TestFileEntry) => void
+  openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'trash', entry?: TestFileEntry) => void
   currentPath: { value: string }
   directory: {
     value?: {
       path: string
-      entries: Array<{
-        name: string
-        path: string
-        kind: 'file'
-        mime: string
-        sizeBytes: number
-        mode: string
-        owner: string
-        group: string
-        modifiedAt: string
-        resourceVersion: string
-        editable: boolean
-        previewable: boolean
-      }>
+      entries: TestFileEntry[]
     }
   }
   selected: { value: Set<string> }
+  clipboard: {
+    value?: {
+      mode: 'copy' | 'move'
+      entries: TestFileEntry[]
+    }
+  }
+  contextMenu: { value?: { entry: TestFileEntry; x: number; y: number } }
+  dialogEntries: { value: TestFileEntry[] }
   dialogAction: { value?: 'trash' }
+}
+
+interface TestFileEntry {
+  name: string
+  path: string
+  kind: 'file'
+  mime: string
+  sizeBytes: number
+  mode: string
+  owner: string
+  group: string
+  modifiedAt: string
+  resourceVersion: string
+  editable: boolean
+  previewable: boolean
+}
+
+function testEntry(name: string): TestFileEntry {
+  return {
+    name,
+    path: `/${name}`,
+    kind: 'file',
+    mime: 'text/plain',
+    sizeBytes: 4,
+    mode: '-rw-r--r--',
+    owner: 'root',
+    group: 'root',
+    modifiedAt: '2026-07-30T00:00:00Z',
+    resourceVersion: `sha256:${name}`,
+    editable: true,
+    previewable: true,
+  }
 }
 
 function setupView(): FileBindings {
@@ -73,6 +104,11 @@ function setupView(): FileBindings {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.stubGlobal('window', {
+    innerWidth: 1280,
+    innerHeight: 720,
+    confirm: vi.fn(() => true),
+  })
   mocks.list.mockResolvedValue({
     path: '/web',
     entries: [],
@@ -106,27 +142,13 @@ describe('FilesView directory loading', () => {
 
   it('reports partial batch results and refreshes the real directory state', async () => {
     const view = setupView()
+    const entry = testEntry('keep.txt')
     view.directory.value = {
       path: '/',
-      entries: [
-        {
-          name: 'keep.txt',
-          path: '/keep.txt',
-          kind: 'file',
-          mime: 'text/plain',
-          sizeBytes: 4,
-          mode: '-rw-r--r--',
-          owner: 'root',
-          group: 'root',
-          modifiedAt: '2026-07-30T00:00:00Z',
-          resourceVersion: 'sha256:test',
-          editable: true,
-          previewable: true,
-        },
-      ],
+      entries: [entry],
     }
     view.selected.value = new Set(['/keep.txt'])
-    view.dialogAction.value = 'trash'
+    view.openDialog('trash')
     mocks.action.mockResolvedValueOnce({
       action: 'trash',
       succeeded: [],
@@ -145,5 +167,83 @@ describe('FilesView directory loading', () => {
     )
     expect(mocks.list).toHaveBeenCalled()
     expect(view.dialogAction.value).toBeUndefined()
+  })
+
+  it('does not change checkbox selection when opening a context menu', () => {
+    const view = setupView()
+    const checked = testEntry('checked.txt')
+    const clicked = testEntry('clicked.txt')
+    view.directory.value = { path: '/', entries: [checked, clicked] }
+    view.selected.value = new Set([checked.path])
+
+    view.showContext(
+      {
+        preventDefault: vi.fn(),
+        clientX: 400,
+        clientY: 300,
+      } as unknown as MouseEvent,
+      clicked,
+    )
+
+    expect([...view.selected.value]).toEqual([checked.path])
+    expect(view.contextMenu.value?.entry.path).toBe(clicked.path)
+  })
+
+  it('copies to the page clipboard without executing a file action', () => {
+    const view = setupView()
+    const checked = testEntry('checked.txt')
+    const clicked = testEntry('clicked.txt')
+    view.directory.value = { path: '/', entries: [checked, clicked] }
+    view.selected.value = new Set([checked.path])
+
+    view.setClipboard('copy', clicked)
+
+    expect(view.clipboard.value?.mode).toBe('copy')
+    expect(view.clipboard.value?.entries.map((entry) => entry.path)).toEqual([clicked.path])
+    expect([...view.selected.value]).toEqual([checked.path])
+    expect(mocks.action).not.toHaveBeenCalled()
+  })
+
+  it('pastes copied entries into the current directory and keeps the clipboard', async () => {
+    const view = setupView()
+    const entry = testEntry('source.txt')
+    view.currentPath.value = '/target'
+    view.clipboard.value = { mode: 'copy', entries: [entry] }
+    mocks.action.mockResolvedValueOnce({
+      action: 'copy',
+      succeeded: [{ path: entry.path, destination: '/target/source.txt' }],
+      failed: [],
+    })
+
+    await view.pasteClipboard()
+
+    expect(mocks.action).toHaveBeenCalledWith({
+      action: 'copy',
+      sources: [entry.path],
+      target: '/target',
+    })
+    expect(view.clipboard.value?.entries).toEqual([entry])
+    expect(mocks.list).toHaveBeenCalled()
+  })
+
+  it('keeps only failed entries after a partial cut paste', async () => {
+    const view = setupView()
+    const moved = testEntry('moved.txt')
+    const failed = testEntry('failed.txt')
+    view.clipboard.value = { mode: 'move', entries: [moved, failed] }
+    mocks.action.mockResolvedValueOnce({
+      action: 'move',
+      succeeded: [{ path: moved.path, destination: `/target/${moved.name}` }],
+      failed: [{ path: failed.path, detail: '目标已存在' }],
+    })
+
+    await view.pasteClipboard('/target')
+
+    expect(view.clipboard.value?.mode).toBe('move')
+    expect(view.clipboard.value?.entries.map((entry) => entry.path)).toEqual([failed.path])
+    expect(mocks.danger).toHaveBeenCalledWith(
+      '部分文件未粘贴',
+      '1 项成功，1 项失败：目标已存在',
+    )
   })
 })
