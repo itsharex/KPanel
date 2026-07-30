@@ -647,6 +647,7 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		"/api/v1/capabilities":            "/v1/capabilities",
 		"/api/v1/system/summary":          "/v1/system/summary",
 		"/api/v1/system/public-network":   "/v1/system/public-network",
+		"/api/v1/monitoring/history":      "/v1/monitoring/history",
 		"/api/v1/sites":                   "/v1/sites",
 		"/api/v1/site-installations":      "/v1/site-installations",
 		"/api/v1/web-environment":         "/v1/web-environment",

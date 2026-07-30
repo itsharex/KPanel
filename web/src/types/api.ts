@@ -799,6 +799,83 @@ export interface DockerContainerStats {
   collectedAt: string
 }
 
+export type MonitoringRange = '1h' | '6h' | '24h' | '7d'
+
+export interface MonitoringHostPoint {
+  collectedAt: string
+  cpuPercent: number
+  cpuCores: number
+  loadOne: number
+  loadFive: number
+  loadFifteen: number
+  memoryUsedBytes: number
+  memoryTotalBytes: number
+  swapUsedBytes: number
+  swapTotalBytes: number
+  diskUsedBytes: number
+  diskTotalBytes: number
+  diskPercent: number
+  networkRxBytes: number
+  networkTxBytes: number
+  networkRxBytesPerSecond: number
+  networkTxBytesPerSecond: number
+  tcpConnections: number
+  udpConnections: number
+}
+
+export interface MonitoringContainerPoint {
+  collectedAt: string
+  cpuPercent: number
+  memoryBytes: number
+  memoryLimitBytes: number
+  memoryPercent: number
+  networkRxBytes: number
+  networkTxBytes: number
+  networkRxBytesPerSecond: number
+  networkTxBytesPerSecond: number
+  blockReadBytes: number
+  blockWriteBytes: number
+  pids: number
+}
+
+export interface MonitoringContainerSeries {
+  containerId: string
+  name: string
+  image: string
+  points: MonitoringContainerPoint[]
+}
+
+export interface MonitoringStorageStatus {
+  enabled: boolean
+  retentionDays: number
+  hostIntervalSeconds: number
+  containerIntervalSeconds: number
+  maxContainers: number
+  storageBytes: number
+  maxStorageBytes: number
+  lastSampleAt?: string
+  lastError?: string
+  lastContainerTotal: number
+  lastContainerRecorded: number
+  lastContainerFailed: number
+  lastContainerTruncated: number
+  lastDockerAvailable: boolean
+  storageLimitReached: boolean
+}
+
+export interface MonitoringHistory {
+  range: MonitoringRange
+  startedAt: string
+  endedAt: string
+  bucketSeconds: number
+  host: MonitoringHostPoint[]
+  containers: MonitoringContainerSeries[]
+  storage: MonitoringStorageStatus
+  scannedBytes: number
+  skippedLines: number
+  truncatedSeries: number
+}
+
 export interface DockerExecResult {
   containerId: string
   exitCode: number

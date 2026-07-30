@@ -21,6 +21,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/diagnostics"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
+	"github.com/kejilion/kejilion-panel/internal/monitoring"
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
 	"github.com/kejilion/kejilion-panel/internal/systemmanage"
@@ -124,6 +125,14 @@ func run(arguments []string) error {
 	}
 	systemCollector := systeminfo.NewCollector()
 	systemCollector.PublicNetworkLookupEnabled = *enablePublicNetworkLookup
+	historyService, historyErr := monitoring.New(monitoring.Config{
+		StateDir: filepath.Join(*stateDir, "monitoring"),
+		System:   systemCollector,
+		Docker:   dockerClient,
+	})
+	if historyErr != nil {
+		slog.Warn("history monitoring is unavailable", "error", historyErr)
+	}
 	handler, err := agent.NewServer(agent.Config{
 		Token: token, Version: version.Version, ProtocolVersion: version.ProtocolVersion,
 		WebRoot: *webRoot, StateDir: *stateDir, System: systemCollector,
@@ -132,7 +141,7 @@ func run(arguments []string) error {
 			Executable: executable,
 		}),
 		Sites: sites.NewDiscoverer(*webRoot), Docker: dockerClient, AppMarket: appMarket,
-		Diagnostics: diagnosticService,
+		Diagnostics: diagnosticService, Monitoring: historyService,
 	})
 	clear(token)
 	if err != nil {
@@ -154,6 +163,9 @@ func run(arguments []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if historyService != nil {
+		go historyService.Run(ctx)
+	}
 	serverErr := make(chan error, 1)
 	go func() {
 		serverErr <- httpServer.Serve(listener)

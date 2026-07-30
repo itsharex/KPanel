@@ -71,6 +71,50 @@ func TestContainerStatsDoesNotUnderflowAfterCounterReset(t *testing.T) {
 	}
 }
 
+func TestRunningContainerStatsUsesOneListWithoutInspectAndBoundsWork(t *testing.T) {
+	firstID := strings.Repeat("1", 64)
+	secondID := strings.Repeat("2", 64)
+	thirdID := strings.Repeat("3", 64)
+	listCalls := 0
+	statsCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/containers/json":
+			listCalls++
+			if request.URL.Query().Get("all") != "0" || request.URL.Query().Get("size") != "0" {
+				t.Fatalf("unexpected list query: %s", request.URL.RawQuery)
+			}
+			_, _ = response.Write([]byte(`[
+				{"Id":"` + secondID + `","Names":["/bravo"],"Image":"b:latest","State":"running"},
+				{"Id":"` + firstID + `","Names":["/alpha"],"Image":"a:latest","State":"running"},
+				{"Id":"` + thirdID + `","Names":["/stopped"],"Image":"c:latest","State":"exited"}
+			]`))
+		case strings.HasSuffix(request.URL.Path, "/stats"):
+			statsCalls++
+			if strings.HasSuffix(request.URL.Path, "/json") {
+				t.Fatal("bulk monitoring performed a container inspect")
+			}
+			_, _ = response.Write([]byte(`{
+				"cpu_stats":{"cpu_usage":{"total_usage":300},"system_cpu_usage":3000,"online_cpus":2},
+				"precpu_stats":{"cpu_usage":{"total_usage":200},"system_cpu_usage":2000},
+				"memory_stats":{"usage":1000,"limit":2000}
+			}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	batch, err := testHTTPClient(server).RunningContainerStats(context.Background(), 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listCalls != 1 || statsCalls != 1 || batch.Total != 2 || batch.Truncated != 1 ||
+		len(batch.Items) != 1 || batch.Items[0].Name != "alpha" {
+		t.Fatalf("unexpected bulk stats: %#v list=%d stats=%d", batch, listCalls, statsCalls)
+	}
+}
+
 func TestContainerExecUsesFixedShellAndDoesNotReturnCommand(t *testing.T) {
 	id := strings.Repeat("b", 64)
 	execID := strings.Repeat("c", 64)

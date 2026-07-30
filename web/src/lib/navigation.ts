@@ -10,6 +10,7 @@ const routeViewLoaders = {
   '/setup': () => import('@/views/SetupView.vue'),
   '/login': () => import('@/views/LoginView.vue'),
   '/overview': () => import('@/views/OverviewView.vue'),
+  '/monitoring': () => import('@/views/MonitoringView.vue'),
   '/cluster': () => import('@/views/ClusterView.vue'),
   '/sites': () => import('@/views/SitesView.vue'),
   '/sites/environment': () => import('@/views/EnvironmentView.vue'),

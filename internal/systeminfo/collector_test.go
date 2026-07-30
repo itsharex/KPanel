@@ -4,9 +4,28 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/kejilion/kejilion-panel/internal/contract"
 )
+
+func TestPrepareDefaultsIsSafeForConcurrentCollectors(t *testing.T) {
+	collector := &Collector{}
+	var group sync.WaitGroup
+	for range 8 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			collector.prepareDefaults()
+		}()
+	}
+	group.Wait()
+	if collector.ProcRoot != "/proc" || collector.SysRoot != "/sys" || collector.Now == nil {
+		t.Fatalf("collector defaults were not initialized: %#v", collector)
+	}
+}
 
 func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	root := filepath.Join("testdata", "root")
@@ -73,6 +92,35 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	if !got.Management.BBR.Enabled || !got.Management.BBR.Supported ||
 		got.Management.BBR.DefaultQDisc != "fq" {
 		t.Fatalf("unexpected BBR state: %#v", got.Management.BBR)
+	}
+}
+
+func TestCollectRuntimeSkipsNetworkIdentityAndManagementProbes(t *testing.T) {
+	root := filepath.Join("testdata", "root")
+	lookupCalls := 0
+	collector := &Collector{
+		ProcRoot:                   filepath.Join(root, "proc"),
+		EtcRoot:                    filepath.Join(root, "etc"),
+		Now:                        func() time.Time { return time.Unix(1_700_000_000, 0) },
+		PublicNetworkLookupEnabled: true,
+		PublicNetworkLookup: func(context.Context) (contract.PublicNetworkSummary, error) {
+			lookupCalls++
+			return contract.PublicNetworkSummary{IPv4: "192.0.2.1"}, nil
+		},
+	}
+	got, err := collector.CollectRuntime(context.Background())
+	if err != nil {
+		t.Fatalf("CollectRuntime() error = %v", err)
+	}
+	if lookupCalls != 0 || got.PublicNetwork.IPv4 != "" {
+		t.Fatalf("runtime collection performed public lookup: calls=%d result=%#v", lookupCalls, got.PublicNetwork)
+	}
+	if len(got.Management.SSH.Ports) != 0 || got.Management.Timezone != "" ||
+		got.Management.PackageManager != "" {
+		t.Fatalf("runtime collection included management data: %#v", got.Management)
+	}
+	if got.CPU.Cores != 2 || got.Memory.TotalBytes == 0 || got.Network.ReceivedBytes == 0 {
+		t.Fatalf("runtime collection missed local metrics: %#v", got)
 	}
 }
 

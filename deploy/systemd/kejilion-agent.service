@@ -42,7 +42,7 @@ ReadOnlyPaths=/var/lib/kejilion-panel/panel
 # System actions need atomic rename transactions below /etc. The application
 # market and file manager write only through audited, fixed Agent adapters.
 # The file manager is rooted at /home and independently rejects KPanel data paths.
-ReadWritePaths=/run/kejilion-panel /var/lib/kejilion-panel/system /var/lib/kejilion-panel/wordpress-jobs /var/lib/kejilion-panel/site-recipe-jobs /var/lib/kejilion-panel/app-jobs /var/lib/kejilion-panel/diagnostic-jobs /var/lib/kejilion-panel/docker-jobs /var/lib/kejilion-panel/site-icons /home /etc
+ReadWritePaths=/run/kejilion-panel /var/lib/kejilion-panel/system /var/lib/kejilion-panel/wordpress-jobs /var/lib/kejilion-panel/site-recipe-jobs /var/lib/kejilion-panel/app-jobs /var/lib/kejilion-panel/diagnostic-jobs /var/lib/kejilion-panel/docker-jobs /var/lib/kejilion-panel/site-icons /var/lib/kejilion-panel/monitoring /home /etc
 # iptables-nft talks to the kernel through netlink. Keep that family available
 # so Docker access rules work inside the otherwise restricted service sandbox.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK

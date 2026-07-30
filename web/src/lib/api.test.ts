@@ -1050,6 +1050,40 @@ describe('API client', () => {
     })
   })
 
+  it('requests monitoring history with a fixed same-origin range query', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      range: '7d',
+      startedAt: '2026-07-24T00:00:00Z',
+      endedAt: '2026-07-31T00:00:00Z',
+      bucketSeconds: 900,
+      host: [],
+      containers: [],
+      storage: {
+        enabled: true,
+        retentionDays: 7,
+        hostIntervalSeconds: 60,
+        containerIntervalSeconds: 300,
+        maxContainers: 32,
+        storageBytes: 0,
+        maxStorageBytes: 33554432,
+        lastContainerTotal: 0,
+        lastContainerRecorded: 0,
+        lastContainerFailed: 0,
+        lastContainerTruncated: 0,
+        lastDockerAvailable: false,
+        storageLimitReached: false,
+      },
+      scannedBytes: 0,
+      skippedLines: 0,
+      truncatedSeries: 0,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.monitoring.history('7d')).resolves.toMatchObject({ range: '7d' })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/monitoring/history?range=7d')
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('GET')
+  })
+
   it('normalizes null and legacy null-item list responses', () => {
     expect(normalizeList<string>(null)).toEqual({ items: [], total: 0 })
     expect(normalizeList({ items: null } as unknown as { items: string[]; total: number })).toEqual({

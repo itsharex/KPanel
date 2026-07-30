@@ -186,6 +186,8 @@ grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F '/var/lib/kejilion-panel/diagnostic-jobs' >/dev/null
 grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F '/var/lib/kejilion-panel/site-icons' >/dev/null
+grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
+	grep -F '/var/lib/kejilion-panel/monitoring' >/dev/null
 grep -F 'ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F ' /home ' >/dev/null
 grep -F 'SYSTEM_STATE_DIR=/var/lib/kejilion-panel/system' \
@@ -198,7 +200,11 @@ grep -F 'DIAGNOSTIC_STATE_DIR=/var/lib/kejilion-panel/diagnostic-jobs' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'SITE_ICON_STATE_DIR=/var/lib/kejilion-panel/site-icons' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
+grep -F 'MONITORING_STATE_DIR=/var/lib/kejilion-panel/monitoring' \
+	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'install -d -o root -g root -m 0700 "$SITE_ICON_STATE_DIR"' \
+	"$PROJECT_DIR/deploy/install.sh" >/dev/null
+grep -F 'install -d -o root -g root -m 0700 "$MONITORING_STATE_DIR"' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'expected 65532:65532:700' "$PROJECT_DIR/deploy/install.sh" >/dev/null
 test "$(grep -c '^assert_panel_data_dir \"after ' "$PROJECT_DIR/deploy/install.sh")" = 3

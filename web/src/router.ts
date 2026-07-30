@@ -44,6 +44,12 @@ export const router = createRouter({
           meta: { title: '概览' },
         },
         {
+          path: 'monitoring',
+          name: 'monitoring',
+          component: () => loadNavigationRoute('/monitoring'),
+          meta: { title: '历史监控' },
+        },
+        {
           path: 'cluster',
           name: 'cluster',
           component: () => loadNavigationRoute('/cluster'),

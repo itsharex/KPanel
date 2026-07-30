@@ -10,7 +10,9 @@ import (
 	"net/url"
 	pathpkg "path"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -34,6 +36,19 @@ type ContainerStats struct {
 	BlockWrite    uint64    `json:"blockWriteBytes"`
 	PIDs          uint64    `json:"pids"`
 	CollectedAt   time.Time `json:"collectedAt"`
+}
+
+type ContainerMetricSample struct {
+	ContainerStats
+	Name  string `json:"name"`
+	Image string `json:"image"`
+}
+
+type ContainerMetricBatch struct {
+	Items     []ContainerMetricSample
+	Total     int
+	Failed    int
+	Truncated int
 }
 
 type ContainerExecInput struct {
@@ -76,6 +91,10 @@ func (c *Client) ContainerStats(ctx context.Context, id string) (ContainerStats,
 	if _, err := c.inspect(ctx, id); err != nil {
 		return ContainerStats{}, err
 	}
+	return c.containerStats(ctx, id)
+}
+
+func (c *Client) containerStats(ctx context.Context, id string) (ContainerStats, error) {
 	var raw struct {
 		CPUStats struct {
 			CPUUsage struct {
@@ -166,6 +185,90 @@ func (c *Client) ContainerStats(ctx context.Context, id string) (ContainerStats,
 		}
 	}
 	return result, nil
+}
+
+// RunningContainerStats performs one bounded container list request and then
+// reads stats only for IDs returned by Docker. It deliberately avoids the
+// per-container Inspect used by administrator-initiated actions.
+func (c *Client) RunningContainerStats(
+	ctx context.Context,
+	limit int,
+	maxConcurrent int,
+) (ContainerMetricBatch, error) {
+	if limit < 1 || limit > 64 {
+		return ContainerMetricBatch{}, errors.New("container metric limit must be between 1 and 64")
+	}
+	if maxConcurrent < 1 || maxConcurrent > 4 {
+		return ContainerMetricBatch{}, errors.New("container metric concurrency must be between 1 and 4")
+	}
+	var raw []containerListItem
+	if err := c.getJSON(ctx, "/containers/json?all=0&size=0", &raw); err != nil {
+		return ContainerMetricBatch{}, err
+	}
+	running := make([]containerListItem, 0, len(raw))
+	for _, item := range raw {
+		if item.State == "running" && containerIDPattern.MatchString(item.ID) {
+			running = append(running, item)
+		}
+	}
+	sort.Slice(running, func(i, j int) bool {
+		return strings.TrimPrefix(first(running[i].Names), "/") <
+			strings.TrimPrefix(first(running[j].Names), "/")
+	})
+	batch := ContainerMetricBatch{Total: len(running)}
+	if len(running) > limit {
+		batch.Truncated = len(running) - limit
+		running = running[:limit]
+	}
+	if len(running) == 0 {
+		batch.Items = []ContainerMetricSample{}
+		return batch, nil
+	}
+
+	items := make([]ContainerMetricSample, len(running))
+	success := make([]bool, len(running))
+	indexes := make(chan int)
+	workers := min(maxConcurrent, len(running))
+	var group sync.WaitGroup
+	group.Add(workers)
+	for range workers {
+		go func() {
+			defer group.Done()
+			for index := range indexes {
+				item := running[index]
+				stats, err := c.containerStats(ctx, item.ID)
+				if err != nil {
+					continue
+				}
+				items[index] = ContainerMetricSample{
+					ContainerStats: stats,
+					Name:           strings.TrimPrefix(first(item.Names), "/"),
+					Image:          item.Image,
+				}
+				success[index] = true
+			}
+		}()
+	}
+	for index := range running {
+		select {
+		case indexes <- index:
+		case <-ctx.Done():
+			close(indexes)
+			group.Wait()
+			return ContainerMetricBatch{}, ctx.Err()
+		}
+	}
+	close(indexes)
+	group.Wait()
+	batch.Items = make([]ContainerMetricSample, 0, len(items))
+	for index, item := range items {
+		if success[index] {
+			batch.Items = append(batch.Items, item)
+		} else {
+			batch.Failed++
+		}
+	}
+	return batch, nil
 }
 
 func (c *Client) ContainerExec(ctx context.Context, id string, input ContainerExecInput) (ContainerExecResult, error) {

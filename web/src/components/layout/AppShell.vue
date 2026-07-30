@@ -6,6 +6,7 @@ import {
   Boxes,
   HeartPulse,
   ClipboardList,
+  ChartNoAxesCombined,
   Container,
   Folder,
   LayoutDashboard,
@@ -43,6 +44,7 @@ interface NavigationItem {
 
 const navigation: NavigationItem[] = [
   { label: '概览', to: '/overview', icon: LayoutDashboard },
+  { label: '历史监控', to: '/monitoring', icon: ChartNoAxesCombined },
   { label: '网站', to: '/sites', icon: Boxes },
   { label: '应用市场', to: '/apps', icon: Store },
   { label: 'Docker', to: '/docker', icon: Container },

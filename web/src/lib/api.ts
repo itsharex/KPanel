@@ -31,6 +31,8 @@ import type {
   AppInstallJob,
   AppTerminalChunk,
   LoginRequest,
+  MonitoringHistory,
+  MonitoringRange,
   PanelSettings,
   SetupRequest,
   Site,
@@ -1512,6 +1514,13 @@ export const api = {
       request<DockerMaintenanceJob>(`/docker/jobs/${encodeURIComponent(id)}`, { signal }),
     jobs: async (signal?: AbortSignal): Promise<ApiList<DockerMaintenanceJob>> =>
       normalizeList(await request<ApiList<DockerMaintenanceJob> | DockerMaintenanceJob[]>('/docker/jobs', { signal })),
+  },
+  monitoring: {
+    history: (range: MonitoringRange, signal?: AbortSignal): Promise<MonitoringHistory> =>
+      request<MonitoringHistory>('/monitoring/history', {
+        query: { range },
+        signal,
+      }),
   },
   jobs: {
     list: async (query?: { limit?: number }, signal?: AbortSignal): Promise<ApiList<Job>> => {

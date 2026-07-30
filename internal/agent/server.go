@@ -23,6 +23,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/diagnostics"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/filemanager"
+	"github.com/kejilion/kejilion-panel/internal/monitoring"
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
 	"github.com/kejilion/kejilion-panel/internal/systemmanage"
@@ -47,11 +48,16 @@ type Config struct {
 	WebEnvironment  *webenv.Service
 	Files           *filemanager.Manager
 	SiteIcons       siteIconProvider
+	Monitoring      monitoringHistoryProvider
 	Now             func() time.Time
 }
 
 type siteIconProvider interface {
 	Get(context.Context, string) (sites.SiteIcon, error)
+}
+
+type monitoringHistoryProvider interface {
+	History(context.Context, string) (contract.MonitoringHistory, error)
 }
 
 type Server struct {
@@ -69,6 +75,7 @@ type Server struct {
 	webEnvironment  *webenv.Service
 	files           *filemanager.Manager
 	siteIcons       siteIconProvider
+	monitoring      monitoringHistoryProvider
 	now             func() time.Time
 }
 
@@ -167,6 +174,7 @@ func NewServer(config Config) (*Server, error) {
 		webEnvironment:  config.WebEnvironment,
 		files:           config.Files,
 		siteIcons:       config.SiteIcons,
+		monitoring:      config.Monitoring,
 		now:             config.Now,
 	}, nil
 }
@@ -194,6 +202,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemTelemetry)
 	case r.URL.Path == "/v1/system/public-network":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.publicNetwork)
+	case r.URL.Path == "/v1/monitoring/history":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.monitoringHistory)
 	case r.URL.Path == "/v1/system/actions":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.systemAction)
 	case r.URL.Path == "/v1/sites":
@@ -377,6 +387,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	checks.Wait()
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
+		{ID: "monitoring.history.read", Enabled: s.monitoring != nil, Reason: reasonUnless(s.monitoring != nil, "历史监控服务未配置"), Methods: []string{"GET"}},
 		{ID: "apps.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "apps.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
 		{ID: "apps.install", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
@@ -464,6 +475,49 @@ func (s *Server) publicNetwork(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3500*time.Millisecond)
 	defer cancel()
 	writeJSON(w, http.StatusOK, s.system.PublicNetwork(ctx))
+}
+
+func (s *Server) monitoringHistory(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" {
+		writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_query", "监控查询参数无效", "")
+		return
+	}
+	values := r.URL.Query()
+	if len(values) > 1 || len(values["range"]) > 1 {
+		writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_query", "监控查询参数无效", "")
+		return
+	}
+	for key := range values {
+		if key != "range" {
+			writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_query", "监控查询参数无效", "")
+			return
+		}
+	}
+	rangeValue := values.Get("range")
+	switch rangeValue {
+	case "", "1h", "6h", "24h", "7d":
+	default:
+		writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_range", "监控时间范围无效", "")
+		return
+	}
+	if s.monitoring == nil {
+		writeProblem(w, requestID, http.StatusServiceUnavailable, "monitoring_unavailable", "历史监控尚未就绪", "")
+		return
+	}
+	result, err := s.monitoring.History(r.Context(), rangeValue)
+	if err != nil {
+		switch {
+		case errors.Is(err, monitoring.ErrInvalidRange):
+			writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_range", "监控时间范围无效", "")
+		case errors.Is(err, monitoring.ErrBusy):
+			writeProblem(w, requestID, http.StatusTooManyRequests, "monitoring_busy", "历史监控查询繁忙", "")
+		default:
+			writeProblem(w, requestID, http.StatusServiceUnavailable, "monitoring_unavailable", "历史监控暂时不可用", "")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) systemAction(w http.ResponseWriter, r *http.Request) {

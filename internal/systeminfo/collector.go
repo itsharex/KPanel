@@ -30,6 +30,7 @@ type Collector struct {
 	PublicNetworkLookup        func(context.Context) (contract.PublicNetworkSummary, error)
 	PublicNetworkCacheTTL      time.Duration
 
+	defaultsOnce         sync.Once
 	publicNetworkMu      sync.Mutex
 	publicNetworkCache   contract.PublicNetworkSummary
 	publicNetworkExpires time.Time
@@ -49,29 +50,34 @@ func NewCollector() *Collector {
 	}
 }
 
-func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error) {
-	if c.ProcRoot == "" {
-		c.ProcRoot = "/proc"
-	}
-	if c.EtcRoot == "" {
-		c.EtcRoot = "/etc"
-	}
-	if c.SysRoot == "" {
-		c.SysRoot = "/sys"
-	}
-	if c.SwapPath == "" {
-		c.SwapPath = "/swapfile"
-	}
-	if c.LegacySwapPath == "" {
-		c.LegacySwapPath = "/var/lib/kejilion-panel/system/swapfile"
-	}
-	if c.Now == nil {
-		c.Now = time.Now
-	}
-	if c.PublicNetworkCacheTTL <= 0 {
-		c.PublicNetworkCacheTTL = 30 * time.Minute
-	}
+func (c *Collector) prepareDefaults() {
+	c.defaultsOnce.Do(func() {
+		if c.ProcRoot == "" {
+			c.ProcRoot = "/proc"
+		}
+		if c.EtcRoot == "" {
+			c.EtcRoot = "/etc"
+		}
+		if c.SysRoot == "" {
+			c.SysRoot = "/sys"
+		}
+		if c.SwapPath == "" {
+			c.SwapPath = "/swapfile"
+		}
+		if c.LegacySwapPath == "" {
+			c.LegacySwapPath = "/var/lib/kejilion-panel/system/swapfile"
+		}
+		if c.Now == nil {
+			c.Now = time.Now
+		}
+		if c.PublicNetworkCacheTTL <= 0 {
+			c.PublicNetworkCacheTTL = 30 * time.Minute
+		}
+	})
+}
 
+func (c *Collector) collectRuntime(ctx context.Context) (contract.SystemSummary, error) {
+	c.prepareDefaults()
 	result := contract.SystemSummary{
 		Architecture: runtime.GOARCH,
 		CollectedAt:  c.Now().UTC(),
@@ -96,10 +102,27 @@ func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error)
 	if err := c.readNetwork(&result.Network); err != nil {
 		errs = append(errs, err)
 	}
+	result.Disks = c.readDisks()
+	return result, errors.Join(errs...)
+}
+
+// CollectRuntime reads only bounded local runtime metrics. It deliberately
+// skips public-network lookup and management configuration probes so a
+// background history sampler never creates network traffic or invokes host
+// management tools.
+func (c *Collector) CollectRuntime(ctx context.Context) (contract.SystemSummary, error) {
+	return c.collectRuntime(ctx)
+}
+
+func (c *Collector) Collect(ctx context.Context) (contract.SystemSummary, error) {
+	result, err := c.collectRuntime(ctx)
+	var errs []error
+	if err != nil {
+		errs = append(errs, err)
+	}
 	if c.PublicNetworkLookupEnabled {
 		result.PublicNetwork = c.readPublicNetwork(ctx)
 	}
-	result.Disks = c.readDisks()
 	c.readManagement(&result.Management)
 	return result, errors.Join(errs...)
 }

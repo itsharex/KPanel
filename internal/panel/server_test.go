@@ -675,6 +675,22 @@ func TestAllowedDockerReadPaths(t *testing.T) {
 	}
 }
 
+func TestAllowedMonitoringHistoryPathIsExact(t *testing.T) {
+	path, ok := allowedAgentPath("/api/v1/monitoring/history")
+	if !ok || path != "/v1/monitoring/history" {
+		t.Fatalf("monitoring mapping = %q, %v", path, ok)
+	}
+	for _, invalid := range []string{
+		"/api/v1/monitoring",
+		"/api/v1/monitoring/history/extra",
+		"/api/v1/monitoring/history/../../system",
+	} {
+		if path, ok := allowedAgentPath(invalid); ok {
+			t.Fatalf("allowed unsafe monitoring path %q as %q", invalid, path)
+		}
+	}
+}
+
 func TestAllowedWordPressInstallationPath(t *testing.T) {
 	id := strings.Repeat("a", 32)
 	for publicPath, expected := range map[string]string{
