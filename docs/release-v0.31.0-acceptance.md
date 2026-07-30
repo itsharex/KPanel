@@ -15,10 +15,20 @@
 - [x] Web 全量测试、类型检查和生产构建。
 - [x] 生态规则、部署安装安全测试和应用生命周期测试。
 - [x] Linux amd64/arm64 的 `paneld`、`kejilion-agent` 和 `kpctl` 交叉构建。
-- [ ] 已知漏洞扫描和 Node 高危依赖审计。
-- [ ] 本地 L3 镜像构建、运行时健康检查和镜像契约检查。
-- [ ] 主线 CI。
-- [ ] Release 工作流、多架构镜像、GitHub Release 及 Docker Hub 摘要。
+- [x] 已知漏洞扫描和 Node 高危依赖审计。
+- [x] Release L3 镜像构建、运行时健康检查和镜像契约检查。
+- [x] 主线 CI。
+- [x] Release 工作流、多架构镜像、GitHub Release 及 Docker Hub 摘要。
+
+## 发布证据
+
+- 发布提交：`e829f6a5154a4e21ff53547cda4a3790691b353c`
+- 主线 CI：<https://github.com/kejilion/KPanel/actions/runs/30575188641>
+- Release：<https://github.com/kejilion/KPanel/actions/runs/30575479951>
+- GitHub Release：<https://github.com/kejilion/KPanel/releases/tag/v0.31.0>
+- Docker Hub `0.31.0` / `latest`：
+  `sha256:1d9a73d105a11059e6b909433a1927fe6400ca4198c7211faa0786205ef45c0a`
+- 平台清单：`linux/amd64`、`linux/arm64`
 
 ## 性能、安全与兼容结论
 
