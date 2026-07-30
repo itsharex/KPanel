@@ -16,6 +16,7 @@ const props = defineProps<{
   jobId: string
   inputOpen?: boolean
   kind?: 'app' | 'site' | 'diagnostic' | 'environment'
+  compact?: boolean
 }>()
 
 const host = ref<HTMLElement>()
@@ -207,7 +208,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="interactive-terminal">
+  <section class="interactive-terminal" :class="{ 'is-compact': props.compact }">
     <header>
       <div>
         <strong>
@@ -330,6 +331,11 @@ onBeforeUnmount(() => {
 
 .interactive-terminal__screen :deep(.xterm) {
   height: 100%;
+}
+
+.interactive-terminal.is-compact .interactive-terminal__screen {
+  height: min(30vh, 260px);
+  min-height: 200px;
 }
 
 .interactive-terminal__composer {

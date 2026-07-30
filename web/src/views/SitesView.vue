@@ -58,6 +58,7 @@ const formError = ref('')
 const installProgress = ref<SiteInstallationProgress>()
 const showMoreTemplates = ref(false)
 const siteList = ref<HTMLElement>()
+const installationPanel = ref<HTMLElement>()
 const recentCreatedDomain = ref('')
 const deleteOpen = ref(false)
 const deletingSite = ref<Site>()
@@ -69,6 +70,7 @@ const toast = useToast()
 let controller: AbortController | undefined
 let installationMonitor: ReturnType<typeof setTimeout> | undefined
 let recentCreatedTimer: ReturnType<typeof setTimeout> | undefined
+let focusedInstallationID = ''
 
 const installStageLabels: Record<string, string> = {
   submitting: '提交配置',
@@ -103,6 +105,31 @@ const installStageLabel = computed(() => installStageName(installProgress.value?
 const installTaskActive = computed(
   () => installProgress.value?.status === 'queued' || installProgress.value?.status === 'running',
 )
+const installationTaskView = computed(
+  () => !editingSite.value && Boolean(installProgress.value),
+)
+const installationTaskFinished = computed(
+  () => installProgress.value?.status === 'succeeded' || installProgress.value?.status === 'failed',
+)
+const editorTitle = computed(() => {
+  if (editingSite.value) return '编辑网站设置'
+  if (!installationTaskView.value) return '新建网站'
+  if (installProgress.value?.status === 'succeeded') return '网站搭建完成'
+  if (installProgress.value?.status === 'failed') return '网站搭建失败'
+  return '正在搭建网站'
+})
+const editorDescription = computed(() => {
+  if (!installationTaskView.value) {
+    return '脚本建站由独立后台任务执行；关闭窗口不会中断，可从网站页重新打开终端。'
+  }
+  if (installProgress.value?.status === 'succeeded') {
+    return '任务已结束，终端输出仍会保留；请确认网站配置信息后手动关闭窗口。'
+  }
+  if (installProgress.value?.status === 'failed') {
+    return '任务已结束，请根据终端原始输出定位原因后手动关闭窗口。'
+  }
+  return '终端正在实时显示脚本输出；需要时按提示输入，关闭窗口仅会转入后台。'
+})
 
 const serviceOptions = [
   {
@@ -446,17 +473,32 @@ function openCreate(): void {
   form.phpVersion = 'latest'
   formError.value = ''
   installProgress.value = undefined
+  focusedInstallationID = ''
   showMoreTemplates.value = !featuredServiceOptions.value.some((option) => option.type === form.type)
   editorOpen.value = true
 }
 
 function openInstallationTask(): void {
   editorOpen.value = true
+  void focusInstallationPanel(true)
 }
 
 function closeEditor(): void {
+  const completedDomain =
+    installProgress.value?.status === 'succeeded'
+      ? installProgress.value.domain || form.primaryDomain
+      : ''
   editorOpen.value = false
   showMoreTemplates.value = false
+  if (completedDomain) void revealCreatedSite(completedDomain)
+}
+
+async function focusInstallationPanel(force = false): Promise<void> {
+  const jobID = installProgress.value?.id || ''
+  if (!force && jobID && focusedInstallationID === jobID) return
+  await nextTick()
+  installationPanel.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  if (jobID) focusedInstallationID = jobID
 }
 
 async function revealCreatedSite(domain: string): Promise<void> {
@@ -496,7 +538,7 @@ function monitorInstallation(id?: string): void {
       if (progress.status === 'succeeded') {
         toast.success('后台建站已完成', `${progress.domain || '网站'} 已完成脚本执行与产物对账。`)
         await load(true)
-        await revealCreatedSite(progress.domain || form.primaryDomain)
+        if (!editorOpen.value) await revealCreatedSite(progress.domain || form.primaryDomain)
       }
     } catch (reason) {
       if (isTransientAgentError(reason)) {
@@ -606,8 +648,9 @@ async function submitSite(): Promise<void> {
       ? await api.sites.update(editingSite.value.id, input)
       : await api.sites.create(input, (progress) => {
           installProgress.value = progress
+          if (progress.id) void focusInstallationPanel()
         })
-    editorOpen.value = false
+    if (wasEditing) editorOpen.value = false
     toast.success(
       wasEditing
         ? '网站已更新'
@@ -619,7 +662,19 @@ async function submitSite(): Promise<void> {
         : `${savedSite.primaryDomain} 已通过 nginx -t 校验并完成同步应用。`,
     )
     await load(true)
-    if (!wasEditing) await revealCreatedSite(savedSite.primaryDomain)
+    if (!wasEditing) {
+      installProgress.value = {
+        ...(installProgress.value || {
+          progress: 100,
+          message: '网站已完成脚本执行与产物对账。',
+        }),
+        domain: savedSite.primaryDomain,
+        status: 'succeeded',
+        stage: 'completed',
+        progress: 100,
+      }
+      await focusInstallationPanel()
+    }
   } catch (reason) {
     const message = reason instanceof ApiError ? reason.message : '操作失败，请稍后重试。'
     formError.value = message
@@ -1087,15 +1142,16 @@ onBeforeUnmount(() => {
 
     <ModalDialog
       :open="editorOpen"
-      :title="editingSite ? '编辑网站设置' : '新建网站'"
-      description="脚本建站由独立后台任务执行；关闭窗口不会中断，可从网站页重新打开终端。"
+      :title="editorTitle"
+      :description="editorDescription"
       size="large"
       @close="closeEditor"
     >
       <form id="site-form" class="form-stack" @submit.prevent="submitSite">
         <div v-if="formError" class="inline-alert inline-alert--danger" role="alert">{{ formError }}</div>
         <div
-          v-if="installProgress && (submitting || installProgress.status === 'failed')"
+          v-if="installProgress && installationTaskView"
+          ref="installationPanel"
           class="site-install-progress"
           :class="{ 'is-failed': installProgress.status === 'failed' }"
           role="status"
@@ -1140,8 +1196,10 @@ onBeforeUnmount(() => {
             :job-id="installProgress.id"
             :input-open="installProgress.inputOpen"
             kind="site"
+            compact
           />
         </div>
+        <template v-if="!installationTaskView">
         <label class="field">
           <span>主域名</span>
           <input
@@ -1351,12 +1409,23 @@ onBeforeUnmount(() => {
           <ShieldCheck :size="14" />
           建站任务在后台执行，关闭窗口不会中断。
         </small>
+        </template>
       </form>
       <template #footer>
-        <button class="button button--secondary" type="button" @click="closeEditor">
-          {{ submitting ? '转入后台' : '取消' }}
+        <button
+          v-if="installationTaskView"
+          class="button"
+          :class="installationTaskFinished ? 'button--primary' : 'button--secondary'"
+          type="button"
+          @click="closeEditor"
+        >
+          {{ installationTaskFinished ? '关闭窗口' : '转入后台' }}
         </button>
-        <button class="button button--primary" type="submit" form="site-form" :disabled="submitting || !canSubmit">
+        <template v-else>
+          <button class="button button--secondary" type="button" @click="closeEditor">
+            取消
+          </button>
+          <button class="button button--primary" type="submit" form="site-form" :disabled="submitting || !canSubmit">
           <LoaderCircle v-if="submitting" class="spin" :size="16" />
           {{
             submitting
@@ -1377,7 +1446,8 @@ onBeforeUnmount(() => {
                     ? `使用脚本搭建 ${selectedService?.title || '网站'}`
                     : '创建网站'
           }}
-        </button>
+          </button>
+        </template>
       </template>
     </ModalDialog>
   </div>

@@ -2788,7 +2788,7 @@ div.resource-name {
 
 .site-install-progress__events {
   display: grid;
-  max-height: 230px;
+  max-height: 86px;
   padding: 2px 0 2px 3px;
   margin: 2px 0 0;
   overflow-y: auto;
