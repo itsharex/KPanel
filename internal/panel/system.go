@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -118,6 +119,18 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 		if input.Enabled == nil {
 			return "enabled", "enabled is required"
 		}
+	case "bbrv3":
+		if input.MaintenancePolicy != "install" && input.MaintenancePolicy != "update" &&
+			input.MaintenancePolicy != "uninstall" {
+			return "maintenancePolicy", "maintenancePolicy must be install, update, or uninstall"
+		}
+		allowed := contract.SystemActionRequest{
+			Action:            input.Action,
+			MaintenancePolicy: input.MaintenancePolicy,
+		}
+		if !reflect.DeepEqual(*input, allowed) {
+			return "request", "only action and maintenancePolicy are allowed for bbrv3"
+		}
 	case "update":
 		if input.MaintenancePolicy != "full" {
 			return "maintenancePolicy", "maintenancePolicy must be full"
@@ -162,7 +175,7 @@ func systemActionAuditChange(input contract.SystemActionRequest) map[string]any 
 		change["profile"] = input.Profile
 	case "bbr":
 		change["enabled"] = input.Enabled != nil && *input.Enabled
-	case "update", "cleanup":
+	case "update", "cleanup", "bbrv3":
 		change["maintenancePolicy"] = input.MaintenancePolicy
 	case "reboot":
 		change["requested"] = true

@@ -79,6 +79,7 @@ interface ManagementTool {
 }
 
 type KernelProfile = 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
+type BBRv3Policy = 'install' | 'update' | 'uninstall'
 
 const mirrorPresets: Array<{
   value: MirrorPreset
@@ -127,6 +128,7 @@ const actionForm = reactive({
   preference: 'ipv4' as 'ipv4' | 'system_default',
   profile: 'balanced' as KernelProfile,
   bbrEnabled: true,
+  bbrv3Policy: 'install' as BBRv3Policy,
   sshDefenseEnabled: true,
   maintenancePolicy: 'full' as 'full' | 'cache' | 'standard',
 })
@@ -278,6 +280,46 @@ const systemTools = computed<ManagementTool[]>(() => {
   if (management.swap.otherActiveDevices) {
     swapDetails.push(`保留 ${management.swap.otherActiveDevices} 个其他 Swap`)
   }
+  const bbrv3 = management.bbrv3
+  const bbrv3Reason: Record<string, string> = {
+    protocol_unavailable: '请更新本机 kejilion.sh 以启用 BBRv3 管理协议',
+    status_failed: '脚本未能读取 BBRv3 状态',
+    invalid_protocol: '脚本返回的 BBRv3 状态无法识别',
+    unsupported_release: '仅支持 Debian 12 / Ubuntu 24 或更高版本',
+    arm64_external_installer_untrusted: 'ARM64 原模块依赖未固定来源，暂不开放面板执行',
+    unsupported_distribution: '当前仅支持 Debian / Ubuntu',
+    missing_dependencies: 'APT 或 DPKG 依赖不完整',
+  }
+  let bbrv3Value = bbrv3.active
+    ? '已生效'
+    : bbrv3.installed
+      ? bbrv3.rebootRequired
+        ? '已安装 · 待重启'
+        : '已安装'
+      : bbrv3.supported
+        ? '可安装'
+        : '当前主机不支持'
+  let bbrv3Detail = [
+    bbrv3.runningKernel ? `内核 ${bbrv3.runningKernel}` : '',
+    bbrv3.installedKernel && bbrv3.installedKernel !== bbrv3.runningKernel
+      ? `待切换 ${bbrv3.installedKernel}`
+      : '',
+    bbrv3.congestionControl ? `拥塞算法 ${bbrv3.congestionControl}` : '',
+    bbrv3.defaultQDisc ? `队列 ${bbrv3.defaultQDisc}` : '',
+  ].filter(Boolean).join(' · ')
+  if (!bbrv3.available || !bbrv3.supported) {
+    bbrv3Detail = bbrv3Reason[bbrv3.reason || ''] || bbrv3Detail || '等待 Agent 识别'
+  }
+  if (management.maintenance.action === 'bbrv3' && management.maintenance.state !== 'idle') {
+    if (management.maintenance.state === 'running') {
+      bbrv3Value = `进行中 · ${management.maintenance.progress}%`
+    } else if (management.maintenance.state === 'failed') {
+      bbrv3Value = '上次执行失败'
+    } else {
+      bbrv3Value = management.maintenance.rebootRequired ? '已完成 · 待重启' : '已完成'
+    }
+    bbrv3Detail = management.maintenance.message || bbrv3Detail
+  }
   return [
     {
       id: 'swap',
@@ -341,6 +383,17 @@ const systemTools = computed<ManagementTool[]>(() => {
       capability: 'system.bbr.write',
       safety: '先确认内核暴露 bbr 算法，再写入独立 sysctl 配置并回读生效状态。',
       icon: Bolt,
+    },
+    {
+      id: 'bbrv3',
+      title: 'BBRv3 管理',
+      description: '对应 kejilion.sh 的“BBRv3 管理”。',
+      value: bbrv3Value,
+      detail: bbrv3Detail,
+      capability: 'system.bbrv3.write',
+      safety: '复用 kejilion.sh 的 XanMod 安装、更新与卸载流程；由独立 systemd 任务执行，不自动重启服务器。',
+      icon: Gauge,
+      tone: bbrv3.rebootRequired ? 'amber' : 'blue',
     },
   ]
 })
@@ -466,15 +519,17 @@ function openTool(tool: ManagementTool): void {
     management?.kernelOptimization.profile,
   )
   actionForm.bbrEnabled = !management?.bbr.enabled
+  actionForm.bbrv3Policy = management?.bbrv3.installed ? 'update' : 'install'
   actionForm.sshDefenseEnabled = !management?.ssh.defense.enabled
   actionForm.maintenancePolicy = tool.id === 'system-cleanup' ? 'standard' : 'full'
   selectedTool.value = tool
 }
 
-function maintenanceActionFor(toolID: string): 'update' | 'cleanup' | 'ssh-defense' | undefined {
+function maintenanceActionFor(toolID: string): 'update' | 'cleanup' | 'ssh-defense' | 'bbrv3' | undefined {
   if (toolID === 'system-update') return 'update'
   if (toolID === 'system-cleanup') return 'cleanup'
   if (toolID === 'ssh-defense') return 'ssh-defense'
+  if (toolID === 'bbrv3') return 'bbrv3'
   return undefined
 }
 
@@ -540,6 +595,8 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
       return { action: 'kernel-tuning', profile: actionForm.profile }
     case 'bbr':
       return { action: 'bbr', enabled: actionForm.bbrEnabled }
+    case 'bbrv3':
+      return { action: 'bbrv3', maintenancePolicy: actionForm.bbrv3Policy }
     case 'system-update':
       return { action: 'update', maintenancePolicy: 'full' }
     case 'system-cleanup':
@@ -557,7 +614,8 @@ const actionValid = computed(() => {
   if (
     (input.action === 'update' ||
       input.action === 'cleanup' ||
-      input.action === 'ssh-defense') &&
+      input.action === 'ssh-defense' ||
+      input.action === 'bbrv3') &&
     maintenanceRunning.value
   ) {
     return false
@@ -580,6 +638,11 @@ const actionValid = computed(() => {
       return input.swapSizeMiB === 0 || Boolean(input.swapSizeMiB && input.swapSizeMiB >= 1)
     case 'reboot':
       return true
+    case 'bbrv3':
+      return Boolean(
+        data.value?.management.bbrv3.supported ||
+        (input.maintenancePolicy === 'uninstall' && data.value?.management.bbrv3.installed),
+      )
     default:
       return true
   }
@@ -595,7 +658,8 @@ async function executeAction(): Promise<void> {
     if (
       input.action === 'update' ||
       input.action === 'cleanup' ||
-      input.action === 'ssh-defense'
+      input.action === 'ssh-defense' ||
+      input.action === 'bbrv3'
     ) {
       toast.success(`${tool.title}任务已提交`, result.message)
     } else if (input.action === 'reboot') {
@@ -1237,6 +1301,17 @@ onBeforeUnmount(() => {
               <option :value="false">停用并恢复 cubic + fq_codel</option>
             </select>
           </label>
+          <label v-else-if="selectedTool.id === 'bbrv3'" class="field">
+            <span>BBRv3 操作</span>
+            <select v-model="actionForm.bbrv3Policy">
+              <option v-if="!data?.management.bbrv3.installed" value="install">安装 XanMod BBRv3 内核</option>
+              <option v-if="data?.management.bbrv3.installed" value="update">更新 XanMod BBRv3 内核</option>
+              <option v-if="data?.management.bbrv3.installed" value="uninstall">卸载 XanMod BBRv3 内核</option>
+            </select>
+            <small>
+              安装、更新或卸载内核后需要重启才能完成切换；KPanel 只提交后台任务，不会自动重启。
+            </small>
+          </label>
           <label v-else-if="selectedTool.id === 'system-update'" class="field">
             <span>更新方式</span>
             <select v-model="actionForm.maintenancePolicy">
@@ -1269,15 +1344,21 @@ onBeforeUnmount(() => {
           <CircleAlert :size="17" />
           <span>
             {{
-              maintenanceRunning &&
+              selectedTool.id === 'bbrv3' &&
+              !data?.management.bbrv3.supported &&
+              !(actionForm.bbrv3Policy === 'uninstall' && data?.management.bbrv3.installed)
+                ? '当前系统或脚本来源不满足 BBRv3 受控执行条件，请查看上方状态说明。'
+                : maintenanceRunning &&
               (selectedTool.id === 'system-update' ||
                 selectedTool.id === 'system-cleanup' ||
-                selectedTool.id === 'ssh-defense')
+                selectedTool.id === 'ssh-defense' ||
+                selectedTool.id === 'bbrv3')
                 ? '已有系统维护任务正在后台执行，请等待完成后再提交新任务。'
                 : capabilityState(selectedTool.capability).enabled
                   ? selectedTool.id === 'system-update' ||
                     selectedTool.id === 'system-cleanup' ||
-                    selectedTool.id === 'ssh-defense'
+                    selectedTool.id === 'ssh-defense' ||
+                    selectedTool.id === 'bbrv3'
                     ? '任务由独立 systemd 单元执行；关闭浏览器不会中断，页面将持续读取进度。'
                     : selectedTool.id === 'system-reboot'
                       ? '请求成功后，Agent 会创建固定的延时重启单元；约 15 秒后面板离线属于正常现象。'
@@ -1302,7 +1383,9 @@ onBeforeUnmount(() => {
                 ? '正在安排重启…'
                 : '正在执行并验证…'
               : capabilityState(selectedTool?.capability || '').enabled
-                ? '确认执行'
+                ? selectedTool?.id === 'bbrv3' && !actionValid
+                  ? '当前不可执行'
+                  : '确认执行'
                 : '当前不可执行'
           }}
         </button>

@@ -254,8 +254,8 @@ export interface SystemManagement {
   maintenance: {
     id?: string
     state: 'idle' | 'running' | 'succeeded' | 'failed'
-    action?: 'update' | 'cleanup' | 'ssh-defense'
-    policy?: 'full' | 'cache' | 'standard' | 'enable' | 'disable'
+    action?: 'update' | 'cleanup' | 'ssh-defense' | 'bbrv3'
+    policy?: 'full' | 'cache' | 'standard' | 'enable' | 'disable' | 'install' | 'update' | 'uninstall'
     stage?: string
     progress: number
     message?: string
@@ -275,6 +275,21 @@ export interface SystemManagement {
     congestionControl?: string
     defaultQDisc?: string
     available: string[]
+  }
+  bbrv3: {
+    available: boolean
+    supported: boolean
+    installed: boolean
+    active: boolean
+    architecture?: string
+    os?: string
+    codename?: string
+    runningKernel?: string
+    installedKernel?: string
+    congestionControl?: string
+    defaultQDisc?: string
+    rebootRequired: boolean
+    reason?: string
   }
   capabilities: Record<string, CapabilityState>
 }
@@ -335,6 +350,7 @@ export interface SystemActionInput {
     | 'ip-preference'
     | 'kernel-tuning'
     | 'bbr'
+    | 'bbrv3'
     | 'update'
     | 'cleanup'
     | 'reboot'
@@ -346,7 +362,7 @@ export interface SystemActionInput {
   mirrorPreset?: 'cn-default' | 'cn-edu' | 'abroad' | 'smart'
   preference?: 'ipv4' | 'system_default'
   profile?: 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
-  maintenancePolicy?: 'full' | 'cache' | 'standard'
+  maintenancePolicy?: 'full' | 'cache' | 'standard' | 'install' | 'update' | 'uninstall'
   enabled?: boolean
 }
 

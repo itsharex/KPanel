@@ -27,6 +27,7 @@ Rocky 等系统分别制作 Panel 镜像。
 | CPU、内存、负载、磁盘、网络、系统版本 | 读取宿主机 `/proc`、挂载点和系统文件 | 基本不依赖发行版 |
 | 网站与 Docker | 读取宿主机 Docker Engine、`/home/web`、`/home/docker` | 依赖 Kejilion 产物布局，不依赖包管理器 |
 | 主机名、时区、Swap、IP 优先级、内核优化、BBR | 按命令和内核能力动态开放 | 缺少工具时明确显示依赖未就绪 |
+| BBRv3 管理 | x86_64 Debian 12 / Ubuntu 24 及脚本支持的后续版本；可信 `kejilion.sh` 固定协议 | ARM64 外部安装器未固定摘要时只保留 SSH 脚本入口；面板不自动重启 |
 | SSH 端口 | 支持 `ssh.service`、`sshd.service`，兼容 UFW、Firewalld、iptables | 必须存在 OpenSSH 配置、reload 与监听验证能力 |
 | DNS 写入 | 可信 `kejilion.sh` 非交互协议；systemd-resolved 原生配置或脚本兼容 `resolv.conf` 事务 | 本机脚本版本过旧或底层 `systemctl`/`chattr` 不可用时禁用 |
 | 软件源读取 | APT、DNF/YUM、APK、Pacman、Zypper | 页面展示实际源主机 |

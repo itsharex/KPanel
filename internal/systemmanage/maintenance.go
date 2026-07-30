@@ -32,7 +32,10 @@ type maintenanceStep struct {
 	optional  bool
 }
 
-const maintenanceOperationPacmanOrphans = "pacman-orphans"
+const (
+	maintenanceOperationPacmanOrphans = "pacman-orphans"
+	maintenanceOperationBBRv3         = "bbrv3"
+)
 
 var pacmanPackagePattern = regexp.MustCompile(`^[a-z0-9@._+][a-z0-9@._+-]{0,127}$`)
 var maintenanceIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,96}$`)
@@ -161,6 +164,11 @@ func (m *Manager) startMaintenance(
 			return false, "", fmt.Errorf("%w: SSH defense policy must be enable or disable", ErrInvalidInput)
 		}
 		mode = "ssh-defense-" + policy
+	case "bbrv3":
+		if policy != "install" && policy != "update" && policy != "uninstall" {
+			return false, "", fmt.Errorf("%w: BBRv3 policy must be install, update, or uninstall", ErrInvalidInput)
+		}
+		mode = "bbrv3-" + policy
 	default:
 		return false, "", fmt.Errorf("%w: unknown maintenance action", ErrInvalidInput)
 	}
@@ -252,6 +260,7 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 		return fmt.Errorf("persist maintenance start: %w", err)
 	}
 
+	bbrv3RebootRequired := false
 	for _, step := range steps {
 		status.Stage = step.stage
 		status.Progress = step.progress
@@ -262,6 +271,12 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 		var runErr error
 		if step.operation == maintenanceOperationPacmanOrphans {
 			runErr = m.removePacmanOrphans(ctx, step.command)
+		} else if step.operation == maintenanceOperationBBRv3 {
+			var output []byte
+			output, runErr = m.runner.Run(ctx, step.command, step.arguments...)
+			if runErr == nil {
+				bbrv3RebootRequired, runErr = verifyBBRv3ActionOutput(output, policy)
+			}
 		} else {
 			_, runErr = m.runner.Run(ctx, step.command, step.arguments...)
 		}
@@ -280,14 +295,16 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 	status.State = "succeeded"
 	status.Stage = "completed"
 	status.Progress = 100
+	status.RebootRequired = bbrv3RebootRequired ||
+		regularFile(filepath.Join(m.runRoot, "reboot-required"))
 	status.Message = maintenanceCompletionMessage(
 		action,
 		policy,
 		len(steps),
 		finishedAt.Sub(*status.StartedAt),
+		status.RebootRequired,
 	)
 	status.FinishedAt = &finishedAt
-	status.RebootRequired = regularFile(filepath.Join(m.runRoot, "reboot-required"))
 	if err := m.writeMaintenance(status); err != nil {
 		return fmt.Errorf("persist maintenance result: %w", err)
 	}
@@ -326,6 +343,45 @@ func (m *Manager) maintenanceSteps(
 				"bash",
 				script,
 				"f2b",
+				policy,
+			},
+		}}, nil
+	}
+	if strings.HasPrefix(mode, "bbrv3-") {
+		script, err := m.bbrv3Script()
+		if err != nil {
+			return "", "", nil, fmt.Errorf(
+				"%w: update kejilion.sh to enable the BBRv3 protocol",
+				ErrUnsupported,
+			)
+		}
+		for _, command := range []string{"env", "bash"} {
+			if _, err := m.runner.LookPath(command); err != nil {
+				return "", "", nil, fmt.Errorf(
+					"%w: BBRv3 command %s is unavailable",
+					ErrUnsupported,
+					command,
+				)
+			}
+		}
+		policy := strings.TrimPrefix(mode, "bbrv3-")
+		switch policy {
+		case "install", "update", "uninstall":
+		default:
+			return "", "", nil, fmt.Errorf("%w: unknown BBRv3 policy", ErrInvalidInput)
+		}
+		return "bbrv3", policy, []maintenanceStep{{
+			stage:     "bbrv3_" + policy,
+			progress:  35,
+			command:   "env",
+			operation: maintenanceOperationBBRv3,
+			arguments: []string{
+				"KJ_BBRV3_NONINTERACTIVE=1",
+				"LC_ALL=C.UTF-8",
+				"LANG=C.UTF-8",
+				"bash",
+				script,
+				"bbrv3",
 				policy,
 			},
 		}}, nil
@@ -586,17 +642,36 @@ func maintenanceStageMessage(stage string) string {
 		return "正在安装并启用 Fail2Ban SSH 防御"
 	case "ssh_defense_disable":
 		return "正在停用 Fail2Ban SSH 防御并保留配置"
+	case "bbrv3_install":
+		return "正在安装 XanMod BBRv3 内核"
+	case "bbrv3_update":
+		return "正在更新 XanMod BBRv3 内核"
+	case "bbrv3_uninstall":
+		return "正在卸载 XanMod BBRv3 内核"
 	default:
 		return "正在执行系统维护"
 	}
 }
 
-func maintenanceSuccessMessage(action, policy string) string {
+func maintenanceSuccessMessage(action, policy string, rebootRequired bool) string {
 	if action == "ssh-defense" {
 		if policy == "enable" {
 			return "SSH 防御已启用，Fail2Ban SSH jail 已验证"
 		}
 		return "SSH 防御已停用，Fail2Ban 配置仍保留"
+	}
+	if action == "bbrv3" {
+		if !rebootRequired {
+			return "BBRv3 操作已完成并通过内核状态复核，当前无需重启切换"
+		}
+		switch policy {
+		case "install":
+			return "BBRv3 内核已安装；请安排重启后复核生效状态"
+		case "update":
+			return "BBRv3 内核已更新；请安排重启后复核生效状态"
+		default:
+			return "BBRv3 内核已卸载；请安排重启切换回发行版内核"
+		}
 	}
 	if action == "update" {
 		return "系统更新已完成；如内核或核心组件变化，请按提示安排重启"
@@ -612,6 +687,7 @@ func maintenanceCompletionMessage(
 	policy string,
 	completedSteps int,
 	elapsed time.Duration,
+	rebootRequired bool,
 ) string {
 	if elapsed < 0 {
 		elapsed = 0
@@ -626,7 +702,7 @@ func maintenanceCompletionMessage(
 	}
 	return fmt.Sprintf(
 		"%s；已执行 %d 个固定维护步骤，耗时 %s",
-		maintenanceSuccessMessage(action, policy),
+		maintenanceSuccessMessage(action, policy, rebootRequired),
 		completedSteps,
 		duration,
 	)

@@ -78,6 +78,7 @@ type SystemManagementSummary struct {
 	IPPreference       string                    `json:"ipPreference"`
 	KernelOptimization KernelOptimizationSummary `json:"kernelOptimization"`
 	BBR                BBRSummary                `json:"bbr"`
+	BBRv3              BBRv3Summary              `json:"bbrv3"`
 }
 
 type SystemMaintenanceSummary struct {
@@ -142,6 +143,22 @@ type BBRSummary struct {
 	CongestionControl string   `json:"congestionControl,omitempty"`
 	DefaultQDisc      string   `json:"defaultQDisc,omitempty"`
 	Available         []string `json:"available,omitempty"`
+}
+
+type BBRv3Summary struct {
+	Available         bool   `json:"available"`
+	Supported         bool   `json:"supported"`
+	Installed         bool   `json:"installed"`
+	Active            bool   `json:"active"`
+	Architecture      string `json:"architecture,omitempty"`
+	OS                string `json:"os,omitempty"`
+	Codename          string `json:"codename,omitempty"`
+	RunningKernel     string `json:"runningKernel,omitempty"`
+	InstalledKernel   string `json:"installedKernel,omitempty"`
+	CongestionControl string `json:"congestionControl,omitempty"`
+	DefaultQDisc      string `json:"defaultQDisc,omitempty"`
+	RebootRequired    bool   `json:"rebootRequired"`
+	Reason            string `json:"reason,omitempty"`
 }
 
 // SystemActionRequest is the only mutation envelope accepted by the Agent.

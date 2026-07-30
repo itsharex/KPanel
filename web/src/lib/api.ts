@@ -171,6 +171,21 @@ interface RawSystemSummary {
       defaultQDisc?: string
       available?: string[]
     }
+    bbrv3?: {
+      available?: boolean
+      supported?: boolean
+      installed?: boolean
+      active?: boolean
+      architecture?: string
+      os?: string
+      codename?: string
+      runningKernel?: string
+      installedKernel?: string
+      congestionControl?: string
+      defaultQDisc?: string
+      rebootRequired?: boolean
+      reason?: string
+    }
   }
   collectedAt: string
 }
@@ -975,6 +990,21 @@ export const api = {
             congestionControl: system.management?.bbr?.congestionControl,
             defaultQDisc: system.management?.bbr?.defaultQDisc,
             available: system.management?.bbr?.available || [],
+          },
+          bbrv3: {
+            available: Boolean(system.management?.bbrv3?.available),
+            supported: Boolean(system.management?.bbrv3?.supported),
+            installed: Boolean(system.management?.bbrv3?.installed),
+            active: Boolean(system.management?.bbrv3?.active),
+            architecture: system.management?.bbrv3?.architecture,
+            os: system.management?.bbrv3?.os,
+            codename: system.management?.bbrv3?.codename,
+            runningKernel: system.management?.bbrv3?.runningKernel,
+            installedKernel: system.management?.bbrv3?.installedKernel,
+            congestionControl: system.management?.bbrv3?.congestionControl,
+            defaultQDisc: system.management?.bbrv3?.defaultQDisc,
+            rebootRequired: Boolean(system.management?.bbrv3?.rebootRequired),
+            reason: system.management?.bbrv3?.reason,
           },
           capabilities,
         },

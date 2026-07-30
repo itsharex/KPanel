@@ -93,6 +93,7 @@ type Config struct {
 	EffectiveUID func() int
 	DNSScript    KejilionScriptFinder
 	F2BScript    KejilionScriptFinder
+	BBRv3Script  KejilionScriptFinder
 }
 
 type Manager struct {
@@ -110,6 +111,7 @@ type Manager struct {
 	effectiveUID    func() int
 	dnsScript       KejilionScriptFinder
 	f2bScript       KejilionScriptFinder
+	bbrv3Script     KejilionScriptFinder
 	rebootScheduled bool
 	mu              sync.Mutex
 }
@@ -154,6 +156,9 @@ func NewManager(config Config) *Manager {
 	if config.F2BScript == nil {
 		config.F2BScript = findKejilionF2BScript
 	}
+	if config.BBRv3Script == nil {
+		config.BBRv3Script = findKejilionBBRv3Script
+	}
 	return &Manager{
 		enabled: config.Enabled, etcRoot: filepath.Clean(config.EtcRoot),
 		procRoot: filepath.Clean(config.ProcRoot), sysRoot: filepath.Clean(config.SysRoot),
@@ -162,7 +167,7 @@ func NewManager(config Config) *Manager {
 		executable: filepath.Clean(config.Executable),
 		now:        config.Now, runner: config.Runner, country: config.Country,
 		effectiveUID: config.EffectiveUID, dnsScript: config.DNSScript,
-		f2bScript: config.F2BScript,
+		f2bScript: config.F2BScript, bbrv3Script: config.BBRv3Script,
 	}
 }
 
@@ -225,6 +230,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 	_, chattrErr := m.runner.LookPath("chattr")
 	_, dnsScriptErr := m.dnsScript()
 	_, f2bScriptErr := m.f2bScript()
+	_, bbrv3ScriptErr := m.bbrv3Script()
 
 	sshConfig := regularFile(filepath.Join(m.etcRoot, "ssh", "sshd_config"))
 	packageManager := m.detectPackageManager()
@@ -291,6 +297,11 @@ func (m *Manager) Capabilities() []contract.Capability {
 		capability("system.ip-preference.write", true, ""),
 		capability("system.kernel-tuning.write", sysctlErr == nil, "sysctl 不可用"),
 		capability("system.bbr.write", sysctlErr == nil && modprobeErr == nil, "内核调优工具不完整"),
+		capability(
+			"system.bbrv3.write",
+			systemdRunErr == nil && helperErr == nil && envErr == nil && bashErr == nil && bbrv3ScriptErr == nil,
+			"请更新本机 kejilion.sh 以启用 BBRv3 固定协议",
+		),
 		capability("system.update.write", updateSupported, updateReason),
 		capability("system.cleanup.write", cleanupSupported, cleanupReason),
 		capability("system.reboot.write", systemctlErr == nil && systemdRunErr == nil, "systemctl 或 systemd-run 不可用"),
@@ -348,6 +359,15 @@ func (m *Manager) Execute(ctx context.Context, input contract.SystemActionReques
 			break
 		}
 		result.Changed, result.BackupPath, result.Message, err = m.setBBR(ctx, *input.Enabled)
+	case "bbrv3":
+		result.Changed, result.Message, err = m.startMaintenance(
+			ctx,
+			input.Action,
+			input.MaintenancePolicy,
+		)
+		if err == nil {
+			result.Status = "accepted"
+		}
 	case "update":
 		result.Changed, result.Message, err = m.startMaintenance(ctx, input.Action, input.MaintenancePolicy)
 		if err == nil {

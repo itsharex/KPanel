@@ -49,6 +49,7 @@ IPinfo IPv4/IPv6 HTTPS 端点，成功结果缓存 30 分钟；外部查询超�
 | V4/V6 优先 | `gai.conf` | 维护 `kejilion.sh` 同一 precedence 规则并保留其他用户配置 |
 | 内核优化 | Kejilion sysctl 产物 | 五种固定预设、内存自适应、逐项应用和版本化回滚；合法脚本产物可接管 |
 | BBR | 当前/可用拥塞算法与 qdisc | 内核能力检查、独立 sysctl 文件、回读 |
+| BBRv3 | `k bbrv3 status|install|update|uninstall` | 可信 `kejilion.sh` 固定协议；XanMod 状态回读、systemd 后台任务、完成后提示重启 |
 | 系统更新 | APT/DNF/YUM/APK/Pacman/Zypper 源与后台任务状态 | 已实现对应包管理器和 systemd 后台执行器 |
 | 系统清理 | 软件包管理器与 journal 后台任务状态 | 缓存或标准策略；动作差异必须在生态对齐矩阵中明确 |
 | 重启服务器 | systemd 能力 | 普通确认后固定延迟约 15 秒执行；维护任务不构成禁止条件 |
@@ -62,8 +63,22 @@ Agent 根据宿主机命令、配置管理器和 root/sandbox 条件动态返回
 
 已开放：主机名、SSH 单端口切换、`kejilion.sh` 同源 SSH 防御、DNS、时区、脚本兼容
 `/swapfile`、Debian/Ubuntu APT 四种区域镜像预设、地址优先级、KPanel 内核调优预设和
-BBR，以及普通确认的服务器重启。重装系统、其他发行版换源和通用
+BBR、BBRv3，以及普通确认的服务器重启。重装系统、其他发行版换源和通用
 sysctl 编辑目前缺少适配器；这不是永久产品限制。
+
+## v0.29 BBRv3 管理
+
+- 页面与普通 BBR 并排展示，状态始终来自 `kejilion.sh` 的
+  `KJ_BBRV3_NONINTERACTIVE=1 k bbrv3 status`，不以 Panel 数据库推断安装结果。
+- Web 只接受 `install`、`update`、`uninstall` 三个枚举动作；Agent 通过可信脚本校验后，
+  使用现有 systemd 维护队列执行，同一时间不与系统更新、清理或 SSH 防御并发。
+- 安装、更新和卸载继续复用脚本的 XanMod 软件源、CPU PSABI 匹配、磁盘/Swap 检查、
+  BBR + fq 配置和包管理语义；KPanel 不维护第二份内核安装命令。
+- 任务完成后只标记“需要重启”，不会自动重启。用户可使用同页受控重启入口，并在重连后
+  由状态接口复核运行内核包含 XanMod、拥塞算法为 `bbr` 且 qdisc 为 `fq`。
+- 当前 KPanel 受控安装支持 x86_64 的 Debian 12 / Ubuntu 24 及脚本列出的后续受支持版本。
+  原 ARM64 菜单依赖未固定摘要的第三方安装器，因此只保留 SSH 脚本入口，不从 Web 自动执行。
+  已安装但发行版已不在支持列表时仍允许卸载。
 
 ## v0.5 后台系统维护
 

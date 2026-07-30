@@ -390,6 +390,7 @@ func (s *Server) systemSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summary.Management.SSH.Defense = s.systemManager.SSHDefenseStatus(r.Context())
+	summary.Management.BBRv3 = s.systemManager.BBRv3Status(r.Context())
 	summary.Management.Maintenance = s.systemManager.MaintenanceStatus()
 	writeJSON(w, http.StatusOK, summary)
 }

@@ -551,6 +551,27 @@ describe('API client', () => {
     })
   })
 
+  it('submits only the fixed BBRv3 action and policy', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        action: 'bbrv3',
+        status: 'accepted',
+        changed: true,
+        message: 'queued',
+        appliedAt: '2026-07-30T03:00:00Z',
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.system.action({ action: 'bbrv3', maintenancePolicy: 'install' })
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(JSON.parse(String(init.body))).toEqual({
+      action: 'bbrv3',
+      maintenancePolicy: 'install',
+    })
+  })
+
   it('keeps the overview compatible with an older Agent without management fields', async () => {
     const collectedAt = '2026-07-25T10:00:00Z'
     const system = {
@@ -654,6 +675,13 @@ describe('API client', () => {
       maintenance: { state: 'idle', progress: 0, rebootRequired: false },
       ipPreference: 'unknown',
       bbr: { supported: false, enabled: false, available: [] },
+      bbrv3: {
+        available: false,
+        supported: false,
+        installed: false,
+        active: false,
+        rebootRequired: false,
+      },
       capabilities: { 'system.read': { enabled: true } },
     })
     expect(overview.cpu).toMatchObject({
