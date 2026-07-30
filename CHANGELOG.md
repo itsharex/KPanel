@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.28.5] - 2026-07-30
+
+### Fixed
+
+- 更新内置 `kejilion.sh`，统一规范 WordPress、PHP、静态站及成品站的目录和文件权限，修复 KPanel 后台任务使用严格 `umask` 时 Nginx 无法读取 CSS、JavaScript 与站点入口的问题。
+
 ## [0.28.4] - 2026-07-30
 
 ### Changed
