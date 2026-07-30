@@ -625,7 +625,10 @@ onBeforeUnmount(() => {
       @dragleave.self="dragging = false"
       @drop.prevent="onDrop"
     >
-      <header class="file-toolbar">
+      <header
+        class="file-toolbar"
+        :class="{ 'file-toolbar--selecting': selected.size }"
+      >
         <nav class="breadcrumbs" aria-label="文件路径">
           <button
             v-for="(item, index) in breadcrumbs"
@@ -646,25 +649,30 @@ onBeforeUnmount(() => {
             <X :size="14" />
           </button>
         </label>
-      </header>
 
-      <Transition name="slide">
-        <div v-if="selected.size" class="batch-bar">
-          <strong>已选 {{ selected.size }} 项</strong>
-          <button
-            v-if="selectedEntries.some((entry) => entry.kind === 'file')"
-            type="button"
-            @click="downloadSelected"
-          ><Download :size="15" />下载</button>
-          <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
-          <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
-          <button type="button" @click="openDialog('chmod')"><ShieldCheck :size="15" />权限</button>
-          <button class="danger-link" type="button" @click="openDialog('trash')">
-            <Trash2 :size="15" />回收站
-          </button>
-          <button type="button" @click="clearSelection">取消选择</button>
-        </div>
-      </Transition>
+        <Transition name="slide">
+          <div
+            v-if="selected.size"
+            class="batch-bar"
+            role="toolbar"
+            aria-label="批量文件操作"
+          >
+            <strong>已选 {{ selected.size }} 项</strong>
+            <button
+              v-if="selectedEntries.some((entry) => entry.kind === 'file')"
+              type="button"
+              @click="downloadSelected"
+            ><Download :size="15" />下载</button>
+            <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
+            <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
+            <button type="button" @click="openDialog('chmod')"><ShieldCheck :size="15" />权限</button>
+            <button class="danger-link" type="button" @click="openDialog('trash')">
+              <Trash2 :size="15" />回收站
+            </button>
+            <button type="button" @click="clearSelection">取消选择</button>
+          </div>
+        </Transition>
+      </header>
 
       <Transition name="slide">
         <div v-if="clipboard?.entries.length" class="clipboard-bar">
@@ -968,6 +976,7 @@ onBeforeUnmount(() => {
 }
 
 .file-toolbar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -975,6 +984,11 @@ onBeforeUnmount(() => {
   padding: 13px 15px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-subtle) 45%, var(--surface));
+}
+
+.file-toolbar--selecting > .breadcrumbs,
+.file-toolbar--selecting > .file-search {
+  visibility: hidden;
 }
 
 .breadcrumbs {
@@ -1043,9 +1057,14 @@ onBeforeUnmount(() => {
 }
 
 .batch-bar {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
   padding: 9px 15px;
   border-bottom: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border));
   background: color-mix(in srgb, var(--brand) 7%, var(--surface));
@@ -1561,10 +1580,6 @@ onBeforeUnmount(() => {
 
   .file-search {
     width: 100%;
-  }
-
-  .batch-bar {
-    overflow-x: auto;
   }
 
   .batch-bar button,
