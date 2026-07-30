@@ -14,9 +14,13 @@
 - [x] Linux 文件管理和 Agent `-race` 测试。
 - [x] L2 生态规则、全量 Go 测试与 vet、Web 124 项测试、类型检查和生产构建。
 - [x] Linux amd64/arm64 的 `paneld`、`kejilion-agent` 和 `kpctl` 交叉构建。
-- [ ] L3 发布验收和本地镜像契约。
-- [ ] 主线 CI、安全审计。
-- [ ] Release 工作流、多架构镜像及 Docker Hub 摘要。
+- [x] L3 发布验收和镜像运行时契约。
+- [x] 主线 CI、安全审计：
+  [Actions 30541250951](https://github.com/kejilion/KPanel/actions/runs/30541250951)。
+- [x] Release 工作流、多架构镜像及 Docker Hub 摘要：
+  [Actions 30541379235](https://github.com/kejilion/KPanel/actions/runs/30541379235)，
+  `0.30.0` 与 `latest` 均为
+  `sha256:6375ffd1ba3ce03d8fccdce51f6c9686a274bac7e504c2106aad1fac7c43ea7e`。
 
 ## 安全与兼容结论
 
