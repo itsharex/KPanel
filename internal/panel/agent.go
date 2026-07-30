@@ -111,16 +111,37 @@ func (c *AgentClient) Get(ctx context.Context, path, rawQuery, requestID string)
 }
 
 func (c *AgentClient) Open(ctx context.Context, method, path, rawQuery, requestID string) (*http.Response, error) {
+	return c.OpenStream(ctx, method, path, rawQuery, requestID, http.NoBody, nil, 0)
+}
+
+func (c *AgentClient) OpenStream(
+	ctx context.Context,
+	method, path, rawQuery, requestID string,
+	body io.Reader,
+	headers http.Header,
+	contentLength int64,
+) (*http.Response, error) {
 	token, err := readSmallSecret(c.tokenFile)
 	if err != nil {
 		return nil, fmt.Errorf("read agent credential: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, http.NoBody)
+	if body == nil {
+		body = http.NoBody
+	}
+	request, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, body)
 	if err != nil {
 		return nil, fmt.Errorf("create agent request: %w", err)
 	}
 	request.URL.RawQuery = rawQuery
 	request.Header.Set("Authorization", "Bearer "+token)
+	for key, values := range headers {
+		for _, value := range values {
+			request.Header.Add(key, value)
+		}
+	}
+	if contentLength >= 0 {
+		request.ContentLength = contentLength
+	}
 	if requestID != "" {
 		request.Header.Set("X-Request-ID", requestID)
 	}

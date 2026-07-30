@@ -14,6 +14,7 @@ import (
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
+	"github.com/kejilion/kejilion-panel/internal/filemanager"
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
 )
@@ -63,7 +64,7 @@ func TestHealthKeepsCoreReadyWithoutWebRoot(t *testing.T) {
 	server, err := NewServer(Config{
 		Token: []byte(strings.Repeat("x", 32)), Version: "test", ProtocolVersion: "test",
 		WebRoot: root, System: systeminfo.NewCollector(),
-		Sites: sites.NewDiscoverer(root), Docker: docker,
+		Sites: sites.NewDiscoverer(root), Docker: docker, Files: testFileManager(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +185,7 @@ func TestSitesPageReturnsEmptyWithoutWebRoot(t *testing.T) {
 	server, err := NewServer(Config{
 		Token: []byte(strings.Repeat("x", 32)), Version: "test", ProtocolVersion: "test",
 		WebRoot: root, System: systeminfo.NewCollector(),
-		Sites: sites.NewDiscoverer(root), Docker: docker,
+		Sites: sites.NewDiscoverer(root), Docker: docker, Files: testFileManager(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -364,12 +365,21 @@ func testServer(t *testing.T) *Server {
 	server, err := NewServer(Config{
 		Token: []byte(strings.Repeat("x", 32)), Version: "test", ProtocolVersion: "test",
 		WebRoot: root, System: systeminfo.NewCollector(),
-		Sites: sites.NewDiscoverer(root), Docker: docker,
+		Sites: sites.NewDiscoverer(root), Docker: docker, Files: testFileManager(t),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return server
+}
+
+func testFileManager(t *testing.T) *filemanager.Manager {
+	t.Helper()
+	manager, err := filemanager.New(filemanager.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manager
 }
 
 func fakeDockerSocket(t *testing.T) string {

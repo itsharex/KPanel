@@ -180,8 +180,7 @@ grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
 	grep -F '/var/lib/kejilion-panel/site-icons' >/dev/null
 grep -F 'ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
-	grep -F -- '-/home/web/certs' |
-	grep -F -- '-/home/web/letsencrypt' >/dev/null
+	grep -F ' /home ' >/dev/null
 grep -F 'SYSTEM_STATE_DIR=/var/lib/kejilion-panel/system' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'WORDPRESS_STATE_DIR=/var/lib/kejilion-panel/wordpress-jobs' \

@@ -190,6 +190,14 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/diagnostic-jobs/") &&
 		strings.HasSuffix(r.URL.Path, "/input"):
 		s.handleDiagnosticInput(w, r)
+	case r.URL.Path == "/api/v1/files":
+		s.handleFileList(w, r)
+	case r.URL.Path == "/api/v1/files/content":
+		s.handleFileContent(w, r)
+	case r.URL.Path == "/api/v1/files/upload":
+		s.handleFileUpload(w, r)
+	case r.URL.Path == "/api/v1/files/actions":
+		s.handleFileAction(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/") &&
 		strings.HasSuffix(r.URL.Path, "/exec"):
 		s.handleDockerExec(w, r)

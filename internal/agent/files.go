@@ -1,0 +1,270 @@
+package agent
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"mime"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/kejilion/kejilion-panel/internal/contract"
+	"github.com/kejilion/kejilion-panel/internal/filemanager"
+)
+
+func (s *Server) fileList(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_path", "文件路径无效", "")
+		return
+	}
+	values := r.URL.Query()
+	if !strictQuery(values, "path", "limit") {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "文件查询参数无效", "")
+		return
+	}
+	limit := filemanager.MaxDirectoryEntries
+	if raw := values.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > filemanager.MaxDirectoryEntries {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_limit", "目录项目上限无效", "")
+			return
+		}
+		limit = parsed
+	}
+	result, err := s.files.List(r.Context(), values.Get("path"), limit)
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) fileContent(w http.ResponseWriter, r *http.Request, requestID string) {
+	switch r.Method {
+	case http.MethodGet:
+		s.fileRead(w, r, requestID)
+	case http.MethodPut:
+		s.fileWrite(w, r, requestID)
+	default:
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPut)
+		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+	}
+}
+
+func (s *Server) fileRead(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.URL.RawPath != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_path", "文件路径无效", "")
+		return
+	}
+	values := r.URL.Query()
+	if !strictQuery(values, "path", "disposition", "mode") {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "文件查询参数无效", "")
+		return
+	}
+	disposition := values.Get("disposition")
+	if disposition == "" {
+		disposition = "inline"
+	}
+	if disposition != "inline" && disposition != "attachment" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_disposition", "文件响应方式无效", "")
+		return
+	}
+	readMode := values.Get("mode")
+	if readMode != "" && readMode != "text" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_file_mode", "文件读取模式无效", "")
+		return
+	}
+	file, entry, err := s.files.Open(values.Get("path"))
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	defer file.Close()
+	contentType := entry.MIME
+	if readMode == "text" {
+		if disposition != "inline" || !entry.Editable || entry.SizeBytes > filemanager.MaxTextBytes {
+			writeProblem(w, requestID, http.StatusUnprocessableEntity, "text_preview_unavailable", "该文件不能作为文本编辑", "")
+			return
+		}
+		content, readErr := io.ReadAll(io.LimitReader(file, filemanager.MaxTextBytes+1))
+		if readErr != nil {
+			writeFileProblem(w, requestID, readErr)
+			return
+		}
+		if len(content) > filemanager.MaxTextBytes || !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+			writeProblem(w, requestID, http.StatusUnprocessableEntity, "text_preview_unavailable", "该文件不是有效的 UTF-8 文本", "")
+			return
+		}
+		w.Header().Set("Content-Disposition", "inline")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("ETag", `"`+entry.ResourceVersion+`"`)
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		http.ServeContent(w, r, entry.Name, entry.ModifiedAt, bytes.NewReader(content))
+		return
+	}
+	if disposition == "inline" && activeContent(entry.Name, contentType) {
+		contentType = "text/plain; charset=utf-8"
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if formatted := mime.FormatMediaType(disposition, map[string]string{"filename": entry.Name}); formatted != "" {
+		w.Header().Set("Content-Disposition", formatted)
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("ETag", `"`+entry.ResourceVersion+`"`)
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	http.ServeContent(w, r, entry.Name, entry.ModifiedAt, file)
+}
+
+func (s *Server) fileWrite(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "path") {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "文件查询参数无效", "")
+		return
+	}
+	if contentType := strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]); contentType != "application/json" {
+		writeProblem(w, requestID, http.StatusUnsupportedMediaType, "json_required", "必须提交 JSON", "")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, filemanager.MaxTextBytes+(64<<10))
+	var input contract.FileWriteRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "文件内容无效", "")
+		return
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "文件内容无效", "")
+		return
+	}
+	entry, err := s.files.WriteText(r.Context(), r.URL.Query().Get("path"), input)
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, contract.FileWriteResult{Entry: entry})
+}
+
+func (s *Server) fileUpload(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "path", "name", "overwrite") {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "上传参数无效", "")
+		return
+	}
+	if strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]) != "application/octet-stream" {
+		writeProblem(w, requestID, http.StatusUnsupportedMediaType, "binary_required", "上传必须使用二进制内容", "")
+		return
+	}
+	overwrite := false
+	if raw := r.URL.Query().Get("overwrite"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_overwrite", "覆盖选项无效", "")
+			return
+		}
+		overwrite = parsed
+	}
+	if r.ContentLength > filemanager.MaxUploadBytes {
+		writeFileProblem(w, requestID, filemanager.ErrTooLarge)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, filemanager.MaxUploadBytes+1)
+	entry, err := s.files.Upload(
+		r.Context(),
+		r.URL.Query().Get("path"),
+		r.URL.Query().Get("name"),
+		r.Body,
+		r.ContentLength,
+		overwrite,
+	)
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
+}
+
+func (s *Server) fileAction(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "文件操作参数无效", "")
+		return
+	}
+	var input contract.FileActionRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_request", "文件操作无效", "")
+		return
+	}
+	result, err := s.files.Action(r.Context(), input)
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	status := http.StatusOK
+	if len(result.Failed) > 0 {
+		status = http.StatusMultiStatus
+	}
+	writeJSON(w, status, result)
+}
+
+func strictQuery(values map[string][]string, allowed ...string) bool {
+	keys := make(map[string]struct{}, len(allowed))
+	for _, value := range allowed {
+		keys[value] = struct{}{}
+	}
+	for key, values := range values {
+		if _, ok := keys[key]; !ok || len(values) != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func activeContent(name, contentType string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, ".html") ||
+		strings.HasSuffix(lower, ".htm") ||
+		strings.HasSuffix(lower, ".svg") ||
+		contentType == "text/html" ||
+		contentType == "image/svg+xml" ||
+		contentType == "application/xhtml+xml"
+}
+
+func writeFileProblem(w http.ResponseWriter, requestID string, err error) {
+	status, code, title := http.StatusUnprocessableEntity, "file_operation_failed", "文件操作失败"
+	var maxBytesError *http.MaxBytesError
+	switch {
+	case errors.As(err, &maxBytesError):
+		status, code, title = http.StatusRequestEntityTooLarge, "file_too_large", "文件超过允许的大小"
+	case errors.Is(err, os.ErrNotExist):
+		status, code, title = http.StatusNotFound, "file_not_found", "文件不存在"
+	case errors.Is(err, os.ErrPermission):
+		status, code, title = http.StatusForbidden, "file_permission_denied", "文件权限不足"
+	case errors.Is(err, filemanager.ErrInvalidPath),
+		errors.Is(err, filemanager.ErrRootOperation),
+		errors.Is(err, filemanager.ErrAction),
+		errors.Is(err, filemanager.ErrBatchTooLarge),
+		errors.Is(err, filemanager.ErrInvalidEncoding):
+		status, code, title = http.StatusBadRequest, "file_request_invalid", "文件请求无效"
+	case errors.Is(err, filemanager.ErrProtected):
+		status, code, title = http.StatusForbidden, "file_path_protected", "KPanel 保护目录不可访问"
+	case errors.Is(err, filemanager.ErrSymlink):
+		status, code, title = http.StatusUnprocessableEntity, "file_symlink_rejected", "符号链接不能在面板中打开"
+	case errors.Is(err, filemanager.ErrConflict),
+		errors.Is(err, filemanager.ErrAlreadyExists):
+		status, code, title = http.StatusConflict, "file_conflict", "文件状态冲突"
+	case errors.Is(err, filemanager.ErrTooLarge):
+		status, code, title = http.StatusRequestEntityTooLarge, "file_too_large", "文件超过允许的大小"
+	case errors.Is(err, filemanager.ErrNotDirectory),
+		errors.Is(err, filemanager.ErrNotRegular):
+		status, code, title = http.StatusUnprocessableEntity, "file_type_invalid", "文件类型不支持此操作"
+	}
+	writeProblem(w, requestID, status, code, title, safeDetail(err))
+}
