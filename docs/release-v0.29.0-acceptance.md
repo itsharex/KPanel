@@ -16,7 +16,8 @@
 - [x] Go 新增严格状态解析、可信脚本调用、固定 systemd 任务和 Panel 枚举校验测试。
 - [x] Windows 可执行的 Go 编译、定向测试与 `go vet ./...`。
 - [x] Web TypeScript、121 项单元测试和生产构建。
-- [ ] Ubuntu CI 全量 `make verify-change`、`govulncheck` 与 `npm audit`。
+- [x] Ubuntu CI 全量 `make verify-change`、`govulncheck` 与 `npm audit`：
+  [Actions 30521579716](https://github.com/kejilion/KPanel/actions/runs/30521579716)。
 - [ ] Release 工作流镜像契约、安装生命周期、多架构镜像与 Docker Hub 摘要。
 
 ## 安全与兼容结论
