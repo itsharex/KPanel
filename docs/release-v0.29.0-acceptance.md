@@ -18,7 +18,10 @@
 - [x] Web TypeScript、121 项单元测试和生产构建。
 - [x] Ubuntu CI 全量 `make verify-change`、`govulncheck` 与 `npm audit`：
   [Actions 30521579716](https://github.com/kejilion/KPanel/actions/runs/30521579716)。
-- [ ] Release 工作流镜像契约、安装生命周期、多架构镜像与 Docker Hub 摘要。
+- [x] Release 工作流镜像契约、安装生命周期、多架构镜像与 Docker Hub 摘要：
+  [Actions 30521780060](https://github.com/kejilion/KPanel/actions/runs/30521780060)，
+  `0.29.0` 与 `latest` 均为
+  `sha256:8718a6cce47dc899f61eb9e9a224d3b34d452a9687d50ff9cfeba372be160543`。
 
 ## 安全与兼容结论
 
