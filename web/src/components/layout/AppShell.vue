@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Boxes,
@@ -10,6 +10,7 @@ import {
   Folder,
   LayoutDashboard,
   LogOut,
+  LoaderCircle,
   Menu,
   Moon,
   Network,
@@ -26,6 +27,10 @@ import { usePanelState } from '@/stores/panel'
 import { useTheme } from '@/stores/theme'
 import { useToast } from '@/stores/toast'
 import { api } from '@/lib/api'
+import {
+  prefetchNavigationRoute,
+  routeNavigationState,
+} from '@/lib/navigation'
 
 interface NavigationItem {
   label: string
@@ -63,9 +68,32 @@ const agentStatus = computed(() => {
   return { status: 'connected', label: 'Agent 在线' }
 })
 let agentTimer: number | undefined
+let navigationWarmupTimer: number | undefined
+let navigationWarmupCancelled = false
 
 function closeMenu(): void {
   menuOpen.value = false
+}
+
+function navigationItemPending(path: string): boolean {
+  if (!routeNavigationState.pending) return false
+  return routeNavigationState.targetPath === path || routeNavigationState.targetPath.startsWith(`${path}/`)
+}
+
+function prefetchNavigation(path: string): void {
+  void prefetchNavigationRoute(path)
+}
+
+async function warmNavigation(): Promise<void> {
+  const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection
+  if (connection?.saveData) return
+
+  for (const item of navigation) {
+    if (navigationWarmupCancelled) return
+    if (route.path === item.to || route.path.startsWith(`${item.to}/`)) continue
+    await prefetchNavigationRoute(item.to)
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 120))
+  }
 }
 
 function toggleTheme(): void {
@@ -106,11 +134,24 @@ async function refreshAgent(): Promise<void> {
 onMounted(() => {
   void refreshAgent()
   agentTimer = window.setInterval(refreshAgent, 30_000)
+  navigationWarmupTimer = window.setTimeout(() => {
+    void warmNavigation()
+  }, 2_000)
 })
 
 onBeforeUnmount(() => {
   if (agentTimer) window.clearInterval(agentTimer)
+  navigationWarmupCancelled = true
+  if (navigationWarmupTimer) window.clearTimeout(navigationWarmupTimer)
 })
+
+watch(
+  () => routeNavigationState.failureSequence,
+  (current, previous) => {
+    if (current === previous) return
+    toast.danger('页面加载失败', '网络连接不稳定，请重新点击左侧分类。')
+  },
+)
 </script>
 
 <template>
@@ -133,10 +174,20 @@ onBeforeUnmount(() => {
           :key="item.to"
           :to="item.to"
           class="sidebar__link"
+          :class="{ 'sidebar__link--pending': navigationItemPending(item.to) }"
+          @pointerenter="prefetchNavigation(item.to)"
+          @focus="prefetchNavigation(item.to)"
+          @touchstart.passive="prefetchNavigation(item.to)"
           @click="closeMenu"
         >
           <component :is="item.icon" :size="18" :stroke-width="1.9" aria-hidden="true" />
           <span>{{ item.label }}</span>
+          <LoaderCircle
+            v-if="navigationItemPending(item.to)"
+            class="sidebar__link-loader"
+            :size="15"
+            aria-label="正在加载"
+          />
         </RouterLink>
       </nav>
 
@@ -157,6 +208,14 @@ onBeforeUnmount(() => {
     </aside>
 
     <div class="app-shell__main">
+      <Transition name="fade">
+        <div
+          v-if="routeNavigationState.pending"
+          class="route-loading-progress"
+          role="progressbar"
+          aria-label="正在加载页面"
+        />
+      </Transition>
       <header class="topbar">
         <div class="topbar__title">
           <button class="icon-button topbar__menu" type="button" aria-label="打开导航" @click="menuOpen = true">

@@ -1,5 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AppShell from '@/components/layout/AppShell.vue'
+import {
+  beginRouteNavigation,
+  failRouteNavigation,
+  finishRouteNavigation,
+  loadNavigationRoute,
+} from '@/lib/navigation'
 import { useSession } from '@/stores/session'
 
 declare module 'vue-router' {
@@ -17,13 +23,13 @@ export const router = createRouter({
     {
       path: '/setup',
       name: 'setup',
-      component: () => import('@/views/SetupView.vue'),
+      component: () => loadNavigationRoute('/setup'),
       meta: { title: '初始化', public: true, guestOnly: true },
     },
     {
       path: '/login',
       name: 'login',
-      component: () => import('@/views/LoginView.vue'),
+      component: () => loadNavigationRoute('/login'),
       meta: { title: '登录', public: true, guestOnly: true },
     },
     {
@@ -34,55 +40,55 @@ export const router = createRouter({
         {
           path: 'overview',
           name: 'overview',
-          component: () => import('@/views/OverviewView.vue'),
+          component: () => loadNavigationRoute('/overview'),
           meta: { title: '概览' },
         },
         {
           path: 'cluster',
           name: 'cluster',
-          component: () => import('@/views/ClusterView.vue'),
+          component: () => loadNavigationRoute('/cluster'),
           meta: { title: '集群' },
         },
         {
           path: 'sites',
           name: 'sites',
-          component: () => import('@/views/SitesView.vue'),
+          component: () => loadNavigationRoute('/sites'),
           meta: { title: '网站' },
         },
         {
           path: 'sites/environment',
           name: 'sites-environment',
-          component: () => import('@/views/EnvironmentView.vue'),
+          component: () => loadNavigationRoute('/sites/environment'),
           meta: { title: '网站 · 环境管理' },
         },
         {
           path: 'apps',
           name: 'apps',
-          component: () => import('@/views/AppsView.vue'),
+          component: () => loadNavigationRoute('/apps'),
           meta: { title: '应用市场' },
         },
         {
           path: 'files',
           name: 'files',
-          component: () => import('@/views/FilesView.vue'),
+          component: () => loadNavigationRoute('/files'),
           meta: { title: '文件' },
         },
         {
           path: 'diagnostics',
           name: 'diagnostics',
-          component: () => import('@/views/DiagnosticsView.vue'),
+          component: () => loadNavigationRoute('/diagnostics'),
           meta: { title: '体检' },
         },
         {
           path: 'docker',
           name: 'docker',
-          component: () => import('@/views/DockerView.vue'),
+          component: () => loadNavigationRoute('/docker'),
           meta: { title: 'Docker' },
         },
         {
           path: 'activity',
           name: 'activity',
-          component: () => import('@/views/ActivityView.vue'),
+          component: () => loadNavigationRoute('/activity'),
           meta: { title: '活动记录' },
         },
         {
@@ -96,7 +102,7 @@ export const router = createRouter({
         {
           path: 'settings',
           name: 'settings',
-          component: () => import('@/views/SettingsView.vue'),
+          component: () => loadNavigationRoute('/settings'),
           meta: { title: '设置' },
         },
       ],
@@ -106,6 +112,7 @@ export const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
+  beginRouteNavigation(to.path)
   const session = useSession()
   if (!session.state.checked) await session.refresh()
 
@@ -126,4 +133,12 @@ router.beforeEach(async (to) => {
   }
 
   return true
+})
+
+router.afterEach((to) => {
+  finishRouteNavigation(to.path)
+})
+
+router.onError((_error, to) => {
+  failRouteNavigation(to.path)
 })

@@ -1059,6 +1059,11 @@ textarea:focus-visible,
   color: #4cd5af;
 }
 
+.sidebar__link-loader {
+  margin-left: auto;
+  animation: route-loading-spin 800ms linear infinite;
+}
+
 .sidebar__footer {
   display: grid;
   gap: 14px;
@@ -1137,8 +1142,53 @@ textarea:focus-visible,
 }
 
 .app-shell__main {
+  position: relative;
   min-height: 100vh;
   margin-left: var(--sidebar-width);
+}
+
+.route-loading-progress {
+  position: fixed;
+  z-index: 70;
+  top: 0;
+  right: 0;
+  left: var(--sidebar-width);
+  height: 3px;
+  overflow: hidden;
+  background: rgb(57 202 164 / 20%);
+  pointer-events: none;
+}
+
+.route-loading-progress::after {
+  position: absolute;
+  width: 38%;
+  height: 100%;
+  content: "";
+  background: linear-gradient(90deg, transparent, #45d0ab 30%, #57a8ff 70%, transparent);
+  animation: route-loading-slide 1.05s ease-in-out infinite;
+}
+
+@keyframes route-loading-slide {
+  from {
+    transform: translateX(-110%);
+  }
+
+  to {
+    transform: translateX(290%);
+  }
+}
+
+@keyframes route-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-loading-progress::after,
+  .sidebar__link-loader {
+    animation-duration: 2s;
+  }
 }
 
 .topbar {
@@ -3739,6 +3789,10 @@ div.resource-name {
 
   .app-shell__main {
     margin-left: 0;
+  }
+
+  .route-loading-progress {
+    left: 0;
   }
 
   .auth-layout {
