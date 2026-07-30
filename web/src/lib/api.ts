@@ -20,6 +20,11 @@ import type {
   DockerEnvironment,
   DockerMaintenanceInput,
   DockerMaintenanceJob,
+  FileActionInput,
+  FileActionResult,
+  FileDirectory,
+  FileEntry,
+  FileWriteResult,
   DiagnosticCatalog,
   DiagnosticJob,
   Job,
@@ -391,6 +396,38 @@ function buildUrl(path: string, query?: Record<string, QueryValue>): string {
   })
   const serialized = params.toString()
   return serialized ? `${url}?${serialized}` : url
+}
+
+async function rawFileResponse(
+  path: string,
+  options: { method?: 'GET' | 'POST'; body?: BodyInit; query?: Record<string, QueryValue>; headers?: HeadersInit } = {},
+): Promise<Response> {
+  const headers = new Headers(options.headers)
+  if (options.method === 'POST' && csrfToken) headers.set('X-CSRF-Token', csrfToken)
+  let response: Response
+  try {
+    response = await fetch(buildUrl(path, options.query), {
+      method: options.method || 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers,
+      body: options.body,
+    })
+  } catch (error) {
+    throw new ApiError('无法连接到面板服务，请检查服务状态后重试。', 0, 'network_error', error)
+  }
+  if (!response.ok) {
+    const payload = await parsePayload(response)
+    const problem = payload && typeof payload === 'object' ? (payload as ProblemPayload) : undefined
+    throw new ApiError(
+      problem?.detail || problem?.title || '文件操作失败。',
+      response.status,
+      problem?.code || 'file_request_failed',
+      payload,
+      problem?.requestId,
+    )
+  }
+  return response
 }
 
 function pickCsrfToken(headers: Headers, payload: unknown): void {
@@ -1296,6 +1333,62 @@ export const api = {
         method: 'POST',
         body: { checkId },
       }),
+  },
+  files: {
+    list: (path = '/', signal?: AbortSignal): Promise<FileDirectory> =>
+      request<FileDirectory>('/files', { query: { path, limit: 500 }, signal }),
+    contentUrl: (path: string, disposition: 'inline' | 'attachment' = 'inline'): string =>
+      buildUrl('/files/content', { path, disposition }),
+    text: async (path: string): Promise<string> =>
+      (
+        await rawFileResponse('/files/content', {
+          query: { path, disposition: 'inline', mode: 'text' },
+        })
+      ).text(),
+    write: (path: string, content: string, expectedResourceVersion: string): Promise<FileWriteResult> =>
+      request<FileWriteResult>('/files/content', {
+        method: 'PUT',
+        query: { path },
+        body: { content, expectedResourceVersion },
+      }),
+    upload: async (
+      path: string,
+      file: File,
+      overwrite = false,
+      onProgress?: (percent: number) => void,
+    ): Promise<FileEntry> =>
+      new Promise<FileEntry>((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', buildUrl('/files/upload', { path, name: file.name, overwrite }))
+        xhr.withCredentials = true
+        xhr.responseType = 'json'
+        xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+        if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken)
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100))
+        }
+        xhr.onerror = () => reject(new ApiError('文件上传连接中断。', 0, 'network_error'))
+        xhr.onload = () => {
+          const payload = xhr.response
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(payload as FileEntry)
+            return
+          }
+          const problem = payload && typeof payload === 'object' ? (payload as ProblemPayload) : undefined
+          reject(
+            new ApiError(
+              problem?.detail || problem?.title || '文件上传失败。',
+              xhr.status,
+              problem?.code || 'file_upload_failed',
+              payload,
+              problem?.requestId,
+            ),
+          )
+        }
+        xhr.send(file)
+      }),
+    action: (input: FileActionInput): Promise<FileActionResult> =>
+      request<FileActionResult>('/files/actions', { method: 'POST', body: input }),
   },
   docker: {
     environment: (signal?: AbortSignal): Promise<DockerEnvironment> =>

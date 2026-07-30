@@ -62,6 +62,12 @@ export const router = createRouter({
           meta: { title: '应用市场' },
         },
         {
+          path: 'files',
+          name: 'files',
+          component: () => import('@/views/FilesView.vue'),
+          meta: { title: '文件' },
+        },
+        {
           path: 'diagnostics',
           name: 'diagnostics',
           component: () => import('@/views/DiagnosticsView.vue'),

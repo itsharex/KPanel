@@ -969,6 +969,58 @@ export interface PanelSettings {
   telemetryEnabled?: boolean
 }
 
+export type FileKind = 'file' | 'directory' | 'symlink' | 'special'
+
+export interface FileEntry {
+  name: string
+  path: string
+  kind: FileKind
+  mime?: string
+  sizeBytes: number
+  mode: string
+  owner: string
+  group: string
+  modifiedAt: string
+  resourceVersion: string
+  editable: boolean
+  previewable: boolean
+}
+
+export interface FileDirectory {
+  path: string
+  entries: FileEntry[]
+  truncated: boolean
+  readAt: string
+}
+
+export type FileAction = 'mkdir' | 'rename' | 'copy' | 'move' | 'trash' | 'chmod'
+
+export interface FileActionInput {
+  action: FileAction
+  sources?: string[]
+  target?: string
+  name?: string
+  mode?: string
+  expectedResourceVersion?: string
+}
+
+export interface FileActionResult {
+  action: FileAction
+  succeeded: Array<{
+    path: string
+    destination?: string
+    resourceVersion?: string
+  }>
+  failed: Array<{
+    path: string
+    detail: string
+  }>
+}
+
+export interface FileWriteResult {
+  entry: FileEntry
+}
+
 export interface DockerActionResult {
   jobId?: string
   containerId?: string
