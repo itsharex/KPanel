@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   Archive,
   ChevronRight,
@@ -31,8 +31,11 @@ import {
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { ApiError, api } from '@/lib/api'
+import type { CodeLanguage } from '@/lib/code-editor-language'
 import { useToast } from '@/stores/toast'
 import type { FileActionInput, FileDirectory, FileEntry } from '@/types/api'
+
+const CodeEditor = defineAsyncComponent(() => import('@/components/files/CodeEditor.vue'))
 
 type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'trash'
 type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
@@ -52,6 +55,7 @@ const sortDescending = ref(false)
 const loading = ref(false)
 const dragging = ref(false)
 const selected = ref(new Set<string>())
+const selectionAnchor = ref<string>()
 const uploadInput = ref<HTMLInputElement>()
 const uploadProgress = ref<Record<string, number>>({})
 const dialogAction = ref<DialogAction>()
@@ -66,7 +70,7 @@ const previewContent = ref('')
 const previewLoading = ref(false)
 const previewSaving = ref(false)
 const previewDirty = ref(false)
-const editorScrollTop = ref(0)
+const editorInfo = ref<Pick<CodeLanguage, 'label' | 'highlighted' | 'reason'> & { loadMs: number }>()
 
 const entries = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
@@ -118,10 +122,6 @@ const previewMode = computed<PreviewMode>(() => {
 const previewURL = computed(() =>
   previewEntry.value ? api.files.contentUrl(previewEntry.value.path, 'inline') : '',
 )
-const lineNumbers = computed(() => {
-  const lines = Math.min(previewContent.value.split('\n').length, 100_000)
-  return Array.from({ length: lines }, (_, index) => index + 1).join('\n')
-})
 const dialogTitle = computed(() => {
   const titles: Record<DialogAction, string> = {
     mkdir: '新建文件夹',
@@ -146,6 +146,7 @@ async function loadDirectory(path = currentPath.value): Promise<void> {
     directory.value = result
     currentPath.value = result.path
     selected.value = new Set()
+    selectionAnchor.value = undefined
   } catch (error) {
     toast.danger('目录读取失败', errorMessage(error))
   } finally {
@@ -166,6 +167,7 @@ async function openPreview(entry: FileEntry): Promise<void> {
   previewEntry.value = entry
   previewContent.value = ''
   previewDirty.value = false
+  editorInfo.value = undefined
   if (!entry.editable) return
   previewLoading.value = true
   try {
@@ -183,6 +185,7 @@ function closePreview(): void {
   previewEntry.value = undefined
   previewContent.value = ''
   previewDirty.value = false
+  editorInfo.value = undefined
 }
 
 async function savePreview(): Promise<void> {
@@ -202,23 +205,13 @@ async function savePreview(): Promise<void> {
   }
 }
 
-function handleEditorKey(event: KeyboardEvent): void {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 's') {
-    event.preventDefault()
-    void savePreview()
-    return
+function handleEditorReady(info: CodeLanguage & { loadMs: number }): void {
+  editorInfo.value = {
+    label: info.label,
+    highlighted: info.highlighted,
+    reason: info.reason,
+    loadMs: info.loadMs,
   }
-  if (event.key !== 'Tab') return
-  event.preventDefault()
-  const target = event.target as HTMLTextAreaElement
-  const start = target.selectionStart
-  const end = target.selectionEnd
-  previewContent.value =
-    previewContent.value.slice(0, start) + '  ' + previewContent.value.slice(end)
-  previewDirty.value = true
-  void nextTick(() => {
-    target.selectionStart = target.selectionEnd = start + 2
-  })
 }
 
 function toggleEntry(path: string): void {
@@ -226,13 +219,45 @@ function toggleEntry(path: string): void {
   if (next.has(path)) next.delete(path)
   else next.add(path)
   selected.value = next
+  selectionAnchor.value = path
+}
+
+function selectEntry(event: MouseEvent, path: string): void {
+  if (event.shiftKey && selectionAnchor.value) {
+    const visiblePaths = entries.value.map((entry) => entry.path)
+    const anchorIndex = visiblePaths.indexOf(selectionAnchor.value)
+    const currentIndex = visiblePaths.indexOf(path)
+    if (anchorIndex >= 0 && currentIndex >= 0) {
+      const start = Math.min(anchorIndex, currentIndex)
+      const end = Math.max(anchorIndex, currentIndex)
+      const range = visiblePaths.slice(start, end + 1)
+      selected.value =
+        event.ctrlKey || event.metaKey
+          ? new Set([...selected.value, ...range])
+          : new Set(range)
+      return
+    }
+  }
+  if (event.ctrlKey || event.metaKey) {
+    toggleEntry(path)
+    return
+  }
+  selected.value = new Set([path])
+  selectionAnchor.value = path
 }
 
 function toggleAll(): void {
+  const clearVisible = allVisibleSelected.value
   const next = new Set(selected.value)
-  if (allVisibleSelected.value) entries.value.forEach((entry) => next.delete(entry.path))
+  if (clearVisible) entries.value.forEach((entry) => next.delete(entry.path))
   else entries.value.forEach((entry) => next.add(entry.path))
   selected.value = next
+  selectionAnchor.value = clearVisible ? undefined : entries.value[0]?.path
+}
+
+function clearSelection(): void {
+  selected.value = new Set()
+  selectionAnchor.value = undefined
 }
 
 function showContext(event: MouseEvent, entry: FileEntry): void {
@@ -487,7 +512,11 @@ function handleFileShortcut(event: KeyboardEvent): void {
     return
   }
   const key = event.key.toLocaleLowerCase()
-  if ((event.ctrlKey || event.metaKey) && key === 'c' && selectedEntries.value.length) {
+  if ((event.ctrlKey || event.metaKey) && key === 'a' && entries.value.length) {
+    event.preventDefault()
+    selected.value = new Set(entries.value.map((entry) => entry.path))
+    selectionAnchor.value = entries.value[0]?.path
+  } else if ((event.ctrlKey || event.metaKey) && key === 'c' && selectedEntries.value.length) {
     event.preventDefault()
     setClipboard('copy')
   } else if ((event.ctrlKey || event.metaKey) && key === 'x' && selectedEntries.value.length) {
@@ -594,7 +623,7 @@ onBeforeUnmount(() => {
           <button class="danger-link" type="button" @click="openDialog('trash')">
             <Trash2 :size="15" />回收站
           </button>
-          <button type="button" @click="selected = new Set()">取消选择</button>
+          <button type="button" @click="clearSelection">取消选择</button>
         </div>
       </Transition>
 
@@ -646,6 +675,7 @@ onBeforeUnmount(() => {
           :class="{ 'file-row--selected': selected.has(entry.path) }"
           role="row"
           tabindex="0"
+          @click="selectEntry($event, entry.path)"
           @dblclick="openEntry(entry)"
           @keydown.enter="openEntry(entry)"
           @contextmenu="showContext($event, entry)"
@@ -659,7 +689,7 @@ onBeforeUnmount(() => {
               @click.stop
             />
           </span>
-          <span class="file-name" @click="openEntry(entry)">
+          <span class="file-name">
             <span class="file-icon" :class="{ 'file-icon--folder': entry.kind === 'directory' }">
               <component :is="entryIcon(entry)" :size="19" />
             </span>
@@ -794,18 +824,25 @@ onBeforeUnmount(() => {
           <span>{{ previewEntry.mode }} · {{ previewEntry.owner }}:{{ previewEntry.group }}</span>
         </header>
         <div class="code-editor">
-          <pre :style="{ transform: `translateY(-${editorScrollTop}px)` }">{{ lineNumbers }}</pre>
-          <textarea
+          <CodeEditor
             v-model="previewContent"
-            spellcheck="false"
-            aria-label="文件内容"
-            @input="previewDirty = true"
-            @scroll="editorScrollTop = ($event.target as HTMLTextAreaElement).scrollTop"
-            @keydown="handleEditorKey"
+            :file-name="previewEntry.name"
+            :mime="previewEntry.mime"
+            :size-bytes="previewEntry.sizeBytes"
+            :editable="previewEntry.editable"
+            @dirty="previewDirty = true"
+            @save="savePreview"
+            @ready="handleEditorReady"
           />
         </div>
         <footer>
-          <span>{{ previewContent.split('\n').length }} 行 · UTF-8</span>
+          <span>
+            {{ previewContent.split('\n').length }} 行 · UTF-8
+            <template v-if="editorInfo">
+              · {{ editorInfo.label }}
+              {{ editorInfo.highlighted ? '语法着色' : editorInfo.reason === 'large-file' ? '大文件纯文本' : '纯文本' }}
+            </template>
+          </span>
           <span v-if="previewDirty">有未保存修改</span>
           <button class="button button--primary button--small" type="button" :disabled="previewSaving || !previewDirty" @click="savePreview">
             <Save :size="15" />{{ previewSaving ? '保存中…' : '保存 Ctrl+S' }}
@@ -1359,38 +1396,12 @@ onBeforeUnmount(() => {
 
 .code-editor {
   position: relative;
-  display: grid;
-  grid-template-columns: 58px 1fr;
   height: min(60vh, 620px);
   overflow: hidden;
 }
 
-.code-editor pre {
-  min-height: 100%;
-  margin: 0;
-  padding: 14px 12px;
-  color: #52617a;
-  font: 13px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace;
-  text-align: right;
-  background: #0e1728;
-  pointer-events: none;
-  will-change: transform;
-}
-
-.code-editor textarea {
-  width: 100%;
+.code-editor > * {
   height: 100%;
-  resize: none;
-  padding: 14px 16px;
-  border: 0;
-  outline: 0;
-  color: #d8e3f5;
-  caret-color: #5eead4;
-  background: #0b1120;
-  font: 13px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace;
-  tab-size: 2;
-  white-space: pre;
-  overflow: auto;
 }
 
 .media-viewer {

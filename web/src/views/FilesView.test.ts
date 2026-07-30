@@ -36,6 +36,8 @@ interface FileBindings {
   pasteClipboard: (target?: string) => Promise<void>
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
   showContext: (event: MouseEvent, entry: TestFileEntry) => void
+  selectEntry: (event: MouseEvent, path: string) => void
+  handleFileShortcut: (event: KeyboardEvent) => void
   openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'trash', entry?: TestFileEntry) => void
   currentPath: { value: string }
   directory: {
@@ -187,6 +189,40 @@ describe('FilesView directory loading', () => {
 
     expect([...view.selected.value]).toEqual([checked.path])
     expect(view.contextMenu.value?.entry.path).toBe(clicked.path)
+  })
+
+  it('uses Windows-style click, control-click, and shift-click selection', () => {
+    const view = setupView()
+    const first = testEntry('a.txt')
+    const second = testEntry('b.txt')
+    const third = testEntry('c.txt')
+    view.directory.value = { path: '/', entries: [first, second, third] }
+
+    view.selectEntry({} as MouseEvent, first.path)
+    expect([...view.selected.value]).toEqual([first.path])
+
+    view.selectEntry({ ctrlKey: true } as MouseEvent, third.path)
+    expect([...view.selected.value]).toEqual([first.path, third.path])
+
+    view.selectEntry({ shiftKey: true } as MouseEvent, second.path)
+    expect([...view.selected.value]).toEqual([second.path, third.path])
+  })
+
+  it('selects every visible entry with control-a', () => {
+    const view = setupView()
+    const first = testEntry('a.txt')
+    const second = testEntry('b.txt')
+    view.directory.value = { path: '/', entries: [first, second] }
+    const preventDefault = vi.fn()
+
+    view.handleFileShortcut({
+      key: 'a',
+      ctrlKey: true,
+      preventDefault,
+    } as unknown as KeyboardEvent)
+
+    expect(preventDefault).toHaveBeenCalled()
+    expect([...view.selected.value]).toEqual([first.path, second.path])
   })
 
   it('copies to the page clipboard without executing a file action', () => {
