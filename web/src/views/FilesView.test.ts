@@ -31,7 +31,7 @@ vi.mock('@/stores/toast', () => ({
 }))
 
 interface FileBindings {
-  loadDirectory: (path?: string) => Promise<void>
+  loadDirectory: (path?: string, append?: boolean) => Promise<void>
   submitDialog: () => Promise<void>
   pasteClipboard: (target?: string) => Promise<void>
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
@@ -114,6 +114,8 @@ beforeEach(() => {
   mocks.list.mockResolvedValue({
     path: '/web',
     entries: [],
+    offset: 0,
+    total: 0,
     truncated: false,
     readAt: '2026-07-30T00:00:00Z',
   })
@@ -125,10 +127,51 @@ describe('FilesView directory loading', () => {
     const view = setupView()
     await view.loadDirectory('/web')
 
-    expect(mocks.list).toHaveBeenCalledWith('/web')
+    expect(mocks.list).toHaveBeenCalledWith(
+      '/web',
+      { offset: 0, search: undefined },
+      expect.any(AbortSignal),
+    )
     expect(view.currentPath.value).toBe('/web')
     expect(view.directory.value?.entries).toEqual([])
     expect(mocks.danger).not.toHaveBeenCalled()
+  })
+
+  it('appends a subsequent directory page without duplicating entries', async () => {
+    const first = testEntry('first.txt')
+    const second = testEntry('second.txt')
+    mocks.list
+      .mockResolvedValueOnce({
+        path: '/web',
+        entries: [first],
+        offset: 0,
+        nextOffset: 1,
+        total: 2,
+        truncated: true,
+        readAt: '2026-07-30T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        path: '/web',
+        entries: [first, second],
+        offset: 1,
+        total: 2,
+        truncated: false,
+        readAt: '2026-07-30T00:00:01Z',
+      })
+    const view = setupView()
+
+    await view.loadDirectory('/web')
+    await view.loadDirectory('/web', true)
+
+    expect(mocks.list).toHaveBeenLastCalledWith(
+      '/web',
+      { offset: 1, search: undefined },
+      expect.any(AbortSignal),
+    )
+    expect(view.directory.value?.entries.map((entry) => entry.name)).toEqual([
+      'first.txt',
+      'second.txt',
+    ])
   })
 
   it('keeps the current directory when refresh fails', async () => {

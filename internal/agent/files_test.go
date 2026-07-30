@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -110,6 +111,53 @@ func TestFileEndpointsRejectUnknownQueryAndOversizedBatch(t *testing.T) {
 	response = fileRequest(server, http.MethodPost, "/v1/files/actions", string(content))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("batch status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestFileListSupportsBoundedSearchAndPagination(t *testing.T) {
+	server := testServer(t)
+	root := t.TempDir()
+	manager, err := filemanager.New(filemanager.Config{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server.files = manager
+	for index := range 510 {
+		name := fmt.Sprintf("item-%03d.txt", index)
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "wanted.txt"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	response := fileRequest(
+		server,
+		http.MethodGet,
+		"/v1/files?path=%2F&limit=100&offset=500",
+		"",
+	)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"offset":500`) {
+		t.Fatalf("page status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = fileRequest(server, http.MethodGet, "/v1/files?path=%2F&search=wanted", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"wanted.txt"`) {
+		t.Fatalf("search status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = fileRequest(server, http.MethodGet, "/v1/files?path=%2F&offset=20000", "")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid offset status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestFileBusyMapsToTooManyRequests(t *testing.T) {
+	response := httptest.NewRecorder()
+	writeFileProblem(response, "request-id", filemanager.ErrBusy)
+	if response.Code != http.StatusTooManyRequests ||
+		!strings.Contains(response.Body.String(), `"file_transfer_busy"`) {
+		t.Fatalf("busy status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

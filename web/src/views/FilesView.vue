@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   Archive,
   ChevronRight,
@@ -71,6 +71,8 @@ const previewLoading = ref(false)
 const previewSaving = ref(false)
 const previewDirty = ref(false)
 const editorInfo = ref<Pick<CodeLanguage, 'label' | 'highlighted' | 'reason'> & { loadMs: number }>()
+let directoryController: AbortController | undefined
+let searchTimer: number | undefined
 
 const entries = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
@@ -138,19 +140,47 @@ function errorMessage(error: unknown): string {
   return '操作未完成，请稍后重试。'
 }
 
-async function loadDirectory(path = currentPath.value): Promise<void> {
+async function loadDirectory(path = currentPath.value, append = false): Promise<void> {
+  if (append && !directory.value?.nextOffset) return
+  directoryController?.abort()
+  const controller = new AbortController()
+  directoryController = controller
   loading.value = true
   contextMenu.value = undefined
   try {
-    const result = await api.files.list(path)
-    directory.value = result
+    const result = await api.files.list(
+      path,
+      {
+        offset: append ? directory.value?.nextOffset : 0,
+        search: search.value.trim() || undefined,
+      },
+      controller.signal,
+    )
+    if (append && directory.value?.path === result.path) {
+      const known = new Set(directory.value.entries.map((entry) => entry.path))
+      directory.value = {
+        ...result,
+        entries: [
+          ...directory.value.entries,
+          ...result.entries.filter((entry) => !known.has(entry.path)),
+        ],
+      }
+    } else {
+      directory.value = result
+    }
     currentPath.value = result.path
-    selected.value = new Set()
-    selectionAnchor.value = undefined
+    if (!append) {
+      selected.value = new Set()
+      selectionAnchor.value = undefined
+    }
   } catch (error) {
+    if (controller.signal.aborted) return
     toast.danger('目录读取失败', errorMessage(error))
   } finally {
-    loading.value = false
+    if (directoryController === controller) {
+      loading.value = false
+      directoryController = undefined
+    }
   }
 }
 
@@ -539,7 +569,16 @@ onMounted(() => {
   void loadDirectory('/')
 })
 
+watch(search, () => {
+  if (searchTimer !== undefined) window.clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(() => {
+    void loadDirectory(currentPath.value)
+  }, 250)
+})
+
 onBeforeUnmount(() => {
+  directoryController?.abort()
+  if (searchTimer !== undefined) window.clearTimeout(searchTimer)
   window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleFileShortcut)
 })
@@ -721,7 +760,22 @@ onBeforeUnmount(() => {
         <span>{{ search ? '换一个关键词试试。' : '可直接拖入文件，或在右上角新建文件夹。' }}</span>
       </div>
       <div v-if="loading" class="file-loading"><RefreshCw :size="22" class="spinning" />正在读取目录…</div>
-      <footer v-if="directory?.truncated" class="file-limit">当前目录项目较多，仅显示前 500 项。</footer>
+      <footer v-if="directory?.truncated" class="file-limit">
+        <span v-if="directory.scanTruncated">目录超过 20,000 项，搜索和分页仅覆盖已扫描范围。</span>
+        <span v-else-if="directory.totalKnown">
+          已显示 {{ directory.entries.length }} / {{ directory.total }} 项。
+        </span>
+        <span v-else>已显示 {{ directory.entries.length }} 项，可继续加载。</span>
+        <button
+          v-if="directory.nextOffset"
+          class="button button--secondary"
+          type="button"
+          :disabled="loading"
+          @click="loadDirectory(currentPath, true)"
+        >
+          加载更多
+        </button>
+      </footer>
 
       <div v-if="dragging" class="drop-overlay">
         <Upload :size="34" />
@@ -1242,10 +1296,19 @@ onBeforeUnmount(() => {
 }
 
 .file-limit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   padding: 10px 15px;
   color: var(--amber);
   font-size: 12px;
   text-align: center;
+}
+
+.file-limit .button {
+  min-height: 32px;
+  padding: 6px 12px;
 }
 
 .drop-overlay {

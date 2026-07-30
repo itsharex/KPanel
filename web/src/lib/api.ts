@@ -1335,8 +1335,15 @@ export const api = {
       }),
   },
   files: {
-    list: (path = '/', signal?: AbortSignal): Promise<FileDirectory> =>
-      request<FileDirectory>('/files', { query: { path, limit: 500 }, signal }),
+    list: (
+      path = '/',
+      options?: { offset?: number; search?: string },
+      signal?: AbortSignal,
+    ): Promise<FileDirectory> =>
+      request<FileDirectory>('/files', {
+        query: { path, limit: 500, offset: options?.offset, search: options?.search },
+        signal,
+      }),
     contentUrl: (path: string, disposition: 'inline' | 'attachment' = 'inline'): string =>
       buildUrl('/files/content', { path, disposition }),
     text: async (path: string): Promise<string> =>

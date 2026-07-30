@@ -989,7 +989,12 @@ export interface FileEntry {
 export interface FileDirectory {
   path: string
   entries: FileEntry[]
+  offset: number
+  nextOffset?: number
+  total?: number
+  totalKnown?: boolean
   truncated: boolean
+  scanTruncated?: boolean
   readAt: string
 }
 

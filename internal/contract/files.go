@@ -18,10 +18,15 @@ type FileEntry struct {
 }
 
 type FileDirectory struct {
-	Path      string      `json:"path"`
-	Entries   []FileEntry `json:"entries"`
-	Truncated bool        `json:"truncated"`
-	ReadAt    time.Time   `json:"readAt"`
+	Path          string      `json:"path"`
+	Entries       []FileEntry `json:"entries"`
+	Offset        int         `json:"offset"`
+	NextOffset    int         `json:"nextOffset,omitempty"`
+	Total         int         `json:"total,omitempty"`
+	TotalKnown    bool        `json:"totalKnown,omitempty"`
+	Truncated     bool        `json:"truncated"`
+	ScanTruncated bool        `json:"scanTruncated,omitempty"`
+	ReadAt        time.Time   `json:"readAt"`
 }
 
 type FileActionRequest struct {

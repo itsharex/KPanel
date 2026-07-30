@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -225,6 +227,99 @@ func TestLimitsUploadsAndBatchOperations(t *testing.T) {
 		Action: "trash", Sources: sources,
 	}); !errors.Is(err, ErrBatchTooLarge) {
 		t.Fatalf("expected batch limit, got %v", err)
+	}
+}
+
+func TestDownloadGateRejectsExcessConcurrentReads(t *testing.T) {
+	manager, root := newTestManager(t)
+	mustWrite(t, filepath.Join(root, "download.txt"), "content")
+	opened := make([]io.Closer, 0, 4)
+	for range 4 {
+		file, _, err := manager.Open(context.Background(), "/download.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		opened = append(opened, file)
+	}
+	if _, _, err := manager.Open(context.Background(), "/download.txt"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("expected busy download gate, got %v", err)
+	}
+	for _, file := range opened {
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if file, _, err := manager.Open(context.Background(), "/download.txt"); err != nil {
+		t.Fatalf("gate did not recover: %v", err)
+	} else {
+		_ = file.Close()
+	}
+}
+
+func TestBatchCopyUsesOneCumulativeBudget(t *testing.T) {
+	root := t.TempDir()
+	manager, err := New(Config{Root: root, MaxCopyBytes: 12})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	mustMkdirAll(t, filepath.Join(root, "target"))
+	mustWrite(t, filepath.Join(root, "first.txt"), "12345678")
+	mustWrite(t, filepath.Join(root, "second.txt"), "abcdefgh")
+
+	result, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "copy", Sources: []string{"/first.txt", "/second.txt"}, Target: "/target",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Succeeded) != 1 || len(result.Failed) != 1 {
+		t.Fatalf("unexpected cumulative result: %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, "target", "first.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "target", "second.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("second copy should be rejected, got %v", err)
+	}
+}
+
+func TestListPageFindsEntriesBeyondFirstPage(t *testing.T) {
+	manager, root := newTestManager(t)
+	for index := range 620 {
+		mustWrite(t, filepath.Join(root, fmt.Sprintf("item-%03d.txt", index)), "x")
+	}
+	mustWrite(t, filepath.Join(root, "wanted-result.txt"), "x")
+
+	first, err := manager.ListPage(context.Background(), "/", ListOptions{Limit: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Entries) != 500 || first.NextOffset != 500 || first.TotalKnown {
+		t.Fatalf("unexpected first page: %#v", first)
+	}
+	second, err := manager.ListPage(
+		context.Background(),
+		"/",
+		ListOptions{Limit: 500, Offset: first.NextOffset},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Entries) != 121 || second.NextOffset != 0 ||
+		!second.TotalKnown || second.Total != 621 {
+		t.Fatalf("unexpected second page: %#v", second)
+	}
+	search, err := manager.ListPage(
+		context.Background(),
+		"/",
+		ListOptions{Limit: 500, Search: "wanted"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(search.Entries) != 1 || search.Entries[0].Name != "wanted-result.txt" {
+		t.Fatalf("unexpected search result: %#v", search)
 	}
 }
 

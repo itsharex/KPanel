@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,10 +11,17 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/filemanager"
+	"github.com/kejilion/kejilion-panel/internal/httpstream"
+)
+
+const (
+	fileTransferIdleTimeout = 45 * time.Second
+	fileTransferMaxDuration = 2 * time.Hour
 )
 
 func (s *Server) fileList(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +31,7 @@ func (s *Server) fileList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	values := r.URL.Query()
-	if !strictQuery(values, "path", "limit") {
+	if !strictQuery(values, "path", "limit", "offset", "search") {
 		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "文件查询参数无效", "")
 		return
 	}
@@ -36,7 +44,23 @@ func (s *Server) fileList(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
-	result, err := s.files.List(r.Context(), values.Get("path"), limit)
+	offset := 0
+	if raw := values.Get("offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 || parsed >= filemanager.MaxDirectoryScan {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_offset", "目录偏移量无效", "")
+			return
+		}
+		offset = parsed
+	}
+	search := values.Get("search")
+	if len(search) > filemanager.MaxSearchBytes {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_search", "目录搜索内容过长", "")
+		return
+	}
+	result, err := s.files.ListPage(r.Context(), values.Get("path"), filemanager.ListOptions{
+		Limit: limit, Offset: offset, Search: search,
+	})
 	if err != nil {
 		writeFileProblem(w, requestID, err)
 		return
@@ -79,7 +103,9 @@ func (s *Server) fileRead(w http.ResponseWriter, r *http.Request, requestID stri
 		writeProblem(w, requestID, http.StatusBadRequest, "invalid_file_mode", "文件读取模式无效", "")
 		return
 	}
-	file, entry, err := s.files.Open(values.Get("path"))
+	transferContext, cancel := context.WithTimeout(r.Context(), fileTransferMaxDuration)
+	defer cancel()
+	file, entry, err := s.files.Open(transferContext, values.Get("path"))
 	if err != nil {
 		writeFileProblem(w, requestID, err)
 		return
@@ -104,7 +130,10 @@ func (s *Server) fileRead(w http.ResponseWriter, r *http.Request, requestID stri
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("ETag", `"`+entry.ResourceVersion+`"`)
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-		http.ServeContent(w, r, entry.Name, entry.ModifiedAt, bytes.NewReader(content))
+		http.ServeContent(
+			httpstream.NewIdleResponseWriter(transferContext, w, fileTransferIdleTimeout),
+			r, entry.Name, entry.ModifiedAt, bytes.NewReader(content),
+		)
 		return
 	}
 	if disposition == "inline" && activeContent(entry.Name, contentType) {
@@ -119,7 +148,10 @@ func (s *Server) fileRead(w http.ResponseWriter, r *http.Request, requestID stri
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("ETag", `"`+entry.ResourceVersion+`"`)
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	http.ServeContent(w, r, entry.Name, entry.ModifiedAt, file)
+	http.ServeContent(
+		httpstream.NewIdleResponseWriter(transferContext, w, fileTransferIdleTimeout),
+		r, entry.Name, entry.ModifiedAt, file,
+	)
 }
 
 func (s *Server) fileWrite(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -175,12 +207,17 @@ func (s *Server) fileUpload(w http.ResponseWriter, r *http.Request) {
 		writeFileProblem(w, requestID, filemanager.ErrTooLarge)
 		return
 	}
+	transferContext, cancel := context.WithTimeout(r.Context(), fileTransferMaxDuration)
+	defer cancel()
 	r.Body = http.MaxBytesReader(w, r.Body, filemanager.MaxUploadBytes+1)
+	content := httpstream.NewIdleReader(
+		transferContext, w, r.Body, fileTransferIdleTimeout,
+	)
 	entry, err := s.files.Upload(
-		r.Context(),
+		transferContext,
 		r.URL.Query().Get("path"),
 		r.URL.Query().Get("name"),
-		r.Body,
+		content,
 		r.ContentLength,
 		overwrite,
 	)
@@ -262,6 +299,8 @@ func writeFileProblem(w http.ResponseWriter, requestID string, err error) {
 		status, code, title = http.StatusConflict, "file_conflict", "文件状态冲突"
 	case errors.Is(err, filemanager.ErrTooLarge):
 		status, code, title = http.StatusRequestEntityTooLarge, "file_too_large", "文件超过允许的大小"
+	case errors.Is(err, filemanager.ErrBusy):
+		status, code, title = http.StatusTooManyRequests, "file_transfer_busy", "文件传输任务繁忙"
 	case errors.Is(err, filemanager.ErrNotDirectory),
 		errors.Is(err, filemanager.ErrNotRegular):
 		status, code, title = http.StatusUnprocessableEntity, "file_type_invalid", "文件类型不支持此操作"

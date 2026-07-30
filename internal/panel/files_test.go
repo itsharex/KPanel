@@ -83,7 +83,7 @@ func TestFileListRequiresSessionAndForwardsStrictQuery(t *testing.T) {
 	}
 
 	response := authenticatedRequest(
-		server, http.MethodGet, "/api/v1/files?path=%2F&limit=100", nil,
+		server, http.MethodGet, "/api/v1/files?path=%2F&limit=100&offset=0&search=log", nil,
 		sessionCookie, csrfCookie, nil,
 	)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"path":"/"`) {
@@ -91,7 +91,7 @@ func TestFileListRequiresSessionAndForwardsStrictQuery(t *testing.T) {
 	}
 	calls := agent.snapshotCalls()
 	if len(calls) != 1 || calls[0].path != "/v1/files" ||
-		calls[0].rawQuery != "path=%2F&limit=100" {
+		calls[0].rawQuery != "path=%2F&limit=100&offset=0&search=log" {
 		t.Fatalf("unexpected Agent calls: %#v", calls)
 	}
 

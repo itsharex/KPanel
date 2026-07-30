@@ -8,9 +8,16 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/filemanager"
+	"github.com/kejilion/kejilion-panel/internal/httpstream"
+)
+
+const (
+	panelFileTransferIdleTimeout = 45 * time.Second
+	panelFileTransferMaxDuration = 2 * time.Hour
 )
 
 type agentStreamAPI interface {
@@ -29,7 +36,7 @@ func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
-	if r.URL.RawPath != "" || !strictPanelQuery(r.URL.Query(), "path", "limit") {
+	if r.URL.RawPath != "" || !strictPanelQuery(r.URL.Query(), "path", "limit", "offset", "search") {
 		s.writeProblem(w, r, http.StatusBadRequest, "file_query_invalid", "文件查询参数无效", "")
 		return
 	}
@@ -77,8 +84,10 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 			headers.Set(key, value)
 		}
 	}
+	transferContext, cancel := context.WithTimeout(r.Context(), panelFileTransferMaxDuration)
+	defer cancel()
 	response, err := streamer.OpenStream(
-		r.Context(), http.MethodGet, "/v1/files/content", r.URL.RawQuery,
+		transferContext, http.MethodGet, "/v1/files/content", r.URL.RawQuery,
 		requestID(r), http.NoBody, headers, 0,
 	)
 	if err != nil {
@@ -89,8 +98,11 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	copyFileHeaders(w.Header(), response.Header)
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Pragma", "no-cache")
-	w.WriteHeader(response.StatusCode)
-	_, _ = io.CopyBuffer(w, response.Body, make([]byte, 64<<10))
+	writer := httpstream.NewIdleResponseWriter(
+		transferContext, w, panelFileTransferIdleTimeout,
+	)
+	writer.WriteHeader(response.StatusCode)
+	_, _ = io.CopyBuffer(writer, response.Body, make([]byte, 64<<10))
 }
 
 func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
@@ -188,9 +200,14 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/octet-stream")
+	transferContext, cancel := context.WithTimeout(r.Context(), panelFileTransferMaxDuration)
+	defer cancel()
+	content := httpstream.NewIdleReader(
+		transferContext, w, r.Body, panelFileTransferIdleTimeout,
+	)
 	response, err := streamer.OpenStream(
-		r.Context(), http.MethodPost, "/v1/files/upload", r.URL.RawQuery,
-		requestID(r), r.Body, headers, r.ContentLength,
+		transferContext, http.MethodPost, "/v1/files/upload", r.URL.RawQuery,
+		requestID(r), content, headers, r.ContentLength,
 	)
 	if err != nil {
 		_ = s.audit(r, session.User.ID, "file.upload", "file", target, "failure", change)

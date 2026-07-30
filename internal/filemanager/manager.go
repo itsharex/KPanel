@@ -27,6 +27,8 @@ const (
 	MaxBatchItems       = 100
 	MaxTextBytes        = 2 << 20
 	MaxUploadBytes      = 512 << 20
+	MaxDirectoryScan    = 20_000
+	MaxSearchBytes      = 128
 	maxPathBytes        = 4096
 	maxCopyEntries      = 10_000
 	maxCopyBytes        = 10 << 30
@@ -45,21 +47,33 @@ var (
 	ErrAction          = errors.New("不支持的文件操作")
 	ErrRootOperation   = errors.New("不能对文件根目录执行此操作")
 	ErrInvalidEncoding = errors.New("文本内容必须使用 UTF-8 编码")
+	ErrBusy            = errors.New("文件传输任务繁忙，请稍后重试")
 )
 
 type Manager struct {
-	root       string
-	rootFS     *os.Root
-	protected  []string
-	now        func() time.Time
-	uploadGate chan struct{}
-	writeMu    sync.Mutex
+	root           string
+	rootFS         *os.Root
+	protected      []string
+	now            func() time.Time
+	uploadGate     chan struct{}
+	downloadGate   chan struct{}
+	maxCopyEntries int
+	maxCopyBytes   int64
+	writeMu        sync.Mutex
 }
 
 type Config struct {
 	Root             string
 	ProtectedVirtual []string
 	Now              func() time.Time
+	MaxCopyEntries   int
+	MaxCopyBytes     int64
+}
+
+type ListOptions struct {
+	Limit  int
+	Offset int
+	Search string
 }
 
 func New(config Config) (*Manager, error) {
@@ -69,16 +83,25 @@ func New(config Config) (*Manager, error) {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
+	if config.MaxCopyEntries <= 0 || config.MaxCopyEntries > maxCopyEntries {
+		config.MaxCopyEntries = maxCopyEntries
+	}
+	if config.MaxCopyBytes <= 0 || config.MaxCopyBytes > maxCopyBytes {
+		config.MaxCopyBytes = maxCopyBytes
+	}
 	rootPath := filepath.Clean(config.Root)
 	rootFS, err := os.OpenRoot(rootPath)
 	if err != nil {
 		return nil, fmt.Errorf("open file manager root: %w", err)
 	}
 	manager := &Manager{
-		root:       rootPath,
-		rootFS:     rootFS,
-		now:        config.Now,
-		uploadGate: make(chan struct{}, 2),
+		root:           rootPath,
+		rootFS:         rootFS,
+		now:            config.Now,
+		uploadGate:     make(chan struct{}, 2),
+		downloadGate:   make(chan struct{}, 4),
+		maxCopyEntries: config.MaxCopyEntries,
+		maxCopyBytes:   config.MaxCopyBytes,
 	}
 	protectedValues := append([]string{"/.kpanel-trash"}, config.ProtectedVirtual...)
 	seenProtected := make(map[string]struct{}, len(protectedValues))
@@ -114,9 +137,25 @@ func (m *Manager) Close() error {
 }
 
 func (m *Manager) List(ctx context.Context, virtual string, limit int) (contract.FileDirectory, error) {
-	if limit <= 0 || limit > MaxDirectoryEntries {
-		limit = MaxDirectoryEntries
+	return m.ListPage(ctx, virtual, ListOptions{Limit: limit})
+}
+
+func (m *Manager) ListPage(
+	ctx context.Context,
+	virtual string,
+	options ListOptions,
+) (contract.FileDirectory, error) {
+	if options.Limit <= 0 || options.Limit > MaxDirectoryEntries {
+		options.Limit = MaxDirectoryEntries
 	}
+	if options.Offset < 0 || options.Offset >= MaxDirectoryScan {
+		return contract.FileDirectory{}, ErrInvalidPath
+	}
+	search := strings.TrimSpace(options.Search)
+	if len(search) > MaxSearchBytes {
+		return contract.FileDirectory{}, ErrInvalidPath
+	}
+	search = strings.ToLower(search)
 	_, normalized, err := m.resolveExisting(virtual)
 	if err != nil {
 		return contract.FileDirectory{}, err
@@ -133,8 +172,12 @@ func (m *Manager) List(ctx context.Context, virtual string, limit int) (contract
 		return contract.FileDirectory{}, err
 	}
 	defer directory.Close()
-	entries := make([]contract.FileEntry, 0, limit)
-	truncated := false
+	entries := make([]contract.FileEntry, 0, options.Limit)
+	scanned := 0
+	scanTruncated := false
+	hasMore := false
+	reachedEOF := false
+	matched := 0
 	for {
 		values, readErr := directory.ReadDir(128)
 		for _, value := range values {
@@ -145,17 +188,34 @@ func (m *Manager) List(ctx context.Context, virtual string, limit int) (contract
 			if m.isProtected(childVirtual) || isInternalComponent(value.Name()) {
 				continue
 			}
-			if len(entries) == limit {
-				truncated = true
+			if scanned == MaxDirectoryScan {
+				scanTruncated = true
 				break
 			}
+			scanned++
+			if search != "" && !strings.Contains(strings.ToLower(value.Name()), search) {
+				continue
+			}
+			if matched < options.Offset {
+				matched++
+				continue
+			}
+			if len(entries) == options.Limit {
+				hasMore = true
+				break
+			}
+			matched++
 			childInfo, infoErr := value.Info()
 			if infoErr != nil {
 				continue
 			}
 			entries = append(entries, m.entry(childVirtual, childInfo))
 		}
-		if truncated || errors.Is(readErr, io.EOF) {
+		if hasMore || scanTruncated {
+			break
+		}
+		if errors.Is(readErr, io.EOF) {
+			reachedEOF = true
 			break
 		}
 		if readErr != nil {
@@ -170,8 +230,18 @@ func (m *Manager) List(ctx context.Context, virtual string, limit int) (contract
 		}
 		return strings.ToLower(entries[left].Name) < strings.ToLower(entries[right].Name)
 	})
+	nextOffset := 0
+	if hasMore {
+		nextOffset = matched
+	}
+	total := 0
+	if reachedEOF {
+		total = matched
+	}
 	return contract.FileDirectory{
-		Path: normalized, Entries: entries, Truncated: truncated, ReadAt: m.now().UTC(),
+		Path: normalized, Entries: entries,
+		Offset: options.Offset, NextOffset: nextOffset, Total: total, TotalKnown: reachedEOF,
+		Truncated: hasMore || scanTruncated, ScanTruncated: scanTruncated, ReadAt: m.now().UTC(),
 	}, nil
 }
 
@@ -187,7 +257,16 @@ func (m *Manager) Stat(virtual string) (contract.FileEntry, error) {
 	return m.entry(normalized, info), nil
 }
 
-func (m *Manager) Open(virtual string) (*os.File, contract.FileEntry, error) {
+func (m *Manager) Open(ctx context.Context, virtual string) (io.ReadSeekCloser, contract.FileEntry, error) {
+	if err := acquireNow(ctx, m.downloadGate); err != nil {
+		return nil, contract.FileEntry{}, err
+	}
+	releaseDownload := true
+	defer func() {
+		if releaseDownload {
+			release(m.downloadGate)
+		}
+	}()
 	_, normalized, err := m.resolveExisting(virtual)
 	if err != nil {
 		return nil, contract.FileEntry{}, err
@@ -212,7 +291,8 @@ func (m *Manager) Open(virtual string) (*os.File, contract.FileEntry, error) {
 		file.Close()
 		return nil, contract.FileEntry{}, ErrConflict
 	}
-	return file, m.entry(normalized, opened), nil
+	releaseDownload = false
+	return &gatedFile{File: file, gate: m.downloadGate}, m.entry(normalized, opened), nil
 }
 
 func (m *Manager) WriteText(
@@ -297,7 +377,7 @@ func (m *Manager) Upload(
 	if err := validateName(name); err != nil {
 		return contract.FileEntry{}, err
 	}
-	if err := acquire(ctx, m.uploadGate); err != nil {
+	if err := acquireNow(ctx, m.uploadGate); err != nil {
 		return contract.FileEntry{}, err
 	}
 	defer release(m.uploadGate)
@@ -438,6 +518,7 @@ func (m *Manager) Action(
 	default:
 		return result, ErrAction
 	}
+	budget := &copyBudget{maxEntries: m.maxCopyEntries, maxBytes: m.maxCopyBytes}
 	for _, source := range input.Sources {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -449,13 +530,13 @@ func (m *Manager) Action(
 		)
 		switch input.Action {
 		case "copy":
-			entry, err = m.copyOne(ctx, source, input.Target)
+			entry, err = m.copyOne(ctx, source, input.Target, budget)
 			destination = entry.Path
 		case "move":
-			entry, err = m.moveOne(ctx, source, input.Target)
+			entry, err = m.moveOne(ctx, source, input.Target, budget)
 			destination = entry.Path
 		case "trash":
-			destination, err = m.trashOne(ctx, source)
+			destination, err = m.trashOne(ctx, source, budget)
 			entry = contract.FileEntry{Path: source}
 		case "chmod":
 			entry, err = m.chmodOne(source, input.Mode)
@@ -565,6 +646,7 @@ func (m *Manager) rename(
 func (m *Manager) moveOne(
 	ctx context.Context,
 	sourceVirtual, targetDirectoryVirtual string,
+	budget *copyBudget,
 ) (contract.FileEntry, error) {
 	_, normalizedSource, err := m.resolveExisting(sourceVirtual)
 	if err != nil {
@@ -613,7 +695,7 @@ func (m *Manager) moveOne(
 			return contract.FileEntry{}, err
 		}
 		tempVirtual := joinVirtual(normalizedTarget, ".kpanel-copy-"+randomID())
-		if err := m.copyTree(ctx, normalizedSource, tempVirtual, &copyBudget{}); err != nil {
+		if err := m.copyTree(ctx, normalizedSource, tempVirtual, budget); err != nil {
 			_ = m.rootFS.RemoveAll(rootName(tempVirtual))
 			return contract.FileEntry{}, err
 		}
@@ -645,6 +727,7 @@ func (m *Manager) moveOne(
 func (m *Manager) copyOne(
 	ctx context.Context,
 	sourceVirtual, targetDirectoryVirtual string,
+	budget *copyBudget,
 ) (contract.FileEntry, error) {
 	_, normalizedSource, err := m.resolveExisting(sourceVirtual)
 	if err != nil {
@@ -681,7 +764,6 @@ func (m *Manager) copyOne(
 		return contract.FileEntry{}, err
 	}
 	tempVirtual := joinVirtual(normalizedTarget, ".kpanel-copy-"+randomID())
-	budget := &copyBudget{}
 	sourceInfo, err := m.rootFS.Lstat(rootName(normalizedSource))
 	if err != nil {
 		return contract.FileEntry{}, err
@@ -706,7 +788,11 @@ func (m *Manager) copyOne(
 	return m.Stat(targetVirtual)
 }
 
-func (m *Manager) trashOne(ctx context.Context, sourceVirtual string) (string, error) {
+func (m *Manager) trashOne(
+	ctx context.Context,
+	sourceVirtual string,
+	budget *copyBudget,
+) (string, error) {
 	_, normalized, err := m.resolveExisting(sourceVirtual)
 	if err != nil {
 		return "", err
@@ -733,7 +819,7 @@ func (m *Manager) trashOne(ctx context.Context, sourceVirtual string) (string, e
 			return "", err
 		}
 		tempVirtual := joinVirtual(trashRootVirtual, ".kpanel-copy-"+randomID())
-		if err := m.copyTree(ctx, normalized, tempVirtual, &copyBudget{}); err != nil {
+		if err := m.copyTree(ctx, normalized, tempVirtual, budget); err != nil {
 			_ = m.rootFS.RemoveAll(rootName(tempVirtual))
 			return "", err
 		}
@@ -992,17 +1078,34 @@ func actionItem(path string, entry contract.FileEntry, destination string) contr
 	}
 }
 
-func acquire(ctx context.Context, gate chan struct{}) error {
+func acquireNow(ctx context.Context, gate chan struct{}) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case gate <- struct{}{}:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	default:
+		return ErrBusy
 	}
 }
 
 func release(gate chan struct{}) {
 	<-gate
+}
+
+type gatedFile struct {
+	*os.File
+	gate chan struct{}
+	once sync.Once
+}
+
+func (file *gatedFile) Close() error {
+	err := file.File.Close()
+	file.once.Do(func() { release(file.gate) })
+	return err
 }
 
 type contextReader struct {
@@ -1018,8 +1121,10 @@ func (reader *contextReader) Read(buffer []byte) (int, error) {
 }
 
 type copyBudget struct {
-	entries int
-	bytes   int64
+	entries    int
+	bytes      int64
+	maxEntries int
+	maxBytes   int64
 }
 
 func (m *Manager) copyTree(
@@ -1039,7 +1144,7 @@ func (m *Manager) copyTree(
 	}
 	budget.entries++
 	budget.bytes += info.Size()
-	if budget.entries > maxCopyEntries || budget.bytes > maxCopyBytes {
+	if budget.entries > budget.maxEntries || budget.bytes > budget.maxBytes {
 		return ErrTooLarge
 	}
 	if info.IsDir() {
