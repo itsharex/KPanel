@@ -37,7 +37,8 @@
 ## 3. 真实状态与双端互通
 
 - Docker Engine、Nginx 配置、systemd、系统文件和 `kejilion.sh` 兼容产物是共享事实。
-- KPanel 每次读取真实产物并计算 `resourceVersion`；面板数据库只保存登录、任务、审计和必要缓存。
+- KPanel 每次读取真实产物并计算 `resourceVersion`；Panel 持久化只允许保存账户、Session、
+  任务索引、审计和必要缓存，高权限任务状态由 Agent 独立保存。
 - 脚本、Compose、CLI 或 Web 创建的容器都可按实时状态执行生命周期、日志、性能、控制台和访问控制。
 - 网站更新尽量在当前配置结构上补丁修改；无法解析的配置仍可按资源 ID 删除，不要求 KPanel marker。
 - 网站图标接口不是任意 URL 代理：Agent 只接受已发现站点 ID，网络连接固定到本机

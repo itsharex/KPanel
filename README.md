@@ -88,7 +88,7 @@ bash <(curl -sL kejilion.sh) app kpanel
 
 ## 为什么是 KPanel
 
-- **与脚本互认**：宿主机实际状态是事实来源，面板数据库不是资源的唯一真相。
+- **与脚本互认**：宿主机实际状态是事实来源，面板存储不复制第二套资源真相。
 - **不接管现有环境**：安装器不会修改 `kejilion.sh`、`/home/web`、Nginx、防火墙
   或现有站点。
 - **权限边界清晰**：Web/API 进程无特权运行，不挂载 Docker Socket 或宿主机根目录；
@@ -120,6 +120,7 @@ bash <(curl -sL kejilion.sh) app kpanel
   [高级构建、发布与部署](docs/deployment.md)、
   [宿主机系统兼容矩阵](docs/platform-support.md)
 - 架构与安全：[架构与事实来源](docs/architecture.md)、
+  [持久化与数据存储策略](docs/storage-strategy.md)、
   [攻击面与操作边界](docs/security-model.md)、
   [性能、稳定性、资源与网络入侵安全开发规范](docs/development-quality-standard.md)
 - 生态兼容：[kejilion.sh 兼容基线](docs/compatibility.md)、

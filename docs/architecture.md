@@ -6,14 +6,16 @@
   类型化接口便于限制高权限操作，也减少生产运行时依赖。
 - 前端：Vue 3 + TypeScript + Vite。构建后为静态文件，由 `paneld` 直接提供，
   不在生产机运行 Node.js。
-- 面板状态：使用带进程锁和原子落盘的 JSON Store，仅保存认证、任务与审计；
-  宿主机资源始终从实际文件系统和 Docker Engine 读取。
+- 面板状态：当前使用带进程锁和原子落盘的 JSON Store，保存账户、Session、登录限速和审计；
+  Agent 后台任务使用独立的有界任务状态与日志。宿主机资源始终从实际文件系统和
+  Docker Engine 读取。
 - 部署：无特权 `paneld` Docker 容器 + 受 systemd 限制的宿主机 Agent。
   这种拆分让 Web 进程不接触 Docker Socket、宿主机根目录或任意 Shell。
 
-该组合优先满足“轻量、快速、稳定、安全、可打包为多架构 Docker
-镜像”的目标。资源量或审计查询规模增长后，可以在不改变 Agent 安全边界的
-前提下把面板 Store 迁移到 SQLite/PostgreSQL。
+该组合优先满足“轻量、快速、稳定、安全、可打包为多架构 Docker 镜像”的目标。
+未来按业务特征分层使用 JSON、JSONL、SQLite；只有多 Panel 共享写入、主动高可用或
+多租户控制面才评估 PostgreSQL。选型、迁移和回滚规则见
+[持久化与数据存储策略](storage-strategy.md)，任何迁移都不得改变 Agent 安全边界。
 
 ## 进程边界
 
@@ -67,8 +69,11 @@ Agent 不 `source` Shell 函数。需要写入脚本已定义的外联配置时�
 ## 状态规则
 
 - Docker Engine、Nginx 配置、证书文件与系统状态是真实状态。
-- 原子 JSON 存储只保存用户、Session、登录限速、任务和审计；它由单个
-  `paneld` writer 独占。宿主机资源不写入该文件。
+- 当前原子 JSON Store 只保存账户、Session、登录限速和审计，由单个 `paneld` writer
+  独占；Agent 任务、集群状态和监控历史分别使用独立且有界的持久化文件。
+- 面板自身结构化数据未来可以按
+  [持久化与数据存储策略](storage-strategy.md)迁移至 SQLite；数据库仍不得保存宿主机
+  资源的影子真相。
 - 每个资源包含基于实际产物计算的 `resourceVersion`。
 - 更新必须携带预期版本；版本变化时返回冲突，不静默覆盖。
 - 对脚本、SSH 或其他工具的修改重新解析并继续管理；资源版本用于避免并发静默覆盖。
