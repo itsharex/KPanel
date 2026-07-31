@@ -6,6 +6,7 @@ import {
   Boxes,
   HeartPulse,
   ClipboardList,
+  CircleArrowUp,
   Container,
   Folder,
   LayoutDashboard,
@@ -34,6 +35,7 @@ import {
   routeNavigationState,
 } from '@/lib/navigation'
 import { readSidebarCollapsed, writeSidebarCollapsed } from '@/lib/sidebarPreference'
+import { detectKPanelUpdate } from '@/lib/kpanelUpdate'
 
 interface NavigationItem {
   label: string
@@ -62,6 +64,8 @@ const toast = useToast()
 const menuOpen = ref(false)
 const signingOut = ref(false)
 const sidebarCollapsed = ref(readSidebarCollapsed())
+const kpanelUpdateAvailable = ref(false)
+const checkingKPanelUpdate = ref(false)
 
 const pageTitle = computed(() => String(route.meta.title || 'KPanel'))
 const agentStatus = computed(() => {
@@ -74,6 +78,8 @@ const agentStatus = computed(() => {
 let agentTimer: number | undefined
 let navigationWarmupTimer: number | undefined
 let navigationWarmupCancelled = false
+let lastKPanelUpdateCheckAt = 0
+const kpanelUpdateCheckInterval = 60 * 60 * 1000
 
 function closeMenu(): void {
   menuOpen.value = false
@@ -109,6 +115,37 @@ function toggleTheme(): void {
   theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')
 }
 
+function openKPanelUpdate(): void {
+  if (!kpanelUpdateAvailable.value) return
+  closeMenu()
+  void router.push({
+    name: 'apps',
+    query: { app: 'kpanel', action: 'update' },
+  })
+}
+
+async function refreshKPanelUpdate(): Promise<void> {
+  const agent = panel.state.agent
+  if (
+    checkingKPanelUpdate.value ||
+    !agent?.connected ||
+    !agent.compatible ||
+    agent.readOnly ||
+    Date.now() - lastKPanelUpdateCheckAt < kpanelUpdateCheckInterval
+  ) {
+    return
+  }
+  checkingKPanelUpdate.value = true
+  lastKPanelUpdateCheckAt = Date.now()
+  try {
+    kpanelUpdateAvailable.value = (await detectKPanelUpdate()) === 'available'
+  } catch {
+    // Registry or Agent failures must not interrupt normal navigation.
+  } finally {
+    checkingKPanelUpdate.value = false
+  }
+}
+
 async function signOut(): Promise<void> {
   signingOut.value = true
   try {
@@ -126,6 +163,7 @@ async function refreshAgent(): Promise<void> {
     const status = await api.agent.health()
     panel.setAgent(status)
     session.state.agent = status
+    void refreshKPanelUpdate()
   } catch (error) {
     const previous = panel.state.agent
     panel.setAgent({
@@ -222,7 +260,19 @@ watch(
       <div class="sidebar__footer">
         <div class="sidebar__agent" :title="sidebarCollapsed ? agentStatus.label : undefined">
           <StatusBadge :status="agentStatus.status" :label="agentStatus.label" subtle />
-          <small v-if="panel.state.agent?.version">v{{ panel.state.agent.version }}</small>
+          <button
+            v-if="kpanelUpdateAvailable"
+            class="sidebar__version sidebar__version--update"
+            type="button"
+            aria-label="发现 KPanel 新版本，打开更新确认"
+            title="发现 KPanel 新版本"
+            @click="openKPanelUpdate"
+          >
+            <CircleArrowUp :size="16" aria-hidden="true" />
+            <span>更新</span>
+            <small v-if="panel.state.agent?.version">v{{ panel.state.agent.version }}</small>
+          </button>
+          <small v-else-if="panel.state.agent?.version">v{{ panel.state.agent.version }}</small>
         </div>
         <button
           class="sidebar__user"

@@ -19,6 +19,26 @@ const mocks = vi.hoisted(() => ({
   publicNetwork: vi.fn(),
   toastSuccess: vi.fn(),
   toastDanger: vi.fn(),
+  routerReplace: vi.fn(),
+  reloadPanelInterface: vi.fn(),
+  route: {
+    name: 'apps',
+    fullPath: '/apps',
+    query: {} as Record<string, string>,
+  },
+}))
+
+vi.mock('vue-router', async () => {
+  const actual = await vi.importActual<typeof import('vue-router')>('vue-router')
+  return {
+    ...actual,
+    useRoute: () => mocks.route,
+    useRouter: () => ({ replace: mocks.routerReplace }),
+  }
+})
+
+vi.mock('@/lib/pageLifecycle', () => ({
+  reloadPanelInterface: mocks.reloadPanelInterface,
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -101,6 +121,8 @@ interface AppsBindings {
   requestCancelJob: () => void
   confirmCancelJob: () => Promise<void>
   dismissJob: () => void
+  consumeUpdateIntent: () => Promise<void>
+  refreshAfterSelfUpdate: (job: AppInstallJob) => boolean
 }
 
 function setupView(): AppsBindings {
@@ -234,6 +256,23 @@ function markerOnlyInventory(resourceVersion: string): AppMarketInventory {
   return result
 }
 
+function kpanelInventory(resourceVersion: string): AppMarketInventory {
+  const result = inventory(resourceVersion)
+  const current = result.items[0]
+  if (!current) throw new Error('test inventory is incomplete')
+  result.items[0] = {
+    ...current,
+    id: 'thirdparty-kpanel',
+    num: undefined,
+    source: 'thirdparty',
+    token: 'kpanel',
+    name_zh: 'KPanel',
+    name_en: 'KPanel',
+    slug: 'kpanel',
+  }
+  return result
+}
+
 function proxySite(): Site {
   return {
     id: 'site-cloud',
@@ -252,6 +291,10 @@ function proxySite(): Site {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.route.name = 'apps'
+  mocks.route.fullPath = '/apps'
+  mocks.route.query = {}
+  mocks.routerReplace.mockResolvedValue(undefined)
   const storage = new Map<string, string>()
   vi.stubGlobal('window', {
     localStorage: {
@@ -733,6 +776,38 @@ describe('AppsView script management', () => {
 })
 
 describe('AppsView application mutations', () => {
+  it('opens the existing KPanel update confirmation from the sidebar intent', async () => {
+    const view = setupView()
+    view.inventory.value = kpanelInventory('kpanel-version')
+    mocks.route.query = { app: 'kpanel', action: 'update' }
+    mocks.route.fullPath = '/apps?app=kpanel&action=update'
+
+    await view.consumeUpdateIntent()
+
+    expect(view.selected.value?.id).toBe('thirdparty-kpanel')
+    expect(view.confirmAction.value).toBe('update')
+    expect(mocks.routerReplace).toHaveBeenCalledWith({ query: {} })
+  })
+
+  it('schedules an interface reload only after a successful KPanel self update', () => {
+    const view = setupView()
+    const job: AppInstallJob = {
+      id: '89abcdef0123456789abcdef01234567',
+      appId: 'thirdparty-kpanel',
+      appName: 'KPanel',
+      action: 'update',
+      status: 'succeeded',
+      stage: 'completed',
+      progress: 100,
+      logs: [],
+      createdAt: '2026-07-31T00:00:00Z',
+    }
+
+    expect(view.refreshAfterSelfUpdate(job)).toBe(true)
+    expect(window.setTimeout).toHaveBeenCalledWith(mocks.reloadPanelInterface, 600)
+    expect(view.refreshAfterSelfUpdate({ ...job, appId: 'builtin-13' })).toBe(false)
+  })
+
   it('refreshes inventory and retries an update once when the container version changed', async () => {
     const job: AppInstallJob = {
       id: '89abcdef0123456789abcdef01234567',

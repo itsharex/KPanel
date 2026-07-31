@@ -1116,6 +1116,8 @@ textarea:focus-visible,
   .sidebar .brand__text,
   .sidebar__link > span,
   .sidebar__agent > small,
+  .sidebar__version > span,
+  .sidebar__version > small,
   .sidebar__user > span:not(.avatar),
   .sidebar__user > svg {
     min-width: 0;
@@ -1140,6 +1142,11 @@ textarea:focus-visible,
   }
 
   .sidebar__agent > small {
+    max-width: 72px;
+  }
+
+  .sidebar__version > span,
+  .sidebar__version > small {
     max-width: 72px;
   }
 
@@ -1176,6 +1183,8 @@ textarea:focus-visible,
   .sidebar--collapsed .brand__text,
   .sidebar--collapsed .sidebar__link > span,
   .sidebar--collapsed .sidebar__agent > small,
+  .sidebar--collapsed .sidebar__version > span,
+  .sidebar--collapsed .sidebar__version > small,
   .sidebar--collapsed .sidebar__user > span:not(.avatar),
   .sidebar--collapsed .sidebar__user > svg {
     max-width: 0;
@@ -1261,6 +1270,40 @@ textarea:focus-visible,
 .sidebar__agent small {
   color: var(--sidebar-muted);
   font-size: 10px;
+}
+
+.sidebar__version {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  color: var(--sidebar-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+}
+
+.sidebar__version--update {
+  color: #ff9f43;
+  cursor: pointer;
+  background: rgb(255 159 67 / 10%);
+}
+
+.sidebar__version--update:hover,
+.sidebar__version--update:focus-visible {
+  color: #ffb86b;
+  background: rgb(255 159 67 / 17%);
+  outline: none;
+}
+
+.sidebar__version span {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sidebar__version--update small {
+  color: currentColor;
 }
 
 .sidebar__user {

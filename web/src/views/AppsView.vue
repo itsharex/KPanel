@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowUpRight,
   Activity,
@@ -32,6 +33,8 @@ import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
 import { ApiError, api } from '@/lib/api'
 import { appAccessURL, matchingAppProxySites } from '@/lib/appAccess'
+import { isKPanelSelfUpdate, kpanelAppID, kpanelAppToken } from '@/lib/kpanelUpdate'
+import { reloadPanelInterface } from '@/lib/pageLifecycle'
 import { useToast } from '@/stores/toast'
 import type { AppInstallJob, AppMarketInventory, AppMarketItem, PublicNetworkSummary, Site } from '@/types/api'
 
@@ -69,6 +72,8 @@ const recentInstalledID = ref('')
 const cancelJobPending = ref(false)
 const cancellingJob = ref(false)
 const toast = useToast()
+const route = useRoute()
+const router = useRouter()
 let controller: AbortController | undefined
 let jobController: AbortController | undefined
 let jobTimer: number | undefined
@@ -309,6 +314,51 @@ function jobActionLabel(action?: AppInstallJob['action']): string {
   return action ? labels[action] : '操作'
 }
 
+function routeQueryValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+async function clearUpdateIntent(): Promise<void> {
+  const query = { ...route.query }
+  delete query.app
+  delete query.action
+  await router.replace({ query })
+}
+
+async function consumeUpdateIntent(): Promise<void> {
+  if (
+    route.name !== 'apps' ||
+    routeQueryValue(route.query.app) !== kpanelAppToken ||
+    routeQueryValue(route.query.action) !== 'update' ||
+    !inventory.value
+  ) {
+    return
+  }
+  await clearUpdateIntent()
+  const item = inventory.value.items.find((candidate) => candidate.token === kpanelAppToken)
+  if (!item) {
+    toast.danger('无法打开更新', '应用目录中没有找到 KPanel。')
+    return
+  }
+  selectedID.value = item.id
+  if (applicationTaskActive.value) {
+    jobDetailsOpen.value = true
+    toast.danger('已有应用任务运行中', '请等待当前任务结束后再更新 KPanel。')
+    return
+  }
+  if (!item.runtime.installed || !capability(item, 'update')) {
+    toast.danger('当前无法更新', item.capabilities.update?.reason || 'KPanel 更新能力尚未就绪。')
+    return
+  }
+  confirmAction.value = 'update'
+}
+
+function refreshAfterSelfUpdate(job: AppInstallJob): boolean {
+  if (!isKPanelSelfUpdate(job)) return false
+  window.setTimeout(reloadPanelInterface, 600)
+  return true
+}
+
 function stopJobPolling(): void {
   if (jobTimer) window.clearInterval(jobTimer)
   jobTimer = undefined
@@ -330,6 +380,7 @@ async function refreshJob(id: string): Promise<void> {
       if (job.status === 'succeeded') {
         toast.success(`后台${jobActionLabel(job.action)}完成`, `${job.appName} 已完成状态对账。`)
         if (job.action === 'uninstall' && selectedID.value === job.appId) selectedID.value = ''
+        if (refreshAfterSelfUpdate(job)) return
         await load(true)
         if (job.action === 'install') await revealInstalledApp(job.appId)
       } else if (job.status === 'cancelled') {
@@ -550,6 +601,10 @@ async function confirmMutation(): Promise<void> {
     }
     confirmAction.value = undefined
     toast.success(action === 'update' ? '应用更新完成' : '应用已卸载')
+    if (action === 'update' && item.id === kpanelAppID) {
+      window.setTimeout(reloadPanelInterface, 600)
+      return
+    }
     if (action === 'uninstall') selectedID.value = ''
     await load(true)
   } catch (reason) {
@@ -734,8 +789,7 @@ function openURL(item: AppMarketItem): string {
 }
 
 onMounted(() => {
-  void load()
-  void restoreBackgroundJob()
+  void Promise.all([load(), restoreBackgroundJob()]).then(() => consumeUpdateIntent())
 })
 onBeforeUnmount(() => {
   controller?.abort()
@@ -748,6 +802,11 @@ onBeforeUnmount(() => {
 watch(installPort, () => {
   if (installOpen.value) scheduleInstallPortCheck()
 })
+
+watch(
+  () => route.fullPath,
+  () => void consumeUpdateIntent(),
+)
 </script>
 
 <template>
