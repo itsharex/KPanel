@@ -570,14 +570,7 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 	for _, item := range containerPoints {
 		series = append(series, *item)
 	}
-	sort.Slice(series, func(i, j int) bool {
-		left := lastContainerPoint(series[i])
-		right := lastContainerPoint(series[j])
-		if left.Equal(right) {
-			return series[i].Name < series[j].Name
-		}
-		return left.After(right)
-	})
+	sortContainerSeries(series)
 	if len(series) > maxHistorySeries {
 		result.TruncatedSeries += len(series) - maxHistorySeries
 		series = series[:maxHistorySeries]
@@ -787,9 +780,32 @@ func ratio(used uint64, total uint64) float64 {
 	return float64(used) / float64(total)
 }
 
-func lastContainerPoint(series contract.MonitoringContainerSeries) time.Time {
+func sortContainerSeries(series []contract.MonitoringContainerSeries) {
+	sort.Slice(series, func(i, j int) bool {
+		left, leftOK := latestContainerPoint(series[i])
+		right, rightOK := latestContainerPoint(series[j])
+		if leftOK != rightOK {
+			return leftOK
+		}
+		if leftOK && !left.CollectedAt.Equal(right.CollectedAt) {
+			return left.CollectedAt.After(right.CollectedAt)
+		}
+		if leftOK && left.MemoryBytes != right.MemoryBytes {
+			return left.MemoryBytes > right.MemoryBytes
+		}
+		if leftOK && left.CPUPercent != right.CPUPercent {
+			return left.CPUPercent > right.CPUPercent
+		}
+		if series[i].Name != series[j].Name {
+			return series[i].Name < series[j].Name
+		}
+		return series[i].ContainerID < series[j].ContainerID
+	})
+}
+
+func latestContainerPoint(series contract.MonitoringContainerSeries) (contract.MonitoringContainerPoint, bool) {
 	if len(series.Points) == 0 {
-		return time.Time{}
+		return contract.MonitoringContainerPoint{}, false
 	}
-	return series.Points[len(series.Points)-1].CollectedAt
+	return series.Points[len(series.Points)-1], true
 }

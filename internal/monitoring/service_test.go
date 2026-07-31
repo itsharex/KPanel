@@ -122,6 +122,57 @@ func TestSampleAndHistoryPersistBoundedHostAndContainerMetrics(t *testing.T) {
 	}
 }
 
+func TestSortContainerSeriesPrioritizesFreshMemoryThenCPU(t *testing.T) {
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	series := []contract.MonitoringContainerSeries{
+		{ContainerID: "empty", Name: "empty"},
+		{
+			ContainerID: "same-zeta", Name: "zeta",
+			Points: []contract.MonitoringContainerPoint{{
+				CollectedAt: now, MemoryBytes: 3 << 30, CPUPercent: 5,
+			}},
+		},
+		{
+			ContainerID: "same-alpha", Name: "alpha",
+			Points: []contract.MonitoringContainerPoint{{
+				CollectedAt: now, MemoryBytes: 3 << 30, CPUPercent: 5,
+			}},
+		},
+		{
+			ContainerID: "older", Name: "older",
+			Points: []contract.MonitoringContainerPoint{{
+				CollectedAt: now.Add(-5 * time.Minute), MemoryBytes: 8 << 30, CPUPercent: 100,
+			}},
+		},
+		{
+			ContainerID: "lower-memory", Name: "lower-memory",
+			Points: []contract.MonitoringContainerPoint{{
+				CollectedAt: now, MemoryBytes: 1 << 30, CPUPercent: 90,
+			}},
+		},
+		{
+			ContainerID: "lower-cpu", Name: "lower-cpu",
+			Points: []contract.MonitoringContainerPoint{{
+				CollectedAt: now, MemoryBytes: 2 << 30, CPUPercent: 20,
+			}},
+		},
+		{
+			ContainerID: "higher-cpu", Name: "higher-cpu",
+			Points: []contract.MonitoringContainerPoint{{
+				CollectedAt: now, MemoryBytes: 2 << 30, CPUPercent: 40,
+			}},
+		},
+	}
+
+	sortContainerSeries(series)
+	want := []string{"same-alpha", "same-zeta", "higher-cpu", "lower-cpu", "lower-memory", "older", "empty"}
+	for index, containerID := range want {
+		if series[index].ContainerID != containerID {
+			t.Fatalf("container order at %d = %q, want %q: %#v", index, series[index].ContainerID, containerID, series)
+		}
+	}
+}
+
 func TestHistorySkipsCorruptRecordsAndRejectsUnknownRange(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	dir := t.TempDir()
