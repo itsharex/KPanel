@@ -1005,6 +1005,7 @@ textarea:focus-visible,
   justify-content: space-between;
   padding: 0 22px;
   border-bottom: 1px solid var(--sidebar-border);
+  transition: padding 200ms ease;
 }
 
 .sidebar__collapse {
@@ -1014,6 +1015,15 @@ textarea:focus-visible,
   color: var(--sidebar-muted);
   background: transparent;
   border-color: var(--sidebar-border);
+  transition:
+    width 200ms ease,
+    height 200ms ease,
+    top 200ms ease,
+    right 200ms ease,
+    color 160ms ease,
+    background 160ms ease,
+    box-shadow 200ms ease,
+    transform 200ms ease;
 }
 
 .sidebar__collapse:hover {
@@ -1036,6 +1046,7 @@ textarea:focus-visible,
   display: grid;
   gap: 5px;
   padding: 22px 13px;
+  transition: padding 200ms ease;
 }
 
 .sidebar__link {
@@ -1051,7 +1062,9 @@ textarea:focus-visible,
   font-weight: 580;
   transition:
     color 160ms ease,
-    background 160ms ease;
+    background 160ms ease,
+    gap 180ms ease,
+    padding 200ms ease;
 }
 
 .sidebar__link:hover {
@@ -1084,13 +1097,80 @@ textarea:focus-visible,
 }
 
 @media (min-width: 921px) {
+  .sidebar__brand {
+    justify-content: flex-start;
+  }
+
+  .sidebar__brand .brand {
+    min-width: 0;
+    transition: gap 180ms ease;
+  }
+
+  .sidebar__collapse {
+    position: absolute;
+    z-index: 2;
+    top: calc(50% - 17px);
+    right: 16px;
+  }
+
+  .sidebar .brand__text,
+  .sidebar__link > span,
+  .sidebar__agent > small,
+  .sidebar__user > span:not(.avatar),
+  .sidebar__user > svg {
+    min-width: 0;
+    overflow: hidden;
+    opacity: 1;
+    transform: translateX(0);
+    visibility: visible;
+    white-space: nowrap;
+    transition:
+      max-width 180ms ease,
+      opacity 120ms ease,
+      transform 180ms ease,
+      visibility 0s linear;
+  }
+
+  .sidebar .brand__text {
+    max-width: 132px;
+  }
+
+  .sidebar__link > span {
+    max-width: 150px;
+  }
+
+  .sidebar__agent > small {
+    max-width: 72px;
+  }
+
+  .sidebar .sidebar__user {
+    display: flex;
+    transition:
+      gap 180ms ease,
+      padding 200ms ease;
+  }
+
+  .sidebar__user > span:not(.avatar) {
+    max-width: 150px;
+    flex: 1 1 auto;
+  }
+
+  .sidebar__user > svg {
+    max-width: 16px;
+    flex: 0 0 auto;
+  }
+
   .sidebar--collapsed {
     width: var(--sidebar-collapsed-width);
   }
 
   .sidebar--collapsed .sidebar__brand {
-    justify-content: center;
-    padding: 0;
+    justify-content: flex-start;
+    padding: 0 0 0 20px;
+  }
+
+  .sidebar--collapsed .sidebar__brand .brand {
+    gap: 0;
   }
 
   .sidebar--collapsed .brand__text,
@@ -1098,12 +1178,18 @@ textarea:focus-visible,
   .sidebar--collapsed .sidebar__agent > small,
   .sidebar--collapsed .sidebar__user > span:not(.avatar),
   .sidebar--collapsed .sidebar__user > svg {
-    display: none;
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-6px);
+    visibility: hidden;
+    transition:
+      max-width 180ms ease,
+      opacity 100ms ease,
+      transform 180ms ease,
+      visibility 0s linear 180ms;
   }
 
   .sidebar--collapsed .sidebar__collapse {
-    position: absolute;
-    z-index: 2;
     top: calc(50% - 13.5px);
     right: -13px;
     width: 27px;
@@ -1117,9 +1203,8 @@ textarea:focus-visible,
   }
 
   .sidebar--collapsed .sidebar__link {
-    justify-content: center;
     gap: 0;
-    padding: 0;
+    padding: 0 20px;
   }
 
   .sidebar--collapsed .sidebar__link-loader {
@@ -1135,11 +1220,13 @@ textarea:focus-visible,
   }
 
   .sidebar--collapsed .sidebar__agent {
-    justify-content: center;
+    justify-content: flex-start;
+    padding-inline: 16px;
   }
 
   .sidebar--collapsed .sidebar__agent .status-badge {
     width: 25px;
+    max-width: 25px;
     justify-content: center;
     gap: 0;
     padding: 0;
@@ -1148,9 +1235,8 @@ textarea:focus-visible,
   }
 
   .sidebar--collapsed .sidebar__user {
-    display: flex;
-    justify-content: center;
-    padding: 8px;
+    gap: 0;
+    padding: 8px 13px;
   }
 }
 
@@ -1160,12 +1246,16 @@ textarea:focus-visible,
   padding: 16px;
   margin-top: auto;
   border-top: 1px solid var(--sidebar-border);
+  transition:
+    gap 180ms ease,
+    padding 200ms ease;
 }
 
 .sidebar__agent {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  transition: padding 200ms ease;
 }
 
 .sidebar__agent small {
@@ -1292,8 +1382,10 @@ textarea:focus-visible,
   }
 
   .sidebar,
+  .sidebar *,
   .app-shell__main {
-    transition-duration: 0.01ms;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
   }
 }
 
@@ -1451,7 +1543,13 @@ textarea:focus-visible,
   border-radius: 999px;
   font-size: 11px;
   font-weight: 680;
+  max-width: 160px;
   white-space: nowrap;
+  transition:
+    max-width 180ms ease,
+    gap 180ms ease,
+    padding 180ms ease,
+    font-size 120ms ease;
 }
 
 .status-badge__dot {
