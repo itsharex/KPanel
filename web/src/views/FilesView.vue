@@ -48,7 +48,7 @@ interface FileClipboard {
 
 const toast = useToast()
 const directory = ref<FileDirectory>()
-const currentPath = ref('/')
+const currentPath = ref('/home')
 const search = ref('')
 const sortKey = ref<'name' | 'size' | 'modified'>('name')
 const sortDescending = ref(false)
@@ -97,7 +97,7 @@ const entries = computed(() => {
 const breadcrumbs = computed(() => {
   const parts = currentPath.value.split('/').filter(Boolean)
   return [
-    { name: 'home', path: '/' },
+    { name: '根目录', path: '/' },
     ...parts.map((name, index) => ({
       name,
       path: `/${parts.slice(0, index + 1).join('/')}`,
@@ -614,7 +614,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="files-page">
-    <PageHeader title="文件管理" description="轻量管理 /home 日常文件；KPanel 自身数据目录已隔离保护。">
+    <PageHeader title="文件管理" description="轻量管理宿主机文件；KPanel 凭据与状态目录已隔离保护。">
       <template #actions>
         <button class="button button--secondary" type="button" :disabled="loading" @click="loadDirectory()">
           <RefreshCw :size="16" :class="{ spinning: loading }" />
@@ -641,9 +641,15 @@ onBeforeUnmount(() => {
 
     <div class="file-guard">
       <ShieldCheck :size="18" />
-      <span>可管理范围 <strong>/home</strong>，符号链接与 KPanel 数据目录不会开放。</span>
+      <span>可管理范围 <strong>/</strong>，符号链接、内核写入口与 KPanel 数据目录不会开放。</span>
       <small>单文件上传 512 MiB · 文本编辑 2 MiB · 批量最多 100 项</small>
     </div>
+
+    <nav class="file-shortcuts" aria-label="常用目录">
+      <button v-for="item in ['/', '/home', '/root', '/etc', '/var']" :key="item" type="button" @click="loadDirectory(item)">
+        {{ item === '/' ? '根目录 /' : item }}
+      </button>
+    </nav>
 
     <section
       class="file-browser"
@@ -997,6 +1003,27 @@ onBeforeUnmount(() => {
 .file-guard small {
   margin-left: auto;
   white-space: nowrap;
+}
+
+.file-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -8px;
+}
+
+.file-shortcuts button {
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.file-shortcuts button:hover {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--border));
+  color: var(--brand);
 }
 
 .file-browser {

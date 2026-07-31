@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import {
   Check,
   Clock3,
+  Copy,
   ExternalLink,
   KeyRound,
   LoaderCircle,
@@ -38,6 +39,14 @@ const passwordForm = reactive({
   confirmPassword: '',
 })
 const capabilities = ref<Array<{ id: string; enabled: boolean; reason?: string }>>([])
+const securityEntry = ref<{ enabled: boolean; path?: string; resourceVersion: string }>()
+const securityEntryPath = ref('')
+const savingSecurityEntry = ref(false)
+
+const securityEntryUrl = computed(() => {
+  if (!securityEntry.value?.enabled || !securityEntry.value.path || typeof window === 'undefined') return ''
+  return `${window.location.origin}/${securityEntry.value.path}`
+})
 
 const passwordChecks = computed(() => [
   { label: '至少 12 个字符', valid: passwordForm.newPassword.length >= 12 },
@@ -112,11 +121,64 @@ async function changePassword(): Promise<void> {
   await router.replace({ name: 'login' })
 }
 
-onMounted(async () => {
+async function saveSecurityEntry(enabled: boolean, regenerate = false): Promise<void> {
+  if (!securityEntry.value || savingSecurityEntry.value) return
+  savingSecurityEntry.value = true
   try {
-    capabilities.value = await api.agent.capabilities()
+    const updated = await api.settings.securityEntrance.update({
+      enabled,
+      path: securityEntryPath.value,
+      regenerate,
+      expectedResourceVersion: securityEntry.value.resourceVersion,
+    })
+    securityEntry.value = updated
+    securityEntryPath.value = updated.path || ''
+    toast.success(enabled ? '安全入口已启用' : '安全入口已关闭')
+  } catch (reason) {
+    toast.danger('安全入口更新失败', reason instanceof ApiError ? reason.message : '请刷新后重试。')
+  } finally {
+    savingSecurityEntry.value = false
+  }
+}
+
+async function copySecurityEntry(): Promise<void> {
+  if (!securityEntryUrl.value) return
+  try {
+    let copied = false
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(securityEntryUrl.value)
+        copied = true
+      } catch {
+        copied = false
+      }
+    }
+    if (!copied) {
+      const input = document.createElement('textarea')
+      input.value = securityEntryUrl.value
+      input.style.position = 'fixed'
+      input.style.opacity = '0'
+      document.body.appendChild(input)
+      input.select()
+      const succeeded = document.execCommand('copy')
+      input.remove()
+      if (!succeeded) throw new Error('copy unavailable')
+    }
+    toast.success('安全入口已复制')
   } catch {
-    capabilities.value = []
+    toast.danger('复制失败', '请手动选择并复制入口地址。')
+  }
+}
+
+onMounted(async () => {
+  const [capabilityResult, entranceResult] = await Promise.allSettled([
+    api.agent.capabilities(),
+    api.settings.securityEntrance.get(),
+  ])
+  capabilities.value = capabilityResult.status === 'fulfilled' ? capabilityResult.value : []
+  if (entranceResult.status === 'fulfilled') {
+    securityEntry.value = entranceResult.value
+    securityEntryPath.value = entranceResult.value.path || ''
   }
 })
 </script>
@@ -221,6 +283,44 @@ onMounted(async () => {
 
     <section class="settings-section panel-card">
       <header class="settings-section__header">
+        <span><ShieldCheck :size="19" /></span>
+        <div><h2>登录安全入口</h2><p>隐藏常规登录路径，减少公网扫描与撞库噪声</p></div>
+        <StatusBadge
+          :status="securityEntry?.enabled ? 'connected' : 'idle'"
+          :label="securityEntry?.enabled ? '已启用' : '未启用'"
+        />
+      </header>
+      <div v-if="securityEntry" class="security-entry-form">
+        <label class="field">
+          <span>入口路径</span>
+          <div class="security-entry-input">
+            <span>/</span>
+            <input v-model="securityEntryPath" type="text" maxlength="48" autocomplete="off" placeholder="panel-xxxxxxxx" />
+          </div>
+        </label>
+        <div class="security-entry-actions">
+          <button
+            v-if="!securityEntry.enabled"
+            class="button button--primary"
+            type="button"
+            :disabled="savingSecurityEntry"
+            @click="saveSecurityEntry(true, !securityEntryPath)"
+          >启用安全入口</button>
+          <template v-else>
+            <button class="button button--secondary" type="button" :disabled="savingSecurityEntry" @click="saveSecurityEntry(true)">保存路径</button>
+            <button class="button button--secondary" type="button" :disabled="savingSecurityEntry" @click="saveSecurityEntry(true, true)">重新生成</button>
+            <button class="button button--secondary" type="button" @click="copySecurityEntry"><Copy :size="15" />复制入口</button>
+            <button class="button button--ghost" type="button" :disabled="savingSecurityEntry" @click="saveSecurityEntry(false)">关闭</button>
+          </template>
+        </div>
+        <code v-if="securityEntryUrl" class="security-entry-url">{{ securityEntryUrl }}</code>
+      </div>
+      <p v-else class="settings-note">正在读取安全入口状态…</p>
+      <p class="settings-note">安全入口是登录验证前的额外门槛，不替代强密码、会话保护和登录限速；请妥善保存入口地址。</p>
+    </section>
+
+    <section class="settings-section panel-card">
+      <header class="settings-section__header">
         <span><Sun :size="19" /></span>
         <div><h2>界面主题</h2><p>仅保存在当前浏览器，不上传服务器</p></div>
       </header>
@@ -316,6 +416,34 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 14px;
+}
+
+.security-entry-form {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+  padding: 18px;
+}
+
+.security-entry-input {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.security-entry-input input {
+  flex: 1;
+}
+
+.security-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.security-entry-url {
+  overflow-wrap: anywhere;
+  color: var(--brand);
 }
 
 @media (max-width: 640px) {

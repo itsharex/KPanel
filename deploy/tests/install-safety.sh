@@ -176,20 +176,7 @@ if grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" 
 	echo "Agent unit can write the Panel authentication and audit data tree" >&2
 	exit 1
 fi
-grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
-	grep -F '/var/lib/kejilion-panel/system' >/dev/null
-grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
-	grep -F '/var/lib/kejilion-panel/wordpress-jobs' >/dev/null
-grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
-	grep -F '/var/lib/kejilion-panel/app-jobs' >/dev/null
-grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
-	grep -F '/var/lib/kejilion-panel/diagnostic-jobs' >/dev/null
-grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
-	grep -F '/var/lib/kejilion-panel/site-icons' >/dev/null
-grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
-	grep -F '/var/lib/kejilion-panel/monitoring' >/dev/null
-grep -F 'ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
-	grep -F ' /home ' >/dev/null
+grep -Fx 'ReadWritePaths=/' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
 grep -F 'SYSTEM_STATE_DIR=/var/lib/kejilion-panel/system' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'WORDPRESS_STATE_DIR=/var/lib/kejilion-panel/wordpress-jobs' \

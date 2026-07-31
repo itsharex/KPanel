@@ -60,6 +60,36 @@ func TestStorePersistsIdentitySessionAndAudit(t *testing.T) {
 	}
 }
 
+func TestSecurityEntrancePersistsAndRejectsStaleWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	_, initialVersion := storage.SecurityEntrance()
+	value := SecurityEntrance{Enabled: true, Path: "panel-a1b2c3", UpdatedAt: now}
+	if err := storage.ReplaceSecurityEntrance(initialVersion, value); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.ReplaceSecurityEntrance(initialVersion, SecurityEntrance{}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale write was not rejected: %v", err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	got, version := reopened.SecurityEntrance()
+	if got != value || version == initialVersion {
+		t.Fatalf("unexpected persisted entrance: %#v version=%q", got, version)
+	}
+}
+
 func TestStoreRejectsOversizedState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	file, err := os.Create(path)

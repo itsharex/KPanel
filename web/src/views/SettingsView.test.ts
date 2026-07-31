@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => {
   return {
     MockApiError,
     changePassword: vi.fn(),
+    getSecurityEntrance: vi.fn(),
+    updateSecurityEntrance: vi.fn(),
     resetApiSecurityState: vi.fn(),
     replace: vi.fn(),
     toastSuccess: vi.fn(),
@@ -34,6 +36,10 @@ vi.mock('@/lib/api', () => ({
     },
     settings: {
       changePassword: mocks.changePassword,
+      securityEntrance: {
+        get: mocks.getSecurityEntrance,
+        update: mocks.updateSecurityEntrance,
+      },
     },
   },
   resetApiSecurityState: mocks.resetApiSecurityState,
@@ -75,6 +81,9 @@ interface SettingsBindings {
   changingPassword: Ref<boolean>
   passwordSubmitted: Ref<boolean>
   changePassword: () => Promise<void>
+  securityEntry: Ref<{ enabled: boolean; path?: string; resourceVersion: string } | undefined>
+  securityEntryPath: Ref<string>
+  saveSecurityEntry: (enabled: boolean, regenerate?: boolean) => Promise<void>
 }
 
 function setupView(): SettingsBindings {
@@ -95,6 +104,12 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.replace.mockResolvedValue(undefined)
   mocks.changePassword.mockResolvedValue(undefined)
+  mocks.getSecurityEntrance.mockResolvedValue({ enabled: false, resourceVersion: 'sha256:initial' })
+  mocks.updateSecurityEntrance.mockResolvedValue({
+    enabled: true,
+    path: 'panel-generated',
+    resourceVersion: 'sha256:updated',
+  })
   mocks.sessionState.authenticated = true
   mocks.sessionState.user = { id: 'admin', username: 'admin' }
   mocks.sessionState.expiresAt = '2026-07-26T00:00:00Z'
@@ -163,5 +178,28 @@ describe('SettingsView password change', () => {
     expect(mocks.replace).not.toHaveBeenCalled()
     expect(mocks.sessionState.authenticated).toBe(true)
     expect(view.changingPassword.value).toBe(false)
+  })
+})
+
+describe('SettingsView security entrance', () => {
+  it('updates from the current resource version and reflects the generated path', async () => {
+    const view = setupView()
+    view.securityEntry.value = { enabled: false, resourceVersion: 'sha256:initial' }
+    view.securityEntryPath.value = ''
+
+    await view.saveSecurityEntry(true, true)
+
+    expect(mocks.updateSecurityEntrance).toHaveBeenCalledWith({
+      enabled: true,
+      path: '',
+      regenerate: true,
+      expectedResourceVersion: 'sha256:initial',
+    })
+    expect(view.securityEntry.value).toEqual({
+      enabled: true,
+      path: 'panel-generated',
+      resourceVersion: 'sha256:updated',
+    })
+    expect(view.securityEntryPath.value).toBe('panel-generated')
   })
 })

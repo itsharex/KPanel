@@ -148,12 +148,19 @@ func NewServer(config Config) (*Server, error) {
 	if config.Files == nil {
 		var fileErr error
 		config.Files, fileErr = filemanager.New(filemanager.Config{
-			Root: "/home",
+			Root:         "/",
+			TrashVirtual: "/var/lib/kejilion-panel/file-trash",
 			ProtectedVirtual: []string{
-				"/docker/kpanel",
-				"/docker/kejilion-panel",
-				"/.kpanel-trash",
+				"/var/lib/kejilion-panel",
+				"/run/kejilion-panel",
+				"/etc/kejilion-panel",
+				"/home/docker/kpanel/secrets",
+				"/home/docker/kpanel/data/panel",
+				"/home/docker/kpanel/data/agent",
+				"/home/docker/kpanel/run",
+				"/home/.kpanel-trash",
 			},
+			ReadOnlyVirtual: []string{"/proc", "/sys", "/dev"},
 		})
 		if fileErr != nil {
 			return nil, fmt.Errorf("initialize file manager: %w", fileErr)
@@ -403,8 +410,8 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		{ID: "sites.recipes.install", Enabled: recipeWriteErr == nil, Reason: reasonIf(recipeWriteErr, "kejilion.sh 一键建站协议不可用"), Methods: []string{"POST"}},
 		{ID: "sites.templates.install", Enabled: templateWriteErr == nil, Reason: reasonIf(templateWriteErr, "kejilion.sh 交互建站模板不可用"), Methods: []string{"POST"}},
 		{ID: "diagnostics.run", Enabled: diagnosticErr == nil, Reason: reasonIf(diagnosticErr, "请更新本机 kejilion.sh 以启用体检协议"), Methods: []string{"GET", "POST"}},
-		{ID: "files.read", Enabled: fileErr == nil, Reason: reasonIf(fileErr, "/home 文件根目录不可用"), Methods: []string{"GET"}},
-		{ID: "files.write", Enabled: fileErr == nil, Reason: reasonIf(fileErr, "/home 文件根目录不可用"), Methods: []string{"POST", "PUT"}},
+		{ID: "files.read", Enabled: fileErr == nil, Reason: reasonIf(fileErr, "宿主机文件根目录不可用"), Methods: []string{"GET"}},
+		{ID: "files.write", Enabled: fileErr == nil, Reason: reasonIf(fileErr, "宿主机文件根目录不可用"), Methods: []string{"POST", "PUT"}},
 		{ID: "web.environment.read", Enabled: environmentReadErr == nil, Reason: reasonIf(environmentReadErr, "请更新本机 kejilion.sh 以启用 LDNMP 环境协议"), Methods: []string{"GET"}},
 		{ID: "web.environment.install", Enabled: environmentErr == nil, Reason: reasonIf(environmentErr, "LDNMP 安装协议不可用"), Methods: []string{"POST"}},
 		{ID: "web.environment.protection.write", Enabled: environmentErr == nil, Reason: reasonIf(environmentErr, "LDNMP 防护协议不可用"), Methods: []string{"POST"}},

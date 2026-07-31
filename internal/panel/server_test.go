@@ -146,6 +146,69 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestSecurityEntranceGatesLoginWithoutBreakingSessions(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	_, resourceVersion := server.store.SecurityEntrance()
+	body, err := json.Marshal(map[string]any{
+		"enabled": true, "path": "panel-secure1", "expectedResourceVersion": resourceVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := authenticatedRequest(server, http.MethodPut, "/api/v1/settings/security-entry", body,
+		sessionCookie, csrfCookie, map[string]string{
+			"Content-Type": "application/json", "Origin": "http://panel.test", "X-CSRF-Token": csrfCookie.Value,
+		})
+	if updated.Code != http.StatusOK {
+		t.Fatalf("enable security entry failed: %d %s", updated.Code, updated.Body.String())
+	}
+
+	directLogin := performRequest(server, http.MethodGet, "/login", nil, nil)
+	if directLogin.Code != http.StatusNotFound {
+		t.Fatalf("direct login should be hidden, got %d", directLogin.Code)
+	}
+	directAPI := loginRequest(server, "a-strong-password")
+	if directAPI.Code != http.StatusNotFound {
+		t.Fatalf("direct login API should be hidden, got %d", directAPI.Code)
+	}
+
+	entry := performRequest(server, http.MethodGet, "/panel-secure1", nil, nil)
+	if entry.Code != http.StatusSeeOther || entry.Header().Get("Location") != "/login" {
+		t.Fatalf("unexpected entrance response: %d %s", entry.Code, entry.Header().Get("Location"))
+	}
+	var entryCookie *http.Cookie
+	for _, cookie := range entry.Result().Cookies() {
+		if cookie.Name == "kejilion_entry" {
+			entryCookie = cookie
+		}
+	}
+	if entryCookie == nil || !entryCookie.HttpOnly || entryCookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("unexpected entrance cookie: %#v", entry.Result().Cookies())
+	}
+	loginBody, _ := json.Marshal(map[string]string{"username": "admin", "password": "a-strong-password"})
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
+	loginRequest.Host = "panel.test"
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginRequest.Header.Set("Origin", "http://panel.test")
+	loginRequest.AddCookie(entryCookie)
+	loginResponse := httptest.NewRecorder()
+	server.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK {
+		t.Fatalf("entrance cookie did not unlock login API: %d %s", loginResponse.Code, loginResponse.Body.String())
+	}
+
+	sessionRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+	sessionRequest.Host = "panel.test"
+	sessionRequest.AddCookie(sessionCookie)
+	sessionRequest.AddCookie(csrfCookie)
+	sessionPage := httptest.NewRecorder()
+	server.ServeHTTP(sessionPage, sessionRequest)
+	if sessionPage.Code != http.StatusOK {
+		t.Fatalf("existing session was gated: %d", sessionPage.Code)
+	}
+}
+
 func TestPasswordChangeGuardsAndValidation(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)

@@ -37,6 +37,7 @@ const (
 var (
 	ErrInvalidPath     = errors.New("文件路径无效")
 	ErrProtected       = errors.New("KPanel 保护目录不可访问")
+	ErrReadOnly        = errors.New("该系统目录仅支持查看，不能通过文件管理写入")
 	ErrSymlink         = errors.New("不允许通过符号链接访问文件")
 	ErrNotRegular      = errors.New("目标不是普通文件")
 	ErrNotDirectory    = errors.New("目标不是目录")
@@ -54,6 +55,8 @@ type Manager struct {
 	root           string
 	rootFS         *os.Root
 	protected      []string
+	readOnly       []string
+	trashRoot      string
 	now            func() time.Time
 	uploadGate     chan struct{}
 	downloadGate   chan struct{}
@@ -65,6 +68,8 @@ type Manager struct {
 type Config struct {
 	Root             string
 	ProtectedVirtual []string
+	ReadOnlyVirtual  []string
+	TrashVirtual     string
 	Now              func() time.Time
 	MaxCopyEntries   int
 	MaxCopyBytes     int64
@@ -103,7 +108,17 @@ func New(config Config) (*Manager, error) {
 		maxCopyEntries: config.MaxCopyEntries,
 		maxCopyBytes:   config.MaxCopyBytes,
 	}
-	protectedValues := append([]string{"/.kpanel-trash"}, config.ProtectedVirtual...)
+	trashVirtual := strings.TrimSpace(config.TrashVirtual)
+	if trashVirtual == "" {
+		trashVirtual = "/.kpanel-trash"
+	}
+	trashVirtual, err = normalizeVirtual(trashVirtual)
+	if err != nil || trashVirtual == "/" {
+		_ = rootFS.Close()
+		return nil, fmt.Errorf("invalid trash path %q", config.TrashVirtual)
+	}
+	manager.trashRoot = joinVirtual(trashVirtual, "files")
+	protectedValues := append([]string{trashVirtual}, config.ProtectedVirtual...)
 	seenProtected := make(map[string]struct{}, len(protectedValues))
 	for _, value := range protectedValues {
 		normalized, err := normalizeVirtual(value)
@@ -118,6 +133,15 @@ func New(config Config) (*Manager, error) {
 		manager.protected = append(manager.protected, normalized)
 	}
 	sort.Strings(manager.protected)
+	for _, value := range config.ReadOnlyVirtual {
+		normalized, normalizeErr := normalizeVirtual(value)
+		if normalizeErr != nil || normalized == "/" {
+			_ = rootFS.Close()
+			return nil, fmt.Errorf("invalid read-only file path %q", value)
+		}
+		manager.readOnly = append(manager.readOnly, normalized)
+	}
+	sort.Strings(manager.readOnly)
 	return manager, nil
 }
 
@@ -312,6 +336,9 @@ func (m *Manager) WriteText(
 	if err != nil {
 		return contract.FileEntry{}, err
 	}
+	if err := m.mutationError(normalized); err != nil {
+		return contract.FileEntry{}, err
+	}
 	info, err := m.rootFS.Lstat(rootName(normalized))
 	if err != nil {
 		return contract.FileEntry{}, err
@@ -326,6 +353,15 @@ func (m *Manager) WriteText(
 	}
 	if err := ctx.Err(); err != nil {
 		return contract.FileEntry{}, err
+	}
+	source, err := m.rootFS.Open(rootName(normalized))
+	if err != nil {
+		return contract.FileEntry{}, err
+	}
+	defer source.Close()
+	opened, err := source.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return contract.FileEntry{}, ErrConflict
 	}
 	parentVirtual := path.Dir(normalized)
 	temp, tempVirtual, err := m.createTemp(parentVirtual, ".kpanel-edit-")
@@ -343,6 +379,9 @@ func (m *Manager) WriteText(
 		return contract.FileEntry{}, err
 	}
 	if err := preserveFileOwnership(temp, info); err != nil {
+		return contract.FileEntry{}, err
+	}
+	if err := preserveFileExtendedAttributes(temp, source); err != nil {
 		return contract.FileEntry{}, err
 	}
 	if _, err := io.WriteString(temp, input.Content); err != nil {
@@ -393,8 +432,8 @@ func (m *Manager) Upload(
 		return contract.FileEntry{}, ErrNotDirectory
 	}
 	targetVirtual := joinVirtual(normalizedDirectory, name)
-	if m.isMutationProtected(targetVirtual) {
-		return contract.FileEntry{}, ErrProtected
+	if err := m.mutationError(targetVirtual); err != nil {
+		return contract.FileEntry{}, err
 	}
 	var existing os.FileInfo
 	if value, statErr := m.rootFS.Lstat(rootName(targetVirtual)); statErr == nil {
@@ -413,12 +452,24 @@ func (m *Manager) Upload(
 		return contract.FileEntry{}, err
 	}
 	if existing != nil {
+		source, openErr := m.rootFS.Open(rootName(targetVirtual))
+		if openErr != nil {
+			temp.Close()
+			_ = m.rootFS.Remove(rootName(tempVirtual))
+			return contract.FileEntry{}, openErr
+		}
+		defer source.Close()
 		if err := temp.Chmod(existing.Mode().Perm()); err != nil {
 			temp.Close()
 			_ = m.rootFS.Remove(rootName(tempVirtual))
 			return contract.FileEntry{}, err
 		}
 		if err := preserveFileOwnership(temp, existing); err != nil {
+			temp.Close()
+			_ = m.rootFS.Remove(rootName(tempVirtual))
+			return contract.FileEntry{}, err
+		}
+		if err := preserveFileExtendedAttributes(temp, source); err != nil {
 			temp.Close()
 			_ = m.rootFS.Remove(rootName(tempVirtual))
 			return contract.FileEntry{}, err
@@ -568,8 +619,8 @@ func (m *Manager) mkdir(parentVirtual, name string) (contract.FileEntry, error) 
 		return contract.FileEntry{}, ErrNotDirectory
 	}
 	targetVirtual := joinVirtual(normalized, name)
-	if m.isMutationProtected(targetVirtual) {
-		return contract.FileEntry{}, ErrProtected
+	if err := m.mutationError(targetVirtual); err != nil {
+		return contract.FileEntry{}, err
 	}
 	if err := m.rootFS.Mkdir(rootName(targetVirtual), 0755); err != nil {
 		if errors.Is(err, os.ErrExist) {
@@ -593,8 +644,8 @@ func (m *Manager) rename(
 	if normalizedSource == "/" {
 		return contract.FileEntry{}, ErrRootOperation
 	}
-	if m.isMutationProtected(normalizedSource) {
-		return contract.FileEntry{}, ErrProtected
+	if err := m.mutationError(normalizedSource); err != nil {
+		return contract.FileEntry{}, err
 	}
 	sourceInfo, err := m.rootFS.Lstat(rootName(normalizedSource))
 	if err != nil {
@@ -617,8 +668,8 @@ func (m *Manager) rename(
 		return contract.FileEntry{}, err
 	}
 	targetNormalized := joinVirtual(normalizedParent, name)
-	if m.isMutationProtected(targetNormalized) {
-		return contract.FileEntry{}, ErrProtected
+	if err := m.mutationError(targetNormalized); err != nil {
+		return contract.FileEntry{}, err
 	}
 	if _, err := m.rootFS.Lstat(rootName(targetNormalized)); err == nil {
 		return contract.FileEntry{}, ErrAlreadyExists
@@ -655,8 +706,8 @@ func (m *Manager) moveOne(
 	if normalizedSource == "/" {
 		return contract.FileEntry{}, ErrRootOperation
 	}
-	if m.isMutationProtected(normalizedSource) {
-		return contract.FileEntry{}, ErrProtected
+	if err := m.mutationError(normalizedSource); err != nil {
+		return contract.FileEntry{}, err
 	}
 	sourceInfo, err := m.rootFS.Lstat(rootName(normalizedSource))
 	if err != nil {
@@ -676,8 +727,8 @@ func (m *Manager) moveOne(
 	}
 	name := path.Base(normalizedSource)
 	targetVirtual := joinVirtual(normalizedTarget, name)
-	if m.isMutationProtected(targetVirtual) {
-		return contract.FileEntry{}, ErrProtected
+	if err := m.mutationError(targetVirtual); err != nil {
+		return contract.FileEntry{}, err
 	}
 	if targetVirtual == normalizedSource || isWithin(targetVirtual, normalizedSource) {
 		return contract.FileEntry{}, ErrInvalidPath
@@ -752,8 +803,8 @@ func (m *Manager) copyOne(
 	}
 	name := path.Base(normalizedSource)
 	targetVirtual := joinVirtual(normalizedTarget, name)
-	if m.isMutationProtected(targetVirtual) {
-		return contract.FileEntry{}, ErrProtected
+	if err := m.mutationError(targetVirtual); err != nil {
+		return contract.FileEntry{}, err
 	}
 	if targetVirtual == normalizedSource || isWithin(targetVirtual, normalizedSource) {
 		return contract.FileEntry{}, ErrInvalidPath
@@ -800,15 +851,15 @@ func (m *Manager) trashOne(
 	if normalized == "/" {
 		return "", ErrRootOperation
 	}
-	if m.isMutationProtected(normalized) {
-		return "", ErrProtected
+	if err := m.mutationError(normalized); err != nil {
+		return "", err
 	}
 	sourceInfo, err := m.rootFS.Lstat(rootName(normalized))
 	if err != nil {
 		return "", err
 	}
 	sourceVersion := resourceVersion(normalized, sourceInfo)
-	trashRootVirtual := "/.kpanel-trash/files"
+	trashRootVirtual := m.trashRoot
 	if err := m.rootFS.MkdirAll(rootName(trashRootVirtual), 0700); err != nil {
 		return "", err
 	}
@@ -857,8 +908,8 @@ func (m *Manager) chmodOne(virtual, rawMode string) (contract.FileEntry, error) 
 	if err != nil {
 		return contract.FileEntry{}, err
 	}
-	if m.isMutationProtected(normalized) {
-		return contract.FileEntry{}, ErrProtected
+	if err := m.mutationError(normalized); err != nil {
+		return contract.FileEntry{}, err
 	}
 	if err := m.rootFS.Chmod(rootName(normalized), os.FileMode(value)); err != nil {
 		return contract.FileEntry{}, err
@@ -974,6 +1025,18 @@ func (m *Manager) isMutationProtected(virtual string) bool {
 		}
 	}
 	return false
+}
+
+func (m *Manager) mutationError(virtual string) error {
+	if m.isMutationProtected(virtual) {
+		return ErrProtected
+	}
+	for _, readOnly := range m.readOnly {
+		if virtual == readOnly || isWithin(virtual, readOnly) || isWithin(readOnly, virtual) {
+			return ErrReadOnly
+		}
+	}
+	return nil
 }
 
 func normalizeVirtual(value string) (string, error) {

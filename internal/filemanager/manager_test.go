@@ -107,6 +107,41 @@ func TestProtectedDirectoryCannotBeChangedThroughAnAncestor(t *testing.T) {
 	}
 }
 
+func TestReadOnlyVirtualDirectoryCanBeListedButNotMutated(t *testing.T) {
+	root := t.TempDir()
+	mustMkdirAll(t, filepath.Join(root, "proc"))
+	mustWrite(t, filepath.Join(root, "proc", "status"), "ok")
+	manager, err := New(Config{
+		Root: root, ReadOnlyVirtual: []string{"/proc"}, TrashVirtual: "/state/trash",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	listed, err := manager.List(context.Background(), "/proc", 10)
+	if err != nil || len(listed.Entries) != 1 {
+		t.Fatalf("read-only directory was not listable: %#v err=%v", listed, err)
+	}
+	if _, err := manager.Upload(context.Background(), "/proc", "new", strings.NewReader("x"), 1, false); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("read-only upload was not rejected: %v", err)
+	}
+	entry, err := manager.Stat("/proc/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.WriteText(context.Background(), "/proc/status", contract.FileWriteRequest{
+		Content: "changed", ExpectedResourceVersion: entry.ResourceVersion,
+	}); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("read-only text edit was not rejected: %v", err)
+	}
+	result, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "trash", Sources: []string{"/proc/status"},
+	})
+	if err != nil || len(result.Failed) != 1 || !strings.Contains(result.Failed[0].Detail, ErrReadOnly.Error()) {
+		t.Fatalf("read-only trash was not rejected: %#v err=%v", result, err)
+	}
+}
+
 func TestWriteTextIsAtomicAndRequiresResourceVersion(t *testing.T) {
 	manager, root := newTestManager(t)
 	mustWrite(t, filepath.Join(root, "config.json"), `{"enabled":false}`)

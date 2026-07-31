@@ -1053,6 +1053,12 @@ export interface PanelSettings {
   telemetryEnabled?: boolean
 }
 
+export interface SecurityEntranceSettings {
+  enabled: boolean
+  path?: string
+  resourceVersion: string
+}
+
 export type FileKind = 'file' | 'directory' | 'symlink' | 'special'
 
 export interface FileEntry {

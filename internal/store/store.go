@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,16 +64,24 @@ type LoginAttempt struct {
 	Success    bool      `json:"success"`
 }
 
+type SecurityEntrance struct {
+	Enabled   bool      `json:"enabled"`
+	Path      string    `json:"path,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+}
+
 type diskState struct {
-	SchemaVersion int            `json:"schemaVersion"`
-	Users         []User         `json:"users"`
-	Sessions      []Session      `json:"sessions"`
-	Audit         []AuditEvent   `json:"audit"`
-	LoginAttempts []LoginAttempt `json:"loginAttempts"`
+	SchemaVersion    int              `json:"schemaVersion"`
+	Users            []User           `json:"users"`
+	Sessions         []Session        `json:"sessions"`
+	Audit            []AuditEvent     `json:"audit"`
+	LoginAttempts    []LoginAttempt   `json:"loginAttempts"`
+	SecurityEntrance SecurityEntrance `json:"securityEntrance,omitempty"`
 }
 
 // Store is a small, single-node persistence layer. It deliberately stores only
-// panel identity/session/audit data; host resources remain owned by the Agent.
+// panel identity/session/audit and panel-local security settings; host resources
+// remain owned by the Agent.
 type Store struct {
 	mu            sync.RWMutex
 	path          string
@@ -368,6 +377,34 @@ func (s *Store) FailedLoginCount(key string, since time.Time) int {
 	return count
 }
 
+func (s *Store) SecurityEntrance() (SecurityEntrance, string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value := s.data.SecurityEntrance
+	return value, SecurityEntranceResourceVersion(value)
+}
+
+func (s *Store) ReplaceSecurityEntrance(expectedResourceVersion string, value SecurityEntrance) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if expectedResourceVersion != SecurityEntranceResourceVersion(s.data.SecurityEntrance) {
+		return ErrConflict
+	}
+	previous := cloneDiskState(s.data)
+	s.data.SecurityEntrance = value
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
+}
+
+func SecurityEntranceResourceVersion(value SecurityEntrance) string {
+	payload := fmt.Sprintf("%t\x00%s\x00%s", value.Enabled, value.Path, value.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	digest := sha256.Sum256([]byte(payload))
+	return fmt.Sprintf("sha256:%x", digest[:])
+}
+
 func (s *Store) persistLocked() error {
 	content, err := json.MarshalIndent(s.data, "", "  ")
 	if err != nil {
@@ -428,11 +465,12 @@ func (s *Store) persistLocked() error {
 
 func cloneDiskState(source diskState) diskState {
 	return diskState{
-		SchemaVersion: source.SchemaVersion,
-		Users:         append([]User(nil), source.Users...),
-		Sessions:      append([]Session(nil), source.Sessions...),
-		Audit:         append([]AuditEvent(nil), source.Audit...),
-		LoginAttempts: append([]LoginAttempt(nil), source.LoginAttempts...),
+		SchemaVersion:    source.SchemaVersion,
+		Users:            append([]User(nil), source.Users...),
+		Sessions:         append([]Session(nil), source.Sessions...),
+		Audit:            append([]AuditEvent(nil), source.Audit...),
+		LoginAttempts:    append([]LoginAttempt(nil), source.LoginAttempts...),
+		SecurityEntrance: source.SecurityEntrance,
 	}
 }
 

@@ -40,6 +40,7 @@ var (
 	containerIDPattern       = regexp.MustCompile(`^[a-fA-F0-9]{12,64}$`)
 	resourceVersionPattern   = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 	environmentBackupPattern = regexp.MustCompile(`^web_[0-9]{14}\.tar\.gz$`)
+	securityEntrancePattern  = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{4,46}[a-z0-9])$`)
 )
 
 type Server struct {
@@ -114,6 +115,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		!s.checkHost(w, r) {
 		return
 	}
+	if s.handleSecurityEntrance(w, r) {
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		w.Header().Set("Cache-Control", "no-store")
 		s.serveAPI(w, r)
@@ -152,6 +156,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleLogout(w, r)
 	case r.Method == http.MethodPut && r.URL.Path == "/api/v1/settings/password":
 		s.handlePasswordChange(w, r)
+	case (r.Method == http.MethodGet || r.Method == http.MethodPut) && r.URL.Path == "/api/v1/settings/security-entry":
+		s.handleSecurityEntranceSettings(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit":
 		s.handleAudit(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/v1/cluster/"):
@@ -441,6 +447,154 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, authResponse{
 		User: credentials.User, CSRFToken: credentials.CSRFToken, ExpiresAt: credentials.ExpiresAt,
 	})
+}
+
+type securityEntranceResponse struct {
+	Enabled         bool   `json:"enabled"`
+	Path            string `json:"path,omitempty"`
+	ResourceVersion string `json:"resourceVersion"`
+}
+
+func (s *Server) handleSecurityEntranceSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut && !s.checkOrigin(w, r) {
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if r.Method == http.MethodPut && !s.checkCSRF(w, r, session) {
+		return
+	}
+	current, version := s.store.SecurityEntrance()
+	if r.Method == http.MethodGet {
+		s.writeJSON(w, http.StatusOK, securityEntranceResponse{
+			Enabled: current.Enabled, Path: current.Path, ResourceVersion: version,
+		})
+		return
+	}
+
+	var input struct {
+		Enabled                 bool   `json:"enabled"`
+		Path                    string `json:"path"`
+		Regenerate              bool   `json:"regenerate"`
+		ExpectedResourceVersion string `json:"expectedResourceVersion"`
+	}
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	if !resourceVersionPattern.MatchString(input.ExpectedResourceVersion) {
+		s.writeValidationProblem(w, r, "expectedResourceVersion", "a valid resourceVersion is required")
+		return
+	}
+	entrancePath := strings.Trim(strings.ToLower(strings.TrimSpace(input.Path)), "/")
+	if input.Enabled && (input.Regenerate || entrancePath == "") {
+		generated, err := newSecurityEntrancePath()
+		if err != nil {
+			s.writeProblem(w, r, http.StatusInternalServerError, "security_entry_generation_failed", "Security entry generation failed", "")
+			return
+		}
+		entrancePath = generated
+	}
+	if input.Enabled && !securityEntrancePattern.MatchString(entrancePath) {
+		s.writeValidationProblem(w, r, "path", "安全入口须为 6–48 位小写字母、数字或连字符")
+		return
+	}
+	if !input.Enabled {
+		entrancePath = ""
+	}
+	updated := store.SecurityEntrance{Enabled: input.Enabled, Path: entrancePath, UpdatedAt: time.Now().UTC()}
+	change := map[string]any{"enabled": input.Enabled, "regenerated": input.Regenerate}
+	if err := s.audit(r, session.User.ID, "settings.security_entry.update", "panel", "security-entry", "intent", change); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	if err := s.store.ReplaceSecurityEntrance(input.ExpectedResourceVersion, updated); err != nil {
+		_ = s.audit(r, session.User.ID, "settings.security_entry.update", "panel", "security-entry", "failure", change)
+		if errors.Is(err, store.ErrConflict) {
+			s.writeProblem(w, r, http.StatusConflict, "resource_version_changed", "Security entry changed; refresh and retry", "")
+			return
+		}
+		s.writeProblem(w, r, http.StatusInternalServerError, "security_entry_update_failed", "Security entry update failed", "")
+		return
+	}
+	_ = s.audit(r, session.User.ID, "settings.security_entry.update", "panel", "security-entry", "success", change)
+	value, newVersion := s.store.SecurityEntrance()
+	s.writeJSON(w, http.StatusOK, securityEntranceResponse{
+		Enabled: value.Enabled, Path: value.Path, ResourceVersion: newVersion,
+	})
+}
+
+func newSecurityEntrancePath() (string, error) {
+	buffer := make([]byte, 10)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return "panel-" + hex.EncodeToString(buffer), nil
+}
+
+func (s *Server) handleSecurityEntrance(w http.ResponseWriter, r *http.Request) bool {
+	value, _ := s.store.SecurityEntrance()
+	if !value.Enabled || !s.auth.IsInitialized() {
+		return false
+	}
+	if r.Method == http.MethodGet && r.URL.RawQuery == "" && r.URL.Path == "/"+value.Path {
+		expires := time.Now().Add(s.config.SessionTTL)
+		http.SetCookie(w, &http.Cookie{
+			Name: s.securityEntranceCookieName(), Value: securityEntranceToken(value), Path: "/",
+			MaxAge: max(int(s.config.SessionTTL.Seconds()), 1), Expires: expires, HttpOnly: true,
+			Secure: s.requestUsesHTTPS(r), SameSite: http.SameSiteStrictMode,
+		})
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return true
+	}
+	if securityEntrancePublicPath(r.URL.Path) || s.hasSecurityEntranceCookie(r, value) || s.hasValidSession(r) {
+		return false
+	}
+	http.NotFound(w, r)
+	return true
+}
+
+func securityEntrancePublicPath(requestPath string) bool {
+	return requestPath == "/api/v1/health" || isStaticAssetPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/")
+}
+
+func isStaticAssetPath(requestPath string) bool {
+	if strings.HasPrefix(requestPath, "/assets/") {
+		return true
+	}
+	switch requestPath {
+	case "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/manifest.webmanifest", "/robots.txt":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) hasValidSession(r *http.Request) bool {
+	cookie, err := r.Cookie(s.config.CookieName)
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	_, err = s.auth.Authenticate(cookie.Value)
+	return err == nil
+}
+
+func (s *Server) hasSecurityEntranceCookie(r *http.Request, entrance store.SecurityEntrance) bool {
+	cookie, err := r.Cookie(s.securityEntranceCookieName())
+	return err == nil && secureStringEqual(cookie.Value, securityEntranceToken(entrance))
+}
+
+func securityEntranceToken(entrance store.SecurityEntrance) string {
+	digest := sha256.Sum256([]byte("kpanel-security-entry\x00" + entrance.Path + "\x00" + entrance.UpdatedAt.UTC().Format(time.RFC3339Nano)))
+	return hex.EncodeToString(digest[:])
+}
+
+func (s *Server) securityEntranceCookieName() string {
+	if s.config.SecureCookie {
+		return "__Host-kejilion_entry"
+	}
+	return "kejilion_entry"
 }
 
 func (s *Server) auditAuthFailure(r *http.Request, action string) {

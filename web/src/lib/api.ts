@@ -34,6 +34,7 @@ import type {
   MonitoringHistory,
   MonitoringRange,
   PanelSettings,
+  SecurityEntranceSettings,
   SetupRequest,
   Site,
   SiteDeleteResult,
@@ -1559,6 +1560,15 @@ export const api = {
   },
   settings: {
     get: (signal?: AbortSignal) => request<PanelSettings>('/settings', { signal }),
+	securityEntrance: {
+		get: () => request<SecurityEntranceSettings>('/settings/security-entry'),
+		update: (input: {
+			enabled: boolean
+			path?: string
+			regenerate?: boolean
+			expectedResourceVersion: string
+		}) => request<SecurityEntranceSettings>('/settings/security-entry', { method: 'PUT', body: input }),
+	},
     changePassword: (currentPassword: string, newPassword: string) =>
       request<void>('/settings/password', {
         method: 'PUT',
