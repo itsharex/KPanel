@@ -62,7 +62,7 @@ const dialogAction = ref<DialogAction>()
 const dialogValue = ref('')
 const dialogBusy = ref(false)
 const dialogEntries = ref<FileEntry[]>([])
-const contextMenu = ref<{ entry: FileEntry; x: number; y: number }>()
+const contextMenu = ref<{ entry?: FileEntry; x: number; y: number }>()
 const clipboard = ref<FileClipboard>()
 const pasteBusy = ref(false)
 const previewEntry = ref<FileEntry>()
@@ -272,6 +272,10 @@ function selectEntry(event: MouseEvent, path: string): void {
     toggleEntry(path)
     return
   }
+  if (selected.value.size === 1 && selected.value.has(path)) {
+    clearSelection()
+    return
+  }
   selected.value = new Set([path])
   selectionAnchor.value = path
 }
@@ -306,6 +310,22 @@ function showContext(event: MouseEvent, entry: FileEntry): void {
   }
 }
 
+function showDirectoryContext(event: MouseEvent): void {
+  const target = event.target as HTMLElement
+  if (
+    target.closest(
+      '.file-row--entry, .file-toolbar, .clipboard-bar, .upload-strip, .file-limit, .drop-overlay',
+    )
+  ) {
+    return
+  }
+  event.preventDefault()
+  contextMenu.value = {
+    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 230)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 220)),
+  }
+}
+
 function openDialog(action: DialogAction, entry?: FileEntry): void {
   contextMenu.value = undefined
   dialogEntries.value = entry ? [entry] : [...selectedEntries.value]
@@ -327,6 +347,7 @@ function setClipboard(mode: ClipboardMode, entry?: FileEntry): void {
   const entriesToStore = entry ? [entry] : [...selectedEntries.value]
   if (!entriesToStore.length) return
   clipboard.value = { mode, entries: entriesToStore }
+  clearSelection()
   toast.success(
     mode === 'copy' ? '已复制到文件剪贴板' : '已剪切到文件剪贴板',
     `${entriesToStore.length} 项，进入目标文件夹后点击“粘贴”`,
@@ -631,6 +652,7 @@ onBeforeUnmount(() => {
       @dragover.prevent
       @dragleave.self="dragging = false"
       @drop.prevent="onDrop"
+      @contextmenu="showDirectoryContext"
     >
       <header
         class="file-toolbar"
@@ -732,7 +754,7 @@ onBeforeUnmount(() => {
           @click="selectEntry($event, entry.path)"
           @dblclick="openEntry(entry)"
           @keydown.enter="openEntry(entry)"
-          @contextmenu="showContext($event, entry)"
+          @contextmenu.stop="showContext($event, entry)"
         >
           <span @click.stop="toggleEntry(entry.path)">
             <input
@@ -804,29 +826,38 @@ onBeforeUnmount(() => {
       :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
       role="menu"
     >
-      <button type="button" @click="openEntry(contextMenu!.entry)">
+      <button v-if="contextMenu.entry" type="button" @click="openEntry(contextMenu.entry)">
         <Eye :size="15" />{{ contextMenu.entry.kind === 'directory' ? '打开' : '查看' }}
       </button>
-      <button v-if="contextMenu.entry.kind === 'file'" type="button" @click="download(contextMenu!.entry)">
+      <button v-if="contextMenu.entry?.kind === 'file'" type="button" @click="download(contextMenu.entry)">
         <Download :size="15" />下载
       </button>
-      <hr />
-      <button type="button" @click="openDialog('rename', contextMenu!.entry)">
+      <hr v-if="contextMenu.entry" />
+      <button v-if="contextMenu.entry" type="button" @click="openDialog('rename', contextMenu.entry)">
         <Pencil :size="15" />重命名
       </button>
-      <button type="button" @click="setClipboard('copy', contextMenu!.entry)"><Copy :size="15" />复制</button>
-      <button type="button" @click="setClipboard('move', contextMenu!.entry)"><Scissors :size="15" />剪切</button>
+      <button v-if="contextMenu.entry" type="button" @click="setClipboard('copy', contextMenu.entry)"><Copy :size="15" />复制</button>
+      <button v-if="contextMenu.entry" type="button" @click="setClipboard('move', contextMenu.entry)"><Scissors :size="15" />剪切</button>
       <button
-        v-if="clipboard?.entries.length && contextMenu.entry.kind === 'directory'"
+        v-if="clipboard?.entries.length && contextMenu.entry?.kind === 'directory'"
         type="button"
         :disabled="pasteBusy"
-        @click="pasteClipboard(contextMenu!.entry.path)"
+        @click="pasteClipboard(contextMenu.entry.path)"
       ><ClipboardPaste :size="15" />粘贴到此文件夹</button>
-      <button type="button" @click="openDialog('chmod', contextMenu!.entry)">
+      <button
+        v-if="clipboard?.entries.length"
+        type="button"
+        :disabled="pasteBusy"
+        @click="pasteClipboard()"
+      ><ClipboardPaste :size="15" />粘贴到当前目录</button>
+      <button v-if="contextMenu.entry" type="button" @click="openDialog('chmod', contextMenu.entry)">
         <ShieldCheck :size="15" />修改权限
       </button>
-      <hr />
-      <button class="danger-link" type="button" @click="openDialog('trash', contextMenu!.entry)">
+      <button v-else type="button" @click="openDialog('mkdir')">
+        <Plus :size="15" />新建文件夹
+      </button>
+      <hr v-if="contextMenu.entry" />
+      <button v-if="contextMenu.entry" class="danger-link" type="button" @click="openDialog('trash', contextMenu.entry)">
         <Trash2 :size="15" />移入回收站
       </button>
     </div>

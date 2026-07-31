@@ -36,6 +36,7 @@ interface FileBindings {
   pasteClipboard: (target?: string) => Promise<void>
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
   showContext: (event: MouseEvent, entry: TestFileEntry) => void
+  showDirectoryContext: (event: MouseEvent) => void
   selectEntry: (event: MouseEvent, path: string) => void
   handleFileShortcut: (event: KeyboardEvent) => void
   openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'trash', entry?: TestFileEntry) => void
@@ -53,7 +54,7 @@ interface FileBindings {
       entries: TestFileEntry[]
     }
   }
-  contextMenu: { value?: { entry: TestFileEntry; x: number; y: number } }
+  contextMenu: { value?: { entry?: TestFileEntry; x: number; y: number } }
   dialogEntries: { value: TestFileEntry[] }
   dialogAction: { value?: 'trash' }
 }
@@ -231,7 +232,7 @@ describe('FilesView directory loading', () => {
     )
 
     expect([...view.selected.value]).toEqual([clicked.path])
-    expect(view.contextMenu.value?.entry.path).toBe(clicked.path)
+    expect(view.contextMenu.value?.entry?.path).toBe(clicked.path)
   })
 
   it('preserves a multi-selection when opening a selected entry context menu', () => {
@@ -251,7 +252,7 @@ describe('FilesView directory loading', () => {
     )
 
     expect([...view.selected.value]).toEqual([first.path, second.path])
-    expect(view.contextMenu.value?.entry.path).toBe(second.path)
+    expect(view.contextMenu.value?.entry?.path).toBe(second.path)
   })
 
   it('uses Windows-style click, control-click, and shift-click selection', () => {
@@ -271,6 +272,17 @@ describe('FilesView directory loading', () => {
     expect([...view.selected.value]).toEqual([second.path, third.path])
   })
 
+  it('clears a single selection when the selected row is clicked again', () => {
+    const view = setupView()
+    const entry = testEntry('toggle.txt')
+    view.directory.value = { path: '/', entries: [entry] }
+
+    view.selectEntry({} as MouseEvent, entry.path)
+    view.selectEntry({} as MouseEvent, entry.path)
+
+    expect([...view.selected.value]).toEqual([])
+  })
+
   it('selects every visible entry with control-a', () => {
     const view = setupView()
     const first = testEntry('a.txt')
@@ -288,7 +300,7 @@ describe('FilesView directory loading', () => {
     expect([...view.selected.value]).toEqual([first.path, second.path])
   })
 
-  it('copies to the page clipboard without executing a file action', () => {
+  it('copies to the page clipboard, clears selection, and does not execute a file action', () => {
     const view = setupView()
     const checked = testEntry('checked.txt')
     const clicked = testEntry('clicked.txt')
@@ -299,8 +311,23 @@ describe('FilesView directory loading', () => {
 
     expect(view.clipboard.value?.mode).toBe('copy')
     expect(view.clipboard.value?.entries.map((entry) => entry.path)).toEqual([clicked.path])
-    expect([...view.selected.value]).toEqual([checked.path])
+    expect([...view.selected.value]).toEqual([])
     expect(mocks.action).not.toHaveBeenCalled()
+  })
+
+  it('opens a current-directory context menu from blank space', () => {
+    const view = setupView()
+    const preventDefault = vi.fn()
+
+    view.showDirectoryContext({
+      preventDefault,
+      clientX: 400,
+      clientY: 300,
+      target: { closest: vi.fn(() => null) },
+    } as unknown as MouseEvent)
+
+    expect(preventDefault).toHaveBeenCalled()
+    expect(view.contextMenu.value).toEqual({ x: 400, y: 300 })
   })
 
   it('pastes copied entries into the current directory and keeps the clipboard', async () => {
