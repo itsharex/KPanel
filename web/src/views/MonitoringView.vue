@@ -14,6 +14,7 @@ import {
   normalizeMonitoringMetric,
   type MonitoringMetric,
 } from '@/lib/monitoringNavigation'
+import { isHistoricalContainer, newestContainerSampleTime } from '@/lib/monitoringPresentation'
 import type {
   MonitoringContainerSeries,
   MonitoringHistory,
@@ -45,6 +46,7 @@ const selectedContainer = computed<MonitoringContainerSeries | undefined>(() => 
   return containers.find((item) => item.containerId === selectedContainerId.value) || containers[0]
 })
 const latestContainer = computed(() => selectedContainer.value?.points.at(-1))
+const newestContainerSample = computed(() => newestContainerSampleTime(history.value?.containers || []))
 const selectedMetric = computed<MonitoringMetric | undefined>(() => normalizeMonitoringMetric(route.query.metric))
 
 const hostCPU = computed<TrendSeries[]>(() => [
@@ -206,6 +208,10 @@ function percent(used?: number, total?: number): number {
 
 function selectContainer(container: MonitoringContainerSeries): void {
   selectedContainerId.value = container.containerId
+}
+
+function containerIsHistorical(container: MonitoringContainerSeries): boolean {
+  return isHistoricalContainer(container, newestContainerSample.value)
 }
 
 async function load(silent = false): Promise<void> {
@@ -382,11 +388,20 @@ onBeforeUnmount(() => controller?.abort())
               v-for="container in history.containers"
               :key="container.containerId"
               class="container-row"
-              :class="{ 'container-row--active': selectedContainer?.containerId === container.containerId }"
+              :class="{
+                'container-row--active': selectedContainer?.containerId === container.containerId,
+                'container-row--historical': containerIsHistorical(container),
+              }"
               type="button"
               @click="selectContainer(container)"
             >
-              <span><strong>{{ container.name }}</strong><small>{{ container.image }}</small></span>
+              <span>
+                <span class="container-row__title">
+                  <strong>{{ container.name }}</strong>
+                  <em v-if="containerIsHistorical(container)">历史</em>
+                </span>
+                <small>{{ container.image }}</small>
+              </span>
               <span>
                 <strong>{{ formatPercent(container.points.at(-1)?.cpuPercent) }}</strong>
                 <small>{{ formatBytes(container.points.at(-1)?.memoryBytes) }}</small>
@@ -405,8 +420,8 @@ onBeforeUnmount(() => controller?.abort())
             <div class="container-charts">
               <article><strong>CPU</strong><TrendChart :series="containerCPU" :formatter="formatPercent" :max-value="100" /></article>
               <article><strong>内存</strong><TrendChart :series="containerMemory" :formatter="formatPercent" :max-value="100" /></article>
-              <article><strong>网络</strong><TrendChart :series="containerNetwork" :formatter="formatRate" /></article>
               <article><strong>磁盘 I/O</strong><TrendChart :series="containerBlock" :formatter="formatRate" /></article>
+              <article><strong>网络</strong><TrendChart :series="containerNetwork" :formatter="formatRate" /></article>
             </div>
           </div>
         </div>
@@ -483,9 +498,17 @@ onBeforeUnmount(() => controller?.abort())
 .container-row:hover, .container-row--active {
   border-color: color-mix(in srgb, var(--brand) 40%, var(--border)); background: var(--brand-soft);
 }
+.container-row--historical { color: var(--muted); background: var(--surface-subtle); opacity: .66; }
+.container-row--historical:hover, .container-row--historical.container-row--active { opacity: 1; }
 .container-row > span { min-width: 0; }
 .container-row > span:last-child { flex: 0 0 auto; text-align: right; }
 .container-row strong, .container-row small { display: block; }
+.container-row__title { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.container-row__title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.container-row__title em {
+  flex: 0 0 auto; padding: 1px 5px; border-radius: 999px; color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 12%, transparent); font-size: .62rem; font-style: normal;
+}
 .container-row small {
   max-width: 180px; margin-top: 3px; overflow: hidden; color: var(--muted);
   font-size: .7rem; text-overflow: ellipsis; white-space: nowrap;

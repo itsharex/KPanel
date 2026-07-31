@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { nearestTimestamp, svgClientXToViewBox, uniqueSeriesTimes } from '@/lib/monitoringPresentation'
 
 export interface TrendSeries {
   label: string
@@ -78,10 +79,13 @@ const hoveredPoints = computed(() => {
   })
 })
 
+const interactionTimes = computed(() => uniqueSeriesTimes(normalizedSeries.value))
+
 const hoverX = computed(() => {
-  const point = hoveredPoints.value[0]
-  return point ? xFor(point.time) : 0
+  return hoveredTime.value === undefined ? 0 : xFor(hoveredTime.value)
 })
+
+const tooltipTime = computed(() => hoveredTime.value ?? 0)
 
 const tooltipStyle = computed(() => ({
   left: `${(hoverX.value / width) * 100}%`,
@@ -130,14 +134,12 @@ function nearestPoint(points: NormalizedPoint[], target: number): NormalizedPoin
 
 function onPointerMove(event: PointerEvent): void {
   if (!bounds.value.hasData) return
-  const rect = (event.currentTarget as SVGElement).getBoundingClientRect()
-  if (!rect.width) return
-  const svgX = ((event.clientX - rect.left) / rect.width) * width
+  const svgX = svgClientXToViewBox(event.currentTarget as SVGSVGElement, event.clientX, event.clientY, width)
+  if (svgX === undefined) return
   const clamped = Math.min(width - padding.right, Math.max(padding.left, svgX))
   const ratio = (clamped - padding.left) / plotWidth()
   const target = bounds.value.minimumTime + ratio * (bounds.value.maximumTime - bounds.value.minimumTime)
-  const point = nearestPoint(normalizedSeries.value[0]?.points || [], target)
-  hoveredTime.value = point?.time
+  hoveredTime.value = nearestTimestamp(interactionTimes.value, target)
 }
 
 function lastValue(series: (typeof normalizedSeries.value)[number]): number {
@@ -215,7 +217,7 @@ function timeLabel(value: number, detailed = false): string {
         :class="{ 'is-left': hoverX > width * .72 }"
         :style="tooltipStyle"
       >
-        <time>{{ timeLabel(hoveredPoints[0]!.time, true) }}</time>
+        <time>{{ timeLabel(tooltipTime, true) }}</time>
         <span v-for="point in hoveredPoints" :key="point.label">
           <i :style="{ backgroundColor: point.color }" />
           {{ point.label }}
