@@ -290,8 +290,15 @@ function clearSelection(): void {
   selectionAnchor.value = undefined
 }
 
+function selectForContext(entry: FileEntry): void {
+  if (selected.value.has(entry.path)) return
+  selected.value = new Set([entry.path])
+  selectionAnchor.value = entry.path
+}
+
 function showContext(event: MouseEvent, entry: FileEntry): void {
   event.preventDefault()
+  selectForContext(entry)
   contextMenu.value = {
     entry,
     x: Math.max(8, Math.min(event.clientX, window.innerWidth - 210)),

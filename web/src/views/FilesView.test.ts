@@ -214,7 +214,7 @@ describe('FilesView directory loading', () => {
     expect(view.dialogAction.value).toBeUndefined()
   })
 
-  it('does not change checkbox selection when opening a context menu', () => {
+  it('selects an unchecked entry when opening its context menu', () => {
     const view = setupView()
     const checked = testEntry('checked.txt')
     const clicked = testEntry('clicked.txt')
@@ -230,8 +230,28 @@ describe('FilesView directory loading', () => {
       clicked,
     )
 
-    expect([...view.selected.value]).toEqual([checked.path])
+    expect([...view.selected.value]).toEqual([clicked.path])
     expect(view.contextMenu.value?.entry.path).toBe(clicked.path)
+  })
+
+  it('preserves a multi-selection when opening a selected entry context menu', () => {
+    const view = setupView()
+    const first = testEntry('first.txt')
+    const second = testEntry('second.txt')
+    view.directory.value = { path: '/', entries: [first, second] }
+    view.selected.value = new Set([first.path, second.path])
+
+    view.showContext(
+      {
+        preventDefault: vi.fn(),
+        clientX: 400,
+        clientY: 300,
+      } as unknown as MouseEvent,
+      second,
+    )
+
+    expect([...view.selected.value]).toEqual([first.path, second.path])
+    expect(view.contextMenu.value?.entry.path).toBe(second.path)
   })
 
   it('uses Windows-style click, control-click, and shift-click selection', () => {
