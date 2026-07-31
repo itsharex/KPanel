@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Box, Cpu, Database, HardDrive, MemoryStick, Network, RefreshCw } from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/feedback/EmptyState.vue'
@@ -8,6 +9,11 @@ import LoadingState from '@/components/feedback/LoadingState.vue'
 import TrendChart, { type TrendSeries } from '@/components/monitoring/TrendChart.vue'
 import { ApiError, api } from '@/lib/api'
 import { formatBytes, formatDateTime, formatPercent, formatRate } from '@/lib/format'
+import {
+  monitoringTargetId,
+  normalizeMonitoringMetric,
+  type MonitoringMetric,
+} from '@/lib/monitoringNavigation'
 import type {
   MonitoringContainerSeries,
   MonitoringHistory,
@@ -23,6 +29,7 @@ const ranges: Array<{ value: MonitoringRange; label: string }> = [
 ]
 
 const history = ref<MonitoringHistory>()
+const route = useRoute()
 const selectedRange = ref<MonitoringRange>('24h')
 const selectedContainerId = ref('')
 const loading = ref(true)
@@ -36,6 +43,7 @@ const selectedContainer = computed<MonitoringContainerSeries | undefined>(() => 
   return containers.find((item) => item.containerId === selectedContainerId.value) || containers[0]
 })
 const latestContainer = computed(() => selectedContainer.value?.points.at(-1))
+const selectedMetric = computed<MonitoringMetric | undefined>(() => normalizeMonitoringMetric(route.query.metric))
 
 const hostCPU = computed<TrendSeries[]>(() => [
   {
@@ -215,6 +223,22 @@ function changeRange(range: MonitoringRange): void {
   void load()
 }
 
+function chartIsSelected(...metrics: MonitoringMetric[]): boolean {
+  return selectedMetric.value !== undefined && metrics.includes(selectedMetric.value)
+}
+
+async function focusSelectedMetric(): Promise<void> {
+  const metric = selectedMetric.value
+  if (!metric || !history.value?.host.length) return
+  await nextTick()
+  document.getElementById(monitoringTargetId(metric))?.scrollIntoView({
+    behavior: 'smooth',
+    block: 'center',
+  })
+}
+
+watch([selectedMetric, () => history.value?.host.length], () => void focusSelectedMetric(), { flush: 'post' })
+
 onMounted(() => void load())
 onBeforeUnmount(() => controller?.abort())
 </script>
@@ -277,15 +301,27 @@ onBeforeUnmount(() => controller?.abort())
       </div>
 
       <div v-if="history.host.length" class="chart-grid">
-        <article class="chart-card">
+        <article
+          id="host-cpu-load-history"
+          class="chart-card"
+          :class="{ 'chart-card--selected': chartIsSelected('cpu', 'load') }"
+        >
           <header><div><Cpu :size="18" /><strong>CPU 与负载</strong></div><span>{{ history.host.length }} 个点</span></header>
           <TrendChart :series="hostCPU" :formatter="(value) => value.toFixed(1)" />
         </article>
-        <article class="chart-card">
+        <article
+          id="host-memory-disk-history"
+          class="chart-card"
+          :class="{ 'chart-card--selected': chartIsSelected('memory', 'disk') }"
+        >
           <header><div><MemoryStick :size="18" /><strong>内存与磁盘</strong></div><span>峰值聚合</span></header>
           <TrendChart :series="hostMemory" :formatter="formatPercent" />
         </article>
-        <article class="chart-card">
+        <article
+          id="host-network-history"
+          class="chart-card"
+          :class="{ 'chart-card--selected': chartIsSelected('network') }"
+        >
           <header><div><Network :size="18" /><strong>主机网络</strong></div><span>按秒速率</span></header>
           <TrendChart :series="hostNetwork" :formatter="formatRate" />
         </article>
@@ -385,6 +421,10 @@ onBeforeUnmount(() => controller?.abort())
 }
 .chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .chart-card { min-width: 0; padding: 16px; }
+.chart-card--selected {
+  border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent), var(--shadow-sm);
+}
 .chart-card--wide { grid-column: 1 / -1; }
 .chart-card > header, .section-heading, .container-detail > header {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px;

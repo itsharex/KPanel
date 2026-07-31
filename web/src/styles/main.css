@@ -1864,7 +1864,75 @@ textarea:focus-visible,
 .metric-grid {
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.realtime-monitoring {
+  display: grid;
+  gap: 12px;
+}
+
+.realtime-monitoring__header,
+.realtime-monitoring__header > div {
+  display: flex;
+  align-items: center;
+}
+
+.realtime-monitoring__header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.realtime-monitoring__header > div {
+  gap: 10px;
+}
+
+.realtime-monitoring__header h2,
+.realtime-monitoring__header p {
+  margin: 0;
+}
+
+.realtime-monitoring__header h2 {
+  font-size: 15px;
+}
+
+.realtime-monitoring__header p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.realtime-monitoring__icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 10px;
+}
+
+.metric-link {
+  min-width: 0;
+  color: inherit;
+  border-radius: var(--radius);
+  text-decoration: none;
+}
+
+.metric-link .metric-card {
+  height: 100%;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.metric-link:hover .metric-card {
+  border-color: color-mix(in srgb, var(--brand) 38%, var(--border));
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+}
+
+.metric-link:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--brand) 35%, transparent);
+  outline-offset: 3px;
 }
 
 .metric-card {

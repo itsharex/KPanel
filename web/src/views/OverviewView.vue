@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
+import { RouterLink } from 'vue-router'
 import {
   Activity,
   ArrowLeftRight,
@@ -39,7 +40,15 @@ import OperatingSystemIcon from '@/components/overview/OperatingSystemIcon.vue'
 import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import { ApiError, api } from '@/lib/api'
-import { clampPercent, formatBytes, formatDateTime, formatDuration, formatHostDateTime, formatPercent } from '@/lib/format'
+import {
+  clampPercent,
+  formatBytes,
+  formatDateTime,
+  formatDuration,
+  formatHostDateTime,
+  formatPercent,
+  formatRate,
+} from '@/lib/format'
 import {
   customPreset,
   detectDNSPreset,
@@ -739,38 +748,91 @@ onBeforeUnmount(() => {
         自动刷新暂时失败，正在显示上一次观测结果。
       </div>
 
-      <section class="metric-grid" aria-label="主机资源">
-        <MetricCard
-          label="CPU"
-          :icon="Cpu"
-          :value="formatPercent(data.cpu.percent)"
-          :percent="data.cpu.percent"
-          detail="当前总使用率"
-        />
-        <MetricCard
-          label="内存"
-          :icon="MemoryStick"
-          tone="blue"
-          :value="formatPercent(data.memory.percent)"
-          :percent="data.memory.percent"
-          :detail="`${formatBytes(data.memory.value)} / ${formatBytes(data.memory.total)}`"
-        />
-        <MetricCard
-          label="系统盘"
-          :icon="HardDrive"
-          tone="violet"
-          :value="formatPercent(data.disk.percent)"
-          :percent="data.disk.percent"
-          :detail="`${formatBytes(data.disk.value)} / ${formatBytes(data.disk.total)}`"
-        />
-        <MetricCard
-          label="1 分钟负载"
-          :icon="Gauge"
-          tone="amber"
-          :value="data.load.value.toFixed(2)"
-          :percent="loadPercent"
-          :detail="`${data.load.unit || '—'} 个 CPU 核心`"
-        />
+      <section class="realtime-monitoring" aria-labelledby="realtime-monitoring-title">
+        <header class="realtime-monitoring__header">
+          <div>
+            <span class="realtime-monitoring__icon"><Activity :size="18" /></span>
+            <div>
+              <h2 id="realtime-monitoring-title">实时监控</h2>
+              <p>点击指标查看历史趋势</p>
+            </div>
+          </div>
+          <RouterLink class="button button--secondary button--small" to="/monitoring">
+            查看历史
+            <ChevronRight :size="16" />
+          </RouterLink>
+        </header>
+
+        <div class="metric-grid" aria-label="主机实时资源">
+          <RouterLink
+            class="metric-link"
+            :to="{ path: '/monitoring', query: { metric: 'cpu' } }"
+            aria-label="查看 CPU 历史趋势"
+          >
+            <MetricCard
+              label="CPU"
+              :icon="Cpu"
+              :value="formatPercent(data.cpu.percent)"
+              :percent="data.cpu.percent"
+              detail="当前总使用率"
+            />
+          </RouterLink>
+          <RouterLink
+            class="metric-link"
+            :to="{ path: '/monitoring', query: { metric: 'memory' } }"
+            aria-label="查看内存历史趋势"
+          >
+            <MetricCard
+              label="内存"
+              :icon="MemoryStick"
+              tone="blue"
+              :value="formatPercent(data.memory.percent)"
+              :percent="data.memory.percent"
+              :detail="`${formatBytes(data.memory.value)} / ${formatBytes(data.memory.total)}`"
+            />
+          </RouterLink>
+          <RouterLink
+            class="metric-link"
+            :to="{ path: '/monitoring', query: { metric: 'disk' } }"
+            aria-label="查看系统盘历史趋势"
+          >
+            <MetricCard
+              label="系统盘"
+              :icon="HardDrive"
+              tone="violet"
+              :value="formatPercent(data.disk.percent)"
+              :percent="data.disk.percent"
+              :detail="`${formatBytes(data.disk.value)} / ${formatBytes(data.disk.total)}`"
+            />
+          </RouterLink>
+          <RouterLink
+            class="metric-link"
+            :to="{ path: '/monitoring', query: { metric: 'load' } }"
+            aria-label="查看系统负载历史趋势"
+          >
+            <MetricCard
+              label="1 分钟负载"
+              :icon="Gauge"
+              tone="amber"
+              :value="data.load.value.toFixed(2)"
+              :percent="loadPercent"
+              :detail="`${data.load.unit || '—'} 个 CPU 核心`"
+            />
+          </RouterLink>
+          <RouterLink
+            class="metric-link"
+            :to="{ path: '/monitoring', query: { metric: 'network' } }"
+            aria-label="查看网络历史趋势"
+          >
+            <MetricCard
+              label="实时网络"
+              :icon="Network"
+              tone="blue"
+              :value="formatRate(data.network.receiveBytesPerSecond + data.network.transmitBytesPerSecond)"
+              :detail="`↓ ${formatRate(data.network.receiveBytesPerSecond)} · ↑ ${formatRate(data.network.transmitBytesPerSecond)}`"
+            />
+          </RouterLink>
+        </div>
       </section>
 
       <div class="overview-grid">
