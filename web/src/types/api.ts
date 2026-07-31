@@ -815,6 +815,11 @@ export interface MonitoringHostPoint {
   diskUsedBytes: number
   diskTotalBytes: number
   diskPercent: number
+  diskIoAvailable?: boolean
+  diskReadBytes?: number
+  diskWriteBytes?: number
+  diskReadBytesPerSecond?: number
+  diskWriteBytesPerSecond?: number
   networkRxBytes: number
   networkTxBytes: number
   networkRxBytesPerSecond: number
@@ -835,6 +840,8 @@ export interface MonitoringContainerPoint {
   networkTxBytesPerSecond: number
   blockReadBytes: number
   blockWriteBytes: number
+  blockReadBytesPerSecond?: number
+  blockWriteBytesPerSecond?: number
   pids: number
 }
 

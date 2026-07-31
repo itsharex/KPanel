@@ -59,6 +59,7 @@ type SystemSummary struct {
 	CPU           CPUSummary              `json:"cpu"`
 	Memory        MemorySummary           `json:"memory"`
 	Disks         []DiskSummary           `json:"disks"`
+	DiskIO        DiskIOSummary           `json:"diskIo"`
 	Network       NetworkSummary          `json:"network"`
 	PublicNetwork PublicNetworkSummary    `json:"publicNetwork"`
 	Management    SystemManagementSummary `json:"management"`
@@ -217,6 +218,15 @@ type DiskSummary struct {
 	TotalBytes   uint64  `json:"totalBytes"`
 	UsedBytes    uint64  `json:"usedBytes"`
 	UsagePercent float64 `json:"usagePercent"`
+}
+
+// DiskIOSummary contains monotonically increasing host block-device counters.
+// Consumers derive rates from samples so collection remains a single bounded
+// read of /proc/diskstats without an additional sleep or process invocation.
+type DiskIOSummary struct {
+	Available  bool   `json:"available"`
+	ReadBytes  uint64 `json:"readBytes"`
+	WriteBytes uint64 `json:"writeBytes"`
 }
 
 type NetworkSummary struct {

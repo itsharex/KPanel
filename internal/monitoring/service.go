@@ -107,6 +107,9 @@ type diskHostPoint struct {
 	DiskUsedBytes    uint64  `json:"du"`
 	DiskTotalBytes   uint64  `json:"dt"`
 	DiskPercent      float64 `json:"dp"`
+	DiskIOAvailable  bool    `json:"di,omitempty"`
+	DiskReadBytes    uint64  `json:"dr,omitempty"`
+	DiskWriteBytes   uint64  `json:"dw,omitempty"`
 	NetworkRxBytes   uint64  `json:"nr"`
 	NetworkTxBytes   uint64  `json:"nt"`
 	TCPConnections   int     `json:"tc"`
@@ -306,6 +309,8 @@ func hostPoint(summary contract.SystemSummary, _ time.Time) diskHostPoint {
 		MemoryUsedBytes: summary.Memory.UsedBytes, MemoryTotalBytes: summary.Memory.TotalBytes,
 		SwapUsedBytes: summary.Memory.SwapUsedBytes, SwapTotalBytes: summary.Memory.SwapTotalBytes,
 		DiskUsedBytes: disk.UsedBytes, DiskTotalBytes: disk.TotalBytes, DiskPercent: disk.UsagePercent,
+		DiskIOAvailable: summary.DiskIO.Available,
+		DiskReadBytes:   summary.DiskIO.ReadBytes, DiskWriteBytes: summary.DiskIO.WriteBytes,
 		NetworkRxBytes: summary.Network.ReceivedBytes, NetworkTxBytes: summary.Network.SentBytes,
 		TCPConnections: summary.Network.TCPConnections, UDPConnections: summary.Network.UDPConnections,
 	}
@@ -319,7 +324,9 @@ func (point diskHostPoint) contractPoint(at time.Time) contract.MonitoringHostPo
 		MemoryUsedBytes: point.MemoryUsedBytes, MemoryTotalBytes: point.MemoryTotalBytes,
 		SwapUsedBytes: point.SwapUsedBytes, SwapTotalBytes: point.SwapTotalBytes,
 		DiskUsedBytes: point.DiskUsedBytes, DiskTotalBytes: point.DiskTotalBytes,
-		DiskPercent:    point.DiskPercent,
+		DiskPercent:     point.DiskPercent,
+		DiskIOAvailable: point.DiskIOAvailable,
+		DiskReadBytes:   point.DiskReadBytes, DiskWriteBytes: point.DiskWriteBytes,
 		NetworkRxBytes: point.NetworkRxBytes, NetworkTxBytes: point.NetworkTxBytes,
 		TCPConnections: point.TCPConnections, UDPConnections: point.UDPConnections,
 	}
@@ -512,6 +519,10 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 			seconds := host.CollectedAt.Sub(previousHost.CollectedAt).Seconds()
 			host.NetworkRxRate = counterRate(previousHost.NetworkRxBytes, host.NetworkRxBytes, seconds)
 			host.NetworkTxRate = counterRate(previousHost.NetworkTxBytes, host.NetworkTxBytes, seconds)
+			if previousHost.DiskIOAvailable && host.DiskIOAvailable {
+				host.DiskReadRate = counterRate(previousHost.DiskReadBytes, host.DiskReadBytes, seconds)
+				host.DiskWriteRate = counterRate(previousHost.DiskWriteBytes, host.DiskWriteBytes, seconds)
+			}
 		}
 		hostCopy := host
 		previousHost = &hostCopy
@@ -532,6 +543,8 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 				seconds := point.CollectedAt.Sub(previous.CollectedAt).Seconds()
 				point.NetworkRxRate = counterRate(previous.NetworkRxBytes, point.NetworkRxBytes, seconds)
 				point.NetworkTxRate = counterRate(previous.NetworkTxBytes, point.NetworkTxBytes, seconds)
+				point.BlockReadRate = counterRate(previous.BlockReadBytes, point.BlockReadBytes, seconds)
+				point.BlockWriteRate = counterRate(previous.BlockWriteBytes, point.BlockWriteBytes, seconds)
 			}
 			previousContainers[container.ID] = point
 			series := containerPoints[container.ID]
@@ -696,6 +709,12 @@ func appendHostBucket(
 		last.DiskTotalBytes = point.DiskTotalBytes
 		last.DiskPercent = point.DiskPercent
 	}
+	if point.DiskReadRate > last.DiskReadRate {
+		last.DiskReadRate = point.DiskReadRate
+	}
+	if point.DiskWriteRate > last.DiskWriteRate {
+		last.DiskWriteRate = point.DiskWriteRate
+	}
 	if point.NetworkRxRate > last.NetworkRxRate {
 		last.NetworkRxRate = point.NetworkRxRate
 	}
@@ -705,6 +724,9 @@ func appendHostBucket(
 	last.CollectedAt = point.CollectedAt
 	last.NetworkRxBytes = point.NetworkRxBytes
 	last.NetworkTxBytes = point.NetworkTxBytes
+	last.DiskIOAvailable = point.DiskIOAvailable
+	last.DiskReadBytes = point.DiskReadBytes
+	last.DiskWriteBytes = point.DiskWriteBytes
 	last.LoadOne = point.LoadOne
 	last.LoadFive = point.LoadFive
 	last.LoadFifteen = point.LoadFifteen
@@ -742,6 +764,12 @@ func appendContainerBucket(
 	}
 	if point.NetworkTxRate > last.NetworkTxRate {
 		last.NetworkTxRate = point.NetworkTxRate
+	}
+	if point.BlockReadRate > last.BlockReadRate {
+		last.BlockReadRate = point.BlockReadRate
+	}
+	if point.BlockWriteRate > last.BlockWriteRate {
+		last.BlockWriteRate = point.BlockWriteRate
 	}
 	last.CollectedAt = point.CollectedAt
 	last.NetworkRxBytes = point.NetworkRxBytes

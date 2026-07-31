@@ -28,6 +28,13 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import { ApiError, api } from '@/lib/api'
+import {
+  sortDockerContainers,
+  sortDockerImages,
+  sortDockerNetworks,
+  sortDockerVolumes,
+  type ResourceSort,
+} from '@/lib/dockerSorting'
 import { formatBytes, formatDateTime, relativeTime, shortId } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
 import { useToast } from '@/stores/toast'
@@ -74,6 +81,7 @@ const refreshing = ref(false)
 const error = ref('')
 const search = ref('')
 const activeTab = ref<DockerTab>('containers')
+const resourceSort = ref<ResourceSort>('smart')
 const taskRunning = ref(false)
 const activeJob = ref<DockerMaintenanceJob>()
 const pendingMaintenance = ref<{
@@ -175,34 +183,42 @@ const createNetworks = computed(() => data.value?.networks || [])
 
 const filteredContainers = computed(() => {
   const query = search.value.trim().toLowerCase()
-  if (!query) return data.value?.containers || []
-  return (data.value?.containers || []).filter(
+  const values = query ? (data.value?.containers || []).filter(
     (item) =>
       item.name.toLowerCase().includes(query) ||
       item.image.toLowerCase().includes(query) ||
       item.project?.toLowerCase().includes(query),
-  )
+  ) : [...(data.value?.containers || [])]
+  return sortDockerContainers(values, resourceSort.value)
 })
 const filteredImages = computed(() => {
   const query = search.value.trim().toLowerCase()
-  if (!query) return data.value?.images || []
-  return (data.value?.images || []).filter(
+  const values = query ? (data.value?.images || []).filter(
     (item) => item.id.toLowerCase().includes(query) || item.tags.some((tag) => tag.toLowerCase().includes(query)),
-  )
+  ) : [...(data.value?.images || [])]
+  return sortDockerImages(values, resourceSort.value)
 })
 const filteredNetworks = computed(() => {
   const query = search.value.trim().toLowerCase()
-  if (!query) return data.value?.networks || []
-  return (data.value?.networks || []).filter(
+  const values = query ? (data.value?.networks || []).filter(
     (item) => item.name.toLowerCase().includes(query) || item.driver.toLowerCase().includes(query),
-  )
+  ) : [...(data.value?.networks || [])]
+  return sortDockerNetworks(values, resourceSort.value)
 })
 const filteredVolumes = computed(() => {
   const query = search.value.trim().toLowerCase()
-  if (!query) return data.value?.volumes || []
-  return (data.value?.volumes || []).filter(
+  const values = query ? (data.value?.volumes || []).filter(
     (item) => item.name.toLowerCase().includes(query) || item.driver.toLowerCase().includes(query),
-  )
+  ) : [...(data.value?.volumes || [])]
+  return sortDockerVolumes(values, resourceSort.value)
+})
+
+const visibleResourceCount = computed(() => {
+  if (activeTab.value === 'containers') return filteredContainers.value.length
+  if (activeTab.value === 'images') return filteredImages.value.length
+  if (activeTab.value === 'networks') return filteredNetworks.value.length
+  if (activeTab.value === 'volumes') return filteredVolumes.value.length
+  return 0
 })
 
 function formatPorts(container: DockerContainer): string {
@@ -760,46 +776,50 @@ onBeforeUnmount(() => {
         Docker Engine 当前不可用。资源写入已停止，页面可能只显示最后一次成功观测结果。
       </div>
 
-      <section class="summary-strip" aria-label="Docker 摘要">
-        <div>
-          <span class="summary-strip__icon"><Container :size="20" /></span>
-          <span><strong>{{ data.containers.length }}</strong><small>容器总数</small></span>
-        </div>
-        <div>
-          <span class="summary-strip__icon summary-strip__icon--success"><Play :size="20" /></span>
-          <span><strong>{{ runningCount }}</strong><small>运行中</small></span>
-        </div>
-        <div>
-          <span class="summary-strip__icon summary-strip__icon--blue"><ShieldCheck :size="20" /></span>
-          <span><strong>{{ manageableCount }}</strong><small>可直接管理</small></span>
-        </div>
-        <div>
-          <span class="summary-strip__icon summary-strip__icon--violet"><Boxes :size="20" /></span>
-          <span><strong>{{ data.images.length }}</strong><small>本地镜像</small></span>
+      <section class="docker-command-center">
+        <header class="docker-command-center__header">
+          <div>
+            <span class="workspace-card__icon"><Boxes :size="20" /></span>
+            <span><strong>Docker Engine</strong><small>{{ data.version || '版本待检测' }} · 观测于 {{ formatDateTime(data.observedAt) }}</small></span>
+          </div>
+          <StatusBadge :status="data.available ? 'running' : 'critical'" :label="data.available ? '运行正常' : '连接异常'" />
+        </header>
+
+        <section class="docker-summary" aria-label="Docker 摘要">
+          <div><span class="summary-strip__icon"><Container :size="19" /></span><span><strong>{{ data.containers.length }}</strong><small>全部容器</small></span></div>
+          <div><span class="summary-strip__icon summary-strip__icon--success"><Play :size="19" /></span><span><strong>{{ runningCount }}</strong><small>运行中</small></span></div>
+          <div><span class="summary-strip__icon summary-strip__icon--blue"><ShieldCheck :size="19" /></span><span><strong>{{ manageableCount }}</strong><small>可管理</small></span></div>
+          <div><span class="summary-strip__icon summary-strip__icon--violet"><Boxes :size="19" /></span><span><strong>{{ data.images.length }}</strong><small>本地镜像</small></span></div>
+        </section>
+
+        <nav class="docker-nav" aria-label="Docker 功能分区">
+          <button
+            v-for="tab in tabs"
+            :key="tab.id"
+            type="button"
+            :class="{ 'is-active': activeTab === tab.id }"
+            :aria-current="activeTab === tab.id ? 'page' : undefined"
+            @click="activeTab = tab.id; search = ''; resourceSort = 'smart'"
+          >
+            <component :is="tab.icon" :size="17" />
+            <strong>{{ tab.label }}</strong>
+            <small>{{ tab.count }}</small>
+          </button>
+        </nav>
+
+        <div v-if="activeTab !== 'environment'" class="docker-toolbar">
+          <span class="docker-toolbar__count">显示 {{ visibleResourceCount }} 项</span>
+          <div class="search-field search-field--small">
+            <Search :size="16" />
+            <input v-model="search" type="search" placeholder="搜索当前资源" aria-label="搜索 Docker 资源" />
+          </div>
+          <select v-model="resourceSort" class="select-input docker-sort" aria-label="Docker 资源排序">
+            <option value="smart">智能排序</option>
+            <option value="name-asc">名称 A–Z</option>
+            <option value="name-desc">名称 Z–A</option>
+          </select>
         </div>
       </section>
-
-      <nav class="docker-nav" aria-label="Docker 功能分区">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          type="button"
-          :class="{ 'is-active': activeTab === tab.id }"
-          :aria-current="activeTab === tab.id ? 'page' : undefined"
-          @click="activeTab = tab.id; search = ''"
-        >
-          <span><component :is="tab.icon" :size="19" /></span>
-          <strong>{{ tab.label }}</strong>
-          <small>{{ tab.count }}</small>
-        </button>
-      </nav>
-
-      <div v-if="activeTab !== 'environment'" class="docker-toolbar">
-        <div class="search-field search-field--small">
-          <Search :size="16" />
-          <input v-model="search" type="search" placeholder="搜索当前资源" aria-label="搜索 Docker 资源" />
-        </div>
-      </div>
 
       <template v-if="activeTab === 'environment'">
         <div class="workspace-grid workspace-grid--environment">
@@ -936,7 +956,7 @@ onBeforeUnmount(() => {
               </colgroup>
               <thead><tr><th>容器</th><th>状态</th><th>端口</th><th>网络</th><th>归属</th><th>操作</th></tr></thead>
               <tbody>
-                <tr v-for="container in filteredContainers" :key="container.id">
+                <tr v-for="container in filteredContainers" :key="container.id" :class="`docker-row docker-row--${container.state}`">
                   <td>
                     <div class="resource-name">
                       <span class="resource-name__icon resource-name__icon--docker"><Container :size="18" /></span>
@@ -1177,15 +1197,28 @@ onBeforeUnmount(() => {
 .docker-page { gap: 18px; }
 .docker-job { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(160px, 28%); align-items: center; gap: 12px; }
 .docker-job span { display: grid; gap: 3px; }
-.docker-job small { color: var(--text-muted); }
+.docker-job small { color: var(--muted); }
 .docker-job progress { width: 100%; }
-.docker-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; padding: 5px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--surface-raised) 72%, transparent); }
-.docker-nav button { min-width: 0; border: 1px solid transparent; border-radius: 11px; background: transparent; color: var(--text); padding: 10px 12px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; text-align: left; cursor: pointer; transition: .18s ease; }
-.docker-nav button:hover { border-color: var(--primary); transform: translateY(-1px); }
-.docker-nav button.is-active { border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); background: var(--surface); box-shadow: var(--shadow-sm); }
-.docker-nav button > span { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--primary); background: color-mix(in srgb, var(--primary) 11%, transparent); }
-.docker-nav small { color: var(--text-muted); }
-.docker-toolbar { display: flex; justify-content: flex-end; gap: 16px; align-items: center; margin-bottom: -4px; }
+.docker-command-center { overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-sm); }
+.docker-command-center__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.docker-command-center__header > div { display: flex; align-items: center; gap: 11px; }
+.docker-command-center__header > div > span:last-child { display: grid; gap: 3px; }
+.docker-command-center__header small { color: var(--muted); }
+.docker-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--border); }
+.docker-summary > div { display: flex; align-items: center; gap: 11px; min-width: 0; padding: 13px 16px; border-right: 1px solid var(--border); }
+.docker-summary > div:last-child { border-right: 0; }
+.docker-summary > div > span:last-child { display: grid; gap: 2px; }
+.docker-summary strong { font-size: 1.12rem; }
+.docker-summary small { color: var(--muted); font-size: .73rem; }
+.docker-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 8px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface-raised) 62%, transparent); }
+.docker-nav button { min-width: 0; min-height: 40px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--text); padding: 7px 11px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; text-align: left; cursor: pointer; transition: background-color .16s ease, border-color .16s ease; }
+.docker-nav button:hover { border-color: color-mix(in srgb, var(--brand) 38%, var(--border)); background: var(--surface); }
+.docker-nav button.is-active { border-color: color-mix(in srgb, var(--brand) 34%, var(--border)); color: var(--brand); background: var(--surface); box-shadow: var(--shadow-sm); }
+.docker-nav button > svg { color: var(--brand); }
+.docker-nav small { color: var(--muted); }
+.docker-toolbar { display: grid; grid-template-columns: 1fr minmax(220px, 320px) 130px; gap: 10px; align-items: center; padding: 10px 12px; }
+.docker-toolbar__count { padding-left: 4px; color: var(--muted); font-size: .78rem; }
+.docker-sort { width: 100%; min-height: 38px; }
 .workspace-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .workspace-grid--environment { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .workspace-card { min-width: 0; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); padding: 18px; display: grid; align-content: start; gap: 16px; }
@@ -1194,12 +1227,12 @@ onBeforeUnmount(() => {
 .workspace-card > header, .resource-section__header, .form-section > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
 .workspace-card > header > div, .resource-section__header > div:first-child, .form-section > header > div { display: grid; gap: 3px; }
 .workspace-card > header { grid-template-columns: auto 1fr; justify-content: start; }
-.workspace-card > header small, .resource-section__header small, .form-section small, .card-note { color: var(--text-muted); }
-.workspace-card__icon { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); flex: 0 0 auto; }
+.workspace-card > header small, .resource-section__header small, .form-section small, .card-note { color: var(--muted); }
+.workspace-card__icon { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); flex: 0 0 auto; }
 .action-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .action-card { border: 1px solid var(--border); border-radius: 13px; padding: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .action-card > div { display: grid; gap: 4px; }
-.action-card small { color: var(--text-muted); line-height: 1.45; }
+.action-card small { color: var(--muted); line-height: 1.45; }
 .card-actions, .row-actions { display: flex; align-items: center; gap: 8px; }
 .workspace-card > header > .card-actions,
 .resource-section__header > .card-actions { display: flex; flex: 0 0 auto; flex-wrap: nowrap; }
@@ -1209,7 +1242,7 @@ onBeforeUnmount(() => {
 .backup-list article { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
 .backup-list article > div { display: grid; gap: 3px; }
 .backup-list article > div:last-child { display: flex; grid-auto-flow: column; gap: 7px; }
-.backup-list small { color: var(--text-muted); }
+.backup-list small { color: var(--muted); }
 .card-note { margin: 0; font-size: .82rem; line-height: 1.55; }
 .divider { height: 1px; background: var(--border); }
 .check-row { display: flex; gap: 10px; align-items: flex-start; }
@@ -1229,18 +1262,22 @@ onBeforeUnmount(() => {
 .docker-row-actions__group { display: inline-flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface-raised) 70%, transparent); }
 .docker-row-actions__group .icon-button { width: 32px; height: 32px; border: 0; border-radius: 7px; background: transparent; }
 .docker-row-actions__group .icon-button:hover { background: var(--surface); }
+.docker-row { transition: background-color .14s ease; }
+.docker-row:hover { background: color-mix(in srgb, var(--brand) 4%, var(--surface)); }
+.docker-row--running > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--brand) 75%, transparent); }
+.docker-row--restarting > td:first-child, .docker-row--paused > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--amber) 75%, transparent); }
 .network-membership { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto auto; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface-raised) 70%, transparent); }
 .compact-input { width: min(240px, 34vw); }
 .compact-input--driver { width: min(170px, 24vw); }
-.table-sub { display: block; color: var(--text-muted); margin-top: 3px; }
-.action-unavailable-label { font-size: .78rem; color: var(--text-muted); }
+.table-sub { display: block; color: var(--muted); margin-top: 3px; }
+.action-unavailable-label { font-size: .78rem; color: var(--muted); }
 .form-grid { display: grid; gap: 14px; }
 .form-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .field { display: grid; gap: 7px; }
 .field > span { font-weight: 650; }
-.field > small { color: var(--text-muted); line-height: 1.45; }
+.field > small { color: var(--muted); line-height: 1.45; }
 .text-area { width: 100%; resize: vertical; min-height: 84px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); padding: 10px 12px; font: inherit; }
-.text-area:focus { outline: 2px solid color-mix(in srgb, var(--primary) 25%, transparent); border-color: var(--primary); }
+.text-area:focus { outline: 2px solid color-mix(in srgb, var(--brand) 25%, transparent); border-color: var(--brand); }
 .form-section { display: grid; gap: 10px; margin-top: 18px; }
 .repeat-row { display: grid; gap: 8px; align-items: center; }
 .repeat-row--ports { grid-template-columns: minmax(100px, 1fr) auto minmax(100px, 1fr) 100px 110px auto; }
@@ -1250,15 +1287,18 @@ onBeforeUnmount(() => {
 .log-viewer { margin: 0; min-height: 280px; max-height: 58vh; overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: #0b1020; color: #d9e2ff; padding: 15px; font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .stats-grid article { border: 1px solid var(--border); border-radius: 13px; padding: 14px; display: grid; gap: 5px; }
-.stats-grid small, .stats-grid span { color: var(--text-muted); }
+.stats-grid small, .stats-grid span { color: var(--muted); }
 .stats-grid strong { font-size: 1.3rem; }
 .stats-grid .stats-time { font-size: .9rem; line-height: 1.4; }
 .console-command { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
-.console-command > span { font-family: ui-monospace, monospace; color: var(--primary); font-weight: 700; }
+.console-command > span { font-family: ui-monospace, monospace; color: var(--brand); font-weight: 700; }
 .console-output { min-height: 240px; margin-top: 14px; }
-.modal-copy { color: var(--text-muted); line-height: 1.65; }
+.modal-copy { color: var(--muted); line-height: 1.65; }
 @media (max-width: 1000px) {
   .docker-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .docker-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .docker-summary > div:nth-child(2) { border-right: 0; }
+  .docker-summary > div:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
   .action-grid { grid-template-columns: 1fr; }
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .resource-section__header { flex-direction: column; }
@@ -1267,6 +1307,9 @@ onBeforeUnmount(() => {
   .docker-job { grid-template-columns: auto 1fr; }
   .docker-job progress { grid-column: 1 / -1; }
   .docker-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .docker-command-center__header { align-items: flex-start; }
+  .docker-toolbar { grid-template-columns: 1fr; }
+  .docker-toolbar__count { display: none; }
   .workspace-grid, .workspace-grid--environment, .form-grid--two { grid-template-columns: 1fr; }
   .docker-toolbar, .resource-section__header, .backup-list article { align-items: stretch; flex-direction: column; }
   .workspace-card > header > .card-actions,

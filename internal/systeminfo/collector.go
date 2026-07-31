@@ -102,6 +102,7 @@ func (c *Collector) collectRuntime(ctx context.Context) (contract.SystemSummary,
 	if err := c.readNetwork(&result.Network); err != nil {
 		errs = append(errs, err)
 	}
+	result.DiskIO = c.readDiskIO()
 	result.Disks = c.readDisks()
 	return result, errors.Join(errs...)
 }
@@ -347,6 +348,79 @@ func (c *Collector) readNetwork(out *contract.NetworkSummary) error {
 	out.TCPConnections = c.connectionCount("net/tcp") + c.connectionCount("net/tcp6")
 	out.UDPConnections = c.connectionCount("net/udp") + c.connectionCount("net/udp6")
 	return nil
+}
+
+func (c *Collector) readDiskIO() contract.DiskIOSummary {
+	data := c.readOptional("diskstats")
+	var result contract.DiskIOSummary
+	for _, line := range strings.Split(data, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 14 || !physicalDiskDevice(fields[2]) {
+			continue
+		}
+		readSectors, readErr := strconv.ParseUint(fields[5], 10, 64)
+		writeSectors, writeErr := strconv.ParseUint(fields[9], 10, 64)
+		if readErr != nil || writeErr != nil {
+			continue
+		}
+		result.Available = true
+		result.ReadBytes += sectorsToBytes(readSectors)
+		result.WriteBytes += sectorsToBytes(writeSectors)
+	}
+	return result
+}
+
+// physicalDiskDevice keeps aggregate I/O counters free of partition and
+// device-mapper double counting. These names cover the physical and
+// hypervisor-backed disks used by the supported Linux distributions.
+func physicalDiskDevice(name string) bool {
+	for _, prefix := range []string{"sd", "vd", "xvd", "hd", "dasd"} {
+		if strings.HasPrefix(name, prefix) {
+			return onlyASCIILetters(name[len(prefix):])
+		}
+	}
+	if strings.HasPrefix(name, "nvme") {
+		rest := name[len("nvme"):]
+		controllerEnd := strings.IndexByte(rest, 'n')
+		return controllerEnd > 0 && onlyASCIIDigits(rest[:controllerEnd]) &&
+			onlyASCIIDigits(rest[controllerEnd+1:])
+	}
+	if strings.HasPrefix(name, "mmcblk") {
+		return onlyASCIIDigits(name[len("mmcblk"):])
+	}
+	return false
+}
+
+func onlyASCIILetters(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < 'a' || char > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+func onlyASCIIDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func sectorsToBytes(sectors uint64) uint64 {
+	const sectorSize = uint64(512)
+	if sectors > ^uint64(0)/sectorSize {
+		return ^uint64(0)
+	}
+	return sectors * sectorSize
 }
 
 func (c *Collector) connectionCount(name string) int {

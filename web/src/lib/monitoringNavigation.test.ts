@@ -12,8 +12,8 @@ describe('monitoring navigation', () => {
   it('maps overview metrics to their history chart', () => {
     expect(monitoringTargetId('cpu')).toBe('host-cpu-load-history')
     expect(monitoringTargetId('load')).toBe('host-cpu-load-history')
-    expect(monitoringTargetId('memory')).toBe('host-memory-disk-history')
-    expect(monitoringTargetId('disk')).toBe('host-memory-disk-history')
+    expect(monitoringTargetId('memory')).toBe('host-memory-history')
+    expect(monitoringTargetId('disk')).toBe('host-disk-history')
     expect(monitoringTargetId('network')).toBe('host-network-history')
   })
 })

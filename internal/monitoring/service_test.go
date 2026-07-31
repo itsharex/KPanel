@@ -50,6 +50,9 @@ func testSummary(rx, tx uint64) contract.SystemSummary {
 		Disks: []contract.DiskSummary{{
 			MountPoint: "/", UsedBytes: 20 << 30, TotalBytes: 100 << 30, UsagePercent: 20,
 		}},
+		DiskIO: contract.DiskIOSummary{
+			Available: true, ReadBytes: rx * 2, WriteBytes: tx * 2,
+		},
 		Network: contract.NetworkSummary{
 			ReceivedBytes: rx, SentBytes: tx, TCPConnections: 12, UDPConnections: 3,
 		},
@@ -66,7 +69,7 @@ func TestSampleAndHistoryPersistBoundedHostAndContainerMetrics(t *testing.T) {
 			ContainerStats: dockerx.ContainerStats{
 				ContainerID: strings.Repeat("a", 64), CPUPercent: 12,
 				MemoryBytes: 128 << 20, MemoryLimit: 1 << 30, MemoryPercent: 12.5,
-				NetworkRx: 100, NetworkTx: 200, PIDs: 5,
+				NetworkRx: 100, NetworkTx: 200, BlockRead: 1_000, BlockWrite: 2_000, PIDs: 5,
 			},
 		}},
 	}}
@@ -85,6 +88,8 @@ func TestSampleAndHistoryPersistBoundedHostAndContainerMetrics(t *testing.T) {
 	system.summary = testSummary(1_600, 2_900)
 	docker.batch.Items[0].NetworkRx = 400
 	docker.batch.Items[0].NetworkTx = 500
+	docker.batch.Items[0].BlockRead = 1_600
+	docker.batch.Items[0].BlockWrite = 3_200
 	if err := service.Sample(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -94,11 +99,14 @@ func TestSampleAndHistoryPersistBoundedHostAndContainerMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(history.Host) != 2 || history.Host[1].NetworkRxRate != 10 ||
-		history.Host[1].NetworkTxRate != 15 {
+		history.Host[1].NetworkTxRate != 15 || history.Host[1].DiskReadRate != 20 ||
+		history.Host[1].DiskWriteRate != 30 {
 		t.Fatalf("unexpected host history: %#v", history.Host)
 	}
 	if len(history.Containers) != 1 || len(history.Containers[0].Points) != 2 ||
-		history.Containers[0].Points[1].NetworkRxRate != 5 {
+		history.Containers[0].Points[1].NetworkRxRate != 5 ||
+		history.Containers[0].Points[1].BlockReadRate != 10 ||
+		history.Containers[0].Points[1].BlockWriteRate != 20 {
 		t.Fatalf("unexpected container history: %#v", history.Containers)
 	}
 	if history.Storage.StorageBytes <= 0 || history.Storage.LastContainerRecorded != 1 ||
@@ -246,29 +254,31 @@ func TestBucketAggregationKeepsResourcePeaksAndLatestCounters(t *testing.T) {
 		CollectedAt: at, MemoryUsedBytes: 4, MemoryTotalBytes: 10,
 		SwapUsedBytes: 1, SwapTotalBytes: 10,
 		DiskUsedBytes: 4, DiskTotalBytes: 10, DiskPercent: 40,
-		NetworkRxBytes: 100,
+		NetworkRxBytes: 100, DiskReadRate: 2, DiskWriteRate: 3,
 	}, time.Minute)
 	host = appendHostBucket(host, contract.MonitoringHostPoint{
 		CollectedAt: at.Add(30 * time.Second), MemoryUsedBytes: 6, MemoryTotalBytes: 20,
 		SwapUsedBytes: 8, SwapTotalBytes: 10,
 		DiskUsedBytes: 9, DiskTotalBytes: 10, DiskPercent: 90,
-		NetworkRxBytes: 200,
+		NetworkRxBytes: 200, DiskReadRate: 8, DiskWriteRate: 9,
 	}, time.Minute)
 	if host[0].MemoryUsedBytes != 4 || host[0].SwapUsedBytes != 8 ||
-		host[0].DiskUsedBytes != 9 || host[0].NetworkRxBytes != 200 {
+		host[0].DiskUsedBytes != 9 || host[0].NetworkRxBytes != 200 ||
+		host[0].DiskReadRate != 8 || host[0].DiskWriteRate != 9 {
 		t.Fatalf("host bucket did not preserve peaks and latest counter: %#v", host[0])
 	}
 
 	container := appendContainerBucket(nil, contract.MonitoringContainerPoint{
 		CollectedAt: at, MemoryBytes: 4, MemoryLimitBytes: 10, MemoryPercent: 40,
-		NetworkRxBytes: 100,
+		NetworkRxBytes: 100, BlockReadRate: 2, BlockWriteRate: 3,
 	}, time.Minute)
 	container = appendContainerBucket(container, contract.MonitoringContainerPoint{
 		CollectedAt: at.Add(30 * time.Second), MemoryBytes: 6, MemoryLimitBytes: 20,
-		MemoryPercent: 30, NetworkRxBytes: 200,
+		MemoryPercent: 30, NetworkRxBytes: 200, BlockReadRate: 8, BlockWriteRate: 9,
 	}, time.Minute)
 	if container[0].MemoryBytes != 4 || container[0].MemoryPercent != 40 ||
-		container[0].NetworkRxBytes != 200 {
+		container[0].NetworkRxBytes != 200 || container[0].BlockReadRate != 8 ||
+		container[0].BlockWriteRate != 9 {
 		t.Fatalf("container bucket did not preserve peak and latest counter: %#v", container[0])
 	}
 }

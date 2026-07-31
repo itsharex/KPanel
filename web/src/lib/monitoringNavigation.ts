@@ -10,6 +10,7 @@ export function normalizeMonitoringMetric(value: unknown): MonitoringMetric | un
 
 export function monitoringTargetId(metric: MonitoringMetric): string {
   if (metric === 'cpu' || metric === 'load') return 'host-cpu-load-history'
-  if (metric === 'memory' || metric === 'disk') return 'host-memory-disk-history'
+  if (metric === 'memory') return 'host-memory-history'
+  if (metric === 'disk') return 'host-disk-history'
   return 'host-network-history'
 }

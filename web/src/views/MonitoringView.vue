@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Box, Cpu, Database, HardDrive, MemoryStick, Network, RefreshCw } from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -28,13 +28,15 @@ const ranges: Array<{ value: MonitoringRange; label: string }> = [
   { value: '7d', label: '7 天' },
 ]
 
-const history = ref<MonitoringHistory>()
+const history = shallowRef<MonitoringHistory>()
 const route = useRoute()
 const selectedRange = ref<MonitoringRange>('24h')
 const selectedContainerId = ref('')
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
+const diskChartMode = ref<'capacity' | 'io'>('capacity')
+const networkChartMode = ref<'traffic' | 'connections'>('traffic')
 let controller: AbortController | undefined
 
 const latestHost = computed<MonitoringHostPoint | undefined>(() => history.value?.host.at(-1))
@@ -68,10 +70,6 @@ const hostMemory = computed<TrendSeries[]>(() => {
       at: point.collectedAt,
       value: percent(point.memoryUsedBytes, point.memoryTotalBytes),
     })),
-  }, {
-    label: '系统盘',
-    color: 'var(--amber)',
-    points: (history.value?.host || []).map((point) => ({ at: point.collectedAt, value: point.diskPercent })),
   }]
   if ((history.value?.host || []).some((point) => point.swapTotalBytes > 0)) {
     series.push({
@@ -85,7 +83,31 @@ const hostMemory = computed<TrendSeries[]>(() => {
   }
   return series
 })
-const hostNetwork = computed<TrendSeries[]>(() => [
+const hostDiskCapacity = computed<TrendSeries[]>(() => [{
+  label: '系统盘使用率',
+  color: 'var(--amber)',
+  points: (history.value?.host || []).map((point) => ({ at: point.collectedAt, value: point.diskPercent })),
+}])
+const hostDiskIO = computed<TrendSeries[]>(() => [
+  {
+    label: '读取',
+    color: 'var(--blue)',
+    points: (history.value?.host || []).map((point) => ({
+      at: point.collectedAt,
+      value: point.diskReadBytesPerSecond || 0,
+    })),
+  },
+  {
+    label: '写入',
+    color: 'var(--amber)',
+    points: (history.value?.host || []).map((point) => ({
+      at: point.collectedAt,
+      value: point.diskWriteBytesPerSecond || 0,
+    })),
+  },
+])
+const activeHostDisk = computed(() => diskChartMode.value === 'io' ? hostDiskIO.value : hostDiskCapacity.value)
+const hostNetworkTraffic = computed<TrendSeries[]>(() => [
   {
     label: '下载',
     color: 'var(--brand)',
@@ -103,7 +125,7 @@ const hostNetwork = computed<TrendSeries[]>(() => [
     })),
   },
 ])
-const hostConnections = computed<TrendSeries[]>(() => [
+const hostNetworkConnections = computed<TrendSeries[]>(() => [
   {
     label: 'TCP',
     color: 'var(--brand)',
@@ -121,24 +143,25 @@ const hostConnections = computed<TrendSeries[]>(() => [
     })),
   },
 ])
-const containerCPU = computed<TrendSeries[]>(() => [
-  {
-    label: 'CPU',
-    color: 'var(--brand)',
-    points: (selectedContainer.value?.points || []).map((point) => ({
-      at: point.collectedAt,
-      value: point.cpuPercent,
-    })),
-  },
-  {
-    label: '内存',
-    color: 'var(--violet)',
-    points: (selectedContainer.value?.points || []).map((point) => ({
-      at: point.collectedAt,
-      value: point.memoryPercent,
-    })),
-  },
-])
+const activeHostNetwork = computed(() => networkChartMode.value === 'traffic'
+  ? hostNetworkTraffic.value
+  : hostNetworkConnections.value)
+const containerCPU = computed<TrendSeries[]>(() => [{
+  label: 'CPU',
+  color: 'var(--brand)',
+  points: (selectedContainer.value?.points || []).map((point) => ({
+    at: point.collectedAt,
+    value: point.cpuPercent,
+  })),
+}])
+const containerMemory = computed<TrendSeries[]>(() => [{
+  label: '内存',
+  color: 'var(--violet)',
+  points: (selectedContainer.value?.points || []).map((point) => ({
+    at: point.collectedAt,
+    value: point.memoryPercent,
+  })),
+}])
 const containerNetwork = computed<TrendSeries[]>(() => [
   {
     label: '接收',
@@ -163,7 +186,7 @@ const containerBlock = computed<TrendSeries[]>(() => [
     color: 'var(--brand)',
     points: (selectedContainer.value?.points || []).map((point) => ({
       at: point.collectedAt,
-      value: point.blockReadBytes,
+      value: point.blockReadBytesPerSecond || 0,
     })),
   },
   {
@@ -171,18 +194,10 @@ const containerBlock = computed<TrendSeries[]>(() => [
     color: 'var(--amber)',
     points: (selectedContainer.value?.points || []).map((point) => ({
       at: point.collectedAt,
-      value: point.blockWriteBytes,
+      value: point.blockWriteBytesPerSecond || 0,
     })),
   },
 ])
-const containerPIDs = computed<TrendSeries[]>(() => [{
-  label: '进程数',
-  color: 'var(--violet)',
-  points: (selectedContainer.value?.points || []).map((point) => ({
-    at: point.collectedAt,
-    value: point.pids,
-  })),
-}])
 
 function percent(used?: number, total?: number): number {
   if (!used || !total) return 0
@@ -307,27 +322,47 @@ onBeforeUnmount(() => controller?.abort())
           :class="{ 'chart-card--selected': chartIsSelected('cpu', 'load') }"
         >
           <header><div><Cpu :size="18" /><strong>CPU 与负载</strong></div><span>{{ history.host.length }} 个点</span></header>
-          <TrendChart :series="hostCPU" :formatter="(value) => value.toFixed(1)" />
+          <TrendChart :series="hostCPU" :formatter="formatPercent" :max-value="100" />
         </article>
         <article
-          id="host-memory-disk-history"
+          id="host-memory-history"
           class="chart-card"
-          :class="{ 'chart-card--selected': chartIsSelected('memory', 'disk') }"
+          :class="{ 'chart-card--selected': chartIsSelected('memory') }"
         >
-          <header><div><MemoryStick :size="18" /><strong>内存与磁盘</strong></div><span>峰值聚合</span></header>
-          <TrendChart :series="hostMemory" :formatter="formatPercent" />
+          <header><div><MemoryStick :size="18" /><strong>内存</strong></div><span>内存 / Swap</span></header>
+          <TrendChart :series="hostMemory" :formatter="formatPercent" :max-value="100" />
+        </article>
+        <article
+          id="host-disk-history"
+          class="chart-card"
+          :class="{ 'chart-card--selected': chartIsSelected('disk') }"
+        >
+          <header>
+            <div><HardDrive :size="18" /><strong>磁盘</strong></div>
+            <div class="chart-switch" aria-label="磁盘指标">
+              <button type="button" :class="{ 'is-active': diskChartMode === 'capacity' }" @click="diskChartMode = 'capacity'">容量</button>
+              <button type="button" :class="{ 'is-active': diskChartMode === 'io' }" @click="diskChartMode = 'io'">读写 I/O</button>
+            </div>
+          </header>
+          <TrendChart
+            :series="activeHostDisk"
+            :formatter="diskChartMode === 'io' ? formatRate : formatPercent"
+            :max-value="diskChartMode === 'capacity' ? 100 : undefined"
+          />
         </article>
         <article
           id="host-network-history"
           class="chart-card"
           :class="{ 'chart-card--selected': chartIsSelected('network') }"
         >
-          <header><div><Network :size="18" /><strong>主机网络</strong></div><span>按秒速率</span></header>
-          <TrendChart :series="hostNetwork" :formatter="formatRate" />
-        </article>
-        <article class="chart-card">
-          <header><div><Network :size="18" /><strong>网络连接</strong></div><span>TCP / UDP</span></header>
-          <TrendChart :series="hostConnections" :formatter="(value) => value.toFixed(0)" />
+          <header>
+            <div><Network :size="18" /><strong>网络与连接</strong></div>
+            <div class="chart-switch" aria-label="网络指标">
+              <button type="button" :class="{ 'is-active': networkChartMode === 'traffic' }" @click="networkChartMode = 'traffic'">流量</button>
+              <button type="button" :class="{ 'is-active': networkChartMode === 'connections' }" @click="networkChartMode = 'connections'">连接数</button>
+            </div>
+          </header>
+          <TrendChart :series="activeHostNetwork" :formatter="networkChartMode === 'traffic' ? formatRate : (value) => value.toFixed(0)" />
         </article>
       </div>
       <EmptyState v-else title="正在积累历史数据" description="功能启用后约 1 分钟生成首个主机采样点，刷新页面即可查看。" />
@@ -368,10 +403,10 @@ onBeforeUnmount(() => controller?.abort())
               </div>
             </header>
             <div class="container-charts">
-              <TrendChart :series="containerCPU" :formatter="formatPercent" />
-              <TrendChart :series="containerNetwork" :formatter="formatRate" />
-              <TrendChart :series="containerBlock" :formatter="formatBytes" />
-              <TrendChart :series="containerPIDs" :formatter="(value) => value.toFixed(0)" />
+              <article><strong>CPU</strong><TrendChart :series="containerCPU" :formatter="formatPercent" :max-value="100" /></article>
+              <article><strong>内存</strong><TrendChart :series="containerMemory" :formatter="formatPercent" :max-value="100" /></article>
+              <article><strong>网络</strong><TrendChart :series="containerNetwork" :formatter="formatRate" /></article>
+              <article><strong>磁盘 I/O</strong><TrendChart :series="containerBlock" :formatter="formatRate" /></article>
             </div>
           </div>
         </div>
@@ -431,6 +466,9 @@ onBeforeUnmount(() => controller?.abort())
 }
 .chart-card > header div, .section-heading > div { display: flex; align-items: center; gap: 8px; }
 .chart-card > header span, .section-heading > span { color: var(--muted); font-size: .76rem; }
+.chart-switch { display: inline-flex !important; gap: 2px !important; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-subtle); }
+.chart-switch button { min-height: 26px; padding: 0 9px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: .72rem; cursor: pointer; }
+.chart-switch button:hover, .chart-switch button.is-active { color: var(--brand-strong); background: var(--brand-soft); }
 .container-section { padding: 18px; }
 .section-heading h2, .container-detail h3 { margin: 0; font-size: 1rem; }
 .section-heading p, .container-detail p { margin: 3px 0 0; color: var(--muted); font-size: .76rem; }
@@ -459,6 +497,8 @@ onBeforeUnmount(() => controller?.abort())
 .container-detail__latest { display: flex; gap: 14px; color: var(--muted); font-size: .74rem; }
 .container-detail__latest strong { color: var(--text); }
 .container-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.container-charts > article { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
+.container-charts > article > strong { display: block; margin-bottom: 4px; font-size: .78rem; }
 .monitoring-footnote { color: var(--muted); font-size: .74rem; text-align: center; }
 @media (max-width: 1180px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

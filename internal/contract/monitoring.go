@@ -16,6 +16,11 @@ type MonitoringHostPoint struct {
 	DiskUsedBytes    uint64    `json:"diskUsedBytes"`
 	DiskTotalBytes   uint64    `json:"diskTotalBytes"`
 	DiskPercent      float64   `json:"diskPercent"`
+	DiskIOAvailable  bool      `json:"diskIoAvailable"`
+	DiskReadBytes    uint64    `json:"diskReadBytes"`
+	DiskWriteBytes   uint64    `json:"diskWriteBytes"`
+	DiskReadRate     float64   `json:"diskReadBytesPerSecond"`
+	DiskWriteRate    float64   `json:"diskWriteBytesPerSecond"`
 	NetworkRxBytes   uint64    `json:"networkRxBytes"`
 	NetworkTxBytes   uint64    `json:"networkTxBytes"`
 	NetworkRxRate    float64   `json:"networkRxBytesPerSecond"`
@@ -36,6 +41,8 @@ type MonitoringContainerPoint struct {
 	NetworkTxRate    float64   `json:"networkTxBytesPerSecond"`
 	BlockReadBytes   uint64    `json:"blockReadBytes"`
 	BlockWriteBytes  uint64    `json:"blockWriteBytes"`
+	BlockReadRate    float64   `json:"blockReadBytesPerSecond"`
+	BlockWriteRate   float64   `json:"blockWriteBytesPerSecond"`
 	PIDs             uint64    `json:"pids"`
 }
 

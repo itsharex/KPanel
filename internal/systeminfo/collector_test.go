@@ -61,6 +61,10 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	if got.Network.TCPConnections != 1 {
 		t.Fatalf("unexpected connection counts: %#v", got.Network)
 	}
+	if !got.DiskIO.Available || got.DiskIO.ReadBytes != 1536*512 ||
+		got.DiskIO.WriteBytes != 3072*512 {
+		t.Fatalf("unexpected disk I/O: %#v", got.DiskIO)
+	}
 	if got.UptimeSeconds != 12345 {
 		t.Fatalf("unexpected uptime: %d", got.UptimeSeconds)
 	}
@@ -174,6 +178,51 @@ func TestCPUUsagePercentUsesIntervalDelta(t *testing.T) {
 	after := cpuTimes{total: 1_200, idle: 900}
 	if got := cpuUsagePercent(before, after); got != 50 {
 		t.Fatalf("cpuUsagePercent() = %v, want 50", got)
+	}
+}
+
+func TestReadDiskIOIncludesWholeDisksWithoutPartitionDoubleCounting(t *testing.T) {
+	procRoot := t.TempDir()
+	data := " 252 0 vda 1 0 100 0 2 0 200 0 0 0 0 0 0 0\n" +
+		" 252 1 vda1 1 0 90 0 2 0 180 0 0 0 0 0 0 0\n" +
+		" 259 0 nvme0n1 1 0 300 0 2 0 400 0 0 0 0 0 0 0\n" +
+		" 259 1 nvme0n1p1 1 0 250 0 2 0 350 0 0 0 0 0 0 0\n" +
+		" 7 0 loop0 1 0 999 0 2 0 999 0 0 0 0 0 0 0\n"
+	if err := os.WriteFile(filepath.Join(procRoot, "diskstats"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := (&Collector{ProcRoot: procRoot}).readDiskIO()
+	if !got.Available || got.ReadBytes != 400*512 || got.WriteBytes != 600*512 {
+		t.Fatalf("readDiskIO() = %#v", got)
+	}
+}
+
+func BenchmarkReadDiskIO(b *testing.B) {
+	collector := &Collector{ProcRoot: filepath.Join("testdata", "root", "proc")}
+	b.ReportAllocs()
+	for b.Loop() {
+		if !collector.readDiskIO().Available {
+			b.Fatal("fixture disk I/O unavailable")
+		}
+	}
+}
+
+func TestPhysicalDiskDeviceRejectsPartitionsAndVirtualLayers(t *testing.T) {
+	tests := map[string]bool{
+		"sda": true, "vda": true, "xvdb": true, "nvme0n1": true, "mmcblk0": true,
+		"sda1": false, "nvme0n1p1": false, "mmcblk0p1": false,
+		"loop0": false, "dm-0": false, "md0": false,
+	}
+	for name, expected := range tests {
+		if got := physicalDiskDevice(name); got != expected {
+			t.Errorf("physicalDiskDevice(%q) = %v, want %v", name, got, expected)
+		}
+	}
+}
+
+func TestSectorsToBytesSaturatesInsteadOfWrapping(t *testing.T) {
+	if got := sectorsToBytes(^uint64(0)); got != ^uint64(0) {
+		t.Fatalf("sectorsToBytes(max) = %d, want saturation", got)
 	}
 }
 
