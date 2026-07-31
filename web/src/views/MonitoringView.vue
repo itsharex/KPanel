@@ -383,30 +383,32 @@ onBeforeUnmount(() => controller?.abort())
         </header>
 
         <div v-if="history.containers.length" class="container-layout">
-          <div class="container-list">
-            <button
-              v-for="container in history.containers"
-              :key="container.containerId"
-              class="container-row"
-              :class="{
-                'container-row--active': selectedContainer?.containerId === container.containerId,
-                'container-row--historical': containerIsHistorical(container),
-              }"
-              type="button"
-              @click="selectContainer(container)"
-            >
-              <span>
-                <span class="container-row__title">
-                  <strong>{{ container.name }}</strong>
-                  <em v-if="containerIsHistorical(container)">历史</em>
+          <div class="container-list-shell">
+            <div class="container-list">
+              <button
+                v-for="container in history.containers"
+                :key="container.containerId"
+                class="container-row"
+                :class="{
+                  'container-row--active': selectedContainer?.containerId === container.containerId,
+                  'container-row--historical': containerIsHistorical(container),
+                }"
+                type="button"
+                @click="selectContainer(container)"
+              >
+                <span>
+                  <span class="container-row__title">
+                    <strong>{{ container.name }}</strong>
+                    <em v-if="containerIsHistorical(container)">历史</em>
+                  </span>
+                  <small>{{ container.image }}</small>
                 </span>
-                <small>{{ container.image }}</small>
-              </span>
-              <span>
-                <strong>{{ formatPercent(container.points.at(-1)?.cpuPercent) }}</strong>
-                <small>{{ formatBytes(container.points.at(-1)?.memoryBytes) }}</small>
-              </span>
-            </button>
+                <span>
+                  <strong>{{ formatPercent(container.points.at(-1)?.cpuPercent) }}</strong>
+                  <small>{{ formatBytes(container.points.at(-1)?.memoryBytes) }}</small>
+                </span>
+              </button>
+            </div>
           </div>
           <div class="container-detail">
             <header>
@@ -488,7 +490,8 @@ onBeforeUnmount(() => controller?.abort())
 .section-heading h2, .container-detail h3 { margin: 0; font-size: 1rem; }
 .section-heading p, .container-detail p { margin: 3px 0 0; color: var(--muted); font-size: .76rem; }
 .container-layout { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 14px; }
-.container-list { max-height: 430px; overflow: auto; padding-right: 4px; }
+.container-list-shell { position: relative; min-width: 0; min-height: 0; }
+.container-list { position: absolute; inset: 0; overflow: auto; padding-right: 4px; }
 .container-row {
   display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px;
   padding: 11px 12px; border: 1px solid transparent; border-radius: 10px;
@@ -532,7 +535,8 @@ onBeforeUnmount(() => controller?.abort())
   .monitoring-toolbar__meta { width: 100%; margin-left: 0; padding: 4px 8px; }
   .summary-grid, .chart-grid, .container-layout { grid-template-columns: 1fr; }
   .chart-card--wide { grid-column: auto; }
-  .container-list { max-height: 240px; }
+  .container-list-shell { min-height: 0; }
+  .container-list { position: static; max-height: 240px; }
   .container-detail > header { align-items: flex-start; flex-direction: column; }
 }
 </style>
