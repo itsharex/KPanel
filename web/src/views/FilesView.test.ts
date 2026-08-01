@@ -40,6 +40,7 @@ interface FileBindings {
   showContext: (event: MouseEvent, entry: TestFileEntry) => void
   showDirectoryContext: (event: MouseEvent) => void
   selectEntry: (event: MouseEvent, path: string) => void
+  preventNativeSelection: (event: Event) => void
   handleFileShortcut: (event: KeyboardEvent) => void
   openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'trash', entry?: TestFileEntry) => void
   currentPath: { value: string }
@@ -313,6 +314,15 @@ describe('FilesView directory loading', () => {
 
     view.selectEntry({ shiftKey: true } as MouseEvent, second.path)
     expect([...view.selected.value]).toEqual([second.path, third.path])
+  })
+
+  it('prevents browser text selection inside the file list', () => {
+    const view = setupView()
+    const preventDefault = vi.fn()
+
+    view.preventNativeSelection({ preventDefault } as unknown as Event)
+
+    expect(preventDefault).toHaveBeenCalledOnce()
   })
 
   it('clears a single selection when the selected row is clicked again', () => {

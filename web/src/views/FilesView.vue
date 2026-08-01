@@ -324,6 +324,10 @@ function clearSelection(): void {
   selectionAnchor.value = undefined
 }
 
+function preventNativeSelection(event: Event): void {
+  event.preventDefault()
+}
+
 function selectForContext(entry: FileEntry): void {
   if (selected.value.has(entry.path)) return
   selected.value = new Set([entry.path])
@@ -742,7 +746,12 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="file-table" role="table" aria-label="文件列表">
+      <div
+        class="file-table"
+        role="table"
+        aria-label="文件列表"
+        @selectstart="preventNativeSelection"
+      >
         <div class="file-row file-row--header" role="row">
           <span>
             <input type="checkbox" :checked="allVisibleSelected" aria-label="选择全部" @change="toggleAll" />
@@ -1335,6 +1344,8 @@ onBeforeUnmount(() => {
   color: var(--text);
   text-align: left;
   background: var(--surface);
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .file-row--header {
