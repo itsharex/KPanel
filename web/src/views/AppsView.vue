@@ -2375,7 +2375,7 @@ watch(
 .job-log {
   overflow: hidden;
   margin-top: 18px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--terminal-shell-border, #29383a);
   border-radius: 14px;
 }
 
@@ -2383,12 +2383,13 @@ watch(
   display: flex;
   justify-content: space-between;
   padding: 11px 13px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-muted);
+  border-bottom: 1px solid var(--terminal-shell-border, #29383a);
+  color: var(--terminal-shell-text, #d8dddc);
+  background: var(--terminal-shell-panel, #111a1d);
 }
 
 .job-log header small {
-  color: var(--text-tertiary);
+  color: var(--terminal-shell-muted, #8a9695);
 }
 
 .job-log pre,
@@ -2397,11 +2398,11 @@ watch(
   max-height: 340px;
   margin: 0;
   padding: 14px;
-  color: #dce4ff;
+  color: var(--terminal-shell-text, #d8dddc);
   font: 12px/1.65 var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: #111827;
+  background: var(--terminal-shell-background, #0b1214);
 }
 
 @media (max-width: 1280px) {

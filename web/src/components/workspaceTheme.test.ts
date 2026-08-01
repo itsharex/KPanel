@@ -13,6 +13,18 @@ const diagnosticsSource = readFileSync(
   new URL('../views/DiagnosticsView.vue', import.meta.url),
   'utf8',
 )
+const filesSource = readFileSync(
+  new URL('../views/FilesView.vue', import.meta.url),
+  'utf8',
+)
+const dockerSource = readFileSync(
+  new URL('../views/DockerView.vue', import.meta.url),
+  'utf8',
+)
+const appsSource = readFileSync(
+  new URL('../views/AppsView.vue', import.meta.url),
+  'utf8',
+)
 const globalThemeSource = readFileSync(
   new URL('../styles/main.css', import.meta.url),
   'utf8',
@@ -38,10 +50,20 @@ describe('terminal and editor workspace theme', () => {
   })
 
   it('keeps the editor dark while using KPanel brand and semantic tokens for controls', () => {
-    expect(editorSource).toContain('--code-background: #071411')
+    expect(editorSource).toContain('--code-background: var(--terminal-shell-background, #0b1214)')
     expect(editorSource).toContain('--code-caret: var(--brand, #35cba6)')
     expect(editorSource).toContain('color: var(--danger, #ef7a7a)')
     expect(editorSource).not.toContain('#409be8')
     expect(editorSource).not.toContain('#31415b')
+  })
+
+  it('uses the shared workspace palette for editor chrome and non-interactive logs', () => {
+    for (const source of [filesSource, dockerSource, appsSource]) {
+      expect(source).toContain('var(--terminal-shell-background, #0b1214)')
+      expect(source).toContain('var(--terminal-shell-text, #d8dddc)')
+    }
+    expect(filesSource).not.toContain('background: #111a2c')
+    expect(dockerSource).not.toContain('background: #0b1020')
+    expect(appsSource).not.toContain('background: #111827')
   })
 })

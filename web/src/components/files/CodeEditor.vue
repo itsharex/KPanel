@@ -508,15 +508,15 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .code-editor-shell {
-  --code-background: #071411;
-  --code-gutter: #0b1b17;
-  --code-panel: #0d211c;
-  --code-text: #dceae7;
+  --code-background: var(--terminal-shell-background, #0b1214);
+  --code-gutter: color-mix(in srgb, var(--terminal-shell-panel, #111a1d) 72%, #070b0c);
+  --code-panel: var(--terminal-shell-panel, #111a1d);
+  --code-text: var(--terminal-shell-text, #d8dddc);
   --code-caret: var(--brand, #35cba6);
-  --code-line-number: #688078;
+  --code-line-number: var(--terminal-shell-muted, #8a9695);
   --code-active-line: rgb(53 203 166 / 8%);
   --code-selection: rgb(53 203 166 / 27%);
-  --code-border: color-mix(in srgb, var(--brand, #35cba6) 24%, #304941);
+  --code-border: var(--terminal-shell-border, #29383a);
   --code-comment: #748a84;
   --code-keyword: #c9a7ff;
   --code-string: #8ed6a5;
@@ -527,9 +527,9 @@ onBeforeUnmount(() => {
   --code-property: #5adaba;
   --code-search-match: rgb(239 179 93 / 22%);
   --code-search-match-border: rgb(239 179 93 / 62%);
-  --scrollbar-track: #071411;
-  --scrollbar-thumb: #29483f;
-  --scrollbar-thumb-hover: #3f6a5e;
+  --scrollbar-track: var(--terminal-shell-background, #0b1214);
+  --scrollbar-thumb: var(--terminal-shell-scrollbar, #35474a);
+  --scrollbar-thumb-hover: var(--terminal-shell-scrollbar-hover, #506367);
   --scrollbar-thumb-active: var(--brand, #35cba6);
   position: relative;
   height: 100%;

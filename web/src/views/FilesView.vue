@@ -1940,9 +1940,9 @@ onBeforeUnmount(() => {
 
 .code-viewer {
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--border));
+  border: 1px solid var(--terminal-shell-border, #29383a);
   border-radius: 12px;
-  background: #0b1120;
+  background: var(--terminal-shell-background, #0b1214);
 }
 
 .code-viewer > header,
@@ -1953,16 +1953,16 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 14px;
   padding: 7px 12px;
-  color: #9eacc5;
+  color: var(--terminal-shell-muted, #8a9695);
   font-size: 12px;
-  background: #111a2c;
+  background: var(--terminal-shell-panel, #111a1d);
 }
 
 .code-viewer > header > span:first-child {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #dce7f8;
+  color: var(--terminal-shell-text, #d8dddc);
 }
 
 .code-viewer__header-right,
@@ -1984,19 +1984,19 @@ onBeforeUnmount(() => {
   padding: 0;
   border: 0;
   border-radius: 6px;
-  color: #9eacc5;
+  color: var(--terminal-shell-muted, #8a9695);
   background: transparent;
   cursor: pointer;
 }
 
 .code-editor-tool:hover,
 .code-editor-tool.is-active {
-  color: #f4f8ff;
-  background: #26344a;
+  color: var(--terminal-shell-text, #d8dddc);
+  background: var(--terminal-shell-panel-raised, #182326);
 }
 
 .code-editor-tool.is-active {
-  color: #5eead4;
+  color: var(--brand, #35cba6);
 }
 
 .code-viewer > footer {

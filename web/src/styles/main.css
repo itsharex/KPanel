@@ -160,16 +160,10 @@ html {
 }
 
 .code-editor-shell,
+.diagnostic-log,
+.interactive-terminal,
 .log-view,
 .log-viewer {
-  --scrollbar-track: #09111d;
-  --scrollbar-thumb: #30445d;
-  --scrollbar-thumb-hover: #496685;
-  --scrollbar-thumb-active: #5eead4;
-}
-
-.diagnostic-log,
-.interactive-terminal {
   --scrollbar-track: var(--terminal-shell-background);
   --scrollbar-thumb: var(--terminal-shell-scrollbar);
   --scrollbar-thumb-hover: var(--terminal-shell-scrollbar-hover);
@@ -3606,9 +3600,9 @@ div.resource-name {
   padding: 16px;
   margin: 0;
   overflow: auto;
-  color: #cfebe3;
-  background: #07110f;
-  border: 1px solid #20352f;
+  color: var(--terminal-shell-text);
+  background: var(--terminal-shell-background);
+  border: 1px solid var(--terminal-shell-border);
   border-radius: 8px;
   font-size: 11px;
   line-height: 1.7;
