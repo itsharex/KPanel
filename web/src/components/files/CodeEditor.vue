@@ -302,12 +302,12 @@ async function initialize(): Promise<void> {
         '.cm-panel.cm-search input': {
           color: 'var(--code-text)',
           backgroundColor: 'var(--code-background)',
-          border: '1px solid rgb(96 112 139 / 55%)',
+          border: '1px solid var(--code-border)',
           borderRadius: '6px',
         },
         '.cm-searchMatch': {
-          backgroundColor: 'rgb(245 215 110 / 22%)',
-          outline: '1px solid rgb(245 215 110 / 60%)',
+          backgroundColor: 'var(--code-search-match)',
+          outline: '1px solid var(--code-search-match-border)',
         },
       }),
       keymap.of([
@@ -508,25 +508,34 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .code-editor-shell {
-  --code-background: #0b1120;
-  --code-gutter: #0e1728;
-  --code-text: #d8e3f5;
-  --code-caret: #5eead4;
-  --code-line-number: #60708b;
-  --code-active-line: rgb(94 234 212 / 7%);
-  --code-selection: rgb(59 130 246 / 32%);
-  --code-comment: #718096;
-  --code-keyword: #d58cff;
-  --code-string: #8fd694;
-  --code-number: #f2b36f;
-  --code-function: #73b7ff;
-  --code-type: #f5d76e;
-  --code-tag: #ff7b8b;
-  --code-property: #5eead4;
+  --code-background: #071411;
+  --code-gutter: #0b1b17;
+  --code-panel: #0d211c;
+  --code-text: #dceae7;
+  --code-caret: var(--brand, #35cba6);
+  --code-line-number: #688078;
+  --code-active-line: rgb(53 203 166 / 8%);
+  --code-selection: rgb(53 203 166 / 27%);
+  --code-border: color-mix(in srgb, var(--brand, #35cba6) 24%, #304941);
+  --code-comment: #748a84;
+  --code-keyword: #c9a7ff;
+  --code-string: #8ed6a5;
+  --code-number: #efb35d;
+  --code-function: #7eb8f2;
+  --code-type: #f0d27a;
+  --code-tag: #f28f98;
+  --code-property: #5adaba;
+  --code-search-match: rgb(239 179 93 / 22%);
+  --code-search-match-border: rgb(239 179 93 / 62%);
+  --scrollbar-track: #071411;
+  --scrollbar-thumb: #29483f;
+  --scrollbar-thumb-hover: #3f6a5e;
+  --scrollbar-thumb-active: var(--brand, #35cba6);
   position: relative;
   height: 100%;
   overflow: hidden;
   background: var(--code-background);
+  box-shadow: inset 0 0 0 1px var(--code-border);
 }
 
 .code-editor-host {
@@ -540,10 +549,10 @@ onBeforeUnmount(() => {
   right: 14px;
   width: min(430px, calc(100% - 28px));
   padding: 6px;
-  border: 1px solid #31415b;
+  border: 1px solid var(--code-border);
   border-radius: 8px;
   color: var(--code-text);
-  background: #111a2c;
+  background: var(--code-panel);
   box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
 }
 
@@ -566,14 +575,14 @@ onBeforeUnmount(() => {
   gap: 1px;
   padding-right: 2px;
   overflow: hidden;
-  border: 1px solid #3b4c68;
+  border: 1px solid var(--code-border);
   border-radius: 5px;
   background: var(--code-background);
 }
 
 .code-search__field:focus-within {
-  border-color: #409be8;
-  box-shadow: 0 0 0 1px #409be8;
+  border-color: var(--brand, #35cba6);
+  box-shadow: 0 0 0 1px var(--brand, #35cba6);
 }
 
 .code-search__field input {
@@ -589,12 +598,12 @@ onBeforeUnmount(() => {
 }
 
 .code-search__field input::placeholder {
-  color: #66758e;
+  color: var(--code-line-number);
 }
 
 .code-search__message {
   flex: 0 0 auto;
-  color: #f6a7a7;
+  color: var(--danger, #ef7a7a);
   font-size: 10px;
   white-space: nowrap;
 }
@@ -608,7 +617,7 @@ onBeforeUnmount(() => {
   padding: 0;
   border: 0;
   border-radius: 4px;
-  color: #a8b6cc;
+  color: #a9bdb7;
   background: transparent;
   cursor: pointer;
 }
@@ -620,12 +629,12 @@ onBeforeUnmount(() => {
 .code-search__icon:hover:not(:disabled),
 .code-search__option:hover,
 .code-search__option.is-active {
-  color: #f4f8ff;
-  background: #26344a;
+  color: #f2faf7;
+  background: color-mix(in srgb, var(--brand, #35cba6) 14%, var(--code-panel));
 }
 
 .code-search__option.is-active {
-  color: #5eead4;
+  color: var(--brand-strong, #5adaba);
 }
 
 .code-search__icon:disabled {

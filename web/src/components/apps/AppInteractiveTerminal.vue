@@ -37,6 +37,11 @@ let polling = false
 
 const inputFlushInterval = 12
 
+function terminalThemeColor(name: string, fallback: string): string {
+  if (!host.value) return fallback
+  return window.getComputedStyle(host.value).getPropertyValue(name).trim() || fallback
+}
+
 function decodeBase64(value: string): Uint8Array {
   const decoded = window.atob(value)
   const bytes = new Uint8Array(decoded.length)
@@ -175,10 +180,27 @@ onMounted(() => {
     lineHeight: 1.25,
     scrollback: 5000,
     theme: {
-      background: '#090d18',
-      foreground: '#dbe6f3',
-      cursor: '#8b7cff',
-      selectionBackground: '#6d5dfc55',
+      background: terminalThemeColor('--terminal-background', '#071411'),
+      foreground: terminalThemeColor('--terminal-text', '#dceae7'),
+      cursor: terminalThemeColor('--terminal-accent', '#35cba6'),
+      cursorAccent: terminalThemeColor('--terminal-background', '#071411'),
+      selectionBackground: terminalThemeColor('--terminal-selection', 'rgb(53 203 166 / 26%)'),
+      black: '#071411',
+      red: '#f48a8a',
+      green: '#35cba6',
+      yellow: '#efb35d',
+      blue: '#70a9ef',
+      magenta: '#b49af4',
+      cyan: '#5adaba',
+      white: '#dceae7',
+      brightBlack: '#6f8781',
+      brightRed: '#ffaaa8',
+      brightGreen: '#72e4ae',
+      brightYellow: '#ffd089',
+      brightBlue: '#9bc5f5',
+      brightMagenta: '#d0bfff',
+      brightCyan: '#8cebd4',
+      brightWhite: '#f4fbf9',
     },
   })
   fitAddon = new FitAddon()
@@ -273,10 +295,25 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .interactive-terminal {
+  --terminal-background: #071411;
+  --terminal-panel: #0c1d19;
+  --terminal-panel-raised: #10251f;
+  --terminal-text: #dceae7;
+  --terminal-muted: #89a49d;
+  --terminal-accent: var(--brand, #35cba6);
+  --terminal-selection: rgb(53 203 166 / 26%);
+  --terminal-border: color-mix(in srgb, var(--terminal-accent) 24%, #263d37);
+  --scrollbar-track: #071411;
+  --scrollbar-thumb: #29483f;
+  --scrollbar-thumb-hover: #3f6a5e;
+  --scrollbar-thumb-active: var(--terminal-accent);
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border, #243044) 88%, #6d5dfc);
+  border: 1px solid var(--terminal-border);
   border-radius: 14px;
-  background: #090d18;
+  background: var(--terminal-background);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--terminal-accent) 12%, transparent),
+    0 14px 34px rgb(0 0 0 / 18%);
 }
 
 .interactive-terminal header {
@@ -285,8 +322,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 16px;
   padding: 11px 14px;
-  border-bottom: 1px solid #202a3b;
-  background: #111827;
+  border-bottom: 1px solid var(--terminal-border);
+  background: var(--terminal-panel);
 }
 
 .interactive-terminal header div {
@@ -295,12 +332,12 @@ onBeforeUnmount(() => {
 }
 
 .interactive-terminal header strong {
-  color: #f2f5fb;
+  color: #f2faf7;
   font-size: 13px;
 }
 
 .interactive-terminal header small {
-  color: #91a0b7;
+  color: var(--terminal-muted);
   font-size: 11px;
 }
 
@@ -308,19 +345,19 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 4px 9px;
-  color: #aebbd0;
-  background: #243044;
+  color: #b5c8c2;
+  background: var(--terminal-panel-raised);
   font-size: 11px;
 }
 
 .interactive-terminal header > span.is-connected {
   color: #72e4ae;
-  background: #123b30;
+  background: color-mix(in srgb, var(--terminal-accent) 18%, var(--terminal-panel));
 }
 
 .interactive-terminal header > span.is-error {
-  color: #ffb4aa;
-  background: #462020;
+  color: #ffaaa8;
+  background: color-mix(in srgb, var(--danger, #ef7a7a) 18%, var(--terminal-panel));
 }
 
 .interactive-terminal__screen {
@@ -342,37 +379,38 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 8px;
   padding: 10px;
-  border-top: 1px solid #202a3b;
-  background: #111827;
+  border-top: 1px solid var(--terminal-border);
+  background: var(--terminal-panel);
 }
 
 .interactive-terminal__composer input {
   min-width: 0;
   flex: 1;
-  border: 1px solid #314057;
+  border: 1px solid #315148;
   border-radius: 9px;
   padding: 9px 11px;
-  color: #e7edf7;
-  background: #090d18;
+  color: var(--terminal-text);
+  background: var(--terminal-background);
   font: 13px/1.2 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
 }
 
 .interactive-terminal__composer input:focus {
-  border-color: #6d5dfc;
-  outline: 2px solid #6d5dfc33;
+  border-color: var(--terminal-accent);
+  outline: 2px solid color-mix(in srgb, var(--terminal-accent) 24%, transparent);
 }
 
 .interactive-terminal__composer button {
-  border: 1px solid #6d5dfc;
+  border: 1px solid var(--terminal-accent);
   border-radius: 9px;
   padding: 8px 16px;
   color: #fff;
-  background: #6d5dfc;
+  background: var(--terminal-accent);
   font-weight: 700;
   cursor: pointer;
 }
 
 .interactive-terminal__composer button:hover {
-  background: #7c6dff;
+  border-color: var(--brand-strong, #5adaba);
+  background: var(--brand-strong, #5adaba);
 }
 </style>
