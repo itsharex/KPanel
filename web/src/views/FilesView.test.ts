@@ -38,6 +38,7 @@ interface FileBindings {
   loadDirectory: (path?: string, append?: boolean) => Promise<void>
   savePreview: (content?: string) => Promise<void>
   submitDialog: () => Promise<void>
+  cancelArchive: () => void
   openTrash: () => Promise<void>
   runTrashAction: (action: 'trash_restore' | 'trash_delete' | 'trash_empty') => Promise<void>
   pasteClipboard: (target?: string) => Promise<void>
@@ -47,7 +48,7 @@ interface FileBindings {
   selectEntry: (event: MouseEvent, path: string) => void
   preventNativeSelection: (event: Event) => void
   handleFileShortcut: (event: KeyboardEvent) => void
-  openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'trash', entry?: TestFileEntry) => void
+  openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash', entry?: TestFileEntry) => void
   currentPath: { value: string }
   directory: {
     value?: {
@@ -64,7 +65,9 @@ interface FileBindings {
   }
   contextMenu: { value?: { entry?: TestFileEntry; x: number; y: number } }
   dialogEntries: { value: TestFileEntry[] }
-  dialogAction: { value?: 'trash' }
+  dialogAction: { value?: 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash' }
+  dialogValue: { value: string }
+  dialogFormat: { value: 'tar.gz' | 'zip' | 'tar' }
   trashEntries: { value: Array<{ id: string; resourceVersion: string; restorable: boolean }> }
   selectedTrash: { value: Set<string> }
   previewEntry: { value?: TestFileEntry }
@@ -245,6 +248,81 @@ describe('FilesView directory loading', () => {
       '0 项成功，1 项失败：文件状态已变化',
     )
     expect(mocks.list).toHaveBeenCalled()
+    expect(view.dialogAction.value).toBeUndefined()
+  })
+
+  it('compresses selected entries with the chosen fixed archive format', async () => {
+    const view = setupView()
+    const entry = testEntry('website.txt')
+    view.currentPath.value = '/web'
+    view.directory.value = { path: '/web', entries: [entry] }
+    view.selected.value = new Set([entry.path])
+    view.openDialog('compress')
+    view.dialogValue.value = 'release'
+    view.dialogFormat.value = 'zip'
+    mocks.action.mockResolvedValueOnce({
+      action: 'compress',
+      succeeded: [{ path: '/web/release.zip' }],
+      failed: [],
+    })
+
+    await view.submitDialog()
+
+    expect(mocks.action).toHaveBeenCalledWith({
+      action: 'compress',
+      sources: [entry.path],
+      target: '/web',
+      name: 'release.zip',
+      format: 'zip',
+      expectedResourceVersions: { [entry.path]: entry.resourceVersion },
+    }, expect.any(AbortSignal))
+    expect(mocks.success).toHaveBeenCalledWith('压缩完成', '1 项已处理')
+  })
+
+  it('extracts a supported archive into a new non-overwriting directory', async () => {
+    const view = setupView()
+    const entry = testEntry('backup.tar.gz')
+    view.currentPath.value = '/backups'
+    view.directory.value = { path: '/backups', entries: [entry] }
+    mocks.action.mockResolvedValueOnce({
+      action: 'extract',
+      succeeded: [{ path: entry.path, destination: '/backups/backup' }],
+      failed: [],
+    })
+
+    view.openDialog('extract', entry)
+    await view.submitDialog()
+
+    expect(mocks.action).toHaveBeenCalledWith({
+      action: 'extract',
+      sources: [entry.path],
+      target: '/backups',
+      name: 'backup',
+      format: 'tar.gz',
+      expectedResourceVersion: entry.resourceVersion,
+    }, expect.any(AbortSignal))
+    expect(mocks.success).toHaveBeenCalledWith('解压完成', '1 项已处理')
+  })
+
+  it('aborts an active archive request and reports cleanup without a false failure', async () => {
+    const view = setupView()
+    const entry = testEntry('large.log')
+    view.currentPath.value = '/logs'
+    view.directory.value = { path: '/logs', entries: [entry] }
+    view.selected.value = new Set([entry.path])
+    view.openDialog('compress')
+    mocks.action.mockImplementationOnce((_input: unknown, signal?: AbortSignal) =>
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+      }),
+    )
+
+    const pending = view.submitDialog()
+    view.cancelArchive()
+    await pending
+
+    expect(mocks.success).toHaveBeenCalledWith('操作已停止', '未完成的临时文件已清理。')
+    expect(mocks.danger).not.toHaveBeenCalledWith('文件操作失败', expect.any(String))
     expect(view.dialogAction.value).toBeUndefined()
   })
 

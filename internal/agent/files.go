@@ -321,6 +321,8 @@ func writeFileProblem(w http.ResponseWriter, requestID string, err error) {
 		status, code, title = http.StatusInsufficientStorage, "file_trash_full", "回收站已满"
 	case errors.Is(err, filemanager.ErrTrashMetadata):
 		status, code, title = http.StatusUnprocessableEntity, "file_trash_not_restorable", "回收站项目无法恢复"
+	case errors.Is(err, filemanager.ErrInvalidArchive):
+		status, code, title = http.StatusUnprocessableEntity, "file_archive_invalid", "压缩包格式或内容无效"
 	case errors.Is(err, filemanager.ErrNotDirectory),
 		errors.Is(err, filemanager.ErrNotRegular):
 		status, code, title = http.StatusUnprocessableEntity, "file_type_invalid", "文件类型不支持此操作"

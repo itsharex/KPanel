@@ -243,6 +243,22 @@ func TestFileActionUsesFixedEnumAndWritesAudit(t *testing.T) {
 	if !intent || !success {
 		t.Fatalf("file audit events missing: %#v", events)
 	}
+
+	agent.streamResponse = []byte(`{"action":"compress","succeeded":[{"path":"/backup.tar.gz"}]}`)
+	agent.streamHeaders = http.Header{"Content-Type": []string{"application/json"}}
+	archive := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/actions",
+		[]byte(`{"action":"compress","sources":["/website"],"target":"/","name":"backup.tar.gz","format":"tar.gz"}`),
+		sessionCookie, csrfCookie, headers,
+	)
+	if archive.Code != http.StatusOK {
+		t.Fatalf("compress action = %d %s", archive.Code, archive.Body.String())
+	}
+	streamCalls := agent.snapshotStreamCalls()
+	if len(streamCalls) != 1 ||
+		!strings.Contains(string(streamCalls[0].body), `"format":"tar.gz"`) {
+		t.Fatalf("compress action was not forwarded: %#v", streamCalls)
+	}
 }
 
 func TestFileActionAuditsPartialFailure(t *testing.T) {

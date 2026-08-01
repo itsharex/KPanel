@@ -15,7 +15,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
 
-func newTestManager(t *testing.T) (*Manager, string) {
+func newTestManager(t testing.TB) (*Manager, string) {
 	t.Helper()
 	root := t.TempDir()
 	manager, err := New(Config{

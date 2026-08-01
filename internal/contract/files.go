@@ -36,6 +36,7 @@ type FileActionRequest struct {
 	Target                   string            `json:"target,omitempty"`
 	Name                     string            `json:"name,omitempty"`
 	Mode                     string            `json:"mode,omitempty"`
+	Format                   string            `json:"format,omitempty"`
 	ExpectedResourceVersion  string            `json:"expectedResourceVersion,omitempty"`
 	ExpectedResourceVersions map[string]string `json:"expectedResourceVersions,omitempty"`
 }

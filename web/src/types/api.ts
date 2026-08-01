@@ -1093,6 +1093,8 @@ export type FileAction =
   | 'rename'
   | 'copy'
   | 'move'
+  | 'compress'
+  | 'extract'
   | 'trash'
   | 'chmod'
   | 'trash_restore'
@@ -1105,6 +1107,7 @@ export interface FileActionInput {
   trashIds?: string[]
   target?: string
   name?: string
+  format?: 'zip' | 'tar' | 'tar.gz'
   mode?: string
   expectedResourceVersion?: string
   expectedResourceVersions?: Record<string, string>

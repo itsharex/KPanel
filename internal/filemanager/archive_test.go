@@ -1,0 +1,355 @@
+package filemanager
+
+import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"encoding/binary"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/kejilion/kejilion-panel/internal/contract"
+)
+
+func TestCompressAndExtractSupportedFormats(t *testing.T) {
+	for _, format := range []struct {
+		name     string
+		fileName string
+	}{
+		{name: archiveFormatZIP, fileName: "website.zip"},
+		{name: archiveFormatTAR, fileName: "website.tar"},
+		{name: archiveFormatTARGZ, fileName: "website.tar.gz"},
+	} {
+		t.Run(format.name, func(t *testing.T) {
+			manager, root := newTestManager(t)
+			mustMkdirAll(t, filepath.Join(root, "website", "assets"))
+			mustWrite(t, filepath.Join(root, "website", "index.html"), "hello")
+			mustWrite(t, filepath.Join(root, "website", "assets", "app.js"), "script")
+			modified := time.Date(2026, 7, 1, 12, 30, 20, 0, time.UTC)
+			if err := os.Chtimes(filepath.Join(root, "website", "index.html"), modified, modified); err != nil {
+				t.Fatal(err)
+			}
+
+			compressed, err := manager.Action(context.Background(), contract.FileActionRequest{
+				Action:  "compress",
+				Sources: []string{"/website"},
+				Target:  "/",
+				Name:    format.fileName,
+				Format:  format.name,
+			})
+			if err != nil || len(compressed.Succeeded) != 1 {
+				t.Fatalf("compress result = %#v err=%v", compressed, err)
+			}
+			if _, err := os.Stat(filepath.Join(root, format.fileName)); err != nil {
+				t.Fatal(err)
+			}
+
+			extracted, err := manager.Action(context.Background(), contract.FileActionRequest{
+				Action:                  "extract",
+				Sources:                 []string{"/" + format.fileName},
+				Target:                  "/",
+				Name:                    "restored-" + strings.ReplaceAll(format.name, ".", "-"),
+				Format:                  format.name,
+				ExpectedResourceVersion: compressed.Succeeded[0].ResourceVersion,
+			})
+			if err != nil || len(extracted.Succeeded) != 1 {
+				t.Fatalf("extract result = %#v err=%v", extracted, err)
+			}
+			restoredRoot := filepath.Join(root, "restored-"+strings.ReplaceAll(format.name, ".", "-"))
+			content, err := os.ReadFile(filepath.Join(restoredRoot, "index.html"))
+			if err != nil || string(content) != "hello" {
+				t.Fatalf("restored index = %q err=%v", content, err)
+			}
+			if _, err := os.Stat(filepath.Join(restoredRoot, "website", "index.html")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("single selected directory must not be nested twice: %v", err)
+			}
+			restoredInfo, err := os.Stat(filepath.Join(restoredRoot, "index.html"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if restoredInfo.ModTime().Sub(modified).Abs() > 2*time.Second {
+				t.Fatalf("restored modification time = %v", restoredInfo.ModTime())
+			}
+		})
+	}
+}
+
+func TestCompressMultipleEntriesKeepsTheirBaseNames(t *testing.T) {
+	manager, root := newTestManager(t)
+	mustWrite(t, filepath.Join(root, "one.txt"), "one")
+	mustWrite(t, filepath.Join(root, "folder", "two.txt"), "two")
+
+	_, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "compress", Sources: []string{"/one.txt", "/folder"},
+		Target: "/", Name: "bundle.zip", Format: archiveFormatZIP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "extract", Sources: []string{"/bundle.zip"},
+		Target: "/", Name: "bundle", Format: archiveFormatZIP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for relative, expected := range map[string]string{
+		"one.txt": "one", "folder/two.txt": "two",
+	} {
+		content, readErr := os.ReadFile(filepath.Join(root, "bundle", filepath.FromSlash(relative)))
+		if readErr != nil || string(content) != expected {
+			t.Fatalf("%s = %q err=%v", relative, content, readErr)
+		}
+	}
+}
+
+func TestCompressAndExtractEmptyDirectory(t *testing.T) {
+	manager, root := newTestManager(t)
+	mustMkdirAll(t, filepath.Join(root, "empty"))
+	for _, format := range []struct {
+		name string
+		file string
+	}{
+		{name: archiveFormatZIP, file: "empty.zip"},
+		{name: archiveFormatTAR, file: "empty.tar"},
+		{name: archiveFormatTARGZ, file: "empty.tar.gz"},
+	} {
+		result, err := manager.Action(context.Background(), contract.FileActionRequest{
+			Action: "compress", Sources: []string{"/empty"}, Target: "/",
+			Name: format.file, Format: format.name,
+		})
+		if err != nil {
+			t.Fatalf("compress %s: %v", format.name, err)
+		}
+		_, err = manager.Action(context.Background(), contract.FileActionRequest{
+			Action: "extract", Sources: []string{"/" + format.file}, Target: "/",
+			Name: "restored-" + strings.ReplaceAll(format.name, ".", "-"), Format: format.name,
+			ExpectedResourceVersion: result.Succeeded[0].ResourceVersion,
+		})
+		if err != nil {
+			t.Fatalf("extract %s: %v", format.name, err)
+		}
+	}
+}
+
+func TestExtractRejectsTraversalLinksAndSpecialEntries(t *testing.T) {
+	for _, fixture := range []struct {
+		name   string
+		format string
+		write  func(*testing.T, string)
+	}{
+		{
+			name: "traversal.zip", format: archiveFormatZIP,
+			write: func(t *testing.T, target string) {
+				writeZIPFixture(t, target, "../escaped.txt", 0644, "escaped")
+			},
+		},
+		{
+			name: "symlink.zip", format: archiveFormatZIP,
+			write: func(t *testing.T, target string) {
+				writeZIPFixture(t, target, "link", os.ModeSymlink|0777, "/etc/passwd")
+			},
+		},
+		{
+			name: "hardlink.tar.gz", format: archiveFormatTARGZ,
+			write: func(t *testing.T, target string) {
+				writeTARGZFixture(t, target, &tar.Header{
+					Name: "link", Typeflag: tar.TypeLink, Linkname: "target", Mode: 0644,
+				}, "")
+			},
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			manager, root := newTestManager(t)
+			fixture.write(t, filepath.Join(root, fixture.name))
+			_, err := manager.Action(context.Background(), contract.FileActionRequest{
+				Action: "extract", Sources: []string{"/" + fixture.name},
+				Target: "/", Name: "output", Format: fixture.format,
+			})
+			if !errors.Is(err, ErrInvalidArchive) {
+				t.Fatalf("expected invalid archive, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "output")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("failed extraction left output: %v", err)
+			}
+			matches, _ := filepath.Glob(filepath.Join(root, ".kpanel-extract-*"))
+			if len(matches) != 0 {
+				t.Fatalf("failed extraction left temporary paths: %#v", matches)
+			}
+		})
+	}
+}
+
+func TestArchiveBudgetsCancellationAndCollisionsAreAtomic(t *testing.T) {
+	root := t.TempDir()
+	manager, err := New(Config{Root: root, MaxCopyBytes: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	writeZIPFixture(t, filepath.Join(root, "large.zip"), "large.txt", 0644, "12345")
+	if _, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "extract", Sources: []string{"/large.zip"}, Target: "/",
+		Name: "large", Format: archiveFormatZIP,
+	}); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("expected extraction budget failure, got %v", err)
+	}
+	mustWrite(t, filepath.Join(root, "source.txt"), "1234")
+	mustWrite(t, filepath.Join(root, "existing.zip"), "keep")
+	if _, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "compress", Sources: []string{"/source.txt"}, Target: "/",
+		Name: "existing.zip", Format: archiveFormatZIP,
+	}); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("expected archive collision, got %v", err)
+	}
+	content, _ := os.ReadFile(filepath.Join(root, "existing.zip"))
+	if string(content) != "keep" {
+		t.Fatalf("existing archive was overwritten: %q", content)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := manager.Action(cancelled, contract.FileActionRequest{
+		Action: "compress", Sources: []string{"/source.txt"}, Target: "/",
+		Name: "cancelled.tar.gz", Format: archiveFormatTARGZ,
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "cancelled.tar.gz")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled archive left output: %v", err)
+	}
+}
+
+func TestZIPDirectoryEntryCountIsBoundedBeforeAllocation(t *testing.T) {
+	manager, root := newTestManager(t)
+	endRecord := make([]byte, 22)
+	copy(endRecord, []byte{'P', 'K', 0x05, 0x06})
+	binary.LittleEndian.PutUint16(endRecord[8:10], uint16(maxCopyEntries+1))
+	binary.LittleEndian.PutUint16(endRecord[10:12], uint16(maxCopyEntries+1))
+	if err := os.WriteFile(filepath.Join(root, "many.zip"), endRecord, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "extract", Sources: []string{"/many.zip"}, Target: "/",
+		Name: "many", Format: archiveFormatZIP,
+	})
+	if !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("expected bounded ZIP directory rejection, got %v", err)
+	}
+}
+
+func BenchmarkCompressTARGZ8MiB(b *testing.B) {
+	manager, root := newTestManager(b)
+	content := make([]byte, 8<<20)
+	for index := range content {
+		content[index] = byte(index * 31)
+	}
+	if err := os.WriteFile(filepath.Join(root, "payload.bin"), content, 0600); err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(content)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		name := "payload-" + strconv.Itoa(index) + ".tar.gz"
+		if _, err := manager.Action(context.Background(), contract.FileActionRequest{
+			Action: "compress", Sources: []string{"/payload.bin"}, Target: "/",
+			Name: name, Format: archiveFormatTARGZ,
+		}); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+		if err := os.Remove(filepath.Join(root, name)); err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+	}
+}
+
+func BenchmarkExtractTARGZ8MiB(b *testing.B) {
+	manager, root := newTestManager(b)
+	content := make([]byte, 8<<20)
+	for index := range content {
+		content[index] = byte(index * 31)
+	}
+	if err := os.WriteFile(filepath.Join(root, "payload.bin"), content, 0600); err != nil {
+		b.Fatal(err)
+	}
+	if _, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "compress", Sources: []string{"/payload.bin"}, Target: "/",
+		Name: "payload.tar.gz", Format: archiveFormatTARGZ,
+	}); err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(content)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		name := "restored-" + strconv.Itoa(index)
+		if _, err := manager.Action(context.Background(), contract.FileActionRequest{
+			Action: "extract", Sources: []string{"/payload.tar.gz"}, Target: "/",
+			Name: name, Format: archiveFormatTARGZ,
+		}); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+		if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+	}
+}
+
+func writeZIPFixture(t *testing.T, target, name string, mode os.FileMode, content string) {
+	t.Helper()
+	file, err := os.Create(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := zip.NewWriter(file)
+	header := &zip.FileHeader{Name: name, Method: zip.Store}
+	header.SetMode(mode)
+	header.UncompressedSize64 = uint64(len(content))
+	entry, err := writer.CreateHeader(header)
+	if err == nil {
+		_, err = entry.Write([]byte(content))
+	}
+	if closeErr := writer.Close(); err == nil {
+		err = closeErr
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTARGZFixture(t *testing.T, target string, header *tar.Header, content string) {
+	t.Helper()
+	var output bytes.Buffer
+	gzipWriter := gzip.NewWriter(&output)
+	tarWriter := tar.NewWriter(gzipWriter)
+	header.Size = int64(len(content))
+	if err := tarWriter.WriteHeader(header); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tarWriter.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, output.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+}

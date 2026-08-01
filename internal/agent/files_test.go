@@ -162,6 +162,15 @@ func TestFileBusyMapsToTooManyRequests(t *testing.T) {
 	}
 }
 
+func TestInvalidArchiveMapsToUnprocessableEntity(t *testing.T) {
+	response := httptest.NewRecorder()
+	writeFileProblem(response, "request-id", filemanager.ErrInvalidArchive)
+	if response.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(response.Body.String(), `"file_archive_invalid"`) {
+		t.Fatalf("invalid archive status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestFileActionReturnsMultiStatusForPartialResult(t *testing.T) {
 	server := testServer(t)
 	root := t.TempDir()
@@ -187,6 +196,45 @@ func TestFileActionReturnsMultiStatusForPartialResult(t *testing.T) {
 	}
 	if len(result.Succeeded) != 1 || len(result.Failed) != 1 {
 		t.Fatalf("partial result=%#v", result)
+	}
+}
+
+func TestFileArchiveActionsRoundTripThroughAgentAPI(t *testing.T) {
+	server := testServer(t)
+	root := t.TempDir()
+	manager, err := filemanager.New(filemanager.Config{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server.files = manager
+	if err := os.WriteFile(filepath.Join(root, "hello.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	compressBody, _ := json.Marshal(contract.FileActionRequest{
+		Action: "compress", Sources: []string{"/hello.txt"}, Target: "/",
+		Name: "hello.tar.gz", Format: "tar.gz",
+	})
+	compressResponse := fileRequest(server, http.MethodPost, "/v1/files/actions", string(compressBody))
+	if compressResponse.Code != http.StatusOK {
+		t.Fatalf("compress status=%d body=%s", compressResponse.Code, compressResponse.Body.String())
+	}
+	var compressed contract.FileActionResult
+	if err := json.Unmarshal(compressResponse.Body.Bytes(), &compressed); err != nil || len(compressed.Succeeded) != 1 {
+		t.Fatalf("compress result=%#v err=%v", compressed, err)
+	}
+	extractBody, _ := json.Marshal(contract.FileActionRequest{
+		Action: "extract", Sources: []string{"/hello.tar.gz"}, Target: "/",
+		Name: "restored", Format: "tar.gz",
+		ExpectedResourceVersion: compressed.Succeeded[0].ResourceVersion,
+	})
+	extractResponse := fileRequest(server, http.MethodPost, "/v1/files/actions", string(extractBody))
+	if extractResponse.Code != http.StatusOK {
+		t.Fatalf("extract status=%d body=%s", extractResponse.Code, extractResponse.Body.String())
+	}
+	content, err := os.ReadFile(filepath.Join(root, "restored", "hello.txt"))
+	if err != nil || string(content) != "hello" {
+		t.Fatalf("restored content=%q err=%v", content, err)
 	}
 }
 

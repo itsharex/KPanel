@@ -39,9 +39,10 @@ import type { FileActionInput, FileDirectory, FileEntry, FileTrashEntry } from '
 
 const CodeEditor = defineAsyncComponent(() => import('@/components/files/CodeEditor.vue'))
 
-type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'trash'
+type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash'
 type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
 type ClipboardMode = 'copy' | 'move'
+type ArchiveFormat = 'tar.gz' | 'zip' | 'tar'
 
 interface FileClipboard {
   mode: ClipboardMode
@@ -75,6 +76,7 @@ const uploadInput = ref<HTMLInputElement>()
 const uploadProgress = ref<Record<string, number>>({})
 const dialogAction = ref<DialogAction>()
 const dialogValue = ref('')
+const dialogFormat = ref<ArchiveFormat>('tar.gz')
 const dialogBusy = ref(false)
 const dialogEntries = ref<FileEntry[]>([])
 const contextMenu = ref<{ entry?: FileEntry; x: number; y: number }>()
@@ -97,7 +99,9 @@ const trashTotal = ref(0)
 const trashTruncated = ref(false)
 const selectedTrash = ref(new Set<string>())
 let directoryController: AbortController | undefined
+let archiveController: AbortController | undefined
 let searchTimer: number | undefined
+let unmounted = false
 
 const entries = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
@@ -154,6 +158,8 @@ const dialogTitle = computed(() => {
     mkdir: '新建文件夹',
     rename: '重命名',
     chmod: dialogEntries.value.length > 1 ? `修改 ${dialogEntries.value.length} 项权限` : '修改权限',
+    compress: dialogEntries.value.length > 1 ? `压缩 ${dialogEntries.value.length} 项` : '压缩文件',
+    extract: '解压文件',
     trash: dialogEntries.value.length > 1 ? `移入回收站（${dialogEntries.value.length} 项）` : '移入回收站',
   }
   return dialogAction.value ? titles[dialogAction.value] : '文件操作'
@@ -163,6 +169,27 @@ function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message
   if (error instanceof Error) return error.message
   return '操作未完成，请稍后重试。'
+}
+
+function archiveFormat(entry: FileEntry): ArchiveFormat | undefined {
+  if (entry.kind !== 'file') return undefined
+  const name = entry.name.toLocaleLowerCase()
+  if (name.endsWith('.tar.gz') || name.endsWith('.tgz')) return 'tar.gz'
+  if (name.endsWith('.zip')) return 'zip'
+  if (name.endsWith('.tar')) return 'tar'
+  return undefined
+}
+
+function archiveSuffix(format: ArchiveFormat): string {
+  return format === 'tar.gz' ? '.tar.gz' : `.${format}`
+}
+
+function withoutArchiveSuffix(name: string): string {
+  return name.replace(/\.(?:tar\.gz|tgz|zip|tar)$/i, '') || 'archive'
+}
+
+function normalizedArchiveName(name: string, format: ArchiveFormat): string {
+  return `${withoutArchiveSuffix(name.trim())}${archiveSuffix(format)}`
 }
 
 async function loadDirectory(path = currentPath.value, append = false): Promise<void> {
@@ -261,7 +288,7 @@ async function savePreview(content?: string): Promise<void> {
       codeEditorRef.value?.markClean()
     }
     toast.success('已保存', entry.name)
-    await loadDirectory()
+    if (!unmounted) await loadDirectory()
   } catch (error) {
     toast.danger('保存失败', errorMessage(error))
   } finally {
@@ -348,7 +375,7 @@ function showContext(event: MouseEvent, entry: FileEntry): void {
   contextMenu.value = {
     entry,
     x: Math.max(8, Math.min(event.clientX, window.innerWidth - 210)),
-    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 360)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 430)),
   }
 }
 
@@ -371,10 +398,27 @@ function showDirectoryContext(event: MouseEvent): void {
 function openDialog(action: DialogAction, entry?: FileEntry): void {
   contextMenu.value = undefined
   dialogEntries.value = entry ? [entry] : [...selectedEntries.value]
+  if ((action === 'compress' || action === 'extract') && !dialogEntries.value.length) return
   dialogAction.value = action
   if (action === 'mkdir') dialogValue.value = ''
   else if (action === 'rename') dialogValue.value = dialogEntries.value[0]?.name || ''
   else if (action === 'chmod') dialogValue.value = '644'
+  else if (action === 'compress') {
+    dialogFormat.value = 'tar.gz'
+    dialogValue.value = dialogEntries.value.length === 1
+      ? `${dialogEntries.value[0]?.name || 'archive'}${archiveSuffix(dialogFormat.value)}`
+      : `archive${archiveSuffix(dialogFormat.value)}`
+  } else if (action === 'extract') {
+    const source = dialogEntries.value[0]
+    const format = source ? archiveFormat(source) : undefined
+    if (!source || !format) {
+      dialogAction.value = undefined
+      toast.danger('无法解压', '仅支持 .tar.gz、.tgz、.zip 和 .tar 文件。')
+      return
+    }
+    dialogFormat.value = format
+    dialogValue.value = withoutArchiveSuffix(source.name)
+  }
 }
 
 function closeDialog(): void {
@@ -382,6 +426,10 @@ function closeDialog(): void {
   dialogAction.value = undefined
   dialogValue.value = ''
   dialogEntries.value = []
+}
+
+function cancelArchive(): void {
+  archiveController?.abort()
 }
 
 function setClipboard(mode: ClipboardMode, entry?: FileEntry): void {
@@ -427,7 +475,7 @@ async function pasteClipboard(target = currentPath.value): Promise<void> {
         `${result.succeeded.length} 项已粘贴到 ${target}`,
       )
     }
-    await loadDirectory()
+    if (!unmounted) await loadDirectory()
   } catch (error) {
     toast.danger('粘贴失败', errorMessage(error))
     await loadDirectory()
@@ -439,6 +487,10 @@ async function pasteClipboard(target = currentPath.value): Promise<void> {
 async function submitDialog(): Promise<void> {
   const action = dialogAction.value
   if (!action) return
+  const controller = action === 'compress' || action === 'extract'
+    ? new AbortController()
+    : undefined
+  archiveController = controller
   dialogBusy.value = true
   try {
     let input: FileActionInput
@@ -468,11 +520,35 @@ async function submitDialog(): Promise<void> {
         sources: dialogEntries.value.map((entry) => entry.path),
         mode: dialogValue.value.trim(),
       }
+    } else if (action === 'compress') {
+      input = {
+        action,
+        sources: dialogEntries.value.map((entry) => entry.path),
+        target: currentPath.value,
+        name: normalizedArchiveName(dialogValue.value, dialogFormat.value),
+        format: dialogFormat.value,
+        expectedResourceVersions: Object.fromEntries(
+          dialogEntries.value.map((entry) => [entry.path, entry.resourceVersion]),
+        ),
+      }
+    } else if (action === 'extract') {
+      const entry = dialogEntries.value[0]
+      if (!entry) throw new Error('请选择需要解压的文件。')
+      input = {
+        action,
+        sources: [entry.path],
+        target: currentPath.value,
+        name: dialogValue.value.trim(),
+        format: dialogFormat.value,
+        expectedResourceVersion: entry.resourceVersion,
+      }
     } else {
       const unsupportedAction: never = action
       throw new Error(`不支持的文件操作：${unsupportedAction}`)
     }
-    const result = await api.files.action(input)
+    const result = controller
+      ? await api.files.action(input, controller.signal)
+      : await api.files.action(input)
     if (result.failed.length) {
       toast.danger(
         result.succeeded.length ? '部分文件未处理' : '文件操作未完成',
@@ -480,18 +556,32 @@ async function submitDialog(): Promise<void> {
       )
     } else {
       toast.success(
-        action === 'trash' ? '已移入回收站' : '文件操作完成',
+        action === 'trash'
+          ? '已移入回收站'
+          : action === 'compress'
+            ? '压缩完成'
+            : action === 'extract'
+              ? '解压完成'
+              : '文件操作完成',
         `${Math.max(result.succeeded.length, 1)} 项已处理`,
       )
     }
     dialogAction.value = undefined
     dialogValue.value = ''
     dialogEntries.value = []
-    await loadDirectory()
+    if (!unmounted) await loadDirectory()
   } catch (error) {
-    toast.danger('文件操作失败', errorMessage(error))
-    await loadDirectory()
+    if (controller?.signal.aborted) {
+      if (!unmounted) toast.success('操作已停止', '未完成的临时文件已清理。')
+      dialogAction.value = undefined
+      dialogValue.value = ''
+      dialogEntries.value = []
+    } else {
+      toast.danger('文件操作失败', errorMessage(error))
+    }
+    if (!unmounted) await loadDirectory()
   } finally {
+    if (archiveController === controller) archiveController = undefined
     dialogBusy.value = false
   }
 }
@@ -717,7 +807,9 @@ watch(search, () => {
 })
 
 onBeforeUnmount(() => {
+  unmounted = true
   directoryController?.abort()
+  archiveController?.abort()
   if (searchTimer !== undefined) window.clearTimeout(searchTimer)
   window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleFileShortcut)
@@ -935,6 +1027,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="downloadSelected"
         ><Download :size="15" />下载</button>
+        <button type="button" @click="openDialog('compress')"><Archive :size="15" />压缩</button>
         <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
         <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
         <button type="button" @click="openDialog('chmod')"><ShieldCheck :size="15" />权限</button>
@@ -956,6 +1049,16 @@ onBeforeUnmount(() => {
       </button>
       <button v-if="contextMenu.entry?.kind === 'file'" type="button" @click="download(contextMenu.entry)">
         <Download :size="15" />下载
+      </button>
+      <button
+        v-if="contextMenu.entry && archiveFormat(contextMenu.entry)"
+        type="button"
+        @click="openDialog('extract', contextMenu.entry)"
+      >
+        <FolderOpen :size="15" />解压到文件夹
+      </button>
+      <button v-if="contextMenu.entry" type="button" @click="openDialog('compress', contextMenu.entry)">
+        <Archive :size="15" />压缩
       </button>
       <hr v-if="contextMenu.entry" />
       <button v-if="contextMenu.entry" type="button" @click="openDialog('rename', contextMenu.entry)">
@@ -990,7 +1093,15 @@ onBeforeUnmount(() => {
     <ModalDialog
       :open="Boolean(dialogAction)"
       :title="dialogTitle"
-      :description="dialogAction === 'trash' ? '文件将移动到 KPanel 隔离回收区，可在回收站中恢复。' : ''"
+      :description="
+        dialogAction === 'trash'
+          ? '文件将移动到 KPanel 隔离回收区，可在回收站中恢复。'
+          : dialogAction === 'compress'
+            ? '默认使用适合 Linux 服务器的 tar.gz；也可选择 ZIP 或 TAR。'
+            : dialogAction === 'extract'
+              ? '内容将解压到全新的文件夹，不覆盖已有文件。'
+              : ''
+      "
       size="small"
       @close="closeDialog"
     >
@@ -1004,16 +1115,37 @@ onBeforeUnmount(() => {
                   ? '新名称'
                   : dialogAction === 'chmod'
                     ? '权限（八进制）'
-                    : '目标文件夹'
+                    : dialogAction === 'compress'
+                      ? '压缩包名称'
+                      : '目标文件夹名称'
             }}
           </span>
           <input
             v-model="dialogValue"
-            :placeholder="dialogAction === 'chmod' ? '例如 644 或 755' : '/web/html'"
+            :placeholder="
+              dialogAction === 'chmod'
+                ? '例如 644 或 755'
+                : dialogAction === 'compress'
+                  ? '例如 website.tar.gz'
+                  : dialogAction === 'extract'
+                    ? '例如 website'
+                    : '输入名称'
+            "
             autocomplete="off"
             @keydown.enter="submitDialog"
           />
         </label>
+        <label v-if="dialogAction === 'compress'">
+          <span>压缩格式</span>
+          <select v-model="dialogFormat">
+            <option value="tar.gz">TAR.GZ（推荐）</option>
+            <option value="zip">ZIP（跨平台）</option>
+            <option value="tar">TAR（不压缩）</option>
+          </select>
+        </label>
+        <small v-if="dialogAction === 'compress' || dialogAction === 'extract'" class="archive-hint">
+          单次最多 100 项、10,000 个条目或解压后 10 GiB；不支持符号链接、硬链接和设备文件。
+        </small>
       </div>
       <div v-else class="trash-summary">
         <Trash2 :size="24" />
@@ -1021,7 +1153,14 @@ onBeforeUnmount(() => {
         <span>稍后可从文件管理右上角的回收站恢复或彻底删除。</span>
       </div>
       <div class="dialog-actions">
-        <button class="button button--secondary" type="button" :disabled="dialogBusy" @click="closeDialog">取消</button>
+        <button
+          class="button button--secondary"
+          type="button"
+          :disabled="dialogBusy && dialogAction !== 'compress' && dialogAction !== 'extract'"
+          @click="dialogBusy ? cancelArchive() : closeDialog()"
+        >
+          {{ dialogBusy && (dialogAction === 'compress' || dialogAction === 'extract') ? '停止' : '取消' }}
+        </button>
         <button
           class="button"
           :class="dialogAction === 'trash' ? 'button--danger' : 'button--primary'"
@@ -1029,7 +1168,21 @@ onBeforeUnmount(() => {
           :disabled="dialogBusy || (dialogAction !== 'trash' && !dialogValue.trim())"
           @click="submitDialog"
         >
-          {{ dialogBusy ? '处理中…' : dialogAction === 'trash' ? '移入回收站' : '确认' }}
+          {{
+            dialogBusy
+              ? dialogAction === 'compress'
+                ? '压缩中…'
+                : dialogAction === 'extract'
+                  ? '解压中…'
+                  : '处理中…'
+              : dialogAction === 'trash'
+                ? '移入回收站'
+                : dialogAction === 'compress'
+                  ? '开始压缩'
+                  : dialogAction === 'extract'
+                    ? '开始解压'
+                    : '确认'
+          }}
         </button>
       </div>
     </ModalDialog>
@@ -1650,6 +1803,11 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--border);
 }
 
+.operation-form {
+  display: grid;
+  gap: 14px;
+}
+
 .operation-form label {
   display: grid;
   gap: 8px;
@@ -1659,7 +1817,8 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.operation-form input {
+.operation-form input,
+.operation-form select {
   width: 100%;
   height: 42px;
   padding: 0 12px;
@@ -1670,9 +1829,15 @@ onBeforeUnmount(() => {
   outline: none;
 }
 
-.operation-form input:focus {
+.operation-form input:focus,
+.operation-form select:focus {
   border-color: var(--brand);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 13%, transparent);
+}
+
+.archive-hint {
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .trash-summary {

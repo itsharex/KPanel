@@ -573,6 +573,35 @@ func (m *Manager) Action(
 		}
 		result.Succeeded = append(result.Succeeded, actionItem(input.Sources[0], entry, entry.Path))
 		return result, nil
+	case "compress":
+		if len(input.Sources) == 0 {
+			return result, ErrAction
+		}
+		if len(input.Sources) > MaxBatchItems {
+			return result, ErrBatchTooLarge
+		}
+		entry, err := m.compressArchive(
+			ctx, input.Sources, input.Target, input.Name, input.Format,
+			input.ExpectedResourceVersions,
+		)
+		if err != nil {
+			return result, err
+		}
+		result.Succeeded = append(result.Succeeded, actionItem(entry.Path, entry, entry.Path))
+		return result, nil
+	case "extract":
+		if len(input.Sources) != 1 {
+			return result, ErrAction
+		}
+		entry, err := m.extractArchive(
+			ctx, input.Sources[0], input.Target, input.Name, input.Format,
+			input.ExpectedResourceVersion,
+		)
+		if err != nil {
+			return result, err
+		}
+		result.Succeeded = append(result.Succeeded, actionItem(input.Sources[0], entry, entry.Path))
+		return result, nil
 	case "trash_restore", "trash_delete":
 		if len(input.TrashIDs) == 0 {
 			return result, ErrAction
@@ -1418,7 +1447,9 @@ func validateName(value string) error {
 func isInternalComponent(value string) bool {
 	return strings.HasPrefix(value, ".kpanel-edit-") ||
 		strings.HasPrefix(value, ".kpanel-upload-") ||
-		strings.HasPrefix(value, ".kpanel-copy-")
+		strings.HasPrefix(value, ".kpanel-copy-") ||
+		strings.HasPrefix(value, ".kpanel-archive-") ||
+		strings.HasPrefix(value, ".kpanel-extract-")
 }
 
 func joinVirtual(parent, name string) string {

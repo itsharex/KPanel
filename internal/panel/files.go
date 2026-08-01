@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -294,13 +295,15 @@ func (s *Server) handleFileAction(w http.ResponseWriter, r *http.Request) {
 		itemCount = len(input.TrashIDs)
 	}
 	change := map[string]any{"action": input.Action, "items": itemCount}
+	if input.Action == "compress" || input.Action == "extract" {
+		change["format"] = input.Format
+		change["name"] = input.Name
+	}
 	if err := s.audit(r, session.User.ID, "file."+input.Action, "file", target, "intent", change); err != nil {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
 	}
-	response, err := s.agent.Do(
-		r.Context(), http.MethodPost, "/v1/files/actions", "", requestID(r), body,
-	)
+	response, err := s.doFileAction(r, input.Action, body)
 	if err != nil {
 		_ = s.audit(r, session.User.ID, "file."+input.Action, "file", target, "failure", change)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
@@ -316,6 +319,44 @@ func (s *Server) handleFileAction(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.audit(r, session.User.ID, "file."+input.Action, "file", target, result, change)
 	s.writeAgentResponse(w, r, response)
+}
+
+func (s *Server) doFileAction(r *http.Request, action string, body []byte) (AgentResponse, error) {
+	if action != "compress" && action != "extract" {
+		return s.agent.Do(
+			r.Context(), http.MethodPost, "/v1/files/actions", "", requestID(r), body,
+		)
+	}
+	streamer, ok := s.agent.(agentStreamAPI)
+	if !ok {
+		return s.agent.Do(
+			r.Context(), http.MethodPost, "/v1/files/actions", "", requestID(r), body,
+		)
+	}
+	headers := make(http.Header)
+	headers.Set("Accept", "application/json")
+	headers.Set("Content-Type", "application/json")
+	response, err := streamer.OpenStream(
+		r.Context(), http.MethodPost, "/v1/files/actions", "", requestID(r),
+		bytes.NewReader(body), headers, int64(len(body)),
+	)
+	if err != nil {
+		return AgentResponse{}, err
+	}
+	defer response.Body.Close()
+	const maxArchiveActionResponse = 1 << 20
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxArchiveActionResponse+1))
+	if err != nil {
+		return AgentResponse{}, err
+	}
+	if len(responseBody) > maxArchiveActionResponse {
+		return AgentResponse{}, errors.New("agent archive response exceeds configured limit")
+	}
+	return AgentResponse{
+		StatusCode:  response.StatusCode,
+		ContentType: response.Header.Get("Content-Type"),
+		Body:        responseBody,
+	}, nil
 }
 
 func strictPanelQuery(values map[string][]string, allowed ...string) bool {
@@ -334,7 +375,7 @@ func strictPanelQuery(values map[string][]string, allowed ...string) bool {
 func allowedFileAction(action string) bool {
 	switch action {
 	case "mkdir", "rename", "copy", "move", "trash", "chmod",
-		"trash_restore", "trash_delete", "trash_empty":
+		"compress", "extract", "trash_restore", "trash_delete", "trash_empty":
 		return true
 	default:
 		return false

@@ -1398,8 +1398,8 @@ export const api = {
         }
         xhr.send(file)
       }),
-    action: (input: FileActionInput): Promise<FileActionResult> =>
-      request<FileActionResult>('/files/actions', { method: 'POST', body: input }),
+    action: (input: FileActionInput, signal?: AbortSignal): Promise<FileActionResult> =>
+      request<FileActionResult>('/files/actions', { method: 'POST', body: input, signal }),
     trash: (): Promise<FileTrashDirectory> => request<FileTrashDirectory>('/files/trash'),
   },
   docker: {
