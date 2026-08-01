@@ -955,7 +955,31 @@ onBeforeUnmount(() => {
       <div v-else-if="previewEntry && previewMode === 'text'" class="code-viewer">
         <header>
           <span><Code2 :size="15" />{{ previewEntry.mime || 'UTF-8 文本' }}</span>
-          <span>{{ previewEntry.mode }} · {{ previewEntry.owner }}:{{ previewEntry.group }}</span>
+          <span class="code-viewer__header-right">
+            <span>{{ previewEntry.mode }} · {{ previewEntry.owner }}:{{ previewEntry.group }}</span>
+            <span class="code-editor-tools">
+              <button
+                class="code-editor-tool"
+                type="button"
+                title="查找或替换（Ctrl+F）"
+                aria-label="查找或替换"
+                @click="codeEditorRef?.openSearch()"
+              >
+                <Search :size="15" />
+              </button>
+              <button
+                class="code-editor-tool"
+                :class="{ 'is-active': editorLineWrap }"
+                type="button"
+                title="切换自动换行"
+                aria-label="切换自动换行"
+                :aria-pressed="editorLineWrap"
+                @click="editorLineWrap = !editorLineWrap"
+              >
+                <WrapText :size="15" />
+              </button>
+            </span>
+          </span>
         </header>
         <div class="code-editor">
           <CodeEditor
@@ -984,17 +1008,6 @@ onBeforeUnmount(() => {
           </span>
           <span v-if="previewDirty">有未保存修改</span>
           <span class="code-editor-actions">
-            <button class="button button--secondary button--small" type="button" title="查找或替换（Ctrl+F）" @click="codeEditorRef?.openSearch()">
-              <Search :size="15" />查找
-            </button>
-            <button
-              class="button button--secondary button--small"
-              type="button"
-              :aria-pressed="editorLineWrap"
-              @click="editorLineWrap = !editorLineWrap"
-            >
-              <WrapText :size="15" />换行 {{ editorLineWrap ? '开' : '关' }}
-            </button>
             <button class="button button--primary button--small" type="button" :disabled="previewSaving || !previewDirty" @click="savePreview()">
               <Save :size="15" />{{ previewSaving ? '保存中…' : '保存 Ctrl+S' }}
             </button>
@@ -1576,11 +1589,45 @@ onBeforeUnmount(() => {
   background: #111a2c;
 }
 
-.code-viewer > header span:first-child {
+.code-viewer > header > span:first-child {
   display: flex;
   align-items: center;
   gap: 7px;
   color: #dce7f8;
+}
+
+.code-viewer__header-right,
+.code-editor-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.code-editor-tools {
+  gap: 3px;
+}
+
+.code-editor-tool {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #9eacc5;
+  background: transparent;
+  cursor: pointer;
+}
+
+.code-editor-tool:hover,
+.code-editor-tool.is-active {
+  color: #f4f8ff;
+  background: #26344a;
+}
+
+.code-editor-tool.is-active {
+  color: #5eead4;
 }
 
 .code-viewer > footer {
@@ -1761,12 +1808,11 @@ onBeforeUnmount(() => {
   }
 
   .code-editor-actions {
-    width: 100%;
-    margin-left: 0;
+    margin-left: auto;
   }
 
-  .code-editor-actions .button:last-child {
-    margin-left: auto;
+  .code-viewer__header-right > span:first-child {
+    display: none;
   }
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type {
   Compartment as CompartmentType,
   EditorState as EditorStateType,
@@ -39,11 +39,24 @@ const emit = defineEmits<{
 }>()
 
 const host = ref<HTMLElement>()
+const searchInput = ref<HTMLInputElement>()
 const loading = ref(true)
 const loadError = ref('')
+const searchOpen = ref(false)
+const replaceOpen = ref(false)
+const searchValue = ref('')
+const replaceValue = ref('')
+const searchCaseSensitive = ref(false)
+const searchRegexp = ref(false)
+const searchWholeWord = ref(false)
+const searchMessage = ref('')
 let editor: EditorViewType | undefined
 let lineWrapCompartment: CompartmentType | undefined
 let lineWrappingExtension: Extension | undefined
+let searchRuntime: Pick<
+  typeof import('@codemirror/search'),
+  'SearchQuery' | 'setSearchQuery' | 'findNext' | 'findPrevious' | 'replaceNext' | 'replaceAll'
+> | undefined
 let applyingExternalValue = false
 let dirty = false
 let cancelled = false
@@ -72,11 +85,75 @@ function requestSave(): void {
   emit('save', value)
 }
 
-function openSearch(): void {
-  if (!editor) return
-  void import('@codemirror/search').then(({ openSearchPanel }) => {
-    if (editor) openSearchPanel(editor)
+function updateSearchQuery(): boolean {
+  if (!editor || !searchRuntime) return false
+  const query = new searchRuntime.SearchQuery({
+    search: searchValue.value,
+    replace: replaceValue.value,
+    caseSensitive: searchCaseSensitive.value,
+    regexp: searchRegexp.value,
+    wholeWord: searchWholeWord.value,
   })
+  editor.dispatch({ effects: searchRuntime.setSearchQuery.of(query) })
+  if (!searchValue.value) {
+    searchMessage.value = ''
+    return false
+  }
+  searchMessage.value = query.valid ? '' : '表达式无效'
+  return query.valid
+}
+
+function runSearch(direction: 'next' | 'previous'): void {
+  if (!editor || !searchRuntime || !updateSearchQuery()) return
+  const found = direction === 'next'
+    ? searchRuntime.findNext(editor)
+    : searchRuntime.findPrevious(editor)
+  searchMessage.value = found ? '' : '无匹配'
+}
+
+function runReplace(all: boolean): void {
+  if (!editor || !searchRuntime || !props.editable || !updateSearchQuery()) return
+  const replaced = all
+    ? searchRuntime.replaceAll(editor)
+    : searchRuntime.replaceNext(editor)
+  searchMessage.value = replaced ? '' : '无匹配'
+}
+
+function toggleSearchOption(option: 'case' | 'regexp' | 'word'): void {
+  if (option === 'case') searchCaseSensitive.value = !searchCaseSensitive.value
+  else if (option === 'regexp') searchRegexp.value = !searchRegexp.value
+  else searchWholeWord.value = !searchWholeWord.value
+  updateSearchQuery()
+}
+
+function openSearch(showReplace = false): void {
+  if (!editor) return
+  const selection = editor.state.selection.main
+  const selectedText = selection.empty
+    ? ''
+    : editor.state.sliceDoc(selection.from, selection.to)
+  if (!searchValue.value && selectedText && !/[\r\n]/.test(selectedText)) {
+    searchValue.value = selectedText
+  }
+  searchOpen.value = true
+  replaceOpen.value = replaceOpen.value || showReplace
+  searchMessage.value = ''
+  updateSearchQuery()
+  void nextTick(() => {
+    searchInput.value?.focus()
+    searchInput.value?.select()
+  })
+}
+
+function closeSearch(): void {
+  searchOpen.value = false
+  searchMessage.value = ''
+  if (editor && searchRuntime) {
+    editor.dispatch({
+      effects: searchRuntime.setSearchQuery.of(new searchRuntime.SearchQuery({ search: '' })),
+    })
+    editor.focus()
+  }
 }
 
 defineExpose({
@@ -103,7 +180,16 @@ async function initialize(): Promise<void> {
       },
       { defaultKeymap, history, historyKeymap, indentWithTab },
       { bracketMatching, foldGutter, foldKeymap, HighlightStyle, indentOnInput, syntaxHighlighting },
-      { highlightSelectionMatches, search, searchKeymap },
+      {
+        findNext,
+        findPrevious,
+        highlightSelectionMatches,
+        replaceAll,
+        replaceNext,
+        search,
+        SearchQuery,
+        setSearchQuery,
+      },
       { tags },
       language,
     ] = await Promise.all([
@@ -131,6 +217,14 @@ async function initialize(): Promise<void> {
 
     lineWrapCompartment = new Compartment()
     lineWrappingExtension = EditorView.lineWrapping
+    searchRuntime = {
+      SearchQuery,
+      setSearchQuery,
+      findNext,
+      findPrevious,
+      replaceNext,
+      replaceAll,
+    }
     const extensions = [
       lineNumbers(),
       ...(language.highlighted ? [foldGutter()] : []),
@@ -226,7 +320,36 @@ async function initialize(): Promise<void> {
           },
         },
         indentWithTab,
-        ...searchKeymap,
+        {
+          key: 'Mod-f',
+          preventDefault: true,
+          run: () => {
+            openSearch()
+            return true
+          },
+        },
+        {
+          key: 'Mod-h',
+          preventDefault: true,
+          run: () => {
+            openSearch(true)
+            return true
+          },
+        },
+        {
+          key: 'F3',
+          run: () => {
+            runSearch('next')
+            return true
+          },
+        },
+        {
+          key: 'Shift-F3',
+          run: () => {
+            runSearch('previous')
+            return true
+          },
+        },
         ...foldKeymap,
         ...defaultKeymap,
         ...historyKeymap,
@@ -284,6 +407,98 @@ onBeforeUnmount(() => {
 <template>
   <div class="code-editor-shell">
     <div ref="host" class="code-editor-host" />
+    <div
+      v-if="searchOpen"
+      class="code-search"
+      role="dialog"
+      aria-label="查找或替换"
+      @keydown.esc.stop.prevent="closeSearch"
+    >
+      <div class="code-search__row">
+        <button
+          class="code-search__icon code-search__toggle"
+          type="button"
+          :title="replaceOpen ? '收起替换' : '展开替换'"
+          :aria-label="replaceOpen ? '收起替换' : '展开替换'"
+          :aria-expanded="replaceOpen"
+          @click="replaceOpen = !replaceOpen"
+        >
+          <span aria-hidden="true">{{ replaceOpen ? '⌄' : '›' }}</span>
+        </button>
+        <div class="code-search__field">
+          <input
+            ref="searchInput"
+            v-model="searchValue"
+            type="text"
+            placeholder="查找"
+            aria-label="查找内容"
+            spellcheck="false"
+            @input="updateSearchQuery"
+            @keydown.enter.exact.prevent="runSearch('next')"
+            @keydown.shift.enter.prevent="runSearch('previous')"
+          />
+          <span v-if="searchMessage" class="code-search__message">{{ searchMessage }}</span>
+          <button
+            class="code-search__option"
+            :class="{ 'is-active': searchCaseSensitive }"
+            type="button"
+            title="区分大小写"
+            aria-label="区分大小写"
+            :aria-pressed="searchCaseSensitive"
+            @click="toggleSearchOption('case')"
+          ><span aria-hidden="true">Aa</span></button>
+          <button
+            class="code-search__option"
+            :class="{ 'is-active': searchWholeWord }"
+            type="button"
+            title="全字匹配"
+            aria-label="全字匹配"
+            :aria-pressed="searchWholeWord"
+            @click="toggleSearchOption('word')"
+          ><span aria-hidden="true">ab</span></button>
+          <button
+            class="code-search__option"
+            :class="{ 'is-active': searchRegexp }"
+            type="button"
+            title="使用正则表达式"
+            aria-label="使用正则表达式"
+            :aria-pressed="searchRegexp"
+            @click="toggleSearchOption('regexp')"
+          ><span aria-hidden="true">.*</span></button>
+        </div>
+        <button class="code-search__icon" type="button" title="上一个（Shift+F3）" aria-label="上一个匹配" @click="runSearch('previous')">
+          <span aria-hidden="true">↑</span>
+        </button>
+        <button class="code-search__icon" type="button" title="下一个（F3）" aria-label="下一个匹配" @click="runSearch('next')">
+          <span aria-hidden="true">↓</span>
+        </button>
+        <button class="code-search__icon" type="button" title="关闭（Esc）" aria-label="关闭查找" @click="closeSearch">
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
+      <div v-if="replaceOpen" class="code-search__row code-search__replace">
+        <span class="code-search__toggle" aria-hidden="true" />
+        <div class="code-search__field">
+          <input
+            v-model="replaceValue"
+            type="text"
+            placeholder="替换"
+            aria-label="替换内容"
+            spellcheck="false"
+            :disabled="!props.editable"
+            @input="updateSearchQuery"
+            @keydown.enter.prevent="runReplace(false)"
+          />
+        </div>
+        <button class="code-search__icon" type="button" title="替换" aria-label="替换当前匹配" :disabled="!props.editable" @click="runReplace(false)">
+          <span aria-hidden="true">↪</span>
+        </button>
+        <button class="code-search__icon" type="button" title="全部替换" aria-label="替换全部匹配" :disabled="!props.editable" @click="runReplace(true)">
+          <span aria-hidden="true">⇉</span>
+        </button>
+        <span class="code-search__icon" aria-hidden="true" />
+      </div>
+    </div>
     <div v-if="loading" class="code-editor-state">正在加载代码编辑器…</div>
     <div v-else-if="loadError" class="code-editor-state code-editor-state--error">
       代码编辑器加载失败：{{ loadError }}
@@ -316,6 +531,118 @@ onBeforeUnmount(() => {
 
 .code-editor-host {
   height: 100%;
+}
+
+.code-search {
+  position: absolute;
+  z-index: 5;
+  top: 10px;
+  right: 14px;
+  width: min(430px, calc(100% - 28px));
+  padding: 6px;
+  border: 1px solid #31415b;
+  border-radius: 8px;
+  color: var(--code-text);
+  background: #111a2c;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
+}
+
+.code-search__row {
+  display: grid;
+  grid-template-columns: 24px minmax(130px, 1fr) 26px 26px 26px;
+  align-items: center;
+  gap: 3px;
+}
+
+.code-search__replace {
+  margin-top: 4px;
+}
+
+.code-search__field {
+  display: flex;
+  min-width: 0;
+  height: 27px;
+  align-items: center;
+  gap: 1px;
+  padding-right: 2px;
+  overflow: hidden;
+  border: 1px solid #3b4c68;
+  border-radius: 5px;
+  background: var(--code-background);
+}
+
+.code-search__field:focus-within {
+  border-color: #409be8;
+  box-shadow: 0 0 0 1px #409be8;
+}
+
+.code-search__field input {
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  padding: 0 7px;
+  border: 0;
+  outline: 0;
+  color: var(--code-text);
+  background: transparent;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.code-search__field input::placeholder {
+  color: #66758e;
+}
+
+.code-search__message {
+  flex: 0 0 auto;
+  color: #f6a7a7;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.code-search__icon,
+.code-search__option {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: #a8b6cc;
+  background: transparent;
+  cursor: pointer;
+}
+
+.code-search__toggle {
+  width: 24px;
+}
+
+.code-search__icon:hover:not(:disabled),
+.code-search__option:hover,
+.code-search__option.is-active {
+  color: #f4f8ff;
+  background: #26344a;
+}
+
+.code-search__option.is-active {
+  color: #5eead4;
+}
+
+.code-search__icon:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+@media (max-width: 620px) {
+  .code-search {
+    top: 7px;
+    right: 7px;
+    width: calc(100% - 14px);
+  }
+
+  .code-search__row {
+    grid-template-columns: 22px minmax(110px, 1fr) 26px 26px 26px;
+  }
 }
 
 .code-editor-state {
