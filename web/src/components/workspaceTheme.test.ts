@@ -33,6 +33,7 @@ const globalThemeSource = readFileSync(
 describe('terminal and editor workspace theme', () => {
   it('keeps terminal surfaces neutral while reserving KPanel brand tokens for interaction', () => {
     expect(globalThemeSource).toContain('--terminal-shell-background: #0b1214')
+    expect(globalThemeSource).toContain('--terminal-shell-radius: 12px')
     expect(terminalSource).toContain('--terminal-background: var(--terminal-shell-background, #0b1214)')
     expect(terminalSource).toContain('--terminal-accent: var(--brand, #35cba6)')
     expect(terminalSource).toContain("terminalThemeColor('--terminal-accent'")
@@ -65,5 +66,14 @@ describe('terminal and editor workspace theme', () => {
     expect(filesSource).not.toContain('background: #111a2c')
     expect(dockerSource).not.toContain('background: #0b1020')
     expect(appsSource).not.toContain('background: #111827')
+  })
+
+  it('uses one border radius and edge treatment across dark workspaces', () => {
+    for (const source of [terminalSource, filesSource, dockerSource, appsSource]) {
+      expect(source).toContain('var(--terminal-shell-radius, 12px)')
+      expect(source).toContain('var(--terminal-shell-shadow, inset 0 1px 0 rgb(255 255 255 / 3%))')
+    }
+    expect(globalThemeSource).toContain('border-radius: var(--terminal-shell-radius)')
+    expect(globalThemeSource).toContain('box-shadow: var(--terminal-shell-shadow)')
   })
 })

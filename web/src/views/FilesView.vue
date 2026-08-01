@@ -1941,8 +1941,9 @@ onBeforeUnmount(() => {
 .code-viewer {
   overflow: hidden;
   border: 1px solid var(--terminal-shell-border, #29383a);
-  border-radius: 12px;
+  border-radius: var(--terminal-shell-radius, 12px);
   background: var(--terminal-shell-background, #0b1214);
+  box-shadow: var(--terminal-shell-shadow, inset 0 1px 0 rgb(255 255 255 / 3%));
 }
 
 .code-viewer > header,

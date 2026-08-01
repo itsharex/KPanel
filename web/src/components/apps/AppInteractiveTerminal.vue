@@ -309,11 +309,9 @@ onBeforeUnmount(() => {
   --scrollbar-thumb-active: var(--terminal-accent);
   overflow: hidden;
   border: 1px solid var(--terminal-border);
-  border-radius: 14px;
+  border-radius: var(--terminal-shell-radius, 12px);
   background: var(--terminal-background);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--terminal-accent) 12%, transparent),
-    0 14px 34px rgb(0 0 0 / 18%);
+  box-shadow: var(--terminal-shell-shadow, inset 0 1px 0 rgb(255 255 255 / 3%));
 }
 
 .interactive-terminal header {

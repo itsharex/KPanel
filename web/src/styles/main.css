@@ -45,14 +45,16 @@
   --scrollbar-thumb: #b5c8c2;
   --scrollbar-thumb-hover: #86a69d;
   --scrollbar-thumb-active: #0c9b78;
-  /* Terminals stay dark in both application themes. Keep their base neutral;
-     the KPanel brand is reserved for focus, selection and live-state accents. */
+  /* Shared dark workspace: terminals, editors and log/console viewers stay
+     visually consistent in both application themes. */
   --terminal-shell-background: #0b1214;
   --terminal-shell-panel: #111a1d;
   --terminal-shell-panel-raised: #182326;
   --terminal-shell-text: #d8dddc;
   --terminal-shell-muted: #8a9695;
   --terminal-shell-border: #29383a;
+  --terminal-shell-radius: 12px;
+  --terminal-shell-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
   --terminal-shell-scrollbar: #35474a;
   --terminal-shell-scrollbar-hover: #506367;
   --terminal-ansi-black: #1d2426;
@@ -3603,7 +3605,8 @@ div.resource-name {
   color: var(--terminal-shell-text);
   background: var(--terminal-shell-background);
   border: 1px solid var(--terminal-shell-border);
-  border-radius: 8px;
+  border-radius: var(--terminal-shell-radius);
+  box-shadow: var(--terminal-shell-shadow);
   font-size: 11px;
   line-height: 1.7;
   tab-size: 2;
