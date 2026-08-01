@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Eye, EyeOff, LoaderCircle, LockKeyhole } from '@lucide/vue'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import { ApiError } from '@/lib/api'
+import { prefetchNavigationRoute } from '@/lib/navigation'
 import { useSession } from '@/stores/session'
 
 const route = useRoute()
@@ -17,14 +18,29 @@ const form = reactive({
 const showPassword = ref(false)
 const totpRequired = ref(false)
 const error = ref('')
+const loginPhase = ref<'idle' | 'authenticating' | 'entering'>('idle')
+
+const destination = computed(() => (
+  typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/')
+    ? route.query.redirect
+    : '/overview'
+))
+const destinationPath = computed(() => destination.value.split(/[?#]/, 1)[0] || '/overview')
+const busy = computed(() => loginPhase.value !== 'idle' || session.state.loading)
+const submitLabel = computed(() => {
+  if (loginPhase.value === 'entering') return '登录成功，正在进入控制台…'
+  if (loginPhase.value === 'authenticating' || session.state.loading) return '正在验证…'
+  return '安全登录'
+})
 
 const canSubmit = computed(
   () => form.username.trim().length > 0 && form.password.length > 0 && (!totpRequired.value || /^\d{6}$/.test(form.totpCode)),
 )
 
 async function submit(): Promise<void> {
-  if (!canSubmit.value) return
+  if (!canSubmit.value || busy.value) return
   error.value = ''
+  loginPhase.value = 'authenticating'
 
   try {
     await session.login({
@@ -32,19 +48,27 @@ async function submit(): Promise<void> {
       password: form.password,
       totpCode: totpRequired.value ? form.totpCode : undefined,
     })
-    const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/')
-      ? route.query.redirect
-      : '/overview'
-    await router.replace(redirect)
+    loginPhase.value = 'entering'
+    await router.replace(destination.value)
   } catch (reason) {
     if (reason instanceof ApiError && reason.code === 'totp_required') {
       totpRequired.value = true
       error.value = '请输入身份验证器中的 6 位验证码。'
       return
     }
-    error.value = reason instanceof ApiError ? reason.message : '登录失败，请稍后重试。'
+    error.value = session.state.authenticated
+      ? '登录成功，但控制台资源加载失败，请刷新页面重试。'
+      : reason instanceof ApiError ? reason.message : '登录失败，请稍后重试。'
+  } finally {
+    loginPhase.value = 'idle'
   }
 }
+
+onMounted(() => {
+  // Warm only the destination view. This overlaps the small chunk download
+  // with credential entry without loading protected data or the full console.
+  void prefetchNavigationRoute(destinationPath.value)
+})
 </script>
 
 <template>
@@ -103,12 +127,20 @@ async function submit(): Promise<void> {
         />
       </label>
 
-      <button class="button button--primary button--block" type="submit" :disabled="!canSubmit || session.state.loading">
-        <LoaderCircle v-if="session.state.loading" class="spin" :size="17" />
-        {{ session.state.loading ? '正在验证…' : '安全登录' }}
+      <button class="button button--primary button--block" type="submit" :disabled="!canSubmit || busy">
+        <LoaderCircle v-if="busy" class="spin" :size="17" />
+        {{ submitLabel }}
       </button>
     </form>
 
     <p class="auth-card__security">Session 仅保存在安全的 HttpOnly Cookie 中。</p>
+
+    <Transition name="fade">
+      <div v-if="loginPhase === 'entering'" class="login-transition" role="status" aria-live="polite">
+        <span class="login-transition__icon"><LoaderCircle class="spin" :size="24" /></span>
+        <strong>登录成功</strong>
+        <small>正在加载控制台…</small>
+      </div>
+    </Transition>
   </AuthLayout>
 </template>
