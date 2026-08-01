@@ -16,6 +16,8 @@ import {
   Folder,
   FolderOpen,
   HardDrive,
+  LayoutGrid,
+  List,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -43,6 +45,7 @@ type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'tra
 type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
 type ClipboardMode = 'copy' | 'move'
 type ArchiveFormat = 'tar.gz' | 'zip' | 'tar'
+type FileViewMode = 'list' | 'grid'
 
 interface FileClipboard {
   mode: ClipboardMode
@@ -68,6 +71,7 @@ const currentPath = ref('/home')
 const search = ref('')
 const sortKey = ref<'name' | 'size' | 'modified'>('name')
 const sortDescending = ref(false)
+const viewMode = ref<FileViewMode>('list')
 const loading = ref(false)
 const dragging = ref(false)
 const selected = ref(new Set<string>())
@@ -98,10 +102,14 @@ const trashEntries = ref<FileTrashEntry[]>([])
 const trashTotal = ref(0)
 const trashTruncated = ref(false)
 const selectedTrash = ref(new Set<string>())
+const thumbnailFailures = ref(new Set<string>())
 let directoryController: AbortController | undefined
 let archiveController: AbortController | undefined
 let searchTimer: number | undefined
 let unmounted = false
+
+const fileViewStorageKey = 'kpanel:files:view:v1'
+const thumbnailSourceMaxBytes = 12 * 1024 * 1024
 
 const entries = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
@@ -224,6 +232,7 @@ async function loadDirectory(path = currentPath.value, append = false): Promise<
     if (!append) {
       selected.value = new Set()
       selectionAnchor.value = undefined
+      thumbnailFailures.value = new Set()
     }
   } catch (error) {
     if (controller.signal.aborted) return
@@ -233,6 +242,24 @@ async function loadDirectory(path = currentPath.value, append = false): Promise<
       loading.value = false
       directoryController = undefined
     }
+  }
+}
+
+function setViewMode(mode: FileViewMode): void {
+  viewMode.value = mode
+  try {
+    window.localStorage?.setItem(fileViewStorageKey, mode)
+  } catch {
+    // Browser privacy modes may reject preference storage; the current view still works.
+  }
+}
+
+function restoreViewMode(): void {
+  try {
+    const stored = window.localStorage?.getItem(fileViewStorageKey)
+    if (stored === 'list' || stored === 'grid') viewMode.value = stored
+  } catch {
+    // Keep the lightweight list default when browser storage is unavailable.
   }
 }
 
@@ -383,7 +410,7 @@ function showDirectoryContext(event: MouseEvent): void {
   const target = event.target as HTMLElement
   if (
     target.closest(
-      '.file-row--entry, .file-toolbar, .clipboard-bar, .upload-strip, .file-limit, .drop-overlay',
+      '.file-row--entry, .file-grid-card, .file-toolbar, .clipboard-bar, .upload-strip, .file-limit, .drop-overlay',
     )
   ) {
     return
@@ -733,6 +760,24 @@ function entryIcon(entry: FileEntry) {
   return entry.previewable ? FileText : File
 }
 
+function canShowThumbnail(entry: FileEntry): boolean {
+  return entry.kind === 'file' &&
+    entry.sizeBytes > 0 &&
+    entry.sizeBytes <= thumbnailSourceMaxBytes &&
+    ['image/jpeg', 'image/png', 'image/gif'].includes(entry.mime || '') &&
+    !thumbnailFailures.value.has(entry.path)
+}
+
+function thumbnailURL(entry: FileEntry): string {
+  return api.files.thumbnailUrl(entry.path, entry.resourceVersion)
+}
+
+function markThumbnailFailed(path: string): void {
+  const next = new Set(thumbnailFailures.value)
+  next.add(path)
+  thumbnailFailures.value = next
+}
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes)) return '—'
   if (bytes < 1024) return `${bytes} B`
@@ -796,6 +841,7 @@ function handleFileShortcut(event: KeyboardEvent): void {
 onMounted(() => {
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleFileShortcut)
+  restoreViewMode()
   void loadDirectory('/')
 })
 
@@ -882,14 +928,46 @@ onBeforeUnmount(() => {
             <ChevronRight v-if="index < breadcrumbs.length - 1" :size="14" />
           </button>
         </nav>
-        <label class="file-search">
-          <Search :size="16" />
-          <input v-model="search" type="search" aria-label="搜索当前目录" placeholder="搜索当前目录" />
-          <button v-if="search" type="button" aria-label="清除搜索" @click="search = ''">
-            <X :size="14" />
-          </button>
-        </label>
-
+        <div class="file-toolbar__controls">
+          <label class="file-search">
+            <Search :size="16" />
+            <input v-model="search" type="search" aria-label="搜索当前目录" placeholder="搜索当前目录" />
+            <button v-if="search" type="button" aria-label="清除搜索" @click="search = ''">
+              <X :size="14" />
+            </button>
+          </label>
+          <div v-if="viewMode === 'grid'" class="file-grid-sort">
+            <select v-model="sortKey" aria-label="大图标排序方式">
+              <option value="name">名称</option>
+              <option value="modified">修改时间</option>
+              <option value="size">大小</option>
+            </select>
+            <button
+              type="button"
+              :aria-label="sortDescending ? '切换为升序' : '切换为降序'"
+              :title="sortDescending ? '当前降序' : '当前升序'"
+              @click="sortDescending = !sortDescending"
+            >{{ sortDescending ? '↓' : '↑' }}</button>
+          </div>
+          <div class="file-view-switch" role="group" aria-label="文件排版方式">
+            <button
+              type="button"
+              :class="{ 'is-active': viewMode === 'list' }"
+              :aria-pressed="viewMode === 'list'"
+              aria-label="列表排版"
+              title="列表排版"
+              @click="setViewMode('list')"
+            ><List :size="17" /></button>
+            <button
+              type="button"
+              :class="{ 'is-active': viewMode === 'grid' }"
+              :aria-pressed="viewMode === 'grid'"
+              aria-label="大图标排版"
+              title="大图标排版"
+              @click="setViewMode('grid')"
+            ><LayoutGrid :size="17" /></button>
+          </div>
+        </div>
       </header>
 
       <Transition name="slide">
@@ -921,6 +999,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div
+        v-if="viewMode === 'list'"
         class="file-table"
         role="table"
         aria-label="文件列表"
@@ -982,6 +1061,64 @@ onBeforeUnmount(() => {
               <MoreHorizontal :size="18" />
             </button>
           </span>
+        </div>
+      </div>
+
+      <div
+        v-else
+        class="file-grid"
+        role="list"
+        aria-label="文件大图标列表"
+        @selectstart="preventNativeSelection"
+      >
+        <div
+          v-for="entry in entries"
+          :key="entry.path"
+          class="file-grid-card"
+          :class="{ 'file-grid-card--selected': selected.has(entry.path) }"
+          role="listitem"
+          tabindex="0"
+          @click="selectEntry($event, entry.path)"
+          @dblclick="openEntry(entry)"
+          @keydown.enter="openEntry(entry)"
+          @contextmenu.stop="showContext($event, entry)"
+        >
+          <input
+            class="file-grid-card__check"
+            type="checkbox"
+            :checked="selected.has(entry.path)"
+            :aria-label="`选择 ${entry.name}`"
+            @change="toggleEntry(entry.path)"
+            @click.stop
+          />
+          <button
+            class="row-menu file-grid-card__menu"
+            type="button"
+            :aria-label="`${entry.name} 操作`"
+            @click.stop="showContext($event, entry)"
+          ><MoreHorizontal :size="18" /></button>
+          <div class="file-grid-card__visual">
+            <img
+              v-if="canShowThumbnail(entry)"
+              :src="thumbnailURL(entry)"
+              :alt="entry.name"
+              loading="lazy"
+              decoding="async"
+              draggable="false"
+              @error="markThumbnailFailed(entry.path)"
+            />
+            <span
+              v-else
+              class="file-grid-card__icon"
+              :class="{ 'file-grid-card__icon--folder': entry.kind === 'directory' }"
+            ><component :is="entryIcon(entry)" :size="48" /></span>
+          </div>
+          <strong :title="entry.name">{{ entry.name }}</strong>
+          <small>
+            {{ entry.kind === 'directory' ? '文件夹' : formatBytes(entry.sizeBytes) }}
+            <span aria-hidden="true">·</span>
+            {{ formatTime(entry.modifiedAt) }}
+          </small>
         </div>
       </div>
 
@@ -1470,6 +1607,63 @@ onBeforeUnmount(() => {
   background: var(--surface-subtle);
 }
 
+.file-toolbar__controls,
+.file-grid-sort,
+.file-view-switch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.file-toolbar__controls {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+}
+
+.file-grid-sort,
+.file-view-switch {
+  min-height: 38px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.file-grid-sort select {
+  height: 30px;
+  padding: 0 6px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  outline: none;
+}
+
+.file-grid-sort button,
+.file-view-switch button {
+  display: grid;
+  width: 31px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.file-grid-sort button:hover,
+.file-view-switch button:hover,
+.file-view-switch button.is-active {
+  color: var(--text);
+  background: var(--surface-subtle);
+}
+
+.file-view-switch button.is-active {
+  color: var(--brand);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 24%, transparent);
+}
+
 .batch-bar {
   position: fixed;
   z-index: 45;
@@ -1612,6 +1806,132 @@ onBeforeUnmount(() => {
 
 .file-table {
   display: grid;
+}
+
+.file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(166px, 1fr));
+  align-content: start;
+  gap: 12px;
+  min-height: 430px;
+  padding: 16px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.file-grid-card {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  color: var(--text);
+  background: transparent;
+  cursor: default;
+  outline: none;
+  transition: border-color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.file-grid-card:hover,
+.file-grid-card:focus-visible {
+  border-color: var(--border);
+  background: var(--surface-subtle);
+}
+
+.file-grid-card--selected {
+  border-color: color-mix(in srgb, var(--brand) 48%, var(--border));
+  background: color-mix(in srgb, var(--brand) 8%, var(--surface));
+  box-shadow: 0 7px 20px color-mix(in srgb, var(--brand) 8%, transparent);
+}
+
+.file-grid-card__check,
+.file-grid-card__menu {
+  position: absolute;
+  z-index: 2;
+  top: 16px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.file-grid-card__check {
+  left: 16px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+}
+
+.file-grid-card__menu {
+  right: 16px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 10%);
+}
+
+.file-grid-card:hover .file-grid-card__check,
+.file-grid-card:hover .file-grid-card__menu,
+.file-grid-card:focus-within .file-grid-card__check,
+.file-grid-card:focus-within .file-grid-card__menu,
+.file-grid-card--selected .file-grid-card__check,
+.file-grid-card--selected .file-grid-card__menu {
+  opacity: 1;
+}
+
+.file-grid-card__visual {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 10px;
+  background:
+    linear-gradient(45deg, color-mix(in srgb, var(--surface-subtle) 75%, transparent) 25%, transparent 25%) 0 0 / 16px 16px,
+    linear-gradient(-45deg, color-mix(in srgb, var(--surface-subtle) 75%, transparent) 25%, transparent 25%) 0 0 / 16px 16px,
+    var(--surface);
+}
+
+.file-grid-card__visual img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.file-grid-card__icon {
+  display: grid;
+  width: 76px;
+  height: 76px;
+  place-items: center;
+  border-radius: 20px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+}
+
+.file-grid-card__icon--folder {
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 11%, var(--surface));
+}
+
+.file-grid-card > strong,
+.file-grid-card > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-grid-card > strong {
+  padding: 0 2px;
+  font-size: 13px;
+}
+
+.file-grid-card > small {
+  display: flex;
+  gap: 5px;
+  padding: 0 2px 2px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .file-row {
@@ -2139,6 +2459,43 @@ onBeforeUnmount(() => {
 
   .file-search {
     width: 100%;
+  }
+
+  .file-toolbar__controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .file-toolbar__controls .file-search {
+    flex: 1 1 100%;
+  }
+
+  .file-grid-sort {
+    margin-right: auto;
+  }
+
+  .file-grid {
+    grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .file-grid-card {
+    padding: 8px;
+  }
+
+  .file-grid-card__check,
+  .file-grid-card__menu {
+    top: 13px;
+    opacity: 1;
+  }
+
+  .file-grid-card__check {
+    left: 13px;
+  }
+
+  .file-grid-card__menu {
+    right: 13px;
   }
 
   .batch-bar button,

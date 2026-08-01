@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   action: vi.fn(),
   trash: vi.fn(),
   write: vi.fn(),
+  thumbnailUrl: vi.fn(),
   success: vi.fn(),
   danger: vi.fn(),
 }))
@@ -20,6 +21,7 @@ vi.mock('@/lib/api', () => ({
       action: mocks.action,
       trash: mocks.trash,
       contentUrl: vi.fn(),
+      thumbnailUrl: mocks.thumbnailUrl,
       text: vi.fn(),
       write: mocks.write,
       upload: vi.fn(),
@@ -49,6 +51,11 @@ interface FileBindings {
   preventNativeSelection: (event: Event) => void
   handleFileShortcut: (event: KeyboardEvent) => void
   openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash', entry?: TestFileEntry) => void
+  setViewMode: (mode: 'list' | 'grid') => void
+  restoreViewMode: () => void
+  canShowThumbnail: (entry: TestFileEntry) => boolean
+  thumbnailURL: (entry: TestFileEntry) => string
+  markThumbnailFailed: (path: string) => void
   currentPath: { value: string }
   directory: {
     value?: {
@@ -68,6 +75,7 @@ interface FileBindings {
   dialogAction: { value?: 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash' }
   dialogValue: { value: string }
   dialogFormat: { value: 'tar.gz' | 'zip' | 'tar' }
+  viewMode: { value: 'list' | 'grid' }
   trashEntries: { value: Array<{ id: string; resourceVersion: string; restorable: boolean }> }
   selectedTrash: { value: Set<string> }
   previewEntry: { value?: TestFileEntry }
@@ -135,6 +143,10 @@ beforeEach(() => {
     innerWidth: 1280,
     innerHeight: 720,
     confirm: vi.fn(() => true),
+    localStorage: {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+    },
   })
   mocks.list.mockResolvedValue({
     path: '/web',
@@ -149,6 +161,52 @@ beforeEach(() => {
   mocks.write.mockImplementation(async (_path: string, _content: string, _version: string) => ({
     entry: testEntry('saved.txt'),
   }))
+  mocks.thumbnailUrl.mockImplementation((path: string, version: string) => `/thumb?path=${path}&version=${version}`)
+})
+
+describe('FilesView large icon layout', () => {
+  it('defaults to the list and persists the selected layout', () => {
+    const view = setupView()
+
+    expect(view.viewMode.value).toBe('list')
+    view.setViewMode('grid')
+
+    expect(view.viewMode.value).toBe('grid')
+    expect(window.localStorage.setItem).toHaveBeenCalledWith('kpanel:files:view:v1', 'grid')
+  })
+
+  it('restores a valid saved layout preference', () => {
+    vi.mocked(window.localStorage.getItem).mockReturnValue('grid')
+    const view = setupView()
+
+    view.restoreViewMode()
+
+    expect(view.viewMode.value).toBe('grid')
+  })
+
+  it('only requests bounded safe raster thumbnails and falls back after an error', () => {
+    const view = setupView()
+    const image = { ...testEntry('photo.png'), mime: 'image/png', sizeBytes: 1024 }
+    const svg = { ...testEntry('active.svg'), mime: 'image/svg+xml', sizeBytes: 1024 }
+    const oversized = { ...testEntry('large.jpg'), mime: 'image/jpeg', sizeBytes: 13 * 1024 * 1024 }
+
+    expect(view.canShowThumbnail(image)).toBe(true)
+    expect(view.thumbnailURL(image)).toContain('/thumb?path=/photo.png')
+    expect(view.canShowThumbnail(svg)).toBe(false)
+    expect(view.canShowThumbnail(oversized)).toBe(false)
+
+    view.markThumbnailFailed(image.path)
+    expect(view.canShowThumbnail(image)).toBe(false)
+  })
+
+  it('lazy-loads thumbnails without making the original image draggable', () => {
+    const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
+
+    expect(source).toContain('loading="lazy"')
+    expect(source).toContain('decoding="async"')
+    expect(source).toContain('draggable="false"')
+    expect(source).toContain('markThumbnailFailed(entry.path)')
+  })
 })
 
 describe('FilesView directory loading', () => {

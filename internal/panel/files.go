@@ -87,7 +87,7 @@ func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request) {
-	if r.URL.RawPath != "" || !strictPanelQuery(r.URL.Query(), "path", "disposition", "mode") {
+	if r.URL.RawPath != "" || !strictPanelQuery(r.URL.Query(), "path", "disposition", "mode", "version") {
 		s.writeProblem(w, r, http.StatusBadRequest, "file_query_invalid", "文件查询参数无效", "")
 		return
 	}

@@ -77,6 +77,7 @@ type Server struct {
 	files           *filemanager.Manager
 	siteIcons       siteIconProvider
 	monitoring      monitoringHistoryProvider
+	thumbnailGate   chan struct{}
 	now             func() time.Time
 }
 
@@ -169,6 +170,7 @@ func NewServer(config Config) (*Server, error) {
 		files:           config.Files,
 		siteIcons:       config.SiteIcons,
 		monitoring:      config.Monitoring,
+		thumbnailGate:   make(chan struct{}, 2),
 		now:             config.Now,
 	}, nil
 }

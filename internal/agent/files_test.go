@@ -1,11 +1,16 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +19,59 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/filemanager"
 )
+
+func TestFileThumbnailIsBoundedAndVersionProtected(t *testing.T) {
+	server := testServer(t)
+	root := t.TempDir()
+	manager, err := filemanager.New(filemanager.Config{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server.files = manager
+	source := image.NewNRGBA(image.Rect(0, 0, 640, 360))
+	for y := range 360 {
+		for x := range 640 {
+			source.SetNRGBA(x, y, color.NRGBA{R: uint8(x % 255), G: uint8(y % 255), B: 160, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "photo.png"), encoded.Bytes(), 0644); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := manager.Stat("/photo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := fileRequest(
+		server,
+		http.MethodGet,
+		"/v1/files/content?path=%2Fphoto.png&disposition=inline&mode=thumbnail&version="+
+			url.QueryEscape(entry.ResourceVersion),
+		"",
+	)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("thumbnail status=%d type=%q body=%s", response.Code, response.Header().Get("Content-Type"), response.Body.String())
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(response.Body.Bytes()))
+	if err != nil || format != "png" || config.Width > fileThumbnailMaxWidth || config.Height > fileThumbnailMaxHeight {
+		t.Fatalf("thumbnail config=%#v format=%q err=%v", config, format, err)
+	}
+
+	stale := fileRequest(
+		server,
+		http.MethodGet,
+		"/v1/files/content?path=%2Fphoto.png&disposition=inline&mode=thumbnail&version=stale",
+		"",
+	)
+	if stale.Code != http.StatusConflict {
+		t.Fatalf("stale thumbnail status=%d body=%s", stale.Code, stale.Body.String())
+	}
+}
 
 func TestFileEndpointsListWriteUploadAndRejectProtectedPaths(t *testing.T) {
 	server := testServer(t)

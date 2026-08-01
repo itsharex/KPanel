@@ -1350,6 +1350,8 @@ export const api = {
       }),
     contentUrl: (path: string, disposition: 'inline' | 'attachment' = 'inline'): string =>
       buildUrl('/files/content', { path, disposition }),
+    thumbnailUrl: (path: string, version: string): string =>
+      buildUrl('/files/content', { path, disposition: 'inline', mode: 'thumbnail', version }),
     text: async (path: string): Promise<string> =>
       (
         await rawFileResponse('/files/content', {

@@ -191,6 +191,45 @@ func TestFileContentStreamsRangeAndUploadRequiresCSRF(t *testing.T) {
 	}
 }
 
+func TestFileThumbnailQueryIsAuthenticatedAndForwarded(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &fileStubAgent{
+		stubAgent:      &stubAgent{},
+		streamStatus:   http.StatusOK,
+		streamResponse: []byte("thumbnail"),
+		streamHeaders:  http.Header{"Content-Type": []string{"image/png"}},
+	}
+	server.agent = agent
+
+	unauthenticated := performRequest(
+		server,
+		http.MethodGet,
+		"/api/v1/files/content?path=%2Fphoto.png&disposition=inline&mode=thumbnail&version=version-1",
+		nil,
+		nil,
+	)
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated thumbnail status=%d", unauthenticated.Code)
+	}
+	response := authenticatedRequest(
+		server,
+		http.MethodGet,
+		"/api/v1/files/content?path=%2Fphoto.png&disposition=inline&mode=thumbnail&version=version-1",
+		nil,
+		sessionCookie,
+		csrfCookie,
+		nil,
+	)
+	if response.Code != http.StatusOK || response.Body.String() != "thumbnail" {
+		t.Fatalf("thumbnail response=%d %q", response.Code, response.Body.String())
+	}
+	calls := agent.snapshotStreamCalls()
+	if len(calls) != 1 || calls[0].rawQuery != "path=%2Fphoto.png&disposition=inline&mode=thumbnail&version=version-1" {
+		t.Fatalf("thumbnail stream call=%#v", calls)
+	}
+}
+
 func TestFileActionUsesFixedEnumAndWritesAudit(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)

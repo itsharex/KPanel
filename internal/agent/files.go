@@ -5,6 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	_ "image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"mime"
 	"net/http"
@@ -22,7 +27,14 @@ import (
 const (
 	fileTransferIdleTimeout = 45 * time.Second
 	fileTransferMaxDuration = 2 * time.Hour
+	fileThumbnailTimeout    = 20 * time.Second
+	fileThumbnailMaxBytes   = 12 << 20
+	fileThumbnailMaxPixels  = 8_000_000
+	fileThumbnailMaxWidth   = 320
+	fileThumbnailMaxHeight  = 210
 )
+
+var errThumbnailUnavailable = errors.New("该图片不能生成缩略图")
 
 func (s *Server) fileList(w http.ResponseWriter, r *http.Request) {
 	requestID := requestIDFrom(w)
@@ -100,7 +112,7 @@ func (s *Server) fileRead(w http.ResponseWriter, r *http.Request, requestID stri
 		return
 	}
 	values := r.URL.Query()
-	if !strictQuery(values, "path", "disposition", "mode") {
+	if !strictQuery(values, "path", "disposition", "mode", "version") {
 		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "文件查询参数无效", "")
 		return
 	}
@@ -113,18 +125,66 @@ func (s *Server) fileRead(w http.ResponseWriter, r *http.Request, requestID stri
 		return
 	}
 	readMode := values.Get("mode")
-	if readMode != "" && readMode != "text" {
+	if readMode != "" && readMode != "text" && readMode != "thumbnail" {
 		writeProblem(w, requestID, http.StatusBadRequest, "invalid_file_mode", "文件读取模式无效", "")
 		return
 	}
-	transferContext, cancel := context.WithTimeout(r.Context(), fileTransferMaxDuration)
+	if readMode != "thumbnail" && values.Get("version") != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_file_version", "文件版本参数无效", "")
+		return
+	}
+	transferTimeout := fileTransferMaxDuration
+	if readMode == "thumbnail" {
+		if disposition != "inline" || values.Get("version") == "" || len(values.Get("version")) > 256 {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_thumbnail_request", "缩略图请求无效", "")
+			return
+		}
+		transferTimeout = fileThumbnailTimeout
+	}
+	transferContext, cancel := context.WithTimeout(r.Context(), transferTimeout)
 	defer cancel()
+	if readMode == "thumbnail" {
+		select {
+		case s.thumbnailGate <- struct{}{}:
+			defer func() { <-s.thumbnailGate }()
+		case <-transferContext.Done():
+			writeProblem(w, requestID, http.StatusRequestTimeout, "thumbnail_timeout", "缩略图生成超时", "")
+			return
+		}
+	}
 	file, entry, err := s.files.Open(transferContext, values.Get("path"))
 	if err != nil {
 		writeFileProblem(w, requestID, err)
 		return
 	}
 	defer file.Close()
+	if readMode == "thumbnail" {
+		if values.Get("version") != entry.ResourceVersion {
+			writeProblem(w, requestID, http.StatusConflict, "file_conflict", "文件状态已变化", "")
+			return
+		}
+		content, contentType, thumbnailErr := makeFileThumbnail(file, entry.SizeBytes)
+		if thumbnailErr != nil {
+			status, code, title := http.StatusUnprocessableEntity, "file_thumbnail_unavailable", "无法生成文件缩略图"
+			if errors.Is(thumbnailErr, filemanager.ErrTooLarge) {
+				status, code, title = http.StatusRequestEntityTooLarge, "file_too_large", "图片超过缩略图处理上限"
+			}
+			writeProblem(w, requestID, status, code, title, "")
+			return
+		}
+		etag := `"thumbnail-` + entry.ResourceVersion + `"`
+		if r.Header.Get("If-None-Match") == etag {
+			w.Header().Set("ETag", etag)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", "inline")
+		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		w.Header().Set("ETag", etag)
+		_, _ = w.Write(content)
+		return
+	}
 	contentType := entry.MIME
 	if readMode == "text" {
 		if disposition != "inline" || !entry.Editable || entry.SizeBytes > filemanager.MaxTextBytes {
@@ -166,6 +226,106 @@ func (s *Server) fileRead(w http.ResponseWriter, r *http.Request, requestID stri
 		httpstream.NewIdleResponseWriter(transferContext, w, fileTransferIdleTimeout),
 		r, entry.Name, entry.ModifiedAt, file,
 	)
+}
+
+func makeFileThumbnail(file io.ReadSeeker, size int64) ([]byte, string, error) {
+	if size <= 0 || size > fileThumbnailMaxBytes {
+		return nil, "", filemanager.ErrTooLarge
+	}
+	config, format, err := image.DecodeConfig(io.LimitReader(file, fileThumbnailMaxBytes+1))
+	if err != nil || (format != "jpeg" && format != "png" && format != "gif") {
+		return nil, "", errThumbnailUnavailable
+	}
+	if config.Width <= 0 || config.Height <= 0 ||
+		config.Width > fileThumbnailMaxPixels/config.Height {
+		return nil, "", filemanager.ErrTooLarge
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, "", err
+	}
+	source, decodedFormat, err := image.Decode(io.LimitReader(file, fileThumbnailMaxBytes+1))
+	if err != nil || decodedFormat != format {
+		return nil, "", errThumbnailUnavailable
+	}
+	width, height := thumbnailDimensions(config.Width, config.Height)
+	thumbnail := resizeBilinear(source, width, height)
+	var output bytes.Buffer
+	if format == "jpeg" {
+		if err := jpeg.Encode(&output, thumbnail, &jpeg.Options{Quality: 84}); err != nil {
+			return nil, "", err
+		}
+		return output.Bytes(), "image/jpeg", nil
+	}
+	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := encoder.Encode(&output, thumbnail); err != nil {
+		return nil, "", err
+	}
+	return output.Bytes(), "image/png", nil
+}
+
+func thumbnailDimensions(width, height int) (int, int) {
+	if width <= fileThumbnailMaxWidth && height <= fileThumbnailMaxHeight {
+		return width, height
+	}
+	scaleWidth := float64(fileThumbnailMaxWidth) / float64(width)
+	scaleHeight := float64(fileThumbnailMaxHeight) / float64(height)
+	scale := scaleWidth
+	if scaleHeight < scale {
+		scale = scaleHeight
+	}
+	resultWidth := max(1, int(float64(width)*scale))
+	resultHeight := max(1, int(float64(height)*scale))
+	return resultWidth, resultHeight
+}
+
+func resizeBilinear(source image.Image, width, height int) *image.NRGBA {
+	target := image.NewNRGBA(image.Rect(0, 0, width, height))
+	bounds := source.Bounds()
+	sourceWidth, sourceHeight := bounds.Dx(), bounds.Dy()
+	if sourceWidth == width && sourceHeight == height {
+		for y := range height {
+			for x := range width {
+				target.Set(x, y, source.At(bounds.Min.X+x, bounds.Min.Y+y))
+			}
+		}
+		return target
+	}
+	for y := range height {
+		sy := (float64(y)+0.5)*float64(sourceHeight)/float64(height) - 0.5
+		y0 := max(0, min(sourceHeight-1, int(sy)))
+		y1 := min(sourceHeight-1, y0+1)
+		fy := sy - float64(y0)
+		if fy < 0 {
+			fy = 0
+		}
+		for x := range width {
+			sx := (float64(x)+0.5)*float64(sourceWidth)/float64(width) - 0.5
+			x0 := max(0, min(sourceWidth-1, int(sx)))
+			x1 := min(sourceWidth-1, x0+1)
+			fx := sx - float64(x0)
+			if fx < 0 {
+				fx = 0
+			}
+			c00 := color.NRGBAModel.Convert(source.At(bounds.Min.X+x0, bounds.Min.Y+y0)).(color.NRGBA)
+			c10 := color.NRGBAModel.Convert(source.At(bounds.Min.X+x1, bounds.Min.Y+y0)).(color.NRGBA)
+			c01 := color.NRGBAModel.Convert(source.At(bounds.Min.X+x0, bounds.Min.Y+y1)).(color.NRGBA)
+			c11 := color.NRGBAModel.Convert(source.At(bounds.Min.X+x1, bounds.Min.Y+y1)).(color.NRGBA)
+			target.SetNRGBA(x, y, color.NRGBA{
+				R: bilinearChannel(c00.R, c10.R, c01.R, c11.R, fx, fy),
+				G: bilinearChannel(c00.G, c10.G, c01.G, c11.G, fx, fy),
+				B: bilinearChannel(c00.B, c10.B, c01.B, c11.B, fx, fy),
+				A: bilinearChannel(c00.A, c10.A, c01.A, c11.A, fx, fy),
+			})
+		}
+	}
+	return target
+}
+
+func bilinearChannel(c00, c10, c01, c11 uint8, fx, fy float64) uint8 {
+	top := float64(c00)*(1-fx) + float64(c10)*fx
+	bottom := float64(c01)*(1-fx) + float64(c11)*fx
+	value := top*(1-fy) + bottom*fy
+	return uint8(max(0, min(255, int(value+0.5))))
 }
 
 func (s *Server) fileWrite(w http.ResponseWriter, r *http.Request, requestID string) {
