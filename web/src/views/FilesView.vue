@@ -39,7 +39,7 @@ import type { FileActionInput, FileDirectory, FileEntry, FileTrashEntry } from '
 
 const CodeEditor = defineAsyncComponent(() => import('@/components/files/CodeEditor.vue'))
 
-type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'trash' | 'delete'
+type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'trash'
 type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
 type ClipboardMode = 'copy' | 'move'
 
@@ -155,7 +155,6 @@ const dialogTitle = computed(() => {
     rename: '重命名',
     chmod: dialogEntries.value.length > 1 ? `修改 ${dialogEntries.value.length} 项权限` : '修改权限',
     trash: dialogEntries.value.length > 1 ? `移入回收站（${dialogEntries.value.length} 项）` : '移入回收站',
-    delete: dialogEntries.value.length > 1 ? `彻底删除（${dialogEntries.value.length} 项）` : '彻底删除',
   }
   return dialogAction.value ? titles[dialogAction.value] : '文件操作'
 })
@@ -463,14 +462,6 @@ async function submitDialog(): Promise<void> {
           dialogEntries.value.map((entry) => [entry.path, entry.resourceVersion]),
         ),
       }
-    } else if (action === 'delete') {
-      input = {
-        action,
-        sources: dialogEntries.value.map((entry) => entry.path),
-        expectedResourceVersions: Object.fromEntries(
-          dialogEntries.value.map((entry) => [entry.path, entry.resourceVersion]),
-        ),
-      }
     } else if (action === 'chmod') {
       input = {
         action,
@@ -489,7 +480,7 @@ async function submitDialog(): Promise<void> {
       )
     } else {
       toast.success(
-        action === 'trash' ? '已移入回收站' : action === 'delete' ? '已彻底删除' : '文件操作完成',
+        action === 'trash' ? '已移入回收站' : '文件操作完成',
         `${Math.max(result.succeeded.length, 1)} 项已处理`,
       )
     }
@@ -950,9 +941,6 @@ onBeforeUnmount(() => {
         <button class="danger-link" type="button" @click="openDialog('trash')">
           <Trash2 :size="15" />回收站
         </button>
-        <button class="danger-link" type="button" @click="openDialog('delete')">
-          <X :size="15" />彻底删除
-        </button>
         <button type="button" @click="clearSelection">取消选择</button>
       </div>
     </Transition>
@@ -997,19 +985,16 @@ onBeforeUnmount(() => {
       <button v-if="contextMenu.entry" class="danger-link" type="button" @click="openDialog('trash', contextMenu.entry)">
         <Trash2 :size="15" />移入回收站
       </button>
-      <button v-if="contextMenu.entry" class="danger-link" type="button" @click="openDialog('delete', contextMenu.entry)">
-        <X :size="15" />彻底删除
-      </button>
     </div>
 
     <ModalDialog
       :open="Boolean(dialogAction)"
       :title="dialogTitle"
-      :description="dialogAction === 'trash' ? '文件将移动到 KPanel 隔离回收区，可在回收站中恢复。' : dialogAction === 'delete' ? '文件将立即从磁盘删除，且无法恢复。' : ''"
+      :description="dialogAction === 'trash' ? '文件将移动到 KPanel 隔离回收区，可在回收站中恢复。' : ''"
       size="small"
       @close="closeDialog"
     >
-      <div v-if="dialogAction !== 'trash' && dialogAction !== 'delete'" class="operation-form">
+      <div v-if="dialogAction !== 'trash'" class="operation-form">
         <label>
           <span>
             {{
@@ -1032,19 +1017,19 @@ onBeforeUnmount(() => {
       </div>
       <div v-else class="trash-summary">
         <Trash2 :size="24" />
-        <strong>{{ dialogAction === 'delete' ? `确认彻底删除 ${dialogEntries.length} 项？` : `确认移动 ${dialogEntries.length} 项？` }}</strong>
-        <span>{{ dialogAction === 'delete' ? '此操作不可撤销，目录内的全部内容也会被删除。' : '稍后可从文件管理右上角的回收站恢复或彻底删除。' }}</span>
+        <strong>确认移动 {{ dialogEntries.length }} 项？</strong>
+        <span>稍后可从文件管理右上角的回收站恢复或彻底删除。</span>
       </div>
       <div class="dialog-actions">
         <button class="button button--secondary" type="button" :disabled="dialogBusy" @click="closeDialog">取消</button>
         <button
           class="button"
-          :class="dialogAction === 'trash' || dialogAction === 'delete' ? 'button--danger' : 'button--primary'"
+          :class="dialogAction === 'trash' ? 'button--danger' : 'button--primary'"
           type="button"
-          :disabled="dialogBusy || (dialogAction !== 'trash' && dialogAction !== 'delete' && !dialogValue.trim())"
+          :disabled="dialogBusy || (dialogAction !== 'trash' && !dialogValue.trim())"
           @click="submitDialog"
         >
-          {{ dialogBusy ? '处理中…' : dialogAction === 'trash' ? '移入回收站' : dialogAction === 'delete' ? '彻底删除' : '确认' }}
+          {{ dialogBusy ? '处理中…' : dialogAction === 'trash' ? '移入回收站' : '确认' }}
         </button>
       </div>
     </ModalDialog>
@@ -1336,8 +1321,8 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 45;
   bottom: max(16px, env(safe-area-inset-bottom));
-  left: calc(var(--sidebar-width) + (100vw - var(--sidebar-width)) / 2);
-  width: min(760px, calc(100vw - var(--sidebar-width) - 32px));
+  left: calc(var(--app-shell-inline-offset) + (100vw - var(--app-shell-inline-offset)) / 2);
+  width: min(760px, calc(100vw - var(--app-shell-inline-offset) - 32px));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1349,11 +1334,6 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--brand) 8%, var(--surface));
   box-shadow: 0 12px 34px rgb(0 0 0 / 20%);
   transform: translateX(-50%);
-}
-
-:global(.app-shell__main--sidebar-collapsed) .batch-bar {
-  left: calc(var(--sidebar-collapsed-width) + (100vw - var(--sidebar-collapsed-width)) / 2);
-  width: min(760px, calc(100vw - var(--sidebar-collapsed-width) - 32px));
 }
 
 .batch-bar strong {

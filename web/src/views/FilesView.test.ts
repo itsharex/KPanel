@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createSSRApp, ssrContextKey } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView.vue'
@@ -46,7 +47,7 @@ interface FileBindings {
   selectEntry: (event: MouseEvent, path: string) => void
   preventNativeSelection: (event: Event) => void
   handleFileShortcut: (event: KeyboardEvent) => void
-  openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'trash' | 'delete', entry?: TestFileEntry) => void
+  openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'trash', entry?: TestFileEntry) => void
   currentPath: { value: string }
   directory: {
     value?: {
@@ -148,6 +149,13 @@ beforeEach(() => {
 })
 
 describe('FilesView directory loading', () => {
+  it('keeps the collapsed sidebar offset scoped through a custom property', () => {
+    const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
+
+    expect(source).toContain('var(--app-shell-inline-offset)')
+    expect(source).not.toContain(':global(.app-shell__main--sidebar-collapsed)')
+  })
+
   it('uses the Agent-confirmed path and clears stale errors', async () => {
     const view = setupView()
     await view.loadDirectory('/web')

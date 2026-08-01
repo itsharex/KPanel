@@ -288,35 +288,17 @@ func TestTrashCanBeListedRestoredAndPermanentlyDeleted(t *testing.T) {
 	}
 }
 
-func TestPermanentDeleteRequiresCurrentVersionAndProtectsInternalPaths(t *testing.T) {
+func TestPermanentDeleteIsOnlyAvailableInsideTrash(t *testing.T) {
 	manager, root := newTestManager(t)
 	mustWrite(t, filepath.Join(root, "delete.txt"), "delete me")
-	entry, err := manager.Stat("/delete.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
 	result, err := manager.Action(context.Background(), contract.FileActionRequest{
 		Action: "delete", Sources: []string{"/delete.txt"},
-		ExpectedResourceVersions: map[string]string{"/delete.txt": "sha256:stale"},
 	})
-	if err != nil || len(result.Failed) != 1 || !strings.Contains(result.Failed[0].Detail, ErrConflict.Error()) {
-		t.Fatalf("stale delete result: %#v err=%v", result, err)
+	if !errors.Is(err, ErrAction) || len(result.Succeeded) != 0 {
+		t.Fatalf("ordinary permanent delete result: %#v err=%v", result, err)
 	}
-	result, err = manager.Action(context.Background(), contract.FileActionRequest{
-		Action: "delete", Sources: []string{"/delete.txt"},
-		ExpectedResourceVersions: map[string]string{"/delete.txt": entry.ResourceVersion},
-	})
-	if err != nil || len(result.Succeeded) != 1 {
-		t.Fatalf("delete result: %#v err=%v", result, err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "delete.txt")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("file still exists: %v", err)
-	}
-	result, err = manager.Action(context.Background(), contract.FileActionRequest{
-		Action: "delete", Sources: []string{"/.kpanel-trash"},
-	})
-	if err != nil || len(result.Failed) != 1 || !strings.Contains(result.Failed[0].Detail, ErrProtected.Error()) {
-		t.Fatalf("protected delete result: %#v err=%v", result, err)
+	if _, err := os.Stat(filepath.Join(root, "delete.txt")); err != nil {
+		t.Fatalf("ordinary file must remain: %v", err)
 	}
 }
 

@@ -582,7 +582,7 @@ func (m *Manager) Action(
 		}
 	case "trash_empty":
 		return m.emptyTrash(ctx, result)
-	case "copy", "move", "trash", "delete", "chmod":
+	case "copy", "move", "trash", "chmod":
 		if len(input.Sources) == 0 {
 			return result, ErrAction
 		}
@@ -618,9 +618,6 @@ func (m *Manager) Action(
 				break
 			}
 			destination, err = m.trashOne(ctx, source, budget)
-			entry = contract.FileEntry{Path: source}
-		case "delete":
-			err = m.deleteOne(source, input.ExpectedResourceVersions[source])
 			entry = contract.FileEntry{Path: source}
 		case "chmod":
 			if err = m.checkExpectedVersion(source, input.ExpectedResourceVersions[source]); err != nil {
@@ -1123,26 +1120,6 @@ func (m *Manager) checkExpectedVersion(virtual, expected string) error {
 		return ErrConflict
 	}
 	return nil
-}
-
-func (m *Manager) deleteOne(virtual, expected string) error {
-	_, normalized, err := m.resolveExisting(virtual)
-	if err != nil {
-		return err
-	}
-	if normalized == "/" {
-		return ErrRootOperation
-	}
-	if err := m.mutationError(normalized); err != nil {
-		return err
-	}
-	if err := m.checkExpectedVersion(normalized, expected); err != nil {
-		return err
-	}
-	if err := m.rootFS.RemoveAll(rootName(normalized)); err != nil {
-		return err
-	}
-	return syncRootDirectory(m.rootFS, rootName(path.Dir(normalized)))
 }
 
 func (m *Manager) deleteTrash(id, expected string) error {

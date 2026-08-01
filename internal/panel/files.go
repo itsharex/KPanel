@@ -333,7 +333,7 @@ func strictPanelQuery(values map[string][]string, allowed ...string) bool {
 
 func allowedFileAction(action string) bool {
 	switch action {
-	case "mkdir", "rename", "copy", "move", "trash", "delete", "chmod",
+	case "mkdir", "rename", "copy", "move", "trash", "chmod",
 		"trash_restore", "trash_delete", "trash_empty":
 		return true
 	default:

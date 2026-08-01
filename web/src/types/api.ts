@@ -1094,7 +1094,6 @@ export type FileAction =
   | 'copy'
   | 'move'
   | 'trash'
-  | 'delete'
   | 'chmod'
   | 'trash_restore'
   | 'trash_delete'

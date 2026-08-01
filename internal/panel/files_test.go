@@ -214,6 +214,14 @@ func TestFileActionUsesFixedEnumAndWritesAudit(t *testing.T) {
 	if rejected.Code != http.StatusUnprocessableEntity || len(agent.snapshotCalls()) != 0 {
 		t.Fatalf("unsupported action = %d calls=%#v", rejected.Code, agent.snapshotCalls())
 	}
+	directDelete := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/actions",
+		[]byte(`{"action":"delete","sources":["/old.txt"]}`),
+		sessionCookie, csrfCookie, headers,
+	)
+	if directDelete.Code != http.StatusUnprocessableEntity || len(agent.snapshotCalls()) != 0 {
+		t.Fatalf("ordinary permanent delete = %d calls=%#v", directDelete.Code, agent.snapshotCalls())
+	}
 
 	response := authenticatedRequest(
 		server, http.MethodPost, "/api/v1/files/actions",

@@ -1437,20 +1437,17 @@ textarea:focus-visible,
 }
 
 .app-shell__main {
+  --app-shell-inline-offset: var(--sidebar-width);
+
   position: relative;
-  width: calc(100% - var(--sidebar-width));
   min-height: 100vh;
   min-width: 0;
-  margin-left: var(--sidebar-width);
-  transition:
-    width 200ms ease,
-    margin-left 200ms ease;
+  margin-left: var(--app-shell-inline-offset);
 }
 
 @media (min-width: 921px) {
   .app-shell__main--sidebar-collapsed {
-    width: calc(100% - var(--sidebar-collapsed-width));
-    margin-left: var(--sidebar-collapsed-width);
+    --app-shell-inline-offset: var(--sidebar-collapsed-width);
   }
 
   .app-shell__main--sidebar-collapsed .route-loading-progress {
