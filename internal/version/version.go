@@ -1,6 +1,6 @@
 package version
 
 // Version is overwritten by -ldflags for release builds.
-var Version = "0.34.5-dev"
+var Version = "0.34.6-dev"
 
 const ProtocolVersion = "v1alpha1"
