@@ -22,6 +22,7 @@ type Config struct {
 	DataDir             string        `json:"dataDir"`
 	StorePath           string        `json:"storePath"`
 	BootstrapTokenPath  string        `json:"bootstrapTokenPath"`
+	TOTPKeyPath         string        `json:"totpKeyPath"`
 	AgentSocket         string        `json:"agentSocket"`
 	AgentTokenFile      string        `json:"agentTokenFile"`
 	WebRoot             string        `json:"webRoot"`
@@ -85,6 +86,7 @@ func LoadConfig(path string) (Config, error) {
 	applyStringEnv("KEJILION_PANEL_DATA_DIR", &config.DataDir)
 	applyStringEnv("KEJILION_PANEL_STORE_PATH", &config.StorePath)
 	applyStringEnv("KEJILION_PANEL_BOOTSTRAP_TOKEN_FILE", &config.BootstrapTokenPath)
+	applyStringEnv("KEJILION_PANEL_TOTP_KEY_FILE", &config.TOTPKeyPath)
 	applyStringEnv("KEJILION_PANEL_AGENT_SOCKET", &config.AgentSocket)
 	applyStringEnv("KEJILION_PANEL_AGENT_TOKEN_FILE", &config.AgentTokenFile)
 	applyStringEnv("KEJILION_PANEL_WEB_ROOT", &config.WebRoot)
@@ -138,6 +140,9 @@ func LoadConfig(path string) (Config, error) {
 	if config.BootstrapTokenPath == "" {
 		config.BootstrapTokenPath = filepath.Join(config.DataDir, "bootstrap.token")
 	}
+	if config.TOTPKeyPath == "" {
+		config.TOTPKeyPath = filepath.Join(config.DataDir, "totp-encryption.key")
+	}
 	if config.CookieName == "" {
 		if config.SecureCookie {
 			config.CookieName = "__Host-kejilion_session"
@@ -162,6 +167,8 @@ func (c Config) Validate() error {
 		return errors.New("storePath must be absolute")
 	case strings.TrimSpace(c.BootstrapTokenPath) == "" || !filepath.IsAbs(c.BootstrapTokenPath):
 		return errors.New("bootstrapTokenPath must be absolute")
+	case strings.TrimSpace(c.TOTPKeyPath) != "" && !filepath.IsAbs(c.TOTPKeyPath):
+		return errors.New("totpKeyPath must be absolute")
 	case strings.TrimSpace(c.AgentSocket) == "" || !filepath.IsAbs(c.AgentSocket):
 		return errors.New("agentSocket must be absolute")
 	case strings.TrimSpace(c.AgentTokenFile) == "" || !filepath.IsAbs(c.AgentTokenFile):
@@ -179,19 +186,26 @@ func (c Config) Validate() error {
 	case c.MaxAgentBytes < 1024 || c.MaxAgentBytes > 64<<20:
 		return errors.New("maxAgentBytes must be between 1 KiB and 64 MiB")
 	}
-	for label, protectedPath := range map[string]string{
+	protectedPaths := map[string]string{
 		"dataDir":            c.DataDir,
 		"storePath":          c.StorePath,
 		"bootstrapTokenPath": c.BootstrapTokenPath,
 		"agentTokenFile":     c.AgentTokenFile,
-	} {
+	}
+	if c.TOTPKeyPath != "" {
+		protectedPaths["totpKeyPath"] = c.TOTPKeyPath
+	}
+	for label, protectedPath := range protectedPaths {
 		if pathsOverlap(c.WebRoot, protectedPath) {
 			return fmt.Errorf("webRoot must not overlap %s", label)
 		}
 	}
 	if samePath(c.StorePath, c.BootstrapTokenPath) ||
+		(c.TOTPKeyPath != "" && samePath(c.StorePath, c.TOTPKeyPath)) ||
 		samePath(c.StorePath, c.AgentTokenFile) ||
-		samePath(c.BootstrapTokenPath, c.AgentTokenFile) {
+		(c.TOTPKeyPath != "" && samePath(c.BootstrapTokenPath, c.TOTPKeyPath)) ||
+		samePath(c.BootstrapTokenPath, c.AgentTokenFile) ||
+		(c.TOTPKeyPath != "" && samePath(c.TOTPKeyPath, c.AgentTokenFile)) {
 		return errors.New("store and secret paths must be distinct")
 	}
 	if !cookieNamePattern.MatchString(c.CookieName) {

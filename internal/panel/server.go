@@ -156,6 +156,12 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleLogout(w, r)
 	case r.Method == http.MethodPut && r.URL.Path == "/api/v1/settings/password":
 		s.handlePasswordChange(w, r)
+	case r.URL.Path == "/api/v1/settings/totp":
+		s.handleTOTPSettings(w, r)
+	case r.URL.Path == "/api/v1/settings/totp/enrollment":
+		s.handleTOTPEnrollment(w, r)
+	case r.URL.Path == "/api/v1/settings/totp/recovery-codes":
+		s.handleTOTPRecoveryCodes(w, r)
 	case (r.Method == http.MethodGet || r.Method == http.MethodPut) && r.URL.Path == "/api/v1/settings/security-entry":
 		s.handleSecurityEntranceSettings(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit":
@@ -422,12 +428,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		TOTPCode string `json:"totpCode,omitempty"`
 	}
 	if err := s.decodeJSON(w, r, &input); err != nil {
 		s.auditAuthFailure(r, "auth.login")
 		return
 	}
-	credentials, err := s.auth.Login(s.remoteIP(r), input.Username, input.Password)
+	credentials, err := s.auth.Login(s.remoteIP(r), input.Username, input.Password, input.TOTPCode)
 	if err != nil {
 		var rateError *auth.RateLimitError
 		switch {
@@ -438,6 +445,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			s.auditAuthFailure(r, "auth.login")
 			s.writeProblem(w, r, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials", "")
+		case errors.Is(err, auth.ErrTOTPRequired):
+			s.writeProblem(w, r, http.StatusUnauthorized, "totp_required", "Two-factor authentication required", "")
+		case errors.Is(err, auth.ErrInvalidSecondFactor):
+			s.auditAuthFailure(r, "auth.login.second_factor")
+			s.writeProblem(w, r, http.StatusUnauthorized, "invalid_second_factor", "Invalid two-factor authentication code", "")
+		case errors.Is(err, auth.ErrSecondFactorUnavailable):
+			s.auditAuthFailure(r, "auth.login.second_factor_unavailable")
+			s.writeProblem(w, r, http.StatusServiceUnavailable, "second_factor_unavailable", "Two-factor authentication is temporarily unavailable", "Use a recovery code or restore the Panel TOTP encryption key.")
 		default:
 			s.auditAuthFailure(r, "auth.login")
 			s.writeProblem(w, r, http.StatusInternalServerError, "login_failed", "Login failed", "")

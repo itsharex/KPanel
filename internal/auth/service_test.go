@@ -84,7 +84,7 @@ func TestBootstrapLoginSessionAndLogout(t *testing.T) {
 		t.Fatalf("expected invalid session, got %v", err)
 	}
 
-	login, err := service.Login("127.0.0.1", "admin", "a-strong-password")
+	login, err := service.Login("127.0.0.1", "admin", "a-strong-password", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,14 +120,14 @@ func TestLoginRateLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := service.Login("192.0.2.1", "admin", "wrong"); !errors.Is(err, ErrInvalidCredentials) {
+		if _, err := service.Login("192.0.2.1", "admin", "wrong", ""); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("expected invalid credentials, got %v", err)
 		}
 	}
-	if _, err := service.Login("192.0.2.1", "admin", "a-strong-password"); !errors.Is(err, ErrRateLimited) {
+	if _, err := service.Login("192.0.2.1", "admin", "a-strong-password", ""); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected rate limit, got %v", err)
 	}
-	if _, err := service.Login("192.0.2.2", "admin", "a-strong-password"); err != nil {
+	if _, err := service.Login("192.0.2.2", "admin", "a-strong-password", ""); err != nil {
 		t.Fatalf("a different IP could not use valid credentials after one IP was limited: %v", err)
 	}
 }
@@ -160,11 +160,11 @@ func TestLoginAppliesHigherDistributedAccountLimit(t *testing.T) {
 	}
 	for attempt := range 2 * accountFailureLimitMultiplier {
 		ip := fmt.Sprintf("192.0.2.%d", attempt+1)
-		if _, err := service.Login(ip, "admin", "wrong"); !errors.Is(err, ErrInvalidCredentials) {
+		if _, err := service.Login(ip, "admin", "wrong", ""); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("attempt %d: expected invalid credentials, got %v", attempt, err)
 		}
 	}
-	if _, err := service.Login("198.51.100.1", "admin", "a-strong-password"); !errors.Is(err, ErrRateLimited) {
+	if _, err := service.Login("198.51.100.1", "admin", "a-strong-password", ""); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected distributed account rate limit, got %v", err)
 	}
 }
@@ -197,7 +197,7 @@ func TestLoginBoundsConcurrentPasswordHashes(t *testing.T) {
 
 	firstResult := make(chan error, 1)
 	go func() {
-		_, loginErr := service.Login("192.0.2.1", "admin", "wrong")
+		_, loginErr := service.Login("192.0.2.1", "admin", "wrong", "")
 		firstResult <- loginErr
 	}()
 	select {
@@ -206,7 +206,7 @@ func TestLoginBoundsConcurrentPasswordHashes(t *testing.T) {
 		t.Fatal("first password verification did not start")
 	}
 
-	if _, err := service.Login("192.0.2.2", "admin", "wrong"); !errors.Is(err, ErrRateLimited) {
+	if _, err := service.Login("192.0.2.2", "admin", "wrong", ""); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected concurrent hash limit, got %v", err)
 	}
 	close(hasher.release)
@@ -302,7 +302,7 @@ func TestChangePasswordRevokesSessionsAndReplacesCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondSession, err := service.Login("192.0.2.1", "admin", "a-strong-password")
+	secondSession, err := service.Login("192.0.2.1", "admin", "a-strong-password", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,10 +343,10 @@ func TestChangePasswordRevokesSessionsAndReplacesCredentials(t *testing.T) {
 			t.Fatalf("old session remained valid: %v", err)
 		}
 	}
-	if _, err := service.Login("192.0.2.2", "admin", "a-strong-password"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := service.Login("192.0.2.2", "admin", "a-strong-password", ""); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("old password remained valid: %v", err)
 	}
-	newSession, err := service.Login("192.0.2.2", "admin", "an-even-stronger-password")
+	newSession, err := service.Login("192.0.2.2", "admin", "an-even-stronger-password", "")
 	if err != nil {
 		t.Fatalf("new password was rejected: %v", err)
 	}
@@ -500,7 +500,7 @@ func TestPasswordChangeRevokesSessionCreatedByInflightOldPasswordLogin(t *testin
 		err         error
 	}, 1)
 	go func() {
-		credentials, loginErr := service.Login("192.0.2.1", "admin", "a-strong-password")
+		credentials, loginErr := service.Login("192.0.2.1", "admin", "a-strong-password", "")
 		loginResult <- struct {
 			credentials Credentials
 			err         error

@@ -61,6 +61,7 @@ func run(arguments []string) error {
 	}
 	authService, err := auth.NewService(storage, hasher, auth.Config{
 		BootstrapTokenPath: config.BootstrapTokenPath,
+		TOTPKeyPath:        config.TOTPKeyPath,
 		SessionTTL:         config.SessionTTL,
 		LoginWindow:        config.LoginWindow,
 		MaxLoginFailures:   config.MaxLoginFailures,

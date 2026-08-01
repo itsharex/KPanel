@@ -17,6 +17,7 @@ const form = reactive({
 })
 const showPassword = ref(false)
 const totpRequired = ref(false)
+const useRecoveryCode = ref(false)
 const error = ref('')
 const loginPhase = ref<'idle' | 'authenticating' | 'entering'>('idle')
 
@@ -33,8 +34,12 @@ const submitLabel = computed(() => {
   return '安全登录'
 })
 
-const canSubmit = computed(
-  () => form.username.trim().length > 0 && form.password.length > 0 && (!totpRequired.value || /^\d{6}$/.test(form.totpCode)),
+const canSubmit = computed(() =>
+  form.username.trim().length > 0 && form.password.length > 0 && (
+    !totpRequired.value || (useRecoveryCode.value
+      ? /^[A-Za-z2-7-]{15,17}$/.test(form.totpCode)
+      : /^\d{6}$/.test(form.totpCode))
+  ),
 )
 
 async function submit(): Promise<void> {
@@ -54,6 +59,11 @@ async function submit(): Promise<void> {
     if (reason instanceof ApiError && reason.code === 'totp_required') {
       totpRequired.value = true
       error.value = '请输入身份验证器中的 6 位验证码。'
+      return
+    }
+    if (reason instanceof ApiError && reason.code === 'invalid_second_factor') {
+      error.value = useRecoveryCode.value ? '恢复码无效或已使用。' : '验证码无效、已使用或已过期。'
+      form.totpCode = ''
       return
     }
     error.value = session.state.authenticated
@@ -116,15 +126,23 @@ onMounted(() => {
       </label>
 
       <label v-if="totpRequired" class="field">
-        <span>两步验证码</span>
+        <span>{{ useRecoveryCode ? '恢复码' : '两步验证码' }}</span>
         <input
           v-model.trim="form.totpCode"
-          inputmode="numeric"
+          :inputmode="useRecoveryCode ? 'text' : 'numeric'"
           autocomplete="one-time-code"
-          maxlength="6"
-          placeholder="000000"
+          :maxlength="useRecoveryCode ? 17 : 6"
+          :placeholder="useRecoveryCode ? 'XXXXX-XXXXX-XXXXX' : '000000'"
+          autofocus
           required
         />
+        <button
+          class="button-link auth-recovery-toggle"
+          type="button"
+          @click="useRecoveryCode = !useRecoveryCode; form.totpCode = ''; error = ''"
+        >
+          {{ useRecoveryCode ? '使用身份验证器' : '改用恢复码' }}
+        </button>
       </label>
 
       <button class="button button--primary button--block" type="submit" :disabled="!canSubmit || busy">

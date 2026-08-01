@@ -61,6 +61,23 @@ export interface AuthSession {
   expiresAt?: string
 }
 
+export interface TOTPStatus {
+  enabled: boolean
+  enabledAt?: string
+  recoveryCodesRemaining: number
+}
+
+export interface TOTPEnrollment {
+  id: string
+  secret: string
+  otpauthUri: string
+  expiresAt: string
+}
+
+export interface TOTPRecoveryCodes {
+  recoveryCodes: string[]
+}
+
 export interface MetricValue {
   value: number
   total?: number

@@ -10,6 +10,11 @@ const mocks = vi.hoisted(() => {
     changePassword: vi.fn(),
     getSecurityEntrance: vi.fn(),
     updateSecurityEntrance: vi.fn(),
+    getTOTPStatus: vi.fn(),
+    startTOTPEnrollment: vi.fn(),
+    confirmTOTPEnrollment: vi.fn(),
+    rotateRecoveryCodes: vi.fn(),
+    disableTOTP: vi.fn(),
     resetApiSecurityState: vi.fn(),
     replace: vi.fn(),
     toastSuccess: vi.fn(),
@@ -40,10 +45,19 @@ vi.mock('@/lib/api', () => ({
         get: mocks.getSecurityEntrance,
         update: mocks.updateSecurityEntrance,
       },
+      totp: {
+        status: mocks.getTOTPStatus,
+        startEnrollment: mocks.startTOTPEnrollment,
+        confirmEnrollment: mocks.confirmTOTPEnrollment,
+        regenerateRecoveryCodes: mocks.rotateRecoveryCodes,
+        disable: mocks.disableTOTP,
+      },
     },
   },
   resetApiSecurityState: mocks.resetApiSecurityState,
 }))
+
+vi.mock('qrcode', () => ({ default: { toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,test') } }))
 
 vi.mock('@/stores/panel', () => ({
   usePanelState: () => ({
@@ -84,6 +98,12 @@ interface SettingsBindings {
   securityEntry: Ref<{ enabled: boolean; path?: string; resourceVersion: string } | undefined>
   securityEntryPath: Ref<string>
   saveSecurityEntry: (enabled: boolean, regenerate?: boolean) => Promise<void>
+  totpForm: { currentPassword: string; code: string; secondFactor: string }
+  totpAction: Ref<'idle' | 'enroll' | 'verify' | 'recovery' | 'rotate' | 'disable'>
+  recoveryCodes: Ref<string[]>
+  startTOTPEnrollment: () => Promise<void>
+  confirmTOTPEnrollment: () => Promise<void>
+  finishTOTPFlow: () => Promise<void>
 }
 
 function setupView(): SettingsBindings {
@@ -110,6 +130,11 @@ beforeEach(() => {
     path: 'panel-generated',
     resourceVersion: 'sha256:updated',
   })
+  mocks.getTOTPStatus.mockResolvedValue({ enabled: false, recoveryCodesRemaining: 0 })
+  mocks.startTOTPEnrollment.mockResolvedValue({
+    id: 'enrollment-1', secret: 'JBSWY3DPEHPK3PXP', otpauthUri: 'otpauth://totp/KPanel:admin', expiresAt: '2026-08-01T00:10:00Z',
+  })
+  mocks.confirmTOTPEnrollment.mockResolvedValue({ recoveryCodes: ['AAAAA-BBBBB-CCCCC', 'DDDDD-EEEEE-FFFFF'] })
   mocks.sessionState.authenticated = true
   mocks.sessionState.user = { id: 'admin', username: 'admin' }
   mocks.sessionState.expiresAt = '2026-07-26T00:00:00Z'
@@ -201,5 +226,28 @@ describe('SettingsView security entrance', () => {
       resourceVersion: 'sha256:updated',
     })
     expect(view.securityEntryPath.value).toBe('panel-generated')
+  })
+})
+
+describe('SettingsView two-factor authentication', () => {
+  it('requires the current password, verifies TOTP, and shows recovery codes before logout', async () => {
+    const view = setupView()
+    view.totpAction.value = 'enroll'
+    view.totpForm.currentPassword = 'CurrentPassword123'
+
+    await view.startTOTPEnrollment()
+    expect(mocks.startTOTPEnrollment).toHaveBeenCalledWith('CurrentPassword123')
+    expect(view.totpAction.value).toBe('verify')
+
+    view.totpForm.code = '123456'
+    await view.confirmTOTPEnrollment()
+    expect(mocks.confirmTOTPEnrollment).toHaveBeenCalledWith('enrollment-1', '123456')
+    expect(view.totpAction.value).toBe('recovery')
+    expect(view.recoveryCodes.value).toEqual(['AAAAA-BBBBB-CCCCC', 'DDDDD-EEEEE-FFFFF'])
+    expect(mocks.replace).not.toHaveBeenCalled()
+
+    await view.finishTOTPFlow()
+    expect(mocks.resetApiSecurityState).toHaveBeenCalled()
+    expect(mocks.replace).toHaveBeenCalledWith({ name: 'login' })
   })
 })

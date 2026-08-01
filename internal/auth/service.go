@@ -19,16 +19,22 @@ import (
 )
 
 var (
-	ErrBootstrapUnavailable   = errors.New("bootstrap is unavailable")
-	ErrInvalidBootstrapToken  = errors.New("invalid bootstrap token")
-	ErrInvalidCredentials     = errors.New("invalid credentials")
-	ErrInvalidSession         = errors.New("invalid session")
-	ErrInvalidCSRFToken       = errors.New("invalid csrf token")
-	ErrRateLimited            = errors.New("too many login attempts")
-	ErrInvalidUsername        = errors.New("username must contain 3-32 letters, numbers, dots, underscores, or hyphens")
-	ErrWeakPassword           = errors.New("password must contain 12-256 bytes")
-	ErrInvalidCurrentPassword = errors.New("current password is invalid")
-	ErrPasswordUnchanged      = errors.New("new password must differ from current password")
+	ErrBootstrapUnavailable    = errors.New("bootstrap is unavailable")
+	ErrInvalidBootstrapToken   = errors.New("invalid bootstrap token")
+	ErrInvalidCredentials      = errors.New("invalid credentials")
+	ErrInvalidSession          = errors.New("invalid session")
+	ErrInvalidCSRFToken        = errors.New("invalid csrf token")
+	ErrRateLimited             = errors.New("too many login attempts")
+	ErrInvalidUsername         = errors.New("username must contain 3-32 letters, numbers, dots, underscores, or hyphens")
+	ErrWeakPassword            = errors.New("password must contain 12-256 bytes")
+	ErrInvalidCurrentPassword  = errors.New("current password is invalid")
+	ErrPasswordUnchanged       = errors.New("new password must differ from current password")
+	ErrTOTPRequired            = errors.New("two-factor authentication is required")
+	ErrInvalidSecondFactor     = errors.New("invalid two-factor authentication code")
+	ErrTOTPAlreadyEnabled      = errors.New("two-factor authentication is already enabled")
+	ErrTOTPDisabled            = errors.New("two-factor authentication is not enabled")
+	ErrTOTPEnrollmentExpired   = errors.New("two-factor enrollment expired")
+	ErrSecondFactorUnavailable = errors.New("two-factor authentication is temporarily unavailable")
 )
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$`)
@@ -37,6 +43,7 @@ const accountFailureLimitMultiplier = 10
 
 type Config struct {
 	BootstrapTokenPath  string
+	TOTPKeyPath         string
 	SessionTTL          time.Duration
 	LoginWindow         time.Duration
 	MaxLoginFailures    int
@@ -54,12 +61,15 @@ type Service struct {
 	loginMu      sync.Mutex
 	pending      map[string]int
 	hashSlots    chan struct{}
+	enrollmentMu sync.Mutex
+	enrollments  map[string]pendingTOTPEnrollment
 }
 
 type PublicUser struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	Role        string `json:"role"`
+	TOTPEnabled bool   `json:"totpEnabled"`
 }
 
 type Credentials struct {
@@ -98,6 +108,12 @@ func NewService(storage *store.Store, hasher PasswordHasher, config Config) (*Se
 	if config.BootstrapTokenPath == "" {
 		return nil, errors.New("bootstrap token path is required")
 	}
+	if config.TOTPKeyPath == "" {
+		config.TOTPKeyPath = filepath.Join(filepath.Dir(config.BootstrapTokenPath), "totp-encryption.key")
+	}
+	if !filepath.IsAbs(config.TOTPKeyPath) {
+		return nil, errors.New("TOTP key path must be absolute")
+	}
 	if config.SessionTTL <= 0 {
 		config.SessionTTL = 12 * time.Hour
 	}
@@ -121,13 +137,14 @@ func NewService(storage *store.Store, hasher PasswordHasher, config Config) (*Se
 		return nil, fmt.Errorf("prepare password verifier: %w", err)
 	}
 	return &Service{
-		store:     storage,
-		hasher:    hasher,
-		config:    config,
-		now:       func() time.Time { return time.Now().UTC() },
-		dummyHash: dummyHash,
-		pending:   make(map[string]int),
-		hashSlots: make(chan struct{}, config.MaxConcurrentHashes),
+		store:       storage,
+		hasher:      hasher,
+		config:      config,
+		now:         func() time.Time { return time.Now().UTC() },
+		dummyHash:   dummyHash,
+		pending:     make(map[string]int),
+		hashSlots:   make(chan struct{}, config.MaxConcurrentHashes),
+		enrollments: make(map[string]pendingTOTPEnrollment),
 	}, nil
 }
 
@@ -238,7 +255,7 @@ func (s *Service) Bootstrap(token, username, password string) (Credentials, erro
 	return s.createSession(user)
 }
 
-func (s *Service) Login(ip, username, password string) (Credentials, error) {
+func (s *Service) Login(ip, username, password, secondFactor string) (Credentials, error) {
 	now := s.now()
 	ipKey, accountKey := loginKeys(ip, username)
 	since := now.Add(-s.config.LoginWindow)
@@ -273,10 +290,236 @@ func (s *Service) Login(ip, username, password string) (Credentials, error) {
 		}
 		return Credentials{}, ErrInvalidCredentials
 	}
+	if user.TOTPSecret != "" {
+		if strings.TrimSpace(secondFactor) == "" {
+			return Credentials{}, ErrTOTPRequired
+		}
+		if err := s.verifyAndConsumeSecondFactor(user, secondFactor, now); err != nil {
+			if errors.Is(err, ErrSecondFactorUnavailable) {
+				return Credentials{}, err
+			}
+			if recordErr := s.recordLoginAttempt(ipKey, accountKey, now, false); recordErr != nil {
+				return Credentials{}, recordErr
+			}
+			return Credentials{}, ErrInvalidSecondFactor
+		}
+	}
 	if err := s.recordLoginAttempt(ipKey, accountKey, now, true); err != nil {
 		return Credentials{}, err
 	}
 	return s.createSession(user)
+}
+
+func (s *Service) TOTPStatus(userID string) (TOTPStatus, error) {
+	user, err := s.store.UserByID(userID)
+	if err != nil {
+		return TOTPStatus{}, err
+	}
+	return TOTPStatus{
+		Enabled:                user.TOTPSecret != "",
+		EnabledAt:              user.TOTPEnabledAt,
+		RecoveryCodesRemaining: len(user.TOTPRecoveryCodeHashes),
+	}, nil
+}
+
+func (s *Service) StartTOTPEnrollment(userID, currentPassword string) (TOTPEnrollment, error) {
+	user, err := s.verifyCurrentPassword(userID, currentPassword)
+	if err != nil {
+		return TOTPEnrollment{}, err
+	}
+	if user.TOTPSecret != "" {
+		return TOTPEnrollment{}, ErrTOTPAlreadyEnabled
+	}
+	secret, err := generateTOTPSecret()
+	if err != nil {
+		return TOTPEnrollment{}, err
+	}
+	id, err := randomToken(18)
+	if err != nil {
+		return TOTPEnrollment{}, err
+	}
+	now := s.now()
+	expiresAt := now.Add(enrollmentTTL)
+	s.enrollmentMu.Lock()
+	defer s.enrollmentMu.Unlock()
+	for key, pending := range s.enrollments {
+		if !pending.expiresAt.After(now) || key == userID {
+			delete(s.enrollments, key)
+		}
+	}
+	if len(s.enrollments) >= maxPendingEnrollments {
+		return TOTPEnrollment{}, &RateLimitError{RetryAfter: time.Minute}
+	}
+	s.enrollments[userID] = pendingTOTPEnrollment{id: id, secret: secret, expiresAt: expiresAt}
+	return TOTPEnrollment{ID: id, Secret: secret, OTPAuthURI: buildOTPAuthURI(user.Username, secret), ExpiresAt: expiresAt}, nil
+}
+
+func (s *Service) ConfirmTOTPEnrollment(userID, enrollmentID, code string) ([]string, error) {
+	if len(enrollmentID) < 1 || len(enrollmentID) > 128 {
+		return nil, ErrTOTPEnrollmentExpired
+	}
+	if len(code) > 64 {
+		return nil, ErrInvalidSecondFactor
+	}
+	s.enrollmentMu.Lock()
+	pending, ok := s.enrollments[userID]
+	if !ok || !secureEqual(pending.id, enrollmentID) || !pending.expiresAt.After(s.now()) {
+		delete(s.enrollments, userID)
+		s.enrollmentMu.Unlock()
+		return nil, ErrTOTPEnrollmentExpired
+	}
+	step, valid := matchTOTPStep(pending.secret, strings.TrimSpace(code), s.now())
+	if !valid {
+		s.enrollmentMu.Unlock()
+		return nil, ErrInvalidSecondFactor
+	}
+	delete(s.enrollments, userID)
+	s.enrollmentMu.Unlock()
+
+	encryptedSecret, err := sealTOTPSecret(s.config.TOTPKeyPath, pending.secret)
+	if err != nil {
+		return nil, fmt.Errorf("protect TOTP secret: %w", err)
+	}
+	codes, hashes, err := generateRecoveryCodes()
+	if err != nil {
+		return nil, err
+	}
+	now := s.now()
+	if err := s.store.EnableUserTOTP(userID, encryptedSecret, now, step, hashes); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return nil, ErrTOTPAlreadyEnabled
+		}
+		return nil, err
+	}
+	return codes, nil
+}
+
+func (s *Service) RegenerateRecoveryCodes(userID, currentPassword, secondFactor string) ([]string, error) {
+	user, err := s.verifyCurrentPassword(userID, currentPassword)
+	if err != nil {
+		return nil, err
+	}
+	if user.TOTPSecret == "" {
+		return nil, ErrTOTPDisabled
+	}
+	if err := s.verifyAndConsumeSecondFactor(user, secondFactor, s.now()); err != nil {
+		if errors.Is(err, ErrSecondFactorUnavailable) {
+			return nil, err
+		}
+		return nil, ErrInvalidSecondFactor
+	}
+	codes, hashes, err := generateRecoveryCodes()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.ReplaceUserRecoveryCodes(userID, hashes, s.now()); err != nil {
+		return nil, err
+	}
+	return codes, nil
+}
+
+func (s *Service) DisableTOTP(userID, currentPassword, secondFactor string) error {
+	user, err := s.verifyCurrentPassword(userID, currentPassword)
+	if err != nil {
+		return err
+	}
+	if user.TOTPSecret == "" {
+		return ErrTOTPDisabled
+	}
+	if err := s.verifyAndConsumeSecondFactor(user, secondFactor, s.now()); err != nil {
+		if errors.Is(err, ErrSecondFactorUnavailable) {
+			return err
+		}
+		return ErrInvalidSecondFactor
+	}
+	if err := s.store.DisableUserTOTP(userID, s.now()); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return ErrTOTPDisabled
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Service) verifyCurrentPassword(userID, currentPassword string) (store.User, error) {
+	now := s.now()
+	reauthKey := "reauth:" + userID
+	if !s.reserveAuthenticationAttempt(reauthKey, now.Add(-s.config.LoginWindow), s.config.MaxLoginFailures) {
+		return store.User{}, &RateLimitError{RetryAfter: s.config.LoginWindow}
+	}
+	defer s.releaseAuthenticationAttempt(reauthKey)
+	record := func(success bool) error {
+		return s.store.RecordLoginAttempt(store.LoginAttempt{Key: reauthKey, OccurredAt: now, Success: success}, now.Add(-24*time.Hour))
+	}
+	if len(currentPassword) < 1 || len(currentPassword) > 256 {
+		if err := record(false); err != nil {
+			return store.User{}, err
+		}
+		return store.User{}, ErrInvalidCurrentPassword
+	}
+	select {
+	case s.hashSlots <- struct{}{}:
+		defer func() { <-s.hashSlots }()
+	default:
+		return store.User{}, &RateLimitError{RetryAfter: time.Second}
+	}
+	user, err := s.store.UserByID(userID)
+	if err != nil {
+		if recordErr := record(false); recordErr != nil {
+			return store.User{}, recordErr
+		}
+		return store.User{}, ErrInvalidCurrentPassword
+	}
+	valid, err := s.hasher.Verify(currentPassword, user.PasswordHash)
+	if err != nil || !valid {
+		if recordErr := record(false); recordErr != nil {
+			return store.User{}, recordErr
+		}
+		return store.User{}, ErrInvalidCurrentPassword
+	}
+	if err := record(true); err != nil {
+		return store.User{}, err
+	}
+	return user, nil
+}
+
+func (s *Service) reserveAuthenticationAttempt(key string, since time.Time, limit int) bool {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	if s.store.FailedLoginCount(key, since)+s.pending[key] >= limit {
+		return false
+	}
+	s.pending[key]++
+	return true
+}
+
+func (s *Service) releaseAuthenticationAttempt(key string) {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	if s.pending[key] <= 1 {
+		delete(s.pending, key)
+		return
+	}
+	s.pending[key]--
+}
+
+func (s *Service) verifyAndConsumeSecondFactor(user store.User, value string, now time.Time) error {
+	value = strings.TrimSpace(value)
+	if len(value) < 1 || len(value) > 64 {
+		return ErrInvalidSecondFactor
+	}
+	if recovery := normalizeRecoveryCode(value); recoveryCodePattern.MatchString(recovery) {
+		return s.store.ConsumeUserRecoveryCode(user.ID, recoveryCodeHash(recovery), now)
+	}
+	secret, err := openTOTPSecret(s.config.TOTPKeyPath, user.TOTPSecret)
+	if err != nil {
+		return fmt.Errorf("%w: protected TOTP secret cannot be opened", ErrSecondFactorUnavailable)
+	}
+	step, valid := matchTOTPStep(secret, value, now)
+	if !valid {
+		return ErrInvalidSecondFactor
+	}
+	return s.store.ConsumeUserTOTPStep(user.ID, user.TOTPSecret, step, now)
 }
 
 func (s *Service) reserveLogin(ipKey, accountKey string, since time.Time) bool {
@@ -460,7 +703,7 @@ func loginKeys(ip, username string) (string, string) {
 }
 
 func publicUser(user store.User) PublicUser {
-	return PublicUser{ID: user.ID, Username: user.Username, Role: user.Role}
+	return PublicUser{ID: user.ID, Username: user.Username, Role: user.Role, TOTPEnabled: user.TOTPSecret != ""}
 }
 
 func randomToken(bytes int) (string, error) {

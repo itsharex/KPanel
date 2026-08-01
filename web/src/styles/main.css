@@ -3989,6 +3989,134 @@ div.resource-name {
   margin: 0 18px 15px;
 }
 
+.totp-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.totp-panel > p,
+.totp-enrollment p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.totp-summary {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.totp-summary dl {
+  display: flex;
+  gap: 28px;
+  margin: 0;
+}
+
+.totp-summary dl div {
+  display: grid;
+  gap: 3px;
+}
+
+.totp-summary dt {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.totp-summary dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.totp-enrollment {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+}
+
+.totp-enrollment > img {
+  width: 190px;
+  height: 190px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.totp-secret {
+  display: block;
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  color: var(--brand-strong);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  letter-spacing: .08em;
+}
+
+.totp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.recovery-code-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.recovery-code-grid code {
+  padding: 9px 12px;
+  color: var(--text);
+  text-align: center;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  letter-spacing: .06em;
+}
+
+.button-link {
+  width: fit-content;
+  padding: 0;
+  color: var(--brand-strong);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.auth-recovery-toggle {
+  margin-top: -2px;
+  font-size: 10px;
+}
+
+@media (max-width: 680px) {
+  .totp-summary,
+  .totp-enrollment {
+    grid-template-columns: 1fr;
+  }
+
+  .totp-enrollment > img {
+    justify-self: center;
+  }
+
+  .totp-summary dl,
+  .totp-actions {
+    justify-content: flex-start;
+  }
+
+  .recovery-code-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .theme-options {
   display: grid;
   gap: 10px;

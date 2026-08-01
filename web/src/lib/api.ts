@@ -44,6 +44,9 @@ import type {
   SystemActionInput,
   SystemActionResult,
   SystemOverview,
+  TOTPEnrollment,
+  TOTPRecoveryCodes,
+  TOTPStatus,
   WebEnvironmentActionInput,
   WebEnvironmentBackup,
   WebEnvironmentCatalog,
@@ -1562,7 +1565,7 @@ export const api = {
       }
     },
   },
-  settings: {
+	settings: {
     get: (signal?: AbortSignal) => request<PanelSettings>('/settings', { signal }),
 	securityEntrance: {
 		get: () => request<SecurityEntranceSettings>('/settings/security-entry'),
@@ -1572,6 +1575,29 @@ export const api = {
 			regenerate?: boolean
 			expectedResourceVersion: string
 		}) => request<SecurityEntranceSettings>('/settings/security-entry', { method: 'PUT', body: input }),
+	},
+	totp: {
+		status: () => request<TOTPStatus>('/settings/totp'),
+		startEnrollment: (currentPassword: string) =>
+			request<TOTPEnrollment>('/settings/totp/enrollment', {
+				method: 'POST',
+				body: { currentPassword },
+			}),
+		confirmEnrollment: (enrollmentId: string, code: string) =>
+			request<TOTPRecoveryCodes>('/settings/totp/enrollment', {
+				method: 'PUT',
+				body: { enrollmentId, code },
+			}),
+		regenerateRecoveryCodes: (currentPassword: string, secondFactor: string) =>
+			request<TOTPRecoveryCodes>('/settings/totp/recovery-codes', {
+				method: 'POST',
+				body: { currentPassword, secondFactor },
+			}),
+		disable: (currentPassword: string, secondFactor: string) =>
+			request<{ ok: boolean }>('/settings/totp', {
+				method: 'DELETE',
+				body: { currentPassword, secondFactor },
+			}),
 	},
     changePassword: (currentPassword: string, newPassword: string) =>
       request<void>('/settings/password', {

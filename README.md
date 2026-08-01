@@ -85,6 +85,8 @@ bash <(curl -sL kejilion.sh) app kpanel
   资源影响、实时日志和历史结果。
 - **审计与恢复**：记录管理变更，检测资源版本冲突；配置写入前校验，失败时回滚并明确
   报告未完成的清理项。
+- **账户安全**：支持默认关闭、可主动启用的 TOTP 两步验证；提供一次性恢复码、登录限速、
+  因素变更后的 Session 吊销和本地加密密钥保护。
 
 ## 为什么是 KPanel
 
@@ -100,7 +102,7 @@ bash <(curl -sL kejilion.sh) app kpanel
 
 - 不修改、覆盖或 `source` 现有 `kejilion.sh`；需要复用脚本业务时，通过版本化的
   非交互协议调用对应动作。
-- 登录、服务端 Session、CSRF、登录限速、路径约束与供应链校验属于基础能力。
+- 登录、服务端 Session、CSRF、登录限速、可选 TOTP、路径约束与供应链校验属于基础能力。
 - 资源来源、KPanel label、脚本 marker、人工修改、危险运行参数或 KPanel 自身身份，
   均不构成管理授权条件。
 - 配置写入具备校验、审计和失败回滚；不可逆任务会明确标注并持久化进度与结果。
@@ -122,6 +124,7 @@ bash <(curl -sL kejilion.sh) app kpanel
 - 架构与安全：[架构与事实来源](docs/architecture.md)、
   [持久化与数据存储策略](docs/storage-strategy.md)、
   [攻击面与操作边界](docs/security-model.md)、
+  [两步验证安全契约](docs/two-factor-authentication.md)、
   [性能、稳定性、资源与网络入侵安全开发规范](docs/development-quality-standard.md)
 - 生态兼容：[kejilion.sh 兼容基线](docs/compatibility.md)、
   [网站业务分析](docs/legacy-site-contract.md)、

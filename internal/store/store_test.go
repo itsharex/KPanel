@@ -60,6 +60,66 @@ func TestStorePersistsIdentitySessionAndAudit(t *testing.T) {
 	}
 }
 
+func TestTOTPStatePersistsConsumesOnceAndRevokesSessions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	user := User{ID: "user-1", Username: "admin", PasswordHash: "hash", Role: "admin", CreatedAt: now, UpdatedAt: now}
+	if err := storage.CreateInitialAdmin(user); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.PutSession(Session{TokenHash: "before", CSRFHash: "csrf", UserID: user.ID, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.EnableUserTOTP(user.ID, "encrypted", now, 122, []string{"one", "two"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.SessionByTokenHash("before", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("TOTP enable did not revoke session: %v", err)
+	}
+	if err := storage.ConsumeUserTOTPStep(user.ID, "encrypted", 123, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.ConsumeUserTOTPStep(user.ID, "encrypted", 123, now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("TOTP step replay was accepted: %v", err)
+	}
+	if err := storage.ConsumeUserTOTPStep(user.ID, "replaced-secret", 124, now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale TOTP secret was accepted: %v", err)
+	}
+	if err := storage.ConsumeUserRecoveryCode(user.ID, "one", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.ConsumeUserRecoveryCode(user.ID, "one", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("recovery hash replay was accepted: %v", err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	got, err := reopened.UserByID(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TOTPSecret != "encrypted" || got.TOTPLastUsedStep != 123 || len(got.TOTPRecoveryCodeHashes) != 1 {
+		t.Fatalf("unexpected persisted TOTP state %#v", got)
+	}
+	if err := reopened.DisableUserTOTP(user.ID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = reopened.UserByID(user.ID)
+	if got.TOTPSecret != "" || got.TOTPEnabledAt != nil || len(got.TOTPRecoveryCodeHashes) != 0 {
+		t.Fatalf("TOTP state survived disable %#v", got)
+	}
+}
+
 func TestSecurityEntrancePersistsAndRejectsStaleWrites(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	storage, err := Open(path)

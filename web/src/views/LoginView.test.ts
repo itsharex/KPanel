@@ -46,6 +46,8 @@ vi.mock('@/stores/session', () => ({
 
 interface LoginBindings {
   form: { username: string; password: string; totpCode: string }
+  totpRequired: Ref<boolean>
+  useRecoveryCode: Ref<boolean>
   loginPhase: Ref<'idle' | 'authenticating' | 'entering'>
   busy: ComputedRef<boolean>
   submitLabel: ComputedRef<string>
@@ -110,5 +112,28 @@ describe('LoginView console transition', () => {
     await view.submit()
 
     expect(mocks.replace).toHaveBeenCalledWith('/files?path=%2Fhome')
+  })
+
+  it('requires a second factor and supports a one-time recovery code', async () => {
+    const challenge = new mocks.MockApiError('second factor required')
+    challenge.code = 'totp_required'
+    mocks.login.mockRejectedValueOnce(challenge).mockResolvedValueOnce(undefined)
+    mocks.replace.mockResolvedValue(undefined)
+    const view = setupView()
+    view.form.username = 'admin'
+    view.form.password = 'StrongPassword123'
+
+    await view.submit()
+    expect(view.totpRequired.value).toBe(true)
+
+    view.useRecoveryCode.value = true
+    view.form.totpCode = 'ABCDE-FGHIJ-KLMNO'
+    await view.submit()
+
+    expect(mocks.login).toHaveBeenLastCalledWith({
+      username: 'admin',
+      password: 'StrongPassword123',
+      totpCode: 'ABCDE-FGHIJ-KLMNO',
+    })
   })
 })

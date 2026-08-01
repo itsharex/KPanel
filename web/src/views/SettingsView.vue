@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import QRCode from 'qrcode'
 import {
   Check,
   Clock3,
@@ -24,6 +25,7 @@ import { usePanelState } from '@/stores/panel'
 import { useSession } from '@/stores/session'
 import { useTheme, type ThemePreference } from '@/stores/theme'
 import { useToast } from '@/stores/toast'
+import type { TOTPEnrollment, TOTPStatus } from '@/types/api'
 
 const router = useRouter()
 const session = useSession()
@@ -42,6 +44,15 @@ const capabilities = ref<Array<{ id: string; enabled: boolean; reason?: string }
 const securityEntry = ref<{ enabled: boolean; path?: string; resourceVersion: string }>()
 const securityEntryPath = ref('')
 const savingSecurityEntry = ref(false)
+const totpStatus = ref<TOTPStatus>()
+const totpStatusError = ref('')
+const totpEnrollment = ref<TOTPEnrollment>()
+const totpQRCode = ref('')
+const totpBusy = ref(false)
+const totpAction = ref<'idle' | 'enroll' | 'verify' | 'recovery' | 'rotate' | 'disable'>('idle')
+const totpError = ref('')
+const recoveryCodes = ref<string[]>([])
+const totpForm = reactive({ currentPassword: '', code: '', secondFactor: '' })
 
 const securityEntryUrl = computed(() => {
   if (!securityEntry.value?.enabled || !securityEntry.value.path || typeof window === 'undefined') return ''
@@ -144,41 +155,159 @@ async function saveSecurityEntry(enabled: boolean, regenerate = false): Promise<
 async function copySecurityEntry(): Promise<void> {
   if (!securityEntryUrl.value) return
   try {
-    let copied = false
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(securityEntryUrl.value)
-        copied = true
-      } catch {
-        copied = false
-      }
-    }
-    if (!copied) {
-      const input = document.createElement('textarea')
-      input.value = securityEntryUrl.value
-      input.style.position = 'fixed'
-      input.style.opacity = '0'
-      document.body.appendChild(input)
-      input.select()
-      const succeeded = document.execCommand('copy')
-      input.remove()
-      if (!succeeded) throw new Error('copy unavailable')
-    }
+    await copyText(securityEntryUrl.value)
     toast.success('安全入口已复制')
   } catch {
     toast.danger('复制失败', '请手动选择并复制入口地址。')
   }
 }
 
+async function copyText(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value)
+      return
+    } catch {
+      // HTTP/IP deployments may not expose the Clipboard API. Fall back to
+      // the same local selection flow used elsewhere in KPanel.
+    }
+  }
+  const input = document.createElement('textarea')
+  input.value = value
+  input.style.position = 'fixed'
+  input.style.opacity = '0'
+  document.body.appendChild(input)
+  input.select()
+  const succeeded = document.execCommand('copy')
+  input.remove()
+  if (!succeeded) throw new Error('copy unavailable')
+}
+
+function resetTOTPFlow(): void {
+  totpAction.value = 'idle'
+  totpEnrollment.value = undefined
+  totpQRCode.value = ''
+  totpError.value = ''
+  recoveryCodes.value = []
+  totpForm.currentPassword = ''
+  totpForm.code = ''
+  totpForm.secondFactor = ''
+}
+
+async function startTOTPEnrollment(): Promise<void> {
+  if (!totpForm.currentPassword || totpBusy.value) return
+  totpBusy.value = true
+  totpError.value = ''
+  try {
+    const enrollment = await api.settings.totp.startEnrollment(totpForm.currentPassword)
+    totpEnrollment.value = enrollment
+    totpQRCode.value = await QRCode.toDataURL(enrollment.otpauthUri, {
+      width: 220,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#09231d', light: '#ffffff' },
+    })
+    totpForm.currentPassword = ''
+    totpAction.value = 'verify'
+  } catch (reason) {
+    totpError.value = reason instanceof ApiError ? reason.message : '无法开始两步验证配置。'
+  } finally {
+    totpBusy.value = false
+  }
+}
+
+async function confirmTOTPEnrollment(): Promise<void> {
+  if (!totpEnrollment.value || !/^\d{6}$/.test(totpForm.code) || totpBusy.value) return
+  totpBusy.value = true
+  totpError.value = ''
+  try {
+    const result = await api.settings.totp.confirmEnrollment(totpEnrollment.value.id, totpForm.code)
+    recoveryCodes.value = result.recoveryCodes
+    totpStatus.value = { enabled: true, enabledAt: new Date().toISOString(), recoveryCodesRemaining: result.recoveryCodes.length }
+    totpAction.value = 'recovery'
+  } catch (reason) {
+    totpError.value = reason instanceof ApiError ? reason.message : '验证码校验失败。'
+    totpForm.code = ''
+  } finally {
+    totpBusy.value = false
+  }
+}
+
+async function submitTOTPManagement(): Promise<void> {
+  if (!totpForm.currentPassword || !totpForm.secondFactor || totpBusy.value) return
+  totpBusy.value = true
+  totpError.value = ''
+  try {
+    if (totpAction.value === 'rotate') {
+      const result = await api.settings.totp.regenerateRecoveryCodes(totpForm.currentPassword, totpForm.secondFactor)
+      recoveryCodes.value = result.recoveryCodes
+      totpAction.value = 'recovery'
+      return
+    }
+    await api.settings.totp.disable(totpForm.currentPassword, totpForm.secondFactor)
+    toast.success('两步验证已关闭', '请使用密码重新登录。')
+    await finishTOTPFlow()
+  } catch (reason) {
+    totpError.value = reason instanceof ApiError ? reason.message : '两步验证操作失败。'
+  } finally {
+    totpBusy.value = false
+  }
+}
+
+async function copyRecoveryCodes(): Promise<void> {
+  try {
+    await copyText(recoveryCodes.value.join('\n'))
+    toast.success('恢复码已复制')
+  } catch {
+    toast.danger('复制失败', '请手动选择并保存恢复码。')
+  }
+}
+
+async function loadTOTPStatus(): Promise<void> {
+  totpStatusError.value = ''
+  try {
+    totpStatus.value = await api.settings.totp.status()
+  } catch (reason) {
+    totpStatus.value = undefined
+    totpStatusError.value = reason instanceof ApiError ? reason.message : '无法读取两步验证状态。'
+  }
+}
+
+function downloadRecoveryCodes(): void {
+  const blob = new Blob([
+    `KPanel 两步验证恢复码\n生成时间：${new Date().toLocaleString()}\n\n${recoveryCodes.value.join('\n')}\n`,
+  ], { type: 'text/plain;charset=utf-8' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = 'kpanel-recovery-codes.txt'
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
+async function finishTOTPFlow(): Promise<void> {
+  resetApiSecurityState()
+  session.state.authenticated = false
+  session.state.user = undefined
+  session.state.expiresAt = undefined
+  session.state.agent = undefined
+  await router.replace({ name: 'login' })
+}
+
 onMounted(async () => {
-  const [capabilityResult, entranceResult] = await Promise.allSettled([
+  const [capabilityResult, entranceResult, totpResult] = await Promise.allSettled([
     api.agent.capabilities(),
     api.settings.securityEntrance.get(),
+    api.settings.totp.status(),
   ])
   capabilities.value = capabilityResult.status === 'fulfilled' ? capabilityResult.value : []
   if (entranceResult.status === 'fulfilled') {
     securityEntry.value = entranceResult.value
     securityEntryPath.value = entranceResult.value.path || ''
+  }
+  if (totpResult.status === 'fulfilled') {
+    totpStatus.value = totpResult.value
+  } else {
+    totpStatusError.value = totpResult.reason instanceof ApiError ? totpResult.reason.message : '无法读取两步验证状态。'
   }
 })
 </script>
@@ -216,7 +345,112 @@ onMounted(async () => {
           <dd>{{ session.state.user?.totpEnabled ? '已启用 TOTP' : '密码登录' }}</dd>
         </div>
       </dl>
-      <p class="settings-note">TOTP 配置将在账户管理接口实现后显示；宿主机能力按真实适配器状态呈现。</p>
+      <p class="settings-note">账户安全设置由 KPanel 本机保存，不依赖 Agent 或 kejilion.sh。</p>
+    </section>
+
+    <section class="settings-section panel-card">
+      <header class="settings-section__header">
+        <span><ShieldCheck :size="19" /></span>
+        <div><h2>两步验证</h2><p>兼容主流身份验证器的标准 TOTP，并提供一次性恢复码</p></div>
+        <StatusBadge
+          :status="totpStatus?.enabled ? 'connected' : 'idle'"
+          :label="totpStatus?.enabled ? '已启用' : '未启用'"
+        />
+      </header>
+
+      <div v-if="!totpStatus" class="totp-panel">
+        <div v-if="totpStatusError" class="inline-alert inline-alert--danger">
+          <span>{{ totpStatusError }}</span>
+          <button class="button-link" type="button" @click="loadTOTPStatus">重新加载</button>
+        </div>
+        <p v-else>正在读取两步验证状态…</p>
+      </div>
+
+      <div v-else-if="totpAction === 'recovery'" class="totp-panel totp-panel--recovery">
+        <div class="inline-alert inline-alert--warning">
+          恢复码只显示这一次。请保存到密码管理器或离线位置；每个恢复码只能使用一次。
+        </div>
+        <div class="recovery-code-grid" aria-label="恢复码">
+          <code v-for="code in recoveryCodes" :key="code">{{ code }}</code>
+        </div>
+        <div class="totp-actions">
+          <button class="button button--secondary" type="button" @click="copyRecoveryCodes"><Copy :size="15" /> 复制</button>
+          <button class="button button--secondary" type="button" @click="downloadRecoveryCodes">下载文本</button>
+          <button class="button button--primary" type="button" @click="finishTOTPFlow">已安全保存，重新登录</button>
+        </div>
+      </div>
+
+      <form v-else-if="totpAction === 'enroll'" class="totp-panel form-stack" @submit.prevent="startTOTPEnrollment">
+        <p>启用前需要重新验证当前密码。配置完成后，所有现有会话都会失效。</p>
+        <label class="field">
+          <span>当前密码</span>
+          <input v-model="totpForm.currentPassword" type="password" autocomplete="current-password" required autofocus />
+        </label>
+        <div v-if="totpError" class="inline-alert inline-alert--danger">{{ totpError }}</div>
+        <div class="totp-actions">
+          <button class="button button--ghost" type="button" @click="resetTOTPFlow">取消</button>
+          <button class="button button--primary" type="submit" :disabled="totpBusy || !totpForm.currentPassword">
+            <LoaderCircle v-if="totpBusy" class="spin" :size="16" /> 继续
+          </button>
+        </div>
+      </form>
+
+      <form v-else-if="totpAction === 'verify' && totpEnrollment" class="totp-panel" @submit.prevent="confirmTOTPEnrollment">
+        <div class="totp-enrollment">
+          <img :src="totpQRCode" width="190" height="190" alt="TOTP 配置二维码" />
+          <div class="form-stack">
+            <p>使用 Microsoft Authenticator、Google Authenticator、1Password 等应用扫描二维码。</p>
+            <label class="field">
+              <span>无法扫码时手动输入</span>
+              <code class="totp-secret">{{ totpEnrollment.secret }}</code>
+            </label>
+            <label class="field">
+              <span>输入身份验证器中的 6 位验证码</span>
+              <input v-model.trim="totpForm.code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" required autofocus />
+            </label>
+          </div>
+        </div>
+        <div v-if="totpError" class="inline-alert inline-alert--danger">{{ totpError }}</div>
+        <div class="totp-actions">
+          <button class="button button--ghost" type="button" @click="resetTOTPFlow">取消</button>
+          <button class="button button--primary" type="submit" :disabled="totpBusy || !/^\d{6}$/.test(totpForm.code)">
+            <LoaderCircle v-if="totpBusy" class="spin" :size="16" /> 验证并启用
+          </button>
+        </div>
+      </form>
+
+      <form v-else-if="totpAction === 'rotate' || totpAction === 'disable'" class="totp-panel form-stack" @submit.prevent="submitTOTPManagement">
+        <div class="inline-alert" :class="totpAction === 'disable' ? 'inline-alert--warning' : 'inline-alert--info'">
+          {{ totpAction === 'disable' ? '关闭后账户将恢复为仅密码登录。' : '生成新恢复码后，旧恢复码会立即全部失效。' }}
+        </div>
+        <label class="field"><span>当前密码</span><input v-model="totpForm.currentPassword" type="password" autocomplete="current-password" required /></label>
+        <label class="field"><span>当前验证码或恢复码</span><input v-model.trim="totpForm.secondFactor" type="text" autocomplete="one-time-code" maxlength="17" required /></label>
+        <div v-if="totpError" class="inline-alert inline-alert--danger">{{ totpError }}</div>
+        <div class="totp-actions">
+          <button class="button button--ghost" type="button" @click="resetTOTPFlow">取消</button>
+          <button class="button" :class="totpAction === 'disable' ? 'button--danger' : 'button--primary'" type="submit" :disabled="totpBusy">
+            <LoaderCircle v-if="totpBusy" class="spin" :size="16" /> {{ totpAction === 'disable' ? '确认关闭' : '生成新恢复码' }}
+          </button>
+        </div>
+      </form>
+
+      <div v-else class="totp-panel totp-summary">
+        <template v-if="totpStatus.enabled">
+          <dl>
+            <div><dt>启用时间</dt><dd>{{ formatDateTime(totpStatus.enabledAt) }}</dd></div>
+            <div><dt>剩余恢复码</dt><dd>{{ totpStatus.recoveryCodesRemaining }} 个</dd></div>
+          </dl>
+          <div class="totp-actions">
+            <button class="button button--secondary" type="button" @click="totpAction = 'rotate'">重新生成恢复码</button>
+            <button class="button button--ghost" type="button" @click="totpAction = 'disable'">关闭两步验证</button>
+          </div>
+        </template>
+        <template v-else>
+          <p>登录时除密码外，还需要身份验证器生成的动态验证码。默认关闭，可随时启用。</p>
+          <button class="button button--primary" type="button" @click="totpAction = 'enroll'">启用两步验证</button>
+        </template>
+      </div>
+      <p class="settings-note">验证码每 30 秒更新，允许轻微时钟偏差；已成功使用的验证码和恢复码不能重放。</p>
     </section>
 
     <section class="settings-section panel-card">

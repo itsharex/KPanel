@@ -21,7 +21,7 @@
 
 | 边界 | 保留措施 | 防范问题 |
 | --- | --- | --- |
-| 身份 | Argon2id、一次性 Bootstrap Token、服务端 Session、登录限速 | 未授权访问、撞库 |
+| 身份 | Argon2id、一次性 Bootstrap Token、服务端 Session、登录限速、可选 TOTP 与一次性恢复码 | 未授权访问、撞库、密码泄露后的账户接管 |
 | Web 请求 | CSRF Token、严格 Origin、可信代理 CIDR、Secure/HttpOnly Cookie | 跨站请求伪造、代理头伪造 |
 | Agent | Unix Socket、独立 Bearer Token、最小 systemd 权限 | 绕过 Panel 直接提权 |
 | 输入 | 类型化 API、枚举或语法校验、禁止把 Web 字段拼成宿主机 Shell | 命令注入 |
@@ -33,6 +33,10 @@
 | 供应链 | 固定来源、内容/结构校验、本地回退目录 | 远程目录获得执行权限 |
 
 这些控制约束请求和执行过程，不按资源归属缩减管理员业务功能。
+
+TOTP 的注册、密钥保护、恢复和防绕过要求见
+[`two-factor-authentication.md`](two-factor-authentication.md)。两步验证只增强正常认证链路，
+不能替代每个 API 的 Session 鉴权，也不能防御未认证 RCE、路径穿越或 Session 劫持。
 
 ## 3. 真实状态与双端互通
 

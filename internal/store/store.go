@@ -2,6 +2,7 @@ package store
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,12 +29,16 @@ type processLock interface {
 }
 
 type User struct {
-	ID           string    `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"passwordHash"`
-	Role         string    `json:"role"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID                     string     `json:"id"`
+	Username               string     `json:"username"`
+	PasswordHash           string     `json:"passwordHash"`
+	Role                   string     `json:"role"`
+	TOTPSecret             string     `json:"totpSecret,omitempty"`
+	TOTPEnabledAt          *time.Time `json:"totpEnabledAt,omitempty"`
+	TOTPLastUsedStep       int64      `json:"totpLastUsedStep,omitempty"`
+	TOTPRecoveryCodeHashes []string   `json:"totpRecoveryCodeHashes,omitempty"`
+	CreatedAt              time.Time  `json:"createdAt"`
+	UpdatedAt              time.Time  `json:"updatedAt"`
 }
 
 type Session struct {
@@ -234,6 +239,155 @@ func (s *Store) ReplaceUserPassword(userID, expectedHash, newHash string, update
 		return err
 	}
 	return nil
+}
+
+// EnableUserTOTP persists the encrypted authenticator secret and one-time
+// recovery hashes in the same atomic transition that revokes existing sessions.
+func (s *Store) EnableUserTOTP(userID, encryptedSecret string, enabledAt time.Time, lastUsedStep int64, recoveryHashes []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userIndex := s.userIndexLocked(userID)
+	if userIndex < 0 {
+		return ErrNotFound
+	}
+	if s.data.Users[userIndex].TOTPSecret != "" {
+		return ErrConflict
+	}
+	previous := cloneDiskState(s.data)
+	s.data.Users[userIndex].TOTPSecret = encryptedSecret
+	s.data.Users[userIndex].TOTPEnabledAt = &enabledAt
+	s.data.Users[userIndex].TOTPLastUsedStep = lastUsedStep
+	s.data.Users[userIndex].TOTPRecoveryCodeHashes = append([]string(nil), recoveryHashes...)
+	s.data.Users[userIndex].UpdatedAt = enabledAt
+	s.revokeUserSessionsLocked(userID)
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
+}
+
+// ConsumeUserTOTPStep prevents reuse of an authenticator code after successful
+// verification, including concurrent login attempts that matched the same step.
+func (s *Store) ConsumeUserTOTPStep(userID, expectedSecret string, step int64, updatedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userIndex := s.userIndexLocked(userID)
+	if userIndex < 0 {
+		return ErrNotFound
+	}
+	if s.data.Users[userIndex].TOTPSecret == "" ||
+		!secureStringEqual(s.data.Users[userIndex].TOTPSecret, expectedSecret) ||
+		step <= s.data.Users[userIndex].TOTPLastUsedStep {
+		return ErrConflict
+	}
+	previous := cloneDiskState(s.data)
+	s.data.Users[userIndex].TOTPLastUsedStep = step
+	s.data.Users[userIndex].UpdatedAt = updatedAt
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
+}
+
+func secureStringEqual(left, right string) bool {
+	leftHash := sha256.Sum256([]byte(left))
+	rightHash := sha256.Sum256([]byte(right))
+	return subtle.ConstantTimeCompare(leftHash[:], rightHash[:]) == 1
+}
+
+// ConsumeUserRecoveryCode removes a matching hash exactly once. Comparison is
+// constant-time for each stored value so the plaintext code never needs storage.
+func (s *Store) ConsumeUserRecoveryCode(userID, codeHash string, updatedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userIndex := s.userIndexLocked(userID)
+	if userIndex < 0 {
+		return ErrNotFound
+	}
+	hashes := s.data.Users[userIndex].TOTPRecoveryCodeHashes
+	matched := -1
+	for index, candidate := range hashes {
+		if subtle.ConstantTimeCompare([]byte(candidate), []byte(codeHash)) == 1 {
+			matched = index
+		}
+	}
+	if matched < 0 {
+		return ErrNotFound
+	}
+	previous := cloneDiskState(s.data)
+	s.data.Users[userIndex].TOTPRecoveryCodeHashes = append(append([]string(nil), hashes[:matched]...), hashes[matched+1:]...)
+	s.data.Users[userIndex].UpdatedAt = updatedAt
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ReplaceUserRecoveryCodes(userID string, recoveryHashes []string, updatedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userIndex := s.userIndexLocked(userID)
+	if userIndex < 0 {
+		return ErrNotFound
+	}
+	if s.data.Users[userIndex].TOTPSecret == "" {
+		return ErrConflict
+	}
+	previous := cloneDiskState(s.data)
+	s.data.Users[userIndex].TOTPRecoveryCodeHashes = append([]string(nil), recoveryHashes...)
+	s.data.Users[userIndex].UpdatedAt = updatedAt
+	s.revokeUserSessionsLocked(userID)
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
+}
+
+func (s *Store) DisableUserTOTP(userID string, updatedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userIndex := s.userIndexLocked(userID)
+	if userIndex < 0 {
+		return ErrNotFound
+	}
+	if s.data.Users[userIndex].TOTPSecret == "" {
+		return ErrConflict
+	}
+	previous := cloneDiskState(s.data)
+	s.data.Users[userIndex].TOTPSecret = ""
+	s.data.Users[userIndex].TOTPEnabledAt = nil
+	s.data.Users[userIndex].TOTPLastUsedStep = 0
+	s.data.Users[userIndex].TOTPRecoveryCodeHashes = nil
+	s.data.Users[userIndex].UpdatedAt = updatedAt
+	s.revokeUserSessionsLocked(userID)
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
+}
+
+func (s *Store) userIndexLocked(userID string) int {
+	for index := range s.data.Users {
+		if s.data.Users[index].ID == userID {
+			return index
+		}
+	}
+	return -1
+}
+
+func (s *Store) revokeUserSessionsLocked(userID string) {
+	sessions := make([]Session, 0, len(s.data.Sessions))
+	for _, session := range s.data.Sessions {
+		if session.UserID != userID {
+			sessions = append(sessions, session)
+		}
+	}
+	s.data.Sessions = sessions
 }
 
 func (s *Store) PutSession(session Session) error {
@@ -464,9 +618,17 @@ func (s *Store) persistLocked() error {
 }
 
 func cloneDiskState(source diskState) diskState {
+	users := append([]User(nil), source.Users...)
+	for index := range users {
+		users[index].TOTPRecoveryCodeHashes = append([]string(nil), users[index].TOTPRecoveryCodeHashes...)
+		if users[index].TOTPEnabledAt != nil {
+			enabledAt := *users[index].TOTPEnabledAt
+			users[index].TOTPEnabledAt = &enabledAt
+		}
+	}
 	return diskState{
 		SchemaVersion:    source.SchemaVersion,
-		Users:            append([]User(nil), source.Users...),
+		Users:            users,
 		Sessions:         append([]Session(nil), source.Sessions...),
 		Audit:            append([]AuditEvent(nil), source.Audit...),
 		LoginAttempts:    append([]LoginAttempt(nil), source.LoginAttempts...),

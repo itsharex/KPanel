@@ -71,6 +71,23 @@ func TestConfigRejectsWebRootSecretOverlap(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsUnsafeTOTPKeyPaths(t *testing.T) {
+	t.Parallel()
+	for name, keyPath := range map[string]string{
+		"relative":        "totp-encryption.key",
+		"store collision": "/var/lib/kejilion-panel/panel-state.json",
+		"web root child":  "/usr/share/kejilion-panel/web/totp-encryption.key",
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := validTestConfig()
+			config.TOTPKeyPath = keyPath
+			if err := config.Validate(); err == nil {
+				t.Fatal("Validate accepted an unsafe TOTP encryption key path")
+			}
+		})
+	}
+}
+
 func TestConfigRejectsUnsafeCookieNames(t *testing.T) {
 	t.Parallel()
 	for _, cookieName := range []string{
@@ -103,6 +120,7 @@ func validTestConfig() Config {
 	config := DefaultConfig()
 	config.StorePath = "/var/lib/kejilion-panel/panel-state.json"
 	config.BootstrapTokenPath = "/var/lib/kejilion-panel/bootstrap.token"
+	config.TOTPKeyPath = "/var/lib/kejilion-panel/totp-encryption.key"
 	config.CookieName = "__Host-kejilion_session"
 	return config
 }
