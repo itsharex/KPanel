@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type {
+  Compartment as CompartmentType,
+  EditorState as EditorStateType,
+  Extension,
+} from '@codemirror/state'
 import type { EditorView as EditorViewType } from '@codemirror/view'
 import { loadCodeLanguage, type CodeLanguage } from '@/lib/code-editor-language'
 
@@ -10,17 +15,26 @@ const props = withDefaults(
     mime?: string
     sizeBytes: number
     editable?: boolean
+    lineWrap?: boolean
   }>(),
   {
     mime: '',
     editable: true,
+    lineWrap: false,
   },
 )
+
+interface CodeEditorStatus {
+  line: number
+  column: number
+  lines: number
+}
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   dirty: []
-  save: []
+  save: [value: string]
+  status: [value: CodeEditorStatus]
   ready: [value: CodeLanguage & { loadMs: number }]
 }>()
 
@@ -28,14 +42,55 @@ const host = ref<HTMLElement>()
 const loading = ref(true)
 const loadError = ref('')
 let editor: EditorViewType | undefined
+let lineWrapCompartment: CompartmentType | undefined
+let lineWrappingExtension: Extension | undefined
 let applyingExternalValue = false
+let dirty = false
 let cancelled = false
+
+function currentValue(): string {
+  return editor?.state.doc.toString() ?? props.modelValue
+}
+
+function markClean(): void {
+  dirty = false
+}
+
+function emitStatus(state: EditorStateType): void {
+  const head = state.selection.main.head
+  const line = state.doc.lineAt(head)
+  emit('status', {
+    line: line.number,
+    column: head - line.from + 1,
+    lines: state.doc.lines,
+  })
+}
+
+function requestSave(): void {
+  const value = currentValue()
+  emit('update:modelValue', value)
+  emit('save', value)
+}
+
+function openSearch(): void {
+  if (!editor) return
+  void import('@codemirror/search').then(({ openSearchPanel }) => {
+    if (editor) openSearchPanel(editor)
+  })
+}
+
+defineExpose({
+  getValue: currentValue,
+  markClean,
+  openSearch,
+  focus: () => editor?.focus(),
+})
 
 async function initialize(): Promise<void> {
   const startedAt = performance.now()
   try {
     const [
-      { EditorState },
+      { Compartment, EditorState },
       {
         EditorView,
         drawSelection,
@@ -47,7 +102,8 @@ async function initialize(): Promise<void> {
         lineNumbers,
       },
       { defaultKeymap, history, historyKeymap, indentWithTab },
-      { bracketMatching, HighlightStyle, indentOnInput, syntaxHighlighting },
+      { bracketMatching, foldGutter, foldKeymap, HighlightStyle, indentOnInput, syntaxHighlighting },
+      { highlightSelectionMatches, search, searchKeymap },
       { tags },
       language,
     ] = await Promise.all([
@@ -55,6 +111,7 @@ async function initialize(): Promise<void> {
       import('@codemirror/view'),
       import('@codemirror/commands'),
       import('@codemirror/language'),
+      import('@codemirror/search'),
       import('@lezer/highlight'),
       loadCodeLanguage(props.fileName, props.mime, props.sizeBytes),
     ])
@@ -72,8 +129,11 @@ async function initialize(): Promise<void> {
       { tag: tags.invalid, color: 'var(--danger)', textDecoration: 'underline' },
     ])
 
+    lineWrapCompartment = new Compartment()
+    lineWrappingExtension = EditorView.lineWrapping
     const extensions = [
       lineNumbers(),
+      ...(language.highlighted ? [foldGutter()] : []),
       highlightActiveLineGutter(),
       highlightSpecialChars(),
       history(),
@@ -82,15 +142,20 @@ async function initialize(): Promise<void> {
       indentOnInput(),
       bracketMatching(),
       highlightActiveLine(),
+      search({ top: true }),
+      highlightSelectionMatches(),
       syntaxHighlighting(highlightStyle),
       EditorState.tabSize.of(2),
       EditorState.readOnly.of(!props.editable),
       EditorView.editable.of(props.editable),
+      lineWrapCompartment.of(props.lineWrap ? lineWrappingExtension : []),
       EditorView.contentAttributes.of({ 'aria-label': '文件内容' }),
       EditorView.updateListener.of((update) => {
-        if (!update.docChanged || applyingExternalValue) return
-        emit('update:modelValue', update.state.doc.toString())
-        emit('dirty')
+        if (update.docChanged && !applyingExternalValue && !dirty) {
+          dirty = true
+          emit('dirty')
+        }
+        if (update.docChanged || update.selectionSet) emitStatus(update.state)
       }),
       EditorView.theme({
         '&': {
@@ -108,6 +173,10 @@ async function initialize(): Promise<void> {
           minWidth: 'max-content',
           padding: '14px 0',
           caretColor: 'var(--code-caret)',
+        },
+        '.cm-cursor, .cm-dropCursor': {
+          borderLeftColor: 'var(--code-caret)',
+          borderLeftWidth: '2px',
         },
         '.cm-line': { padding: '0 16px' },
         '.cm-gutters': {
@@ -129,17 +198,36 @@ async function initialize(): Promise<void> {
         '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
           backgroundColor: 'var(--code-selection) !important',
         },
+        '.cm-panels': {
+          color: 'var(--code-text)',
+          backgroundColor: 'var(--code-gutter)',
+        },
+        '.cm-panel.cm-search': {
+          padding: '8px 10px',
+        },
+        '.cm-panel.cm-search input': {
+          color: 'var(--code-text)',
+          backgroundColor: 'var(--code-background)',
+          border: '1px solid rgb(96 112 139 / 55%)',
+          borderRadius: '6px',
+        },
+        '.cm-searchMatch': {
+          backgroundColor: 'rgb(245 215 110 / 22%)',
+          outline: '1px solid rgb(245 215 110 / 60%)',
+        },
       }),
       keymap.of([
         {
           key: 'Mod-s',
           preventDefault: true,
           run: () => {
-            emit('save')
+            requestSave()
             return true
           },
         },
         indentWithTab,
+        ...searchKeymap,
+        ...foldKeymap,
         ...defaultKeymap,
         ...historyKeymap,
       ]),
@@ -151,6 +239,7 @@ async function initialize(): Promise<void> {
       state: EditorState.create({ doc: props.modelValue, extensions }),
     })
     editor.focus()
+    emitStatus(editor.state)
     emit('ready', { ...language, loadMs: performance.now() - startedAt })
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '编辑器加载失败'
@@ -168,6 +257,16 @@ watch(
       changes: { from: 0, to: editor.state.doc.length, insert: value },
     })
     applyingExternalValue = false
+  },
+)
+
+watch(
+  () => props.lineWrap,
+  (enabled) => {
+    if (!editor || !lineWrapCompartment || !lineWrappingExtension) return
+    editor.dispatch({
+      effects: lineWrapCompartment.reconfigure(enabled ? lineWrappingExtension : []),
+    })
   },
 )
 

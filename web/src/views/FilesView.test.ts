@@ -5,6 +5,7 @@ import FilesView from './FilesView.vue'
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   action: vi.fn(),
+  write: vi.fn(),
   success: vi.fn(),
   danger: vi.fn(),
 }))
@@ -17,7 +18,7 @@ vi.mock('@/lib/api', () => ({
       action: mocks.action,
       contentUrl: vi.fn(),
       text: vi.fn(),
-      write: vi.fn(),
+      write: mocks.write,
       upload: vi.fn(),
     },
   },
@@ -32,6 +33,7 @@ vi.mock('@/stores/toast', () => ({
 
 interface FileBindings {
   loadDirectory: (path?: string, append?: boolean) => Promise<void>
+  savePreview: (content?: string) => Promise<void>
   submitDialog: () => Promise<void>
   pasteClipboard: (target?: string) => Promise<void>
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
@@ -57,6 +59,17 @@ interface FileBindings {
   contextMenu: { value?: { entry?: TestFileEntry; x: number; y: number } }
   dialogEntries: { value: TestFileEntry[] }
   dialogAction: { value?: 'trash' }
+  previewEntry: { value?: TestFileEntry }
+  previewContent: { value: string }
+  previewDirty: { value: boolean }
+  codeEditorRef: {
+    value?: {
+      getValue: () => string
+      markClean: () => void
+      openSearch: () => void
+      focus: () => void
+    }
+  }
 }
 
 interface TestFileEntry {
@@ -121,6 +134,9 @@ beforeEach(() => {
     readAt: '2026-07-30T00:00:00Z',
   })
   mocks.action.mockResolvedValue({ action: 'trash', succeeded: [], failed: [] })
+  mocks.write.mockImplementation(async (_path: string, _content: string, _version: string) => ({
+    entry: testEntry('saved.txt'),
+  }))
 })
 
 describe('FilesView directory loading', () => {
@@ -213,6 +229,33 @@ describe('FilesView directory loading', () => {
     )
     expect(mocks.list).toHaveBeenCalled()
     expect(view.dialogAction.value).toBeUndefined()
+  })
+
+  it('saves the live editor value without copying the document on every keystroke', async () => {
+    const view = setupView()
+    const entry = testEntry('config.json')
+    const markClean = vi.fn()
+    view.previewEntry.value = entry
+    view.previewContent.value = 'stale content'
+    view.previewDirty.value = true
+    view.codeEditorRef.value = {
+      getValue: () => 'latest editor content',
+      markClean,
+      openSearch: vi.fn(),
+      focus: vi.fn(),
+    }
+    mocks.write.mockResolvedValueOnce({ entry: { ...entry, resourceVersion: 'sha256:saved' } })
+
+    await view.savePreview()
+
+    expect(mocks.write).toHaveBeenCalledWith(
+      entry.path,
+      'latest editor content',
+      entry.resourceVersion,
+    )
+    expect(view.previewContent.value).toBe('latest editor content')
+    expect(view.previewDirty.value).toBe(false)
+    expect(markClean).toHaveBeenCalledOnce()
   })
 
   it('selects an unchecked entry when opening its context menu', () => {

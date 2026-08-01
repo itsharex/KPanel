@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   Trash2,
   Upload,
+  WrapText,
   X,
 } from '@lucide/vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
@@ -44,6 +45,19 @@ type ClipboardMode = 'copy' | 'move'
 interface FileClipboard {
   mode: ClipboardMode
   entries: FileEntry[]
+}
+
+interface CodeEditorHandle {
+  getValue: () => string
+  markClean: () => void
+  openSearch: () => void
+  focus: () => void
+}
+
+interface CodeEditorStatus {
+  line: number
+  column: number
+  lines: number
 }
 
 const toast = useToast()
@@ -71,6 +85,9 @@ const previewLoading = ref(false)
 const previewSaving = ref(false)
 const previewDirty = ref(false)
 const editorInfo = ref<Pick<CodeLanguage, 'label' | 'highlighted' | 'reason'> & { loadMs: number }>()
+const codeEditorRef = ref<CodeEditorHandle>()
+const editorStatus = ref<CodeEditorStatus>()
+const editorLineWrap = ref(false)
 let directoryController: AbortController | undefined
 let searchTimer: number | undefined
 
@@ -198,6 +215,8 @@ async function openPreview(entry: FileEntry): Promise<void> {
   previewContent.value = ''
   previewDirty.value = false
   editorInfo.value = undefined
+  editorStatus.value = undefined
+  editorLineWrap.value = false
   if (!entry.editable) return
   previewLoading.value = true
   try {
@@ -216,16 +235,23 @@ function closePreview(): void {
   previewContent.value = ''
   previewDirty.value = false
   editorInfo.value = undefined
+  editorStatus.value = undefined
+  editorLineWrap.value = false
 }
 
-async function savePreview(): Promise<void> {
+async function savePreview(content?: string): Promise<void> {
   const entry = previewEntry.value
   if (!entry || !entry.editable || !previewDirty.value) return
+  const nextContent = content ?? codeEditorRef.value?.getValue() ?? previewContent.value
+  previewContent.value = nextContent
   previewSaving.value = true
   try {
-    const result = await api.files.write(entry.path, previewContent.value, entry.resourceVersion)
+    const result = await api.files.write(entry.path, nextContent, entry.resourceVersion)
     previewEntry.value = result.entry
-    previewDirty.value = false
+    if ((codeEditorRef.value?.getValue() ?? nextContent) === nextContent) {
+      previewDirty.value = false
+      codeEditorRef.value?.markClean()
+    }
     toast.success('已保存', entry.name)
     await loadDirectory()
   } catch (error) {
@@ -242,6 +268,10 @@ function handleEditorReady(info: CodeLanguage & { loadMs: number }): void {
     reason: info.reason,
     loadMs: info.loadMs,
   }
+}
+
+function handleEditorStatus(status: CodeEditorStatus): void {
+  editorStatus.value = status
 }
 
 function toggleEntry(path: string): void {
@@ -660,10 +690,7 @@ onBeforeUnmount(() => {
       @drop.prevent="onDrop"
       @contextmenu="showDirectoryContext"
     >
-      <header
-        class="file-toolbar"
-        :class="{ 'file-toolbar--selecting': selected.size }"
-      >
+      <header class="file-toolbar">
         <nav class="breadcrumbs" aria-label="文件路径">
           <button
             v-for="(item, index) in breadcrumbs"
@@ -685,28 +712,6 @@ onBeforeUnmount(() => {
           </button>
         </label>
 
-        <Transition name="slide">
-          <div
-            v-if="selected.size"
-            class="batch-bar"
-            role="toolbar"
-            aria-label="批量文件操作"
-          >
-            <strong>已选 {{ selected.size }} 项</strong>
-            <button
-              v-if="selectedEntries.some((entry) => entry.kind === 'file')"
-              type="button"
-              @click="downloadSelected"
-            ><Download :size="15" />下载</button>
-            <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
-            <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
-            <button type="button" @click="openDialog('chmod')"><ShieldCheck :size="15" />权限</button>
-            <button class="danger-link" type="button" @click="openDialog('trash')">
-              <Trash2 :size="15" />回收站
-            </button>
-            <button type="button" @click="clearSelection">取消选择</button>
-          </div>
-        </Transition>
       </header>
 
       <Transition name="slide">
@@ -826,6 +831,29 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    <Transition name="batch-dock">
+      <div
+        v-if="selected.size"
+        class="batch-bar"
+        role="toolbar"
+        aria-label="批量文件操作"
+      >
+        <strong>已选 {{ selected.size }} 项</strong>
+        <button
+          v-if="selectedEntries.some((entry) => entry.kind === 'file')"
+          type="button"
+          @click="downloadSelected"
+        ><Download :size="15" />下载</button>
+        <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
+        <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
+        <button type="button" @click="openDialog('chmod')"><ShieldCheck :size="15" />权限</button>
+        <button class="danger-link" type="button" @click="openDialog('trash')">
+          <Trash2 :size="15" />回收站
+        </button>
+        <button type="button" @click="clearSelection">取消选择</button>
+      </div>
+    </Transition>
+
     <div
       v-if="contextMenu"
       class="file-context-menu"
@@ -931,28 +959,46 @@ onBeforeUnmount(() => {
         </header>
         <div class="code-editor">
           <CodeEditor
+            ref="codeEditorRef"
             v-model="previewContent"
             :file-name="previewEntry.name"
             :mime="previewEntry.mime"
             :size-bytes="previewEntry.sizeBytes"
             :editable="previewEntry.editable"
+            :line-wrap="editorLineWrap"
             @dirty="previewDirty = true"
             @save="savePreview"
+            @status="handleEditorStatus"
             @ready="handleEditorReady"
           />
         </div>
         <footer>
           <span>
-            {{ previewContent.split('\n').length }} 行 · UTF-8
+            {{ editorStatus?.lines || 1 }} 行
+            <template v-if="editorStatus"> · 行 {{ editorStatus.line }}，列 {{ editorStatus.column }}</template>
+            · UTF-8
             <template v-if="editorInfo">
               · {{ editorInfo.label }}
               {{ editorInfo.highlighted ? '语法着色' : editorInfo.reason === 'large-file' ? '大文件纯文本' : '纯文本' }}
             </template>
           </span>
           <span v-if="previewDirty">有未保存修改</span>
-          <button class="button button--primary button--small" type="button" :disabled="previewSaving || !previewDirty" @click="savePreview">
-            <Save :size="15" />{{ previewSaving ? '保存中…' : '保存 Ctrl+S' }}
-          </button>
+          <span class="code-editor-actions">
+            <button class="button button--secondary button--small" type="button" title="查找或替换（Ctrl+F）" @click="codeEditorRef?.openSearch()">
+              <Search :size="15" />查找
+            </button>
+            <button
+              class="button button--secondary button--small"
+              type="button"
+              :aria-pressed="editorLineWrap"
+              @click="editorLineWrap = !editorLineWrap"
+            >
+              <WrapText :size="15" />换行 {{ editorLineWrap ? '开' : '关' }}
+            </button>
+            <button class="button button--primary button--small" type="button" :disabled="previewSaving || !previewDirty" @click="savePreview()">
+              <Save :size="15" />{{ previewSaving ? '保存中…' : '保存 Ctrl+S' }}
+            </button>
+          </span>
         </footer>
       </div>
       <div v-else-if="previewEntry" class="media-viewer">
@@ -1041,7 +1087,6 @@ onBeforeUnmount(() => {
 }
 
 .file-toolbar {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1049,11 +1094,6 @@ onBeforeUnmount(() => {
   padding: 13px 15px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-subtle) 45%, var(--surface));
-}
-
-.file-toolbar--selecting > .breadcrumbs,
-.file-toolbar--selecting > .file-search {
-  visibility: hidden;
 }
 
 .breadcrumbs {
@@ -1122,17 +1162,27 @@ onBeforeUnmount(() => {
 }
 
 .batch-bar {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
+  position: fixed;
+  z-index: 45;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: calc(var(--sidebar-width) + (100vw - var(--sidebar-width)) / 2);
+  width: min(760px, calc(100vw - var(--sidebar-width) - 32px));
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
   overflow-x: auto;
-  padding: 9px 15px;
-  border-bottom: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border));
-  background: color-mix(in srgb, var(--brand) 7%, var(--surface));
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--brand) 8%, var(--surface));
+  box-shadow: 0 12px 34px rgb(0 0 0 / 20%);
+  transform: translateX(-50%);
+}
+
+:global(.app-shell__main--sidebar-collapsed) .batch-bar {
+  left: calc(var(--sidebar-collapsed-width) + (100vw - var(--sidebar-collapsed-width)) / 2);
+  width: min(760px, calc(100vw - var(--sidebar-collapsed-width) - 32px));
 }
 
 .batch-bar strong {
@@ -1535,10 +1585,19 @@ onBeforeUnmount(() => {
 
 .code-viewer > footer {
   justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
-.code-viewer > footer .button {
+.code-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin-left: auto;
+}
+
+.code-editor-actions .button {
+  min-height: 30px;
+  padding: 5px 9px;
 }
 
 .code-editor {
@@ -1609,6 +1668,17 @@ onBeforeUnmount(() => {
   transform: translateY(-6px);
 }
 
+.batch-dock-enter-active,
+.batch-dock-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.batch-dock-enter-from,
+.batch-dock-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 10px);
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1623,6 +1693,13 @@ onBeforeUnmount(() => {
   .file-row > span:nth-child(4),
   .file-row > span:nth-child(5) {
     display: none;
+  }
+}
+
+@media (max-width: 920px) {
+  .batch-bar {
+    left: 50%;
+    width: calc(100vw - 32px);
   }
 }
 
@@ -1652,6 +1729,12 @@ onBeforeUnmount(() => {
     flex: 0 0 auto;
   }
 
+  .batch-bar {
+    bottom: max(10px, env(safe-area-inset-bottom));
+    width: calc(100vw - 20px);
+    border-radius: 12px;
+  }
+
   .clipboard-bar {
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
@@ -1675,6 +1758,15 @@ onBeforeUnmount(() => {
 
   .code-editor {
     grid-template-columns: 44px 1fr;
+  }
+
+  .code-editor-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .code-editor-actions .button:last-child {
+    margin-left: auto;
   }
 }
 </style>
