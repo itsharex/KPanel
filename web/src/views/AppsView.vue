@@ -1648,7 +1648,6 @@ watch(
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 3px;
-  scrollbar-width: none;
 }
 
 .market-categories button {
