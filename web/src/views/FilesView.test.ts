@@ -48,6 +48,7 @@ interface FileBindings {
   showContext: (event: MouseEvent, entry: TestFileEntry) => void
   showDirectoryContext: (event: MouseEvent) => void
   selectEntry: (event: MouseEvent, path: string) => void
+  invertSelection: () => void
   preventNativeSelection: (event: Event) => void
   handleFileShortcut: (event: KeyboardEvent) => void
   openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash', entry?: TestFileEntry) => void
@@ -56,6 +57,7 @@ interface FileBindings {
   canShowThumbnail: (entry: TestFileEntry) => boolean
   thumbnailURL: (entry: TestFileEntry) => string
   markThumbnailFailed: (path: string) => void
+  entryIconKind: (entry: TestFileEntry) => string
   currentPath: { value: string }
   directory: {
     value?: {
@@ -206,6 +208,16 @@ describe('FilesView large icon layout', () => {
     expect(source).toContain('decoding="async"')
     expect(source).toContain('draggable="false"')
     expect(source).toContain('markThumbnailFailed(entry.path)')
+  })
+
+  it('uses distinct icons for common file families', () => {
+    const view = setupView()
+
+    expect(view.entryIconKind({ ...testEntry('backup.tar.gz'), mime: 'application/gzip' })).toBe('archive')
+    expect(view.entryIconKind({ ...testEntry('data.xlsx'), mime: 'application/octet-stream' })).toBe('spreadsheet')
+    expect(view.entryIconKind({ ...testEntry('site.sql'), mime: 'text/plain' })).toBe('database')
+    expect(view.entryIconKind({ ...testEntry('.env'), mime: 'text/plain' })).toBe('secret')
+    expect(view.entryIconKind({ ...testEntry('main.go'), mime: 'text/plain' })).toBe('code')
   })
 })
 
@@ -523,6 +535,19 @@ describe('FilesView directory loading', () => {
     view.selectEntry({} as MouseEvent, entry.path)
 
     expect([...view.selected.value]).toEqual([])
+  })
+
+  it('inverts the selection across the visible entries', () => {
+    const view = setupView()
+    const first = testEntry('first.txt')
+    const second = testEntry('second.txt')
+    const third = testEntry('third.txt')
+    view.directory.value = { path: '/', entries: [first, second, third] }
+    view.selected.value = new Set([first.path, third.path])
+
+    view.invertSelection()
+
+    expect([...view.selected.value]).toEqual([second.path])
   })
 
   it('selects every visible entry with control-a', () => {

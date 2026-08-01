@@ -6,11 +6,16 @@ import {
   ClipboardPaste,
   Code2,
   Copy,
+  Database,
   Download,
   Eye,
   File,
+  FileArchive,
   FileAudio,
+  FileCode,
   FileImage,
+  FileKey,
+  FileSpreadsheet,
   FileText,
   FileVideo,
   Folder,
@@ -18,9 +23,12 @@ import {
   HardDrive,
   LayoutGrid,
   List,
+  ListRestart,
   MoreHorizontal,
+  Package,
   Pencil,
   Plus,
+  Presentation,
   RefreshCw,
   RotateCcw,
   Save,
@@ -46,6 +54,7 @@ type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
 type ClipboardMode = 'copy' | 'move'
 type ArchiveFormat = 'tar.gz' | 'zip' | 'tar'
 type FileViewMode = 'list' | 'grid'
+type FileIconKind = 'folder' | 'image' | 'media' | 'archive' | 'spreadsheet' | 'database' | 'presentation' | 'package' | 'secret' | 'code' | 'document' | 'generic'
 
 interface FileClipboard {
   mode: ClipboardMode
@@ -379,6 +388,16 @@ function toggleAll(): void {
   else entries.value.forEach((entry) => next.add(entry.path))
   selected.value = next
   selectionAnchor.value = clearVisible ? undefined : entries.value[0]?.path
+}
+
+function invertSelection(): void {
+  const next = new Set(selected.value)
+  for (const entry of entries.value) {
+    if (next.has(entry.path)) next.delete(entry.path)
+    else next.add(entry.path)
+  }
+  selected.value = next
+  selectionAnchor.value = entries.value.find((entry) => next.has(entry.path))?.path
 }
 
 function clearSelection(): void {
@@ -745,19 +764,60 @@ function onDrop(event: DragEvent): void {
   if (event.dataTransfer?.files?.length) void uploadFiles(event.dataTransfer.files)
 }
 
-function entryIcon(entry: FileEntry) {
-  if (entry.kind === 'directory') return Folder
-  if (entry.mime?.startsWith('image/')) return FileImage
-  if (entry.mime?.startsWith('audio/')) return FileAudio
-  if (entry.mime?.startsWith('video/')) return FileVideo
-  if (entry.editable) return Code2
+function fileExtension(name: string): string {
+  const normalized = name.toLocaleLowerCase()
+  if (normalized.endsWith('.tar.gz')) return 'tar.gz'
+  const separator = normalized.lastIndexOf('.')
+  return separator >= 0 ? normalized.slice(separator + 1) : ''
+}
+
+function entryIconKind(entry: FileEntry): FileIconKind {
+  if (entry.kind === 'directory') return 'folder'
+  const mime = (entry.mime || '').toLocaleLowerCase()
+  const extension = fileExtension(entry.name)
+  const normalizedName = entry.name.toLocaleLowerCase()
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('audio/') || mime.startsWith('video/')) return 'media'
   if (
-    ['application/zip', 'application/gzip', 'application/x-tar', 'application/x-7z-compressed'].includes(
-      entry.mime || '',
-    )
-  )
-    return Archive
-  return entry.previewable ? FileText : File
+    archiveFormat(entry) ||
+    ['application/gzip', 'application/x-7z-compressed', 'application/x-rar-compressed'].includes(mime) ||
+    ['7z', 'rar', 'gz', 'bz2', 'xz'].includes(extension)
+  ) return 'archive'
+  if (['csv', 'tsv', 'xls', 'xlsx', 'ods'].includes(extension)) return 'spreadsheet'
+  if (['db', 'sqlite', 'sqlite3', 'mdb', 'sql'].includes(extension)) return 'database'
+  if (['ppt', 'pptx', 'odp'].includes(extension)) return 'presentation'
+  if (['deb', 'rpm', 'apk', 'pkg', 'msi'].includes(extension)) return 'package'
+  if (
+    ['env', 'pem', 'key', 'pfx', 'p12', 'crt', 'cer'].includes(extension) ||
+    /^(?:id_(?:rsa|ed25519|ecdsa)|authorized_keys|known_hosts)$/.test(normalizedName)
+  ) return 'secret'
+  if (
+    entry.editable ||
+    ['json', 'yaml', 'yml', 'toml', 'xml', 'ini', 'conf', 'sh', 'bash', 'zsh', 'ps1', 'js', 'ts', 'vue', 'css', 'scss', 'html', 'go', 'py', 'php', 'java', 'c', 'h', 'cpp', 'rs'].includes(extension)
+  ) return 'code'
+  if (
+    entry.previewable ||
+    mime === 'application/pdf' ||
+    ['txt', 'md', 'log', 'pdf', 'doc', 'docx', 'odt', 'rtf'].includes(extension)
+  ) return 'document'
+  return 'generic'
+}
+
+function entryIcon(entry: FileEntry) {
+  switch (entryIconKind(entry)) {
+    case 'folder': return Folder
+    case 'image': return FileImage
+    case 'media': return entry.mime?.startsWith('audio/') ? FileAudio : FileVideo
+    case 'archive': return FileArchive
+    case 'spreadsheet': return FileSpreadsheet
+    case 'database': return Database
+    case 'presentation': return Presentation
+    case 'package': return Package
+    case 'secret': return FileKey
+    case 'code': return FileCode
+    case 'document': return FileText
+    default: return File
+  }
 }
 
 function canShowThumbnail(entry: FileEntry): boolean {
@@ -1039,7 +1099,7 @@ onBeforeUnmount(() => {
             />
           </span>
           <span class="file-name">
-            <span class="file-icon" :class="{ 'file-icon--folder': entry.kind === 'directory' }">
+            <span class="file-icon" :class="`file-icon--${entryIconKind(entry)}`">
               <component :is="entryIcon(entry)" :size="19" />
             </span>
             <span>
@@ -1110,7 +1170,7 @@ onBeforeUnmount(() => {
             <span
               v-else
               class="file-grid-card__icon"
-              :class="{ 'file-grid-card__icon--folder': entry.kind === 'directory' }"
+              :class="`file-grid-card__icon--${entryIconKind(entry)}`"
             ><component :is="entryIcon(entry)" :size="48" /></span>
           </div>
           <strong :title="entry.name">{{ entry.name }}</strong>
@@ -1168,6 +1228,7 @@ onBeforeUnmount(() => {
         <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
         <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
         <button type="button" @click="openDialog('chmod')"><ShieldCheck :size="15" />权限</button>
+        <button type="button" @click="invertSelection"><ListRestart :size="15" />反选</button>
         <button class="danger-link" type="button" @click="openDialog('trash')">
           <Trash2 :size="15" />回收站
         </button>
@@ -1905,13 +1966,8 @@ onBeforeUnmount(() => {
   height: 76px;
   place-items: center;
   border-radius: 20px;
-  color: var(--blue);
-  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
-}
-
-.file-grid-card__icon--folder {
-  color: var(--brand);
-  background: color-mix(in srgb, var(--brand) 11%, var(--surface));
+  color: var(--file-icon-color, var(--blue));
+  background: color-mix(in srgb, var(--file-icon-color, var(--blue)) 11%, var(--surface));
 }
 
 .file-grid-card > strong,
@@ -2027,13 +2083,56 @@ onBeforeUnmount(() => {
   height: 34px;
   place-items: center;
   border-radius: 9px;
-  color: var(--blue);
-  background: color-mix(in srgb, var(--blue) 11%, var(--surface));
+  color: var(--file-icon-color, var(--blue));
+  background: color-mix(in srgb, var(--file-icon-color, var(--blue)) 11%, var(--surface));
 }
 
-.file-icon--folder {
-  color: var(--brand);
-  background: color-mix(in srgb, var(--brand) 11%, var(--surface));
+.file-icon--folder,
+.file-grid-card__icon--folder,
+.file-icon--spreadsheet,
+.file-grid-card__icon--spreadsheet {
+  --file-icon-color: var(--brand);
+}
+
+.file-icon--image,
+.file-grid-card__icon--image,
+.file-icon--code,
+.file-grid-card__icon--code {
+  --file-icon-color: var(--blue);
+}
+
+.file-icon--media,
+.file-grid-card__icon--media {
+  --file-icon-color: #9567dc;
+}
+
+.file-icon--archive,
+.file-grid-card__icon--archive,
+.file-icon--package,
+.file-grid-card__icon--package {
+  --file-icon-color: var(--amber);
+}
+
+.file-icon--database,
+.file-grid-card__icon--database {
+  --file-icon-color: #168e9c;
+}
+
+.file-icon--presentation,
+.file-grid-card__icon--presentation {
+  --file-icon-color: #d96b54;
+}
+
+.file-icon--secret,
+.file-grid-card__icon--secret {
+  --file-icon-color: var(--danger);
+}
+
+.file-icon--document,
+.file-grid-card__icon--document,
+.file-icon--generic,
+.file-grid-card__icon--generic {
+  --file-icon-color: var(--muted);
 }
 
 .mono {
