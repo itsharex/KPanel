@@ -76,7 +76,7 @@ func TestConfigRejectsUnsafeTOTPKeyPaths(t *testing.T) {
 	for name, keyPath := range map[string]string{
 		"relative":        "totp-encryption.key",
 		"store collision": "/var/lib/kejilion-panel/panel-state.json",
-		"web root child":  "/usr/share/kejilion-panel/web/totp-encryption.key",
+		"web root child":  "/app/web/totp-encryption.key",
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := validTestConfig()
