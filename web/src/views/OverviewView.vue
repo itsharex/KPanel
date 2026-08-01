@@ -693,11 +693,14 @@ async function load(silent = false): Promise<void> {
   error.value = ''
 
   try {
-    data.value = await api.overview.get(controller.signal, (partial) => {
-      data.value = partial
-      loading.value = false
-      panel.setAgent(partial.agent)
-    })
+    const onPartial = data.value
+      ? undefined
+      : (partial: SystemOverview) => {
+          data.value = partial
+          loading.value = false
+          panel.setAgent(partial.agent)
+        }
+    data.value = await api.overview.get(controller.signal, onPartial)
     panel.setAgent(data.value.agent)
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
