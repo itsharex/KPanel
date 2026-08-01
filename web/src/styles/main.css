@@ -1049,6 +1049,7 @@ textarea:focus-visible,
 /* Application shell */
 .app-shell {
   min-height: 100vh;
+  overflow-x: clip;
 }
 
 .sidebar {
@@ -1437,13 +1438,18 @@ textarea:focus-visible,
 
 .app-shell__main {
   position: relative;
+  width: calc(100% - var(--sidebar-width));
   min-height: 100vh;
+  min-width: 0;
   margin-left: var(--sidebar-width);
-  transition: margin-left 200ms ease;
+  transition:
+    width 200ms ease,
+    margin-left 200ms ease;
 }
 
 @media (min-width: 921px) {
   .app-shell__main--sidebar-collapsed {
+    width: calc(100% - var(--sidebar-collapsed-width));
     margin-left: var(--sidebar-collapsed-width);
   }
 
@@ -4177,6 +4183,7 @@ div.resource-name {
   }
 
   .app-shell__main {
+    width: 100%;
     margin-left: 0;
   }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +30,8 @@ const (
 	MaxUploadBytes      = 512 << 20
 	MaxDirectoryScan    = 20_000
 	MaxSearchBytes      = 128
+	MaxTrashEntries     = 10_000
+	MaxTrashListEntries = 500
 	maxPathBytes        = 4096
 	maxCopyEntries      = 10_000
 	maxCopyBytes        = 10 << 30
@@ -49,6 +52,8 @@ var (
 	ErrRootOperation   = errors.New("不能对文件根目录执行此操作")
 	ErrInvalidEncoding = errors.New("文本内容必须使用 UTF-8 编码")
 	ErrBusy            = errors.New("文件传输任务繁忙，请稍后重试")
+	ErrTrashFull       = errors.New("回收站项目已达到上限，请先清理回收站")
+	ErrTrashMetadata   = errors.New("回收站项目缺少恢复信息，只能彻底删除")
 )
 
 type Manager struct {
@@ -57,6 +62,7 @@ type Manager struct {
 	protected      []string
 	readOnly       []string
 	trashRoot      string
+	trashInfo      string
 	now            func() time.Time
 	uploadGate     chan struct{}
 	downloadGate   chan struct{}
@@ -79,6 +85,13 @@ type ListOptions struct {
 	Limit  int
 	Offset int
 	Search string
+}
+
+type trashMetadata struct {
+	ID           string    `json:"id"`
+	OriginalPath string    `json:"originalPath"`
+	Name         string    `json:"name"`
+	DeletedAt    time.Time `json:"deletedAt"`
 }
 
 func New(config Config) (*Manager, error) {
@@ -118,6 +131,7 @@ func New(config Config) (*Manager, error) {
 		return nil, fmt.Errorf("invalid trash path %q", config.TrashVirtual)
 	}
 	manager.trashRoot = joinVirtual(trashVirtual, "files")
+	manager.trashInfo = joinVirtual(trashVirtual, "info")
 	protectedValues := append([]string{trashVirtual}, config.ProtectedVirtual...)
 	seenProtected := make(map[string]struct{}, len(protectedValues))
 	for _, value := range protectedValues {
@@ -559,7 +573,16 @@ func (m *Manager) Action(
 		}
 		result.Succeeded = append(result.Succeeded, actionItem(input.Sources[0], entry, entry.Path))
 		return result, nil
-	case "copy", "move", "trash", "chmod":
+	case "trash_restore", "trash_delete":
+		if len(input.TrashIDs) == 0 {
+			return result, ErrAction
+		}
+		if len(input.TrashIDs) > MaxBatchItems {
+			return result, ErrBatchTooLarge
+		}
+	case "trash_empty":
+		return m.emptyTrash(ctx, result)
+	case "copy", "move", "trash", "delete", "chmod":
 		if len(input.Sources) == 0 {
 			return result, ErrAction
 		}
@@ -570,7 +593,11 @@ func (m *Manager) Action(
 		return result, ErrAction
 	}
 	budget := &copyBudget{maxEntries: m.maxCopyEntries, maxBytes: m.maxCopyBytes}
-	for _, source := range input.Sources {
+	items := input.Sources
+	if input.Action == "trash_restore" || input.Action == "trash_delete" {
+		items = input.TrashIDs
+	}
+	for _, source := range items {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
@@ -587,10 +614,25 @@ func (m *Manager) Action(
 			entry, err = m.moveOne(ctx, source, input.Target, budget)
 			destination = entry.Path
 		case "trash":
+			if err = m.checkExpectedVersion(source, input.ExpectedResourceVersions[source]); err != nil {
+				break
+			}
 			destination, err = m.trashOne(ctx, source, budget)
 			entry = contract.FileEntry{Path: source}
+		case "delete":
+			err = m.deleteOne(source, input.ExpectedResourceVersions[source])
+			entry = contract.FileEntry{Path: source}
 		case "chmod":
+			if err = m.checkExpectedVersion(source, input.ExpectedResourceVersions[source]); err != nil {
+				break
+			}
 			entry, err = m.chmodOne(source, input.Mode)
+		case "trash_restore":
+			entry, err = m.restoreTrash(ctx, source, input.ExpectedResourceVersions[source], budget)
+			destination = entry.Path
+		case "trash_delete":
+			err = m.deleteTrash(source, input.ExpectedResourceVersions[source])
+			entry = contract.FileEntry{Path: source}
 		}
 		if err != nil {
 			result.Failed = append(result.Failed, contract.FileActionFailure{
@@ -599,6 +641,69 @@ func (m *Manager) Action(
 			continue
 		}
 		result.Succeeded = append(result.Succeeded, actionItem(source, entry, destination))
+	}
+	return result, nil
+}
+
+func (m *Manager) ListTrash(ctx context.Context) (contract.FileTrashDirectory, error) {
+	if err := ctx.Err(); err != nil {
+		return contract.FileTrashDirectory{}, err
+	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	result := contract.FileTrashDirectory{Entries: make([]contract.FileTrashEntry, 0), ReadAt: m.now().UTC()}
+	directory, err := m.rootFS.Open(rootName(m.trashRoot))
+	if errors.Is(err, os.ErrNotExist) {
+		return result, nil
+	}
+	if err != nil {
+		return result, err
+	}
+	defer directory.Close()
+	values, err := directory.ReadDir(MaxTrashEntries + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return result, err
+	}
+	if len(values) > MaxTrashEntries {
+		return result, ErrTrashFull
+	}
+	for _, value := range values {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		id := value.Name()
+		if validateTrashID(id) != nil || strings.HasPrefix(id, ".kpanel-") {
+			continue
+		}
+		info, statErr := m.rootFS.Lstat(rootName(joinVirtual(m.trashRoot, id)))
+		if statErr != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		metadata, metadataErr := m.readTrashMetadata(id)
+		entry := m.entry(joinVirtual(m.trashRoot, id), info)
+		name := id
+		originalPath := ""
+		deletedAt := info.ModTime().UTC()
+		restorable := false
+		if metadataErr == nil {
+			name = metadata.Name
+			originalPath = metadata.OriginalPath
+			deletedAt = metadata.DeletedAt
+			restorable = true
+		}
+		result.Entries = append(result.Entries, contract.FileTrashEntry{
+			ID: id, Name: name, OriginalPath: originalPath, Kind: entry.Kind,
+			SizeBytes: entry.SizeBytes, Mode: entry.Mode, Owner: entry.Owner, Group: entry.Group,
+			DeletedAt: deletedAt, ResourceVersion: entry.ResourceVersion, Restorable: restorable,
+		})
+	}
+	sort.Slice(result.Entries, func(left, right int) bool {
+		return result.Entries[left].DeletedAt.After(result.Entries[right].DeletedAt)
+	})
+	result.Total = len(result.Entries)
+	if len(result.Entries) > MaxTrashListEntries {
+		result.Entries = result.Entries[:MaxTrashListEntries]
+		result.Truncated = true
 	}
 	return result, nil
 }
@@ -859,17 +964,33 @@ func (m *Manager) trashOne(
 		return "", err
 	}
 	sourceVersion := resourceVersion(normalized, sourceInfo)
-	trashRootVirtual := m.trashRoot
-	if err := m.rootFS.MkdirAll(rootName(trashRootVirtual), 0700); err != nil {
+	if err := m.ensureTrashDirectories(); err != nil {
 		return "", err
 	}
-	name := fmt.Sprintf("%s-%s-%s", m.now().UTC().Format("20060102T150405"), randomID(), path.Base(normalized))
-	targetVirtual := joinVirtual(trashRootVirtual, name)
+	if count, countErr := m.trashCount(); countErr != nil {
+		return "", countErr
+	} else if count >= MaxTrashEntries {
+		return "", ErrTrashFull
+	}
+	id := m.now().UTC().Format("20060102T150405") + "-" + randomID()
+	metadata := trashMetadata{
+		ID: id, OriginalPath: normalized, Name: path.Base(normalized), DeletedAt: m.now().UTC(),
+	}
+	if err := m.writeTrashMetadata(metadata); err != nil {
+		return "", err
+	}
+	metadataWritten := true
+	defer func() {
+		if metadataWritten {
+			_ = m.rootFS.Remove(rootName(m.trashMetadataPath(id)))
+		}
+	}()
+	targetVirtual := joinVirtual(m.trashRoot, id)
 	if err := renameNoReplaceRoot(m.rootFS, normalized, targetVirtual); err != nil {
 		if !isCrossDeviceError(err) {
 			return "", err
 		}
-		tempVirtual := joinVirtual(trashRootVirtual, ".kpanel-copy-"+randomID())
+		tempVirtual := joinVirtual(m.trashRoot, ".kpanel-copy-"+randomID())
 		if err := m.copyTree(ctx, normalized, tempVirtual, budget); err != nil {
 			_ = m.rootFS.RemoveAll(rootName(tempVirtual))
 			return "", err
@@ -887,13 +1008,262 @@ func (m *Manager) trashOne(
 			return "", fmt.Errorf("文件已进入回收区但原文件清理失败: %w", err)
 		}
 	}
+	metadataWritten = false
 	if err := syncRootDirectory(m.rootFS, rootName(path.Dir(normalized))); err != nil {
 		return "", err
 	}
-	if err := syncRootDirectory(m.rootFS, rootName(trashRootVirtual)); err != nil {
+	if err := syncRootDirectory(m.rootFS, rootName(m.trashRoot)); err != nil {
 		return "", err
 	}
 	return targetVirtual, nil
+}
+
+func (m *Manager) ensureTrashDirectories() error {
+	for _, directory := range []string{path.Dir(m.trashRoot), m.trashRoot, m.trashInfo} {
+		if err := m.rootFS.MkdirAll(rootName(directory), 0700); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) trashCount() (int, error) {
+	directory, err := m.rootFS.Open(rootName(m.trashRoot))
+	if err != nil {
+		return 0, err
+	}
+	defer directory.Close()
+	values, err := directory.ReadDir(MaxTrashEntries + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return 0, err
+	}
+	return len(values), nil
+}
+
+func (m *Manager) trashMetadataPath(id string) string {
+	return joinVirtual(m.trashInfo, id+".json")
+}
+
+func (m *Manager) writeTrashMetadata(metadata trashMetadata) error {
+	content, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	temp, tempVirtual, err := m.createTemp(m.trashInfo, ".kpanel-edit-")
+	if err != nil {
+		return err
+	}
+	success := false
+	defer func() {
+		_ = temp.Close()
+		if !success {
+			_ = m.rootFS.Remove(rootName(tempVirtual))
+		}
+	}()
+	if _, err := temp.Write(content); err != nil {
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := renameNoReplaceRoot(m.rootFS, tempVirtual, m.trashMetadataPath(metadata.ID)); err != nil {
+		return err
+	}
+	if err := syncRootDirectory(m.rootFS, rootName(m.trashInfo)); err != nil {
+		return err
+	}
+	success = true
+	return nil
+}
+
+func (m *Manager) readTrashMetadata(id string) (trashMetadata, error) {
+	if err := validateTrashID(id); err != nil {
+		return trashMetadata{}, err
+	}
+	content, err := m.rootFS.ReadFile(rootName(m.trashMetadataPath(id)))
+	if err != nil {
+		return trashMetadata{}, err
+	}
+	var metadata trashMetadata
+	if err := json.Unmarshal(content, &metadata); err != nil {
+		return trashMetadata{}, ErrTrashMetadata
+	}
+	if metadata.ID != id || metadata.Name == "" || metadata.DeletedAt.IsZero() ||
+		validateName(metadata.Name) != nil {
+		return trashMetadata{}, ErrTrashMetadata
+	}
+	normalized, err := normalizeVirtual(metadata.OriginalPath)
+	if err != nil || normalized == "/" || normalized != metadata.OriginalPath ||
+		path.Base(normalized) != metadata.Name {
+		return trashMetadata{}, ErrTrashMetadata
+	}
+	return metadata, nil
+}
+
+func validateTrashID(id string) error {
+	if id == "" || len(id) > 255 || strings.ContainsAny(id, `/\\`) || strings.ContainsRune(id, 0) ||
+		id == "." || id == ".." || strings.HasPrefix(id, ".kpanel-") {
+		return ErrInvalidPath
+	}
+	return nil
+}
+
+func (m *Manager) checkExpectedVersion(virtual, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	entry, err := m.Stat(virtual)
+	if err != nil {
+		return err
+	}
+	if entry.ResourceVersion != expected {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (m *Manager) deleteOne(virtual, expected string) error {
+	_, normalized, err := m.resolveExisting(virtual)
+	if err != nil {
+		return err
+	}
+	if normalized == "/" {
+		return ErrRootOperation
+	}
+	if err := m.mutationError(normalized); err != nil {
+		return err
+	}
+	if err := m.checkExpectedVersion(normalized, expected); err != nil {
+		return err
+	}
+	if err := m.rootFS.RemoveAll(rootName(normalized)); err != nil {
+		return err
+	}
+	return syncRootDirectory(m.rootFS, rootName(path.Dir(normalized)))
+}
+
+func (m *Manager) deleteTrash(id, expected string) error {
+	if err := validateTrashID(id); err != nil {
+		return err
+	}
+	dataVirtual := joinVirtual(m.trashRoot, id)
+	info, err := m.rootFS.Lstat(rootName(dataVirtual))
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return ErrSymlink
+	}
+	if expected != "" && resourceVersion(dataVirtual, info) != expected {
+		return ErrConflict
+	}
+	if err := m.rootFS.RemoveAll(rootName(dataVirtual)); err != nil {
+		return err
+	}
+	_ = m.rootFS.Remove(rootName(m.trashMetadataPath(id)))
+	if err := syncRootDirectory(m.rootFS, rootName(m.trashRoot)); err != nil {
+		return err
+	}
+	return syncRootDirectory(m.rootFS, rootName(m.trashInfo))
+}
+
+func (m *Manager) restoreTrash(
+	ctx context.Context, id, expected string, budget *copyBudget,
+) (contract.FileEntry, error) {
+	metadata, err := m.readTrashMetadata(id)
+	if err != nil {
+		return contract.FileEntry{}, ErrTrashMetadata
+	}
+	sourceVirtual := joinVirtual(m.trashRoot, id)
+	sourceInfo, err := m.rootFS.Lstat(rootName(sourceVirtual))
+	if err != nil {
+		return contract.FileEntry{}, err
+	}
+	if sourceInfo.Mode()&os.ModeSymlink != 0 {
+		return contract.FileEntry{}, ErrSymlink
+	}
+	if expected != "" && resourceVersion(sourceVirtual, sourceInfo) != expected {
+		return contract.FileEntry{}, ErrConflict
+	}
+	targetVirtual := metadata.OriginalPath
+	if err := m.mutationError(targetVirtual); err != nil {
+		return contract.FileEntry{}, err
+	}
+	_, parentVirtual, err := m.resolveExisting(path.Dir(targetVirtual))
+	if err != nil {
+		return contract.FileEntry{}, err
+	}
+	if _, err := m.rootFS.Lstat(rootName(targetVirtual)); err == nil {
+		return contract.FileEntry{}, ErrAlreadyExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return contract.FileEntry{}, err
+	}
+	if err := renameNoReplaceRoot(m.rootFS, sourceVirtual, targetVirtual); err != nil {
+		if !isCrossDeviceError(err) {
+			return contract.FileEntry{}, err
+		}
+		tempVirtual := joinVirtual(parentVirtual, ".kpanel-copy-"+randomID())
+		if err := m.copyTree(ctx, sourceVirtual, tempVirtual, budget); err != nil {
+			_ = m.rootFS.RemoveAll(rootName(tempVirtual))
+			return contract.FileEntry{}, err
+		}
+		currentInfo, statErr := m.rootFS.Lstat(rootName(sourceVirtual))
+		if statErr != nil || resourceVersion(sourceVirtual, currentInfo) != resourceVersion(sourceVirtual, sourceInfo) {
+			_ = m.rootFS.RemoveAll(rootName(tempVirtual))
+			return contract.FileEntry{}, ErrConflict
+		}
+		if err := renameNoReplaceRoot(m.rootFS, tempVirtual, targetVirtual); err != nil {
+			_ = m.rootFS.RemoveAll(rootName(tempVirtual))
+			return contract.FileEntry{}, err
+		}
+		if err := m.rootFS.RemoveAll(rootName(sourceVirtual)); err != nil {
+			return contract.FileEntry{}, err
+		}
+	}
+	_ = m.rootFS.Remove(rootName(m.trashMetadataPath(id)))
+	if err := syncRootDirectory(m.rootFS, rootName(parentVirtual)); err != nil {
+		return contract.FileEntry{}, err
+	}
+	if err := syncRootDirectory(m.rootFS, rootName(m.trashRoot)); err != nil {
+		return contract.FileEntry{}, err
+	}
+	return m.Stat(targetVirtual)
+}
+
+func (m *Manager) emptyTrash(ctx context.Context, result contract.FileActionResult) (contract.FileActionResult, error) {
+	directory, err := m.rootFS.Open(rootName(m.trashRoot))
+	if errors.Is(err, os.ErrNotExist) {
+		return result, nil
+	}
+	if err != nil {
+		return result, err
+	}
+	values, err := directory.ReadDir(MaxTrashEntries + 1)
+	_ = directory.Close()
+	if err != nil && !errors.Is(err, io.EOF) {
+		return result, err
+	}
+	if len(values) > MaxTrashEntries {
+		return result, ErrTrashFull
+	}
+	for _, value := range values {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		id := value.Name()
+		if err := validateTrashID(id); err != nil {
+			continue
+		}
+		if err := m.deleteTrash(id, ""); err != nil {
+			result.Failed = append(result.Failed, contract.FileActionFailure{Path: id, Detail: err.Error()})
+			continue
+		}
+		result.Succeeded = append(result.Succeeded, contract.FileActionItem{Path: id})
+	}
+	return result, nil
 }
 
 func (m *Manager) chmodOne(virtual, rawMode string) (contract.FileEntry, error) {

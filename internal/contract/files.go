@@ -30,12 +30,35 @@ type FileDirectory struct {
 }
 
 type FileActionRequest struct {
-	Action                  string   `json:"action"`
-	Sources                 []string `json:"sources,omitempty"`
-	Target                  string   `json:"target,omitempty"`
-	Name                    string   `json:"name,omitempty"`
-	Mode                    string   `json:"mode,omitempty"`
-	ExpectedResourceVersion string   `json:"expectedResourceVersion,omitempty"`
+	Action                   string            `json:"action"`
+	Sources                  []string          `json:"sources,omitempty"`
+	TrashIDs                 []string          `json:"trashIds,omitempty"`
+	Target                   string            `json:"target,omitempty"`
+	Name                     string            `json:"name,omitempty"`
+	Mode                     string            `json:"mode,omitempty"`
+	ExpectedResourceVersion  string            `json:"expectedResourceVersion,omitempty"`
+	ExpectedResourceVersions map[string]string `json:"expectedResourceVersions,omitempty"`
+}
+
+type FileTrashEntry struct {
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	OriginalPath    string    `json:"originalPath,omitempty"`
+	Kind            string    `json:"kind"`
+	SizeBytes       int64     `json:"sizeBytes"`
+	Mode            string    `json:"mode"`
+	Owner           string    `json:"owner"`
+	Group           string    `json:"group"`
+	DeletedAt       time.Time `json:"deletedAt"`
+	ResourceVersion string    `json:"resourceVersion"`
+	Restorable      bool      `json:"restorable"`
+}
+
+type FileTrashDirectory struct {
+	Entries   []FileTrashEntry `json:"entries"`
+	Total     int              `json:"total"`
+	Truncated bool             `json:"truncated"`
+	ReadAt    time.Time        `json:"readAt"`
 }
 
 type FileActionItem struct {

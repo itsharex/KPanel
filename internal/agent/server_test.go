@@ -373,6 +373,23 @@ func testServer(t *testing.T) *Server {
 	return server
 }
 
+func TestDefaultFileManagerUsesWritableAgentStateDirectoryForTrash(t *testing.T) {
+	config := defaultFileManagerConfig("/home/docker/kpanel/data/agent")
+	if config.TrashVirtual != "/home/docker/kpanel/data/agent/file-trash" {
+		t.Fatalf("trash path = %q", config.TrashVirtual)
+	}
+	found := false
+	for _, protected := range config.ProtectedVirtual {
+		if protected == "/home/docker/kpanel/data/agent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Agent state directory is not protected: %#v", config.ProtectedVirtual)
+	}
+}
+
 func testFileManager(t *testing.T) *filemanager.Manager {
 	t.Helper()
 	manager, err := filemanager.New(filemanager.Config{Root: t.TempDir()})

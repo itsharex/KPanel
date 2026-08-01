@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -186,6 +187,55 @@ func TestFileActionReturnsMultiStatusForPartialResult(t *testing.T) {
 	}
 	if len(result.Succeeded) != 1 || len(result.Failed) != 1 {
 		t.Fatalf("partial result=%#v", result)
+	}
+}
+
+func TestFileTrashEndpointSupportsRestoreAndPermanentDelete(t *testing.T) {
+	server := testServer(t)
+	root := t.TempDir()
+	manager, err := filemanager.New(filemanager.Config{Root: root, TrashVirtual: "/state/file-trash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server.files = manager
+	for _, name := range []string{"restore.txt", "delete.txt"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0644); err != nil {
+			t.Fatal(err)
+		}
+		content, _ := json.Marshal(contract.FileActionRequest{Action: "trash", Sources: []string{"/" + name}})
+		response := fileRequest(server, http.MethodPost, "/v1/files/actions", string(content))
+		if response.Code != http.StatusOK {
+			t.Fatalf("trash %s status=%d body=%s", name, response.Code, response.Body.String())
+		}
+	}
+	response := fileRequest(server, http.MethodGet, "/v1/files/trash", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("trash list status=%d body=%s", response.Code, response.Body.String())
+	}
+	var trash contract.FileTrashDirectory
+	if err := json.Unmarshal(response.Body.Bytes(), &trash); err != nil || trash.Total != 2 {
+		t.Fatalf("trash list=%#v err=%v", trash, err)
+	}
+	for _, entry := range trash.Entries {
+		action := "trash_delete"
+		if entry.Name == "restore.txt" {
+			action = "trash_restore"
+		}
+		content, _ := json.Marshal(contract.FileActionRequest{
+			Action: action, TrashIDs: []string{entry.ID},
+			ExpectedResourceVersions: map[string]string{entry.ID: entry.ResourceVersion},
+		})
+		response = fileRequest(server, http.MethodPost, "/v1/files/actions", string(content))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", action, response.Code, response.Body.String())
+		}
+	}
+	if content, err := os.ReadFile(filepath.Join(root, "restore.txt")); err != nil || string(content) != "restore.txt" {
+		t.Fatalf("restored content=%q err=%v", content, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "delete.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("permanently deleted file remains: %v", err)
 	}
 }
 

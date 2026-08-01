@@ -104,6 +104,31 @@ func TestFileListRequiresSessionAndForwardsStrictQuery(t *testing.T) {
 	}
 }
 
+func TestFileTrashListRequiresSessionAndForwardsToAgent(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &fileStubAgent{stubAgent: &stubAgent{response: AgentResponse{
+		StatusCode: http.StatusOK, ContentType: "application/json",
+		Body: []byte(`{"entries":[],"total":0,"readAt":"2026-07-30T00:00:00Z"}`),
+	}}}
+	server.agent = agent
+
+	unauthenticated := performRequest(server, http.MethodGet, "/api/v1/files/trash", nil, nil)
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d", unauthenticated.Code)
+	}
+	response := authenticatedRequest(
+		server, http.MethodGet, "/api/v1/files/trash", nil, sessionCookie, csrfCookie, nil,
+	)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"total":0`) {
+		t.Fatalf("trash response = %d %s", response.Code, response.Body.String())
+	}
+	calls := agent.snapshotCalls()
+	if len(calls) != 1 || calls[0].path != "/v1/files/trash" || calls[0].rawQuery != "" {
+		t.Fatalf("unexpected Agent calls: %#v", calls)
+	}
+}
+
 func TestFileContentStreamsRangeAndUploadRequiresCSRF(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)

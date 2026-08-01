@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -147,21 +148,7 @@ func NewServer(config Config) (*Server, error) {
 	}
 	if config.Files == nil {
 		var fileErr error
-		config.Files, fileErr = filemanager.New(filemanager.Config{
-			Root:         "/",
-			TrashVirtual: "/var/lib/kejilion-panel/file-trash",
-			ProtectedVirtual: []string{
-				"/var/lib/kejilion-panel",
-				"/run/kejilion-panel",
-				"/etc/kejilion-panel",
-				"/home/docker/kpanel/secrets",
-				"/home/docker/kpanel/data/panel",
-				"/home/docker/kpanel/data/agent",
-				"/home/docker/kpanel/run",
-				"/home/.kpanel-trash",
-			},
-			ReadOnlyVirtual: []string{"/proc", "/sys", "/dev"},
-		})
+		config.Files, fileErr = filemanager.New(defaultFileManagerConfig(config.StateDir))
 		if fileErr != nil {
 			return nil, fmt.Errorf("initialize file manager: %w", fileErr)
 		}
@@ -184,6 +171,30 @@ func NewServer(config Config) (*Server, error) {
 		monitoring:      config.Monitoring,
 		now:             config.Now,
 	}, nil
+}
+
+func defaultFileManagerConfig(stateDirectory string) filemanager.Config {
+	trashDirectory := "/var/lib/kejilion-panel/file-trash"
+	protectedDirectories := []string{
+		"/var/lib/kejilion-panel",
+		"/run/kejilion-panel",
+		"/etc/kejilion-panel",
+		"/home/docker/kpanel/secrets",
+		"/home/docker/kpanel/data/panel",
+		"/home/docker/kpanel/data/agent",
+		"/home/docker/kpanel/run",
+		"/home/.kpanel-trash",
+	}
+	if stateDirectory = strings.TrimSpace(stateDirectory); stateDirectory != "" && path.IsAbs(stateDirectory) {
+		stateDirectory = path.Clean(stateDirectory)
+		trashDirectory = path.Join(stateDirectory, "file-trash")
+		protectedDirectories = append(protectedDirectories, stateDirectory)
+	}
+	return filemanager.Config{
+		Root: "/", TrashVirtual: trashDirectory,
+		ProtectedVirtual: protectedDirectories,
+		ReadOnlyVirtual:  []string{"/proc", "/sys", "/dev"},
+	}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +260,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.diagnosticJob(w, r)
 	case r.URL.Path == "/v1/files":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.fileList)
+	case r.URL.Path == "/v1/files/trash":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.fileTrashList)
 	case r.URL.Path == "/v1/files/content":
 		s.fileContent(w, r, requestID)
 	case r.URL.Path == "/v1/files/upload":

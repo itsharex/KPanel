@@ -52,6 +52,27 @@ func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 	s.writeAgentResponse(w, r, response)
 }
 
+func (s *Server) handleFileTrashList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusBadRequest, "file_query_invalid", "回收站查询参数无效", "")
+		return
+	}
+	if _, _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	response, err := s.agent.Get(r.Context(), "/v1/files/trash", "", requestID(r))
+	if err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	s.writeAgentResponse(w, r, response)
+}
+
 func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -262,8 +283,17 @@ func (s *Server) handleFileAction(w http.ResponseWriter, r *http.Request) {
 	target := input.Target
 	if target == "" && len(input.Sources) > 0 {
 		target = input.Sources[0]
+	} else if target == "" && len(input.TrashIDs) > 0 {
+		target = input.TrashIDs[0]
 	}
-	change := map[string]any{"action": input.Action, "items": len(input.Sources)}
+	if input.Action == "trash_empty" {
+		target = "file-trash"
+	}
+	itemCount := len(input.Sources)
+	if len(input.TrashIDs) > 0 {
+		itemCount = len(input.TrashIDs)
+	}
+	change := map[string]any{"action": input.Action, "items": itemCount}
 	if err := s.audit(r, session.User.ID, "file."+input.Action, "file", target, "intent", change); err != nil {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
@@ -303,7 +333,8 @@ func strictPanelQuery(values map[string][]string, allowed ...string) bool {
 
 func allowedFileAction(action string) bool {
 	switch action {
-	case "mkdir", "rename", "copy", "move", "trash", "chmod":
+	case "mkdir", "rename", "copy", "move", "trash", "delete", "chmod",
+		"trash_restore", "trash_delete", "trash_empty":
 		return true
 	default:
 		return false

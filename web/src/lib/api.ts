@@ -22,6 +22,7 @@ import type {
   DockerMaintenanceJob,
   FileActionInput,
   FileActionResult,
+  FileTrashDirectory,
   FileDirectory,
   FileEntry,
   FileWriteResult,
@@ -1399,6 +1400,7 @@ export const api = {
       }),
     action: (input: FileActionInput): Promise<FileActionResult> =>
       request<FileActionResult>('/files/actions', { method: 'POST', body: input }),
+    trash: (): Promise<FileTrashDirectory> => request<FileTrashDirectory>('/files/trash'),
   },
   docker: {
     environment: (signal?: AbortSignal): Promise<DockerEnvironment> =>

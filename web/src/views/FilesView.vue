@@ -20,6 +20,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   Scissors,
   Search,
@@ -34,11 +35,11 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { ApiError, api } from '@/lib/api'
 import type { CodeLanguage } from '@/lib/code-editor-language'
 import { useToast } from '@/stores/toast'
-import type { FileActionInput, FileDirectory, FileEntry } from '@/types/api'
+import type { FileActionInput, FileDirectory, FileEntry, FileTrashEntry } from '@/types/api'
 
 const CodeEditor = defineAsyncComponent(() => import('@/components/files/CodeEditor.vue'))
 
-type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'trash'
+type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'trash' | 'delete'
 type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
 type ClipboardMode = 'copy' | 'move'
 
@@ -88,6 +89,13 @@ const editorInfo = ref<Pick<CodeLanguage, 'label' | 'highlighted' | 'reason'> & 
 const codeEditorRef = ref<CodeEditorHandle>()
 const editorStatus = ref<CodeEditorStatus>()
 const editorLineWrap = ref(false)
+const trashOpen = ref(false)
+const trashLoading = ref(false)
+const trashBusy = ref(false)
+const trashEntries = ref<FileTrashEntry[]>([])
+const trashTotal = ref(0)
+const trashTruncated = ref(false)
+const selectedTrash = ref(new Set<string>())
 let directoryController: AbortController | undefined
 let searchTimer: number | undefined
 
@@ -147,6 +155,7 @@ const dialogTitle = computed(() => {
     rename: '重命名',
     chmod: dialogEntries.value.length > 1 ? `修改 ${dialogEntries.value.length} 项权限` : '修改权限',
     trash: dialogEntries.value.length > 1 ? `移入回收站（${dialogEntries.value.length} 项）` : '移入回收站',
+    delete: dialogEntries.value.length > 1 ? `彻底删除（${dialogEntries.value.length} 项）` : '彻底删除',
   }
   return dialogAction.value ? titles[dialogAction.value] : '文件操作'
 })
@@ -447,7 +456,21 @@ async function submitDialog(): Promise<void> {
         expectedResourceVersion: entry.resourceVersion,
       }
     } else if (action === 'trash') {
-      input = { action, sources: dialogEntries.value.map((entry) => entry.path) }
+      input = {
+        action,
+        sources: dialogEntries.value.map((entry) => entry.path),
+        expectedResourceVersions: Object.fromEntries(
+          dialogEntries.value.map((entry) => [entry.path, entry.resourceVersion]),
+        ),
+      }
+    } else if (action === 'delete') {
+      input = {
+        action,
+        sources: dialogEntries.value.map((entry) => entry.path),
+        expectedResourceVersions: Object.fromEntries(
+          dialogEntries.value.map((entry) => [entry.path, entry.resourceVersion]),
+        ),
+      }
     } else if (action === 'chmod') {
       input = {
         action,
@@ -466,7 +489,7 @@ async function submitDialog(): Promise<void> {
       )
     } else {
       toast.success(
-        action === 'trash' ? '已移入回收站' : '文件操作完成',
+        action === 'trash' ? '已移入回收站' : action === 'delete' ? '已彻底删除' : '文件操作完成',
         `${Math.max(result.succeeded.length, 1)} 项已处理`,
       )
     }
@@ -479,6 +502,70 @@ async function submitDialog(): Promise<void> {
     await loadDirectory()
   } finally {
     dialogBusy.value = false
+  }
+}
+
+async function openTrash(): Promise<void> {
+  trashOpen.value = true
+  selectedTrash.value = new Set()
+  await loadTrash()
+}
+
+async function loadTrash(): Promise<void> {
+  trashLoading.value = true
+  try {
+    const result = await api.files.trash()
+    trashEntries.value = result.entries
+    trashTotal.value = result.total
+    trashTruncated.value = result.truncated
+    selectedTrash.value = new Set(
+      [...selectedTrash.value].filter((id) => result.entries.some((entry) => entry.id === id)),
+    )
+  } catch (error) {
+    toast.danger('回收站读取失败', errorMessage(error))
+  } finally {
+    trashLoading.value = false
+  }
+}
+
+function toggleTrash(id: string): void {
+  const next = new Set(selectedTrash.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedTrash.value = next
+}
+
+async function runTrashAction(action: 'trash_restore' | 'trash_delete' | 'trash_empty'): Promise<void> {
+  const chosen = trashEntries.value.filter((entry) => selectedTrash.value.has(entry.id))
+  if (action !== 'trash_empty' && !chosen.length) return
+  if (action === 'trash_delete' && !window.confirm(`彻底删除选中的 ${chosen.length} 项？此操作不可恢复。`)) return
+  if (action === 'trash_empty' && !window.confirm(`清空回收站中的 ${trashTotal.value} 项？此操作不可恢复。`)) return
+  trashBusy.value = true
+  try {
+    const input: FileActionInput = {
+      action,
+      trashIds: action === 'trash_empty' ? undefined : chosen.map((entry) => entry.id),
+      expectedResourceVersions:
+        action === 'trash_empty'
+          ? undefined
+          : Object.fromEntries(chosen.map((entry) => [entry.id, entry.resourceVersion])),
+    }
+    const result = await api.files.action(input)
+    if (result.failed.length) {
+      toast.danger(
+        result.succeeded.length ? '部分回收站项目未处理' : '回收站操作失败',
+        `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`,
+      )
+    } else {
+      const title = action === 'trash_restore' ? '恢复完成' : action === 'trash_empty' ? '回收站已清空' : '已彻底删除'
+      toast.success(title, `${result.succeeded.length} 项已处理`)
+    }
+    selectedTrash.value = new Set()
+    await Promise.all([loadTrash(), loadDirectory()])
+  } catch (error) {
+    toast.danger('回收站操作失败', errorMessage(error))
+  } finally {
+    trashBusy.value = false
   }
 }
 
@@ -653,6 +740,10 @@ onBeforeUnmount(() => {
         <button class="button button--secondary" type="button" :disabled="loading" @click="loadDirectory()">
           <RefreshCw :size="16" :class="{ spinning: loading }" />
           刷新
+        </button>
+        <button class="button button--secondary" type="button" @click="openTrash">
+          <Trash2 :size="16" />
+          回收站
         </button>
         <button class="button button--secondary" type="button" @click="openDialog('mkdir')">
           <Plus :size="16" />
@@ -859,6 +950,9 @@ onBeforeUnmount(() => {
         <button class="danger-link" type="button" @click="openDialog('trash')">
           <Trash2 :size="15" />回收站
         </button>
+        <button class="danger-link" type="button" @click="openDialog('delete')">
+          <X :size="15" />彻底删除
+        </button>
         <button type="button" @click="clearSelection">取消选择</button>
       </div>
     </Transition>
@@ -903,16 +997,19 @@ onBeforeUnmount(() => {
       <button v-if="contextMenu.entry" class="danger-link" type="button" @click="openDialog('trash', contextMenu.entry)">
         <Trash2 :size="15" />移入回收站
       </button>
+      <button v-if="contextMenu.entry" class="danger-link" type="button" @click="openDialog('delete', contextMenu.entry)">
+        <X :size="15" />彻底删除
+      </button>
     </div>
 
     <ModalDialog
       :open="Boolean(dialogAction)"
       :title="dialogTitle"
-      :description="dialogAction === 'trash' ? '文件将移动到 KPanel 隔离回收区，不会立即物理删除。' : ''"
+      :description="dialogAction === 'trash' ? '文件将移动到 KPanel 隔离回收区，可在回收站中恢复。' : dialogAction === 'delete' ? '文件将立即从磁盘删除，且无法恢复。' : ''"
       size="small"
       @close="closeDialog"
     >
-      <div v-if="dialogAction !== 'trash'" class="operation-form">
+      <div v-if="dialogAction !== 'trash' && dialogAction !== 'delete'" class="operation-form">
         <label>
           <span>
             {{
@@ -935,20 +1032,72 @@ onBeforeUnmount(() => {
       </div>
       <div v-else class="trash-summary">
         <Trash2 :size="24" />
-        <strong>确认移动 {{ dialogEntries.length }} 项？</strong>
-        <span>回收区不显示在文件列表中，首版暂不提供面板内恢复入口。</span>
+        <strong>{{ dialogAction === 'delete' ? `确认彻底删除 ${dialogEntries.length} 项？` : `确认移动 ${dialogEntries.length} 项？` }}</strong>
+        <span>{{ dialogAction === 'delete' ? '此操作不可撤销，目录内的全部内容也会被删除。' : '稍后可从文件管理右上角的回收站恢复或彻底删除。' }}</span>
       </div>
       <div class="dialog-actions">
         <button class="button button--secondary" type="button" :disabled="dialogBusy" @click="closeDialog">取消</button>
         <button
           class="button"
-          :class="dialogAction === 'trash' ? 'button--danger' : 'button--primary'"
+          :class="dialogAction === 'trash' || dialogAction === 'delete' ? 'button--danger' : 'button--primary'"
           type="button"
-          :disabled="dialogBusy || (dialogAction !== 'trash' && !dialogValue.trim())"
+          :disabled="dialogBusy || (dialogAction !== 'trash' && dialogAction !== 'delete' && !dialogValue.trim())"
           @click="submitDialog"
         >
-          {{ dialogBusy ? '处理中…' : dialogAction === 'trash' ? '移入回收站' : '确认' }}
+          {{ dialogBusy ? '处理中…' : dialogAction === 'trash' ? '移入回收站' : dialogAction === 'delete' ? '彻底删除' : '确认' }}
         </button>
+      </div>
+    </ModalDialog>
+
+    <ModalDialog
+      :open="trashOpen"
+      title="回收站"
+      description="删除的文件保存在 Agent 隔离目录中；恢复时不会覆盖同名文件。"
+      size="wide"
+      @close="!trashBusy && (trashOpen = false)"
+    >
+      <div class="trash-manager">
+        <header>
+          <span>共 {{ trashTotal }} 项<span v-if="trashTruncated">（显示最近 500 项）</span></span>
+          <div>
+            <button class="button button--secondary" type="button" :disabled="trashLoading || trashBusy" @click="loadTrash">
+              <RefreshCw :size="15" :class="{ spinning: trashLoading }" />刷新
+            </button>
+            <button
+              class="button button--secondary"
+              type="button"
+              :disabled="trashBusy || !selectedTrash.size || trashEntries.filter((entry) => selectedTrash.has(entry.id)).some((entry) => !entry.restorable)"
+              @click="runTrashAction('trash_restore')"
+            ><RotateCcw :size="15" />恢复</button>
+            <button class="button button--danger" type="button" :disabled="trashBusy || !selectedTrash.size" @click="runTrashAction('trash_delete')">
+              <Trash2 :size="15" />彻底删除
+            </button>
+            <button class="button button--danger" type="button" :disabled="trashBusy || !trashTotal" @click="runTrashAction('trash_empty')">
+              清空回收站
+            </button>
+          </div>
+        </header>
+        <div v-if="trashLoading" class="file-loading"><RefreshCw :size="22" class="spinning" />正在读取回收站…</div>
+        <div v-else-if="trashEntries.length" class="trash-list">
+          <label v-for="entry in trashEntries" :key="entry.id" class="trash-item">
+            <input type="checkbox" :checked="selectedTrash.has(entry.id)" @change="toggleTrash(entry.id)" />
+            <span class="file-icon" :class="{ 'file-icon--folder': entry.kind === 'directory' }">
+              <Folder v-if="entry.kind === 'directory'" :size="19" />
+              <File v-else :size="19" />
+            </span>
+            <span>
+              <strong>{{ entry.name }}</strong>
+              <small>{{ entry.originalPath || '旧版回收站项目（仅支持彻底删除）' }}</small>
+            </span>
+            <span>{{ entry.kind === 'directory' ? '文件夹' : formatBytes(entry.sizeBytes) }}</span>
+            <span>{{ formatTime(entry.deletedAt) }}</span>
+          </label>
+        </div>
+        <div v-else class="file-empty">
+          <Trash2 :size="34" />
+          <strong>回收站是空的</strong>
+          <span>移入回收站的文件会显示在这里。</span>
+        </div>
       </div>
     </ModalDialog>
 
@@ -1564,6 +1713,70 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+.trash-manager {
+  display: grid;
+  gap: 12px;
+}
+
+.trash-manager > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trash-manager > header > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.trash-list {
+  max-height: min(56vh, 560px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.trash-item {
+  display: grid;
+  grid-template-columns: 28px 38px minmax(180px, 1fr) 100px 128px;
+  align-items: center;
+  gap: 8px;
+  min-height: 62px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.trash-item:last-child {
+  border-bottom: 0;
+}
+
+.trash-item:hover {
+  background: var(--surface-subtle);
+}
+
+.trash-item > span:nth-child(3) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.trash-item strong,
+.trash-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-item small,
+.trash-item > span:nth-last-child(-n + 2) {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -1823,6 +2036,23 @@ onBeforeUnmount(() => {
   }
 
   .code-viewer__header-right > span:first-child {
+    display: none;
+  }
+
+  .trash-manager > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .trash-manager > header > div {
+    justify-content: flex-start;
+  }
+
+  .trash-item {
+    grid-template-columns: 26px 34px minmax(0, 1fr);
+  }
+
+  .trash-item > span:nth-last-child(-n + 2) {
     display: none;
   }
 }

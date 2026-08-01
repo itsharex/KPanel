@@ -228,6 +228,98 @@ func TestUploadCopyMoveChmodAndTrash(t *testing.T) {
 	}
 }
 
+func TestTrashCanBeListedRestoredAndPermanentlyDeleted(t *testing.T) {
+	manager, root := newTestManager(t)
+	mustMkdirAll(t, filepath.Join(root, "documents"))
+	mustWrite(t, filepath.Join(root, "documents", "restore.txt"), "restore me")
+	mustWrite(t, filepath.Join(root, "delete.txt"), "delete me")
+
+	for _, source := range []string{"/documents/restore.txt", "/delete.txt"} {
+		entry, err := manager.Stat(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := manager.Action(context.Background(), contract.FileActionRequest{
+			Action: "trash", Sources: []string{source},
+			ExpectedResourceVersions: map[string]string{source: entry.ResourceVersion},
+		})
+		if err != nil || len(result.Succeeded) != 1 {
+			t.Fatalf("trash %s: %#v err=%v", source, result, err)
+		}
+	}
+
+	trash, err := manager.ListTrash(context.Background())
+	if err != nil || trash.Total != 2 {
+		t.Fatalf("unexpected trash list: %#v err=%v", trash, err)
+	}
+	var restoreEntry, deleteEntry contract.FileTrashEntry
+	for _, entry := range trash.Entries {
+		switch entry.OriginalPath {
+		case "/documents/restore.txt":
+			restoreEntry = entry
+		case "/delete.txt":
+			deleteEntry = entry
+		}
+	}
+	if !restoreEntry.Restorable || !deleteEntry.Restorable {
+		t.Fatalf("trash metadata missing: %#v", trash.Entries)
+	}
+	result, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "trash_restore", TrashIDs: []string{restoreEntry.ID},
+		ExpectedResourceVersions: map[string]string{restoreEntry.ID: restoreEntry.ResourceVersion},
+	})
+	if err != nil || len(result.Succeeded) != 1 {
+		t.Fatalf("restore: %#v err=%v", result, err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "documents", "restore.txt"))
+	if err != nil || string(content) != "restore me" {
+		t.Fatalf("restored content = %q err=%v", content, err)
+	}
+	result, err = manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "trash_delete", TrashIDs: []string{deleteEntry.ID},
+		ExpectedResourceVersions: map[string]string{deleteEntry.ID: deleteEntry.ResourceVersion},
+	})
+	if err != nil || len(result.Succeeded) != 1 {
+		t.Fatalf("trash delete: %#v err=%v", result, err)
+	}
+	trash, err = manager.ListTrash(context.Background())
+	if err != nil || trash.Total != 0 {
+		t.Fatalf("trash not empty: %#v err=%v", trash, err)
+	}
+}
+
+func TestPermanentDeleteRequiresCurrentVersionAndProtectsInternalPaths(t *testing.T) {
+	manager, root := newTestManager(t)
+	mustWrite(t, filepath.Join(root, "delete.txt"), "delete me")
+	entry, err := manager.Stat("/delete.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "delete", Sources: []string{"/delete.txt"},
+		ExpectedResourceVersions: map[string]string{"/delete.txt": "sha256:stale"},
+	})
+	if err != nil || len(result.Failed) != 1 || !strings.Contains(result.Failed[0].Detail, ErrConflict.Error()) {
+		t.Fatalf("stale delete result: %#v err=%v", result, err)
+	}
+	result, err = manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "delete", Sources: []string{"/delete.txt"},
+		ExpectedResourceVersions: map[string]string{"/delete.txt": entry.ResourceVersion},
+	})
+	if err != nil || len(result.Succeeded) != 1 {
+		t.Fatalf("delete result: %#v err=%v", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "delete.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("file still exists: %v", err)
+	}
+	result, err = manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "delete", Sources: []string{"/.kpanel-trash"},
+	})
+	if err != nil || len(result.Failed) != 1 || !strings.Contains(result.Failed[0].Detail, ErrProtected.Error()) {
+		t.Fatalf("protected delete result: %#v err=%v", result, err)
+	}
+}
+
 func TestRenameDoesNotReplaceExistingTarget(t *testing.T) {
 	manager, root := newTestManager(t)
 	mustWrite(t, filepath.Join(root, "source.txt"), "source")

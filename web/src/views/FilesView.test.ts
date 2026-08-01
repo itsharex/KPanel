@@ -5,6 +5,7 @@ import FilesView from './FilesView.vue'
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   action: vi.fn(),
+  trash: vi.fn(),
   write: vi.fn(),
   success: vi.fn(),
   danger: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock('@/lib/api', () => ({
     files: {
       list: mocks.list,
       action: mocks.action,
+      trash: mocks.trash,
       contentUrl: vi.fn(),
       text: vi.fn(),
       write: mocks.write,
@@ -35,6 +37,8 @@ interface FileBindings {
   loadDirectory: (path?: string, append?: boolean) => Promise<void>
   savePreview: (content?: string) => Promise<void>
   submitDialog: () => Promise<void>
+  openTrash: () => Promise<void>
+  runTrashAction: (action: 'trash_restore' | 'trash_delete' | 'trash_empty') => Promise<void>
   pasteClipboard: (target?: string) => Promise<void>
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
   showContext: (event: MouseEvent, entry: TestFileEntry) => void
@@ -42,7 +46,7 @@ interface FileBindings {
   selectEntry: (event: MouseEvent, path: string) => void
   preventNativeSelection: (event: Event) => void
   handleFileShortcut: (event: KeyboardEvent) => void
-  openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'trash', entry?: TestFileEntry) => void
+  openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'trash' | 'delete', entry?: TestFileEntry) => void
   currentPath: { value: string }
   directory: {
     value?: {
@@ -60,6 +64,8 @@ interface FileBindings {
   contextMenu: { value?: { entry?: TestFileEntry; x: number; y: number } }
   dialogEntries: { value: TestFileEntry[] }
   dialogAction: { value?: 'trash' }
+  trashEntries: { value: Array<{ id: string; resourceVersion: string; restorable: boolean }> }
+  selectedTrash: { value: Set<string> }
   previewEntry: { value?: TestFileEntry }
   previewContent: { value: string }
   previewDirty: { value: boolean }
@@ -135,6 +141,7 @@ beforeEach(() => {
     readAt: '2026-07-30T00:00:00Z',
   })
   mocks.action.mockResolvedValue({ action: 'trash', succeeded: [], failed: [] })
+  mocks.trash.mockResolvedValue({ entries: [], total: 0, readAt: '2026-07-30T00:00:00Z' })
   mocks.write.mockImplementation(async (_path: string, _content: string, _version: string) => ({
     entry: testEntry('saved.txt'),
   }))
@@ -223,6 +230,7 @@ describe('FilesView directory loading', () => {
     expect(mocks.action).toHaveBeenCalledWith({
       action: 'trash',
       sources: ['/keep.txt'],
+      expectedResourceVersions: { '/keep.txt': 'sha256:keep.txt' },
     })
     expect(mocks.danger).toHaveBeenCalledWith(
       '文件操作未完成',
@@ -230,6 +238,43 @@ describe('FilesView directory loading', () => {
     )
     expect(mocks.list).toHaveBeenCalled()
     expect(view.dialogAction.value).toBeUndefined()
+  })
+
+  it('restores a recycle-bin entry with resource-version protection', async () => {
+    const view = setupView()
+    mocks.trash.mockResolvedValueOnce({
+      entries: [{
+        id: 'trash-id',
+        name: 'config.json',
+        originalPath: '/etc/config.json',
+        kind: 'file',
+        sizeBytes: 4,
+        mode: '-rw-r--r--',
+        owner: 'root',
+        group: 'root',
+        deletedAt: '2026-07-30T00:00:00Z',
+        resourceVersion: 'sha256:trash',
+        restorable: true,
+      }],
+      total: 1,
+      readAt: '2026-07-30T00:00:00Z',
+    })
+    mocks.action.mockResolvedValueOnce({
+      action: 'trash_restore',
+      succeeded: [{ path: 'trash-id', destination: '/etc/config.json' }],
+      failed: [],
+    })
+
+    await view.openTrash()
+    view.selectedTrash.value = new Set(['trash-id'])
+    await view.runTrashAction('trash_restore')
+
+    expect(mocks.action).toHaveBeenCalledWith({
+      action: 'trash_restore',
+      trashIds: ['trash-id'],
+      expectedResourceVersions: { 'trash-id': 'sha256:trash' },
+    })
+    expect(mocks.success).toHaveBeenCalledWith('恢复完成', '1 项已处理')
   })
 
   it('saves the live editor value without copying the document on every keystroke', async () => {

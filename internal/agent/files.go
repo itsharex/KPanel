@@ -68,6 +68,20 @@ func (s *Server) fileList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) fileTrashList(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "回收站查询参数无效", "")
+		return
+	}
+	result, err := s.files.ListTrash(r.Context())
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) fileContent(w http.ResponseWriter, r *http.Request, requestID string) {
 	switch r.Method {
 	case http.MethodGet:
@@ -303,6 +317,10 @@ func writeFileProblem(w http.ResponseWriter, requestID string, err error) {
 		status, code, title = http.StatusRequestEntityTooLarge, "file_too_large", "文件超过允许的大小"
 	case errors.Is(err, filemanager.ErrBusy):
 		status, code, title = http.StatusTooManyRequests, "file_transfer_busy", "文件传输任务繁忙"
+	case errors.Is(err, filemanager.ErrTrashFull):
+		status, code, title = http.StatusInsufficientStorage, "file_trash_full", "回收站已满"
+	case errors.Is(err, filemanager.ErrTrashMetadata):
+		status, code, title = http.StatusUnprocessableEntity, "file_trash_not_restorable", "回收站项目无法恢复"
 	case errors.Is(err, filemanager.ErrNotDirectory),
 		errors.Is(err, filemanager.ErrNotRegular):
 		status, code, title = http.StatusUnprocessableEntity, "file_type_invalid", "文件类型不支持此操作"

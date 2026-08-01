@@ -1088,15 +1088,48 @@ export interface FileDirectory {
   readAt: string
 }
 
-export type FileAction = 'mkdir' | 'rename' | 'copy' | 'move' | 'trash' | 'chmod'
+export type FileAction =
+  | 'mkdir'
+  | 'rename'
+  | 'copy'
+  | 'move'
+  | 'trash'
+  | 'delete'
+  | 'chmod'
+  | 'trash_restore'
+  | 'trash_delete'
+  | 'trash_empty'
 
 export interface FileActionInput {
   action: FileAction
   sources?: string[]
+  trashIds?: string[]
   target?: string
   name?: string
   mode?: string
   expectedResourceVersion?: string
+  expectedResourceVersions?: Record<string, string>
+}
+
+export interface FileTrashEntry {
+  id: string
+  name: string
+  originalPath?: string
+  kind: FileKind
+  sizeBytes: number
+  mode: string
+  owner: string
+  group: string
+  deletedAt: string
+  resourceVersion: string
+  restorable: boolean
+}
+
+export interface FileTrashDirectory {
+  entries: FileTrashEntry[]
+  total: number
+  truncated: boolean
+  readAt: string
 }
 
 export interface FileActionResult {
