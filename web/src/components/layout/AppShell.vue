@@ -35,7 +35,7 @@ import {
   routeNavigationState,
 } from '@/lib/navigation'
 import { readSidebarCollapsed, writeSidebarCollapsed } from '@/lib/sidebarPreference'
-import { detectKPanelUpdate } from '@/lib/kpanelUpdate'
+import { detectKPanelUpdate, kpanelUpdateHint } from '@/lib/kpanelUpdate'
 
 interface NavigationItem {
   label: string
@@ -66,6 +66,7 @@ const signingOut = ref(false)
 const sidebarCollapsed = ref(readSidebarCollapsed())
 const kpanelUpdateAvailable = ref(false)
 const checkingKPanelUpdate = ref(false)
+const kpanelUpdateDescription = computed(() => kpanelUpdateHint(panel.state.agent?.version))
 
 const pageTitle = computed(() => String(route.meta.title || 'KPanel'))
 const agentStatus = computed(() => {
@@ -264,13 +265,12 @@ watch(
             v-if="kpanelUpdateAvailable"
             class="sidebar__version sidebar__version--update"
             type="button"
-            aria-label="发现 KPanel 新版本，打开更新确认"
-            title="发现 KPanel 新版本"
+            :aria-label="kpanelUpdateDescription"
+            :title="kpanelUpdateDescription"
             @click="openKPanelUpdate"
           >
             <CircleArrowUp :size="16" aria-hidden="true" />
-            <span>更新</span>
-            <small v-if="panel.state.agent?.version">v{{ panel.state.agent.version }}</small>
+            <span>更新可用</span>
           </button>
           <small v-else-if="panel.state.agent?.version">v{{ panel.state.agent.version }}</small>
         </div>

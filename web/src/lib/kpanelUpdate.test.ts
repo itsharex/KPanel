@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { detectKPanelUpdate, findKPanelApp, isKPanelSelfUpdate } from './kpanelUpdate'
+import {
+  detectKPanelUpdate,
+  findKPanelApp,
+  isKPanelSelfUpdate,
+  kpanelUpdateHint,
+} from './kpanelUpdate'
 import type { AppMarketInventory } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
@@ -84,5 +89,15 @@ describe('KPanel update detection', () => {
     expect(isKPanelSelfUpdate({ appId: 'thirdparty-kpanel', action: 'update' })).toBe(true)
     expect(isKPanelSelfUpdate({ appId: 'thirdparty-kpanel', action: 'uninstall' })).toBe(false)
     expect(isKPanelSelfUpdate({ appId: 'builtin-13', action: 'update' })).toBe(false)
+  })
+
+  it('describes the installed version without presenting it as the update target', () => {
+    expect(kpanelUpdateHint('0.34.1')).toBe(
+      '当前版本 v0.34.1，发现可用更新，点击更新到最新版本',
+    )
+    expect(kpanelUpdateHint('v0.34.1')).toBe(
+      '当前版本 v0.34.1，发现可用更新，点击更新到最新版本',
+    )
+    expect(kpanelUpdateHint()).toBe('发现 KPanel 新版本，点击更新到最新版本')
   })
 })

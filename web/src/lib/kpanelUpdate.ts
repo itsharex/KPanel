@@ -6,6 +6,12 @@ export const kpanelAppToken = 'kpanel'
 
 export type KPanelUpdateState = 'available' | 'current' | 'unavailable'
 
+export function kpanelUpdateHint(currentVersion?: string): string {
+  const normalizedVersion = currentVersion?.trim().replace(/^v/i, '')
+  if (!normalizedVersion) return '发现 KPanel 新版本，点击更新到最新版本'
+  return `当前版本 v${normalizedVersion}，发现可用更新，点击更新到最新版本`
+}
+
 export function findKPanelApp(inventory: AppMarketInventory): AppMarketItem | undefined {
   return inventory.items.find((item) => item.id === kpanelAppID || item.token === kpanelAppToken)
 }
