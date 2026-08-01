@@ -180,27 +180,27 @@ onMounted(() => {
     lineHeight: 1.25,
     scrollback: 5000,
     theme: {
-      background: terminalThemeColor('--terminal-background', '#071411'),
-      foreground: terminalThemeColor('--terminal-text', '#dceae7'),
+      background: terminalThemeColor('--terminal-background', '#0b1214'),
+      foreground: terminalThemeColor('--terminal-text', '#d8dddc'),
       cursor: terminalThemeColor('--terminal-accent', '#35cba6'),
-      cursorAccent: terminalThemeColor('--terminal-background', '#071411'),
-      selectionBackground: terminalThemeColor('--terminal-selection', 'rgb(53 203 166 / 26%)'),
-      black: '#071411',
-      red: '#f48a8a',
-      green: '#35cba6',
-      yellow: '#efb35d',
-      blue: '#70a9ef',
-      magenta: '#b49af4',
-      cyan: '#5adaba',
-      white: '#dceae7',
-      brightBlack: '#6f8781',
-      brightRed: '#ffaaa8',
-      brightGreen: '#72e4ae',
-      brightYellow: '#ffd089',
-      brightBlue: '#9bc5f5',
-      brightMagenta: '#d0bfff',
-      brightCyan: '#8cebd4',
-      brightWhite: '#f4fbf9',
+      cursorAccent: terminalThemeColor('--terminal-background', '#0b1214'),
+      selectionBackground: terminalThemeColor('--terminal-selection', 'rgb(53 203 166 / 20%)'),
+      black: terminalThemeColor('--terminal-ansi-black', '#1d2426'),
+      red: terminalThemeColor('--terminal-ansi-red', '#d86f74'),
+      green: terminalThemeColor('--terminal-ansi-green', '#91b56d'),
+      yellow: terminalThemeColor('--terminal-ansi-yellow', '#d5ae62'),
+      blue: terminalThemeColor('--terminal-ansi-blue', '#76a4c7'),
+      magenta: terminalThemeColor('--terminal-ansi-magenta', '#ad8bb8'),
+      cyan: terminalThemeColor('--terminal-ansi-cyan', '#72aaa7'),
+      white: terminalThemeColor('--terminal-ansi-white', '#c9cecd'),
+      brightBlack: terminalThemeColor('--terminal-ansi-bright-black', '#687376'),
+      brightRed: terminalThemeColor('--terminal-ansi-bright-red', '#e68589'),
+      brightGreen: terminalThemeColor('--terminal-ansi-bright-green', '#a7c982'),
+      brightYellow: terminalThemeColor('--terminal-ansi-bright-yellow', '#e3c27b'),
+      brightBlue: terminalThemeColor('--terminal-ansi-bright-blue', '#8bb9dc'),
+      brightMagenta: terminalThemeColor('--terminal-ansi-bright-magenta', '#c19bcb'),
+      brightCyan: terminalThemeColor('--terminal-ansi-bright-cyan', '#8cc2be'),
+      brightWhite: terminalThemeColor('--terminal-ansi-bright-white', '#f0f2f1'),
     },
   })
   fitAddon = new FitAddon()
@@ -295,17 +295,17 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .interactive-terminal {
-  --terminal-background: #071411;
-  --terminal-panel: #0c1d19;
-  --terminal-panel-raised: #10251f;
-  --terminal-text: #dceae7;
-  --terminal-muted: #89a49d;
+  --terminal-background: var(--terminal-shell-background, #0b1214);
+  --terminal-panel: var(--terminal-shell-panel, #111a1d);
+  --terminal-panel-raised: var(--terminal-shell-panel-raised, #182326);
+  --terminal-text: var(--terminal-shell-text, #d8dddc);
+  --terminal-muted: var(--terminal-shell-muted, #8a9695);
   --terminal-accent: var(--brand, #35cba6);
-  --terminal-selection: rgb(53 203 166 / 26%);
-  --terminal-border: color-mix(in srgb, var(--terminal-accent) 24%, #263d37);
-  --scrollbar-track: #071411;
-  --scrollbar-thumb: #29483f;
-  --scrollbar-thumb-hover: #3f6a5e;
+  --terminal-selection: rgb(53 203 166 / 20%);
+  --terminal-border: var(--terminal-shell-border, #29383a);
+  --scrollbar-track: var(--terminal-shell-background, #0b1214);
+  --scrollbar-thumb: var(--terminal-shell-scrollbar, #35474a);
+  --scrollbar-thumb-hover: var(--terminal-shell-scrollbar-hover, #506367);
   --scrollbar-thumb-active: var(--terminal-accent);
   overflow: hidden;
   border: 1px solid var(--terminal-border);

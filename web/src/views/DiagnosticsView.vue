@@ -611,9 +611,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   min-height: 42px;
   padding: 8px 16px;
-  border-bottom: 1px solid #273040;
-  background: #151b25;
-  color: #aeb9cb;
+  border-bottom: 1px solid var(--terminal-shell-border, #29383a);
+  background: var(--terminal-shell-panel, #111a1d);
+  color: var(--terminal-shell-muted, #8a9695);
   font-size: 12px;
 }
 
@@ -642,8 +642,8 @@ onBeforeUnmount(() => {
   overflow: auto;
   margin: 0;
   padding: 18px 20px;
-  background: #10151f;
-  color: #dce5f3;
+  background: var(--terminal-shell-background, #0b1214);
+  color: var(--terminal-shell-text, #d8dddc);
   font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

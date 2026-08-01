@@ -45,6 +45,32 @@
   --scrollbar-thumb: #b5c8c2;
   --scrollbar-thumb-hover: #86a69d;
   --scrollbar-thumb-active: #0c9b78;
+  /* Terminals stay dark in both application themes. Keep their base neutral;
+     the KPanel brand is reserved for focus, selection and live-state accents. */
+  --terminal-shell-background: #0b1214;
+  --terminal-shell-panel: #111a1d;
+  --terminal-shell-panel-raised: #182326;
+  --terminal-shell-text: #d8dddc;
+  --terminal-shell-muted: #8a9695;
+  --terminal-shell-border: #29383a;
+  --terminal-shell-scrollbar: #35474a;
+  --terminal-shell-scrollbar-hover: #506367;
+  --terminal-ansi-black: #1d2426;
+  --terminal-ansi-red: #d86f74;
+  --terminal-ansi-green: #91b56d;
+  --terminal-ansi-yellow: #d5ae62;
+  --terminal-ansi-blue: #76a4c7;
+  --terminal-ansi-magenta: #ad8bb8;
+  --terminal-ansi-cyan: #72aaa7;
+  --terminal-ansi-white: #c9cecd;
+  --terminal-ansi-bright-black: #687376;
+  --terminal-ansi-bright-red: #e68589;
+  --terminal-ansi-bright-green: #a7c982;
+  --terminal-ansi-bright-yellow: #e3c27b;
+  --terminal-ansi-bright-blue: #8bb9dc;
+  --terminal-ansi-bright-magenta: #c19bcb;
+  --terminal-ansi-bright-cyan: #8cc2be;
+  --terminal-ansi-bright-white: #f0f2f1;
 }
 
 :root[data-theme="dark"] {
@@ -134,14 +160,20 @@ html {
 }
 
 .code-editor-shell,
-.diagnostic-log,
-.interactive-terminal,
 .log-view,
 .log-viewer {
   --scrollbar-track: #09111d;
   --scrollbar-thumb: #30445d;
   --scrollbar-thumb-hover: #496685;
   --scrollbar-thumb-active: #5eead4;
+}
+
+.diagnostic-log,
+.interactive-terminal {
+  --scrollbar-track: var(--terminal-shell-background);
+  --scrollbar-thumb: var(--terminal-shell-scrollbar);
+  --scrollbar-thumb-hover: var(--terminal-shell-scrollbar-hover);
+  --scrollbar-thumb-active: var(--brand);
 }
 
 @media (pointer: coarse) {
