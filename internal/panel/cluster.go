@@ -252,7 +252,13 @@ func (s *Server) handleLightEnrollmentCreate(w http.ResponseWriter, r *http.Requ
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
 	}
-	enrollment, err := s.cluster.CreateLightEnrollment()
+	origin, ok := s.lightEnrollmentOrigin(r)
+	if !ok {
+		_ = s.audit(r, session.User.ID, "cluster.light-enrollment.create", "cluster-node", s.cluster.NodeID(), "failure", nil)
+		s.writeClusterError(w, r, cluster.ErrLightHTTPSOrigin)
+		return
+	}
+	enrollment, err := s.cluster.CreateLightEnrollmentForOrigin(origin)
 	if err != nil {
 		_ = s.audit(r, session.User.ID, "cluster.light-enrollment.create", "cluster-node", s.cluster.NodeID(), "failure", nil)
 		s.writeClusterError(w, r, err)
@@ -438,7 +444,13 @@ func (s *Server) handleLightNodeFederation(w http.ResponseWriter, r *http.Reques
 		if err := decodeLimitedJSON(w, r, cluster.MaxPairBytes, &input); err != nil {
 			return
 		}
-		response, err := s.cluster.EnrollLightNode(s.remoteIP(r), input)
+		origin, ok := s.requestHTTPSOrigin(r)
+		if !ok {
+			s.auditAuthFailure(r, "cluster.light-node.enroll")
+			s.writeClusterError(w, r, cluster.ErrLightHTTPSOrigin)
+			return
+		}
+		response, err := s.cluster.EnrollLightNodeAtOrigin(s.remoteIP(r), origin, input)
 		if err != nil {
 			s.auditAuthFailure(r, "cluster.light-node.enroll")
 			s.writeClusterError(w, r, err)
@@ -538,6 +550,8 @@ func (s *Server) writeClusterError(w http.ResponseWriter, r *http.Request, err e
 		status, code, title = http.StatusConflict, "cluster_local_host", "Local cluster host cannot be modified"
 	case errors.Is(err, cluster.ErrInvalidOrigin):
 		status, code, title = http.StatusUnprocessableEntity, "cluster_origin_invalid", "Cluster origin is invalid"
+	case errors.Is(err, cluster.ErrLightHTTPSOrigin):
+		status, code, title = http.StatusUnprocessableEntity, "cluster_light_https_required", "Light node HTTPS origin is required"
 	case errors.Is(err, cluster.ErrPrivateOrigin):
 		status, code, title = http.StatusUnprocessableEntity, "cluster_origin_blocked", "Cluster origin is blocked"
 	case errors.Is(err, cluster.ErrPairingCode):

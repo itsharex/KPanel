@@ -298,6 +298,64 @@ func TestLightNodeEnrollmentUsesAuthenticatedIntentAndPublicOneUseExchange(t *te
 	}
 }
 
+func TestLightNodeEnrollmentUsesTrustedHTTPSProxyOrigin(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/light-enrollments", nil)
+	request.Host = "panel.example"
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Header.Set("Origin", "https://panel.example")
+	request.Header.Set("X-Forwarded-Proto", "https")
+	request.Header.Set("X-CSRF-Token", csrfCookie.Value)
+	request.AddCookie(sessionCookie)
+	request.AddCookie(csrfCookie)
+	created := httptest.NewRecorder()
+	server.ServeHTTP(created, request)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("proxied light enrollment status = %d; body=%s", created.Code, created.Body.String())
+	}
+	var enrollment cluster.LightEnrollment
+	if err := json.Unmarshal(created.Body.Bytes(), &enrollment); err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(enrollment.Command)
+	token := strings.Trim(fields[len(fields)-1], "'")
+	body, err := json.Marshal(cluster.LightEnrollRequest{Token: token, Name: "edge-proxy", NodeVersion: "0.40.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollRequest := httptest.NewRequest(http.MethodPost, "/api/v3/federation/light/enroll", strings.NewReader(string(body)))
+	enrollRequest.Host = "panel.example"
+	enrollRequest.RemoteAddr = "127.0.0.1:23456"
+	enrollRequest.Header.Set("Content-Type", "application/json")
+	enrollRequest.Header.Set("X-Forwarded-Proto", "https")
+	enrolled := httptest.NewRecorder()
+	server.ServeHTTP(enrolled, enrollRequest)
+	if enrolled.Code != http.StatusCreated {
+		t.Fatalf("proxied public light enrollment status = %d; body=%s", enrolled.Code, enrolled.Body.String())
+	}
+}
+
+func TestLightNodeEnrollmentRejectsUntrustedForwardedHTTPS(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/light-enrollments", nil)
+	request.Host = "panel.test"
+	request.RemoteAddr = "198.51.100.10:12345"
+	request.Header.Set("Origin", "http://panel.test")
+	request.Header.Set("X-Forwarded-Proto", "https")
+	request.Header.Set("X-CSRF-Token", csrfCookie.Value)
+	request.AddCookie(sessionCookie)
+	request.AddCookie(csrfCookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(response.Body.String(), "cluster_light_https_required") {
+		t.Fatalf("untrusted forwarded HTTPS returned %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestLightNodePublicEndpointsKeepHostAndBodyGuards(t *testing.T) {
 	server, _ := newTestServerWithPublicURL(t, "https://panel.test")
 	for _, test := range []struct {

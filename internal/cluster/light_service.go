@@ -40,10 +40,15 @@ type LightReportAuth struct {
 }
 
 func (s *Service) CreateLightEnrollment() (LightEnrollment, error) {
+	return s.CreateLightEnrollmentForOrigin(s.publicURL)
+}
+
+func (s *Service) CreateLightEnrollmentForOrigin(origin string) (LightEnrollment, error) {
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
-	if _, err := validateLightOrigin(s.publicURL); err != nil {
-		return LightEnrollment{}, ErrInvalidOrigin
+	origin, err := validateLightOrigin(origin)
+	if err != nil {
+		return LightEnrollment{}, ErrLightHTTPSOrigin
 	}
 	now := s.now().UTC()
 	id, err := randomHex(16)
@@ -62,7 +67,7 @@ func (s *Service) CreateLightEnrollment() (LightEnrollment, error) {
 		return LightEnrollment{}, err
 	}
 	wire, err := json.Marshal(lightTokenWire{
-		Version: 1, Origin: s.publicURL, ID: id,
+		Version: 1, Origin: origin, ID: id,
 		Secret: base64.RawURLEncoding.EncodeToString(secret), ExpiresAt: expiresAt.Unix(),
 	})
 	if err != nil {
@@ -74,6 +79,14 @@ func (s *Service) CreateLightEnrollment() (LightEnrollment, error) {
 }
 
 func (s *Service) EnrollLightNode(source string, input LightEnrollRequest) (LightEnrollResponse, error) {
+	return s.EnrollLightNodeAtOrigin(source, s.publicURL, input)
+}
+
+func (s *Service) EnrollLightNodeAtOrigin(
+	source string,
+	origin string,
+	input LightEnrollRequest,
+) (LightEnrollResponse, error) {
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 	now := s.now().UTC()
@@ -81,7 +94,8 @@ func (s *Service) EnrollLightNode(source string, input LightEnrollRequest) (Ligh
 		return LightEnrollResponse{}, ErrRateLimited
 	}
 	wire, secret, err := parseLightToken(input.Token, now)
-	if err != nil || wire.Origin != s.publicURL {
+	validatedOrigin, originErr := validateLightOrigin(origin)
+	if err != nil || originErr != nil || wire.Origin != validatedOrigin {
 		return LightEnrollResponse{}, ErrPairingCode
 	}
 	name, err := validateOptionalName(input.Name)

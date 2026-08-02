@@ -1068,6 +1068,41 @@ func (s *Server) trustedProxyHTTPSOrigin(r *http.Request) (string, bool) {
 	return origin, true
 }
 
+// requestHTTPSOrigin returns the externally reachable HTTPS origin only when
+// it is authenticated by direct TLS or by a trusted reverse proxy.
+func (s *Server) requestHTTPSOrigin(r *http.Request) (string, bool) {
+	if origin, ok := s.trustedProxyHTTPSOrigin(r); ok {
+		return origin, true
+	}
+	if r.TLS == nil {
+		return "", false
+	}
+	host := strings.TrimSpace(r.Host)
+	if host == "" || strings.ContainsAny(host, "/\\?#@,;%") {
+		return "", false
+	}
+	origin := "https://" + host
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "https" || parsed.Host != host || parsed.Hostname() == "" ||
+		parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	return origin, true
+}
+
+func (s *Server) lightEnrollmentOrigin(r *http.Request) (string, bool) {
+	if origin, ok := s.requestHTTPSOrigin(r); ok {
+		return origin, true
+	}
+	parsed, err := url.Parse(strings.TrimSpace(s.config.PublicURL))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Hostname() == "" ||
+		parsed.User != nil || parsed.Path != "" || parsed.RawPath != "" || parsed.RawQuery != "" ||
+		parsed.Fragment != "" || parsed.ForceQuery {
+		return "", false
+	}
+	return strings.TrimRight(s.config.PublicURL, "/"), true
+}
+
 func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
 	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
 		s.writeProblem(w, r, http.StatusUnsupportedMediaType, "json_required", "JSON request body required", "")

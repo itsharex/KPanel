@@ -92,8 +92,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/kejilion/sh/main/kejilion.sh
 
 规则：
 
-- 命令中的 `kpl1` 授权包含中心端 HTTPS `PublicURL`、随机 ID、32 字节随机 secret 和到期时间；
+- 命令中的 `kpl1` 授权包含中心端当前已验证的 HTTPS 根地址、随机 ID、32 字节随机 secret 和到期时间；
   5 分钟过期且只能成功消费一次，非法名称或无效请求不会提前烧毁有效授权；
+- 通过可信 `k fd` 反向代理访问时，中心直接使用当前浏览器正在访问的 HTTPS 根地址，不要求
+  用户修改安装时保存的 IP + 端口地址，也不额外填写或回传凭据；
 - 目标机只要求 Linux、root、systemd、`curl`、`sha256sum`、`install`、`mktemp` 和 `useradd`，
   不要求 Docker、Go、Node.js 或编译环境，首版支持 `amd64`、`arm64`；
 - `kejilion.sh` 只负责固定安装协议，下载 Release 中对应架构的静态 `kejilion-node` 和
@@ -134,7 +136,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/kejilion/sh/main/kejilion.sh
 轻量节点方向相反：中心不主动访问目标机，也不接收其 URL 或开放端口；节点只连接授权中
 经过严格解析的 HTTPS 根地址，拒绝 userinfo、路径、查询、fragment、降级 HTTP 和重定向，
 TLS 最低 1.2。因而普通 NAT、动态公网 IP 或仅可出站的主机也能加入，但中心端必须具备被
-目标机访问的有效 HTTPS 地址。
+目标机访问的有效 HTTPS 地址。中心端正常操作仅为生成并复制命令；目标机需以 root 执行，
+具备 `curl` 且能够出站访问该 HTTPS 地址。
 
 HTTP v2 的集群正文使用 Noise 端到端加密且绑定目标静态身份，但 HTTP 本身不能保护浏览器
 访问目标管理页。Agent 仍只监听本机权限受限的 Unix Socket。联邦入口位于 Panel，不开放

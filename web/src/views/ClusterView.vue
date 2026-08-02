@@ -162,6 +162,7 @@ function friendlyError(reason: unknown, fallback: string): string {
   if (!(reason instanceof ApiError)) return fallback
   const messages: Record<string, string> = {
     cluster_origin_invalid: '请输入 HTTPS 根地址，或 http://IP:端口。不能包含路径、参数或账号信息。',
+    cluster_light_https_required: '轻量节点需要可从被控机访问的 HTTPS 根地址。请先通过 k fd 为 KPanel 绑定域名后重试。',
     cluster_origin_blocked: '该地址被网络安全策略拒绝；私网地址需由部署管理员加入 CIDR 白名单。',
     cluster_pairing_failed: '授权码无效、已过期或已被使用，请在目标 KPanel 重新生成。',
     cluster_duplicate: '该 KPanel 已经添加到主机列表。',
@@ -305,7 +306,7 @@ async function createLightEnrollment(): Promise<void> {
   } catch (reason) {
     toast.danger(
       '轻量节点命令生成失败',
-      friendlyError(reason, '请确认当前 KPanel 已配置可访问的 HTTPS 公共地址。'),
+      friendlyError(reason, '请确认当前 KPanel 已通过 HTTPS 域名访问；轻量节点不使用 HTTP 直连地址。'),
     )
   } finally {
     generatingLightEnrollment.value = false

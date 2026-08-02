@@ -1,6 +1,7 @@
 import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ClusterView from './ClusterView.vue'
+import { ApiError } from '@/lib/api'
 import type {
   ClusterHost,
   ClusterHostList,
@@ -337,6 +338,21 @@ describe('ClusterView inventory and navigation', () => {
     expect(mocks.createLightEnrollment).toHaveBeenCalledOnce()
     expect(mocks.clipboardWriteText).toHaveBeenCalledWith(enrollment.command)
     expect(mocks.toastSuccess).toHaveBeenCalledWith('轻量节点接入命令已复制')
+  })
+
+  it('explains the only missing prerequisite when no authenticated HTTPS origin exists', async () => {
+    const view = setupView()
+    mocks.createLightEnrollment.mockRejectedValueOnce(
+      new ApiError('Light node HTTPS origin is required', 422, 'cluster_light_https_required'),
+    )
+
+    await view.createLightEnrollment()
+
+    expect(view.lightEnrollment.value).toBeUndefined()
+    expect(mocks.toastDanger).toHaveBeenCalledWith(
+      '轻量节点命令生成失败',
+      '轻量节点需要可从被控机访问的 HTTPS 根地址。请先通过 k fd 为 KPanel 绑定域名后重试。',
+    )
   })
 
   it('falls back to a temporary selection when the Clipboard API is blocked', async () => {

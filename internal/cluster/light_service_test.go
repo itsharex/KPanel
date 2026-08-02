@@ -304,9 +304,46 @@ func TestLightEnrollmentRequiresConfiguredHTTPSPublicOrigin(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewService(%q) error = %v", publicURL, err)
 		}
-		if _, err := service.CreateLightEnrollment(); !errors.Is(err, ErrInvalidOrigin) {
-			t.Fatalf("CreateLightEnrollment(%q) error = %v, want ErrInvalidOrigin", publicURL, err)
+		if _, err := service.CreateLightEnrollment(); !errors.Is(err, ErrLightHTTPSOrigin) {
+			t.Fatalf("CreateLightEnrollment(%q) error = %v, want ErrLightHTTPSOrigin", publicURL, err)
 		}
 		_ = service.Close()
+	}
+}
+
+func TestLightEnrollmentCanUseAuthenticatedExternalHTTPSOrigin(t *testing.T) {
+	clock := &serviceTestClock{now: time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)}
+	service, err := NewService(ServiceConfig{
+		DataDir: t.TempDir(), PublicURL: "http://127.0.0.1:8080", Hostname: "center",
+		Telemetry: serviceTestTelemetry{now: clock.Now, hostname: "center"},
+		Remote:    localNodeTestRemote{}, Now: clock.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+
+	enrollment, err := service.CreateLightEnrollmentForOrigin("https://panel.example")
+	if err != nil {
+		t.Fatalf("CreateLightEnrollmentForOrigin() error = %v", err)
+	}
+	fields := strings.Fields(enrollment.Command)
+	token := strings.Trim(fields[len(fields)-1], "'")
+	if _, err := service.EnrollLightNodeAtOrigin("198.51.100.10", "https://panel.example", LightEnrollRequest{
+		Token: token, Name: "edge-1", NodeVersion: "0.40.0",
+	}); err != nil {
+		t.Fatalf("EnrollLightNodeAtOrigin() error = %v", err)
+	}
+
+	other, err := service.CreateLightEnrollmentForOrigin("https://panel.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherFields := strings.Fields(other.Command)
+	otherToken := strings.Trim(otherFields[len(otherFields)-1], "'")
+	if _, err := service.EnrollLightNodeAtOrigin("198.51.100.10", "https://other.example", LightEnrollRequest{
+		Token: otherToken, Name: "edge-2", NodeVersion: "0.40.0",
+	}); !errors.Is(err, ErrPairingCode) {
+		t.Fatalf("origin mismatch error = %v, want ErrPairingCode", err)
 	}
 }

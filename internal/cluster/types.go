@@ -39,6 +39,7 @@ var (
 	ErrDuplicate        = errors.New("cluster host already exists")
 	ErrHostLimit        = errors.New("cluster host limit reached")
 	ErrInvalidOrigin    = errors.New("invalid cluster origin")
+	ErrLightHTTPSOrigin = errors.New("light node requires an HTTPS origin")
 	ErrPrivateOrigin    = errors.New("cluster origin is outside the configured private network allowlist")
 	ErrPairingCode      = errors.New("pairing code is invalid or expired")
 	ErrAuthentication   = errors.New("federation authentication failed")
