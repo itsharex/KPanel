@@ -39,10 +39,11 @@ interface EnvironmentBindings {
   backups: Ref<WebEnvironmentBackup[]>
   jobs: Ref<WebEnvironmentJob[]>
   error: Ref<string>
-  auxiliaryWarning: Ref<string>
+  auxiliaryWarning: Readonly<Ref<string>>
   terminalOpen: Ref<boolean>
   terminalJob: Ref<WebEnvironmentJob | undefined>
   load: (silent?: boolean) => Promise<void>
+  loadBackups: (force?: boolean) => Promise<void>
   start: (input: Record<string, unknown>) => Promise<void>
 }
 
@@ -89,23 +90,25 @@ beforeEach(() => {
 })
 
 describe('EnvironmentView background jobs', () => {
-  it('keeps environment management available when an auxiliary list fails', async () => {
+  it('renders the environment summary without requesting heavy section data', async () => {
     vi.mocked(api.webEnvironment.summary).mockResolvedValueOnce(summary())
-    vi.mocked(api.webEnvironment.catalog).mockResolvedValueOnce({
-      protocolVersion: '1',
-      installProfiles: [],
-      protectionActions: [],
-      optimizationActions: [],
-      updateComponents: [],
-    })
-    vi.mocked(api.webEnvironment.backups).mockRejectedValueOnce(new Error('backup unavailable'))
-    vi.mocked(api.webEnvironment.jobs).mockResolvedValueOnce({ items: [], total: 0 })
+    vi.mocked(api.webEnvironment.jobs).mockImplementationOnce(() => new Promise(() => undefined))
     const view = setupView()
 
     await view.load()
 
     expect(view.summary.value).toEqual(summary())
     expect(view.error.value).toBe('')
+    expect(api.webEnvironment.catalog).not.toHaveBeenCalled()
+    expect(api.webEnvironment.backups).not.toHaveBeenCalled()
+  })
+
+  it('keeps environment management available when a lazy backup list fails', async () => {
+    vi.mocked(api.webEnvironment.backups).mockRejectedValueOnce(new Error('backup unavailable'))
+    const view = setupView()
+
+    await view.loadBackups()
+
     expect(view.backups.value).toEqual([])
     expect(view.auxiliaryWarning.value).toBe('备份列表暂时无法读取')
   })

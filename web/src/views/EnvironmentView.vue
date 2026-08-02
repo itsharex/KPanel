@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/EnvironmentView/en-US').then((module) => module.default))
@@ -57,8 +57,10 @@ const backups = ref<WebEnvironmentBackup[]>([])
 const jobs = ref<WebEnvironmentJob[]>([])
 const loading = ref(true)
 const refreshing = ref(false)
+const catalogLoading = ref(false)
+const backupsLoading = ref(false)
 const error = ref('')
-const auxiliaryWarning = ref('')
+const auxiliaryErrors = reactive({ catalog: '', backups: '', jobs: '' })
 const submitting = ref(false)
 const terminalOpen = ref(false)
 const terminalJob = ref<WebEnvironmentJob>()
@@ -66,8 +68,17 @@ const backupBeforeUninstall = ref(true)
 const updateVersions = reactive<Record<string, string>>({})
 const cloudflare = reactive({ account: '', token: '', zoneId: '' })
 const toast = useToast()
-let controller: AbortController | undefined
+let summaryController: AbortController | undefined
+let catalogController: AbortController | undefined
+let backupsController: AbortController | undefined
+let jobsController: AbortController | undefined
 let pollTimer: number | undefined
+let catalogLoaded = false
+let backupsLoaded = false
+
+const auxiliaryWarning = computed(() =>
+  Object.values(auxiliaryErrors).filter(Boolean).join('；'),
+)
 
 const activeJob = computed(() =>
   jobs.value.find((job) => ['queued', 'running', 'waiting_input'].includes(job.status)),
@@ -115,41 +126,98 @@ function componentIcon(name: string) {
   return Zap
 }
 
+function isAbort(reason: unknown): boolean {
+  return reason instanceof Error && reason.name === 'AbortError'
+}
+
+async function loadJobs(): Promise<void> {
+  jobsController?.abort()
+  const requestController = new AbortController()
+  jobsController = requestController
+  try {
+    const result = await api.webEnvironment.jobs(requestController.signal)
+    if (jobsController !== requestController) return
+    jobs.value = result.items
+    auxiliaryErrors.jobs = ''
+    schedulePoll()
+  } catch (reason) {
+    if (jobsController === requestController && !isAbort(reason)) {
+      auxiliaryErrors.jobs = '任务记录暂时无法读取'
+    }
+  }
+}
+
+async function loadCatalog(force = false): Promise<void> {
+  if (catalogLoaded && !force) return
+  catalogController?.abort()
+  const requestController = new AbortController()
+  catalogController = requestController
+  catalogLoading.value = true
+  try {
+    const result = await api.webEnvironment.catalog(requestController.signal)
+    if (catalogController !== requestController) return
+    catalog.value = result
+    catalogLoaded = true
+    auxiliaryErrors.catalog = ''
+    for (const item of result.updateComponents) {
+      updateVersions[item.id] ||= item.versions[0] || 'latest'
+    }
+  } catch (reason) {
+    if (catalogController === requestController && !isAbort(reason)) {
+      auxiliaryErrors.catalog = '版本目录暂时无法读取'
+    }
+  } finally {
+    if (catalogController === requestController) catalogLoading.value = false
+  }
+}
+
+async function loadBackups(force = false): Promise<void> {
+  if (backupsLoaded && !force) return
+  backupsController?.abort()
+  const requestController = new AbortController()
+  backupsController = requestController
+  backupsLoading.value = true
+  try {
+    const result = await api.webEnvironment.backups(requestController.signal)
+    if (backupsController !== requestController) return
+    backups.value = result.items
+    backupsLoaded = true
+    auxiliaryErrors.backups = ''
+  } catch (reason) {
+    if (backupsController === requestController && !isAbort(reason)) {
+      auxiliaryErrors.backups = '备份列表暂时无法读取'
+    }
+  } finally {
+    if (backupsController === requestController) backupsLoading.value = false
+  }
+}
+
+function loadSectionData(force = false): void {
+  if (section.value === 'update') void loadCatalog(force)
+  if (section.value === 'backup') void loadBackups(force)
+}
+
 async function load(silent = false): Promise<void> {
-  controller?.abort()
-  controller = new AbortController()
+  summaryController?.abort()
+  const requestController = new AbortController()
+  summaryController = requestController
   if (silent) refreshing.value = true
   else loading.value = true
   try {
-    auxiliaryWarning.value = ''
-    const [summaryResult, catalogResult, backupsResult, jobsResult] = await Promise.allSettled([
-      api.webEnvironment.summary(controller.signal),
-      api.webEnvironment.catalog(controller.signal),
-      api.webEnvironment.backups(controller.signal),
-      api.webEnvironment.jobs(controller.signal),
-    ])
-    if (summaryResult.status === 'rejected') throw summaryResult.reason
-    if (catalogResult.status === 'rejected') throw catalogResult.reason
-
-    summary.value = summaryResult.value
-    catalog.value = catalogResult.value
-    const auxiliaryFailures: string[] = []
-    if (backupsResult.status === 'fulfilled') backups.value = backupsResult.value.items
-    else auxiliaryFailures.push('备份列表暂时无法读取')
-    if (jobsResult.status === 'fulfilled') jobs.value = jobsResult.value.items
-    else auxiliaryFailures.push('任务记录暂时无法读取')
-    auxiliaryWarning.value = auxiliaryFailures.join('；')
-    for (const item of catalogResult.value.updateComponents) {
-      updateVersions[item.id] ||= item.versions[0] || 'latest'
-    }
+    const result = await api.webEnvironment.summary(requestController.signal)
+    if (summaryController !== requestController) return
+    summary.value = result
     error.value = ''
-    schedulePoll()
+    void loadJobs()
+    loadSectionData(silent)
   } catch (reason) {
-    if (reason instanceof DOMException && reason.name === 'AbortError') return
+    if (summaryController !== requestController || isAbort(reason)) return
     error.value = reason instanceof ApiError ? reason.message : '无法读取 LDNMP 环境状态。'
   } finally {
-    loading.value = false
-    refreshing.value = false
+    if (summaryController === requestController) {
+      loading.value = false
+      refreshing.value = false
+    }
   }
 }
 
@@ -272,8 +340,12 @@ function openTerminal(job?: WebEnvironmentJob): void {
 }
 
 onMounted(() => void load())
+watch(section, () => loadSectionData())
 onBeforeUnmount(() => {
-  controller?.abort()
+  summaryController?.abort()
+  catalogController?.abort()
+  backupsController?.abort()
+  jobsController?.abort()
   if (pollTimer) window.clearTimeout(pollTimer)
 })
 </script>
@@ -464,7 +536,8 @@ onBeforeUnmount(() => {
 
       <section v-else-if="section === 'update'" class="environment-panel">
         <header><RefreshCw :size="20" /><div><h2>组件更新</h2><p>版本目录由 kejilion.sh 返回，KPanel 不保存第二份版本列表。</p></div></header>
-        <div class="environment-update-list">
+        <LoadingState v-if="catalogLoading" />
+        <div v-else-if="catalog?.updateComponents.length" class="environment-update-list">
           <article v-for="item in catalog?.updateComponents || []" :key="item.id">
             <div>
               <strong>{{ item.id === 'all' ? '完整环境' : componentLabel(item.id) }}</strong>
@@ -486,6 +559,7 @@ onBeforeUnmount(() => {
             <button class="button button--primary" type="button" :disabled="jobActive || !environmentInstalled" @click="update(item.id)">更新</button>
           </article>
         </div>
+        <p v-else class="environment-empty">版本目录暂时不可用，请刷新后重试。</p>
       </section>
 
       <section v-else-if="section === 'backup'" class="environment-panel">
@@ -494,7 +568,8 @@ onBeforeUnmount(() => {
           <div><h2>备份与还原</h2><p>冷备短暂停止 LDNMP，归档保持与原脚本兼容并附带 SHA-256 sidecar。</p></div>
           <button class="button button--primary" type="button" :disabled="jobActive || !environmentInstalled" @click="createBackup">创建冷备</button>
         </header>
-        <div v-if="backups.length" class="environment-backups">
+        <LoadingState v-if="backupsLoading" />
+        <div v-else-if="backups.length" class="environment-backups">
           <article v-for="backup in backups" :key="backup.id">
             <Archive :size="19" />
             <div><strong>{{ backup.id }}</strong><small>{{ formatBytes(backup.sizeBytes) }} · {{ formatDateTime(backup.createdAt) }}</small></div>

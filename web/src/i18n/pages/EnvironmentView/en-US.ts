@@ -7,6 +7,8 @@ export default [
   ["{0} 确认继续？", "{0} Continue?"],
   ["安装前会展示并检查软件源、DNS、Swap、Docker、Certbot、80/443 端口及目录影响。", "The software source, DNS, Swap, Docker, Certbot, 80/443 port and directory effects are displayed and checked before installation."],
   ["版本目录由 kejilion.sh 返回，KPanel 不保存第二份版本列表。", "The version directory is returned by kejilion.sh, and KPanel does not save the second version list."],
+  ["版本目录暂时无法读取", "Version catalog is temporarily unavailable"],
+  ["版本目录暂时不可用，请刷新后重试。", "The version catalog is temporarily unavailable. Refresh and try again."],
   ["备份还原", "Backup Restore"],
   ["备份列表暂时无法读取", "Backup list cannot be read"],
   ["备份与还原", "Backup and Restore"],
