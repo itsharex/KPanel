@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { nearestTimestamp, svgClientXToViewBox, uniqueSeriesTimes } from '@/lib/monitoringPresentation'
+import {
+  nearestTimestamp,
+  svgClientXToViewBox,
+  svgViewBoxXToClient,
+  uniqueSeriesTimes,
+} from '@/lib/monitoringPresentation'
 
 export interface TrendSeries {
   label: string
@@ -29,6 +34,8 @@ const width = 720
 const height = 210
 const padding = { top: 16, right: 12, bottom: 28, left: 64 }
 const hoveredTime = ref<number>()
+const tooltipX = ref<number>()
+const tooltipOnLeft = ref(false)
 
 const normalizedSeries = computed(() => props.series.map((series) => ({
   ...series,
@@ -88,7 +95,9 @@ const hoverX = computed(() => {
 const tooltipTime = computed(() => hoveredTime.value ?? 0)
 
 const tooltipStyle = computed(() => ({
-  left: `${(hoverX.value / width) * 100}%`,
+  left: tooltipX.value === undefined
+    ? `${(hoverX.value / width) * 100}%`
+    : `${tooltipX.value}px`,
 }))
 
 function plotWidth(): number {
@@ -134,12 +143,33 @@ function nearestPoint(points: NormalizedPoint[], target: number): NormalizedPoin
 
 function onPointerMove(event: PointerEvent): void {
   if (!bounds.value.hasData) return
-  const svgX = svgClientXToViewBox(event.currentTarget as SVGSVGElement, event.clientX, event.clientY, width)
+  const svg = event.currentTarget as SVGSVGElement
+  const svgX = svgClientXToViewBox(svg, event.clientX, event.clientY, width)
   if (svgX === undefined) return
   const clamped = Math.min(width - padding.right, Math.max(padding.left, svgX))
   const ratio = (clamped - padding.left) / plotWidth()
   const target = bounds.value.minimumTime + ratio * (bounds.value.maximumTime - bounds.value.minimumTime)
-  hoveredTime.value = nearestTimestamp(interactionTimes.value, target)
+  const nearest = nearestTimestamp(interactionTimes.value, target)
+  hoveredTime.value = nearest
+  if (nearest === undefined) return
+
+  const canvasRect = svg.parentElement?.getBoundingClientRect()
+  const clientX = svgViewBoxXToClient(svg, xFor(nearest), width)
+  if (!canvasRect?.width || clientX === undefined) {
+    tooltipX.value = undefined
+    tooltipOnLeft.value = hoverX.value > width / 2
+    return
+  }
+
+  const localX = Math.min(canvasRect.width, Math.max(0, clientX - canvasRect.left))
+  tooltipX.value = localX
+  tooltipOnLeft.value = localX > canvasRect.width / 2
+}
+
+function clearHover(): void {
+  hoveredTime.value = undefined
+  tooltipX.value = undefined
+  tooltipOnLeft.value = false
 }
 
 function lastValue(series: (typeof normalizedSeries.value)[number]): number {
@@ -171,7 +201,7 @@ function timeLabel(value: number, detailed = false): string {
         role="img"
         aria-label="资源历史趋势，移动鼠标查看准确刻度"
         @pointermove="onPointerMove"
-        @pointerleave="hoveredTime = undefined"
+        @pointerleave="clearHover"
       >
         <g v-for="tick in yTicks" :key="tick.y">
           <line
@@ -214,7 +244,7 @@ function timeLabel(value: number, detailed = false): string {
       <div
         v-if="hoveredPoints.length"
         class="trend-chart__tooltip"
-        :class="{ 'is-left': hoverX > width * .72 }"
+        :class="{ 'is-left': tooltipOnLeft }"
         :style="tooltipStyle"
       >
         <time>{{ timeLabel(tooltipTime, true) }}</time>

@@ -48,6 +48,20 @@ export function svgClientXToViewBox(
   return ((clientX - rect.left) / rect.width) * viewBoxWidth
 }
 
+export function svgViewBoxXToClient(
+  svg: SVGSVGElement,
+  viewBoxX: number,
+  viewBoxWidth: number,
+): number | undefined {
+  const matrix = svg.getScreenCTM?.()
+  if (matrix && Number.isFinite(matrix.a) && Number.isFinite(matrix.e)) {
+    return matrix.a * viewBoxX + matrix.e
+  }
+  const rect = svg.getBoundingClientRect()
+  if (!rect.width || !viewBoxWidth) return undefined
+  return rect.left + (viewBoxX / viewBoxWidth) * rect.width
+}
+
 function latestContainerTime(container: MonitoringContainerSeries): number | undefined {
   const value = Date.parse(container.points.at(-1)?.collectedAt || '')
   return Number.isFinite(value) ? value : undefined

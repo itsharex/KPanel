@@ -5,6 +5,7 @@ import {
   nearestTimestamp,
   newestContainerSampleTime,
   svgClientXToViewBox,
+  svgViewBoxXToClient,
   uniqueSeriesTimes,
 } from './monitoringPresentation'
 
@@ -60,6 +61,24 @@ describe('monitoring presentation', () => {
       getBoundingClientRect: () => ({ left: 100, width: 900 }),
     } as unknown as SVGSVGElement
     expect(svgClientXToViewBox(svg, 550, 0, 720)).toBe(360)
+  })
+
+  it('maps a view-box x coordinate through the rendered SVG matrix', () => {
+    const svg = {
+      getScreenCTM: () => ({ a: 0.75, e: 120 }),
+      getBoundingClientRect: () => ({ left: 100, width: 900 }),
+    } as unknown as SVGSVGElement
+
+    expect(svgViewBoxXToClient(svg, 400, 720)).toBe(420)
+  })
+
+  it('falls back to the rendered SVG box when mapping a tooltip anchor', () => {
+    const svg = {
+      getScreenCTM: () => null,
+      getBoundingClientRect: () => ({ left: 100, width: 900 }),
+    } as unknown as SVGSVGElement
+
+    expect(svgViewBoxXToClient(svg, 360, 720)).toBe(550)
   })
 
   it('marks only containers older than the newest sample as historical', () => {
