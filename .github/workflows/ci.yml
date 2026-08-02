@@ -43,11 +43,19 @@ jobs:
           VERIFY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: make verify-change
 
+      - name: Detect races in privileged core packages
+        run: go test -race ./internal/panel ./internal/auth ./internal/dockerx
+
       - name: Scan Go call paths for known vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
       - name: Audit Node dependencies
         run: npm audit --prefix web --audit-level=high
+
+      - name: Scan source, dependencies, secrets, and configuration
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
+        run: bash scripts/security-scan.sh source
 
       - name: Verify kejilion.sh application lifecycle
         run: |

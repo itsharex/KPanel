@@ -3,6 +3,33 @@
 本文件适用于整个 `kejilion-panel` 仓库。所有会话开始工作前必须先阅读
 `PROJECT_RULES.md`；如涉及具体业务，再读取对应设计文档和现有实现。
 
+KPanel 的主要研发执行者是 Codex。本仓库的规则、工作流和自动门禁应优先满足 Codex
+可发现、可执行、可验证和可恢复，避免只依赖人工记忆的约定。
+
+## Codex 执行入口
+
+1. 先运行 `git status --short`、`git branch --show-current` 和 `git rev-parse --short HEAD`，
+   记录回滚点并保留用户已有改动。
+2. 读取 `PROJECT_RULES.md`，再用 `rg` 定位与任务直接相关的实现、测试和设计文档；已有证据
+   足够时禁止重复全仓扫描。
+3. 若存在 `.codex-workflows/`，先列出工作流；发布、真机应用回归、站点图标验收和整体质量
+   审计优先复用对应工作流，不在会话里临时重造流程。
+4. 开发阶段按改动运行 `make verify-change`；跨域、高风险或发布前运行 `make verify-release`。
+   不得把“本地构建成功”替代 race、安全扫描、最终镜像和生产限制验证。
+5. 代码修改使用最小、可回滚补丁；新网络入口、宿主机写操作、交互终端、归档和身份验证
+   必须先补失败边界测试，再实现成功路径。
+6. 结论必须区分已验证事实、分析结论和未验证风险，并回传修改文件、命令、结果、回滚点；
+   未经用户明确授权不得提交、推送、打 tag、发布或部署。
+
+统一自动门禁由以下入口负责，Codex 不应复制参数不同的平行命令：
+
+- `scripts/check-version-consistency.sh`：发行版本元数据一致性；
+- `scripts/security-scan.sh`：固定摘要 Trivy 源码和最终镜像扫描；
+- `scripts/verify-deploy.sh`：在隔离根文件系统验证安装安全，不读取或碰撞已部署 KPanel；
+- `make verify-change`：按差异选择的日常验证；
+- `make verify-release`：完整测试、race、`govulncheck`、`npm audit`、Trivy、Linux 构建和最终镜像验证；
+- `.github/workflows/ci.yml` 与 `.github/workflows/release.yml`：远端独立复核和发布阻断。
+
 ## 协作入口
 
 - `KPanel · 协调中心` 是用户的唯一沟通入口，负责拆解、分派、跟踪、验收和汇总。
@@ -29,7 +56,7 @@
 
 ## 新建任务的环境选择
 
-- 如果 Codex 已将 `C:\GitHub\kejilion-panel` 注册为独立 Git 项目，新写任务默认使用
+- 如果 Codex 已将当前 KPanel 仓库注册为独立 Git 项目，新写任务默认使用
   worktree。
 - 如果只有父级 `C:\GitHub` 项目可用，新任务必须在提示中明确 KPanel 的绝对路径。
   这种共享目录任务默认仅做只读分析或测试；需要写入时应串行执行，避免覆盖现有改动。
@@ -38,7 +65,7 @@
 ## 子任务提示模板
 
 ```text
-你是 KPanel 的<角色>会话。项目路径为 C:\GitHub\kejilion-panel。
+你是 KPanel 的<角色>会话。项目路径为<当前 KPanel worktree 绝对路径>。
 先阅读 AGENTS.md、PROJECT_RULES.md 和与任务相关的现有文件。
 任务：<目标>
 范围：<允许修改或检查的内容>

@@ -98,14 +98,20 @@ jobs:
             npm run build
           )
           go test ./...
+          go test -race ./internal/panel ./internal/auth ./internal/dockerx
           go vet ./...
-          sh deploy/tests/install-safety.sh
+          bash scripts/verify-deploy.sh
 
       - name: Scan Go call paths for known vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
       - name: Audit Node dependencies
         run: npm audit --prefix web --audit-level=high
+
+      - name: Scan source, dependencies, secrets, and configuration
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
+        run: bash scripts/security-scan.sh source
 
       - name: Verify kejilion.sh application lifecycle
         run: |
@@ -169,6 +175,11 @@ jobs:
           sbom: false
           cache-from: type=gha
 
+      - name: Scan native release image
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
+        run: bash scripts/security-scan.sh image kejilion-panel:release-check
+
       - name: Verify runtime image contract
         shell: bash
         env:
@@ -200,12 +211,18 @@ jobs:
             docker run --detach --rm \
               --network none \
               --read-only \
+              --memory 256m \
+              --cpus 1 \
+              --pids-limit 128 \
               --cap-drop ALL \
               --security-opt no-new-privileges \
               --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777 \
               --tmpfs /var/lib/kejilion-panel:rw,noexec,nosuid,size=16m,uid=65532,gid=65532,mode=0700 \
               kejilion-panel:release-check
           )"
+          test "$(docker inspect --format '{{.HostConfig.Memory}}' "$container_id")" = "268435456"
+          test "$(docker inspect --format '{{.HostConfig.NanoCpus}}' "$container_id")" = "1000000000"
+          test "$(docker inspect --format '{{.HostConfig.PidsLimit}}' "$container_id")" = "128"
           cleanup() {
             docker container rm --force "$container_id" >/dev/null 2>&1 || true
           }

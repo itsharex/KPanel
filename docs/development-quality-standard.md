@@ -331,6 +331,17 @@ make verify-release
 5. 对 L2/L3 系统动作执行失败注入和回滚验证；
 6. 记录实际 Docker、containerd、runc、内核及 Agent/Panel 协议版本。
 
+自动门禁对应关系：
+
+- CI 固定执行核心特权包 `-race`、`govulncheck`、`npm audit` 和源码 Trivy 扫描；
+- Release 在 CI 基础上扫描最终镜像，并在 `256 MiB`、`1 CPU`、`128 PID`、非 root、只读根和
+  `cap-drop ALL` 条件下启动验证；
+- `make verify-release` 统一执行 `govulncheck`、`npm audit` 并复用 `scripts/security-scan.sh`，
+  不得另建参数不同的本地扫描路径；
+- Trivy 使用固定镜像摘要。项目为 Go 1.17+ 模块，源码扫描跳过仅保存历史校验和的 `go.sum`，
+  仍扫描 `go.mod`，并以 `govulncheck` 和最终 Go 二进制扫描校验实际依赖与调用可达性；这不是
+  漏洞 ID suppress，若 Go 模块版本或扫描器行为变化必须重新复核。
+
 ## 10. 漏洞响应
 
 漏洞优先级由“是否可从网络到达、是否已被利用、权限影响和运行位置”共同决定，不能只看 CVSS：

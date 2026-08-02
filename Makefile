@@ -17,7 +17,7 @@ test-web:
 	cd web && $(NPM) run typecheck && $(NPM) test
 
 test-deploy:
-	sh deploy/tests/install-safety.sh
+	bash scripts/verify-deploy.sh
 
 security-audit:
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...

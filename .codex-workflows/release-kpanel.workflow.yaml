@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
 description: "完成 KPanel 版本准备、CI、GitHub Release、Docker Hub、应用市场契约核对和公开镜像验收"
-version: "1.1"
+version: "1.2"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, apps_repo]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-07-29T09:17:57Z"
+updated: "2026-08-02T13:05:00Z"
 ---
 
 # Release KPanel
@@ -69,6 +69,12 @@ git diff -- VERSION internal/version/version.go web/package.json \
 
 **Expected output:** 所有发行版本字段均为 `${{version}}`，没有空白错误或无关修改。
 
+执行统一检查，禁止只靠人工比对：
+
+```bash
+bash scripts/check-version-consistency.sh
+```
+
 ### 3. 执行 L3 发布前核验
 
 在 Linux、WSL 或 CI 等支持 Bash、Go、Node 和 Docker 的环境执行：
@@ -82,6 +88,10 @@ docker run --rm \
   bash:5.2.37-alpine3.22@sha256:3bee76a96d86d5d2d5efc7c1c570e5a7c95db22348a26944e0e546fa174e3324 \
   bash /src/packaging/tests/app-conf-lifecycle.sh /src
 ```
+
+`make verify-release` 必须实际覆盖核心特权包 race、固定摘要 Trivy 源码/最终镜像扫描，以及
+最终镜像构建；Release 工作流还必须在 `256 MiB`、`1 CPU`、`128 PID`、非 root、只读根、
+`cap-drop ALL` 条件下启动候选镜像。任何一步未执行或失败都不得进入标签和发布阶段。
 
 另外解析 `.github/workflows/ci.yml` 和 `.github/workflows/release.yml`，确认 YAML 有效，并复核：
 

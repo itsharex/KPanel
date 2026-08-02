@@ -7,6 +7,24 @@ RELEASE_VERSION=$(tr -d '\r\n' <"$PROJECT_DIR/VERSION")
 export KP_AGENT_VERSION="${KP_AGENT_VERSION:-$RELEASE_VERSION}"
 FAKE_BIN=$SCRIPT_DIR/fake-bin
 TEST_DIR=$(mktemp -d /tmp/kejilion-panel-install-test.XXXXXX)
+TEST_BIN=$TEST_DIR/fake-bin
+mkdir -p "$TEST_BIN"
+for command_name in curl groupadd openssl; do
+	printf '%s\n' \
+		'#!/bin/sh' \
+		"echo \"install-safety: unexpected $command_name invocation\" >&2" \
+		'exit 97' >"$TEST_BIN/$command_name"
+	chmod 0700 "$TEST_BIN/$command_name"
+done
+REAL_SHA256SUM=$(command -v sha256sum)
+printf '%s\n' \
+	'#!/bin/sh' \
+	'if [ "${1:-}" = "--check" ] && [ "${2:-}" = "--status" ]; then' \
+	'  shift 2' \
+	"  exec \"$REAL_SHA256SUM\" -cs \"\$@\"" \
+	'fi' \
+	"exec \"$REAL_SHA256SUM\" \"\$@\"" >"$TEST_BIN/sha256sum"
+chmod 0700 "$TEST_BIN/sha256sum"
 
 cleanup() {
 	case "$TEST_DIR" in
@@ -27,7 +45,7 @@ AGENT_SHA=$(sha256sum "$AGENT_BINARY" | awk '{print $1}')
 IMAGE=docker.io/example/kejilion-panel@sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 run_installer() {
-	PATH="$FAKE_BIN:$PATH" \
+	PATH="$TEST_BIN:$FAKE_BIN:$PATH" \
 	KP_DOCKER_LOG="$DOCKER_LOG" \
 	KP_AGENT_VERSION="${KP_AGENT_VERSION:-$RELEASE_VERSION}" \
 	sh "$PROJECT_DIR/deploy/install.sh" \
@@ -59,7 +77,7 @@ if KP_AGENT_VERSION=0.0.1 run_installer >"$TEST_DIR/version.out" 2>&1; then
 fi
 grep -F "does not match $RELEASE_VERSION v1alpha1" "$TEST_DIR/version.out" >/dev/null
 
-if PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
+if PATH="$TEST_BIN:$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
 	sh "$PROJECT_DIR/deploy/install.sh" \
 		--agent-binary "$AGENT_BINARY" \
 		--agent-sha256 "$AGENT_SHA" \
@@ -72,7 +90,7 @@ if PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
 fi
 grep -F 'aligned RFC1918 IPv4 /28' "$TEST_DIR/subnet.out" >/dev/null
 
-if PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" KP_ROUTE_CONFLICT=1 \
+if PATH="$TEST_BIN:$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" KP_ROUTE_CONFLICT=1 \
 	sh "$PROJECT_DIR/deploy/install.sh" \
 		--agent-binary "$AGENT_BINARY" \
 		--agent-sha256 "$AGENT_SHA" \
@@ -239,7 +257,7 @@ if grep -R -F '127.0.0.1:18443' \
 fi
 
 : >"$DOCKER_LOG"
-PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" KP_WEB_ROOT_FAIL=1 \
+PATH="$TEST_BIN:$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" KP_WEB_ROOT_FAIL=1 \
 	sh "$PROJECT_DIR/deploy/preflight.sh" \
 		--public-url https://panel.example.com \
 		--network-subnet 172.29.255.240/28 \
@@ -252,7 +270,7 @@ grep -F 'website management will remain disabled until /home/web is initialized'
 	"$TEST_DIR/preflight.out" >/dev/null
 
 : >"$DOCKER_LOG"
-PATH="$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" KP_GROUP_MEMBER=1 \
+PATH="$TEST_BIN:$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" KP_GROUP_MEMBER=1 \
 	sh "$PROJECT_DIR/deploy/preflight.sh" \
 		--public-url https://panel.example.com \
 		--network-subnet 172.29.255.240/28 \

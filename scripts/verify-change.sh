@@ -41,6 +41,7 @@ if [[ -n "$base_ref" ]] && git cat-file -e "${base_ref}^{commit}" 2>/dev/null; t
   git diff --check "$base_ref" --
 fi
 ECOSYSTEM_POLICY_BASE_REF="$base_ref" bash scripts/check-ecosystem-policy.sh
+bash scripts/check-version-consistency.sh
 
 if [[ ${#changed_files[@]} -eq 0 ]]; then
   echo "No changes require verification."
@@ -172,14 +173,19 @@ verify_deploy() {
       bash -n "$script"
     done < <(git ls-files '*.sh')
   fi
-  sh deploy/tests/install-safety.sh
+  bash scripts/verify-deploy.sh
 }
 
 if [[ "$requested_level" == "3" || "$requested_level" == "l3" || "$requested_level" == "release" ]]; then
+  install_web_dependencies
   make test
+  go test -race ./internal/panel ./internal/auth ./internal/dockerx
   go vet ./...
+  make security-audit
+  bash scripts/security-scan.sh source
   make build-linux
   docker build --build-arg "VERSION=$(tr -d '\r\n' < VERSION)" -t kejilion-panel:verify .
+  bash scripts/security-scan.sh image kejilion-panel:verify
   echo "L3 release verification completed."
   exit 0
 fi

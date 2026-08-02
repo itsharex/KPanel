@@ -4,6 +4,9 @@
 
 - `session-collaboration.workflow.yaml`：复用或创建任务、等待、复核并统一交付。
 - `release-kpanel.workflow.yaml`：版本准备、CI、Release、Docker Hub、应用市场和线上验收。
+- `quality-audit-kpanel.workflow.yaml`：快速迭代后的规范、功能、性能、安全和发布门禁健康审计。
+- 最近一次完整证据见 [`docs/quality-audit-2026-08-02.md`](../docs/quality-audit-2026-08-02.md)，
+  后续审计应复用相同指标和环境比较，不重复发明基线。
 - `kpanel-real-machine-app-lifecycle.workflow.yaml`：用隔离候选实例和真实 Chrome 验证应用
   在运行、停止、重启、暂停状态下均可打开详情，并恢复真机现场。
 

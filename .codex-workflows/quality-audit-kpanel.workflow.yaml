@@ -1,0 +1,124 @@
+---
+name: quality-audit-kpanel
+description: "审计快速迭代后的 KPanel 规范一致性、功能正确性、性能预算、安全暴露面和发布门禁"
+version: "1.0"
+author: "Codex"
+tags: [quality, security, performance, review, regression]
+params: [project_dir, baseline_ref, candidate_image, test_host]
+created: "2026-08-02T13:02:08Z"
+updated: "2026-08-02T13:02:08Z"
+---
+
+# KPanel Quality Audit
+
+## Purpose
+
+在不改业务、不发布的前提下，对高频迭代后的 KPanel 做可重复健康审计。先收集证据，
+再只修复可复现缺陷或缺失门禁，避免把一次性人工检查误当成长期质量保障。
+
+## Prerequisites
+
+- 已阅读 `AGENTS.md`、`PROJECT_RULES.md`、`docs/development-quality-standard.md`。
+- `${{project_dir}}` 是独立或无并发写入的 KPanel worktree。
+- 未经用户明确授权，不提交、推送、发布或修改正式服务器状态。
+- `${{test_host}}` 只用于隔离测试，不覆盖现有 KPanel、数据目录或端口。
+
+## Steps
+
+### 1. 固定范围与回滚点
+
+```bash
+cd "${{project_dir}}"
+git status --short
+git branch --show-current
+git rev-parse HEAD
+git diff --stat "${{baseline_ref}}..HEAD"
+```
+
+**Expected output:** 工作树、基线、改动规模和允许修改范围明确，用户已有修改已保留。
+
+### 2. 审计规范与架构不变量
+
+```bash
+rg -n "任意 Shell|真实状态|Unix Socket|Origin|CSRF|性能预算|发布前至少执行" \
+  PROJECT_RULES.md docs/development-quality-standard.md
+rg -n "docker.sock|InsecureSkipVerify|Access-Control-Allow-Origin|/bin/sh -lc" \
+  Dockerfile deploy internal web
+```
+
+人工复核 Panel/Agent 边界、真实状态来源、固定动作枚举、输入/并发/响应上限、敏感信息
+处理和回滚路径。命中危险关键词不等同漏洞，必须结合调用入口和信任边界判断。
+
+**Expected output:** 不变量仍成立；例外均有具体文件、调用链和可利用性结论。
+
+### 3. 执行完整功能与构建门禁
+
+```bash
+make verify-release
+docker run --rm \
+  -e KPANEL_APP_CONF_TEST_ROOTFS=1 \
+  -v "$PWD:/src:ro" \
+  bash:5.2.37-alpine3.22@sha256:3bee76a96d86d5d2d5efc7c1c570e5a7c95db22348a26944e0e546fa174e3324 \
+  bash /src/packaging/tests/app-conf-lifecycle.sh /src
+```
+
+**Expected output:** Go/Web/Shell、race、版本一致性、源码与镜像扫描、Linux 构建和应用生命周期全部通过。
+
+### 4. 验证性能预算
+
+在 `${{test_host}}` 的隔离目录和端口，以以下限制启动 `${{candidate_image}}`：
+
+```text
+memory=256 MiB, cpu=1, pids=128, read-only, non-root, cap-drop=ALL
+```
+
+测量冷启动、预热后 RSS、健康与会话接口延迟和错误率、登录并发峰值、Agent 混合读取、
+文件归档与历史监控基准。与最近稳定报告使用相同机器、数据量和并发比较。
+
+**Expected output:** 满足文档预算；单次波动不得直接定性为回归，超预算必须复跑并保留原始证据。
+
+### 5. 验证网络入侵与供应链安全
+
+```bash
+make security-audit
+bash scripts/security-scan.sh source
+bash scripts/security-scan.sh image "${{candidate_image}}"
+```
+
+同时验证 Host、Origin、CSRF、Cookie、方法、Content-Type、请求上限、伪造代理头、
+Unix Socket 鉴权和最终容器限制。记录 Docker、containerd、runc、内核版本，并只依据
+官方公告核对当前 High/Critical 风险。扫描告警必须按调用可达性人工复核，不得无证据 suppress。
+
+**Expected output:** 无可达 High/Critical；不可达项有版本、调用路径和复核日期证据。
+
+### 6. 只修复可复现缺陷或自动门禁
+
+优先级：可利用安全缺陷、数据完整性、错误成功判定、资源无界、竞态、发布门禁缺失、性能回归。
+只修改最小范围并重跑受影响测试，不顺带重构或发布。
+
+**Expected output:** 修复可回滚，自动测试能阻止同类问题再次进入主线。
+
+## Parameters
+
+- `${{project_dir}}`：待审计 KPanel worktree 绝对路径。
+- `${{baseline_ref}}`：最近稳定 tag 或审计开始时的 `origin/main`。
+- `${{candidate_image}}`：候选或公开版本镜像完整引用。
+- `${{test_host}}`：隔离性能与运行时验收主机；为空时明确列出未验证项。
+
+## Verification
+
+```bash
+git diff --check
+py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
+  validate quality-audit-kpanel --project-dir "${{project_dir}}"
+```
+
+最终报告必须包含：已验证事实、修改文件、测试和性能原始结果、安全可达性结论、回滚点、
+无法验证部分，以及是否提交、推送或发布。
+
+## Notes
+
+- Windows 本机只执行可稳定复现的前端与静态检查；race、Linux 构建、容器限制和 Trivy
+  应在 Linux、CI 或隔离主机执行。
+- 远程传输出现 CRLF、网络超时或测试环境冲突时，先识别环境失败，不得写成代码失败。
+- 快速迭代数量只能提高审计优先级，不能单独证明质量下降。
