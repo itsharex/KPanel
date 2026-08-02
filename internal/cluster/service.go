@@ -41,6 +41,7 @@ type remoteAPI interface {
 type ServiceConfig struct {
 	DataDir         string
 	PanelVersion    string
+	PublicURL       string
 	PrivateCIDRs    []string
 	Telemetry       TelemetrySource
 	Remote          remoteAPI
@@ -75,6 +76,8 @@ type Service struct {
 	telemetry       TelemetrySource
 	nodeIdentityV2  nodeIdentityV2
 	panelVersion    string
+	publicURL       string
+	light           *lightStore
 	hostname        string
 	now             func() time.Time
 	pollInterval    time.Duration
@@ -98,6 +101,9 @@ type Service struct {
 	pairLimiter     *fixedWindowLimiter
 	v2SourceLimiter *fixedWindowLimiter
 	requestLimiter  *fixedWindowLimiter
+	lightEnrolls    *fixedWindowLimiter
+	lightSources    *fixedWindowLimiter
+	lightReports    *fixedWindowLimiter
 
 	localMu       sync.Mutex
 	localValue    contract.HostTelemetry
@@ -169,6 +175,10 @@ func NewService(config ServiceConfig) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	light, err := openLightStore(filepath.Join(config.DataDir, lightStateFileName))
+	if err != nil {
+		return nil, err
+	}
 	if err := storeV2.EnsureNodeID(store.NodeID()); err != nil {
 		return nil, err
 	}
@@ -210,6 +220,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		store: store, secrets: secrets,
 		storeV2: storeV2, secretsV2: secretsV2,
 		remote: config.Remote, remoteV2: remoteV2, telemetry: config.Telemetry,
+		light: light, publicURL: strings.TrimRight(strings.TrimSpace(config.PublicURL), "/"),
 		nodeIdentityV2: cloneNodeIdentityV2(nodeIdentity),
 		panelVersion:   cleanDisplayText(config.PanelVersion, 64), hostname: config.Hostname,
 		now: config.Now, pollInterval: config.PollInterval,
@@ -220,6 +231,9 @@ func NewService(config ServiceConfig) (*Service, error) {
 		pairLimiter:     newFixedWindowLimiter(20, time.Minute, 1024),
 		v2SourceLimiter: newFixedWindowLimiter(120, time.Minute, 2048),
 		requestLimiter:  newFixedWindowLimiter(30, time.Minute, 512),
+		lightEnrolls:    newFixedWindowLimiter(10, time.Minute, 2048),
+		lightSources:    newFixedWindowLimiter(240, time.Minute, 2048),
+		lightReports:    newFixedWindowLimiter(180, time.Minute, MaxHosts),
 	}
 	for _, record := range store.Hosts() {
 		service.runtime[record.ID] = runtimeState{
@@ -285,7 +299,8 @@ func (s *Service) NodeID() string {
 func (s *Service) Hosts(ctx context.Context) HostList {
 	records := s.store.Hosts()
 	recordsV2 := s.storeV2.Hosts()
-	items := make([]Host, 0, len(records)+len(recordsV2)+1)
+	lightRecords := s.light.Hosts()
+	items := make([]Host, 0, len(records)+len(recordsV2)+len(lightRecords)+1)
 	items = append(items, s.localHostSummary(ctx))
 	now := s.now().UTC()
 	s.mu.RLock()
@@ -295,10 +310,13 @@ func (s *Service) Hosts(ctx context.Context) HostList {
 	for _, record := range recordsV2 {
 		items = append(items, publicHostV2(record, s.runtime[record.ID], now))
 	}
+	for _, record := range lightRecords {
+		items = append(items, publicLightHost(record, now))
+	}
 	s.mu.RUnlock()
 	return HostList{
 		Items: items, Total: len(items),
-		RemoteTotal: len(records) + len(recordsV2), MaxHosts: MaxHosts,
+		RemoteTotal: len(records) + len(recordsV2) + len(lightRecords), MaxHosts: MaxHosts,
 		PollIntervalSeconds: max(1, int(s.pollInterval/time.Second)),
 		NodeID:              s.store.NodeID(),
 	}
@@ -316,13 +334,23 @@ func (s *Service) Host(ctx context.Context, id string) (Host, error) {
 		return publicHost(record, current, s.now().UTC()), nil
 	}
 	recordV2, v2Err := s.storeV2.Host(id)
-	if v2Err != nil {
-		return Host{}, err
+	if v2Err == nil {
+		s.mu.RLock()
+		current := s.runtime[id]
+		s.mu.RUnlock()
+		return publicHostV2(recordV2, current, s.now().UTC()), nil
 	}
-	s.mu.RLock()
-	current := s.runtime[id]
-	s.mu.RUnlock()
-	return publicHostV2(recordV2, current, s.now().UTC()), nil
+	lightRecord, lightErr := s.light.Host(id)
+	if lightErr != nil {
+		if !errors.Is(err, ErrNotFound) {
+			return Host{}, err
+		}
+		if !errors.Is(v2Err, ErrNotFound) {
+			return Host{}, v2Err
+		}
+		return Host{}, lightErr
+	}
+	return publicLightHost(lightRecord, s.now().UTC()), nil
 }
 
 func (s *Service) AddHost(ctx context.Context, input AddHostInput) (Host, error) {
@@ -346,7 +374,7 @@ func (s *Service) AddHost(ctx context.Context, input AddHostInput) (Host, error)
 	}
 	existing := s.store.Hosts()
 	existingV2 := s.storeV2.Hosts()
-	if len(existing)+len(existingV2) >= MaxHosts {
+	if len(existing)+len(existingV2)+len(s.light.Hosts()) >= MaxHosts {
 		return Host{}, ErrHostLimit
 	}
 	for _, item := range existing {
@@ -473,7 +501,14 @@ func (s *Service) RenameHost(id string, input UpdateHostInput) (Host, error) {
 	}
 	recordV2, err := s.storeV2.Host(id)
 	if err != nil {
-		return Host{}, err
+		lightRecord, lightErr := s.light.RenameHost(id, name, input.ExpectedResourceVersion, s.now().UTC())
+		if lightErr != nil {
+			if !errors.Is(err, ErrNotFound) {
+				return Host{}, err
+			}
+			return Host{}, lightErr
+		}
+		return publicLightHost(lightRecord, s.now().UTC()), nil
 	}
 	recordV2.Name = name
 	recordV2.UpdatedAt = s.now().UTC()
@@ -504,7 +539,10 @@ func (s *Service) DeleteHost(
 	}
 	record, err := s.store.Host(id)
 	if errors.Is(err, ErrNotFound) {
-		return s.deleteHostV2Locked(ctx, id, input)
+		if _, v2Err := s.storeV2.Host(id); v2Err == nil {
+			return s.deleteHostV2Locked(ctx, id, input)
+		}
+		return s.deleteLightHostLocked(id, input)
 	}
 	if err != nil {
 		return DeleteHostResult{}, err
@@ -547,6 +585,9 @@ func (s *Service) Refresh(ctx context.Context, id string) (Host, error) {
 			return Host{}, err
 		}
 		if _, v2Err := s.storeV2.Host(id); v2Err != nil {
+			if record, lightErr := s.light.Host(id); lightErr == nil {
+				return publicLightHost(record, s.now().UTC()), nil
+			}
 			return Host{}, v2Err
 		}
 	}
@@ -881,6 +922,7 @@ func (s *Service) checkpoint() error {
 	checkpointErr := errors.Join(
 		s.store.Checkpoint(runtime),
 		s.storeV2.Checkpoint(runtime),
+		s.light.Checkpoint(s.now().UTC()),
 	)
 	return errors.Join(checkpointErr, s.cleanupV2(s.now().UTC()))
 }
@@ -1003,6 +1045,7 @@ func localPublicHost(
 	resourceHash := sha256.Sum256([]byte(nodeID + "\x00" + name))
 	return Host{
 		ID: LocalHostID, IsLocal: true, Name: name,
+		Kind:              HostKindPanel,
 		TransportSecurity: TransportSecurityTLS,
 		RemoteNodeID:      nodeID, FederationProtocol: FederationProtocol,
 		PanelVersion: panelVersion, State: hostState(current, now),
@@ -1027,6 +1070,7 @@ func publicHost(record hostRecord, current runtimeState, now time.Time) Host {
 	}
 	return Host{
 		ID: record.ID, Name: record.Name, Origin: record.Origin,
+		Kind:              HostKindPanel,
 		TransportSecurity: TransportSecurityTLS,
 		PeerFingerprint:   "",
 		RemoteNodeID:      record.RemoteNodeID, FederationProtocol: record.FederationProtocol,

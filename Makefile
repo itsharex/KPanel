@@ -36,6 +36,7 @@ build: build-web
 	mkdir -p dist
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/paneld ./cmd/paneld
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/kejilion-agent ./cmd/kejilion-agent
+	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/kejilion-node ./cmd/kejilion-node
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/kpctl ./cmd/kpctl
 
 build-web:
@@ -47,9 +48,11 @@ build-linux-binaries:
 	mkdir -p dist/linux-amd64 dist/linux-arm64
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/linux-amd64/paneld ./cmd/paneld
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/linux-amd64/kejilion-agent ./cmd/kejilion-agent
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/linux-amd64/kejilion-node ./cmd/kejilion-node
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/linux-amd64/kpctl ./cmd/kpctl
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/linux-arm64/paneld ./cmd/paneld
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/linux-arm64/kejilion-agent ./cmd/kejilion-agent
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/linux-arm64/kejilion-node ./cmd/kejilion-node
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/linux-arm64/kpctl ./cmd/kpctl
 
 clean:

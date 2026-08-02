@@ -1,8 +1,8 @@
 # KPanel 集群监控与联邦只读协议
 
-- 状态：已实现
-- 协议：新配对默认 `v2`，兼容既有 `v1`
-- 范围：主机概要监控、独立面板跳转、接入授权与撤销
+- 状态：KPanel 节点已实现；非面板轻量节点已在功能分支实现，待实机验收和发布
+- 协议：KPanel 新配对默认 `v2`、兼容既有 `v1`；轻量节点使用独立 `light-v1`
+- 范围：主机概要监控、独立面板跳转、接入授权与撤销、非面板 Linux 主机只读采集
 
 ## 1. 产品边界
 
@@ -10,6 +10,10 @@
 
 - **中心端**：保存远端节点授权，后台轮询远端概要并向当前浏览器提供缓存列表。
 - **被控端**：签发一次性授权码，向已授权中心端返回本机只读概要。
+
+没有安装 KPanel 的 Linux 主机可以安装独立的 `kejilion-node`。它不是被控面板，不提供 Web、
+Agent、Shell、文件、网站或 Docker 管理能力，只通过出站 HTTPS 主动上报与 KPanel 集群卡片
+一致的主机概要。中心端可修改其备注、排序或移除记录，但不会显示“打开面板”。
 
 当前不提供跨主机 Shell、批量写操作、共享 Session 或免登录跳转。点击“打开面板”只打开
 配对时保存的根地址，目标面板仍需独立登录。集群采集链路支持 HTTPS，或在没有域名时使用
@@ -31,7 +35,8 @@ Socket 读取本地 Agent，不配对、不生成密钥、不写入远端主机�
 - Panel/Agent 版本、轮询延迟、最后成功时间和错误状态。
 
 浏览器每 15 秒读取一次中心端列表，请求不重叠；页面隐藏时暂停，恢复可见时立即刷新。
-刷新失败保留上一次成功数据。最多 100 台远端主机，桌面三列、平板两列、手机一列。
+刷新失败保留上一次成功数据。KPanel 与轻量节点合计最多 100 台远端主机，桌面三列、平板
+两列、手机一列。
 
 联邦摘要使用独立的 `HostTelemetry`，不返回网站、应用、Docker、SSH 端口、DNS、系统配置、
 凭据或宿主机管理能力。
@@ -77,6 +82,40 @@ ID 或静态公钥变化时停止信任，不自动接受新身份。
 Ed25519 签名。新前端调用 `/api/v1/cluster/pairing-codes/v2`，不会把旧授权码接口改成
 另一种格式。v1 与 v2 主机可同时存在，撤销和凭据互不影响。
 
+### 3.3 light-v1（非面板 Linux 主机）
+
+管理员在“集群 → 添加主机 → 非面板 Linux 主机”生成一次性命令：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/kejilion/sh/main/kejilion.sh) kpanel node join '<kpl1-token>'
+```
+
+规则：
+
+- 命令中的 `kpl1` 授权包含中心端 HTTPS `PublicURL`、随机 ID、32 字节随机 secret 和到期时间；
+  5 分钟过期且只能成功消费一次，非法名称或无效请求不会提前烧毁有效授权；
+- 目标机只要求 Linux、root、systemd、`curl`、`sha256sum`、`install`、`mktemp` 和 `useradd`，
+  不要求 Docker、Go、Node.js 或编译环境，首版支持 `amd64`、`arm64`；
+- `kejilion.sh` 只负责固定安装协议，下载 Release 中对应架构的静态 `kejilion-node` 和
+  `SHA256SUMS`，校验摘要及二进制 `version` 后再原子安装；
+- 服务使用无登录、无 home 的 `kejilion-node` 系统用户运行，配置目录 `0750`，凭据文件
+  `0640 root:kejilion-node`；systemd 启用 `NoNewPrivileges`、只读系统、隐藏 home、空 capability
+  及地址族限制；
+- 节点默认每 30 秒采集一次，仅向授权中的 HTTPS 中心地址出站上报；每次请求使用独立
+  32 字节 reporting key 做 HMAC-SHA256，绑定方法、固定路径、节点 ID、时间戳、request ID
+  和正文摘要；中心校验 ±2 分钟时间窗与有界重放缓存；
+- 自动更新由 systemd timer 每 24 小时触发并加入 0–6 小时随机延迟。下载只允许 HTTPS、
+  固定 GitHub Release 来源并验证 `SHA256SUMS`；重启健康检查失败时恢复上一二进制；
+- `k kpanel node status|update|uninstall` 分别用于状态、手动更新和本机卸载。中心删除记录
+  不远程执行卸载；节点被移除后上报凭据立即失效，目标机由用户自行卸载或重新接入。
+
+中心将轻量节点状态和凭据分别保存在 `cluster-light-state.json` 与
+`cluster-light-secrets/`。接入、改名和删除等配置变更立即使用 `0600`、同步和原子替换持久化；
+30 秒遥测只更新内存快照，由既有 5 分钟 checkpoint 或正常退出合并落盘，避免高频磁盘写入和
+无意义的 `resourceVersion` 冲突。reporting key 不进入状态、审计、
+浏览器响应或日志。接入消费、凭据写入和主机落盘属于同一事务，落盘失败会恢复授权并清理
+孤立凭据。
+
 ## 4. 网络与 SSRF
 
 联邦只访问用户登记的规范化 origin：
@@ -91,6 +130,11 @@ Ed25519 签名。新前端调用 `/api/v1/cluster/pairing-codes/v2`，不会把�
   文档保留地址、NAT64/6to4/Teredo 转换前缀和云元数据链路；
 - 私网只能通过部署端 `KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS` 精确放行；
 - 混合返回公网与受限地址时整体拒绝，防止 DNS rebinding。
+
+轻量节点方向相反：中心不主动访问目标机，也不接收其 URL 或开放端口；节点只连接授权中
+经过严格解析的 HTTPS 根地址，拒绝 userinfo、路径、查询、fragment、降级 HTTP 和重定向，
+TLS 最低 1.2。因而普通 NAT、动态公网 IP 或仅可出站的主机也能加入，但中心端必须具备被
+目标机访问的有效 HTTPS 地址。
 
 HTTP v2 的集群正文使用 Noise 端到端加密且绑定目标静态身份，但 HTTP 本身不能保护浏览器
 访问目标管理页。Agent 仍只监听本机权限受限的 Unix Socket。联邦入口位于 Panel，不开放
@@ -109,6 +153,7 @@ DELETE /api/v1/cluster/hosts/{id}
 POST   /api/v1/cluster/hosts/{id}/refresh
 POST   /api/v1/cluster/pairing-codes
 POST   /api/v1/cluster/pairing-codes/v2
+POST   /api/v1/cluster/light-enrollments
 GET    /api/v1/cluster/controllers
 DELETE /api/v1/cluster/controllers/{id}
 ```
@@ -124,10 +169,14 @@ POST   /api/v2/federation/pair
 POST   /api/v2/federation/commit
 POST   /api/v2/federation/summary
 POST   /api/v2/federation/revoke
+
+POST   /api/v3/federation/light/enroll
+POST   /api/v3/federation/light/report
 ```
 
-v2 只接受以上四个精确 POST 路径，不接受查询参数或 `RawPath` 变体；Noise 外层请求上限
-96 KiB，解密后业务负载上限 64 KiB。所有接口使用严格 JSON，拒绝未知字段和多值 JSON。
+v2 只接受以上四个精确 POST 路径；light-v1 只接受以上两个精确 POST 路径。两者都拒绝查询
+参数或 `RawPath` 变体。Noise 外层请求上限 96 KiB，解密后业务负载上限 64 KiB；轻量节点
+接入和上报使用更小的固定请求上限。所有接口使用严格 JSON，拒绝未知字段和多值 JSON。
 
 ## 6. 轮询与状态
 
@@ -145,6 +194,10 @@ v2 只接受以上四个精确 POST 路径，不接受查询参数或 `RawPath` 
 - `auth_failed`：签名或授权失效；
 - `tls_error`：证书或 TLS 校验失败；
 - `incompatible`：协议或远端节点身份变化。
+
+轻量节点不由中心轮询：最近上报不超过 90 秒为 `online`，不超过 5 分钟为 `stale`，之后为
+`offline`。中心只保存最新快照；节点断网时继续以有界指数退避尝试，不在目标机堆积历史或
+任务。轻量节点与 KPanel 节点共享列表、搜索、排序和 100 台上限，但不占中心轮询并发。
 
 只保存最新快照，不保存高频历史。v1 的 `cluster-state.json` 和 v2 的
 `cluster-state-v2.json` 均采用同目录临时文件、`0600`、同步和原子替换；每 5 分钟及正常
@@ -165,16 +218,16 @@ SSRF 与 TLS 校验。对
 
 | 项目 | 决策 |
 | --- | --- |
-| 流量路径 | 浏览器 → 当前 Panel；当前 Panel → 远端 Panel HTTPS 或 Noise 加密 HTTP；远端 Panel → 本机 Agent Unix Socket |
-| 不可信输入 | 主机名称、origin、授权码、DNS 结果、远端证书和远端 JSON |
-| 权限与可写范围 | Panel 只写自身 v1/v2 集群状态与凭据目录；不写宿主机业务目录 |
-| 最坏输入/输出 | 主机 100；v1 配对 16 KiB；v2 外层 96 KiB、解密负载 64 KiB；摘要 64 KiB；Store 4 MiB；控制端 256；有效授权码 16 |
+| 流量路径 | 浏览器 → 当前 Panel；当前 Panel → 远端 Panel HTTPS 或 Noise 加密 HTTP；远端 Panel → 本机 Agent Unix Socket；轻量节点 → 中心 Panel HTTPS |
+| 不可信输入 | 主机名称、origin、授权码、DNS 结果、远端证书、远端 JSON、轻量节点时间戳/request ID/HMAC/遥测 |
+| 权限与可写范围 | Panel 只写自身 v1/v2/light 集群状态与凭据目录；不写宿主机业务目录 |
+| 最坏输入/输出 | 远端主机合计 100；v1 配对 16 KiB；v2 外层 96 KiB、解密负载 64 KiB；摘要 64 KiB；轻量请求有界；Store 4 MiB；控制端 256；各类有效授权码均有界 |
 | 最大并发 | 轮询 8；单主机连接 2；请求与 nonce/rate-limit 缓存均有界 |
 | 超时与重试 | 连接 2 秒、响应头 3 秒、总计 6 秒；读取失败退避到 5 分钟；无写入自动重试 |
 | 真实状态与缓存 | 远端 Agent 实时摘要是事实；中心只缓存最近快照；本机摘要缓存 5 秒 |
 | 失败与恢复 | 保留最近成功快照；认证/TLS/身份错误单独标识；先尽力撤销远端授权，再删除状态，最后清理凭据；孤立凭据启动时回收 |
-| 性能预算 | 浏览器单请求，无 N+1；100 台按 30 秒轮询约 3.3 请求/秒，最多 8 并发 |
-| 网络入侵风险 | SSRF、DNS rebinding、TLS 劫持、授权码猜测、签名重放、恶意大响应和轮询 DoS |
+| 性能预算 | 浏览器单请求，无 N+1；100 台 KPanel 按 30 秒轮询约 3.3 请求/秒、最多 8 并发；轻量节点每台约 2 请求/分钟且不触发中心出站 |
+| 网络入侵风险 | SSRF、DNS rebinding、TLS 劫持、授权码猜测、签名重放、伪造遥测、恶意大响应和轮询/上报 DoS |
 
 ## 8. 验收
 
@@ -188,9 +241,18 @@ SSRF 与 TLS 校验。对
 - Browser Session、Origin、CSRF、未知字段、请求体和响应体上限；
 - 100 台并发上限、退避、取消、重启恢复和 `go test -race`；
 - 前端无 N+1、轮询不重叠、失败保留旧数据、外链安全与移动端布局；
+- 轻量授权 HTTPS 约束、过期/单次消费、HMAC 篡改、未来/过期时间、重放、状态阈值、
+  凭据原子性、错误请求限速和密钥不进入审计；
+- `kejilion-node` 严格配置、拒绝重定向、固定动作、静态跨架构构建；安装器无 Docker 依赖、
+  Release 摘要验证、非特权 systemd、自动更新回滚与失败安装清理；
 - 标准 Compose 和应用市场部署都能出站验证 HTTPS，Panel 仍无 Docker Socket 和宿主权限。
 
 发布前执行 L2 验证；正式版本与镜像发布仍按 L3 流程执行。
+
+轻量节点属于双端协议，发布顺序固定为：先发布兼容旧 KPanel 的 `kejilion.sh` 安装入口，再发布
+包含 `kejilion-node`、`SHA256SUMS` 和 `light-v1` API 的 KPanel Release。脚本先发布期间下载资产
+返回 404 只会让新安装明确失败，不影响既有 KPanel 节点；KPanel Release 发布后必须在独立
+Linux 主机完成安装、断网恢复、自动更新、摘要拒绝、回滚与卸载闭环，才可结束 L3。
 
 ## 9. 回滚
 
@@ -198,6 +260,8 @@ SSRF 与 TLS 校验。对
 
 - v1 的 `cluster-state.json`/`cluster-secrets` 与 v2 的
   `cluster-state-v2.json`/`cluster-secrets-v2` 保留，不影响其他面板功能；
+- `cluster-light-state.json`/`cluster-light-secrets` 同样是独立可忽略状态；旧 Panel 不读取它们，
+  目标机上的 `kejilion-node` 只会变为离线重试，不影响宿主机业务；
 - 旧版本继续读取 v1 文件并忽略 v2 文件，因此原有 v1 主机仍可回滚使用；
 - 如需彻底撤销，先在各节点“接入授权”中撤销控制端，再在停机维护窗口备份并删除集群文件；
 - 不得通过回滚删除 `/home/web`、Docker 容器或 Agent Token。

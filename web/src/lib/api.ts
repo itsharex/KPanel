@@ -11,6 +11,7 @@ import type {
   ClusterController,
   ClusterHost,
   ClusterHostList,
+  ClusterLightEnrollment,
   ClusterPairingCode,
   DockerInventory,
   DockerActionResult,
@@ -1136,6 +1137,8 @@ export const api = {
       }),
     createPairingCode: (): Promise<ClusterPairingCode> =>
       request<ClusterPairingCode>('/cluster/pairing-codes/v2', { method: 'POST' }),
+    createLightEnrollment: (): Promise<ClusterLightEnrollment> =>
+      request<ClusterLightEnrollment>('/cluster/light-enrollments', { method: 'POST' }),
     controllers: async (signal?: AbortSignal): Promise<ApiList<ClusterController>> =>
       normalizeList(
         await request<ApiList<ClusterController> | ClusterController[]>(

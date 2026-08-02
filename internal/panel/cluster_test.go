@@ -217,6 +217,122 @@ func TestClusterPairingCodeSecretIsNotAudited(t *testing.T) {
 	}
 }
 
+func TestLightNodeEnrollmentUsesAuthenticatedIntentAndPublicOneUseExchange(t *testing.T) {
+	server, tokenPath := newTestServerWithPublicURL(t, "https://panel.test")
+	sessionCookie, csrfCookie := bootstrapCookiesForOrigin(t, server, tokenPath, "https://panel.test")
+
+	created := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/cluster/light-enrollments", nil,
+		sessionCookie, csrfCookie, map[string]string{
+			"Origin": "https://panel.test", "X-CSRF-Token": csrfCookie.Value,
+		},
+	)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("light enrollment status = %d; body=%s", created.Code, created.Body.String())
+	}
+	var enrollment cluster.LightEnrollment
+	if err := json.Unmarshal(created.Body.Bytes(), &enrollment); err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(enrollment.Command)
+	if len(fields) == 0 || !strings.Contains(enrollment.Command, "kpanel node join 'kpl1.") {
+		t.Fatalf("unexpected light enrollment command: %q", enrollment.Command)
+	}
+	token := strings.Trim(fields[len(fields)-1], "'")
+	requestBody, err := json.Marshal(cluster.LightEnrollRequest{Token: token, Name: "edge-1", NodeVersion: "0.40.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "https://panel.test/api/v3/federation/light/enroll", strings.NewReader(string(requestBody)))
+	request.Host = "panel.test"
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("public light enrollment status = %d; body=%s", response.Code, response.Body.String())
+	}
+	var enrolled cluster.LightEnrollResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &enrolled); err != nil {
+		t.Fatal(err)
+	}
+	if enrolled.NodeID == "" || enrolled.ReportingKey == "" || enrolled.ReportInterval != 30 {
+		t.Fatalf("unexpected light enrollment response: %#v", enrolled)
+	}
+
+	replay := httptest.NewRequest(http.MethodPost, "https://panel.test/api/v3/federation/light/enroll", strings.NewReader(string(requestBody)))
+	replay.Host = "panel.test"
+	replay.Header.Set("Content-Type", "application/json")
+	replayResponse := httptest.NewRecorder()
+	server.ServeHTTP(replayResponse, replay)
+	if replayResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("reused enrollment status = %d; body=%s", replayResponse.Code, replayResponse.Body.String())
+	}
+
+	inventoryResponse := authenticatedRequest(
+		server, http.MethodGet, "/api/v1/cluster/hosts", nil,
+		sessionCookie, csrfCookie, nil,
+	)
+	var inventory cluster.HostList
+	if err := json.Unmarshal(inventoryResponse.Body.Bytes(), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, host := range inventory.Items {
+		if host.ID == enrolled.NodeID && host.Kind == cluster.HostKindLightNode && host.Origin == "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("enrolled light host missing from inventory: %#v", inventory)
+	}
+
+	events, _ := server.store.ListAudit(200, "")
+	serialized, err := json.Marshal(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{token, enrollment.Command, enrolled.ReportingKey} {
+		if strings.Contains(string(serialized), secret) {
+			t.Fatalf("light enrollment secret leaked into audit: %s", serialized)
+		}
+	}
+}
+
+func TestLightNodePublicEndpointsKeepHostAndBodyGuards(t *testing.T) {
+	server, _ := newTestServerWithPublicURL(t, "https://panel.test")
+	for _, test := range []struct {
+		name   string
+		target string
+		host   string
+		body   string
+		status int
+	}{
+		{
+			name: "untrusted host", target: "https://evil.example/api/v3/federation/light/enroll",
+			host: "evil.example", body: `{}`, status: http.StatusMisdirectedRequest,
+		},
+		{
+			name: "query rejected", target: "https://panel.test/api/v3/federation/light/enroll?unexpected=1",
+			host: "panel.test", body: `{}`, status: http.StatusBadRequest,
+		},
+		{
+			name: "oversized report", target: "https://panel.test/api/v3/federation/light/report",
+			host: "panel.test", body: strings.Repeat("x", cluster.MaxSummaryBytes+1), status: http.StatusRequestEntityTooLarge,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.target, strings.NewReader(test.body))
+			request.Host = test.host
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, test.status, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestLegacyPairingCodeAPIStillIssuesV1Code(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)

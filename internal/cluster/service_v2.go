@@ -158,7 +158,7 @@ func (s *Service) addHostV2Locked(
 	}
 	legacy := s.store.Hosts()
 	records := s.storeV2.Hosts()
-	if len(legacy)+len(records) >= MaxHosts {
+	if len(legacy)+len(records)+len(s.light.Hosts()) >= MaxHosts {
 		return Host{}, ErrHostLimit
 	}
 	for _, record := range legacy {
@@ -595,6 +595,7 @@ func publicHostV2(
 	}
 	return Host{
 		ID: record.ID, Name: name, Origin: record.Origin,
+		Kind:               HostKindPanel,
 		TransportSecurity:  record.TransportSecurity,
 		PeerFingerprint:    record.PeerFingerprint,
 		RemoteNodeID:       record.RemoteNodeID,

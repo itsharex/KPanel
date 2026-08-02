@@ -85,6 +85,7 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 	}
 	clusterService, err := cluster.NewService(cluster.ServiceConfig{
 		DataDir: config.DataDir, PanelVersion: version.Version,
+		PublicURL:    config.PublicURL,
 		PrivateCIDRs: config.ClusterPrivateCIDRs,
 		Telemetry:    clusterTelemetrySource{agent: agent},
 	})
@@ -128,6 +129,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case isLightNodeRequest(r):
+		s.handleLightNodeFederation(w, r)
 	case isFederationV2Request(r):
 		s.handleFederationV2(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/federation/pair":
@@ -573,7 +576,7 @@ func (s *Server) handleSecurityEntrance(w http.ResponseWriter, r *http.Request) 
 }
 
 func securityEntrancePublicPath(requestPath string) bool {
-	return requestPath == "/api/v1/health" || isStaticAssetPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/")
+	return requestPath == "/api/v1/health" || isStaticAssetPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/") || strings.HasPrefix(requestPath, "/api/v3/federation/light/")
 }
 
 func isStaticAssetPath(requestPath string) bool {

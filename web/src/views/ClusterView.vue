@@ -42,6 +42,7 @@ import type {
   ClusterController,
   ClusterHost,
   ClusterHostList,
+  ClusterLightEnrollment,
   ClusterPairingCode,
 } from '@/types/api'
 
@@ -59,8 +60,10 @@ const adding = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
 const generatingCode = ref(false)
+const generatingLightEnrollment = ref(false)
 const controllersLoading = ref(false)
 const pairingCode = ref<ClusterPairingCode>()
+const lightEnrollment = ref<ClusterLightEnrollment>()
 const controllers = ref<ClusterController[]>([])
 const selected = ref<ClusterHost>()
 const addAccessInput = ref<HTMLTextAreaElement>()
@@ -286,11 +289,36 @@ function openAdd(): void {
 }
 
 function closeAdd(): void {
-  if (adding.value) return
+  if (adding.value || generatingLightEnrollment.value) return
   addOpen.value = false
   addForm.name = ''
   addForm.accessCredential = ''
   originError.value = ''
+  lightEnrollment.value = undefined
+}
+
+async function createLightEnrollment(): Promise<void> {
+  if (generatingLightEnrollment.value) return
+  generatingLightEnrollment.value = true
+  try {
+    lightEnrollment.value = await api.cluster.createLightEnrollment()
+  } catch (reason) {
+    toast.danger(
+      '轻量节点命令生成失败',
+      friendlyError(reason, '请确认当前 KPanel 已配置可访问的 HTTPS 公共地址。'),
+    )
+  } finally {
+    generatingLightEnrollment.value = false
+  }
+}
+
+async function copyLightEnrollment(): Promise<void> {
+  if (!lightEnrollment.value?.command) return
+  await copyToClipboard(
+    lightEnrollment.value.command,
+    '轻量节点接入命令已复制',
+    '请手动选择完整命令复制。',
+  )
 }
 
 async function addHost(): Promise<void> {
@@ -655,6 +683,7 @@ function upsertHost(host: ClusterHost): void {
 }
 
 function openPanel(host: ClusterHost): void {
+  if (host.kind === 'light_node') return
   if (
     !host.isLocal &&
     host.transportSecurity === 'e2e_http' &&
@@ -668,16 +697,19 @@ function openPanel(host: ClusterHost): void {
 }
 
 function displayOrigin(host: ClusterHost): string {
+  if (host.kind === 'light_node') return ''
   return host.isLocal ? window.location.origin : host.origin
 }
 
 function transportSecurityLabel(host: ClusterHost): string {
   if (host.isLocal) return '本机 Agent'
+  if (host.kind === 'light_node') return '轻量节点'
   return host.transportSecurity === 'e2e_http' ? '加密直连' : 'HTTPS'
 }
 
 function transportSecurityDescription(host: ClusterHost): string {
   if (host.isLocal) return '本机通过 Unix Socket 读取 Agent 摘要'
+  if (host.kind === 'light_node') return '低权限 Agent 主动通过 HTTPS 上报只读主机摘要'
   if (host.transportSecurity === 'e2e_http') {
     return '集群监控数据端到端加密；普通浏览器管理页面仍是 HTTP'
   }
@@ -835,7 +867,10 @@ onBeforeUnmount(() => {
           <div>
             <span>
               <strong>{{ host.name }}</strong>
-              <em v-if="host.isLocal" class="cluster-card__local">本机</em>
+            <em v-if="host.isLocal" class="cluster-card__local">本机</em>
+              <em v-else-if="host.kind === 'light_node'" class="cluster-card__transport is-light_node">
+                轻量节点
+              </em>
               <em
                 v-else
                 class="cluster-card__transport"
@@ -847,7 +882,7 @@ onBeforeUnmount(() => {
               <StatusBadge :status="host.state" subtle />
             </span>
             <a
-              v-if="host.isLocal || host.transportSecurity === 'tls'"
+              v-if="host.kind !== 'light_node' && (host.isLocal || host.transportSecurity === 'tls')"
               class="cluster-card__origin"
               :href="displayOrigin(host)"
               target="_blank"
@@ -856,7 +891,7 @@ onBeforeUnmount(() => {
               {{ displayOrigin(host) }} <ArrowUpRight :size="12" />
             </a>
             <button
-              v-else
+              v-else-if="host.kind !== 'light_node'"
               class="cluster-card__origin"
               type="button"
               :title="transportSecurityDescription(host)"
@@ -870,6 +905,9 @@ onBeforeUnmount(() => {
               :title="host.peerFingerprint"
             >
               身份指纹 {{ shortFingerprint(host.peerFingerprint) }}
+            </small>
+            <small v-else-if="host.kind === 'light_node'" class="cluster-card__fingerprint">
+              只读摘要 · 主动 HTTPS 上报
             </small>
           </div>
           <button
@@ -994,7 +1032,12 @@ onBeforeUnmount(() => {
             >
               <Pencil :size="14" /> 管理
             </button>
-            <button class="button button--primary button--small" type="button" @click="openPanel(host)">
+            <button
+              v-if="host.kind !== 'light_node'"
+              class="button button--primary button--small"
+              type="button"
+              @click="openPanel(host)"
+            >
               {{ host.isLocal ? '当前面板' : '打开面板' }} <ArrowUpRight :size="14" />
             </button>
           </div>
@@ -1067,6 +1110,41 @@ onBeforeUnmount(() => {
             }}
           </small>
         </label>
+        <section class="cluster-light-enrollment">
+          <div>
+            <Server :size="17" />
+            <span>
+              <strong>非面板 Linux 主机</strong>
+              <small>无需 Docker；生成命令后，在目标机以 root 执行即可加入只读监控。</small>
+            </span>
+            <button
+              v-if="!lightEnrollment"
+              class="button button--secondary button--small"
+              type="button"
+              :disabled="generatingLightEnrollment"
+              @click="createLightEnrollment"
+            >
+              <LoaderCircle v-if="generatingLightEnrollment" class="spin" :size="14" />
+              <Plus v-else :size="14" /> 生成接入命令
+            </button>
+          </div>
+          <div v-if="lightEnrollment" class="cluster-light-enrollment__command">
+            <pre>{{ lightEnrollment.command }}</pre>
+            <button class="button button--secondary button--small" type="button" @click="copyLightEnrollment">
+              <Copy :size="14" /> 复制命令
+            </button>
+            <button
+              class="button button--ghost button--small"
+              type="button"
+              :disabled="generatingLightEnrollment"
+              @click="createLightEnrollment"
+            >
+              <LoaderCircle v-if="generatingLightEnrollment" class="spin" :size="14" />
+              <RefreshCw v-else :size="14" /> 重新生成
+            </button>
+            <small>一次性命令，{{ formatDateTime(lightEnrollment.expiresAt) }} 前有效。</small>
+          </div>
+        </section>
       </form>
       <template #footer>
         <button class="button button--secondary" type="button" :disabled="adding" @click="closeAdd">取消</button>
@@ -1186,14 +1264,17 @@ onBeforeUnmount(() => {
           <input v-model="editName" maxlength="80" autocomplete="off" />
         </label>
         <div class="cluster-manage__identity">
-          <span>目标地址</span><code>{{ displayOrigin(selected) }}</code>
+          <template v-if="selected.kind !== 'light_node'">
+            <span>目标地址</span><code>{{ displayOrigin(selected) }}</code>
+          </template>
           <span>连接方式</span><code>{{ transportSecurityLabel(selected) }}</code>
           <template v-if="selected.peerFingerprint">
             <span>身份指纹</span><code>{{ selected.peerFingerprint }}</code>
           </template>
           <span>节点 ID</span><code>{{ selected.remoteNodeId }}</code>
-          <span>Panel / Agent</span>
-          <code>{{ selected.panelVersion || '未知' }} / {{ selected.lastSnapshot?.telemetry.agentVersion || '未知' }}</code>
+          <span>{{ selected.kind === 'light_node' ? '节点程序' : 'Panel / Agent' }}</span>
+          <code v-if="selected.kind === 'light_node'">{{ selected.panelVersion || selected.lastSnapshot?.telemetry.agentVersion || '未知' }}</code>
+          <code v-else>{{ selected.panelVersion || '未知' }} / {{ selected.lastSnapshot?.telemetry.agentVersion || '未知' }}</code>
         </div>
       </div>
       <template #footer>
@@ -1534,6 +1615,12 @@ onBeforeUnmount(() => {
   border: 1px solid color-mix(in srgb, var(--blue) 22%, var(--border));
 }
 
+.cluster-card__transport.is-light_node {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border));
+}
+
 .cluster-card__origin {
   display: inline-flex;
   max-width: 100%;
@@ -1577,6 +1664,66 @@ onBeforeUnmount(() => {
 
 .cluster-origin-help.is-danger {
   color: var(--danger);
+}
+
+.cluster-light-enrollment {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--brand-soft) 42%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border));
+  border-radius: var(--radius-md);
+}
+
+.cluster-light-enrollment > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.cluster-light-enrollment span {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+
+.cluster-light-enrollment strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.cluster-light-enrollment small {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.cluster-light-enrollment__command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.cluster-light-enrollment__command pre {
+  min-width: 0;
+  margin: 0;
+  padding: 9px 10px;
+  overflow: auto;
+  color: var(--brand);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  user-select: all;
+}
+
+.cluster-light-enrollment__command small {
+  grid-column: 1 / -1;
 }
 
 .cluster-card__metrics {

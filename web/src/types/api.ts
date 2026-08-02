@@ -129,6 +129,7 @@ export type ClusterHostState =
   | 'incompatible'
 
 export type ClusterTransportSecurity = 'tls' | 'e2e_http'
+export type ClusterHostKind = 'panel' | 'light_node'
 
 export interface ClusterTelemetry {
   agentVersion: string
@@ -180,6 +181,7 @@ export interface ClusterHost {
   id: string
   isLocal: boolean
   name: string
+  kind?: ClusterHostKind
   origin: string
   transportSecurity: ClusterTransportSecurity
   peerFingerprint?: string
@@ -212,6 +214,11 @@ export interface ClusterHostList {
 export interface ClusterPairingCode {
   code: string
   scope: 'cluster.summary.read'
+  expiresAt: string
+}
+
+export interface ClusterLightEnrollment {
+  command: string
   expiresAt: string
 }
 

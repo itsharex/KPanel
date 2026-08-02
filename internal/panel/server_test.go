@@ -17,6 +17,10 @@ import (
 )
 
 func newTestServer(t *testing.T) (*Server, string) {
+	return newTestServerWithPublicURL(t, "http://panel.test")
+}
+
+func newTestServerWithPublicURL(t *testing.T, publicURL string) (*Server, string) {
 	t.Helper()
 	directory := t.TempDir()
 	webRoot := filepath.Join(directory, "web")
@@ -34,7 +38,7 @@ func newTestServer(t *testing.T) (*Server, string) {
 	config.AgentSocket = filepath.Join(directory, "run", "agent.sock")
 	config.AgentTokenFile = filepath.Join(directory, "secrets", "agent.token")
 	config.WebRoot = webRoot
-	config.PublicURL = "http://panel.test"
+	config.PublicURL = publicURL
 	config.SecureCookie = false
 	config.CookieName = "kejilion_session"
 	config.SessionTTL = time.Hour
@@ -806,6 +810,10 @@ func TestAllowedApplicationJobPath(t *testing.T) {
 }
 
 func bootstrapCookies(t *testing.T, server *Server, tokenPath string) (*http.Cookie, *http.Cookie) {
+	return bootstrapCookiesForOrigin(t, server, tokenPath, "http://panel.test")
+}
+
+func bootstrapCookiesForOrigin(t *testing.T, server *Server, tokenPath, origin string) (*http.Cookie, *http.Cookie) {
 	t.Helper()
 	token, err := os.ReadFile(tokenPath)
 	if err != nil {
@@ -819,7 +827,7 @@ func bootstrapCookies(t *testing.T, server *Server, tokenPath string) (*http.Coo
 	}
 	response := performRequest(server, http.MethodPost, "/api/v1/auth/bootstrap", body, map[string]string{
 		"Content-Type": "application/json",
-		"Origin":       "http://panel.test",
+		"Origin":       origin,
 	})
 	if response.Code != http.StatusCreated {
 		t.Fatalf("bootstrap failed: %d %s", response.Code, response.Body.String())

@@ -967,6 +967,12 @@ describe('API client', () => {
           expiresAt: '2026-07-29T12:05:00Z',
         })
       }
+      if (url === '/api/v1/cluster/light-enrollments') {
+        return jsonResponse({
+          command: "bash <(curl -fsSL https://example.com/kejilion.sh) kpanel node join 'kpl1.token'",
+          expiresAt: '2026-07-29T12:05:00Z',
+        })
+      }
       if (url.endsWith('/refresh')) return jsonResponse({ id: hostID, polling: true })
       if (url.includes('/cluster/controllers/')) return jsonResponse({ deleted: true })
       if (url.includes('/cluster/hosts/') && init?.method === 'DELETE') {
@@ -991,6 +997,7 @@ describe('API client', () => {
     await api.cluster.remove(hostID, 'host-version-2')
     await api.cluster.refresh(hostID)
     await api.cluster.createPairingCode()
+    await api.cluster.createLightEnrollment()
     await api.cluster.controllers()
     await api.cluster.revokeController(controllerID)
 
@@ -1003,6 +1010,7 @@ describe('API client', () => {
       `/api/v1/cluster/hosts/${encodedHostID}`,
       `/api/v1/cluster/hosts/${encodedHostID}/refresh`,
       '/api/v1/cluster/pairing-codes/v2',
+      '/api/v1/cluster/light-enrollments',
       '/api/v1/cluster/controllers',
       `/api/v1/cluster/controllers/${encodedControllerID}`,
     ])
@@ -1013,6 +1021,7 @@ describe('API client', () => {
       'POST',
       'PATCH',
       'DELETE',
+      'POST',
       'POST',
       'POST',
       'GET',
@@ -1032,6 +1041,7 @@ describe('API client', () => {
     })
     expect((clusterCalls[5]?.[1] as RequestInit).body).toBeUndefined()
     expect((clusterCalls[6]?.[1] as RequestInit).body).toBeUndefined()
+    expect((clusterCalls[7]?.[1] as RequestInit).body).toBeUndefined()
 
     const mutationCalls = clusterCalls.filter(
       ([, init]) => (init as RequestInit).method !== 'GET',

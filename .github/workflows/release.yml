@@ -104,7 +104,7 @@ jobs:
             bash:5.2.37-alpine3.22@sha256:3bee76a96d86d5d2d5efc7c1c570e5a7c95db22348a26944e0e546fa174e3324 \
             bash /src/packaging/tests/app-conf-lifecycle.sh /src
 
-      - name: Build Agent release binaries
+      - name: Build Agent and lightweight node release binaries
         shell: bash
         env:
           VERSION: ${{ steps.release.outputs.version }}
@@ -118,6 +118,12 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
             go build -trimpath -ldflags "$ldflags" \
             -o release/kejilion-agent-linux-arm64 ./cmd/kejilion-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags "$ldflags" \
+            -o release/kejilion-node-linux-amd64 ./cmd/kejilion-node
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -trimpath -ldflags "$ldflags" \
+            -o release/kejilion-node-linux-arm64 ./cmd/kejilion-node
           git archive --format=tar HEAD \
             deploy docs README.md CHANGELOG.md VERSION \
             LICENSE NOTICE LICENSES THIRD_PARTY_NOTICES.md TRADEMARKS.md |
@@ -127,6 +133,8 @@ jobs:
             sha256sum \
               kejilion-agent-linux-amd64 \
               kejilion-agent-linux-arm64 \
+              kejilion-node-linux-amd64 \
+              kejilion-node-linux-arm64 \
               "kejilion-panel-deploy-$VERSION.tar.gz" > SHA256SUMS
           )
 
@@ -225,6 +233,8 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" --clobber \
               release/kejilion-agent-linux-amd64 \
               release/kejilion-agent-linux-arm64 \
+              release/kejilion-node-linux-amd64 \
+              release/kejilion-node-linux-arm64 \
               "release/kejilion-panel-deploy-$VERSION.tar.gz" \
               release/SHA256SUMS \
               LICENSE \
@@ -237,6 +247,8 @@ jobs:
               --notes-file release/DRAFT_NOTES.md \
               release/kejilion-agent-linux-amd64 \
               release/kejilion-agent-linux-arm64 \
+              release/kejilion-node-linux-amd64 \
+              release/kejilion-node-linux-arm64 \
               "release/kejilion-panel-deploy-$VERSION.tar.gz" \
               release/SHA256SUMS \
               LICENSE \

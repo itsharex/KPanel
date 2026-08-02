@@ -15,6 +15,11 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
 
+const (
+	lightEnrollEndpoint = "/api/v3/federation/light/enroll"
+	lightReportEndpoint = "/api/v3/federation/light/report"
+)
+
 type clusterTelemetrySource struct {
 	agent agentAPI
 }
@@ -63,6 +68,8 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		s.handleClusterHostAdd(w, r)
 	case r.URL.Path == "/api/v1/cluster/pairing-codes/v2" && r.Method == http.MethodPost:
 		s.handleClusterPairingCodeV2(w, r)
+	case r.URL.Path == "/api/v1/cluster/light-enrollments" && r.Method == http.MethodPost:
+		s.handleLightEnrollmentCreate(w, r)
 	case r.URL.Path == "/api/v1/cluster/pairing-codes" && r.Method == http.MethodPost:
 		s.handleClusterPairingCode(w, r)
 	case r.URL.Path == "/api/v1/cluster/controllers" && r.Method == http.MethodGet:
@@ -227,6 +234,37 @@ func (s *Server) handleClusterPairingCodeV2(w http.ResponseWriter, r *http.Reque
 	s.handleClusterPairingCodeProtocol(w, r, true)
 }
 
+func (s *Server) handleLightEnrollmentCreate(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireClusterMutation(w, r)
+	if !ok {
+		return
+	}
+	if r.ContentLength > 0 {
+		var input struct{}
+		if err := s.decodeJSON(w, r, &input); err != nil {
+			return
+		}
+	}
+	if err := s.audit(
+		r, session.User.ID, "cluster.light-enrollment.create",
+		"cluster-node", s.cluster.NodeID(), "intent", nil,
+	); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	enrollment, err := s.cluster.CreateLightEnrollment()
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "cluster.light-enrollment.create", "cluster-node", s.cluster.NodeID(), "failure", nil)
+		s.writeClusterError(w, r, err)
+		return
+	}
+	_ = s.audit(r, session.User.ID, "cluster.light-enrollment.create", "cluster-node", s.cluster.NodeID(), "success", map[string]any{
+		"expiresAt": enrollment.ExpiresAt,
+		"protocol":  cluster.LightNodeProtocol,
+	})
+	s.writeJSON(w, http.StatusCreated, enrollment)
+}
+
 func (s *Server) handleClusterPairingCodeProtocol(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -382,6 +420,94 @@ func (s *Server) handleFederationV2(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	s.writeJSON(w, status, response)
+}
+
+func isLightNodeRequest(r *http.Request) bool {
+	return r.Method == http.MethodPost &&
+		(r.URL.Path == lightEnrollEndpoint || r.URL.Path == lightReportEndpoint)
+}
+
+func (s *Server) handleLightNodeFederation(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" || r.URL.Path == "" {
+		s.writeProblem(w, r, http.StatusBadRequest, "invalid_federation_request", "Invalid federation request", "")
+		return
+	}
+	switch r.URL.Path {
+	case lightEnrollEndpoint:
+		var input cluster.LightEnrollRequest
+		if err := decodeLimitedJSON(w, r, cluster.MaxPairBytes, &input); err != nil {
+			return
+		}
+		response, err := s.cluster.EnrollLightNode(s.remoteIP(r), input)
+		if err != nil {
+			s.auditAuthFailure(r, "cluster.light-node.enroll")
+			s.writeClusterError(w, r, err)
+			return
+		}
+		_ = s.audit(r, "", "cluster.light-node.enroll", "cluster-host", response.NodeID, "success", map[string]any{
+			"protocol": cluster.LightNodeProtocol,
+		})
+		s.writeJSON(w, http.StatusCreated, response)
+	case lightReportEndpoint:
+		rawBody, err := readLimitedJSONBody(w, r, cluster.MaxSummaryBytes)
+		if err != nil {
+			return
+		}
+		var input cluster.LightReportRequest
+		decoder := json.NewDecoder(bytes.NewReader(rawBody))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			writeProblemJSON(w, contract.Problem{Type: "about:blank", Title: "Invalid JSON", Status: http.StatusBadRequest, Code: "invalid_json"})
+			return
+		}
+		var extra any
+		if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+			writeProblemJSON(w, contract.Problem{Type: "about:blank", Title: "Invalid JSON", Status: http.StatusBadRequest, Code: "invalid_json"})
+			return
+		}
+		response, err := s.cluster.AcceptLightReport(cluster.LightReportAuth{
+			Source:    s.remoteIP(r),
+			NodeID:    strings.TrimSpace(r.Header.Get("X-KPanel-Light-Node-ID")),
+			Timestamp: strings.TrimSpace(r.Header.Get("X-KPanel-Timestamp")),
+			RequestID: strings.TrimSpace(r.Header.Get("X-KPanel-Request-ID")),
+			Signature: strings.TrimSpace(r.Header.Get("X-KPanel-Signature")),
+		}, rawBody, input)
+		if err != nil {
+			s.auditAuthFailure(r, "cluster.light-node.report")
+			s.writeClusterError(w, r, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, response)
+	default:
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+	}
+}
+
+func readLimitedJSONBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
+		writeProblemJSON(w, contract.Problem{Type: "about:blank", Title: "JSON request body required", Status: http.StatusUnsupportedMediaType, Code: "json_required"})
+		return nil, errors.New("invalid content type")
+	}
+	if r.ContentLength > limit {
+		writeProblemJSON(w, contract.Problem{Type: "about:blank", Title: "Request body too large", Status: http.StatusRequestEntityTooLarge, Code: "request_too_large"})
+		return nil, errors.New("request body too large")
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	content, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeProblemJSON(w, contract.Problem{Type: "about:blank", Title: "Request body too large", Status: http.StatusRequestEntityTooLarge, Code: "request_too_large"})
+		} else {
+			writeProblemJSON(w, contract.Problem{Type: "about:blank", Title: "Invalid JSON", Status: http.StatusBadRequest, Code: "invalid_json"})
+		}
+		return nil, err
+	}
+	if len(content) == 0 {
+		writeProblemJSON(w, contract.Problem{Type: "about:blank", Title: "Invalid JSON", Status: http.StatusBadRequest, Code: "invalid_json"})
+		return nil, errors.New("request body is empty")
+	}
+	return content, nil
 }
 
 func (s *Server) requireClusterMutation(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {

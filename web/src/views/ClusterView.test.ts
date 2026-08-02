@@ -1,7 +1,12 @@
 import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ClusterView from './ClusterView.vue'
-import type { ClusterHost, ClusterHostList, ClusterPairingCode } from '@/types/api'
+import type {
+  ClusterHost,
+  ClusterHostList,
+  ClusterLightEnrollment,
+  ClusterPairingCode,
+} from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
   hosts: vi.fn(),
@@ -11,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   refresh: vi.fn(),
   createPairingCode: vi.fn(),
+  createLightEnrollment: vi.fn(),
   controllers: vi.fn(),
   revokeController: vi.fn(),
   open: vi.fn(),
@@ -43,6 +49,7 @@ vi.mock('@/lib/api', () => ({
       remove: mocks.remove,
       refresh: mocks.refresh,
       createPairingCode: mocks.createPairingCode,
+      createLightEnrollment: mocks.createLightEnrollment,
       controllers: mocks.controllers,
       revokeController: mocks.revokeController,
     },
@@ -70,6 +77,7 @@ interface ClusterBindings {
   manageOpen: Ref<boolean>
   selected: Ref<ClusterHost | undefined>
   pairingCode: Ref<ClusterPairingCode | undefined>
+  lightEnrollment: Ref<ClusterLightEnrollment | undefined>
   editName: Ref<string>
   addForm: { name: string; accessCredential: string }
   load: (silent?: boolean) => Promise<void>
@@ -79,6 +87,8 @@ interface ClusterBindings {
   removeHost: () => Promise<void>
   openPanel: (host: ClusterHost) => void
   copyAccessCredential: () => Promise<void>
+  createLightEnrollment: () => Promise<void>
+  copyLightEnrollment: () => Promise<void>
   formatClusterAccessCredential: (origin: string, pairingCode: string) => string
   parseClusterAccessCredential: (
     raw: string,
@@ -107,6 +117,7 @@ function host(id: string, isLocal: boolean, origin: string): ClusterHost {
   return {
     id,
     isLocal,
+    kind: 'panel',
     name: isLocal ? '当前 KPanel' : '香港节点',
     origin,
     transportSecurity: origin.startsWith('http://') ? 'e2e_http' : 'tls',
@@ -248,6 +259,21 @@ describe('ClusterView inventory and navigation', () => {
     expect(mocks.confirm).not.toHaveBeenCalled()
   })
 
+  it('never exposes a management-page jump for a telemetry-only light node', () => {
+    const view = setupView()
+    const light = host('light', false, '')
+    light.kind = 'light_node'
+    light.origin = ''
+    light.transportSecurity = 'tls'
+    light.federationProtocol = 'light-v1'
+
+    view.openPanel(light)
+
+    expect(mocks.open).not.toHaveBeenCalled()
+    expect(mocks.confirm).not.toHaveBeenCalled()
+    expect(view.transportSecurityLabel(light)).toBe('轻量节点')
+  })
+
   it('defaults to the row list and persists an explicit card preference', () => {
     const view = setupView()
 
@@ -293,6 +319,24 @@ describe('ClusterView inventory and navigation', () => {
       'KPANEL_CLUSTER_ACCESS_V1\nhttps://center.example.com\nkp2.one-time-code',
     )
     expect(mocks.toastSuccess).toHaveBeenCalledWith('接入凭据已复制')
+  })
+
+  it('generates and copies the one-use non-panel Linux enrollment command', async () => {
+    const view = setupView()
+    const enrollment: ClusterLightEnrollment = {
+      command:
+        "bash <(curl -fsSL https://raw.githubusercontent.com/kejilion/sh/main/kejilion.sh) kpanel node join 'kpl1.example-token'",
+      expiresAt: '2026-07-29T10:05:00Z',
+    }
+    mocks.createLightEnrollment.mockResolvedValueOnce(enrollment)
+
+    await view.createLightEnrollment()
+    await view.copyLightEnrollment()
+
+    expect(view.lightEnrollment.value).toEqual(enrollment)
+    expect(mocks.createLightEnrollment).toHaveBeenCalledOnce()
+    expect(mocks.clipboardWriteText).toHaveBeenCalledWith(enrollment.command)
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('轻量节点接入命令已复制')
   })
 
   it('falls back to a temporary selection when the Clipboard API is blocked', async () => {

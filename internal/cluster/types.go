@@ -10,12 +10,20 @@ import (
 const (
 	FederationProtocol   = "v1"
 	FederationProtocolV2 = "v2"
+	LightNodeProtocol    = "light-v1"
 	SummaryScope         = "cluster.summary.read"
 	LocalHostID          = "local"
 	MaxHosts             = 100
 	MaxSummaryBytes      = 64 << 10
 	MaxPairBytes         = 16 << 10
 	MaxFederationV2Bytes = 96 << 10
+)
+
+type HostKind string
+
+const (
+	HostKindPanel     HostKind = "panel"
+	HostKindLightNode HostKind = "light_node"
 )
 
 type TransportSecurity string
@@ -68,6 +76,7 @@ type Host struct {
 	ID                  string            `json:"id"`
 	IsLocal             bool              `json:"isLocal"`
 	Name                string            `json:"name"`
+	Kind                HostKind          `json:"kind"`
 	Origin              string            `json:"origin"`
 	TransportSecurity   TransportSecurity `json:"transportSecurity"`
 	PeerFingerprint     string            `json:"peerFingerprint,omitempty"`
@@ -86,6 +95,32 @@ type Host struct {
 	ResourceVersion     string            `json:"resourceVersion"`
 	CreatedAt           time.Time         `json:"createdAt"`
 	UpdatedAt           time.Time         `json:"updatedAt"`
+}
+
+type LightEnrollment struct {
+	Command   string    `json:"command"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+type LightEnrollRequest struct {
+	Token       string `json:"token"`
+	Name        string `json:"name,omitempty"`
+	NodeVersion string `json:"nodeVersion"`
+}
+
+type LightEnrollResponse struct {
+	NodeID         string `json:"nodeId"`
+	ReportingKey   string `json:"reportingKey"`
+	ReportInterval int    `json:"reportIntervalSeconds"`
+}
+
+type LightReportRequest struct {
+	Telemetry contract.HostTelemetry `json:"telemetry"`
+}
+
+type LightReportResponse struct {
+	AcceptedAt time.Time `json:"acceptedAt"`
+	NextReport int       `json:"nextReportSeconds"`
 }
 
 type AddHostInput struct {
