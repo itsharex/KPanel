@@ -87,7 +87,7 @@ func TestLightEnrollmentIsHTTPSBoundOneUseAndPreservesValidTokenAfterBadInput(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(enrollment.Command, "kejilion.sh) kpanel node join 'kpl1.") ||
+	if !strings.Contains(enrollment.Command, "curl -fsSL https://kejilion.sh) kpanel node join 'kpl1.") ||
 		!enrollment.ExpiresAt.Equal(now.Add(5*time.Minute)) {
 		t.Fatalf("unexpected enrollment: %#v", enrollment)
 	}

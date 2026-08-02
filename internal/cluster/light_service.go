@@ -74,7 +74,7 @@ func (s *Service) CreateLightEnrollmentForOrigin(origin string) (LightEnrollment
 		return LightEnrollment{}, err
 	}
 	token := lightTokenPrefix + base64.RawURLEncoding.EncodeToString(wire)
-	command := "bash <(curl -fsSL https://raw.githubusercontent.com/kejilion/sh/main/kejilion.sh) kpanel node join '" + token + "'"
+	command := "bash <(curl -fsSL https://kejilion.sh) kpanel node join '" + token + "'"
 	return LightEnrollment{Command: command, ExpiresAt: expiresAt}, nil
 }
 

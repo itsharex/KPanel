@@ -87,7 +87,7 @@ Ed25519 签名。新前端调用 `/api/v1/cluster/pairing-codes/v2`，不会把�
 管理员在“集群 → 添加主机 → 非面板 Linux 主机”生成一次性命令：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/kejilion/sh/main/kejilion.sh) kpanel node join '<kpl1-token>'
+bash <(curl -fsSL https://kejilion.sh) kpanel node join '<kpl1-token>'
 ```
 
 规则：

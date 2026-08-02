@@ -326,7 +326,7 @@ describe('ClusterView inventory and navigation', () => {
     const view = setupView()
     const enrollment: ClusterLightEnrollment = {
       command:
-        "bash <(curl -fsSL https://raw.githubusercontent.com/kejilion/sh/main/kejilion.sh) kpanel node join 'kpl1.example-token'",
+        "bash <(curl -fsSL https://kejilion.sh) kpanel node join 'kpl1.example-token'",
       expiresAt: '2026-07-29T10:05:00Z',
     }
     mocks.createLightEnrollment.mockResolvedValueOnce(enrollment)

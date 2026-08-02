@@ -24,7 +24,7 @@
 | `system-bbrv3` | 概览 → 性能与网络工具 → BBRv3 管理 | `k bbrv3` 内的 XanMod 仓库、PSABI 包选择、安装/更新/卸载和 `bbr_on`；KPanel 固定入口为 `KJ_BBRV3_NONINTERACTIVE=1 k bbrv3 <action>` | Agent 仅接受 `status/install/update/uninstall` 固定动作并复用系统维护队列；面板不拼接包名、URL 或 Shell，不自动重启 | **已合规（代码链路）**：脚本 smoke、严格 JSON 解析、固定参数任务、并发锁和前端状态已覆盖；发布前仍须在 Debian 12 / Ubuntu 24 的 x86_64 主机完成安装、重启、更新与卸载闭环 |
 | `system-network` | 软件源、V4/V6、内核、BBR、防火墙 | `kejilion.sh` 系统工具对应函数和远程配置 | 多个 Go 适配器独立执行 | **待审计**：凡脚本已有外联模板/远程来源的项目必须迁移为同源 |
 | `docker-environment` | Docker 安装、换源、维护、迁移、备份与还原 | `kejilion.sh` Docker 工具函数及其远程来源 | KPanel 固定动作适配器 | **待审计**：逐动作核对，不得新增自编外联配置 |
-| `cluster-light-node-runtime` | 集群 → 添加主机 → 非面板 Linux 主机 | `bash <(curl -fsSL https://raw.githubusercontent.com/kejilion/sh/main/kejilion.sh) kpanel node join <授权>`；安装入口固定在 `kejilion/sh@60b7982f5622c5be958a0c8197d3077783505494`，二进制与 `SHA256SUMS` 来自 `https://github.com/kejilion/KPanel/releases/latest/download/` | `kejilion.sh` 固定安装协议按架构下载静态 `kejilion-node`，严格校验 Release 摘要与 `version` 后原子安装；systemd timer 使用同一更新器自动更新并在健康失败时回滚 | **已合规（待 L3）**：不要求 Docker/Go；仅 HTTPS、固定来源和 `amd64`/`arm64` 产物；正式发布须验证 Release 资产、摘要、安装、断网重试、更新回滚与卸载 |
+| `cluster-light-node-runtime` | 集群 → 添加主机 → 非面板 Linux 主机 | `bash <(curl -fsSL https://kejilion.sh) kpanel node join <授权>`；官方短入口按区域加载 `kejilion/sh` 的根目录或 `cn/kejilion.sh`，二者保持同一节点协议；二进制与 `SHA256SUMS` 来自 `https://github.com/kejilion/KPanel/releases/latest/download/` | `kejilion.sh` 固定安装协议按架构下载静态 `kejilion-node`，严格校验 Release 摘要与 `version` 后原子安装；systemd timer 使用同一更新器自动更新并在健康失败时回滚 | **已合规（待 L3）**：不要求 Docker/Go；脚本入口仅使用 HTTPS 官方域名，Release 资产校验不变；正式发布须验证短入口、Release 资产、摘要、安装、断网重试、更新回滚与卸载 |
 
 <!-- external-config-debt:website-nginx:blocked -->
 
