@@ -31,12 +31,16 @@ func TestOriginFromTokenRequiresStrictHTTPSOriginAndFutureExpiry(t *testing.T) {
 	if origin, err := originFromToken(valid); err != nil || origin != "https://panel.example:8443" {
 		t.Fatalf("originFromToken(valid) = %q, %v", origin, err)
 	}
+	rollingUpgrade := lightTokenForTest(t, "https://panel.example", time.Now().UTC().Add(30*time.Minute))
+	if origin, err := originFromToken(rollingUpgrade); err != nil || origin != "https://panel.example" {
+		t.Fatalf("originFromToken(rolling upgrade token) = %q, %v", origin, err)
+	}
 	for _, token := range []string{
 		lightTokenForTest(t, "http://panel.example", time.Now().UTC().Add(time.Minute)),
 		lightTokenForTest(t, "https://user:pass@panel.example", time.Now().UTC().Add(time.Minute)),
 		lightTokenForTest(t, "https://panel.example/path", time.Now().UTC().Add(time.Minute)),
 		lightTokenForTest(t, "https://panel.example", time.Now().UTC().Add(-time.Minute)),
-		lightTokenForTest(t, "https://panel.example", time.Now().UTC().Add(11*time.Minute)),
+		lightTokenForTest(t, "https://panel.example", time.Now().UTC().Add(61*time.Minute)),
 		"kpl1.invalid",
 	} {
 		if _, err := originFromToken(token); err == nil {

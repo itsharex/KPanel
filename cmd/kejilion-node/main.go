@@ -38,6 +38,7 @@ const (
 	lightProtocol     = "light-v1"
 	defaultConfigPath = "/etc/kejilion-node/node.json"
 	maxResponseBytes  = int64(64 << 10)
+	maxTokenAge       = time.Hour
 )
 
 type nodeConfig struct {
@@ -250,7 +251,7 @@ func originFromToken(token string) (string, error) {
 	}
 	now := time.Now().UTC()
 	expiresAt := time.Unix(wire.ExpiresAt, 0).UTC()
-	if wire.Version != 1 || !validHexID(wire.ID) || !expiresAt.After(now) || expiresAt.After(now.Add(10*time.Minute)) {
+	if wire.Version != 1 || !validHexID(wire.ID) || !expiresAt.After(now) || expiresAt.After(now.Add(maxTokenAge)) {
 		return "", errors.New("enrollment token is invalid or expired")
 	}
 	secret, err := base64.RawURLEncoding.DecodeString(wire.Secret)

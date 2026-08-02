@@ -21,6 +21,7 @@ const (
 	lightEnrollPath     = "/api/v3/federation/light/enroll"
 	lightReportPath     = "/api/v3/federation/light/report"
 	lightReportInterval = 30
+	maxLightTokenAge    = time.Hour
 )
 
 type lightTokenWire struct {
@@ -233,7 +234,7 @@ func parseLightToken(token string, now time.Time) (lightTokenWire, []byte, error
 		return lightTokenWire{}, nil, ErrPairingCode
 	}
 	expiresAt := time.Unix(wire.ExpiresAt, 0).UTC()
-	if !expiresAt.After(now.UTC()) || expiresAt.After(now.UTC().Add(10*time.Minute)) {
+	if !expiresAt.After(now.UTC()) || expiresAt.After(now.UTC().Add(maxLightTokenAge)) {
 		return lightTokenWire{}, nil, ErrPairingCode
 	}
 	return wire, secret, nil

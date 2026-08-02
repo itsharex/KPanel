@@ -124,6 +124,45 @@ func TestLightEnrollmentIsHTTPSBoundOneUseAndPreservesValidTokenAfterBadInput(t 
 	}
 }
 
+func TestLightEnrollmentAcceptsLegacyThirtyMinuteTokenDuringRollingUpgrade(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	clock := &serviceTestClock{now: now}
+	service := newLightServiceForTest(t, clock)
+	id := strings.Repeat("a", 32)
+	secret := []byte("0123456789abcdef0123456789abcdef")
+	expiresAt := now.Add(30 * time.Minute)
+	hash := sha256.Sum256(secret)
+	if err := service.light.AddEnrollment(lightEnrollmentRecord{
+		ID: id, SecretHash: hex.EncodeToString(hash[:]), ExpiresAt: expiresAt,
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	wire, err := json.Marshal(lightTokenWire{
+		Version: 1, Origin: "https://panel.example", ID: id,
+		Secret: base64.RawURLEncoding.EncodeToString(secret), ExpiresAt: expiresAt.Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := lightTokenPrefix + base64.RawURLEncoding.EncodeToString(wire)
+	if _, err := service.EnrollLightNode("198.51.100.10", LightEnrollRequest{
+		Token: token, Name: "legacy-edge", NodeVersion: "0.37.1",
+	}); err != nil {
+		t.Fatalf("legacy 30-minute token rejected during rolling upgrade: %v", err)
+	}
+
+	tooLong, err := json.Marshal(lightTokenWire{
+		Version: 1, Origin: "https://panel.example", ID: strings.Repeat("b", 32),
+		Secret: base64.RawURLEncoding.EncodeToString(secret), ExpiresAt: now.Add(61 * time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := parseLightToken(lightTokenPrefix+base64.RawURLEncoding.EncodeToString(tooLong), now); !errors.Is(err, ErrPairingCode) {
+		t.Fatalf("overlong token error = %v, want ErrPairingCode", err)
+	}
+}
+
 func TestLightReportAuthenticatesBeforeReplayAndUpdatesState(t *testing.T) {
 	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
 	clock := &serviceTestClock{now: now}
