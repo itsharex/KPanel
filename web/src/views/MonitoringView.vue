@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/MonitoringView/en-US').then((module) => module.default))
-import { Box, Cpu, Database, HardDrive, MemoryStick, Network, RefreshCw } from '@lucide/vue'
+import { Box, Cpu, Database, HardDrive, MemoryStick, Network, RadioTower, RefreshCw } from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
@@ -18,10 +18,16 @@ import {
   type MonitoringMetric,
 } from '@/lib/monitoringNavigation'
 import { isHistoricalContainer, newestContainerSampleTime } from '@/lib/monitoringPresentation'
+import {
+  latestOperatorLatency,
+  mergeOperatorLatencyVisibility,
+  operatorLatencyColors,
+} from '@/lib/operatorLatencyPresentation'
 import type {
   MonitoringContainerSeries,
   MonitoringHistory,
   MonitoringHostPoint,
+  MonitoringOperatorLatencySeries,
   MonitoringRange,
 } from '@/types/api'
 
@@ -31,6 +37,12 @@ const ranges: Array<{ value: MonitoringRange; label: string }> = [
   { value: '24h', label: '24 小时' },
   { value: '7d', label: '7 天' },
 ]
+const operatorLabels: Record<MonitoringOperatorLatencySeries['operator'], string> = {
+  telecom: '电信', unicom: '联通', mobile: '移动',
+}
+const regionLabels: Record<MonitoringOperatorLatencySeries['region'], string> = {
+  beijing: '北京', shanghai: '上海', guangzhou: '广州',
+}
 
 const history = shallowRef<MonitoringHistory>()
 const route = useRoute()
@@ -41,6 +53,7 @@ const refreshing = ref(false)
 const error = ref('')
 const diskChartMode = ref<'capacity' | 'io'>('capacity')
 const networkChartMode = ref<'traffic' | 'connections'>('traffic')
+const operatorLatencyVisibility = ref<Record<string, boolean>>({})
 let controller: AbortController | undefined
 
 const latestHost = computed<MonitoringHostPoint | undefined>(() => history.value?.host.at(-1))
@@ -151,6 +164,19 @@ const hostNetworkConnections = computed<TrendSeries[]>(() => [
 const activeHostNetwork = computed(() => networkChartMode.value === 'traffic'
   ? hostNetworkTraffic.value
   : hostNetworkConnections.value)
+const operatorLatencyRoutes = computed<MonitoringOperatorLatencySeries[]>(() => history.value?.operatorLatency || [])
+const operatorLatencyChart = computed<TrendSeries[]>(() => operatorLatencyRoutes.value
+  .filter((series) => operatorLatencyVisibility.value[series.id])
+  .map((series) => ({
+    label: operatorLatencyLabel(series),
+    color: operatorLatencyColors[series.id] || 'var(--brand)',
+    points: series.points.flatMap((point) => point.latencyMilliseconds === null
+      ? []
+      : [{ at: point.collectedAt, value: point.latencyMilliseconds }]),
+  }))
+  .filter((series) => series.points.length > 0))
+const operatorLatencyVisibleCount = computed(() => operatorLatencyRoutes.value
+  .filter((series) => operatorLatencyVisibility.value[series.id]).length)
 const containerCPU = computed<TrendSeries[]>(() => [{
   label: 'CPU',
   color: 'var(--brand)',
@@ -217,6 +243,34 @@ function containerIsHistorical(container: MonitoringContainerSeries): boolean {
   return isHistoricalContainer(container, newestContainerSample.value)
 }
 
+function toggleOperatorLatency(id: string): void {
+  operatorLatencyVisibility.value = {
+    ...operatorLatencyVisibility.value,
+    [id]: !operatorLatencyVisibility.value[id],
+  }
+}
+
+function showAllOperatorLatency(visible: boolean): void {
+  operatorLatencyVisibility.value = Object.fromEntries(
+    operatorLatencyRoutes.value.map((series) => [series.id, visible]),
+  )
+}
+
+function formatLatency(value: number): string {
+  return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ms`
+}
+
+function operatorLatencyLabel(series: MonitoringOperatorLatencySeries): string {
+  return `${operatorLabels[series.operator]} · ${regionLabels[series.region]}`
+}
+
+function latestLatencyLabel(series: MonitoringOperatorLatencySeries): string {
+  const latency = latestOperatorLatency(series)
+  if (latency === undefined) return '等待采样'
+  if (latency === null) return '超时'
+  return formatLatency(latency)
+}
+
 async function load(silent = false): Promise<void> {
   controller?.abort()
   controller = new AbortController()
@@ -226,6 +280,10 @@ async function load(silent = false): Promise<void> {
   try {
     const result = await api.monitoring.history(selectedRange.value, controller.signal)
     history.value = result
+    operatorLatencyVisibility.value = mergeOperatorLatencyVisibility(
+      operatorLatencyVisibility.value,
+      result.operatorLatency || [],
+    )
     if (!result.containers.some((item) => item.containerId === selectedContainerId.value)) {
       selectedContainerId.value = result.containers[0]?.containerId || ''
     }
@@ -376,6 +434,52 @@ onBeforeUnmount(() => controller?.abort())
       </div>
       <EmptyState v-else title="正在积累历史数据" description="功能启用后约 1 分钟生成首个主机采样点，刷新页面即可查看。" />
 
+      <article v-if="operatorLatencyRoutes.length" class="chart-card chart-card--wide operator-latency-card">
+        <header class="operator-latency-heading">
+          <div>
+            <RadioTower :size="18" />
+            <span><strong>三网延迟</strong><small>电信、联通、移动在北京、上海、广州的固定节点</small></span>
+          </div>
+          <span v-if="history.storage.lastOperatorLatencyAt">
+            最近一轮成功 {{ history.storage.lastOperatorLatencySuccessful || 0 }}/9 · 每
+            {{ Math.max(1, Math.round((history.storage.operatorLatencyIntervalSeconds || 300) / 60)) }} 分钟
+          </span>
+          <span v-else>等待首次三网延迟采样</span>
+        </header>
+        <div class="operator-latency-controls">
+          <div class="operator-latency-routes" aria-label="线路显示选择">
+            <button
+              v-for="series in operatorLatencyRoutes"
+              :key="series.id"
+              class="operator-route"
+              :class="{ 'operator-route--active': operatorLatencyVisibility[series.id] }"
+              type="button"
+              :aria-pressed="Boolean(operatorLatencyVisibility[series.id])"
+              :title="series.address"
+              @click="toggleOperatorLatency(series.id)"
+            >
+              <i :style="{ background: operatorLatencyColors[series.id] }" />
+              <span>{{ operatorLatencyLabel(series) }}</span>
+              <small>{{ latestLatencyLabel(series) }}</small>
+            </button>
+          </div>
+          <div class="operator-latency-actions">
+            <button type="button" @click="showAllOperatorLatency(true)">全显示</button>
+            <button type="button" @click="showAllOperatorLatency(false)">全隐藏</button>
+          </div>
+        </div>
+        <p class="operator-latency-note">每 5 分钟采样固定节点；超时记为缺测，不记作 0 ms。</p>
+        <TrendChart
+          v-if="operatorLatencyChart.length"
+          :series="operatorLatencyChart"
+          :formatter="formatLatency"
+        />
+        <div v-else-if="operatorLatencyVisibleCount === 0" class="operator-latency-empty">
+          已隐藏全部线路，选择上方线路即可显示。
+        </div>
+        <div v-else class="operator-latency-empty">等待首次三网延迟采样。</div>
+      </article>
+
       <section class="container-section">
         <header class="section-heading">
           <div>
@@ -489,6 +593,26 @@ onBeforeUnmount(() => controller?.abort())
 .chart-switch { display: inline-flex !important; gap: 2px !important; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-subtle); }
 .chart-switch button { min-height: 26px; padding: 0 9px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: .72rem; cursor: pointer; }
 .chart-switch button:hover, .chart-switch button.is-active { color: var(--brand-strong); background: var(--brand-soft); }
+.operator-latency-card { padding-bottom: 12px; }
+.operator-latency-heading > div > span { display: grid; gap: 2px; }
+.operator-latency-heading small { color: var(--muted); font-size: .72rem; font-weight: 400; }
+.operator-latency-controls { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.operator-latency-routes { display: flex; min-width: 0; flex: 1; flex-wrap: wrap; gap: 6px; }
+.operator-route {
+  display: inline-flex; min-height: 30px; align-items: center; gap: 6px; padding: 0 9px;
+  border: 1px solid var(--border); border-radius: 999px; color: var(--muted);
+  background: var(--surface-subtle); font-size: .72rem; cursor: pointer;
+}
+.operator-route:hover { border-color: color-mix(in srgb, var(--brand) 42%, var(--border)); color: var(--text); }
+.operator-route--active { border-color: color-mix(in srgb, var(--brand) 38%, var(--border)); color: var(--text); background: var(--brand-soft); }
+.operator-route i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; opacity: .38; }
+.operator-route--active i { opacity: 1; }
+.operator-route small { color: inherit; font-size: .66rem; opacity: .72; }
+.operator-latency-actions { display: inline-flex; flex: 0 0 auto; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-subtle); }
+.operator-latency-actions button { min-height: 26px; padding: 0 8px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: .7rem; cursor: pointer; }
+.operator-latency-actions button:hover { color: var(--brand-strong); background: var(--brand-soft); }
+.operator-latency-note { margin: 0 0 2px; color: var(--muted); font-size: .7rem; }
+.operator-latency-empty { display: grid; min-height: 210px; place-items: center; color: var(--muted); font-size: .8rem; }
 .container-section { padding: 18px; }
 .section-heading h2, .container-detail h3 { margin: 0; font-size: 1rem; }
 .section-heading p, .container-detail p { margin: 3px 0 0; color: var(--muted); font-size: .76rem; }
@@ -541,5 +665,9 @@ onBeforeUnmount(() => controller?.abort())
   .container-list-shell { min-height: 0; }
   .container-list { position: static; max-height: 240px; }
   .container-detail > header { align-items: flex-start; flex-direction: column; }
+  .operator-latency-heading, .operator-latency-controls { align-items: flex-start; flex-direction: column; }
+  .operator-latency-actions { align-self: stretch; }
+  .operator-latency-actions button { flex: 1; }
+  .operator-route { flex: 1 1 calc(50% - 4px); justify-content: flex-start; }
 }
 </style>

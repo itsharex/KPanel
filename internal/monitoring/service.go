@@ -50,48 +50,60 @@ type DockerSource interface {
 }
 
 type Config struct {
-	StateDir          string
-	System            SystemSource
-	Docker            DockerSource
-	Now               func() time.Time
-	HostInterval      time.Duration
-	ContainerInterval time.Duration
-	SampleTimeout     time.Duration
-	RetentionDays     int
-	MaxContainers     int
-	MaxDailyBytes     int64
-	MaxStorageBytes   int64
+	StateDir                string
+	System                  SystemSource
+	Docker                  DockerSource
+	OperatorLatency         OperatorLatencyProber
+	Now                     func() time.Time
+	HostInterval            time.Duration
+	ContainerInterval       time.Duration
+	OperatorLatencyInterval time.Duration
+	SampleTimeout           time.Duration
+	RetentionDays           int
+	MaxContainers           int
+	MaxDailyBytes           int64
+	MaxStorageBytes         int64
 }
 
 type Service struct {
-	stateDir          string
-	system            SystemSource
-	docker            DockerSource
-	now               func() time.Time
-	hostInterval      time.Duration
-	containerInterval time.Duration
-	sampleTimeout     time.Duration
-	retentionDays     int
-	maxContainers     int
-	maxDailyBytes     int64
-	maxStorageBytes   int64
-	querySlots        chan struct{}
+	stateDir                string
+	system                  SystemSource
+	docker                  DockerSource
+	operatorLatency         OperatorLatencyProber
+	now                     func() time.Time
+	hostInterval            time.Duration
+	containerInterval       time.Duration
+	operatorLatencyInterval time.Duration
+	sampleTimeout           time.Duration
+	retentionDays           int
+	maxContainers           int
+	maxDailyBytes           int64
+	maxStorageBytes         int64
+	querySlots              chan struct{}
 
-	mu              sync.RWMutex
-	status          contract.MonitoringStorageStatus
-	nextContainerAt time.Time
+	mu                    sync.RWMutex
+	status                contract.MonitoringStorageStatus
+	nextContainerAt       time.Time
+	nextOperatorLatencyAt time.Time
 }
 
 type diskRecord struct {
-	Version            int                  `json:"v"`
-	CollectedAt        time.Time            `json:"at"`
-	Host               diskHostPoint        `json:"h"`
-	Containers         []diskContainerPoint `json:"c,omitempty"`
-	ContainerSampled   bool                 `json:"cs,omitempty"`
-	DockerAvailable    bool                 `json:"da,omitempty"`
-	ContainerTotal     int                  `json:"ct,omitempty"`
-	ContainerFailed    int                  `json:"cf,omitempty"`
-	ContainerTruncated int                  `json:"cx,omitempty"`
+	Version            int                        `json:"v"`
+	CollectedAt        time.Time                  `json:"at"`
+	Host               diskHostPoint              `json:"h"`
+	Containers         []diskContainerPoint       `json:"c,omitempty"`
+	OperatorLatency    []diskOperatorLatencyPoint `json:"ol,omitempty"`
+	ContainerSampled   bool                       `json:"cs,omitempty"`
+	DockerAvailable    bool                       `json:"da,omitempty"`
+	ContainerTotal     int                        `json:"ct,omitempty"`
+	ContainerFailed    int                        `json:"cf,omitempty"`
+	ContainerTruncated int                        `json:"cx,omitempty"`
+}
+
+type diskOperatorLatencyPoint struct {
+	ID                  string  `json:"i"`
+	LatencyMilliseconds float64 `json:"m,omitempty"`
+	Reachable           bool    `json:"r,omitempty"`
 }
 
 type diskHostPoint struct {
@@ -150,6 +162,9 @@ func New(config Config) (*Service, error) {
 	if config.ContainerInterval <= 0 {
 		config.ContainerInterval = defaultContainerEvery
 	}
+	if config.OperatorLatencyInterval <= 0 {
+		config.OperatorLatencyInterval = defaultOperatorLatencyEvery
+	}
 	if config.SampleTimeout <= 0 {
 		config.SampleTimeout = defaultSampleTimeout
 	}
@@ -185,9 +200,11 @@ func New(config Config) (*Service, error) {
 	}
 	service := &Service{
 		stateDir: config.StateDir, system: config.System, docker: config.Docker,
-		now: config.Now, hostInterval: config.HostInterval,
+		operatorLatency: config.OperatorLatency,
+		now:             config.Now, hostInterval: config.HostInterval,
 		containerInterval: config.ContainerInterval, sampleTimeout: config.SampleTimeout,
-		retentionDays: config.RetentionDays, maxContainers: config.MaxContainers,
+		operatorLatencyInterval: config.OperatorLatencyInterval,
+		retentionDays:           config.RetentionDays, maxContainers: config.MaxContainers,
 		maxDailyBytes: config.MaxDailyBytes, maxStorageBytes: config.MaxStorageBytes,
 		querySlots: make(chan struct{}, 2),
 	}
@@ -201,9 +218,11 @@ func New(config Config) (*Service, error) {
 func (s *Service) baseStatus() contract.MonitoringStorageStatus {
 	return contract.MonitoringStorageStatus{
 		Enabled: true, RetentionDays: s.retentionDays,
-		HostIntervalSeconds:      int(s.hostInterval.Seconds()),
-		ContainerIntervalSeconds: int(s.containerInterval.Seconds()),
-		MaxContainers:            s.maxContainers, MaxStorageBytes: s.maxStorageBytes,
+		HostIntervalSeconds:            int(s.hostInterval.Seconds()),
+		ContainerIntervalSeconds:       int(s.containerInterval.Seconds()),
+		OperatorLatencyIntervalSeconds: int(s.operatorLatencyInterval.Seconds()),
+		OperatorLatencyAvailable:       s.operatorLatency != nil,
+		MaxContainers:                  s.maxContainers, MaxStorageBytes: s.maxStorageBytes,
 	}
 }
 
@@ -241,7 +260,21 @@ func (s *Service) Sample(ctx context.Context) error {
 	if includeContainers {
 		s.nextContainerAt = now.Add(s.containerInterval)
 	}
+	includeOperatorLatency := s.operatorLatency != nil &&
+		(s.nextOperatorLatencyAt.IsZero() || !now.Before(s.nextOperatorLatencyAt))
+	if includeOperatorLatency {
+		s.nextOperatorLatencyAt = now.Add(s.operatorLatencyInterval)
+	}
 	s.mu.Unlock()
+
+	var operatorLatency <-chan []operatorLatencyResult
+	if includeOperatorLatency {
+		result := make(chan []operatorLatencyResult, 1)
+		operatorLatency = result
+		go func() {
+			result <- collectOperatorLatency(ctx, s.operatorLatency)
+		}()
+	}
 
 	var dockerErr error
 	if includeContainers && s.docker != nil {
@@ -274,6 +307,21 @@ func (s *Service) Sample(ctx context.Context) error {
 		}
 	}
 
+	operatorLatencySuccessful := 0
+	operatorLatencyFailed := 0
+	if operatorLatency != nil {
+		for _, item := range <-operatorLatency {
+			point := diskOperatorLatencyPoint{ID: item.target.ID, Reachable: item.reachable}
+			if item.reachable {
+				point.LatencyMilliseconds = item.milliseconds
+				operatorLatencySuccessful++
+			} else {
+				operatorLatencyFailed++
+			}
+			record.OperatorLatency = append(record.OperatorLatency, point)
+		}
+	}
+
 	if err := s.appendRecord(record); err != nil {
 		s.recordFailure(err)
 		return err
@@ -293,6 +341,15 @@ func (s *Service) Sample(ctx context.Context) error {
 	status.LastContainerRecorded = len(record.Containers)
 	status.LastContainerFailed = record.ContainerFailed
 	status.LastContainerTruncated = record.ContainerTruncated
+	if includeOperatorLatency {
+		status.LastOperatorLatencyAt = &now
+		status.LastOperatorLatencySuccessful = operatorLatencySuccessful
+		status.LastOperatorLatencyFailed = operatorLatencyFailed
+	} else {
+		status.LastOperatorLatencyAt = s.status.LastOperatorLatencyAt
+		status.LastOperatorLatencySuccessful = s.status.LastOperatorLatencySuccessful
+		status.LastOperatorLatencyFailed = s.status.LastOperatorLatencyFailed
+	}
 	if dockerErr != nil {
 		status.LastError = boundedError(dockerErr)
 	}
@@ -504,15 +561,21 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 	start := now.Add(-spec.duration)
 	result := contract.MonitoringHistory{
 		Range: spec.name, StartedAt: start, EndedAt: now,
-		BucketSeconds: int(spec.bucket.Seconds()),
-		Host:          []contract.MonitoringHostPoint{},
-		Containers:    []contract.MonitoringContainerSeries{},
-		Storage:       s.Status(),
+		BucketSeconds:   int(spec.bucket.Seconds()),
+		Host:            []contract.MonitoringHostPoint{},
+		Containers:      []contract.MonitoringContainerSeries{},
+		OperatorLatency: operatorLatencyCatalog(),
+		Storage:         s.Status(),
 	}
 	hostPoints := make([]contract.MonitoringHostPoint, 0, maxHistoryPoints)
 	containerPoints := make(map[string]*contract.MonitoringContainerSeries)
 	var previousHost *contract.MonitoringHostPoint
 	previousContainers := make(map[string]contract.MonitoringContainerPoint)
+	operatorLatencySeries := make(map[string]*contract.MonitoringOperatorLatencySeries)
+	for index := range result.OperatorLatency {
+		series := &result.OperatorLatency[index]
+		operatorLatencySeries[series.ID] = series
+	}
 	scanned, skipped, err := s.scanRecords(ctx, start, now, func(record diskRecord) {
 		host := record.Host.contractPoint(record.CollectedAt)
 		if previousHost != nil {
@@ -558,6 +621,18 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 			series.Name = container.Name
 			series.Image = container.Image
 			series.Points = appendContainerBucket(series.Points, point, spec.bucket)
+		}
+		for _, latency := range record.OperatorLatency {
+			series := operatorLatencySeries[latency.ID]
+			if series == nil {
+				continue
+			}
+			point := contract.MonitoringOperatorLatencyPoint{CollectedAt: record.CollectedAt}
+			if latency.Reachable {
+				value := latency.LatencyMilliseconds
+				point.LatencyMilliseconds = &value
+			}
+			series.Points = appendOperatorLatencyBucket(series.Points, point, spec.bucket)
 		}
 	})
 	if err != nil {
@@ -666,6 +741,42 @@ func counterRate(previous uint64, current uint64, seconds float64) float64 {
 		return 0
 	}
 	return float64(current-previous) / seconds
+}
+
+func operatorLatencyCatalog() []contract.MonitoringOperatorLatencySeries {
+	series := make([]contract.MonitoringOperatorLatencySeries, 0, len(operatorLatencyTargets))
+	for _, target := range operatorLatencyTargets {
+		series = append(series, contract.MonitoringOperatorLatencySeries{
+			ID: target.ID, Operator: target.Operator, Region: target.Region,
+			Address: target.Address, Points: []contract.MonitoringOperatorLatencyPoint{},
+		})
+	}
+	return series
+}
+
+func appendOperatorLatencyBucket(
+	points []contract.MonitoringOperatorLatencyPoint,
+	point contract.MonitoringOperatorLatencyPoint,
+	width time.Duration,
+) []contract.MonitoringOperatorLatencyPoint {
+	bucket := point.CollectedAt.Unix() / int64(width.Seconds())
+	if len(points) == 0 ||
+		points[len(points)-1].CollectedAt.Unix()/int64(width.Seconds()) != bucket {
+		points = append(points, point)
+		if len(points) > maxHistoryPoints {
+			copy(points, points[len(points)-maxHistoryPoints:])
+			points = points[:maxHistoryPoints]
+		}
+		return points
+	}
+	last := &points[len(points)-1]
+	if point.LatencyMilliseconds != nil &&
+		(last.LatencyMilliseconds == nil || *point.LatencyMilliseconds > *last.LatencyMilliseconds) {
+		*last = point
+	} else if last.LatencyMilliseconds == nil {
+		last.CollectedAt = point.CollectedAt
+	}
+	return points
 }
 
 func appendHostBucket(

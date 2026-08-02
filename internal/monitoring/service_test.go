@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +31,40 @@ type fakeDockerSource struct {
 	batch dockerx.ContainerMetricBatch
 	err   error
 	calls int
+}
+
+type fakeOperatorLatencyProber struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	calls     []string
+	failures  map[string]bool
+}
+
+func (prober *fakeOperatorLatencyProber) Probe(
+	ctx context.Context,
+	address string,
+) (time.Duration, error) {
+	prober.mu.Lock()
+	prober.active++
+	if prober.active > prober.maxActive {
+		prober.maxActive = prober.active
+	}
+	prober.calls = append(prober.calls, address)
+	prober.mu.Unlock()
+	select {
+	case <-time.After(time.Millisecond):
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	prober.mu.Lock()
+	prober.active--
+	fails := prober.failures[address]
+	prober.mu.Unlock()
+	if fails {
+		return 0, errors.New("unreachable")
+	}
+	return time.Duration(len(address)) * time.Millisecond, nil
 }
 
 func (source *fakeDockerSource) RunningContainerStats(
@@ -119,6 +156,91 @@ func TestSampleAndHistoryPersistBoundedHostAndContainerMetrics(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("history shard permissions = %o", info.Mode().Perm())
+	}
+}
+
+func TestOperatorLatencyCollectionIsFixedBoundedAndPersisted(t *testing.T) {
+	current := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	failedAddress := operatorLatencyTargets[2].Address
+	prober := &fakeOperatorLatencyProber{failures: map[string]bool{failedAddress: true}}
+	service, err := New(Config{
+		StateDir: t.TempDir(), System: fakeSystemSource{summary: testSummary(1, 2)},
+		Now: func() time.Time { return current }, OperatorLatency: prober,
+		OperatorLatencyInterval: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := service.Status()
+	if !status.OperatorLatencyAvailable || status.OperatorLatencyIntervalSeconds != 60 ||
+		status.LastOperatorLatencySuccessful != len(operatorLatencyTargets)-1 ||
+		status.LastOperatorLatencyFailed != 1 {
+		t.Fatalf("unexpected operator latency status: %#v", status)
+	}
+	prober.mu.Lock()
+	callCount, maxActive := len(prober.calls), prober.maxActive
+	prober.mu.Unlock()
+	if callCount != len(operatorLatencyTargets) || maxActive > operatorProbeWorkers {
+		t.Fatalf("operator probe calls=%d max active=%d", callCount, maxActive)
+	}
+	history, err := service.History(context.Background(), "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.OperatorLatency) != len(operatorLatencyTargets) {
+		t.Fatalf("operator series count=%d", len(history.OperatorLatency))
+	}
+	for index, series := range history.OperatorLatency {
+		target := operatorLatencyTargets[index]
+		if series.ID != target.ID || series.Operator != target.Operator ||
+			series.Region != target.Region || series.Address != target.Address || len(series.Points) != 1 {
+			t.Fatalf("unexpected operator series at %d: %#v", index, series)
+		}
+		if target.Address == failedAddress {
+			if series.Points[0].LatencyMilliseconds != nil {
+				t.Fatalf("failed probe was recorded as latency: %#v", series.Points[0])
+			}
+		} else if series.Points[0].LatencyMilliseconds == nil {
+			t.Fatalf("successful probe was recorded as missing: %#v", series.Points[0])
+		}
+	}
+}
+
+func TestOperatorLatencyCatalogIsNineFixedIPv4Targets(t *testing.T) {
+	if len(operatorLatencyTargets) != 9 {
+		t.Fatalf("operator target count=%d", len(operatorLatencyTargets))
+	}
+	seen := make(map[string]struct{}, len(operatorLatencyTargets))
+	counts := make(map[string]int)
+	for _, target := range operatorLatencyTargets {
+		if target.ID != fmt.Sprintf("%s-%s", target.Operator, target.Region) {
+			t.Fatalf("target id mismatch: %#v", target)
+		}
+		if ip := net.ParseIP(target.Address); ip == nil || ip.To4() == nil {
+			t.Fatalf("target is not fixed IPv4: %#v", target)
+		}
+		if _, exists := seen[target.Address]; exists {
+			t.Fatalf("duplicate target address: %s", target.Address)
+		}
+		seen[target.Address] = struct{}{}
+		counts[target.Operator]++
+	}
+	for _, operator := range []string{"telecom", "unicom", "mobile"} {
+		if counts[operator] != 3 {
+			t.Fatalf("operator %s target count=%d", operator, counts[operator])
+		}
+	}
+}
+
+func TestDNSRootNSQueryUsesBoundedValidatedPacket(t *testing.T) {
+	query := dnsRootNSQuery(0x1234)
+	if len(query) != 17 || query[0] != 0x12 || query[1] != 0x34 ||
+		query[2] != 0x01 || query[5] != 0x01 || query[12] != 0 ||
+		query[13] != 0 || query[14] != 2 || query[15] != 0 || query[16] != 1 {
+		t.Fatalf("unexpected DNS query: %v", query)
 	}
 }
 
@@ -269,6 +391,11 @@ func TestCompactRecordFitsDailyStorageBudgetAtMaximumContainerCount(t *testing.T
 	full.ContainerSampled = true
 	full.DockerAvailable = true
 	full.ContainerTotal = defaultMaxContainers
+	for _, target := range operatorLatencyTargets {
+		full.OperatorLatency = append(full.OperatorLatency, diskOperatorLatencyPoint{
+			ID: target.ID, LatencyMilliseconds: 999.9, Reachable: true,
+		})
+	}
 	for index := 0; index < defaultMaxContainers; index++ {
 		full.Containers = append(full.Containers, diskContainerPoint{
 			ID: strings.Repeat("a", 64), Name: "container-name-1234567890",
@@ -332,15 +459,44 @@ func TestBucketAggregationKeepsResourcePeaksAndLatestCounters(t *testing.T) {
 		container[0].BlockWriteRate != 9 {
 		t.Fatalf("container bucket did not preserve peak and latest counter: %#v", container[0])
 	}
+
+	latencyA := 12.5
+	latencyB := 30.25
+	latency := appendOperatorLatencyBucket(nil, contract.MonitoringOperatorLatencyPoint{
+		CollectedAt: at, LatencyMilliseconds: &latencyA,
+	}, time.Minute)
+	latency = appendOperatorLatencyBucket(latency, contract.MonitoringOperatorLatencyPoint{
+		CollectedAt: at.Add(20 * time.Second), LatencyMilliseconds: nil,
+	}, time.Minute)
+	latency = appendOperatorLatencyBucket(latency, contract.MonitoringOperatorLatencyPoint{
+		CollectedAt: at.Add(40 * time.Second), LatencyMilliseconds: &latencyB,
+	}, time.Minute)
+	if len(latency) != 1 || latency[0].LatencyMilliseconds == nil ||
+		*latency[0].LatencyMilliseconds != latencyB ||
+		!latency[0].CollectedAt.Equal(at.Add(40*time.Second)) {
+		t.Fatalf("latency bucket did not preserve successful peak: %#v", latency)
+	}
 }
 
 func TestMaximumSevenDayResponseFitsPanelAgentLimit(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	history := contract.MonitoringHistory{
 		Range: "7d", StartedAt: now.Add(-7 * 24 * time.Hour), EndedAt: now,
-		BucketSeconds: int((30 * time.Minute).Seconds()),
-		Host:          make([]contract.MonitoringHostPoint, 7*24*2),
-		Containers:    make([]contract.MonitoringContainerSeries, maxHistorySeries),
+		BucketSeconds:   int((30 * time.Minute).Seconds()),
+		Host:            make([]contract.MonitoringHostPoint, 7*24*2),
+		Containers:      make([]contract.MonitoringContainerSeries, maxHistorySeries),
+		OperatorLatency: operatorLatencyCatalog(),
+	}
+	for seriesIndex := range history.OperatorLatency {
+		series := &history.OperatorLatency[seriesIndex]
+		series.Points = make([]contract.MonitoringOperatorLatencyPoint, 7*24*2)
+		for pointIndex := range series.Points {
+			value := 999.9
+			series.Points[pointIndex] = contract.MonitoringOperatorLatencyPoint{
+				CollectedAt:         now.Add(-time.Duration(pointIndex) * 30 * time.Minute),
+				LatencyMilliseconds: &value,
+			}
+		}
 	}
 	for index := range history.Host {
 		history.Host[index] = contract.MonitoringHostPoint{

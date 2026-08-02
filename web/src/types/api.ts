@@ -895,11 +895,25 @@ export interface MonitoringContainerSeries {
   points: MonitoringContainerPoint[]
 }
 
+export interface MonitoringOperatorLatencyPoint {
+  collectedAt: string
+  latencyMilliseconds: number | null
+}
+
+export interface MonitoringOperatorLatencySeries {
+  id: string
+  operator: 'telecom' | 'unicom' | 'mobile'
+  region: 'beijing' | 'shanghai' | 'guangzhou'
+  address: string
+  points: MonitoringOperatorLatencyPoint[]
+}
+
 export interface MonitoringStorageStatus {
   enabled: boolean
   retentionDays: number
   hostIntervalSeconds: number
   containerIntervalSeconds: number
+  operatorLatencyIntervalSeconds?: number
   maxContainers: number
   storageBytes: number
   maxStorageBytes: number
@@ -910,6 +924,10 @@ export interface MonitoringStorageStatus {
   lastContainerFailed: number
   lastContainerTruncated: number
   lastDockerAvailable: boolean
+  operatorLatencyAvailable?: boolean
+  lastOperatorLatencyAt?: string
+  lastOperatorLatencySuccessful?: number
+  lastOperatorLatencyFailed?: number
   storageLimitReached: boolean
 }
 
@@ -920,6 +938,7 @@ export interface MonitoringHistory {
   bucketSeconds: number
   host: MonitoringHostPoint[]
   containers: MonitoringContainerSeries[]
+  operatorLatency?: MonitoringOperatorLatencySeries[]
   storage: MonitoringStorageStatus
   scannedBytes: number
   skippedLines: number

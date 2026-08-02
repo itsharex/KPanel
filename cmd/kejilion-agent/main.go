@@ -127,9 +127,10 @@ func run(arguments []string) error {
 	systemCollector := systeminfo.NewCollector()
 	systemCollector.PublicNetworkLookupEnabled = *enablePublicNetworkLookup
 	historyService, historyErr := monitoring.New(monitoring.Config{
-		StateDir: filepath.Join(*stateDir, "monitoring"),
-		System:   systemCollector,
-		Docker:   dockerClient,
+		StateDir:        filepath.Join(*stateDir, "monitoring"),
+		System:          systemCollector,
+		Docker:          dockerClient,
+		OperatorLatency: monitoring.NewOperatorLatencyProber(),
 	})
 	if historyErr != nil {
 		slog.Warn("history monitoring is unavailable", "error", historyErr)

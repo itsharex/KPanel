@@ -53,33 +53,52 @@ type MonitoringContainerSeries struct {
 	Points      []MonitoringContainerPoint `json:"points"`
 }
 
+type MonitoringOperatorLatencyPoint struct {
+	CollectedAt         time.Time `json:"collectedAt"`
+	LatencyMilliseconds *float64  `json:"latencyMilliseconds"`
+}
+
+type MonitoringOperatorLatencySeries struct {
+	ID       string                           `json:"id"`
+	Operator string                           `json:"operator"`
+	Region   string                           `json:"region"`
+	Address  string                           `json:"address"`
+	Points   []MonitoringOperatorLatencyPoint `json:"points"`
+}
+
 type MonitoringStorageStatus struct {
-	Enabled                  bool       `json:"enabled"`
-	RetentionDays            int        `json:"retentionDays"`
-	HostIntervalSeconds      int        `json:"hostIntervalSeconds"`
-	ContainerIntervalSeconds int        `json:"containerIntervalSeconds"`
-	MaxContainers            int        `json:"maxContainers"`
-	StorageBytes             int64      `json:"storageBytes"`
-	MaxStorageBytes          int64      `json:"maxStorageBytes"`
-	LastSampleAt             *time.Time `json:"lastSampleAt,omitempty"`
-	LastError                string     `json:"lastError,omitempty"`
-	LastContainerTotal       int        `json:"lastContainerTotal"`
-	LastContainerRecorded    int        `json:"lastContainerRecorded"`
-	LastContainerFailed      int        `json:"lastContainerFailed"`
-	LastContainerTruncated   int        `json:"lastContainerTruncated"`
-	LastDockerAvailable      bool       `json:"lastDockerAvailable"`
-	StorageLimitReached      bool       `json:"storageLimitReached"`
+	Enabled                        bool       `json:"enabled"`
+	RetentionDays                  int        `json:"retentionDays"`
+	HostIntervalSeconds            int        `json:"hostIntervalSeconds"`
+	ContainerIntervalSeconds       int        `json:"containerIntervalSeconds"`
+	OperatorLatencyIntervalSeconds int        `json:"operatorLatencyIntervalSeconds"`
+	MaxContainers                  int        `json:"maxContainers"`
+	StorageBytes                   int64      `json:"storageBytes"`
+	MaxStorageBytes                int64      `json:"maxStorageBytes"`
+	LastSampleAt                   *time.Time `json:"lastSampleAt,omitempty"`
+	LastError                      string     `json:"lastError,omitempty"`
+	LastContainerTotal             int        `json:"lastContainerTotal"`
+	LastContainerRecorded          int        `json:"lastContainerRecorded"`
+	LastContainerFailed            int        `json:"lastContainerFailed"`
+	LastContainerTruncated         int        `json:"lastContainerTruncated"`
+	LastDockerAvailable            bool       `json:"lastDockerAvailable"`
+	OperatorLatencyAvailable       bool       `json:"operatorLatencyAvailable"`
+	LastOperatorLatencyAt          *time.Time `json:"lastOperatorLatencyAt,omitempty"`
+	LastOperatorLatencySuccessful  int        `json:"lastOperatorLatencySuccessful"`
+	LastOperatorLatencyFailed      int        `json:"lastOperatorLatencyFailed"`
+	StorageLimitReached            bool       `json:"storageLimitReached"`
 }
 
 type MonitoringHistory struct {
-	Range           string                      `json:"range"`
-	StartedAt       time.Time                   `json:"startedAt"`
-	EndedAt         time.Time                   `json:"endedAt"`
-	BucketSeconds   int                         `json:"bucketSeconds"`
-	Host            []MonitoringHostPoint       `json:"host"`
-	Containers      []MonitoringContainerSeries `json:"containers"`
-	Storage         MonitoringStorageStatus     `json:"storage"`
-	ScannedBytes    int64                       `json:"scannedBytes"`
-	SkippedLines    int                         `json:"skippedLines"`
-	TruncatedSeries int                         `json:"truncatedSeries"`
+	Range           string                            `json:"range"`
+	StartedAt       time.Time                         `json:"startedAt"`
+	EndedAt         time.Time                         `json:"endedAt"`
+	BucketSeconds   int                               `json:"bucketSeconds"`
+	Host            []MonitoringHostPoint             `json:"host"`
+	Containers      []MonitoringContainerSeries       `json:"containers"`
+	OperatorLatency []MonitoringOperatorLatencySeries `json:"operatorLatency"`
+	Storage         MonitoringStorageStatus           `json:"storage"`
+	ScannedBytes    int64                             `json:"scannedBytes"`
+	SkippedLines    int                               `json:"skippedLines"`
+	TruncatedSeries int                               `json:"truncatedSeries"`
 }
