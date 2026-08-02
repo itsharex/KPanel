@@ -32,6 +32,8 @@ v0.1 安装器只支持全新安装。发现任何既有 Panel 文件、同名�
   多架构镜像；
 - `kejilion-agent-linux-amd64`；
 - `kejilion-agent-linux-arm64`；
+- `kejilion-node-linux-amd64`；
+- `kejilion-node-linux-arm64`；
 - `kejilion-panel-deploy-<version>.tar.gz`；
 - 上述文件的 `SHA256SUMS`；
 - 镜像 manifest digest。生产部署只使用

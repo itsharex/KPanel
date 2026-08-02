@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-08-02
+
+### Added
+
+- 集群支持未安装 KPanel 的 Linux 主机通过一次性命令接入只读轻量节点，统一展示 CPU、内存、磁盘、网络、系统和地区概要。
+- Release 新增 `kejilion-node` 的 `linux/amd64`、`linux/arm64` 静态二进制并纳入 `SHA256SUMS`。
+
+### Security
+
+- 轻量节点仅进行出站 HTTPS 上报，不开放管理端口、Shell、文件、Docker 或远程命令；上报使用独立 HMAC-SHA256 凭据、时间窗和重放保护。
+- systemd 服务使用非登录用户、只读系统、空 capability 与 `NoNewPrivileges`；安装和自动更新验证 Release 摘要，健康检查失败自动恢复旧二进制。
+
+### Performance
+
+- 节点默认每 30 秒采集一次，只保留最新快照；中心端有界 checkpoint，不增加高频历史写盘或轮询并发。
+
 ## [0.36.0] - 2026-08-02
 
 ### Added
