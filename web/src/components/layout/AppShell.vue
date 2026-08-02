@@ -23,6 +23,7 @@ import {
   X,
 } from '@lucide/vue'
 import AgentBanner from '@/components/layout/AgentBanner.vue'
+import LanguageSelector from '@/components/common/LanguageSelector.vue'
 import LogoMark from '@/components/common/LogoMark.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import { useSession } from '@/stores/session'
@@ -36,23 +37,25 @@ import {
 } from '@/lib/navigation'
 import { readSidebarCollapsed, writeSidebarCollapsed } from '@/lib/sidebarPreference'
 import { detectKPanelUpdate, kpanelUpdateHint } from '@/lib/kpanelUpdate'
+import { useI18n } from '@/i18n'
+import type { MessageKey } from '@/i18n/messages/zh-CN'
 
 interface NavigationItem {
-  label: string
+  labelKey: MessageKey
   to: string
   icon: Component
 }
 
 const navigation: NavigationItem[] = [
-  { label: '概览', to: '/overview', icon: LayoutDashboard },
-  { label: '网站', to: '/sites', icon: Boxes },
-  { label: '应用市场', to: '/apps', icon: Store },
-  { label: 'Docker', to: '/docker', icon: Container },
-  { label: '文件', to: '/files', icon: Folder },
-  { label: '体检', to: '/diagnostics', icon: HeartPulse },
-  { label: '集群', to: '/cluster', icon: Network },
-  { label: '活动记录', to: '/activity', icon: ClipboardList },
-  { label: '设置', to: '/settings', icon: Settings },
+  { labelKey: 'route.overview', to: '/overview', icon: LayoutDashboard },
+  { labelKey: 'route.sites', to: '/sites', icon: Boxes },
+  { labelKey: 'route.apps', to: '/apps', icon: Store },
+  { labelKey: 'route.docker', to: '/docker', icon: Container },
+  { labelKey: 'route.files', to: '/files', icon: Folder },
+  { labelKey: 'route.diagnostics', to: '/diagnostics', icon: HeartPulse },
+  { labelKey: 'route.cluster', to: '/cluster', icon: Network },
+  { labelKey: 'route.activity', to: '/activity', icon: ClipboardList },
+  { labelKey: 'route.settings', to: '/settings', icon: Settings },
 ]
 
 const route = useRoute()
@@ -61,6 +64,7 @@ const session = useSession()
 const panel = usePanelState()
 const theme = useTheme()
 const toast = useToast()
+const i18n = useI18n()
 const menuOpen = ref(false)
 const signingOut = ref(false)
 const sidebarCollapsed = ref(readSidebarCollapsed())
@@ -68,13 +72,13 @@ const kpanelUpdateAvailable = ref(false)
 const checkingKPanelUpdate = ref(false)
 const kpanelUpdateDescription = computed(() => kpanelUpdateHint(panel.state.agent?.version))
 
-const pageTitle = computed(() => String(route.meta.title || 'KPanel'))
+const pageTitle = computed(() => route.meta.titleKey ? i18n.t(route.meta.titleKey) : 'KPanel')
 const agentStatus = computed(() => {
   const agent = panel.state.agent
-  if (!agent?.connected) return { status: 'offline', label: 'Agent 离线' }
-  if (!agent.compatible) return { status: 'incompatible', label: '版本不兼容' }
-  if (agent.readOnly) return { status: 'read_only', label: '写入依赖未就绪' }
-  return { status: 'connected', label: 'Agent 在线' }
+  if (!agent?.connected) return { status: 'offline', label: i18n.t('agent.offline') }
+  if (!agent.compatible) return { status: 'incompatible', label: i18n.t('agent.incompatible') }
+  if (agent.readOnly) return { status: 'read_only', label: i18n.t('agent.readOnly') }
+  return { status: 'connected', label: i18n.t('agent.online') }
 })
 let agentTimer: number | undefined
 let navigationWarmupTimer: number | undefined
@@ -153,7 +157,7 @@ async function signOut(): Promise<void> {
     await session.logout()
     await router.replace('/login')
   } catch {
-    toast.danger('退出失败', '请刷新页面后重试。')
+    toast.danger(i18n.t('nav.signOutFailed'), i18n.t('nav.signOutRetry'))
   } finally {
     signingOut.value = false
   }
@@ -174,7 +178,7 @@ async function refreshAgent(): Promise<void> {
       version: previous?.version,
       protocolVersion: previous?.protocolVersion,
       lastSeenAt: previous?.lastSeenAt,
-      reason: '无法连接到宿主机 Agent。',
+      reason: i18n.t('agent.unreachable'),
     })
   }
 }
@@ -197,7 +201,7 @@ watch(
   () => routeNavigationState.failureSequence,
   (current, previous) => {
     if (current === previous) return
-    toast.danger('页面加载失败', '网络连接不稳定，请重新点击左侧分类。')
+    toast.danger(i18n.t('nav.loadFailedTitle'), i18n.t('nav.loadFailedMessage'))
   },
 )
 </script>
@@ -205,7 +209,7 @@ watch(
 <template>
   <div class="app-shell">
     <Transition name="fade">
-      <button v-if="menuOpen" class="mobile-overlay" type="button" aria-label="关闭导航" @click="closeMenu" />
+      <button v-if="menuOpen" class="mobile-overlay" type="button" :aria-label="i18n.t('nav.close')" @click="closeMenu" />
     </Transition>
 
     <aside
@@ -220,40 +224,40 @@ watch(
         <button
           class="icon-button sidebar__collapse"
           type="button"
-          :aria-label="sidebarCollapsed ? '展开侧栏' : '收起侧栏'"
+          :aria-label="sidebarCollapsed ? i18n.t('nav.expand') : i18n.t('nav.collapse')"
           :aria-expanded="!sidebarCollapsed"
-          :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'"
+          :title="sidebarCollapsed ? i18n.t('nav.expand') : i18n.t('nav.collapse')"
           @click="toggleSidebar"
         >
           <PanelLeftOpen v-if="sidebarCollapsed" :size="17" />
           <PanelLeftClose v-else :size="17" />
         </button>
-        <button class="icon-button sidebar__close" type="button" aria-label="关闭导航" @click="closeMenu">
+        <button class="icon-button sidebar__close" type="button" :aria-label="i18n.t('nav.close')" @click="closeMenu">
           <X :size="19" />
         </button>
       </div>
 
-      <nav class="sidebar__nav" aria-label="主导航">
+      <nav class="sidebar__nav" :aria-label="i18n.t('nav.main')">
         <RouterLink
           v-for="item in navigation"
           :key="item.to"
           :to="item.to"
           class="sidebar__link"
           :class="{ 'sidebar__link--pending': navigationItemPending(item.to) }"
-          :aria-label="item.label"
-          :title="sidebarCollapsed ? item.label : undefined"
+          :aria-label="i18n.t(item.labelKey)"
+          :title="sidebarCollapsed ? i18n.t(item.labelKey) : undefined"
           @pointerenter="prefetchNavigation(item.to)"
           @focus="prefetchNavigation(item.to)"
           @touchstart.passive="prefetchNavigation(item.to)"
           @click="closeMenu"
         >
           <component :is="item.icon" :size="18" :stroke-width="1.9" aria-hidden="true" />
-          <span>{{ item.label }}</span>
+          <span>{{ i18n.t(item.labelKey) }}</span>
           <LoaderCircle
             v-if="navigationItemPending(item.to)"
             class="sidebar__link-loader"
             :size="15"
-            aria-label="正在加载"
+            :aria-label="i18n.t('common.loading')"
           />
         </RouterLink>
       </nav>
@@ -270,7 +274,7 @@ watch(
             @click="openKPanelUpdate"
           >
             <CircleArrowUp :size="16" aria-hidden="true" />
-            <span>更新可用</span>
+            <span>{{ i18n.t('nav.updateAvailable') }}</span>
           </button>
           <small v-else-if="panel.state.agent?.version">v{{ panel.state.agent.version }}</small>
         </div>
@@ -278,13 +282,13 @@ watch(
           class="sidebar__user"
           type="button"
           :disabled="signingOut"
-          :title="sidebarCollapsed ? '退出登录' : undefined"
+          :title="sidebarCollapsed ? i18n.t('nav.signOut') : undefined"
           @click="signOut"
         >
           <span class="avatar">{{ session.state.user?.username?.slice(0, 1).toUpperCase() || 'A' }}</span>
           <span>
-            <strong>{{ session.state.user?.displayName || session.state.user?.username || '管理员' }}</strong>
-            <small>退出登录</small>
+            <strong>{{ session.state.user?.displayName || session.state.user?.username || i18n.t('common.admin') }}</strong>
+            <small>{{ i18n.t('nav.signOut') }}</small>
           </span>
           <LogOut :size="16" aria-hidden="true" />
         </button>
@@ -300,22 +304,23 @@ watch(
           v-if="routeNavigationState.pending"
           class="route-loading-progress"
           role="progressbar"
-          aria-label="正在加载页面"
+          :aria-label="i18n.t('nav.pageLoading')"
         />
       </Transition>
       <header class="topbar">
         <div class="topbar__title">
-          <button class="icon-button topbar__menu" type="button" aria-label="打开导航" @click="menuOpen = true">
+          <button class="icon-button topbar__menu" type="button" :aria-label="i18n.t('nav.open')" @click="menuOpen = true">
             <Menu :size="20" />
           </button>
           <div>
-            <span>控制台</span>
+            <span>{{ i18n.t('common.console') }}</span>
             <strong>{{ pageTitle }}</strong>
           </div>
         </div>
         <div class="topbar__actions">
           <StatusBadge :status="agentStatus.status" :label="agentStatus.label" subtle />
-          <button class="icon-button" type="button" aria-label="切换浅色或深色主题" @click="toggleTheme">
+          <LanguageSelector compact />
+          <button class="icon-button" type="button" :aria-label="i18n.t('nav.themeToggle')" @click="toggleTheme">
             <Sun v-if="theme.resolved.value === 'dark'" :size="18" />
             <Moon v-else :size="18" />
           </button>

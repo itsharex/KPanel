@@ -1,17 +1,23 @@
 <script setup lang="ts">
 import { CircleAlert, RotateCw } from '@lucide/vue'
+import { computed } from 'vue'
+import { useI18n } from '@/i18n'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     title?: string
     message: string
     retryLabel?: string
   }>(),
   {
-    title: '暂时无法获取数据',
-    retryLabel: '重新加载',
+    title: undefined,
+    retryLabel: undefined,
   },
 )
+
+const i18n = useI18n()
+const resolvedTitle = computed(() => props.title || i18n.t('state.errorTitle'))
+const resolvedRetryLabel = computed(() => props.retryLabel || i18n.t('common.retry'))
 
 defineEmits<{
   retry: []
@@ -24,11 +30,11 @@ defineEmits<{
       <CircleAlert :size="24" :stroke-width="1.8" />
     </div>
     <div>
-      <h3>{{ title }}</h3>
+      <h3>{{ resolvedTitle }}</h3>
       <p>{{ message }}</p>
       <button class="button button--secondary button--small" type="button" @click="$emit('retry')">
         <RotateCw :size="15" />
-        {{ retryLabel }}
+        {{ resolvedRetryLabel }}
       </button>
     </div>
   </div>

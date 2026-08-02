@@ -3,11 +3,13 @@ import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Eye, EyeOff, KeyRound, LoaderCircle, ShieldCheck } from '@lucide/vue'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
-import { ApiError } from '@/lib/api'
+import { useI18n } from '@/i18n'
+import { localizeError } from '@/i18n/errors'
 import { useSession } from '@/stores/session'
 
 const router = useRouter()
 const session = useSession()
+const i18n = useI18n()
 const form = reactive({
   token: '',
   username: 'admin',
@@ -19,8 +21,8 @@ const error = ref('')
 const submitted = ref(false)
 
 const passwordChecks = computed(() => [
-  { label: '至少 12 个字符', valid: form.password.length >= 12 },
-  { label: '包含字母和数字', valid: /[A-Za-z]/.test(form.password) && /\d/.test(form.password) },
+  { label: i18n.t('auth.passwordLength'), valid: form.password.length >= 12 },
+  { label: i18n.t('auth.passwordComposition'), valid: /[A-Za-z]/.test(form.password) && /\d/.test(form.password) },
 ])
 
 const canSubmit = computed(
@@ -44,7 +46,7 @@ async function submit(): Promise<void> {
     })
     await router.replace('/overview')
   } catch (reason) {
-    error.value = reason instanceof ApiError ? reason.message : '初始化失败，请确认凭据后重试。'
+    error.value = localizeError(reason, 'auth.setupFailed')
   }
 }
 </script>
@@ -54,53 +56,52 @@ async function submit(): Promise<void> {
     <div class="auth-card__heading">
       <span class="auth-card__icon"><ShieldCheck :size="22" /></span>
       <div>
-        <span class="eyebrow">首次使用</span>
-        <h2>初始化管理账户</h2>
+        <span class="eyebrow">{{ i18n.t('auth.firstUse') }}</span>
+        <h2>{{ i18n.t('auth.setupTitle') }}</h2>
       </div>
     </div>
     <p class="auth-card__intro">
-      按安装完成提示，从仅 root 可读的文件取得一次性初始化凭据。提交成功后该凭据立即失效，不会修改现有
-      <code>kejilion.sh</code>。
+      {{ i18n.t('auth.setupIntro') }}
     </p>
 
     <div v-if="session.state.error" class="inline-alert inline-alert--danger" role="alert">
-      {{ session.state.error }}
-      <button type="button" @click="session.refresh(true)">重试连接</button>
+      {{ localizeError(session.state.error, 'error.authenticationRequired') }}
+      <button type="button" @click="session.refresh(true)">{{ i18n.t('common.retryConnection') }}</button>
     </div>
     <div v-if="error" class="inline-alert inline-alert--danger" role="alert">{{ error }}</div>
 
     <form class="form-stack" novalidate @submit.prevent="submit">
       <label class="field">
-        <span>初始化凭据</span>
+        <span>{{ i18n.t('auth.bootstrapToken') }}</span>
         <span class="input-wrap">
           <KeyRound :size="17" aria-hidden="true" />
-          <input v-model.trim="form.token" autocomplete="one-time-code" placeholder="粘贴一次性凭据" required />
+          <input v-model.trim="form.token" autocomplete="one-time-code" :placeholder="i18n.t('auth.bootstrapPlaceholder')" required />
         </span>
-        <small v-if="submitted && !form.token">请输入安装时生成的一次性凭据。</small>
+        <small v-if="submitted && !form.token">{{ i18n.t('auth.bootstrapRequired') }}</small>
       </label>
 
       <label class="field">
-        <span>管理员用户名</span>
+        <span>{{ i18n.t('auth.adminUsername') }}</span>
         <input v-model.trim="form.username" autocomplete="username" maxlength="32" required />
         <small v-if="submitted && !/^[A-Za-z0-9._-]{3,32}$/.test(form.username)">
-          使用 3–32 位字母、数字、点、下划线或连字符。
+          {{ i18n.t('auth.usernameRule') }}
         </small>
       </label>
 
       <label class="field">
-        <span>管理员密码</span>
+        <span>{{ i18n.t('auth.adminPassword') }}</span>
         <span class="input-wrap input-wrap--action">
           <input
             v-model="form.password"
             :type="showPassword ? 'text' : 'password'"
             autocomplete="new-password"
-            placeholder="设置一个强密码"
+            :placeholder="i18n.t('auth.strongPasswordPlaceholder')"
             required
           />
           <button
             class="input-action"
             type="button"
-            :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+            :aria-label="i18n.t(showPassword ? 'auth.hidePassword' : 'auth.showPassword')"
             @click="showPassword = !showPassword"
           >
             <EyeOff v-if="showPassword" :size="17" />
@@ -109,21 +110,21 @@ async function submit(): Promise<void> {
         </span>
       </label>
 
-      <div class="password-checks" aria-label="密码要求">
+      <div class="password-checks" :aria-label="i18n.t('auth.passwordRequirements')">
         <span v-for="check in passwordChecks" :key="check.label" :class="{ 'is-valid': check.valid }">
           <i aria-hidden="true" /> {{ check.label }}
         </span>
       </div>
 
       <label class="field">
-        <span>确认密码</span>
+        <span>{{ i18n.t('auth.confirmPassword') }}</span>
         <input v-model="form.confirmPassword" type="password" autocomplete="new-password" required />
-        <small v-if="submitted && form.password !== form.confirmPassword">两次输入的密码不一致。</small>
+        <small v-if="submitted && form.password !== form.confirmPassword">{{ i18n.t('auth.passwordMismatch') }}</small>
       </label>
 
       <button class="button button--primary button--block" type="submit" :disabled="session.state.loading">
         <LoaderCircle v-if="session.state.loading" class="spin" :size="17" />
-        {{ session.state.loading ? '正在初始化…' : '完成初始化' }}
+        {{ i18n.t(session.state.loading ? 'auth.initializing' : 'auth.finishSetup') }}
       </button>
     </form>
   </AuthLayout>

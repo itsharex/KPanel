@@ -1,5 +1,5 @@
 import { computed, reactive } from 'vue'
-import { api, ApiError, resetApiSecurityState } from '@/lib/api'
+import { api, resetApiSecurityState } from '@/lib/api'
 import type { AgentStatus, AuthStatus, LoginRequest, SetupRequest, User } from '@/types/api'
 
 interface SessionState {
@@ -10,7 +10,7 @@ interface SessionState {
   user?: User
   expiresAt?: string
   agent?: AgentStatus
-  error: string
+  error?: unknown
 }
 
 const state = reactive<SessionState>({
@@ -18,7 +18,6 @@ const state = reactive<SessionState>({
   loading: false,
   setupRequired: false,
   authenticated: false,
-  error: '',
 })
 
 let statusPromise: Promise<void> | undefined
@@ -29,7 +28,7 @@ function applyStatus(status: AuthStatus): void {
   state.user = status.user
   state.expiresAt = status.expiresAt
   state.agent = status.agent
-  state.error = ''
+  state.error = undefined
 }
 
 async function refresh(force = false): Promise<void> {
@@ -43,7 +42,7 @@ async function refresh(force = false): Promise<void> {
       state.authenticated = false
       state.setupRequired = false
       state.user = undefined
-      state.error = error instanceof ApiError ? error.message : '无法确认登录状态。'
+      state.error = error
     } finally {
       state.checked = true
       state.loading = false

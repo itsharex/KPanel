@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { LockKeyhole, PlugZap, ShieldAlert } from '@lucide/vue'
+import { useI18n } from '@/i18n'
 import { usePanelState } from '@/stores/panel'
 
 const panel = usePanelState()
+const i18n = useI18n()
 
 const banner = computed(() => {
   const agent = panel.state.agent
@@ -11,24 +13,24 @@ const banner = computed(() => {
   if (!agent.connected) {
     return {
       tone: 'danger',
-      title: '宿主机 Agent 已离线',
-      detail: agent.reason || '当前仅展示最后一次观测结果，所有管理操作已禁用。',
+      title: i18n.t('agent.bannerOfflineTitle'),
+      detail: agent.reason || i18n.t('agent.bannerOfflineDetail'),
       icon: PlugZap,
     }
   }
   if (!agent.compatible) {
     return {
       tone: 'danger',
-      title: 'Agent 协议版本不兼容',
-      detail: agent.reason || '当前 Panel 无法调用该 Agent 的写入协议，请同步升级两端版本。',
+      title: i18n.t('agent.bannerIncompatibleTitle'),
+      detail: agent.reason || i18n.t('agent.bannerIncompatibleDetail'),
       icon: ShieldAlert,
     }
   }
   if (agent.readOnly) {
     return {
       tone: 'warning',
-      title: 'Agent 写入依赖未就绪',
-      detail: agent.reason || '可以查看实时资源；请按提示补齐宿主机依赖后执行变更。',
+      title: i18n.t('agent.bannerReadOnlyTitle'),
+      detail: agent.reason || i18n.t('agent.bannerReadOnlyDetail'),
       icon: LockKeyhole,
     }
   }

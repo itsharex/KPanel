@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   KeyRound,
+  Languages,
   LoaderCircle,
   Monitor,
   Moon,
@@ -25,6 +26,7 @@ import { usePanelState } from '@/stores/panel'
 import { useSession } from '@/stores/session'
 import { useTheme, type ThemePreference } from '@/stores/theme'
 import { useToast } from '@/stores/toast'
+import { useI18n } from '@/i18n'
 import type { TOTPEnrollment, TOTPStatus } from '@/types/api'
 
 const router = useRouter()
@@ -32,6 +34,7 @@ const session = useSession()
 const panel = usePanelState()
 const theme = useTheme()
 const toast = useToast()
+const i18n = useI18n()
 const refreshing = ref(false)
 const changingPassword = ref(false)
 const passwordSubmitted = ref(false)
@@ -551,6 +554,27 @@ onMounted(async () => {
       </div>
       <p v-else class="settings-note">正在读取安全入口状态…</p>
       <p class="settings-note">安全入口是登录验证前的额外门槛，不替代强密码、会话保护和登录限速；请妥善保存入口地址。</p>
+    </section>
+
+    <section class="settings-section panel-card">
+      <header class="settings-section__header">
+        <span><Languages :size="19" /></span>
+        <div><h2>{{ i18n.t('common.language') }}</h2><p>{{ i18n.t('common.languageDescription') }}</p></div>
+      </header>
+      <div class="theme-options">
+        <button
+          v-for="option in i18n.localeOptions"
+          :key="option.id"
+          type="button"
+          :class="{ 'is-active': i18n.locale.value === option.id }"
+          @click="i18n.setLocale(option.id)"
+        >
+          <span><Languages :size="19" /></span>
+          <strong>{{ option.label }}</strong>
+          <small>{{ option.id }}</small>
+          <Check v-if="i18n.locale.value === option.id" class="theme-options__check" :size="17" />
+        </button>
+      </div>
     </section>
 
     <section class="settings-section panel-card">

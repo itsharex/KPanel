@@ -1,0 +1,90 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { enUSMessages } from './messages/en-US'
+import { zhCNMessages } from './messages/zh-CN'
+import {
+  resetLocaleForTest,
+  initializeI18n,
+  resolveInitialLocale,
+  setLocale,
+  t,
+} from './index'
+import { localizeError } from './errors'
+
+afterEach(() => {
+  resetLocaleForTest()
+  vi.unstubAllGlobals()
+})
+
+describe('locale selection', () => {
+  it('uses a persisted user choice before the browser language', () => {
+    expect(resolveInitialLocale('zh-CN', ['en-US'])).toBe('zh-CN')
+    expect(resolveInitialLocale('en-US', ['zh-Hans-CN'])).toBe('en-US')
+  })
+
+  it('uses Chinese for zh browsers and English for every other browser', () => {
+    expect(resolveInitialLocale(undefined, ['zh-HK', 'en-US'])).toBe('zh-CN')
+    expect(resolveInitialLocale(undefined, ['ja-JP'])).toBe('en-US')
+    expect(resolveInitialLocale(undefined, [])).toBe('en-US')
+  })
+
+  it('initializes from the browser only when no user choice is stored', async () => {
+    const documentElement = { lang: '', dir: '' }
+    const addEventListener = vi.fn()
+    vi.stubGlobal('document', { documentElement })
+    vi.stubGlobal('navigator', { languages: ['de-DE'], language: 'de-DE' })
+    vi.stubGlobal('window', {
+      addEventListener,
+      localStorage: { getItem: vi.fn().mockReturnValue(null), setItem: vi.fn() },
+    })
+
+    await initializeI18n()
+
+    expect(t('route.overview')).toBe('Overview')
+    expect(documentElement.lang).toBe('en-US')
+    expect(addEventListener).toHaveBeenCalledWith('storage', expect.any(Function))
+  })
+
+  it('keeps locale resources structurally identical', () => {
+    expect(Object.keys(enUSMessages).sort()).toEqual(Object.keys(zhCNMessages).sort())
+  })
+})
+
+describe('translations', () => {
+  it('loads English on demand and updates the document language', async () => {
+    const documentElement = { lang: '', dir: '' }
+    const setItem = vi.fn()
+    vi.stubGlobal('document', { documentElement })
+    vi.stubGlobal('window', { localStorage: { setItem } })
+
+    await expect(setLocale('en-US')).resolves.toBe(true)
+
+    expect(t('route.overview')).toBe('Overview')
+    expect(documentElement).toMatchObject({ lang: 'en-US', dir: 'ltr' })
+    expect(setItem).toHaveBeenCalledWith('kejilion-panel-locale', 'en-US')
+  })
+
+  it('keeps the most recent choice during rapid language switching', async () => {
+    const documentElement = { lang: '', dir: '' }
+    vi.stubGlobal('document', { documentElement })
+    vi.stubGlobal('window', { localStorage: { setItem: vi.fn() } })
+
+    await Promise.all([setLocale('en-US'), setLocale('zh-CN')])
+
+    expect(t('route.overview')).toBe('概览')
+    expect(documentElement.lang).toBe('zh-CN')
+  })
+
+  it('localizes stable API codes and preserves an unknown server detail', async () => {
+    const documentElement = { lang: '', dir: '' }
+    vi.stubGlobal('document', { documentElement })
+    vi.stubGlobal('window', { localStorage: { setItem: vi.fn() } })
+    await setLocale('en-US')
+
+    expect(localizeError({ code: 'resource_version_changed', message: 'raw detail' }))
+      .toBe('The resource changed. Refresh and try again.')
+    expect(localizeError({ code: 'http_502', status: 502, message: '请求失败（HTTP 502）' }))
+      .toBe('Request failed (HTTP 502).')
+    expect(localizeError({ code: 'custom_error', message: 'operator detail' }))
+      .toBe('operator detail')
+  })
+})

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { CheckCircle2, CircleAlert, Info, X } from '@lucide/vue'
+import { useI18n } from '@/i18n'
 import { useToast } from '@/stores/toast'
 
 const { items, remove } = useToast()
+const i18n = useI18n()
 </script>
 
 <template>
@@ -16,7 +18,7 @@ const { items, remove } = useToast()
           <strong>{{ item.title }}</strong>
           <p v-if="item.message">{{ item.message }}</p>
         </div>
-        <button class="icon-button icon-button--small" type="button" aria-label="关闭通知" @click="remove(item.id)">
+        <button class="icon-button icon-button--small" type="button" :aria-label="i18n.t('common.closeNotification')" @click="remove(item.id)">
           <X :size="16" />
         </button>
       </article>

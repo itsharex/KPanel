@@ -4,12 +4,15 @@ import { useRoute, useRouter } from 'vue-router'
 import { Eye, EyeOff, LoaderCircle, LockKeyhole } from '@lucide/vue'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import { ApiError } from '@/lib/api'
+import { useI18n } from '@/i18n'
+import { localizeError } from '@/i18n/errors'
 import { prefetchNavigationRoute } from '@/lib/navigation'
 import { useSession } from '@/stores/session'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSession()
+const i18n = useI18n()
 const form = reactive({
   username: '',
   password: '',
@@ -29,9 +32,9 @@ const destination = computed(() => (
 const destinationPath = computed(() => destination.value.split(/[?#]/, 1)[0] || '/overview')
 const busy = computed(() => loginPhase.value !== 'idle' || session.state.loading)
 const submitLabel = computed(() => {
-  if (loginPhase.value === 'entering') return '登录成功，正在进入控制台…'
-  if (loginPhase.value === 'authenticating' || session.state.loading) return '正在验证…'
-  return '安全登录'
+  if (loginPhase.value === 'entering') return i18n.t('auth.entering')
+  if (loginPhase.value === 'authenticating' || session.state.loading) return i18n.t('auth.verifying')
+  return i18n.t('auth.secureLogin')
 })
 
 const canSubmit = computed(() =>
@@ -58,17 +61,17 @@ async function submit(): Promise<void> {
   } catch (reason) {
     if (reason instanceof ApiError && reason.code === 'totp_required') {
       totpRequired.value = true
-      error.value = '请输入身份验证器中的 6 位验证码。'
+      error.value = i18n.t('auth.totpRequired')
       return
     }
     if (reason instanceof ApiError && reason.code === 'invalid_second_factor') {
-      error.value = useRecoveryCode.value ? '恢复码无效或已使用。' : '验证码无效、已使用或已过期。'
+      error.value = i18n.t(useRecoveryCode.value ? 'auth.invalidRecovery' : 'auth.invalidTotp')
       form.totpCode = ''
       return
     }
     error.value = session.state.authenticated
-      ? '登录成功，但控制台资源加载失败，请刷新页面重试。'
-      : reason instanceof ApiError ? reason.message : '登录失败，请稍后重试。'
+      ? i18n.t('auth.loginResourceFailed')
+      : localizeError(reason, 'auth.loginFailed')
   } finally {
     loginPhase.value = 'idle'
   }
@@ -86,26 +89,26 @@ onMounted(() => {
     <div class="auth-card__heading">
       <span class="auth-card__icon"><LockKeyhole :size="21" /></span>
       <div>
-        <span class="eyebrow">欢迎回来</span>
-        <h2>登录 KPanel</h2>
+        <span class="eyebrow">{{ i18n.t('auth.welcome') }}</span>
+        <h2>{{ i18n.t('auth.loginTitle') }}</h2>
       </div>
     </div>
-    <p class="auth-card__intro">使用本机管理账户继续。连续失败会触发安全限速。</p>
+    <p class="auth-card__intro">{{ i18n.t('auth.loginIntro') }}</p>
 
     <div v-if="session.state.error" class="inline-alert inline-alert--danger" role="alert">
-      {{ session.state.error }}
-      <button type="button" @click="session.refresh(true)">重试连接</button>
+      {{ localizeError(session.state.error, 'error.authenticationRequired') }}
+      <button type="button" @click="session.refresh(true)">{{ i18n.t('common.retryConnection') }}</button>
     </div>
     <div v-if="error" class="inline-alert inline-alert--danger" role="alert">{{ error }}</div>
 
     <form class="form-stack" @submit.prevent="submit">
       <label class="field">
-        <span>用户名</span>
+        <span>{{ i18n.t('auth.username') }}</span>
         <input v-model.trim="form.username" autocomplete="username" autofocus required />
       </label>
 
       <label class="field">
-        <span>密码</span>
+        <span>{{ i18n.t('auth.password') }}</span>
         <span class="input-wrap input-wrap--action">
           <input
             v-model="form.password"
@@ -116,7 +119,7 @@ onMounted(() => {
           <button
             class="input-action"
             type="button"
-            :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+            :aria-label="i18n.t(showPassword ? 'auth.hidePassword' : 'auth.showPassword')"
             @click="showPassword = !showPassword"
           >
             <EyeOff v-if="showPassword" :size="17" />
@@ -126,13 +129,13 @@ onMounted(() => {
       </label>
 
       <label v-if="totpRequired" class="field">
-        <span>{{ useRecoveryCode ? '恢复码' : '两步验证码' }}</span>
+        <span>{{ i18n.t(useRecoveryCode ? 'auth.recoveryCode' : 'auth.totpCode') }}</span>
         <input
           v-model.trim="form.totpCode"
           :inputmode="useRecoveryCode ? 'text' : 'numeric'"
           autocomplete="one-time-code"
           :maxlength="useRecoveryCode ? 17 : 6"
-          :placeholder="useRecoveryCode ? 'XXXXX-XXXXX-XXXXX' : '000000'"
+          :placeholder="i18n.t(useRecoveryCode ? 'auth.recoveryPlaceholder' : 'auth.totpPlaceholder')"
           autofocus
           required
         />
@@ -141,7 +144,7 @@ onMounted(() => {
           type="button"
           @click="useRecoveryCode = !useRecoveryCode; form.totpCode = ''; error = ''"
         >
-          {{ useRecoveryCode ? '使用身份验证器' : '改用恢复码' }}
+          {{ i18n.t(useRecoveryCode ? 'auth.useAuthenticator' : 'auth.useRecovery') }}
         </button>
       </label>
 
@@ -151,13 +154,13 @@ onMounted(() => {
       </button>
     </form>
 
-    <p class="auth-card__security">Session 仅保存在安全的 HttpOnly Cookie 中。</p>
+    <p class="auth-card__security">{{ i18n.t('auth.sessionSecurity') }}</p>
 
     <Transition name="fade">
       <div v-if="loginPhase === 'entering'" class="login-transition" role="status" aria-live="polite">
         <span class="login-transition__icon"><LoaderCircle class="spin" :size="24" /></span>
-        <strong>登录成功</strong>
-        <small>正在加载控制台…</small>
+        <strong>{{ i18n.t('auth.loginSuccess') }}</strong>
+        <small>{{ i18n.t('auth.loadingConsole') }}</small>
       </div>
     </Transition>
   </AuthLayout>

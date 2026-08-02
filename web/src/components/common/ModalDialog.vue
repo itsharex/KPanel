@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { Maximize2, Minimize2, X } from '@lucide/vue'
+import { useI18n } from '@/i18n'
 import { activateModal, deactivateModal, isTopModal } from './modalStack'
 
 const props = withDefaults(
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 }>()
 const fullscreen = ref(false)
 const modalID = Symbol('modal-dialog')
+const i18n = useI18n()
 
 function close(): void {
   fullscreen.value = false
@@ -73,13 +75,13 @@ onBeforeUnmount(() => {
               v-if="allowFullscreen"
               class="icon-button"
               type="button"
-              :aria-label="fullscreen ? '退出全屏' : '全屏显示'"
+              :aria-label="i18n.t(fullscreen ? 'common.exitFullscreen' : 'common.enterFullscreen')"
               @click="fullscreen = !fullscreen"
             >
               <Minimize2 v-if="fullscreen" :size="18" />
               <Maximize2 v-else :size="18" />
             </button>
-            <button class="icon-button" type="button" aria-label="关闭对话框" @click="close">
+            <button class="icon-button" type="button" :aria-label="i18n.t('common.closeDialog')" @click="close">
               <X :size="19" />
             </button>
           </div>
