@@ -1231,7 +1231,7 @@ onBeforeUnmount(() => {
 .workspace-card--danger { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
 .workspace-card > header, .resource-section__header, .form-section > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
 .workspace-card > header > div, .resource-section__header > div:first-child, .form-section > header > div { display: grid; gap: 3px; }
-.workspace-card > header { grid-template-columns: auto 1fr; justify-content: start; }
+.workspace-card > header:not(.resource-section__header) { grid-template-columns: auto 1fr; justify-content: start; }
 .workspace-card > header small, .resource-section__header small, .form-section small, .card-note { color: var(--muted); }
 .workspace-card__icon { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); flex: 0 0 auto; }
 .action-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -1253,8 +1253,9 @@ onBeforeUnmount(() => {
 .check-row { display: flex; gap: 10px; align-items: flex-start; }
 .check-row span { display: grid; gap: 3px; }
 .resource-section { padding: 0; overflow: hidden; }
-.resource-section__header { padding: 18px; border-bottom: 1px solid var(--border); }
-.resource-section__header > div:first-child { grid-template-columns: auto 1fr; }
+.resource-section__header { min-height: 76px; padding: 18px; border-bottom: 1px solid var(--border); align-items: center; }
+.resource-section__header > div:first-child { grid-template-columns: auto minmax(0, 1fr); align-items: center; flex: 1 1 auto; min-width: 0; }
+.resource-section__header > .card-actions { margin-left: auto; justify-content: flex-end; }
 .resource-section .table-scroll, .resource-section > .empty-state { margin: 0; }
 .docker-table { min-width: 1320px; }
 .docker-table__name { width: 20%; }
@@ -1306,7 +1307,8 @@ onBeforeUnmount(() => {
   .docker-summary > div:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
   .action-grid { grid-template-columns: 1fr; }
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .resource-section__header { flex-direction: column; }
+  .resource-section__header { align-items: stretch; flex-direction: column; }
+  .resource-section__header > .card-actions { width: 100%; margin-left: 0; justify-content: flex-start; flex-wrap: wrap; }
 }
 @media (max-width: 720px) {
   .docker-job { grid-template-columns: auto 1fr; }
