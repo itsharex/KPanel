@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { usePhraseCatalog } from '@/i18n/phrase'
+
+usePhraseCatalog(() => import('@/i18n/pages/SitesView/en-US').then((module) => module.default))
 import {
   ArrowRight,
   Braces,

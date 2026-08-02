@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { usePhraseCatalog } from '@/i18n/phrase'
+
+usePhraseCatalog(() => import('@/i18n/pages/ClusterView/en-US').then((module) => module.default))
 import {
   ArrowUpRight,
   Check,

@@ -3,6 +3,9 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AuditView from '@/views/AuditView.vue'
 import JobsView from '@/views/JobsView.vue'
+import { usePhraseCatalog } from '@/i18n/phrase'
+
+usePhraseCatalog(() => import('@/i18n/pages/ActivityView/en-US').then((module) => module.default))
 
 type ActivityTab = 'jobs' | 'audit'
 

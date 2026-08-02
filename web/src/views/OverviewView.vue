@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
 import { RouterLink } from 'vue-router'
+import { usePhraseCatalog } from '@/i18n/phrase'
+
+usePhraseCatalog(() => import('@/i18n/pages/OverviewView/en-US').then((module) => module.default))
 import {
   Activity,
   ArrowLeftRight,

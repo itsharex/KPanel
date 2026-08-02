@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { usePhraseCatalog } from '@/i18n/phrase'
+
+usePhraseCatalog(() => import('@/i18n/pages/SettingsView/en-US').then((module) => module.default))
 import QRCode from 'qrcode'
 import {
   Check,

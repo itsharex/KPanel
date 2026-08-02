@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { usePhraseCatalog } from '@/i18n/phrase'
+
+usePhraseCatalog(() => import('@/i18n/pages/DiagnosticsView/en-US').then((module) => module.default))
 import {
   Activity,
   Cpu,
@@ -300,7 +303,8 @@ onBeforeUnmount(() => {
             :input-open="activeJob.inputOpen"
             kind="diagnostic"
           />
-          <pre v-else class="diagnostic-log" aria-live="polite">{{ activeJob ? activeLog : '选择左侧体检命令，点击“开始体检”后在这里查看实时输出。' }}</pre>
+          <p v-else-if="!activeJob" class="diagnostic-log diagnostic-log-empty">选择左侧体检命令，点击“开始体检”后在这里查看实时输出。</p>
+          <pre v-else class="diagnostic-log" aria-live="polite" data-i18n-ignore>{{ activeLog }}</pre>
           <footer v-if="activeJob">
             <span><Activity :size="14" /> {{ activeJob.message }}</span>
             <span><Timer :size="14" /> {{ formatDateTime(activeJob.startedAt || activeJob.createdAt) }}</span>

@@ -1,0 +1,26 @@
+import type { PhraseCatalog } from '@/i18n/phrase'
+
+export default [
+  ["安装应用", "Install Application"],
+  ["变更记录", "Change records"],
+  ["变更记录筛选", "Change record filter"],
+  ["创建时间", "Created"],
+  ["创建网站", "Create a website"],
+  ["当前服务版本尚未开放任务查询接口。", "The current service version has not yet opened the task query interface."],
+  ["当网站或容器发生受控变更时，执行结果会显示在这里。", "The results are shown here when the website or container is subject to controlled changes."],
+  ["更新网站", "Update website"],
+  ["关闭", "Close"],
+  ["集中查看网站与容器管理操作的执行结果；未完成的审计意图会标记为进行中。", "Focus on the results of the implementation of the website and the container management operation; the uncompleted audit intent is marked as ongoing."],
+  ["进度", "Progress"],
+  ["目标类型", "Target type"],
+  ["目标资源", "Target resources"],
+  ["启动容器", "Start the container."],
+  ["搜索变更、资源或记录 ID", "Search for changes, resources or records ID"],
+  ["搜索变更记录", "Search for change records"],
+  ["停止容器", "Stop Container"],
+  ["完成时间", "Completion time"],
+  ["无法读取任务记录。", "Unable to read job records."],
+  ["系统", "System"],
+  ["重启容器", "Restart Container"],
+  ["自动对账", "Automatic reconciliation"],
+] as const satisfies PhraseCatalog

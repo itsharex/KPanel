@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { usePhraseCatalog } from '@/i18n/phrase'
+
+usePhraseCatalog(() => import('@/i18n/pages/MonitoringView/en-US').then((module) => module.default))
 import { Box, Cpu, Database, HardDrive, MemoryStick, Network, RefreshCw } from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/feedback/EmptyState.vue'

@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { usePhraseCatalog } from '@/i18n/phrase'
+
+usePhraseCatalog(() => import('@/i18n/pages/DockerView/en-US').then((module) => module.default))
 import {
   Box,
   Boxes,
@@ -1124,7 +1127,8 @@ onBeforeUnmount(() => {
     <ModalDialog :open="logsOpen" :title="`${selectedContainer?.name || '容器'} 日志`" description="显示最近 300 行，输出经过敏感字段脱敏和大小限制。" size="large" @close="closeLogs">
       <LoadingState v-if="logsLoading" :rows="3" />
       <ErrorState v-else-if="logError" :message="logError" retry-label="重新读取" @retry="selectedContainer && showLogs(selectedContainer)" />
-      <pre v-else class="log-viewer">{{ logLines.join('\n') || '当前没有日志输出。' }}</pre>
+      <p v-else-if="!logLines.length" class="log-viewer log-viewer-empty">当前没有日志输出。</p>
+      <pre v-else class="log-viewer" data-i18n-ignore>{{ logLines.join('\n') }}</pre>
       <template #footer><span class="modal-footer-note">{{ logLines.length }} 行</span><button class="button button--secondary" type="button" @click="closeLogs">关闭</button></template>
     </ModalDialog>
 
@@ -1146,7 +1150,8 @@ onBeforeUnmount(() => {
 
     <ModalDialog :open="consoleOpen" :title="`${selectedContainer?.name || '容器'} 控制台`" description="单次命令通过容器内 /bin/sh 执行，最长 20 秒；命令本身不写入审计或任务日志。" size="large" @close="closeConsole">
       <label class="field"><span>命令</span><div class="console-command"><span>$</span><input v-model="consoleCommand" class="text-input" type="text" maxlength="2048" placeholder="ls -la /app" @keyup.enter="runConsoleCommand" /><button class="button button--primary" type="button" :disabled="!consoleCommand.trim() || consoleRunning" @click="runConsoleCommand"><LoaderCircle v-if="consoleRunning" class="spin" :size="15" /><Play v-else :size="15" /> 执行</button></div></label>
-      <pre class="log-viewer console-output">{{ consoleOutput || '输入命令后查看输出。' }}</pre>
+      <p v-if="!consoleOutput" class="log-viewer log-viewer-empty">输入命令后查看输出。</p>
+      <pre v-else class="log-viewer console-output" data-i18n-ignore>{{ consoleOutput }}</pre>
       <div v-if="consoleExitCode !== undefined" class="inline-alert" :class="consoleExitCode === 0 ? 'inline-alert--success' : 'inline-alert--warning'">退出码：{{ consoleExitCode }}{{ consoleExitCode === 0 ? '，执行成功' : '，请检查输出' }}</div>
       <template #footer><button class="button button--secondary" type="button" @click="closeConsole">关闭</button></template>
     </ModalDialog>
