@@ -17,13 +17,18 @@ import (
 )
 
 const (
-	v2PairingCodePrefix = "kp2."
-	v2PairPath          = "/api/v2/federation/pair"
-	v2CommitPath        = "/api/v2/federation/commit"
-	v2SummaryPath       = "/api/v2/federation/summary"
-	v2RevokePath        = "/api/v2/federation/revoke"
-	maxV2PairingCode    = 1024
-	maxV2EnvelopeBytes  = MaxFederationV2Bytes
+	v2PairingCodePrefix  = "kp2."
+	v2PairPath           = "/api/v2/federation/pair"
+	v2CommitPath         = "/api/v2/federation/commit"
+	v2SummaryPath        = "/api/v2/federation/summary"
+	v2RevokePath         = "/api/v2/federation/revoke"
+	v2TerminalOpenPath   = "/api/v2/federation/terminal/open"
+	v2TerminalOutputPath = "/api/v2/federation/terminal/output"
+	v2TerminalInputPath  = "/api/v2/federation/terminal/input"
+	v2TerminalResizePath = "/api/v2/federation/terminal/resize"
+	v2TerminalClosePath  = "/api/v2/federation/terminal/close"
+	maxV2PairingCode     = 1024
+	maxV2EnvelopeBytes   = MaxFederationV2Bytes
 )
 
 var v2NoiseSuite = noise.NewCipherSuite(
@@ -76,6 +81,39 @@ type v2PairResult struct {
 	Hostname           string `json:"hostname"`
 	PanelVersion       string `json:"panelVersion"`
 	FederationProtocol string `json:"federationProtocol"`
+	Scope              string `json:"scope,omitempty"`
+}
+
+type TerminalOpenRequest struct {
+	Rows    uint16 `json:"rows"`
+	Columns uint16 `json:"columns"`
+}
+
+type TerminalOpenResponse struct {
+	SessionID string    `json:"sessionId"`
+	Offset    int64     `json:"offset"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type TerminalOutputRequest struct {
+	SessionID string `json:"sessionId"`
+	Offset    int64  `json:"offset"`
+	Wait      int    `json:"waitMilliseconds"`
+}
+
+type TerminalInputRequest struct {
+	SessionID string `json:"sessionId"`
+	Data      string `json:"data"`
+}
+
+type TerminalResizeRequest struct {
+	SessionID string `json:"sessionId"`
+	Rows      uint16 `json:"rows"`
+	Columns   uint16 `json:"columns"`
+}
+
+type TerminalCloseRequest struct {
+	SessionID string `json:"sessionId"`
 }
 
 type v2CommitPayload struct {
@@ -429,7 +467,19 @@ func v2PathAllowed(method, path string) bool {
 		return false
 	}
 	switch path {
-	case v2PairPath, v2CommitPath, v2SummaryPath, v2RevokePath:
+	case v2PairPath, v2CommitPath, v2SummaryPath, v2RevokePath,
+		v2TerminalOpenPath, v2TerminalOutputPath, v2TerminalInputPath,
+		v2TerminalResizePath, v2TerminalClosePath:
+		return true
+	default:
+		return false
+	}
+}
+
+func v2TerminalPath(path string) bool {
+	switch path {
+	case v2TerminalOpenPath, v2TerminalOutputPath, v2TerminalInputPath,
+		v2TerminalResizePath, v2TerminalClosePath:
 		return true
 	default:
 		return false

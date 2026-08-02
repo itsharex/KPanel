@@ -28,6 +28,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
 	"github.com/kejilion/kejilion-panel/internal/systemmanage"
+	"github.com/kejilion/kejilion-panel/internal/terminal"
 	"github.com/kejilion/kejilion-panel/internal/webenv"
 )
 
@@ -50,6 +51,7 @@ type Config struct {
 	Files           *filemanager.Manager
 	SiteIcons       siteIconProvider
 	Monitoring      monitoringHistoryProvider
+	Terminals       *terminal.Manager
 	Now             func() time.Time
 }
 
@@ -77,8 +79,15 @@ type Server struct {
 	files           *filemanager.Manager
 	siteIcons       siteIconProvider
 	monitoring      monitoringHistoryProvider
+	terminals       *terminal.Manager
 	thumbnailGate   chan struct{}
 	now             func() time.Time
+}
+
+func (s *Server) Close() {
+	if s.terminals != nil {
+		s.terminals.CloseAll()
+	}
 }
 
 func NewServer(config Config) (*Server, error) {
@@ -170,6 +179,7 @@ func NewServer(config Config) (*Server, error) {
 		files:           config.Files,
 		siteIcons:       config.SiteIcons,
 		monitoring:      config.Monitoring,
+		terminals:       config.Terminals,
 		thumbnailGate:   make(chan struct{}, 2),
 		now:             config.Now,
 	}, nil
@@ -226,6 +236,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.monitoringHistory)
 	case r.URL.Path == "/v1/system/actions":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.systemAction)
+	case r.URL.Path == "/v1/terminals":
+		s.requireMethod(w, r, requestID, http.MethodPost, s.terminalOpen)
+	case strings.HasPrefix(r.URL.Path, "/v1/terminals/"):
+		s.terminalOperation(w, r, requestID)
 	case r.URL.Path == "/v1/sites":
 		s.siteCollection(w, r, requestID)
 	case r.URL.Path == "/v1/site-installations":

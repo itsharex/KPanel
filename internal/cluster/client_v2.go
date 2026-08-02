@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/flynn/noise"
+	"github.com/kejilion/kejilion-panel/internal/terminal"
 )
 
 func NormalizeV2Origin(raw string) (string, error) {
@@ -146,6 +147,57 @@ func (c *RemoteClient) RevokeV2(
 		return err
 	}
 	if !response.Revoked {
+		return ErrAuthentication
+	}
+	return nil
+}
+
+func (c *RemoteClient) TerminalOpenV2(ctx context.Context, origin, controllerID, targetID string, key noise.DHKey, target []byte, now time.Time, input TerminalOpenRequest) (TerminalOpenResponse, error) {
+	var response TerminalOpenResponse
+	err := c.exchangeV2(ctx, origin, v2TerminalOpenPath, controllerID, targetID, "", key, target, nil, now, input, &response)
+	return response, err
+}
+
+func (c *RemoteClient) TerminalOutputV2(ctx context.Context, origin, controllerID, targetID string, key noise.DHKey, target []byte, now time.Time, input TerminalOutputRequest) (terminal.Output, error) {
+	var response terminal.Output
+	err := c.exchangeV2(ctx, origin, v2TerminalOutputPath, controllerID, targetID, "", key, target, nil, now, input, &response)
+	return response, err
+}
+
+func (c *RemoteClient) TerminalInputV2(ctx context.Context, origin, controllerID, targetID string, key noise.DHKey, target []byte, now time.Time, input TerminalInputRequest) error {
+	var response struct {
+		Accepted bool `json:"accepted"`
+	}
+	if err := c.exchangeV2(ctx, origin, v2TerminalInputPath, controllerID, targetID, "", key, target, nil, now, input, &response); err != nil {
+		return err
+	}
+	if !response.Accepted {
+		return ErrAuthentication
+	}
+	return nil
+}
+
+func (c *RemoteClient) TerminalResizeV2(ctx context.Context, origin, controllerID, targetID string, key noise.DHKey, target []byte, now time.Time, input TerminalResizeRequest) error {
+	var response struct {
+		Accepted bool `json:"accepted"`
+	}
+	if err := c.exchangeV2(ctx, origin, v2TerminalResizePath, controllerID, targetID, "", key, target, nil, now, input, &response); err != nil {
+		return err
+	}
+	if !response.Accepted {
+		return ErrAuthentication
+	}
+	return nil
+}
+
+func (c *RemoteClient) TerminalCloseV2(ctx context.Context, origin, controllerID, targetID string, key noise.DHKey, target []byte, now time.Time, input TerminalCloseRequest) error {
+	var response struct {
+		Closed bool `json:"closed"`
+	}
+	if err := c.exchangeV2(ctx, origin, v2TerminalClosePath, controllerID, targetID, "", key, target, nil, now, input, &response); err != nil {
+		return err
+	}
+	if !response.Closed {
 		return ErrAuthentication
 	}
 	return nil

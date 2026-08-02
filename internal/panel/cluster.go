@@ -50,6 +50,7 @@ func (s *Server) StartBackground(ctx context.Context) {
 }
 
 func (s *Server) Close() error {
+	s.closeTerminalSessions()
 	return s.cluster.Close()
 }
 
@@ -403,7 +404,7 @@ func (s *Server) handleFederationV2(w http.ResponseWriter, r *http.Request) {
 		s.writeClusterError(w, r, err)
 		return
 	}
-	action := "cluster.federation.v2.summary"
+	action := ""
 	status := http.StatusOK
 	switch r.URL.Path {
 	case "/api/v2/federation/pair":
@@ -413,8 +414,12 @@ func (s *Server) handleFederationV2(w http.ResponseWriter, r *http.Request) {
 		action = "cluster.federation.v2.commit"
 	case "/api/v2/federation/revoke":
 		action = "cluster.federation.v2.revoke"
+	case "/api/v2/federation/terminal/open":
+		action = "cluster.federation.v2.terminal.open"
+	case "/api/v2/federation/terminal/close":
+		action = "cluster.federation.v2.terminal.close"
 	}
-	if r.URL.Path != "/api/v2/federation/summary" {
+	if action != "" {
 		_ = s.audit(
 			r,
 			"",

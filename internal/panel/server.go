@@ -53,6 +53,10 @@ type Server struct {
 	lastAuthAudit       map[string]time.Time
 	lastGlobalAuthAudit time.Time
 	cluster             *cluster.Service
+	terminalMu          sync.Mutex
+	terminalSessions    map[string]panelTerminalSession
+	terminalOpening     int
+	terminalOpeningUser map[string]int
 }
 
 type agentAPI interface {
@@ -88,15 +92,18 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		PublicURL:    config.PublicURL,
 		PrivateCIDRs: config.ClusterPrivateCIDRs,
 		Telemetry:    clusterTelemetrySource{agent: agent},
+		Terminal:     clusterTerminalSource{agent: agent},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize cluster service: %w", err)
 	}
 	return &Server{
 		config: config, auth: authService, store: storage, agent: agent,
-		cluster:        clusterService,
-		trustedProxies: trustedProxies,
-		lastAuthAudit:  make(map[string]time.Time),
+		cluster:             clusterService,
+		terminalSessions:    make(map[string]panelTerminalSession),
+		terminalOpeningUser: make(map[string]int),
+		trustedProxies:      trustedProxies,
+		lastAuthAudit:       make(map[string]time.Time),
 	}, nil
 }
 
@@ -171,6 +178,9 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleAudit(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/v1/cluster/"):
 		s.handleCluster(w, r)
+	case r.URL.Path == "/api/v1/terminal-sessions" ||
+		strings.HasPrefix(r.URL.Path, "/api/v1/terminal-sessions/"):
+		s.handleTerminalSession(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs":
 		s.handleJobs(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/sites/") &&
@@ -239,7 +249,12 @@ func isFederationV2Request(r *http.Request) bool {
 	case "/api/v2/federation/pair",
 		"/api/v2/federation/commit",
 		"/api/v2/federation/summary",
-		"/api/v2/federation/revoke":
+		"/api/v2/federation/revoke",
+		"/api/v2/federation/terminal/open",
+		"/api/v2/federation/terminal/output",
+		"/api/v2/federation/terminal/input",
+		"/api/v2/federation/terminal/resize",
+		"/api/v2/federation/terminal/close":
 		return true
 	default:
 		return false

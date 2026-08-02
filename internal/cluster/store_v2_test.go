@@ -2,7 +2,9 @@ package cluster
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -110,6 +112,27 @@ func TestStoreV2UsesDedicatedStrictPrivateState(t *testing.T) {
 	if _, err := openStoreV2(path); err == nil ||
 		!strings.Contains(err.Error(), "multiple JSON values") {
 		t.Fatalf("multiple JSON values error = %v", err)
+	}
+}
+
+func TestHostResourceVersionV2IncludesTerminalScope(t *testing.T) {
+	record := testHostRecordV2(9, time.Now().UTC())
+	legacyFields := []string{
+		record.ID, record.Name, record.Origin, record.RemoteNodeID,
+		record.ControllerID, string(record.State), record.TransactionID,
+		record.CredentialFile, record.PairingCredentialFile,
+		record.TargetPublicKey, record.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	legacySum := sha256.Sum256([]byte(strings.Join(legacyFields, "\n")))
+	legacyVersion := "sha256:" + hex.EncodeToString(legacySum[:])
+	if current := hostResourceVersionV2(record); current != legacyVersion {
+		t.Fatalf("summary-only resource version changed: got %q want %q", current, legacyVersion)
+	}
+	withoutTerminal := hostResourceVersionV2(record)
+	record.Scope = SummaryTerminalScope
+	withTerminal := hostResourceVersionV2(record)
+	if withoutTerminal == withTerminal {
+		t.Fatal("host resource version did not change when terminal scope changed")
 	}
 }
 

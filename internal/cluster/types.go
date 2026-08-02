@@ -12,6 +12,7 @@ const (
 	FederationProtocolV2 = "v2"
 	LightNodeProtocol    = "light-v1"
 	SummaryScope         = "cluster.summary.read"
+	SummaryTerminalScope = "cluster.summary.read cluster.terminal.open"
 	LocalHostID          = "local"
 	MaxHosts             = 100
 	MaxSummaryBytes      = 64 << 10
@@ -83,6 +84,8 @@ type Host struct {
 	PeerFingerprint     string            `json:"peerFingerprint,omitempty"`
 	RemoteNodeID        string            `json:"remoteNodeId"`
 	FederationProtocol  string            `json:"federationProtocol"`
+	Scope               string            `json:"scope"`
+	TerminalAvailable   bool              `json:"terminalAvailable"`
 	PanelVersion        string            `json:"panelVersion,omitempty"`
 	State               HostState         `json:"state"`
 	LastSnapshot        *HostSnapshot     `json:"lastSnapshot,omitempty"`
@@ -96,6 +99,10 @@ type Host struct {
 	ResourceVersion     string            `json:"resourceVersion"`
 	CreatedAt           time.Time         `json:"createdAt"`
 	UpdatedAt           time.Time         `json:"updatedAt"`
+}
+
+func ScopeAllowsTerminal(scope string) bool {
+	return scope == SummaryTerminalScope
 }
 
 type LightEnrollment struct {

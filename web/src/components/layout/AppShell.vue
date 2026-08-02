@@ -20,6 +20,7 @@ import {
   Settings,
   Store,
   Sun,
+  SquareTerminal,
   X,
 } from '@lucide/vue'
 import AgentBanner from '@/components/layout/AgentBanner.vue'
@@ -52,6 +53,7 @@ const navigation: NavigationItem[] = [
   { labelKey: 'route.apps', to: '/apps', icon: Store },
   { labelKey: 'route.docker', to: '/docker', icon: Container },
   { labelKey: 'route.files', to: '/files', icon: Folder },
+  { labelKey: 'route.terminal', to: '/terminal', icon: SquareTerminal },
   { labelKey: 'route.diagnostics', to: '/diagnostics', icon: HeartPulse },
   { labelKey: 'route.cluster', to: '/cluster', icon: Network },
   { labelKey: 'route.activity', to: '/activity', icon: ClipboardList },

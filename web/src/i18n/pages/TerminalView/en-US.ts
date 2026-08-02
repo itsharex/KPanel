@@ -1,0 +1,20 @@
+import type { PhraseCatalog } from '@/i18n/phrase'
+
+export default [
+  ['多主机终端', 'Multi-host terminal'],
+  ['本机与已配对 KPanel 使用同一登录态进入；远程流量沿集群加密通道传输，不开放新的 SSH 或公网端口。', 'Use the current session for this host and paired KPanel hosts. Remote traffic stays inside the encrypted federation channel with no new SSH or public ports.'],
+  ['连接列表加载失败，请检查 Agent 与集群状态。', 'Failed to load connections. Check the Agent and cluster status.'],
+  ['已达到终端会话上限，请先关闭不用的连接。', 'The terminal session limit has been reached. Close an unused connection first.'],
+  ['终端连接失败，请确认目标 KPanel 在线且双方均已更新。', 'Terminal connection failed. Confirm the target KPanel is online and both panels are up to date.'],
+  ['连接列表', 'Connections'],
+  ['台主机', 'hosts'],
+  ['搜索主机', 'Search hosts'],
+  ['暂无可显示主机', 'No hosts to display'],
+  ['本机终端', 'Local terminal'],
+  ['加密直连', 'Encrypted direct connection'],
+  ['轻量监控节点', 'Monitoring-only node'],
+  ['需要重新配对', 'Pair again to enable'],
+  ['已打开终端', 'Open terminals'],
+  ['选择一台主机开始', 'Select a host to begin'],
+  ['左侧会明确标记本机、可加密直连的 KPanel，以及仅提供监控的轻量节点。', 'The list distinguishes the local host, encrypted KPanel connections, and monitoring-only lightweight nodes.'],
+] satisfies PhraseCatalog

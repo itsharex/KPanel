@@ -19,6 +19,7 @@ import (
 	"unicode"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
+	"github.com/kejilion/kejilion-panel/internal/terminal"
 )
 
 const (
@@ -44,6 +45,7 @@ type ServiceConfig struct {
 	PublicURL       string
 	PrivateCIDRs    []string
 	Telemetry       TelemetrySource
+	Terminal        TerminalBackend
 	Remote          remoteAPI
 	Now             func() time.Time
 	Hostname        string
@@ -52,6 +54,14 @@ type ServiceConfig struct {
 	CheckpointEvery time.Duration
 	MaxConcurrency  int
 	Jitter          func(time.Duration) time.Duration
+}
+
+type TerminalBackend interface {
+	Open(context.Context, string, uint16, uint16) (terminal.Snapshot, error)
+	Output(context.Context, string, string, int64, time.Duration) (terminal.Output, error)
+	Input(context.Context, string, string, []byte) error
+	Resize(context.Context, string, string, uint16, uint16) error
+	Close(context.Context, string, string) error
 }
 
 type runtimeState struct {
@@ -74,6 +84,7 @@ type Service struct {
 	remote          remoteAPI
 	remoteV2        remoteV2API
 	telemetry       TelemetrySource
+	terminal        TerminalBackend
 	nodeIdentityV2  nodeIdentityV2
 	panelVersion    string
 	publicURL       string
@@ -97,13 +108,15 @@ type Service struct {
 	kick            chan struct{}
 	wg              sync.WaitGroup
 
-	replays         *replayGuard
-	pairLimiter     *fixedWindowLimiter
-	v2SourceLimiter *fixedWindowLimiter
-	requestLimiter  *fixedWindowLimiter
-	lightEnrolls    *fixedWindowLimiter
-	lightSources    *fixedWindowLimiter
-	lightReports    *fixedWindowLimiter
+	replays          *replayGuard
+	pairLimiter      *fixedWindowLimiter
+	v2SourceLimiter  *fixedWindowLimiter
+	requestLimiter   *fixedWindowLimiter
+	terminalSources  *fixedWindowLimiter
+	terminalRequests *fixedWindowLimiter
+	lightEnrolls     *fixedWindowLimiter
+	lightSources     *fixedWindowLimiter
+	lightReports     *fixedWindowLimiter
 
 	localMu       sync.Mutex
 	localValue    contract.HostTelemetry
@@ -219,7 +232,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 	service := &Service{
 		store: store, secrets: secrets,
 		storeV2: storeV2, secretsV2: secretsV2,
-		remote: config.Remote, remoteV2: remoteV2, telemetry: config.Telemetry,
+		remote: config.Remote, remoteV2: remoteV2, telemetry: config.Telemetry, terminal: config.Terminal,
 		light: light, publicURL: strings.TrimRight(strings.TrimSpace(config.PublicURL), "/"),
 		nodeIdentityV2: cloneNodeIdentityV2(nodeIdentity),
 		panelVersion:   cleanDisplayText(config.PanelVersion, 64), hostname: config.Hostname,
@@ -227,13 +240,15 @@ func NewService(config ServiceConfig) (*Service, error) {
 		schedulerTick: config.SchedulerTick, checkpointEvery: config.CheckpointEvery,
 		jitter: config.Jitter, sem: make(chan struct{}, config.MaxConcurrency),
 		runtime: make(map[string]runtimeState), kick: make(chan struct{}, 1),
-		replays:         newReplayGuard(4096, 5*time.Minute),
-		pairLimiter:     newFixedWindowLimiter(20, time.Minute, 1024),
-		v2SourceLimiter: newFixedWindowLimiter(120, time.Minute, 2048),
-		requestLimiter:  newFixedWindowLimiter(30, time.Minute, 512),
-		lightEnrolls:    newFixedWindowLimiter(10, time.Minute, 2048),
-		lightSources:    newFixedWindowLimiter(240, time.Minute, 2048),
-		lightReports:    newFixedWindowLimiter(180, time.Minute, MaxHosts),
+		replays:          newReplayGuard(8192, 5*time.Minute),
+		pairLimiter:      newFixedWindowLimiter(20, time.Minute, 1024),
+		v2SourceLimiter:  newFixedWindowLimiter(120, time.Minute, 2048),
+		requestLimiter:   newFixedWindowLimiter(30, time.Minute, 512),
+		terminalSources:  newFixedWindowLimiter(1200, time.Minute, 2048),
+		terminalRequests: newFixedWindowLimiter(600, time.Minute, 512),
+		lightEnrolls:     newFixedWindowLimiter(10, time.Minute, 2048),
+		lightSources:     newFixedWindowLimiter(240, time.Minute, 2048),
+		lightReports:     newFixedWindowLimiter(180, time.Minute, MaxHosts),
 	}
 	for _, record := range store.Hosts() {
 		service.runtime[record.ID] = runtimeState{
@@ -1048,6 +1063,7 @@ func localPublicHost(
 		Kind:              HostKindPanel,
 		TransportSecurity: TransportSecurityTLS,
 		RemoteNodeID:      nodeID, FederationProtocol: FederationProtocol,
+		Scope: SummaryTerminalScope, TerminalAvailable: true,
 		PanelVersion: panelVersion, State: hostState(current, now),
 		LastSnapshot:        cloneSnapshot(current.snapshot),
 		LastAttemptAt:       cloneTime(current.lastAttemptAt),
@@ -1074,6 +1090,7 @@ func publicHost(record hostRecord, current runtimeState, now time.Time) Host {
 		TransportSecurity: TransportSecurityTLS,
 		PeerFingerprint:   "",
 		RemoteNodeID:      record.RemoteNodeID, FederationProtocol: record.FederationProtocol,
+		Scope: SummaryScope, TerminalAvailable: false,
 		PanelVersion: panelVersion, State: hostState(current, now),
 		LastSnapshot:        cloneSnapshot(current.snapshot),
 		LastAttemptAt:       cloneTime(current.lastAttemptAt),

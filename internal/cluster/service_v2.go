@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/flynn/noise"
+	"github.com/kejilion/kejilion-panel/internal/terminal"
 )
 
 const (
@@ -61,6 +62,14 @@ type remoteV2API interface {
 		[]byte,
 		time.Time,
 	) error
+}
+
+type remoteV2TerminalAPI interface {
+	TerminalOpenV2(context.Context, string, string, string, noise.DHKey, []byte, time.Time, TerminalOpenRequest) (TerminalOpenResponse, error)
+	TerminalOutputV2(context.Context, string, string, string, noise.DHKey, []byte, time.Time, TerminalOutputRequest) (terminal.Output, error)
+	TerminalInputV2(context.Context, string, string, string, noise.DHKey, []byte, time.Time, TerminalInputRequest) error
+	TerminalResizeV2(context.Context, string, string, string, noise.DHKey, []byte, time.Time, TerminalResizeRequest) error
+	TerminalCloseV2(context.Context, string, string, string, noise.DHKey, []byte, time.Time, TerminalCloseRequest) error
 }
 
 type v2OriginValidator interface {
@@ -120,7 +129,7 @@ func (s *Service) createPairingCodeV2() (PairingCode, error) {
 	}
 	_ = s.secretsV2.RemoveOrphans(s.storeV2.CredentialReferences())
 	return PairingCode{
-		Code: code, Scope: SummaryScope, ExpiresAt: expiresAt,
+		Code: code, Scope: SummaryTerminalScope, ExpiresAt: expiresAt,
 	}, nil
 }
 
@@ -212,6 +221,7 @@ func (s *Service) addHostV2Locked(
 		TargetPublicKey:       base64.RawURLEncoding.EncodeToString(pairing.TargetPublicKey),
 		PeerFingerprint:       fingerprintV2(pairing.TargetPublicKey),
 		FederationProtocol:    FederationProtocolV2,
+		Scope:                 SummaryScope,
 		CreatedAt:             now, UpdatedAt: now,
 	}
 	if err := s.storeV2.AddHost(record); err != nil {
@@ -265,6 +275,9 @@ func (s *Service) advanceV2Host(
 			); err != nil {
 				return record, err
 			}
+			if response.Scope == "" {
+				response.Scope = SummaryScope
+			}
 			hostCredential := v2Credential{
 				ControllerPrivate: append([]byte(nil), credential.ControllerPrivate...),
 				ControllerPublic:  append([]byte(nil), credential.ControllerPublic...),
@@ -284,6 +297,7 @@ func (s *Service) advanceV2Host(
 			record.State = hostStateV2PendingCommit
 			record.CredentialFile = credentialFile
 			record.PanelVersion = response.PanelVersion
+			record.Scope = response.Scope
 			record.UpdatedAt = s.now().UTC()
 			record, err = s.storeV2.UpdateHost(record, record.ResourceVersion)
 			if err != nil {
@@ -600,6 +614,8 @@ func publicHostV2(
 		PeerFingerprint:    record.PeerFingerprint,
 		RemoteNodeID:       record.RemoteNodeID,
 		FederationProtocol: FederationProtocolV2,
+		Scope:              normalizedV2Scope(record.Scope),
+		TerminalAvailable:  ScopeAllowsTerminal(normalizedV2Scope(record.Scope)),
 		PanelVersion:       panelVersion, State: state,
 		LastSnapshot:        cloneSnapshot(current.snapshot),
 		LastAttemptAt:       cloneTime(current.lastAttemptAt),
@@ -619,7 +635,11 @@ func (s *Service) HandleFederationV2(
 	envelope FederationEnvelopeV2,
 ) (FederationEnvelopeV2, error) {
 	now := s.now().UTC()
-	if !s.v2SourceLimiter.Allow(cleanRateSubject(source), now) {
+	sourceLimiter := s.v2SourceLimiter
+	if v2TerminalPath(path) {
+		sourceLimiter = s.terminalSources
+	}
+	if !sourceLimiter.Allow(cleanRateSubject(source), now) {
 		return FederationEnvelopeV2{}, ErrRateLimited
 	}
 	if err := s.validateV2Request(path, envelope, now); err != nil {
@@ -634,6 +654,16 @@ func (s *Service) HandleFederationV2(
 		return s.handleSummaryV2(ctx, envelope, now)
 	case v2RevokePath:
 		return s.handleRevokeV2(envelope, now)
+	case v2TerminalOpenPath:
+		return s.handleTerminalOpenV2(ctx, envelope, now)
+	case v2TerminalOutputPath:
+		return s.handleTerminalOutputV2(ctx, envelope, now)
+	case v2TerminalInputPath:
+		return s.handleTerminalInputV2(ctx, envelope, now)
+	case v2TerminalResizePath:
+		return s.handleTerminalResizeV2(ctx, envelope, now)
+	case v2TerminalClosePath:
+		return s.handleTerminalCloseV2(ctx, envelope, now)
 	default:
 		return FederationEnvelopeV2{}, ErrAuthentication
 	}
@@ -686,7 +716,7 @@ func (s *Service) handlePairV2(
 	controller := controllerRecordV2{
 		ID: envelope.ControllerID, Name: name,
 		PublicKey:   base64.RawURLEncoding.EncodeToString(peerStatic),
-		Fingerprint: fingerprintV2(peerStatic), Scope: SummaryScope,
+		Fingerprint: fingerprintV2(peerStatic), Scope: SummaryTerminalScope,
 		State:         controllerStateV2Provisional,
 		TransactionID: input.TransactionID,
 		CreatedAt:     now, UpdatedAt: now,
@@ -701,6 +731,7 @@ func (s *Service) handlePairV2(
 		NodeID:        s.store.NodeID(), Hostname: s.hostname,
 		PanelVersion:       s.panelVersion,
 		FederationProtocol: FederationProtocolV2,
+		Scope:              SummaryTerminalScope,
 	})
 }
 
@@ -821,7 +852,11 @@ func (s *Service) openControllerV2(
 	if err != nil || !bytes.Equal(peerStatic, expected) {
 		return controllerRecordV2{}, nil, nil, ErrAuthentication
 	}
-	if !s.requestLimiter.Allow(controller.ID, now) {
+	requestLimiter := s.requestLimiter
+	if v2TerminalPath(path) {
+		requestLimiter = s.terminalRequests
+	}
+	if !requestLimiter.Allow(controller.ID, now) {
 		return controllerRecordV2{}, nil, nil, ErrRateLimited
 	}
 	if err := s.replays.Accept(
@@ -876,11 +911,21 @@ func validateV2PairResult(
 		response.TransactionID != expectedTransactionID {
 		return ErrProtocolMismatch
 	}
+	if response.Scope != "" && response.Scope != SummaryScope && response.Scope != SummaryTerminalScope {
+		return ErrProtocolMismatch
+	}
 	if cleanDisplayText(response.Hostname, 253) != response.Hostname ||
 		cleanDisplayText(response.PanelVersion, 64) != response.PanelVersion {
 		return &RemoteError{Code: "invalid_response"}
 	}
 	return nil
+}
+
+func normalizedV2Scope(scope string) string {
+	if scope == SummaryTerminalScope {
+		return scope
+	}
+	return SummaryScope
 }
 
 func validateFederationSummaryV2(

@@ -113,7 +113,7 @@ bash <(curl -sL kejilion.sh) app kpanel
 
 ## 当前边界
 
-通用宿主机终端、Compose/`daemon.json` 通用编辑器、系统重装非交互适配器，以及部分
+Compose/`daemon.json` 通用编辑器、系统重装非交互适配器，以及部分
 发行版的 DNS/换源适配器仍在规划中。这些是待实现能力；后续实现仍需经过鉴权、
 结构化输入、路径约束、并发控制、审计和失败恢复。
 
@@ -133,7 +133,8 @@ bash <(curl -sL kejilion.sh) app kpanel
   [应用市场对齐](docs/application-market.md)
 - 功能设计：[体检与第三方测试协议](docs/diagnostics.md)、
   [Docker 管理与互通边界](docs/docker-management-v0.18.md)、
-  [集群监控与联邦只读协议](docs/cluster-monitoring.md)
+  [集群监控与联邦协议](docs/cluster-monitoring.md)、
+  [多主机终端安全契约](docs/multi-host-terminal.md)
 - 协作规范：[Codex 会话协作](docs/session-collaboration.md)
 - 版本信息：[版本变更记录](CHANGELOG.md)
 

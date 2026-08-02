@@ -187,6 +187,8 @@ export interface ClusterHost {
   peerFingerprint?: string
   remoteNodeId: string
   federationProtocol: string
+  scope: string
+  terminalAvailable: boolean
   panelVersion?: string
   state: ClusterHostState
   lastSnapshot?: ClusterHostSnapshot
@@ -213,8 +215,25 @@ export interface ClusterHostList {
 
 export interface ClusterPairingCode {
   code: string
-  scope: 'cluster.summary.read'
+  scope: 'cluster.summary.read' | 'cluster.summary.read cluster.terminal.open'
   expiresAt: string
+}
+
+export interface TerminalSession {
+  sessionId: string
+  hostId: string
+  offset: number
+  createdAt: string
+}
+
+export interface TerminalOutput {
+  data: string
+  offset: number
+  nextOffset: number
+  truncated: boolean
+  exitedAt?: string
+  exitError?: string
+  closed: boolean
 }
 
 export interface ClusterLightEnrollment {

@@ -1,6 +1,6 @@
-# KPanel 集群监控与联邦只读协议
+# KPanel 集群监控与联邦协议
 
-- 状态：KPanel 节点已实现；非面板轻量节点已在功能分支实现，待实机验收和发布
+- 状态：集群监控已发布；多主机终端已通过前后端、竞态与双架构自动化验收，完整部署契约及 L3 实机验收待发布前执行
 - 协议：KPanel 新配对默认 `v2`、兼容既有 `v1`；轻量节点使用独立 `light-v1`
 - 范围：主机概要监控、独立面板跳转、接入授权与撤销、非面板 Linux 主机只读采集
 
@@ -15,8 +15,10 @@
 Agent、Shell、文件、网站或 Docker 管理能力，只通过出站 HTTPS 主动上报与 KPanel 集群卡片
 一致的主机概要。中心端可修改其备注、排序或移除记录，但不会显示“打开面板”。
 
-当前不提供跨主机 Shell、批量写操作、共享 Session 或免登录跳转。点击“打开面板”只打开
-配对时保存的根地址，目标面板仍需独立登录。集群采集链路支持 HTTPS，或在没有域名时使用
+新 v2 配对可授权当前中心使用多主机终端；既有 v1、旧 v2 与轻量节点不会自动获得终端权限。
+终端使用独立 Panel Session 和 Noise v2 请求，不共享目标面板登录态；详细契约见
+[`multi-host-terminal.md`](multi-host-terminal.md)。当前不提供批量写操作或免登录打开目标面板。
+点击“打开面板”只打开配对时保存的根地址，目标面板仍需独立登录。集群链路支持 HTTPS，或在没有域名时使用
 端到端加密的 `http://公网IP:非80端口`；后者只保护 KPanel 间的集群数据，浏览器登录目标
 面板仍是普通 HTTP，页面会在跳转前明确警告。
 
@@ -57,7 +59,8 @@ kp2.<base64url-json>
 - 5 分钟过期，只能成功消费一次；
 - 连续 5 次错误后失效；
 - secret 只用于本地派生配对 PSK，不出现在联邦 HTTP 请求、状态、审计或日志中；
-- 权限固定为 `cluster.summary.read`。
+- 新授权权限固定为 `cluster.summary.read cluster.terminal.open`；旧授权保留
+  `cluster.summary.read`，不会因升级自动扩权。
 
 中心端为每台远端主机生成独立 X25519 身份。初次配对使用
 `Noise_IKpsk0_25519_ChaChaPoly_SHA256`，日常采集和撤销使用
@@ -172,12 +175,17 @@ POST   /api/v2/federation/pair
 POST   /api/v2/federation/commit
 POST   /api/v2/federation/summary
 POST   /api/v2/federation/revoke
+POST   /api/v2/federation/terminal/open
+POST   /api/v2/federation/terminal/output
+POST   /api/v2/federation/terminal/input
+POST   /api/v2/federation/terminal/resize
+POST   /api/v2/federation/terminal/close
 
 POST   /api/v3/federation/light/enroll
 POST   /api/v3/federation/light/report
 ```
 
-v2 只接受以上四个精确 POST 路径；light-v1 只接受以上两个精确 POST 路径。两者都拒绝查询
+v2 只接受以上固定 POST 路径；light-v1 只接受以上两个精确 POST 路径。两者都拒绝查询
 参数或 `RawPath` 变体。Noise 外层请求上限 96 KiB，解密后业务负载上限 64 KiB；轻量节点
 接入和上报使用更小的固定请求上限。所有接口使用严格 JSON，拒绝未知字段和多值 JSON。
 

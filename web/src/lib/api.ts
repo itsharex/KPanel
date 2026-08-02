@@ -48,6 +48,8 @@ import type {
   TOTPEnrollment,
   TOTPRecoveryCodes,
   TOTPStatus,
+  TerminalOutput,
+  TerminalSession,
   WebEnvironmentActionInput,
   WebEnvironmentBackup,
   WebEnvironmentCatalog,
@@ -1149,6 +1151,34 @@ export const api = {
     revokeController: (id: string): Promise<{ deleted: boolean }> =>
       request<{ deleted: boolean }>(`/cluster/controllers/${encodeURIComponent(id)}`, {
         method: 'DELETE',
+      }),
+  },
+  terminals: {
+    open: (hostId: string, rows: number, columns: number): Promise<TerminalSession> =>
+      request<TerminalSession>('/terminal-sessions', {
+        method: 'POST',
+        body: { hostId, rows, columns },
+      }),
+    output: (
+      sessionId: string,
+      offset: number,
+      signal?: AbortSignal,
+    ): Promise<TerminalOutput> =>
+      request<TerminalOutput>(`/terminal-sessions/${encodeURIComponent(sessionId)}/output`, {
+        query: { offset, wait: 1000 },
+        signal,
+      }),
+    input: (sessionId: string, data: string): Promise<{ accepted: boolean }> =>
+      request<{ accepted: boolean }>(`/terminal-sessions/${encodeURIComponent(sessionId)}/input`, {
+        method: 'POST', body: { data },
+      }),
+    resize: (sessionId: string, rows: number, columns: number): Promise<{ accepted: boolean }> =>
+      request<{ accepted: boolean }>(`/terminal-sessions/${encodeURIComponent(sessionId)}/resize`, {
+        method: 'POST', body: { rows, columns },
+      }),
+    close: (sessionId: string): Promise<{ closed: boolean }> =>
+      request<{ closed: boolean }>(`/terminal-sessions/${encodeURIComponent(sessionId)}/close`, {
+        method: 'POST', body: {},
       }),
   },
   system: {

@@ -81,6 +81,12 @@ export const router = createRouter({
           meta: { titleKey: 'route.files' },
         },
         {
+          path: 'terminal',
+          name: 'terminal',
+          component: () => loadNavigationRoute('/terminal'),
+          meta: { titleKey: 'route.terminal' },
+        },
+        {
           path: 'diagnostics',
           name: 'diagnostics',
           component: () => loadNavigationRoute('/diagnostics'),

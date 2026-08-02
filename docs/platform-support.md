@@ -33,6 +33,7 @@ Rocky 等系统分别制作 Panel 镜像。
 | 软件源读取 | APT、DNF/YUM、APK、Pacman、Zypper | 页面展示实际源主机 |
 | 软件源切换 | Debian/Ubuntu APT | 其他系统的换源适配器尚未实现 |
 | 系统更新/清理 | APT、DNF/DNF5/YUM、APK、Pacman、Zypper | 固定命令；不接受 Web 传入的包名、命令或 Shell |
+| 多主机终端 | systemd Linux `amd64`、`arm64`；由 Agent 打开 `/dev/ptmx` 并启动固定登录 Shell | 本机和新授权 v2 KPanel 支持；轻量节点、旧 v1/v2 配对不支持；其他发行版仍需实机准入 |
 | 重装系统 | 非交互适配器未实现 | 需要补齐镜像参数、后台执行和重装后结果回传协议 |
 
 ## 部署前置条件

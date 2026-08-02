@@ -125,6 +125,8 @@ function host(id: string, isLocal: boolean, origin: string): ClusterHost {
     peerFingerprint: isLocal ? undefined : `sha256:${'a'.repeat(64)}`,
     remoteNodeId: isLocal ? 'local-node' : 'remote-node',
     federationProtocol: 'v1',
+		scope: isLocal ? 'cluster.summary.read cluster.terminal.open' : 'cluster.summary.read',
+		terminalAvailable: isLocal,
     panelVersion: '0.27.0',
     state: 'online',
     lastSnapshot: {

@@ -10,6 +10,7 @@ type Process interface {
 	io.ReadWriteCloser
 	Wait() error
 	Kill() error
+	Resize(rows, columns uint16) error
 }
 
 func Start(command *exec.Cmd, rows, columns uint16) (Process, error) {

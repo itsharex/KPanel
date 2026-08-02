@@ -37,6 +37,28 @@ func TestBearerRequired(t *testing.T) {
 	}
 }
 
+func TestTerminalRouteRequiresAuthenticationAndExplicitManager(t *testing.T) {
+	server := testServer(t)
+	body := `{"owner":"panel:test","rows":24,"columns":80}`
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("terminal without token status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "terminal_unavailable") {
+		t.Fatalf("terminal without manager status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestAvailableWebRootRequiresDirectory(t *testing.T) {
 	root := t.TempDir()
 	if err := availableWebRoot(root); err != nil {

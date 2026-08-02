@@ -82,7 +82,22 @@ func (process *linuxProcess) Kill() error {
 	if process.command.Process == nil {
 		return nil
 	}
-	return process.command.Process.Kill()
+	err := syscall.Kill(-process.command.Process.Pid, syscall.SIGKILL)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return err
+}
+
+func (process *linuxProcess) Resize(rows, columns uint16) error {
+	if rows == 0 || columns == 0 {
+		return errors.New("terminal dimensions must be positive")
+	}
+	return unix.IoctlSetWinsize(
+		int(process.Fd()),
+		unix.TIOCSWINSZ,
+		&unix.Winsize{Row: rows, Col: columns},
+	)
 }
 
 func createPlatformInput(path string) error {

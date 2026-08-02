@@ -64,6 +64,7 @@ type hostRecordV2 struct {
 	TargetPublicKey       string            `json:"targetPublicKey"`
 	PeerFingerprint       string            `json:"peerFingerprint"`
 	FederationProtocol    string            `json:"federationProtocol"`
+	Scope                 string            `json:"scope,omitempty"`
 	PanelVersion          string            `json:"panelVersion,omitempty"`
 	ResourceVersion       string            `json:"resourceVersion"`
 	CreatedAt             time.Time         `json:"createdAt"`
@@ -865,6 +866,7 @@ func validateHostRecordV2(record hostRecordV2) error {
 		err != nil || normalizedOrigin != record.Origin ||
 		record.TransportSecurity != v2TransportSecurity(record.Origin) ||
 		record.FederationProtocol != FederationProtocolV2 ||
+		(record.Scope != "" && record.Scope != SummaryScope && record.Scope != SummaryTerminalScope) ||
 		keyErr != nil || len(targetPublicKey) != 32 ||
 		record.PeerFingerprint != fingerprintV2(targetPublicKey) ||
 		record.CreatedAt.IsZero() || record.UpdatedAt.IsZero() ||
@@ -902,7 +904,7 @@ func validateControllerRecordV2(record controllerRecordV2) error {
 	if !validID(record.ID) || !validID(record.TransactionID) ||
 		err != nil || len(publicKey) != 32 ||
 		record.Fingerprint != fingerprintV2(publicKey) ||
-		record.Scope != SummaryScope ||
+		(record.Scope != SummaryScope && record.Scope != SummaryTerminalScope) ||
 		record.CreatedAt.IsZero() || record.UpdatedAt.IsZero() ||
 		len(record.Name) > 80 {
 		return errors.New("cluster v2 store contains an invalid controller record")
@@ -950,7 +952,7 @@ func validatePairingCodeRecordV2(record pairingCodeRecordV2) error {
 }
 
 func hostResourceVersionV2(record hostRecordV2) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
+	fields := []string{
 		record.ID,
 		record.Name,
 		record.Origin,
@@ -962,7 +964,13 @@ func hostResourceVersionV2(record hostRecordV2) string {
 		record.PairingCredentialFile,
 		record.TargetPublicKey,
 		record.UpdatedAt.UTC().Format(time.RFC3339Nano),
-	}, "\n")))
+	}
+	// Preserve resource versions for existing summary-only v2 pairings. The
+	// additional terminal grant becomes part of the version only when present.
+	if ScopeAllowsTerminal(record.Scope) {
+		fields = append(fields, "scope:"+SummaryTerminalScope)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(fields, "\n")))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 

@@ -3,6 +3,7 @@ package cluster
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,7 +14,64 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kejilion/kejilion-panel/internal/terminal"
 )
+
+type serviceV2TerminalStub struct {
+	mu      sync.Mutex
+	owner   string
+	input   []byte
+	resized bool
+	closed  bool
+	output  []byte
+}
+
+func (s *serviceV2TerminalStub) Open(_ context.Context, owner string, _, _ uint16) (terminal.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.owner = owner
+	return terminal.Snapshot{ID: "remote-terminal", CreatedAt: time.Now().UTC()}, nil
+}
+
+func (s *serviceV2TerminalStub) Output(_ context.Context, owner, id string, offset int64, _ time.Duration) (terminal.Output, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if owner != s.owner || id != "remote-terminal" {
+		return terminal.Output{}, terminal.ErrNotFound
+	}
+	return terminal.Output{Data: append([]byte(nil), s.output...), Offset: offset, NextOffset: offset + int64(len(s.output))}, nil
+}
+
+func (s *serviceV2TerminalStub) Input(_ context.Context, owner, id string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if owner != s.owner || id != "remote-terminal" {
+		return terminal.ErrNotFound
+	}
+	s.input = append([]byte(nil), data...)
+	return nil
+}
+
+func (s *serviceV2TerminalStub) Resize(_ context.Context, owner, id string, _, _ uint16) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if owner != s.owner || id != "remote-terminal" {
+		return terminal.ErrNotFound
+	}
+	s.resized = true
+	return nil
+}
+
+func (s *serviceV2TerminalStub) Close(_ context.Context, owner, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if owner != s.owner || id != "remote-terminal" {
+		return terminal.ErrNotFound
+	}
+	s.closed = true
+	return nil
+}
 
 type serviceV2RoundTripper struct {
 	mu            sync.Mutex
@@ -236,6 +294,91 @@ func TestServiceV2PairsPollsAndRevokesOverEncryptedHTTP(t *testing.T) {
 	}
 	if controllers := target.Controllers(); len(controllers) != 0 {
 		t.Fatalf("revoked controller remained visible: %#v", controllers)
+	}
+}
+
+func TestServiceV2TerminalLifecycleUsesAuthenticatedEncryptedChannel(t *testing.T) {
+	now := time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC)
+	clock := &serviceTestClock{now: now}
+	terminalStub := &serviceV2TerminalStub{output: []byte("remote-ready\r\n")}
+	targetRemote, _ := newServiceV2Remote(t)
+	target, err := NewService(ServiceConfig{
+		DataDir: filepath.Join(t.TempDir(), "target"), PanelVersion: "v0.38.3", Hostname: "target-v2",
+		Telemetry: serviceTestTelemetry{now: clock.Now, hostname: "target-v2"}, Terminal: terminalStub,
+		Remote: targetRemote, Now: clock.Now, Jitter: func(value time.Duration) time.Duration { return value },
+	})
+	if err != nil {
+		t.Fatalf("target NewService() error = %v", err)
+	}
+	t.Cleanup(func() { _ = target.Close() })
+
+	centerRemote, route := newServiceV2Remote(t)
+	route.target = target
+	center, err := NewService(ServiceConfig{
+		DataDir: filepath.Join(t.TempDir(), "center"), PanelVersion: "v0.38.3", Hostname: "center-v2",
+		Telemetry: serviceTestTelemetry{now: clock.Now, hostname: "center-v2"},
+		Remote:    centerRemote, Now: clock.Now, Jitter: func(value time.Duration) time.Duration { return value },
+	})
+	if err != nil {
+		t.Fatalf("center NewService() error = %v", err)
+	}
+	t.Cleanup(func() { _ = center.Close() })
+
+	code, err := target.CreatePairingCodeV2()
+	if err != nil {
+		t.Fatalf("CreatePairingCodeV2() error = %v", err)
+	}
+	host, err := center.AddHost(context.Background(), AddHostInput{Name: "terminal-target", Origin: "http://8.8.8.8:1801", PairingCode: code.Code})
+	if err != nil {
+		t.Fatalf("AddHost() error = %v", err)
+	}
+	if !host.TerminalAvailable || host.Scope != SummaryTerminalScope {
+		t.Fatalf("terminal capability missing after v2 pairing: %#v", host)
+	}
+
+	opened, err := center.TerminalOpen(context.Background(), host.ID, TerminalOpenRequest{Rows: 30, Columns: 120})
+	if err != nil || opened.SessionID != "remote-terminal" {
+		t.Fatalf("TerminalOpen() = %#v, %v", opened, err)
+	}
+	output, err := center.TerminalOutput(context.Background(), host.ID, TerminalOutputRequest{SessionID: opened.SessionID, Offset: 0})
+	if err != nil || string(output.Data) != "remote-ready\r\n" {
+		t.Fatalf("TerminalOutput() = %#v, %v", output, err)
+	}
+	// Terminal polling has a dedicated bounded limiter. It must not inherit the
+	// low-frequency summary limit and disconnect a healthy shell after 30 polls.
+	for index := 0; index < 40; index++ {
+		if _, err := center.TerminalOutput(context.Background(), host.ID, TerminalOutputRequest{SessionID: opened.SessionID, Offset: 0}); err != nil {
+			t.Fatalf("TerminalOutput() poll %d error = %v", index+1, err)
+		}
+	}
+	terminalStub.mu.Lock()
+	terminalStub.output = bytes.Repeat([]byte("x"), terminal.MaxOutputBytes)
+	terminalStub.mu.Unlock()
+	bounded, err := center.TerminalOutput(context.Background(), host.ID, TerminalOutputRequest{SessionID: opened.SessionID, Offset: 0})
+	if err != nil || len(bounded.Data) != maxFederationTerminalOutputBytes || bounded.NextOffset != int64(maxFederationTerminalOutputBytes) {
+		t.Fatalf("bounded encrypted output = %d bytes, next offset %d, error %v", len(bounded.Data), bounded.NextOffset, err)
+	}
+	command := []byte("printf terminal-secret\r\n")
+	if err := center.TerminalInput(context.Background(), host.ID, TerminalInputRequest{SessionID: opened.SessionID, Data: base64.RawStdEncoding.EncodeToString(command)}); err != nil {
+		t.Fatalf("TerminalInput() error = %v", err)
+	}
+	if err := center.TerminalResize(context.Background(), host.ID, TerminalResizeRequest{SessionID: opened.SessionID, Rows: 40, Columns: 140}); err != nil {
+		t.Fatalf("TerminalResize() error = %v", err)
+	}
+	if err := center.TerminalClose(context.Background(), host.ID, TerminalCloseRequest{SessionID: opened.SessionID}); err != nil {
+		t.Fatalf("TerminalClose() error = %v", err)
+	}
+
+	terminalStub.mu.Lock()
+	if string(terminalStub.input) != string(command) || !terminalStub.resized || !terminalStub.closed || !strings.HasPrefix(terminalStub.owner, "federation:") {
+		terminalStub.mu.Unlock()
+		t.Fatalf("unexpected target terminal lifecycle: %#v", terminalStub)
+	}
+	terminalStub.mu.Unlock()
+	for _, body := range route.requestBodies() {
+		if bytes.Contains(body, command) || bytes.Contains(body, []byte("terminal-secret")) {
+			t.Fatalf("terminal plaintext leaked on HTTP wire: %s", body)
+		}
 	}
 }
 

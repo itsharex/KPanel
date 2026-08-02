@@ -25,6 +25,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/sites"
 	"github.com/kejilion/kejilion-panel/internal/systeminfo"
 	"github.com/kejilion/kejilion-panel/internal/systemmanage"
+	"github.com/kejilion/kejilion-panel/internal/terminal"
 	"github.com/kejilion/kejilion-panel/internal/version"
 	"github.com/kejilion/kejilion-panel/internal/webenv"
 )
@@ -133,6 +134,7 @@ func run(arguments []string) error {
 	if historyErr != nil {
 		slog.Warn("history monitoring is unavailable", "error", historyErr)
 	}
+	terminalManager := terminal.New(terminal.Config{})
 	handler, err := agent.NewServer(agent.Config{
 		Token: token, Version: version.Version, ProtocolVersion: version.ProtocolVersion,
 		WebRoot: *webRoot, StateDir: *stateDir, System: systemCollector,
@@ -141,12 +143,14 @@ func run(arguments []string) error {
 			Executable: executable,
 		}),
 		Sites: sites.NewDiscoverer(*webRoot), Docker: dockerClient, AppMarket: appMarket,
-		Diagnostics: diagnosticService, Monitoring: historyService,
+		Diagnostics: diagnosticService, Monitoring: historyService, Terminals: terminalManager,
 	})
 	clear(token)
 	if err != nil {
+		terminalManager.CloseAll()
 		return err
 	}
+	defer handler.Close()
 	listener, cleanup, err := agent.ListenUnix(*socketPath, *socketGroup)
 	if err != nil {
 		return err
