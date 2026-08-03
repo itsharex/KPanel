@@ -437,6 +437,68 @@ onMounted(async () => {
 
     <section class="settings-section panel-card">
       <header class="settings-section__header">
+        <span><KeyRound :size="19" /></span>
+        <div><h2>修改密码</h2><p>更新当前管理员账户的登录凭据</p></div>
+      </header>
+      <form class="form-stack password-form" novalidate @submit.prevent="changePassword">
+        <label class="field">
+          <span>当前密码</span>
+          <input
+            v-model="passwordForm.currentPassword"
+            type="password"
+            name="current-password"
+            autocomplete="current-password"
+            :aria-invalid="passwordSubmitted && passwordForm.currentPassword.length === 0"
+            required
+          />
+          <small v-if="passwordSubmitted && passwordForm.currentPassword.length === 0">请输入当前密码。</small>
+        </label>
+
+        <label class="field">
+          <span>新密码</span>
+          <input
+            v-model="passwordForm.newPassword"
+            type="password"
+            name="new-password"
+            autocomplete="new-password"
+            minlength="12"
+            :aria-invalid="passwordSubmitted && !passwordChecks.every((item) => item.valid)"
+            required
+          />
+        </label>
+
+        <div class="password-checks" aria-label="新密码要求">
+          <span v-for="check in passwordChecks" :key="check.label" :class="{ 'is-valid': check.valid }">
+            <i aria-hidden="true" /> {{ check.label }}
+          </span>
+        </div>
+
+        <label class="field">
+          <span>确认新密码</span>
+          <input
+            v-model="passwordForm.confirmPassword"
+            type="password"
+            name="confirm-password"
+            autocomplete="new-password"
+            minlength="12"
+            :aria-invalid="passwordSubmitted && passwordForm.newPassword !== passwordForm.confirmPassword"
+            required
+          />
+          <small v-if="passwordSubmitted && passwordForm.newPassword !== passwordForm.confirmPassword">
+            两次输入的密码不一致。
+          </small>
+        </label>
+
+        <button class="button button--primary" type="submit" :disabled="changingPassword">
+          <LoaderCircle v-if="changingPassword" class="spin" :size="17" />
+          {{ changingPassword ? '正在修改…' : '修改密码' }}
+        </button>
+      </form>
+      <p class="settings-note">修改成功后当前会话将立即失效，需要使用新密码重新登录。</p>
+    </section>
+
+    <section class="settings-section panel-card">
+      <header class="settings-section__header">
         <span><ShieldCheck :size="19" /></span>
         <div><h2>登录安全入口</h2><p>隐藏常规登录路径，减少公网扫描与撞库噪声</p></div>
         <StatusBadge
@@ -576,68 +638,6 @@ onMounted(async () => {
         </template>
       </div>
       <p class="settings-note">验证码每 30 秒更新，允许轻微时钟偏差；已成功使用的验证码和恢复码不能重放。</p>
-    </section>
-
-    <section class="settings-section panel-card">
-      <header class="settings-section__header">
-        <span><KeyRound :size="19" /></span>
-        <div><h2>修改密码</h2><p>更新当前管理员账户的登录凭据</p></div>
-      </header>
-      <form class="form-stack password-form" novalidate @submit.prevent="changePassword">
-        <label class="field">
-          <span>当前密码</span>
-          <input
-            v-model="passwordForm.currentPassword"
-            type="password"
-            name="current-password"
-            autocomplete="current-password"
-            :aria-invalid="passwordSubmitted && passwordForm.currentPassword.length === 0"
-            required
-          />
-          <small v-if="passwordSubmitted && passwordForm.currentPassword.length === 0">请输入当前密码。</small>
-        </label>
-
-        <label class="field">
-          <span>新密码</span>
-          <input
-            v-model="passwordForm.newPassword"
-            type="password"
-            name="new-password"
-            autocomplete="new-password"
-            minlength="12"
-            :aria-invalid="passwordSubmitted && !passwordChecks.every((item) => item.valid)"
-            required
-          />
-        </label>
-
-        <div class="password-checks" aria-label="新密码要求">
-          <span v-for="check in passwordChecks" :key="check.label" :class="{ 'is-valid': check.valid }">
-            <i aria-hidden="true" /> {{ check.label }}
-          </span>
-        </div>
-
-        <label class="field">
-          <span>确认新密码</span>
-          <input
-            v-model="passwordForm.confirmPassword"
-            type="password"
-            name="confirm-password"
-            autocomplete="new-password"
-            minlength="12"
-            :aria-invalid="passwordSubmitted && passwordForm.newPassword !== passwordForm.confirmPassword"
-            required
-          />
-          <small v-if="passwordSubmitted && passwordForm.newPassword !== passwordForm.confirmPassword">
-            两次输入的密码不一致。
-          </small>
-        </label>
-
-        <button class="button button--primary" type="submit" :disabled="changingPassword">
-          <LoaderCircle v-if="changingPassword" class="spin" :size="17" />
-          {{ changingPassword ? '正在修改…' : '修改密码' }}
-        </button>
-      </form>
-      <p class="settings-note">修改成功后当前会话将立即失效，需要使用新密码重新登录。</p>
     </section>
 
     <section class="settings-section panel-card">

@@ -230,6 +230,16 @@ describe('SettingsView username change', () => {
     expect(settingsSource.indexOf('<h2>登录安全入口</h2>')).toBeLessThan(settingsSource.indexOf('<h2>两步验证</h2>'))
   })
 
+  it('keeps password change immediately below username change', () => {
+    const usernameIndex = settingsSource.indexOf('<h2>修改用户名</h2>')
+    const passwordIndex = settingsSource.indexOf('<h2>修改密码</h2>')
+    const securityEntryIndex = settingsSource.indexOf('<h2>登录安全入口</h2>')
+
+    expect(usernameIndex).toBeGreaterThanOrEqual(0)
+    expect(passwordIndex).toBeGreaterThan(usernameIndex)
+    expect(passwordIndex).toBeLessThan(securityEntryIndex)
+  })
+
   it('validates the new username and requires the current password', async () => {
     const view = setupView()
     view.usernameForm.newUsername = 'bad name'
