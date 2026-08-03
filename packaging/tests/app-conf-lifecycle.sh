@@ -296,7 +296,9 @@ EOF
 		echo "KPanel installer still points users at a unit removed by cleanup" >&2
 		exit 1
 	fi
-	grep -F 'ReadWritePaths=/home/docker/kpanel /home /etc -/var/lib/kejilion-panel/app-jobs' \
+	grep -Fx 'ReadWritePaths=/' \
+		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	grep -Fx 'ReadOnlyPaths=/home/docker/kpanel/data/panel' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	test -f /home/docker/kpanel/secrets/agent.token
 	test "$(stat -c '%a' /home/docker/kpanel/secrets/agent.token)" = 640
