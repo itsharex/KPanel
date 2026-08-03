@@ -128,15 +128,39 @@ func defaultStarter(rows, columns uint16) (Process, error) {
 	if _, err := os.Stat(shell); err != nil {
 		shell = "/bin/sh"
 	}
-	command := exec.Command(shell, "-l")
-	command.Dir = "/"
+	directory := "/"
 	if root, err := os.Open("/root"); err == nil {
 		if info, statErr := root.Stat(); statErr == nil && info.IsDir() {
-			command.Dir = "/root"
+			directory = "/root"
 		}
 		_ = root.Close()
 	}
-	command.Env = []string{
+	environment := terminalEnvironment(shell)
+	if os.Getenv("INVOCATION_ID") != "" {
+		systemdRun, runErr := trustedTerminalExecutable("systemd-run")
+		systemctl, controlErr := trustedTerminalExecutable("systemctl")
+		if runErr == nil && controlErr == nil {
+			identity, err := randomID()
+			if err != nil {
+				return nil, err
+			}
+			unit := "kpanel-terminal-" + identity
+			command := transientTerminalCommand(systemdRun, shell, directory, unit, environment)
+			process, err := hostpty.Start(command, rows, columns)
+			if err != nil {
+				return nil, err
+			}
+			return &transientTerminalProcess{Process: process, systemctl: systemctl, unit: unit}, nil
+		}
+	}
+	command := exec.Command(shell, "-l")
+	command.Dir = directory
+	command.Env = environment
+	return hostpty.Start(command, rows, columns)
+}
+
+func terminalEnvironment(shell string) []string {
+	return []string{
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 		"HOME=/root",
@@ -146,7 +170,74 @@ func defaultStarter(rows, columns uint16) (Process, error) {
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"LANG=C.UTF-8",
 	}
-	return hostpty.Start(command, rows, columns)
+}
+
+func transientTerminalCommand(systemdRun, shell, directory, unit string, environment []string) *exec.Cmd {
+	arguments := []string{
+		"--quiet",
+		"--wait",
+		"--collect",
+		"--pty",
+		"--unit=" + unit,
+		"--property=Type=exec",
+		"--property=User=root",
+		"--property=Group=root",
+		"--property=WorkingDirectory=" + directory,
+		"--property=UMask=0077",
+		"--property=NoNewPrivileges=no",
+		"--property=ProtectSystem=no",
+		"--property=ProtectHome=no",
+		"--property=KillMode=mixed",
+		"--property=SendSIGHUP=yes",
+		"--property=RuntimeMaxSec=8h",
+		"--property=PartOf=kejilion-agent.service",
+		"--property=After=kejilion-agent.service",
+	}
+	for _, value := range environment {
+		arguments = append(arguments, "--setenv="+value)
+	}
+	arguments = append(arguments, "--", shell, "-l")
+	command := exec.Command(systemdRun, arguments...)
+	command.Dir = directory
+	command.Env = environment
+	return command
+}
+
+func trustedTerminalExecutable(name string) (string, error) {
+	for _, directory := range []string{"/usr/bin", "/bin"} {
+		candidate := directory + "/" + name
+		info, err := os.Stat(candidate)
+		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o022 == 0 && terminalExecutableOwnerTrusted(info) {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("trusted " + name + " was not found")
+}
+
+type transientTerminalProcess struct {
+	Process
+	systemctl string
+	unit      string
+	stopOnce  sync.Once
+}
+
+func (process *transientTerminalProcess) stopUnit() {
+	process.stopOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = exec.CommandContext(ctx, process.systemctl, "stop", process.unit).Run()
+	})
+}
+
+func (process *transientTerminalProcess) Close() error {
+	err := process.Process.Close()
+	process.stopUnit()
+	return err
+}
+
+func (process *transientTerminalProcess) Kill() error {
+	process.stopUnit()
+	return process.Process.Kill()
 }
 
 func (m *Manager) Open(owner string, rows, columns uint16) (Snapshot, error) {

@@ -5,10 +5,44 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestTransientTerminalCommandUsesFixedRootShellContract(t *testing.T) {
+	environment := terminalEnvironment("/bin/bash")
+	command := transientTerminalCommand(
+		"/usr/bin/systemd-run",
+		"/bin/bash",
+		"/root",
+		"kpanel-terminal-test",
+		environment,
+	)
+	joined := strings.Join(command.Args, " ")
+	for _, expected := range []string{
+		"--wait",
+		"--collect",
+		"--pty",
+		"--unit=kpanel-terminal-test",
+		"--property=User=root",
+		"--property=WorkingDirectory=/root",
+		"--property=NoNewPrivileges=no",
+		"--property=ProtectSystem=no",
+		"--property=RuntimeMaxSec=8h",
+		"--property=PartOf=kejilion-agent.service",
+		"--setenv=TERM=xterm-256color",
+		"-- /bin/bash -l",
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("command %q does not contain %q", joined, expected)
+		}
+	}
+	if command.Dir != "/root" {
+		t.Fatalf("command directory = %q", command.Dir)
+	}
+}
 
 type fakeProcess struct {
 	mu      sync.Mutex

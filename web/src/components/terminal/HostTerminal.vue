@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { X } from '@lucide/vue'
+import { ArrowDownToLine, X } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { openTerminalURL } from '@/lib/terminalLinks'
 import { takeTerminalInputChunk, terminalInputShouldFlushImmediately, terminalLineSubmission } from '@/lib/terminalInput'
@@ -23,6 +23,7 @@ const emit = defineEmits<{
 }>()
 
 const host = ref<HTMLElement>()
+const composerInput = ref<HTMLInputElement>()
 const pendingLine = ref('')
 const state = ref<'connecting' | 'connected' | 'reconnecting' | 'finished'>('connecting')
 let terminal: Terminal | undefined
@@ -42,6 +43,7 @@ let closeSent = false
 let lastRows = 0
 let lastColumns = 0
 let reconnectAttempts = 0
+const inputFlushInterval = 24
 
 function themeColor(name: string, fallback: string): string {
   if (!host.value) return fallback
@@ -60,6 +62,23 @@ function encodeBase64(value: string): string {
   return window.btoa(binary).replace(/=+$/, '')
 }
 
+function isFollowingOutput(): boolean {
+  const buffer = terminal?.buffer.active
+  return !buffer || buffer.viewportY >= buffer.baseY
+}
+
+function writeTerminalOutput(data: string | Uint8Array): void {
+  const follow = isFollowingOutput()
+  terminal?.write(data, () => {
+    if (follow) terminal?.scrollToBottom()
+  })
+}
+
+function scrollToBottom(): void {
+  terminal?.scrollToBottom()
+  terminal?.focus()
+}
+
 async function flushInput(): Promise<void> {
   if (inputSending || disposed || state.value === 'finished') return
   if (inputTimer) window.clearTimeout(inputTimer)
@@ -72,7 +91,7 @@ async function flushInput(): Promise<void> {
       inputQueue = rest
     }
   } catch {
-    terminal?.write(`\r\n\x1b[31m[KPanel] ${t('terminal.inputFailed')}\x1b[0m\r\n`)
+    writeTerminalOutput(`\r\n\x1b[31m[KPanel] ${t('terminal.inputFailed')}\x1b[0m\r\n`)
     state.value = 'reconnecting'
   } finally {
     inputSending = false
@@ -85,7 +104,7 @@ function queueInput(data: string): void {
   if (terminalInputShouldFlushImmediately(data) || new TextEncoder().encode(inputQueue).byteLength >= 2048) {
     void flushInput()
   } else if (!inputTimer) {
-    inputTimer = window.setTimeout(() => void flushInput(), 12)
+    inputTimer = window.setTimeout(() => void flushInput(), inputFlushInterval)
   }
 }
 
@@ -102,13 +121,13 @@ async function poll(): Promise<void> {
   pollController = new AbortController()
   try {
     const chunk = await api.terminals.output(props.sessionId, offset, pollController.signal)
-    if (chunk.truncated) terminal?.write(`\r\n\x1b[33m[KPanel] ${t('terminal.outputTruncated')}\x1b[0m\r\n`)
-    if (chunk.data) terminal?.write(decodeBase64(chunk.data))
+    if (chunk.truncated) writeTerminalOutput(`\r\n\x1b[33m[KPanel] ${t('terminal.outputTruncated')}\x1b[0m\r\n`)
+    if (chunk.data) writeTerminalOutput(decodeBase64(chunk.data))
     offset = chunk.nextOffset
     state.value = chunk.closed || chunk.exitedAt ? 'finished' : 'connected'
     reconnectAttempts = 0
     if (state.value === 'connected' && inputQueue) void flushInput()
-    if (chunk.exitError) terminal?.write(`\r\n\x1b[31m[KPanel] ${chunk.exitError}\x1b[0m\r\n`)
+    if (chunk.exitError) writeTerminalOutput(`\r\n\x1b[31m[KPanel] ${chunk.exitError}\x1b[0m\r\n`)
     if (state.value !== 'finished') pollTimer = window.setTimeout(() => void poll(), 0)
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
@@ -176,7 +195,7 @@ onMounted(() => {
     observer = new ResizeObserver(scheduleResize)
     observer.observe(host.value)
     scheduleResize()
-    terminal.focus()
+    window.requestAnimationFrame(() => composerInput.value?.focus())
   }
   void poll()
 })
@@ -200,11 +219,14 @@ onBeforeUnmount(() => {
         <strong>{{ hostName }}</strong>
         <small>{{ state === 'connected' ? t('terminal.connected') : state === 'finished' ? t('terminal.finished') : state === 'reconnecting' ? t('terminal.reconnecting') : t('terminal.connecting') }}</small>
       </div>
-      <button type="button" :title="t('terminal.close')" :aria-label="t('terminal.close')" @click="closeSession"><X :size="17" /></button>
+      <div class="host-terminal__actions">
+        <button type="button" :title="t('terminal.scrollToBottom')" :aria-label="t('terminal.scrollToBottom')" @click="scrollToBottom"><ArrowDownToLine :size="17" /></button>
+        <button type="button" :title="t('terminal.close')" :aria-label="t('terminal.close')" @click="closeSession"><X :size="17" /></button>
+      </div>
     </header>
     <div ref="host" class="host-terminal__screen terminal-screen" @click="terminal?.focus()" />
     <form class="host-terminal__composer" @submit.prevent="submitPendingLine">
-      <input v-model="pendingLine" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="8192" :placeholder="t('terminal.inputPlaceholder')" :disabled="state === 'finished'" />
+      <input ref="composerInput" v-model="pendingLine" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="8192" :placeholder="t('terminal.inputPlaceholder')" :disabled="state === 'finished'" />
       <button type="submit" :disabled="state === 'finished'">{{ t('terminal.send') }}</button>
     </form>
   </section>
@@ -213,12 +235,15 @@ onBeforeUnmount(() => {
 <style scoped>
 .host-terminal { display:grid; height:100%; grid-template-rows:auto minmax(0,1fr) auto; min-height:0; overflow:hidden; border:1px solid var(--terminal-shell-border,#29383a); border-radius:var(--terminal-shell-radius,12px); background:var(--terminal-shell-background,#0b1214); box-shadow:var(--terminal-shell-shadow); }
 .host-terminal header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:11px 14px; border-bottom:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }
-.host-terminal header div { display:grid; gap:2px; }
+.host-terminal header>div:first-child { display:grid; gap:2px; }
 .host-terminal header strong { color:#f2faf7; font-size:13px; }
 .host-terminal header small { color:var(--terminal-shell-muted,#8a9695); font-size:11px; }
 .host-terminal header button { display:grid; width:34px; height:34px; place-items:center; border:1px solid var(--terminal-shell-border,#29383a); border-radius:9px; color:var(--terminal-shell-muted,#8a9695); background:transparent; }
-.host-terminal__screen { min-width:0; min-height:0; padding:10px 7px; }
-.host-terminal__composer { display:grid; grid-template-columns:1fr auto; gap:8px; padding:9px 10px; border-top:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }
+.host-terminal__actions { display:flex; align-items:center; gap:7px; }
+.host-terminal__screen { position:relative; min-width:0; min-height:0; overflow:hidden; padding:10px 7px; }
+.host-terminal__screen :deep(.xterm) { height:100%; }
+.host-terminal__screen :deep(.xterm-viewport) { overflow-y:scroll !important; }
+.host-terminal__composer { position:relative; z-index:2; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:9px 10px; border-top:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }
 .host-terminal__composer input { min-width:0; border:1px solid var(--terminal-shell-border,#29383a); border-radius:8px; padding:9px 11px; color:var(--terminal-shell-text,#d8dddc); background:var(--terminal-shell-background,#0b1214); font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 .host-terminal__composer button { border:0; border-radius:8px; padding:0 16px; color:#05251c; background:var(--brand,#35cba6); font-weight:800; }
 .host-terminal :deep(.xterm-viewport) { scrollbar-color:var(--terminal-shell-scrollbar,#35474a) var(--terminal-shell-background,#0b1214); }
