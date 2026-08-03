@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs'
 import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsView from './SettingsView.vue'
+
+const settingsSource = readFileSync(new URL('./SettingsView.vue', import.meta.url), 'utf8')
 
 const mocks = vi.hoisted(() => {
   class MockApiError extends Error {}
@@ -216,6 +219,12 @@ describe('SettingsView password change', () => {
 })
 
 describe('SettingsView username change', () => {
+  it('does not preload the current password and keeps two-step verification below the security entrance', () => {
+    expect(settingsSource).toContain('name="username-current-password"')
+    expect(settingsSource).toMatch(/name="username-current-password"[\s\S]*?autocomplete="new-password"/)
+    expect(settingsSource.indexOf('<h2>登录安全入口</h2>')).toBeLessThan(settingsSource.indexOf('<h2>两步验证</h2>'))
+  })
+
   it('validates the new username and requires the current password', async () => {
     const view = setupView()
     view.usernameForm.newUsername = 'bad name'

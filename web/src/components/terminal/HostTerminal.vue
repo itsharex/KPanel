@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { ArrowDownToLine, X } from '@lucide/vue'
+import { ArrowDownToLine } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { openTerminalURL } from '@/lib/terminalLinks'
 import { takeTerminalInputChunk, terminalInputShouldFlushImmediately, terminalLineSubmission } from '@/lib/terminalInput'
@@ -19,7 +19,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  close: []
+  stateChange: [state: 'connecting' | 'connected' | 'reconnecting' | 'finished']
 }>()
 
 const host = ref<HTMLElement>()
@@ -39,11 +39,12 @@ let inputSending = false
 // older Panel responses that did not include the initial offset field.
 let offset = Number.isFinite(props.initialOffset) && props.initialOffset >= 0 ? props.initialOffset : 0
 let disposed = false
-let closeSent = false
 let lastRows = 0
 let lastColumns = 0
 let reconnectAttempts = 0
 const inputFlushInterval = 24
+
+watch(state, (value) => emit('stateChange', value), { immediate: true })
 
 function themeColor(name: string, fallback: string): string {
   if (!host.value) return fallback
@@ -155,14 +156,6 @@ function scheduleResize(): void {
   }, 100)
 }
 
-function closeSession(): void {
-  if (!closeSent) {
-    closeSent = true
-    void api.terminals.close(props.sessionId).catch(() => undefined)
-  }
-  emit('close')
-}
-
 onMounted(() => {
   terminal = new Terminal({
     cursorBlink: true,
@@ -208,23 +201,15 @@ onBeforeUnmount(() => {
   if (resizeTimer) window.clearTimeout(resizeTimer)
   observer?.disconnect()
   terminal?.dispose()
-  if (!closeSent) void api.terminals.close(props.sessionId).catch(() => undefined)
+  void api.terminals.close(props.sessionId).catch(() => undefined)
 })
 </script>
 
 <template>
   <section class="host-terminal">
-    <header>
-      <div>
-        <strong>{{ hostName }}</strong>
-        <small>{{ state === 'connected' ? t('terminal.connected') : state === 'finished' ? t('terminal.finished') : state === 'reconnecting' ? t('terminal.reconnecting') : t('terminal.connecting') }}</small>
-      </div>
-      <div class="host-terminal__actions">
-        <button type="button" :title="t('terminal.scrollToBottom')" :aria-label="t('terminal.scrollToBottom')" @click="scrollToBottom"><ArrowDownToLine :size="17" /></button>
-        <button type="button" :title="t('terminal.close')" :aria-label="t('terminal.close')" @click="closeSession"><X :size="17" /></button>
-      </div>
-    </header>
-    <div ref="host" class="host-terminal__screen terminal-screen" @click="terminal?.focus()" />
+    <div ref="host" class="host-terminal__screen terminal-screen" @click="terminal?.focus()">
+      <button class="host-terminal__scroll-bottom" type="button" :title="t('terminal.scrollToBottom')" :aria-label="t('terminal.scrollToBottom')" @click.stop="scrollToBottom"><ArrowDownToLine :size="17" /></button>
+    </div>
     <form class="host-terminal__composer" @submit.prevent="submitPendingLine">
       <input ref="composerInput" v-model="pendingLine" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="8192" :placeholder="t('terminal.inputPlaceholder')" :disabled="state === 'finished'" />
       <button type="submit" :disabled="state === 'finished'">{{ t('terminal.send') }}</button>
@@ -233,14 +218,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.host-terminal { display:grid; height:100%; grid-template-rows:auto minmax(0,1fr) auto; min-height:0; overflow:hidden; border:1px solid var(--terminal-shell-border,#29383a); border-radius:var(--terminal-shell-radius,12px); background:var(--terminal-shell-background,#0b1214); box-shadow:var(--terminal-shell-shadow); }
-.host-terminal header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:11px 14px; border-bottom:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }
-.host-terminal header>div:first-child { display:grid; gap:2px; }
-.host-terminal header strong { color:#f2faf7; font-size:13px; }
-.host-terminal header small { color:var(--terminal-shell-muted,#8a9695); font-size:11px; }
-.host-terminal header button { display:grid; width:34px; height:34px; place-items:center; border:1px solid var(--terminal-shell-border,#29383a); border-radius:9px; color:var(--terminal-shell-muted,#8a9695); background:transparent; }
-.host-terminal__actions { display:flex; align-items:center; gap:7px; }
+.host-terminal { display:grid; height:100%; grid-template-rows:minmax(0,1fr) auto; min-height:0; overflow:hidden; border:1px solid var(--terminal-shell-border,#29383a); border-radius:var(--terminal-shell-radius,12px); background:var(--terminal-shell-background,#0b1214); box-shadow:var(--terminal-shell-shadow); }
 .host-terminal__screen { position:relative; min-width:0; min-height:0; overflow:hidden; padding:10px 7px; }
+.host-terminal__scroll-bottom { position:absolute; z-index:3; top:9px; right:10px; display:grid; width:32px; height:32px; place-items:center; border:1px solid var(--terminal-shell-border,#29383a); border-radius:8px; color:var(--terminal-shell-muted,#8a9695); background:color-mix(in srgb,var(--terminal-shell-panel,#111a1d) 92%,transparent); opacity:.72; backdrop-filter:blur(6px); }
+.host-terminal__scroll-bottom:hover,.host-terminal__scroll-bottom:focus-visible { color:var(--terminal-shell-text,#d8dddc); border-color:var(--brand); opacity:1; }
 .host-terminal__screen :deep(.xterm) { height:100%; }
 .host-terminal__screen :deep(.xterm-viewport) { overflow-y:scroll !important; }
 .host-terminal__composer { position:relative; z-index:2; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:9px 10px; border-top:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }

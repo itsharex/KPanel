@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const terminalSource = readFileSync(new URL('./TerminalView.vue', import.meta.url), 'utf8')
+const hostTerminalSource = readFileSync(new URL('../components/terminal/HostTerminal.vue', import.meta.url), 'utf8')
 
 describe('multi-host terminal workspace layout', () => {
   it('keeps a large connection inventory in its own scroll region', () => {
@@ -18,5 +19,22 @@ describe('multi-host terminal workspace layout', () => {
     expect(terminalSource).toMatch(
       /\.terminal-stage\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\);[^}]*min-height:0;/,
     )
+  })
+
+  it('merges connection status into the session tabs without a duplicate terminal header', () => {
+    expect(terminalSource).toContain('class="terminal-tab__status"')
+    expect(terminalSource).toContain('@state-change="item.state = $event"')
+    expect(hostTerminalSource).not.toContain('<header>')
+    expect(hostTerminalSource).toContain('class="host-terminal__scroll-bottom"')
+  })
+
+  it('provides a viewport-sized terminal mode while keeping session tabs available', () => {
+    expect(terminalSource).toContain("'is-fullscreen': fullscreen")
+    expect(terminalSource).toContain('v-if="sessions.length || fullscreen"')
+    expect(terminalSource).toContain("t('common.exitFullscreen')")
+    expect(terminalSource).toMatch(
+      /\.terminal-workspace\.is-fullscreen\s*\{[^}]*position:fixed;[^}]*inset:0;[^}]*height:100dvh;/,
+    )
+    expect(terminalSource).toMatch(/\.terminal-workspace\.is-fullscreen \.terminal-connections\s*\{[^}]*display:none;/)
   })
 })

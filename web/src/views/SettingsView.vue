@@ -392,7 +392,7 @@ onMounted(async () => {
         <span><UserRound :size="19" /></span>
         <div><h2>修改用户名</h2><p>更新当前管理员账户的登录名称</p></div>
       </header>
-      <form class="form-stack password-form" novalidate @submit.prevent="changeUsername">
+      <form class="form-stack password-form" autocomplete="off" novalidate @submit.prevent="changeUsername">
         <label class="field">
           <span>新用户名</span>
           <input
@@ -413,7 +413,9 @@ onMounted(async () => {
             v-model="usernameForm.currentPassword"
             type="password"
             name="username-current-password"
-            autocomplete="current-password"
+            autocomplete="new-password"
+            data-1p-ignore
+            data-lpignore="true"
             :aria-invalid="usernameSubmitted && usernameForm.currentPassword.length === 0"
             required
           />
@@ -425,6 +427,44 @@ onMounted(async () => {
         </button>
       </form>
       <p class="settings-note">修改成功后所有现有会话会立即失效；密码、两步验证和恢复码保持不变。</p>
+    </section>
+
+    <section class="settings-section panel-card">
+      <header class="settings-section__header">
+        <span><ShieldCheck :size="19" /></span>
+        <div><h2>登录安全入口</h2><p>隐藏常规登录路径，减少公网扫描与撞库噪声</p></div>
+        <StatusBadge
+          :status="securityEntry?.enabled ? 'connected' : 'idle'"
+          :label="securityEntry?.enabled ? '已启用' : '未启用'"
+        />
+      </header>
+      <div v-if="securityEntry" class="security-entry-form">
+        <label class="field">
+          <span>入口路径</span>
+          <div class="security-entry-input">
+            <span>/</span>
+            <input v-model="securityEntryPath" type="text" maxlength="48" autocomplete="off" placeholder="panel-xxxxxxxx" />
+          </div>
+        </label>
+        <div class="security-entry-actions">
+          <button
+            v-if="!securityEntry.enabled"
+            class="button button--primary"
+            type="button"
+            :disabled="savingSecurityEntry"
+            @click="saveSecurityEntry(true, !securityEntryPath)"
+          >启用安全入口</button>
+          <template v-else>
+            <button class="button button--secondary" type="button" :disabled="savingSecurityEntry" @click="saveSecurityEntry(true)">保存路径</button>
+            <button class="button button--secondary" type="button" :disabled="savingSecurityEntry" @click="saveSecurityEntry(true, true)">重新生成</button>
+            <button class="button button--secondary" type="button" @click="copySecurityEntry"><Copy :size="15" />复制入口</button>
+            <button class="button button--ghost" type="button" :disabled="savingSecurityEntry" @click="saveSecurityEntry(false)">关闭</button>
+          </template>
+        </div>
+        <code v-if="securityEntryUrl" class="security-entry-url">{{ securityEntryUrl }}</code>
+      </div>
+      <p v-else class="settings-note">正在读取安全入口状态…</p>
+      <p class="settings-note">安全入口是登录验证前的额外门槛，不替代强密码、会话保护和登录限速；请妥善保存入口地址。</p>
     </section>
 
     <section class="settings-section panel-card">
@@ -592,44 +632,6 @@ onMounted(async () => {
         </button>
       </form>
       <p class="settings-note">修改成功后当前会话将立即失效，需要使用新密码重新登录。</p>
-    </section>
-
-    <section class="settings-section panel-card">
-      <header class="settings-section__header">
-        <span><ShieldCheck :size="19" /></span>
-        <div><h2>登录安全入口</h2><p>隐藏常规登录路径，减少公网扫描与撞库噪声</p></div>
-        <StatusBadge
-          :status="securityEntry?.enabled ? 'connected' : 'idle'"
-          :label="securityEntry?.enabled ? '已启用' : '未启用'"
-        />
-      </header>
-      <div v-if="securityEntry" class="security-entry-form">
-        <label class="field">
-          <span>入口路径</span>
-          <div class="security-entry-input">
-            <span>/</span>
-            <input v-model="securityEntryPath" type="text" maxlength="48" autocomplete="off" placeholder="panel-xxxxxxxx" />
-          </div>
-        </label>
-        <div class="security-entry-actions">
-          <button
-            v-if="!securityEntry.enabled"
-            class="button button--primary"
-            type="button"
-            :disabled="savingSecurityEntry"
-            @click="saveSecurityEntry(true, !securityEntryPath)"
-          >启用安全入口</button>
-          <template v-else>
-            <button class="button button--secondary" type="button" :disabled="savingSecurityEntry" @click="saveSecurityEntry(true)">保存路径</button>
-            <button class="button button--secondary" type="button" :disabled="savingSecurityEntry" @click="saveSecurityEntry(true, true)">重新生成</button>
-            <button class="button button--secondary" type="button" @click="copySecurityEntry"><Copy :size="15" />复制入口</button>
-            <button class="button button--ghost" type="button" :disabled="savingSecurityEntry" @click="saveSecurityEntry(false)">关闭</button>
-          </template>
-        </div>
-        <code v-if="securityEntryUrl" class="security-entry-url">{{ securityEntryUrl }}</code>
-      </div>
-      <p v-else class="settings-note">正在读取安全入口状态…</p>
-      <p class="settings-note">安全入口是登录验证前的额外门槛，不替代强密码、会话保护和登录限速；请妥善保存入口地址。</p>
     </section>
 
     <section class="settings-section panel-card">
