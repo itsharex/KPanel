@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.40.2] - 2026-08-03
+
+### Fixed
+
+- 修复文件管理虽然已开放 `/root`、`/var`、`/opt`、`/srv`、`/mnt` 等宿主机目录，但通过应用市场安装或更新后的 Agent 仍被 systemd 写入范围限制为只读，导致创建、上传、编辑、复制、移动、回收站和解压操作返回 `read-only file system` 的问题。
+
+### Security
+
+- systemd 写入视图与文件 API 的 `/` 管理根保持一致；真实写操作仍必须经过固定类型接口、登录态、同源与 CSRF 校验、路径规范化、符号链接防护、内核虚拟文件系统拒绝、KPanel 数据与凭据目录隔离、请求上限和审计，不新增任意 Shell 或匿名文件入口。
+- KPanel 的 Panel 数据目录继续通过 `ReadOnlyPaths` 独立保护，Agent Token、集群密钥和运行时凭据仍不向文件管理开放。
+
+### Performance
+
+- 本次仅修正 Agent systemd 单元的挂载写入范围，不增加常驻进程、轮询、缓存或请求；文件操作仍按现有有界 API 执行。
+
+### Upgrade Notes
+
+- 应用市场更新会重建 `kejilion-agent.service` 以应用新的 systemd 写入范围；无数据、端口、文件格式或 `kejilion.sh` 协议迁移，现有网站、应用、Docker、集群关系、终端会话策略和监控历史不受影响。更新失败可回滚至 `v0.40.1` 镜像，数据目录保持不动。
+
 ## [0.40.1] - 2026-08-03
 
 ### Added
