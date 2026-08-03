@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -106,6 +107,20 @@ func run(arguments []string) error {
 	}
 	dockerClient := dockerx.New(*dockerSocket, *webRoot, *stateDir)
 	dockerClient.ConfigureDaemonAccess(*dockerPIDFile, *allowDockerSocketActivation)
+	systemCollector := systeminfo.NewCollector()
+	systemCollector.PublicNetworkLookupEnabled = *enablePublicNetworkLookup
+	dockerClient.ConfigureImageUpdateFallback(func(context.Context) (string, error) {
+		if !*enablePublicNetworkLookup {
+			return "ZZ", nil
+		}
+		country := strings.ToUpper(strings.TrimSpace(
+			systemCollector.CachedPublicNetwork().CountryCode,
+		))
+		if len(country) != 2 {
+			return "", errors.New("public country is unavailable")
+		}
+		return country, nil
+	})
 	appMarket, err := appmarket.NewWithOfficialCatalog(dockerClient, "/home/docker")
 	if err != nil {
 		return fmt.Errorf("initialize application market: %w", err)
@@ -124,8 +139,6 @@ func run(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("initialize diagnostic jobs: %w", err)
 	}
-	systemCollector := systeminfo.NewCollector()
-	systemCollector.PublicNetworkLookupEnabled = *enablePublicNetworkLookup
 	historyService, historyErr := monitoring.New(monitoring.Config{
 		StateDir:        filepath.Join(*stateDir, "monitoring"),
 		System:          systemCollector,

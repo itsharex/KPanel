@@ -92,6 +92,16 @@ func (c *Collector) PublicNetwork(ctx context.Context) contract.PublicNetworkSum
 	}
 }
 
+// CachedPublicNetwork returns the last completed public-network snapshot
+// without starting or waiting for an external lookup. Callers that only need
+// an optional locality hint must use this path so normal operations never
+// acquire a new network dependency.
+func (c *Collector) CachedPublicNetwork() contract.PublicNetworkSummary {
+	c.publicNetworkMu.Lock()
+	defer c.publicNetworkMu.Unlock()
+	return c.publicNetworkCache
+}
+
 func (c *Collector) refreshPublicNetwork(parent context.Context) {
 	defer func() {
 		c.publicNetworkMu.Lock()

@@ -47,6 +47,23 @@ func TestReadPublicNetworkCachesSuccessfulLookup(t *testing.T) {
 	}
 }
 
+func TestCachedPublicNetworkDoesNotStartLookup(t *testing.T) {
+	lookupCalls := 0
+	collector := NewCollector()
+	collector.PublicNetworkLookup = func(context.Context) (contract.PublicNetworkSummary, error) {
+		lookupCalls++
+		return contract.PublicNetworkSummary{CountryCode: "CN"}, nil
+	}
+	collector.publicNetworkCache = contract.PublicNetworkSummary{CountryCode: "HK"}
+
+	if got := collector.CachedPublicNetwork().CountryCode; got != "HK" {
+		t.Fatalf("country = %q, want HK", got)
+	}
+	if lookupCalls != 0 {
+		t.Fatalf("cached lookup started %d external requests", lookupCalls)
+	}
+}
+
 func TestReadPublicNetworkCachesFailureBriefly(t *testing.T) {
 	now := time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC)
 	calls := 0

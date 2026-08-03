@@ -50,6 +50,7 @@ type Client struct {
 	jobs                  *dockerJobRegistry
 	pidFile               string
 	allowSocketActivation bool
+	imageUpdateCountry    func(context.Context) (string, error)
 }
 
 type ImageSummary struct {
@@ -134,6 +135,16 @@ func New(socketPath, webRoot, stateRoot string) *Client {
 func (c *Client) ConfigureDaemonAccess(pidFile string, allowSocketActivation bool) {
 	c.pidFile = cleanLinuxPath(pidFile, "/run/docker.pid")
 	c.allowSocketActivation = allowSocketActivation
+}
+
+// ConfigureImageUpdateFallback enables the fixed Docker Hub acceleration
+// fallback used by update checks. The resolver is deliberately configured by
+// the Agent so update checks can reuse its cached public-network identity
+// instead of creating a second country lookup or background poller.
+func (c *Client) ConfigureImageUpdateFallback(
+	country func(context.Context) (string, error),
+) {
+	c.imageUpdateCountry = country
 }
 
 func (c *Client) Ping(ctx context.Context) error {
