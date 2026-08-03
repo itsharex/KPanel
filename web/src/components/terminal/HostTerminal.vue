@@ -34,11 +34,14 @@ let inputTimer: number | undefined
 let resizeTimer: number | undefined
 let inputQueue = ''
 let inputSending = false
-let offset = props.initialOffset
+// A freshly opened terminal starts at offset 0. Keep the client resilient to
+// older Panel responses that did not include the initial offset field.
+let offset = Number.isFinite(props.initialOffset) && props.initialOffset >= 0 ? props.initialOffset : 0
 let disposed = false
 let closeSent = false
 let lastRows = 0
 let lastColumns = 0
+let reconnectAttempts = 0
 
 function themeColor(name: string, fallback: string): string {
   if (!host.value) return fallback
@@ -65,11 +68,10 @@ async function flushInput(): Promise<void> {
   try {
     while (inputQueue && !disposed) {
       const { chunk, rest } = takeTerminalInputChunk(inputQueue)
-      inputQueue = rest
       await api.terminals.input(props.sessionId, encodeBase64(chunk))
+      inputQueue = rest
     }
   } catch {
-    inputQueue = ''
     terminal?.write(`\r\n\x1b[31m[KPanel] ${t('terminal.inputFailed')}\x1b[0m\r\n`)
     state.value = 'reconnecting'
   } finally {
@@ -104,6 +106,8 @@ async function poll(): Promise<void> {
     if (chunk.data) terminal?.write(decodeBase64(chunk.data))
     offset = chunk.nextOffset
     state.value = chunk.closed || chunk.exitedAt ? 'finished' : 'connected'
+    reconnectAttempts = 0
+    if (state.value === 'connected' && inputQueue) void flushInput()
     if (chunk.exitError) terminal?.write(`\r\n\x1b[31m[KPanel] ${chunk.exitError}\x1b[0m\r\n`)
     if (state.value !== 'finished') pollTimer = window.setTimeout(() => void poll(), 0)
   } catch (reason) {
@@ -113,7 +117,9 @@ async function poll(): Promise<void> {
       return
     }
     state.value = 'reconnecting'
-    pollTimer = window.setTimeout(() => void poll(), 750)
+    reconnectAttempts++
+    const retryDelay = Math.min(5000, 500 * 2 ** Math.min(reconnectAttempts - 1, 3))
+    pollTimer = window.setTimeout(() => void poll(), retryDelay)
   }
 }
 
@@ -123,7 +129,7 @@ function scheduleResize(): void {
     fitAddon?.fit()
     const rows = terminal?.rows || 0
     const columns = terminal?.cols || 0
-    if (!rows || !columns || (rows === lastRows && columns === lastColumns)) return
+    if (!rows || !columns || rows > 500 || columns > 1000 || (rows === lastRows && columns === lastColumns)) return
     lastRows = rows
     lastColumns = columns
     void api.terminals.resize(props.sessionId, rows, columns).catch(() => undefined)
@@ -205,16 +211,16 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.host-terminal { display:grid; grid-template-rows:auto minmax(420px,1fr) auto; min-height:0; overflow:hidden; border:1px solid var(--terminal-shell-border,#29383a); border-radius:var(--terminal-shell-radius,12px); background:var(--terminal-shell-background,#0b1214); box-shadow:var(--terminal-shell-shadow); }
+.host-terminal { display:grid; height:100%; grid-template-rows:auto minmax(0,1fr) auto; min-height:0; overflow:hidden; border:1px solid var(--terminal-shell-border,#29383a); border-radius:var(--terminal-shell-radius,12px); background:var(--terminal-shell-background,#0b1214); box-shadow:var(--terminal-shell-shadow); }
 .host-terminal header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:11px 14px; border-bottom:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }
 .host-terminal header div { display:grid; gap:2px; }
 .host-terminal header strong { color:#f2faf7; font-size:13px; }
 .host-terminal header small { color:var(--terminal-shell-muted,#8a9695); font-size:11px; }
 .host-terminal header button { display:grid; width:34px; height:34px; place-items:center; border:1px solid var(--terminal-shell-border,#29383a); border-radius:9px; color:var(--terminal-shell-muted,#8a9695); background:transparent; }
-.host-terminal__screen { min-width:0; min-height:420px; padding:10px 7px; }
+.host-terminal__screen { min-width:0; min-height:0; padding:10px 7px; }
 .host-terminal__composer { display:grid; grid-template-columns:1fr auto; gap:8px; padding:9px 10px; border-top:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }
 .host-terminal__composer input { min-width:0; border:1px solid var(--terminal-shell-border,#29383a); border-radius:8px; padding:9px 11px; color:var(--terminal-shell-text,#d8dddc); background:var(--terminal-shell-background,#0b1214); font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 .host-terminal__composer button { border:0; border-radius:8px; padding:0 16px; color:#05251c; background:var(--brand,#35cba6); font-weight:800; }
 .host-terminal :deep(.xterm-viewport) { scrollbar-color:var(--terminal-shell-scrollbar,#35474a) var(--terminal-shell-background,#0b1214); }
-@media (max-width: 760px) { .host-terminal { grid-template-rows:auto minmax(360px,60vh) auto; } .host-terminal__screen { min-height:360px; } }
+@media (max-width: 760px) { .host-terminal { grid-template-rows:auto minmax(0,1fr) auto; } }
 </style>

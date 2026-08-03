@@ -1,5 +1,18 @@
 import type { MonitoringContainerSeries } from '@/types/api'
 
+export function normalizeTrendChartWidth(measured: number, fallback = 720): number {
+  const width = Number.isFinite(measured) && measured > 0 ? measured : fallback
+  return Math.max(320, Math.round(width))
+}
+
+export function trendLegendLabel(
+  latestLabel: string | undefined,
+  fallbackValue: number,
+  formatter: (value: number) => string,
+): string {
+  return latestLabel ?? formatter(fallbackValue)
+}
+
 interface TimedSeries {
   points: Array<{ time: number }>
 }

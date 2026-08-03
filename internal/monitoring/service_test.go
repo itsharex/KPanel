@@ -244,6 +244,35 @@ func TestDNSRootNSQueryUsesBoundedValidatedPacket(t *testing.T) {
 	}
 }
 
+func TestNetworkLatencyProbeUsesFirstSuccessfulProtocol(t *testing.T) {
+	prober := &networkLatencyProber{probes: []operatorLatencyProbe{
+		func(context.Context, string) (time.Duration, error) {
+			return 0, errors.New("filtered")
+		},
+		func(context.Context, string) (time.Duration, error) {
+			return 42 * time.Millisecond, nil
+		},
+	}}
+	latency, err := prober.Probe(context.Background(), "192.0.2.1")
+	if err != nil || latency != 42*time.Millisecond {
+		t.Fatalf("latency=%s err=%v", latency, err)
+	}
+}
+
+func TestNetworkLatencyProbeRejectsInvalidTargetsAndAllFailures(t *testing.T) {
+	prober := &networkLatencyProber{probes: []operatorLatencyProbe{
+		func(context.Context, string) (time.Duration, error) {
+			return 0, errors.New("filtered")
+		},
+	}}
+	if _, err := prober.Probe(context.Background(), "example.com"); err == nil {
+		t.Fatal("invalid target was accepted")
+	}
+	if _, err := prober.Probe(context.Background(), "192.0.2.1"); err == nil {
+		t.Fatal("failed protocols were reported as a latency")
+	}
+}
+
 func TestSortContainerSeriesPrioritizesFreshMemoryThenCPU(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	series := []contract.MonitoringContainerSeries{

@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   nearestTimestamp,
+  normalizeTrendChartWidth,
   svgClientXToViewBox,
   svgViewBoxXToClient,
+  trendLegendLabel,
   uniqueSeriesTimes,
 } from '@/lib/monitoringPresentation'
 
 export interface TrendSeries {
   label: string
   color: string
+  latestLabel?: string
   points: Array<{ at: string; value: number }>
 }
 
@@ -30,12 +33,15 @@ const props = withDefaults(defineProps<{
   maxValue: undefined,
 })
 
-const width = 720
+const defaultWidth = 720
 const height = 210
 const padding = { top: 16, right: 12, bottom: 28, left: 64 }
+const canvas = ref<HTMLDivElement>()
+const width = ref(defaultWidth)
 const hoveredTime = ref<number>()
 const tooltipX = ref<number>()
 const tooltipOnLeft = ref(false)
+let observer: ResizeObserver | undefined
 
 const normalizedSeries = computed(() => props.series.map((series) => ({
   ...series,
@@ -96,12 +102,12 @@ const tooltipTime = computed(() => hoveredTime.value ?? 0)
 
 const tooltipStyle = computed(() => ({
   left: tooltipX.value === undefined
-    ? `${(hoverX.value / width) * 100}%`
+    ? `${(hoverX.value / width.value) * 100}%`
     : `${tooltipX.value}px`,
 }))
 
 function plotWidth(): number {
-  return width - padding.left - padding.right
+  return width.value - padding.left - padding.right
 }
 
 function plotHeight(): number {
@@ -144,9 +150,9 @@ function nearestPoint(points: NormalizedPoint[], target: number): NormalizedPoin
 function onPointerMove(event: PointerEvent): void {
   if (!bounds.value.hasData) return
   const svg = event.currentTarget as SVGSVGElement
-  const svgX = svgClientXToViewBox(svg, event.clientX, event.clientY, width)
+  const svgX = svgClientXToViewBox(svg, event.clientX, event.clientY, width.value)
   if (svgX === undefined) return
-  const clamped = Math.min(width - padding.right, Math.max(padding.left, svgX))
+  const clamped = Math.min(width.value - padding.right, Math.max(padding.left, svgX))
   const ratio = (clamped - padding.left) / plotWidth()
   const target = bounds.value.minimumTime + ratio * (bounds.value.maximumTime - bounds.value.minimumTime)
   const nearest = nearestTimestamp(interactionTimes.value, target)
@@ -154,10 +160,10 @@ function onPointerMove(event: PointerEvent): void {
   if (nearest === undefined) return
 
   const canvasRect = svg.parentElement?.getBoundingClientRect()
-  const clientX = svgViewBoxXToClient(svg, xFor(nearest), width)
+  const clientX = svgViewBoxXToClient(svg, xFor(nearest), width.value)
   if (!canvasRect?.width || clientX === undefined) {
     tooltipX.value = undefined
-    tooltipOnLeft.value = hoverX.value > width / 2
+    tooltipOnLeft.value = hoverX.value > width.value / 2
     return
   }
 
@@ -184,6 +190,23 @@ function timeLabel(value: number, detailed = false): string {
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
   }).format(new Date(value))
 }
+
+function updateWidth(): void {
+  const measured = canvas.value?.clientWidth || 0
+  width.value = normalizeTrendChartWidth(measured, defaultWidth)
+}
+
+onMounted(() => {
+  updateWidth()
+  if (canvas.value) {
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(updateWidth)
+      observer.observe(canvas.value)
+    }
+  }
+})
+
+onBeforeUnmount(() => observer?.disconnect())
 </script>
 
 <template>
@@ -192,10 +215,10 @@ function timeLabel(value: number, detailed = false): string {
       <span v-for="item in normalizedSeries" :key="item.label">
         <i :style="{ backgroundColor: item.color }" />
         {{ item.label }}
-        <strong>{{ formatter(lastValue(item)) }}</strong>
+        <strong>{{ trendLegendLabel(item.latestLabel, lastValue(item), formatter) }}</strong>
       </span>
     </div>
-    <div v-if="bounds.hasData" class="trend-chart__canvas">
+    <div v-if="bounds.hasData" ref="canvas" class="trend-chart__canvas">
       <svg
         :viewBox="`0 0 ${width} ${height}`"
         role="img"

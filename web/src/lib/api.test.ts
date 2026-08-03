@@ -1053,6 +1053,24 @@ describe('API client', () => {
     })
   })
 
+  it('keeps terminal output objects intact instead of treating their data field as an envelope', async () => {
+    const sessionID = 'a'.repeat(64)
+    const output = {
+      data: 'cm9vdEBrZWppbGlvbjokIA',
+      offset: 0,
+      nextOffset: 19,
+      truncated: false,
+      closed: false,
+    }
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(output))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.terminals.output(sessionID, 0)).resolves.toEqual(output)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `/api/v1/terminal-sessions/${sessionID}/output?offset=0&wait=1000`,
+    )
+  })
+
   it('normalizes list responses without a total field', () => {
     expect(normalizeList({ items: ['a', 'b'] } as { items: string[]; total: number })).toEqual({
       items: ['a', 'b'],

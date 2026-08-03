@@ -475,6 +475,7 @@ async function request<T>(
     body?: unknown
     query?: Record<string, QueryValue>
     signal?: AbortSignal
+    unwrapEnvelope?: boolean
   } = {},
 ): Promise<T> {
   const method = options.method || 'GET'
@@ -525,7 +526,7 @@ async function request<T>(
     )
   }
 
-  if (payload && typeof payload === 'object' && 'data' in payload) {
+  if (options.unwrapEnvelope !== false && payload && typeof payload === 'object' && 'data' in payload) {
     return (payload as ApiEnvelope<T>).data as T
   }
   return payload as T
@@ -1167,6 +1168,8 @@ export const api = {
       request<TerminalOutput>(`/terminal-sessions/${encodeURIComponent(sessionId)}/output`, {
         query: { offset, wait: 1000 },
         signal,
+        // TerminalOutput has its own `data` field and is not an API envelope.
+        unwrapEnvelope: false,
       }),
     input: (sessionId: string, data: string): Promise<{ accepted: boolean }> =>
       request<{ accepted: boolean }>(`/terminal-sessions/${encodeURIComponent(sessionId)}/input`, {

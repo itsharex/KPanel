@@ -4,8 +4,10 @@ import {
   isHistoricalContainer,
   nearestTimestamp,
   newestContainerSampleTime,
+  normalizeTrendChartWidth,
   svgClientXToViewBox,
   svgViewBoxXToClient,
+  trendLegendLabel,
   uniqueSeriesTimes,
 } from './monitoringPresentation'
 
@@ -32,6 +34,18 @@ function container(id: string, collectedAt?: string): MonitoringContainerSeries 
 }
 
 describe('monitoring presentation', () => {
+  it('fills the rendered chart width and keeps a safe fallback', () => {
+    expect(normalizeTrendChartWidth(1440)).toBe(1440)
+    expect(normalizeTrendChartWidth(0)).toBe(720)
+    expect(normalizeTrendChartWidth(180)).toBe(320)
+  })
+
+  it('shows the latest probe state instead of a stale historical value', () => {
+    const formatter = (value: number) => `${value} ms`
+    expect(trendLegendLabel('超时', 274, formatter)).toBe('超时')
+    expect(trendLegendLabel(undefined, 274, formatter)).toBe('274 ms')
+  })
+
   it('uses every series timestamp and reaches both edges', () => {
     const times = uniqueSeriesTimes([
       { points: [{ time: 20 }, { time: 30 }] },

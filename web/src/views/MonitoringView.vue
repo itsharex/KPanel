@@ -170,6 +170,7 @@ const operatorLatencyChart = computed<TrendSeries[]>(() => operatorLatencyRoutes
   .map((series) => ({
     label: operatorLatencyLabel(series),
     color: operatorLatencyColors[series.id] || 'var(--brand)',
+    latestLabel: latestLatencyLabel(series),
     points: series.points.flatMap((point) => point.latencyMilliseconds === null
       ? []
       : [{ at: point.collectedAt, value: point.latencyMilliseconds }]),
@@ -434,52 +435,6 @@ onBeforeUnmount(() => controller?.abort())
       </div>
       <EmptyState v-else title="正在积累历史数据" description="功能启用后约 1 分钟生成首个主机采样点，刷新页面即可查看。" />
 
-      <article v-if="operatorLatencyRoutes.length" class="chart-card chart-card--wide operator-latency-card">
-        <header class="operator-latency-heading">
-          <div>
-            <RadioTower :size="18" />
-            <span><strong>三网延迟</strong><small>电信、联通、移动在北京、上海、广州的固定节点</small></span>
-          </div>
-          <span v-if="history.storage.lastOperatorLatencyAt">
-            最近一轮成功 {{ history.storage.lastOperatorLatencySuccessful || 0 }}/9 · 每
-            {{ Math.max(1, Math.round((history.storage.operatorLatencyIntervalSeconds || 300) / 60)) }} 分钟
-          </span>
-          <span v-else>等待首次三网延迟采样</span>
-        </header>
-        <div class="operator-latency-controls">
-          <div class="operator-latency-routes" aria-label="线路显示选择">
-            <button
-              v-for="series in operatorLatencyRoutes"
-              :key="series.id"
-              class="operator-route"
-              :class="{ 'operator-route--active': operatorLatencyVisibility[series.id] }"
-              type="button"
-              :aria-pressed="Boolean(operatorLatencyVisibility[series.id])"
-              :title="series.address"
-              @click="toggleOperatorLatency(series.id)"
-            >
-              <i :style="{ background: operatorLatencyColors[series.id] }" />
-              <span>{{ operatorLatencyLabel(series) }}</span>
-              <small>{{ latestLatencyLabel(series) }}</small>
-            </button>
-          </div>
-          <div class="operator-latency-actions">
-            <button type="button" @click="showAllOperatorLatency(true)">全显示</button>
-            <button type="button" @click="showAllOperatorLatency(false)">全隐藏</button>
-          </div>
-        </div>
-        <p class="operator-latency-note">每 5 分钟采样固定节点；超时记为缺测，不记作 0 ms。</p>
-        <TrendChart
-          v-if="operatorLatencyChart.length"
-          :series="operatorLatencyChart"
-          :formatter="formatLatency"
-        />
-        <div v-else-if="operatorLatencyVisibleCount === 0" class="operator-latency-empty">
-          已隐藏全部线路，选择上方线路即可显示。
-        </div>
-        <div v-else class="operator-latency-empty">等待首次三网延迟采样。</div>
-      </article>
-
       <section class="container-section">
         <header class="section-heading">
           <div>
@@ -536,6 +491,52 @@ onBeforeUnmount(() => controller?.abort())
         </div>
         <EmptyState v-else title="暂无容器历史数据" description="没有运行中的 Docker 容器，或首轮容器采样尚未完成。" />
       </section>
+
+      <article v-if="operatorLatencyRoutes.length" class="chart-card chart-card--wide operator-latency-card">
+        <header class="operator-latency-heading">
+          <div>
+            <span class="operator-latency-icon"><RadioTower :size="18" /></span>
+            <span><strong>三网延迟</strong><small>电信、联通、移动在北京、上海、广州的固定节点</small></span>
+          </div>
+          <span v-if="history.storage.lastOperatorLatencyAt">
+            最近一轮成功 {{ history.storage.lastOperatorLatencySuccessful || 0 }}/9 · 每
+            {{ Math.max(1, Math.round((history.storage.operatorLatencyIntervalSeconds || 300) / 60)) }} 分钟
+          </span>
+          <span v-else>等待首次三网延迟采样</span>
+        </header>
+        <div class="operator-latency-controls">
+          <div class="operator-latency-routes" aria-label="线路显示选择">
+            <button
+              v-for="series in operatorLatencyRoutes"
+              :key="series.id"
+              class="operator-route"
+              :class="{ 'operator-route--active': operatorLatencyVisibility[series.id] }"
+              type="button"
+              :aria-pressed="Boolean(operatorLatencyVisibility[series.id])"
+              :title="series.address"
+              @click="toggleOperatorLatency(series.id)"
+            >
+              <i :style="{ background: operatorLatencyColors[series.id] }" />
+              <span>{{ operatorLatencyLabel(series) }}</span>
+              <small>{{ latestLatencyLabel(series) }}</small>
+            </button>
+          </div>
+          <div class="operator-latency-actions">
+            <button type="button" @click="showAllOperatorLatency(true)">全显示</button>
+            <button type="button" @click="showAllOperatorLatency(false)">全隐藏</button>
+          </div>
+        </div>
+        <p class="operator-latency-note">每 5 分钟采样固定节点；超时记为缺测，不记作 0 ms。</p>
+        <TrendChart
+          v-if="operatorLatencyChart.length"
+          :series="operatorLatencyChart"
+          :formatter="formatLatency"
+        />
+        <div v-else-if="operatorLatencyVisibleCount === 0" class="operator-latency-empty">
+          已隐藏全部线路，选择上方线路即可显示。
+        </div>
+        <div v-else class="operator-latency-empty">等待首次三网延迟采样。</div>
+      </article>
 
       <footer class="monitoring-footnote">
         采样间隔：主机 {{ history.storage.hostIntervalSeconds }} 秒，容器
@@ -594,6 +595,10 @@ onBeforeUnmount(() => controller?.abort())
 .chart-switch button { min-height: 26px; padding: 0 9px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: .72rem; cursor: pointer; }
 .chart-switch button:hover, .chart-switch button.is-active { color: var(--brand-strong); background: var(--brand-soft); }
 .operator-latency-card { padding-bottom: 12px; }
+.operator-latency-icon {
+  display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center;
+  border-radius: 9px; color: var(--brand); background: var(--brand-soft);
+}
 .operator-latency-heading > div > span { display: grid; gap: 2px; }
 .operator-latency-heading small { color: var(--muted); font-size: .72rem; font-weight: 400; }
 .operator-latency-controls { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 7px; }

@@ -138,7 +138,7 @@ onBeforeUnmount(() => controller?.abort())
 .terminal-heading h1 { margin:7px 0 4px; }
 .terminal-heading p { max-width:850px; margin:0; color:var(--text-muted); }
 .terminal-alert { border:1px solid color-mix(in srgb,var(--danger) 34%,var(--border)); border-radius:10px; padding:11px 13px; color:var(--danger); background:color-mix(in srgb,var(--danger) 8%,var(--surface)); }
-.terminal-workspace { display:grid; grid-template-columns:280px minmax(0,1fr); min-height:630px; overflow:hidden; border:1px solid var(--border); border-radius:16px; background:var(--surface); box-shadow:var(--shadow-sm); }
+.terminal-workspace { display:grid; height:clamp(560px,calc(100vh - 220px),760px); min-height:560px; grid-template-columns:280px minmax(0,1fr); overflow:hidden; border:1px solid var(--border); border-radius:16px; background:var(--surface); box-shadow:var(--shadow-sm); }
 .terminal-connections { min-width:0; border-right:1px solid var(--border); background:color-mix(in srgb,var(--surface) 92%,var(--brand) 8%); }
 .terminal-connections>header { display:flex; align-items:center; justify-content:space-between; padding:17px 16px 12px; color:var(--brand); }
 .terminal-connections>header div { display:grid; gap:2px; color:var(--text); }
@@ -164,5 +164,5 @@ onBeforeUnmount(() => controller?.abort())
 .terminal-empty p { max-width:480px; margin:0; }
 .spin { animation:spin .8s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
-@media (max-width: 900px) { .terminal-workspace { grid-template-columns:1fr; } .terminal-connections { border-right:0; border-bottom:1px solid var(--border); max-height:300px; overflow:auto; } .terminal-stage { min-height:520px; } }
+@media (max-width: 900px) { .terminal-workspace { height:min(760px,calc(100dvh - 110px)); min-height:560px; grid-template-columns:1fr; grid-template-rows:minmax(140px,220px) minmax(0,1fr); } .terminal-connections { border-right:0; border-bottom:1px solid var(--border); overflow:auto; } .terminal-stage { min-height:0; } }
 </style>

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/cluster"
+	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/terminal"
 )
 
@@ -91,6 +92,17 @@ func decodeTerminalAgentResponse(response AgentResponse, err error, target any) 
 		return err
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var problem contract.Problem
+		if json.Unmarshal(response.Body, &problem) == nil {
+			switch problem.Code {
+			case "terminal_not_found":
+				return terminal.ErrNotFound
+			case "terminal_closed":
+				return terminal.ErrClosed
+			case "terminal_limit":
+				return terminal.ErrLimit
+			}
+		}
 		return fmt.Errorf("Agent terminal request failed with status %d", response.StatusCode)
 	}
 	if target == nil {
@@ -260,6 +272,11 @@ func (s *Server) handleTerminalOperation(w http.ResponseWriter, r *http.Request,
 		}
 		output, err := s.outputTerminalBackend(r.Context(), item, offset, wait)
 		if err != nil {
+			if errors.Is(err, terminal.ErrNotFound) || errors.Is(err, terminal.ErrClosed) {
+				s.deleteTerminalSession(id)
+				s.writeProblem(w, r, http.StatusNotFound, "terminal_not_found", "Terminal session not found", "")
+				return
+			}
 			s.writeProblem(w, r, http.StatusBadGateway, "terminal_output_failed", "Terminal output failed", "")
 			return
 		}
@@ -284,6 +301,11 @@ func (s *Server) handleTerminalOperation(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		if err := s.inputTerminalBackend(r.Context(), item, data); err != nil {
+			if errors.Is(err, terminal.ErrNotFound) || errors.Is(err, terminal.ErrClosed) {
+				s.deleteTerminalSession(id)
+				s.writeProblem(w, r, http.StatusNotFound, "terminal_not_found", "Terminal session not found", "")
+				return
+			}
 			s.writeProblem(w, r, http.StatusBadGateway, "terminal_input_failed", "Terminal input failed", "")
 			return
 		}
@@ -305,6 +327,11 @@ func (s *Server) handleTerminalOperation(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		if err := s.resizeTerminalBackend(r.Context(), item, input.Rows, input.Columns); err != nil {
+			if errors.Is(err, terminal.ErrNotFound) || errors.Is(err, terminal.ErrClosed) {
+				s.deleteTerminalSession(id)
+				s.writeProblem(w, r, http.StatusNotFound, "terminal_not_found", "Terminal session not found", "")
+				return
+			}
 			s.writeProblem(w, r, http.StatusBadGateway, "terminal_resize_failed", "Terminal resize failed", "")
 			return
 		}

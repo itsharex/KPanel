@@ -12,13 +12,15 @@ import (
 )
 
 type terminalAgentStub struct {
-	mu      sync.Mutex
-	opened  int
-	inputs  [][]byte
-	resized int
-	closed  int
-	output  []byte
-	next    int64
+	mu           sync.Mutex
+	opened       int
+	inputs       [][]byte
+	resized      int
+	closed       int
+	output       []byte
+	next         int64
+	outputStatus int
+	outputBody   []byte
 }
 
 func (s *terminalAgentStub) Get(_ context.Context, path, _ string, _ string) (AgentResponse, error) {
@@ -27,6 +29,9 @@ func (s *terminalAgentStub) Get(_ context.Context, path, _ string, _ string) (Ag
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.outputStatus != 0 {
+		return AgentResponse{StatusCode: s.outputStatus, ContentType: "application/json", Body: s.outputBody}, nil
+	}
 	body, _ := json.Marshal(map[string]any{
 		"data":       s.output,
 		"offset":     s.next,
@@ -37,6 +42,38 @@ func (s *terminalAgentStub) Get(_ context.Context, path, _ string, _ string) (Ag
 	s.next += int64(len(s.output))
 	s.output = nil
 	return AgentResponse{StatusCode: http.StatusOK, ContentType: "application/json", Body: body}, nil
+}
+
+func TestLocalTerminalSessionStopsReconnectingWhenAgentSessionIsGone(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	problem, _ := json.Marshal(map[string]any{
+		"title": "Terminal session not found", "status": http.StatusNotFound,
+		"code": "terminal_not_found", "requestId": "agent-request", "retryable": false,
+	})
+	stub := &terminalAgentStub{outputStatus: http.StatusNotFound, outputBody: problem}
+	server.agent = stub
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	headers := map[string]string{
+		"Content-Type": "application/json", "Origin": "http://panel.test", "X-CSRF-Token": csrfCookie.Value,
+	}
+	opened := authenticatedRequest(server, http.MethodPost, "/api/v1/terminal-sessions", []byte(`{"hostId":"local","rows":30,"columns":120}`), sessionCookie, csrfCookie, headers)
+	if opened.Code != http.StatusCreated {
+		t.Fatalf("open = %d %s", opened.Code, opened.Body.String())
+	}
+	var result terminalOpenResponse
+	if err := json.Unmarshal(opened.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode open: %v", err)
+	}
+	output := authenticatedRequest(server, http.MethodGet, "/api/v1/terminal-sessions/"+result.SessionID+"/output?offset=0&wait=0", nil, sessionCookie, csrfCookie, nil)
+	if output.Code != http.StatusNotFound || !strings.Contains(output.Body.String(), "terminal_not_found") {
+		t.Fatalf("missing Agent terminal = %d %s", output.Code, output.Body.String())
+	}
+	server.terminalMu.Lock()
+	_, exists := server.terminalSessions[result.SessionID]
+	server.terminalMu.Unlock()
+	if exists {
+		t.Fatal("missing backend terminal left a stale Panel session")
+	}
 }
 
 func (s *terminalAgentStub) Do(_ context.Context, method, path, _ string, _ string, body []byte) (AgentResponse, error) {
