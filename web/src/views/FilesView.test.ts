@@ -53,6 +53,7 @@ interface FileBindings {
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
   showContext: (event: MouseEvent, entry: TestFileEntry) => void
   showDirectoryContext: (event: MouseEvent) => void
+  handleEntryClick: (event: MouseEvent, entry: TestFileEntry) => void
   selectEntry: (event: MouseEvent, path: string) => void
   invertSelection: () => void
   preventNativeSelection: (event: Event) => void
@@ -533,6 +534,28 @@ describe('FilesView directory loading', () => {
 
     view.selectEntry({ shiftKey: true } as MouseEvent, second.path)
     expect([...view.selected.value]).toEqual([second.path, third.path])
+  })
+
+  it('opens entries with one tap on phone widths without changing desktop selection behavior', () => {
+    const view = setupView()
+    const entry = testEntry('mobile.txt')
+    view.directory.value = { path: '/', entries: [entry] }
+    const mobileEvent = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as MouseEvent
+
+    window.innerWidth = 390
+    view.handleEntryClick(mobileEvent, entry)
+    expect(view.previewEntry.value?.path).toBe(entry.path)
+    expect(view.selected.value.size).toBe(0)
+    expect(mobileEvent.preventDefault).toHaveBeenCalledOnce()
+
+    window.innerWidth = 1280
+    view.previewEntry.value = undefined
+    view.handleEntryClick({ shiftKey: false, ctrlKey: false, metaKey: false } as MouseEvent, entry)
+    expect(view.previewEntry.value).toBeUndefined()
+    expect(view.selected.value).toEqual(new Set([entry.path]))
   })
 
   it('prevents browser text selection inside the file list', () => {

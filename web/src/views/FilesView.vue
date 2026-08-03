@@ -395,6 +395,17 @@ function selectEntry(event: MouseEvent, path: string): void {
   selectionAnchor.value = path
 }
 
+function handleEntryClick(event: MouseEvent, entry: FileEntry): void {
+  if (typeof window !== 'undefined' && window.innerWidth <= 720) {
+    event.preventDefault()
+    event.stopPropagation()
+    clearSelection()
+    openEntry(entry)
+    return
+  }
+  selectEntry(event, entry.path)
+}
+
 function toggleAll(): void {
   const clearVisible = allVisibleSelected.value
   const next = new Set(selected.value)
@@ -1107,7 +1118,7 @@ onBeforeUnmount(() => {
           :class="{ 'file-row--selected': selected.has(entry.path) }"
           role="row"
           tabindex="0"
-          @click="selectEntry($event, entry.path)"
+          @click="handleEntryClick($event, entry)"
           @dblclick="openEntry(entry)"
           @keydown.enter="openEntry(entry)"
           @contextmenu.stop="showContext($event, entry)"
@@ -1127,7 +1138,10 @@ onBeforeUnmount(() => {
             </span>
             <span>
               <strong>{{ entry.name }}</strong>
-              <small>{{ entry.kind === 'directory' ? '文件夹' : entry.mime || '文件' }}</small>
+              <small class="file-name__desktop-meta">{{ entry.kind === 'directory' ? '文件夹' : entry.mime || '文件' }}</small>
+              <small class="file-name__mobile-meta">
+                {{ entry.kind === 'directory' ? '文件夹' : formatBytes(entry.sizeBytes) }} · {{ formatTime(entry.modifiedAt) }}
+              </small>
             </span>
           </span>
           <span>{{ entry.kind === 'directory' ? '—' : formatBytes(entry.sizeBytes) }}</span>
@@ -1161,7 +1175,7 @@ onBeforeUnmount(() => {
           :class="{ 'file-grid-card--selected': selected.has(entry.path) }"
           role="listitem"
           tabindex="0"
-          @click="selectEntry($event, entry.path)"
+          @click="handleEntryClick($event, entry)"
           @dblclick="openEntry(entry)"
           @keydown.enter="openEntry(entry)"
           @contextmenu.stop="showContext($event, entry)"
@@ -2099,6 +2113,10 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
+.file-name__mobile-meta {
+  display: none;
+}
+
 .file-icon {
   display: grid;
   flex: 0 0 34px;
@@ -2563,20 +2581,78 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 720px) {
+  .files-page {
+    gap: 12px;
+  }
+
+  .files-page :deep(.page-header) {
+    gap: 10px;
+  }
+
+  .files-page :deep(.page-header__actions) {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .files-page :deep(.page-header__actions .button) {
+    min-width: 0;
+    min-height: 48px;
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 3px;
+    font-size: 11px;
+    line-height: 1.15;
+    white-space: nowrap;
+  }
+
   .file-guard {
     align-items: flex-start;
-    flex-wrap: wrap;
+    min-height: 42px;
+    padding: 9px 11px;
   }
 
   .file-guard small {
-    width: 100%;
-    margin-left: 28px;
-    white-space: normal;
+    display: none;
+  }
+
+  .file-guard span {
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .file-shortcuts {
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-top: -4px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  .file-shortcuts::-webkit-scrollbar {
+    display: none;
+  }
+
+  .file-shortcuts button {
+    min-height: 38px;
+    flex: 0 0 auto;
   }
 
   .file-toolbar {
     align-items: stretch;
     flex-direction: column;
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .breadcrumbs {
+    margin: -2px 0;
+  }
+
+  .breadcrumbs button {
+    min-height: 38px;
+    padding: 5px 3px;
   }
 
   .file-search {
@@ -2596,6 +2672,17 @@ onBeforeUnmount(() => {
     margin-right: auto;
   }
 
+  .file-grid-sort,
+  .file-view-switch {
+    min-height: 42px;
+  }
+
+  .file-grid-sort button,
+  .file-view-switch button {
+    width: 36px;
+    height: 34px;
+  }
+
   .file-grid {
     grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
     gap: 8px;
@@ -2604,6 +2691,8 @@ onBeforeUnmount(() => {
 
   .file-grid-card {
     padding: 8px;
+    cursor: pointer;
+    touch-action: manipulation;
   }
 
   .file-grid-card__check,
@@ -2620,15 +2709,30 @@ onBeforeUnmount(() => {
     right: 13px;
   }
 
-  .batch-bar button,
-  .batch-bar strong {
-    flex: 0 0 auto;
-  }
-
   .batch-bar {
     bottom: max(10px, env(safe-area-inset-bottom));
     width: calc(100vw - 20px);
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+    padding: 8px;
     border-radius: 12px;
+  }
+
+  .batch-bar strong {
+    grid-column: 1 / -1;
+    margin: 0;
+    padding: 2px 6px 5px;
+  }
+
+  .batch-bar button {
+    min-height: 40px;
+    justify-content: center;
+    gap: 3px;
+    padding: 5px 2px;
+    font-size: 11px;
+    white-space: nowrap;
   }
 
   .clipboard-bar {
@@ -2642,7 +2746,31 @@ onBeforeUnmount(() => {
   }
 
   .file-row {
-    grid-template-columns: 38px minmax(180px, 1fr) 46px;
+    grid-template-columns: 38px minmax(0, 1fr) 46px;
+    min-height: 62px;
+    padding: 0 6px;
+  }
+
+  .file-row--entry {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .file-row > span {
+    padding: 7px 5px;
+  }
+
+  .file-name__desktop-meta {
+    display: none;
+  }
+
+  .file-name__mobile-meta {
+    display: block;
+  }
+
+  .row-menu {
+    width: 38px;
+    height: 38px;
   }
 
   .file-row > :nth-child(3),
@@ -2650,6 +2778,30 @@ onBeforeUnmount(() => {
   .file-row > :nth-child(5),
   .file-row > :nth-child(6) {
     display: none;
+  }
+
+  .file-context-menu {
+    top: auto !important;
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    left: 10px !important;
+    width: auto;
+    max-height: min(66dvh, 520px);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px;
+    overflow-y: auto;
+    padding: 9px;
+    border-radius: 16px;
+    box-shadow: 0 18px 52px rgb(0 0 0 / 28%);
+  }
+
+  .file-context-menu button {
+    min-height: 44px;
+    padding: 9px 10px;
+  }
+
+  .file-context-menu hr {
+    grid-column: 1 / -1;
   }
 
   .code-editor {
