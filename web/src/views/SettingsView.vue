@@ -53,6 +53,7 @@ const usernameForm = reactive({
   newUsername: session.state.user?.username || '',
   currentPassword: '',
 })
+const usernamePasswordUnlocked = ref(false)
 const capabilities = ref<Array<{ id: string; enabled: boolean; reason?: string }>>([])
 const securityEntry = ref<{ enabled: boolean; path?: string; resourceVersion: string }>()
 const securityEntryPath = ref('')
@@ -165,6 +166,10 @@ async function changeUsername(): Promise<void> {
   changingUsername.value = false
   toast.success('用户名已修改', '请使用新用户名重新登录。')
   await endAuthenticatedSession()
+}
+
+function unlockUsernamePassword(): void {
+  usernamePasswordUnlocked.value = true
 }
 
 async function saveSecurityEntry(enabled: boolean, regenerate = false): Promise<void> {
@@ -392,7 +397,7 @@ onMounted(async () => {
         <span><UserRound :size="19" /></span>
         <div><h2>修改用户名</h2><p>更新当前管理员账户的登录名称</p></div>
       </header>
-      <form class="form-stack password-form" autocomplete="off" novalidate @submit.prevent="changeUsername">
+      <form class="form-stack password-form" novalidate @submit.prevent="changeUsername">
         <label class="field">
           <span>新用户名</span>
           <input
@@ -413,10 +418,11 @@ onMounted(async () => {
             v-model="usernameForm.currentPassword"
             type="password"
             name="username-current-password"
-            autocomplete="new-password"
-            data-1p-ignore
-            data-lpignore="true"
+            autocomplete="current-password"
+            :readonly="!usernamePasswordUnlocked"
             :aria-invalid="usernameSubmitted && usernameForm.currentPassword.length === 0"
+            @focus="unlockUsernamePassword"
+            @pointerdown="unlockUsernamePassword"
             required
           />
         </label>

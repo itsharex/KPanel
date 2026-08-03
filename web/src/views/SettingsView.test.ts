@@ -219,9 +219,14 @@ describe('SettingsView password change', () => {
 })
 
 describe('SettingsView username change', () => {
-  it('does not preload the current password and keeps two-step verification below the security entrance', () => {
+  it('keeps the current password empty until user interaction while allowing explicit browser fill', () => {
     expect(settingsSource).toContain('name="username-current-password"')
-    expect(settingsSource).toMatch(/name="username-current-password"[\s\S]*?autocomplete="new-password"/)
+    expect(settingsSource).toMatch(/name="username-current-password"[\s\S]*?autocomplete="current-password"/)
+    expect(settingsSource).toContain(':readonly="!usernamePasswordUnlocked"')
+    expect(settingsSource).toContain('@focus="unlockUsernamePassword"')
+  })
+
+  it('keeps two-step verification immediately below the security entrance', () => {
     expect(settingsSource.indexOf('<h2>登录安全入口</h2>')).toBeLessThan(settingsSource.indexOf('<h2>两步验证</h2>'))
   })
 
