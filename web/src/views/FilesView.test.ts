@@ -11,6 +11,11 @@ const mocks = vi.hoisted(() => ({
   thumbnailUrl: vi.fn(),
   success: vi.fn(),
   danger: vi.fn(),
+  route: { query: {} as Record<string, unknown> },
+}))
+
+vi.mock('vue-router', () => ({
+  useRoute: () => mocks.route,
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -37,6 +42,7 @@ vi.mock('@/stores/toast', () => ({
 }))
 
 interface FileBindings {
+  requestedFilePath: (value: unknown) => string | undefined
   loadDirectory: (path?: string, append?: boolean) => Promise<void>
   savePreview: (content?: string) => Promise<void>
   submitDialog: () => Promise<void>
@@ -141,6 +147,7 @@ function setupView(): FileBindings {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.route.query = {}
   vi.stubGlobal('window', {
     innerWidth: 1280,
     innerHeight: 720,
@@ -164,6 +171,17 @@ beforeEach(() => {
     entry: testEntry('saved.txt'),
   }))
   mocks.thumbnailUrl.mockImplementation((path: string, version: string) => `/thumb?path=${path}&version=${version}`)
+})
+
+describe('FilesView route path', () => {
+  it('accepts bounded absolute paths and rejects traversal or relative paths', () => {
+    const view = setupView()
+    expect(view.requestedFilePath('/home/web/html/example.com')).toBe('/home/web/html/example.com')
+    expect(view.requestedFilePath(['/root/project'])).toBe('/root/project')
+    expect(view.requestedFilePath('../etc')).toBeUndefined()
+    expect(view.requestedFilePath('/home/../etc')).toBeUndefined()
+    expect(view.requestedFilePath(`/home/${'x'.repeat(4096)}`)).toBeUndefined()
+  })
 })
 
 describe('FilesView large icon layout', () => {

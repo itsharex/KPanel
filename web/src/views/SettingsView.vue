@@ -20,6 +20,7 @@ import {
   Server,
   ShieldCheck,
   Sun,
+  UserRound,
 } from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
@@ -45,6 +46,12 @@ const passwordForm = reactive({
   currentPassword: '',
   newPassword: '',
   confirmPassword: '',
+})
+const changingUsername = ref(false)
+const usernameSubmitted = ref(false)
+const usernameForm = reactive({
+  newUsername: session.state.user?.username || '',
+  currentPassword: '',
 })
 const capabilities = ref<Array<{ id: string; enabled: boolean; reason?: string }>>([])
 const securityEntry = ref<{ enabled: boolean; path?: string; resourceVersion: string }>()
@@ -78,6 +85,14 @@ const canChangePassword = computed(
     passwordForm.currentPassword.length > 0 &&
     passwordChecks.value.every((item) => item.valid) &&
     passwordForm.newPassword === passwordForm.confirmPassword,
+)
+
+const usernameValid = computed(() => /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/.test(usernameForm.newUsername))
+const canChangeUsername = computed(
+  () =>
+    usernameForm.currentPassword.length > 0 &&
+    usernameValid.value &&
+    usernameForm.newUsername !== session.state.user?.username,
 )
 
 const agentState = computed(() => {
@@ -128,14 +143,28 @@ async function changePassword(): Promise<void> {
   passwordSubmitted.value = false
   changingPassword.value = false
 
-  resetApiSecurityState()
-  session.state.authenticated = false
-  session.state.user = undefined
-  session.state.expiresAt = undefined
-  session.state.agent = undefined
-
   toast.success('密码已修改', '请使用新密码重新登录。')
-  await router.replace({ name: 'login' })
+  await endAuthenticatedSession()
+}
+
+async function changeUsername(): Promise<void> {
+  usernameSubmitted.value = true
+  if (!canChangeUsername.value || changingUsername.value) return
+
+  changingUsername.value = true
+  try {
+    await api.settings.changeUsername(usernameForm.currentPassword, usernameForm.newUsername)
+  } catch (reason) {
+    toast.danger('用户名修改失败', reason instanceof ApiError ? reason.message : '请确认当前密码和新用户名后重试。')
+    changingUsername.value = false
+    return
+  }
+
+  usernameForm.currentPassword = ''
+  usernameSubmitted.value = false
+  changingUsername.value = false
+  toast.success('用户名已修改', '请使用新用户名重新登录。')
+  await endAuthenticatedSession()
 }
 
 async function saveSecurityEntry(enabled: boolean, regenerate = false): Promise<void> {
@@ -291,6 +320,10 @@ function downloadRecoveryCodes(): void {
 }
 
 async function finishTOTPFlow(): Promise<void> {
+  await endAuthenticatedSession()
+}
+
+async function endAuthenticatedSession(): Promise<void> {
   resetApiSecurityState()
   session.state.authenticated = false
   session.state.user = undefined
@@ -352,6 +385,46 @@ onMounted(async () => {
         </div>
       </dl>
       <p class="settings-note">账户安全设置由 KPanel 本机保存，不依赖 Agent 或 kejilion.sh。</p>
+    </section>
+
+    <section class="settings-section panel-card">
+      <header class="settings-section__header">
+        <span><UserRound :size="19" /></span>
+        <div><h2>修改用户名</h2><p>更新当前管理员账户的登录名称</p></div>
+      </header>
+      <form class="form-stack password-form" novalidate @submit.prevent="changeUsername">
+        <label class="field">
+          <span>新用户名</span>
+          <input
+            v-model.trim="usernameForm.newUsername"
+            type="text"
+            name="new-username"
+            autocomplete="username"
+            maxlength="32"
+            :aria-invalid="usernameSubmitted && (!usernameValid || usernameForm.newUsername === session.state.user?.username)"
+            required
+          />
+          <small>3–32 个字符，以字母或数字开头，可使用点、下划线和连字符。</small>
+          <small v-if="usernameSubmitted && usernameForm.newUsername === session.state.user?.username">新用户名不能与当前用户名相同。</small>
+        </label>
+        <label class="field">
+          <span>当前密码</span>
+          <input
+            v-model="usernameForm.currentPassword"
+            type="password"
+            name="username-current-password"
+            autocomplete="current-password"
+            :aria-invalid="usernameSubmitted && usernameForm.currentPassword.length === 0"
+            required
+          />
+        </label>
+        <button class="button button--primary" type="submit" :disabled="changingUsername">
+          <LoaderCircle v-if="changingUsername" class="spin" :size="17" />
+          <template v-if="changingUsername">正在修改…</template>
+          <template v-else>修改用户名</template>
+        </button>
+      </form>
+      <p class="settings-note">修改成功后所有现有会话会立即失效；密码、两步验证和恢复码保持不变。</p>
     </section>
 
     <section class="settings-section panel-card">

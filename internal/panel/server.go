@@ -166,6 +166,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleLogout(w, r)
 	case r.Method == http.MethodPut && r.URL.Path == "/api/v1/settings/password":
 		s.handlePasswordChange(w, r)
+	case r.Method == http.MethodPut && r.URL.Path == "/api/v1/settings/username":
+		s.handleUsernameChange(w, r)
 	case r.URL.Path == "/api/v1/settings/totp":
 		s.handleTOTPSettings(w, r)
 	case r.URL.Path == "/api/v1/settings/totp/enrollment":
@@ -732,6 +734,52 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 			s.writeValidationProblem(w, r, "newPassword", err.Error())
 		default:
 			s.writeProblem(w, r, http.StatusInternalServerError, "password_change_failed", "Password change failed", "")
+		}
+		return
+	}
+
+	s.clearAuthCookies(w, r)
+	_ = s.audit(r, session.User.ID, action, "user", session.User.ID, "success", nil)
+	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleUsernameChange(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	var input struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewUsername     string `json:"newUsername"`
+	}
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+
+	const action = "auth.username.change"
+	if err := s.audit(r, session.User.ID, action, "user", session.User.ID, "intent", nil); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	if err := s.auth.ChangeUsername(session.User.ID, input.CurrentPassword, input.NewUsername); err != nil {
+		_ = s.audit(r, session.User.ID, action, "user", session.User.ID, "failure", nil)
+		var rateError *auth.RateLimitError
+		switch {
+		case errors.As(err, &rateError):
+			seconds := max(int(rateError.RetryAfter.Seconds()), 1)
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			s.writeProblem(w, r, http.StatusTooManyRequests, "username_change_rate_limited", "Username change rate limited", "")
+		case errors.Is(err, auth.ErrInvalidCurrentPassword):
+			s.writeValidationProblem(w, r, "currentPassword", err.Error())
+		case errors.Is(err, auth.ErrInvalidUsername), errors.Is(err, auth.ErrUsernameUnchanged):
+			s.writeValidationProblem(w, r, "newUsername", err.Error())
+		case errors.Is(err, auth.ErrUsernameUnavailable):
+			s.writeProblem(w, r, http.StatusConflict, "username_unavailable", "Username is already in use", "")
+		default:
+			s.writeProblem(w, r, http.StatusInternalServerError, "username_change_failed", "Username change failed", "")
 		}
 		return
 	}

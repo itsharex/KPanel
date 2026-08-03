@@ -1,6 +1,16 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["修改用户名", "Change username"],
+  ["更新当前管理员账户的登录名称", "Update the current administrator account sign-in name"],
+  ["新用户名", "New username"],
+  ["3–32 个字符，以字母或数字开头，可使用点、下划线和连字符。", "Use 3–32 characters, start with a letter or number, and use only dots, underscores, or hyphens."],
+  ["新用户名不能与当前用户名相同。", "The new username must differ from the current username."],
+  ["用户名修改失败", "Username change failed"],
+  ["请确认当前密码和新用户名后重试。", "Confirm the current password and new username, then try again."],
+  ["用户名已修改", "Username changed"],
+  ["请使用新用户名重新登录。", "Sign in again with the new username."],
+  ["修改成功后所有现有会话会立即失效；密码、两步验证和恢复码保持不变。", "After the change, all existing sessions expire immediately. The password, two-factor authentication, and recovery codes remain unchanged."],
   ["安全入口更新失败", "Security access update failed"],
   ["安全入口是登录验证前的额外门槛，不替代强密码、会话保护和登录限速；请妥善保存入口地址。", "The security entrance is an additional threshold prior to login validation and is not a substitute for strong passwords, session protection and login speed limits; please keep the entry address properly."],
   ["安全入口已复制", "Security entrance copied."],

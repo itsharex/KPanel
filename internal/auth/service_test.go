@@ -355,6 +355,61 @@ func TestChangePasswordRevokesSessionsAndReplacesCredentials(t *testing.T) {
 	}
 }
 
+func TestChangeUsernameRevokesSessionsAndKeepsPassword(t *testing.T) {
+	directory := t.TempDir()
+	storage, err := store.Open(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	service, err := NewService(storage, testHasher(t), Config{
+		BootstrapTokenPath: filepath.Join(directory, "bootstrap.token"),
+		SessionTTL:         time.Hour, LoginWindow: time.Minute, MaxLoginFailures: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.EnsureBootstrapToken(); err != nil {
+		t.Fatal(err)
+	}
+	token, err := os.ReadFile(filepath.Join(directory, "bootstrap.token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.Bootstrap(string(token), "admin", "a-strong-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Login("192.0.2.10", "admin", "a-strong-password", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.ChangeUsername(first.User.ID, "wrong-password", "operator"); !errors.Is(err, ErrInvalidCurrentPassword) {
+		t.Fatalf("expected current password rejection, got %v", err)
+	}
+	if err := service.ChangeUsername(first.User.ID, "a-strong-password", "bad name"); !errors.Is(err, ErrInvalidUsername) {
+		t.Fatalf("expected username validation, got %v", err)
+	}
+	if err := service.ChangeUsername(first.User.ID, "a-strong-password", "admin"); !errors.Is(err, ErrUsernameUnchanged) {
+		t.Fatalf("expected unchanged username rejection, got %v", err)
+	}
+	if err := service.ChangeUsername(first.User.ID, "a-strong-password", "operator"); err != nil {
+		t.Fatal(err)
+	}
+	for _, credentials := range []Credentials{first, second} {
+		if _, err := service.Authenticate(credentials.Token); !errors.Is(err, ErrInvalidSession) {
+			t.Fatalf("old session remained valid: %v", err)
+		}
+	}
+	if _, err := service.Login("192.0.2.11", "admin", "a-strong-password", ""); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("old username remained valid: %v", err)
+	}
+	if _, err := service.Login("192.0.2.11", "operator", "a-strong-password", ""); err != nil {
+		t.Fatalf("new username or existing password was rejected: %v", err)
+	}
+}
+
 func TestChangePasswordRejectsInvalidInputs(t *testing.T) {
 	directory := t.TempDir()
 	storage, err := store.Open(filepath.Join(directory, "state.json"))

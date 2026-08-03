@@ -20,6 +20,7 @@ const maxStoreBytes int64 = 32 << 20
 var (
 	ErrAlreadyInitialized = errors.New("store already initialized")
 	ErrConflict           = errors.New("record changed")
+	ErrAlreadyExists      = errors.New("record already exists")
 	ErrNotFound           = errors.New("record not found")
 	ErrStoreLocked        = errors.New("store is already open by another process")
 )
@@ -234,6 +235,38 @@ func (s *Store) ReplaceUserPassword(userID, expectedHash, newHash string, update
 		}
 	}
 	s.data.Sessions = sessions
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
+}
+
+// ReplaceUserUsername atomically changes a user's sign-in name and revokes all
+// of their sessions. Usernames are unique case-insensitively, matching login
+// lookup semantics. expectedUsername prevents stale settings pages from
+// overwriting a concurrent account change.
+func (s *Store) ReplaceUserUsername(userID, expectedUsername, newUsername string, updatedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	userIndex := s.userIndexLocked(userID)
+	if userIndex < 0 {
+		return ErrNotFound
+	}
+	if s.data.Users[userIndex].Username != expectedUsername {
+		return ErrConflict
+	}
+	for index, user := range s.data.Users {
+		if index != userIndex && strings.EqualFold(user.Username, newUsername) {
+			return ErrAlreadyExists
+		}
+	}
+
+	previous := cloneDiskState(s.data)
+	s.data.Users[userIndex].Username = newUsername
+	s.data.Users[userIndex].UpdatedAt = updatedAt
+	s.revokeUserSessionsLocked(userID)
 	if err := s.persistLocked(); err != nil {
 		s.data = previous
 		return err

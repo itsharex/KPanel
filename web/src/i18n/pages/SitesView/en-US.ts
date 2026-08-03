@@ -1,6 +1,7 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["在文件管理中打开站点目录", "Open the site directory in File Manager"],
   ["{0} 的 Nginx 访问配置已移除，网站目录、证书和数据库均已保留。", "The Nginx access configuration for {0} was removed; the site directory, certificates, and database were retained."],
   ["{0} 的原生建站产物已与 kejilion.sh 完成对账。", "The native site resources for {0} have been reconciled with kejilion.sh."],
   ["{0} 已按 k web 业务清理。", "{0} has been cleared by kweb operations."],

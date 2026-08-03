@@ -3500,6 +3500,30 @@ div.resource-name {
   min-width: 100px;
 }
 
+.site-directory-link {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 230px;
+  gap: 4px;
+  color: var(--accent);
+  font-size: 9px;
+}
+
+.site-directory-link svg {
+  flex: 0 0 auto;
+}
+
+.site-directory-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-directory-link:hover span {
+  text-decoration: underline;
+}
+
 .table-time {
   color: var(--muted);
   font-size: 10px;

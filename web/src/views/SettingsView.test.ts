@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
   return {
     MockApiError,
     changePassword: vi.fn(),
+    changeUsername: vi.fn(),
     getSecurityEntrance: vi.fn(),
     updateSecurityEntrance: vi.fn(),
     getTOTPStatus: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock('@/lib/api', () => ({
     },
     settings: {
       changePassword: mocks.changePassword,
+      changeUsername: mocks.changeUsername,
       securityEntrance: {
         get: mocks.getSecurityEntrance,
         update: mocks.updateSecurityEntrance,
@@ -85,6 +87,12 @@ vi.mock('@/stores/toast', () => ({
 }))
 
 interface SettingsBindings {
+  usernameForm: { newUsername: string; currentPassword: string }
+  usernameValid: ComputedRef<boolean>
+  canChangeUsername: ComputedRef<boolean>
+  changingUsername: Ref<boolean>
+  usernameSubmitted: Ref<boolean>
+  changeUsername: () => Promise<void>
   passwordForm: {
     currentPassword: string
     newPassword: string
@@ -124,6 +132,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.replace.mockResolvedValue(undefined)
   mocks.changePassword.mockResolvedValue(undefined)
+  mocks.changeUsername.mockResolvedValue(undefined)
   mocks.getSecurityEntrance.mockResolvedValue({ enabled: false, resourceVersion: 'sha256:initial' })
   mocks.updateSecurityEntrance.mockResolvedValue({
     enabled: true,
@@ -203,6 +212,39 @@ describe('SettingsView password change', () => {
     expect(mocks.replace).not.toHaveBeenCalled()
     expect(mocks.sessionState.authenticated).toBe(true)
     expect(view.changingPassword.value).toBe(false)
+  })
+})
+
+describe('SettingsView username change', () => {
+  it('validates the new username and requires the current password', async () => {
+    const view = setupView()
+    view.usernameForm.newUsername = 'bad name'
+    view.usernameForm.currentPassword = 'CurrentPassword123'
+    expect(view.usernameValid.value).toBe(false)
+    expect(view.canChangeUsername.value).toBe(false)
+
+    view.usernameForm.newUsername = 'admin'
+    expect(view.canChangeUsername.value).toBe(false)
+
+    view.usernameForm.newUsername = 'operator-01'
+    view.usernameForm.currentPassword = ''
+    await view.changeUsername()
+    expect(view.usernameSubmitted.value).toBe(true)
+    expect(mocks.changeUsername).not.toHaveBeenCalled()
+  })
+
+  it('clears the local session and redirects after a successful username change', async () => {
+    const view = setupView()
+    view.usernameForm.newUsername = 'operator-01'
+    view.usernameForm.currentPassword = 'CurrentPassword123'
+
+    await view.changeUsername()
+
+    expect(mocks.changeUsername).toHaveBeenCalledWith('CurrentPassword123', 'operator-01')
+    expect(mocks.resetApiSecurityState).toHaveBeenCalledOnce()
+    expect(mocks.sessionState.authenticated).toBe(false)
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('用户名已修改', '请使用新用户名重新登录。')
+    expect(mocks.replace).toHaveBeenCalledWith({ name: 'login' })
   })
 })
 

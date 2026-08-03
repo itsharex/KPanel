@@ -344,6 +344,88 @@ func TestReplaceUserPasswordPersistsHashAndRevokesOnlyUserSessions(t *testing.T)
 	}
 }
 
+func TestReplaceUserUsernamePersistsIdentityAndRevokesSessions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	user := User{
+		ID: "user-1", Username: "admin", PasswordHash: "password-hash", Role: "admin",
+		TOTPSecret: "encrypted-secret", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := storage.CreateInitialAdmin(user); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.PutSession(Session{
+		TokenHash: "token-hash", CSRFHash: "csrf-hash", UserID: user.ID,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	updatedAt := now.Add(time.Minute)
+	if err := storage.ReplaceUserUsername(user.ID, "admin", "operator", updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := storage.UserByUsername("OPERATOR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.PasswordHash != user.PasswordHash || updated.TOTPSecret != user.TOTPSecret || !updated.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("unrelated account credentials changed: %#v", updated)
+	}
+	if _, err := storage.UserByUsername("admin"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("old username remained available: %v", err)
+	}
+	if _, err := storage.SessionByTokenHash("token-hash", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("session was not revoked: %v", err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if _, err := reopened.UserByUsername("operator"); err != nil {
+		t.Fatalf("username change was not persisted: %v", err)
+	}
+}
+
+func TestReplaceUserUsernameRejectsDuplicateAndStaleIdentity(t *testing.T) {
+	storage, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	now := time.Now().UTC()
+	if err := storage.CreateInitialAdmin(User{ID: "user-1", Username: "admin", PasswordHash: "hash", Role: "admin", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	storage.mu.Lock()
+	storage.data.Users = append(storage.data.Users, User{ID: "user-2", Username: "operator", PasswordHash: "hash", Role: "admin", CreatedAt: now, UpdatedAt: now})
+	err = storage.persistLocked()
+	storage.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := storage.ReplaceUserUsername("user-1", "stale", "new-admin", now.Add(time.Minute)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected stale identity conflict, got %v", err)
+	}
+	if err := storage.ReplaceUserUsername("user-1", "admin", "OPERATOR", now.Add(time.Minute)); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("expected case-insensitive duplicate rejection, got %v", err)
+	}
+	current, err := storage.UserByID("user-1")
+	if err != nil || current.Username != "admin" {
+		t.Fatalf("rejected change modified identity: %#v, %v", current, err)
+	}
+}
+
 func TestReplaceUserPasswordConflictLeavesStateUnchanged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	storage, err := Open(path)

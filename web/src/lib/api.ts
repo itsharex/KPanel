@@ -1640,6 +1640,11 @@ export const api = {
         method: 'PUT',
         body: { currentPassword, newPassword },
       }),
+    changeUsername: (currentPassword: string, newUsername: string) =>
+      request<void>('/settings/username', {
+        method: 'PUT',
+        body: { currentPassword, newUsername },
+      }),
   },
 }
 

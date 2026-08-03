@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/SitesView/en-US').then((module) => module.default))
@@ -11,6 +12,7 @@ import {
   ExternalLink,
   FileCode2,
   Flame,
+  FolderOpen,
   Globe2,
   KeyRound,
   LoaderCircle,
@@ -417,6 +419,19 @@ function siteTargetValue(site: Site): string {
     return [site.rootPath, runtime].filter(Boolean).join(' · ') || '—'
   }
   return site.upstream || site.rootPath || '—'
+}
+
+function siteDirectoryPath(site: Site): string | undefined {
+  if (site.type !== 'static' && site.type !== 'php' && site.type !== 'wordpress') return undefined
+  const path = site.rootPath?.trim()
+  if (!path || !path.startsWith('/') || path.length > 4096 || path.includes('\0')) return undefined
+  if (path.split('/').includes('..')) return undefined
+  return path
+}
+
+function siteRuntimeLabel(site: Site): string {
+  if (site.type !== 'php' && site.type !== 'wordpress') return ''
+  return site.upstream === 'php74' ? 'PHP 7.4' : site.upstream === 'php' ? 'PHP 最新版' : ''
 }
 
 async function load(silent = false): Promise<void> {
@@ -932,9 +947,17 @@ onBeforeUnmount(() => {
               <td>
                 <div class="table-stack">
                   <StatusBadge :status="site.type" :label="typeLabel(site.type)" subtle />
-                  <small :title="siteTargetValue(site)">
-                    {{ siteTargetValue(site) }}
-                  </small>
+                  <RouterLink
+                    v-if="siteDirectoryPath(site)"
+                    class="site-directory-link"
+                    :to="{ name: 'files', query: { path: siteDirectoryPath(site) } }"
+                    title="在文件管理中打开站点目录"
+                  >
+                    <FolderOpen :size="12" />
+                    <span>{{ siteDirectoryPath(site) }}</span>
+                  </RouterLink>
+                  <small v-else :title="siteTargetValue(site)">{{ siteTargetValue(site) }}</small>
+                  <small v-if="siteRuntimeLabel(site)">{{ siteRuntimeLabel(site) }}</small>
                 </div>
               </td>
               <td>

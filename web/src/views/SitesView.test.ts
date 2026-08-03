@@ -34,6 +34,7 @@ vi.mock('@/stores/toast', () => ({
 }))
 
 interface SitesBindings {
+  siteDirectoryPath: (site: Site) => string | undefined
   sites: Ref<Site[]>
   filteredSites: ComputedRef<Site[]>
   search: Ref<string>
@@ -92,6 +93,15 @@ afterEach(() => {
 })
 
 describe('SitesView creation experience', () => {
+  it('links only safe local site directories into File Manager', () => {
+    const view = setupView()
+    const local = { ...site('local.example.com'), rootPath: '/home/web/html/local.example.com' }
+    expect(view.siteDirectoryPath(local)).toBe('/home/web/html/local.example.com')
+    expect(view.siteDirectoryPath({ ...local, type: 'proxy' })).toBeUndefined()
+    expect(view.siteDirectoryPath({ ...local, rootPath: '/home/web/../etc' })).toBeUndefined()
+    expect(view.siteDirectoryPath({ ...local, rootPath: 'home/web/html/local.example.com' })).toBeUndefined()
+  })
+
   it('keeps only the three primary website types visible and folds every recipe', () => {
     const view = setupView()
 

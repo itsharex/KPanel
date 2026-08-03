@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/FilesView/en-US').then((module) => module.default))
@@ -51,8 +52,18 @@ import { useToast } from '@/stores/toast'
 import type { FileActionInput, FileDirectory, FileEntry, FileTrashEntry } from '@/types/api'
 
 const CodeEditor = defineAsyncComponent(() => import('@/components/files/CodeEditor.vue'))
+const route = useRoute()
 
 type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash'
+
+function requestedFilePath(value: unknown): string | undefined {
+  const candidate = Array.isArray(value) ? value[0] : value
+  if (typeof candidate !== 'string' || !candidate.startsWith('/') || candidate.length > 4096 || candidate.includes('\0')) {
+    return undefined
+  }
+  if (candidate.split('/').includes('..')) return undefined
+  return candidate
+}
 type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
 type ClipboardMode = 'copy' | 'move'
 type ArchiveFormat = 'tar.gz' | 'zip' | 'tar'
@@ -905,8 +916,17 @@ onMounted(() => {
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleFileShortcut)
   restoreViewMode()
-  void loadDirectory('/')
+  void loadDirectory(requestedFilePath(route.query.path) || '/')
 })
+
+watch(
+  () => route.query.path,
+  (value, previous) => {
+    if (value === previous) return
+    const path = requestedFilePath(value)
+    if (path && path !== currentPath.value) void loadDirectory(path)
+  },
+)
 
 watch(search, () => {
   if (searchTimer !== undefined) window.clearTimeout(searchTimer)

@@ -29,6 +29,8 @@ var (
 	ErrWeakPassword            = errors.New("password must contain 12-256 bytes")
 	ErrInvalidCurrentPassword  = errors.New("current password is invalid")
 	ErrPasswordUnchanged       = errors.New("new password must differ from current password")
+	ErrUsernameUnchanged       = errors.New("new username must differ from current username")
+	ErrUsernameUnavailable     = errors.New("username is already in use")
 	ErrTOTPRequired            = errors.New("two-factor authentication is required")
 	ErrInvalidSecondFactor     = errors.New("invalid two-factor authentication code")
 	ErrTOTPAlreadyEnabled      = errors.New("two-factor authentication is already enabled")
@@ -629,6 +631,54 @@ func (s *Service) ChangePassword(userID, currentPassword, newPassword string) er
 			return ErrInvalidCurrentPassword
 		}
 		return fmt.Errorf("replace password: %w", err)
+	}
+	return nil
+}
+
+// ChangeUsername verifies the current password before changing the login name.
+// The store updates the identity and revokes all sessions atomically so no
+// session continues to expose stale account data.
+func (s *Service) ChangeUsername(userID, currentPassword, newUsername string) error {
+	if len(currentPassword) < 1 || len(currentPassword) > 256 {
+		return ErrInvalidCurrentPassword
+	}
+	if err := validateUsername(newUsername); err != nil {
+		return err
+	}
+
+	select {
+	case s.hashSlots <- struct{}{}:
+		defer func() { <-s.hashSlots }()
+	default:
+		return &RateLimitError{RetryAfter: time.Second}
+	}
+
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+
+	user, err := s.store.UserByID(userID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrInvalidCurrentPassword
+		}
+		return fmt.Errorf("read user for username change: %w", err)
+	}
+	valid, err := s.hasher.Verify(currentPassword, user.PasswordHash)
+	if err != nil || !valid {
+		return ErrInvalidCurrentPassword
+	}
+	if user.Username == newUsername {
+		return ErrUsernameUnchanged
+	}
+	if err := s.store.ReplaceUserUsername(user.ID, user.Username, newUsername, s.now()); err != nil {
+		switch {
+		case errors.Is(err, store.ErrAlreadyExists):
+			return ErrUsernameUnavailable
+		case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrNotFound):
+			return ErrInvalidCurrentPassword
+		default:
+			return fmt.Errorf("replace username: %w", err)
+		}
 	}
 	return nil
 }
