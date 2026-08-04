@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Boxes,
+  Bot,
   HeartPulse,
   ClipboardList,
   CircleArrowUp,
@@ -49,6 +50,7 @@ interface NavigationItem {
 
 const navigation: NavigationItem[] = [
   { labelKey: 'route.overview', to: '/overview', icon: LayoutDashboard },
+  { labelKey: 'route.ai', to: '/ai', icon: Bot },
   { labelKey: 'route.sites', to: '/sites', icon: Boxes },
   { labelKey: 'route.apps', to: '/apps', icon: Store },
   { labelKey: 'route.docker', to: '/docker', icon: Container },
@@ -75,6 +77,7 @@ const checkingKPanelUpdate = ref(false)
 const kpanelUpdateDescription = computed(() => kpanelUpdateHint(panel.state.agent?.version))
 
 const pageTitle = computed(() => route.meta.titleKey ? i18n.t(route.meta.titleKey) : 'KPanel')
+const isAIWorkspace = computed(() => route.path.startsWith('/ai'))
 const agentStatus = computed(() => {
   const agent = panel.state.agent
   if (!agent?.connected) return { status: 'offline', label: i18n.t('agent.offline') }
@@ -329,9 +332,9 @@ watch(
         </div>
       </header>
 
-      <AgentBanner />
+      <AgentBanner v-if="!isAIWorkspace" />
 
-      <main class="page-content">
+      <main class="page-content" :class="{ 'page-content--ai': isAIWorkspace }">
         <RouterView />
       </main>
     </div>

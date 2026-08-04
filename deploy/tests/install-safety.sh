@@ -234,10 +234,11 @@ if grep -Eq '^[[:space:]]*ports:' "$PROJECT_DIR/deploy/compose/compose.yml"; the
 	exit 1
 fi
 grep -F 'ports:' "$PROJECT_DIR/deploy/compose/direct-port.yml" >/dev/null
-grep -F 'panel-internal:' "$PROJECT_DIR/deploy/compose/direct-port.yml" >/dev/null
-grep -F 'internal: false' "$PROJECT_DIR/deploy/compose/direct-port.yml" >/dev/null
-if grep -F 'panel-public' "$PROJECT_DIR/deploy/compose/direct-port.yml" >/dev/null; then
-	echo "direct-port overlay still adds a second Panel network" >&2
+grep -F 'panel-egress: {}' "$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
+grep -F 'name: kejilion-panel-egress' "$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
+grep -F 'host.docker.internal:host-gateway' "$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
+if grep -F 'internal: false' "$PROJECT_DIR/deploy/compose/direct-port.yml" >/dev/null; then
+	echo "direct-port overlay weakens the internal Panel network" >&2
 	exit 1
 fi
 grep -F "{{len .HostConfig.PortBindings}}" "$PROJECT_DIR/deploy/install.sh" >/dev/null

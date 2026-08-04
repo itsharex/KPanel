@@ -46,7 +46,7 @@ func (s *Server) handleSystemAction(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
 	}
-	response, err := s.agent.Do(r.Context(), http.MethodPost, "/v1/system/actions", "", requestID(r), body)
+	response, err := s.hostOps.Do(r.Context(), http.MethodPost, "/v1/system/actions", "", requestID(r), body)
 	if err != nil {
 		_ = s.audit(r, session.User.ID, action, "system", input.Action, "failure", change)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")

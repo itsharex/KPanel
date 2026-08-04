@@ -39,7 +39,7 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	events, _ := s.store.ListAudit(200, "")
 	jobs := jobsFromAudit(events, limit)
-	if response, err := s.agent.Get(r.Context(), "/v1/app-jobs", "", requestID(r)); err == nil &&
+	if response, err := s.hostOps.Get(r.Context(), "/v1/app-jobs", "", requestID(r)); err == nil &&
 		response.StatusCode == http.StatusOK {
 		var page contract.PageResult[appmarket.AppJob]
 		if json.Unmarshal(response.Body, &page) == nil {

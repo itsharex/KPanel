@@ -12,6 +12,8 @@ services:
     cpus: 1.0
     cap_drop:
       - ALL
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     security_opt:
       - no-new-privileges:true
     tmpfs:

@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kejilion/kejilion-panel/internal/ai"
 	"github.com/kejilion/kejilion-panel/internal/auth"
 	"github.com/kejilion/kejilion-panel/internal/cluster"
 	"github.com/kejilion/kejilion-panel/internal/contract"
@@ -48,6 +49,7 @@ type Server struct {
 	auth                *auth.Service
 	store               *store.Store
 	agent               agentAPI
+	hostOps             *HostOperationService
 	trustedProxies      []*net.IPNet
 	auditMu             sync.Mutex
 	lastAuthAudit       map[string]time.Time
@@ -57,6 +59,8 @@ type Server struct {
 	terminalSessions    map[string]panelTerminalSession
 	terminalOpening     int
 	terminalOpeningUser map[string]int
+	ai                  *ai.Service
+	aiError             string
 }
 
 type agentAPI interface {
@@ -97,14 +101,16 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 	if err != nil {
 		return nil, fmt.Errorf("initialize cluster service: %w", err)
 	}
-	return &Server{
+	server := &Server{
 		config: config, auth: authService, store: storage, agent: agent,
 		cluster:             clusterService,
 		terminalSessions:    make(map[string]panelTerminalSession),
 		terminalOpeningUser: make(map[string]int),
 		trustedProxies:      trustedProxies,
 		lastAuthAudit:       make(map[string]time.Time),
-	}, nil
+	}
+	server.hostOps = newHostOperationService(server)
+	return server, nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +152,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleFederationSummary(w, r)
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/federation/revoke":
 		s.handleFederationRevoke(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/v1/ai/") || r.URL.Path == "/api/v1/ai":
+		s.handleAI(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/health":
 		s.writeJSON(w, http.StatusOK, map[string]any{
 			"status":          "ok",
@@ -297,7 +305,7 @@ func (s *Server) handleDockerAction(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
 	}
-	response, err := s.agent.Do(r.Context(), http.MethodPost, agentPath, "", requestID(r), body)
+	response, err := s.hostOps.Do(r.Context(), http.MethodPost, agentPath, "", requestID(r), body)
 	if err != nil {
 		_ = s.audit(r, session.User.ID, "docker."+action, "container", containerID, "failure", change)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
@@ -351,7 +359,7 @@ func (s *Server) handleDockerExec(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
 	}
-	response, err := s.agent.Do(
+	response, err := s.hostOps.Do(
 		r.Context(),
 		http.MethodPost,
 		"/v1/docker/containers/"+id+"/exec",
@@ -390,7 +398,7 @@ func (s *Server) handleDockerTask(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
 		return
 	}
-	response, err := s.agent.Do(r.Context(), http.MethodPost, "/v1/docker/tasks", "", requestID(r), body)
+	response, err := s.hostOps.Do(r.Context(), http.MethodPost, "/v1/docker/tasks", "", requestID(r), body)
 	if err != nil {
 		_ = s.audit(r, session.User.ID, "docker."+input.Action, "docker", input.Target, "failure", nil)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
@@ -829,7 +837,7 @@ func (s *Server) handleAgentProxy(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
 		return
 	}
-	response, err := s.agent.Get(r.Context(), agentPath, r.URL.RawQuery, requestID(r))
+	response, err := s.hostOps.Get(r.Context(), agentPath, r.URL.RawQuery, requestID(r))
 	if err != nil {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
 		return

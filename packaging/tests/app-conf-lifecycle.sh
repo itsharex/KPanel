@@ -279,6 +279,12 @@ EOF
 	grep -F 'KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS: ${KPANEL_CLUSTER_PRIVATE_CIDRS:-}' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 1
+	grep -Fx '      - kpanel-internal' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '      - kpanel-egress' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '    internal: true' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '    name: kejilion-panel-internal' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '    name: kejilion-panel-egress' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -F 'host.docker.internal:host-gateway' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F 'ExecStart=/home/docker/kpanel/bin/kejilion-agent' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_CHOWN CAP_LINUX_IMMUTABLE' \
@@ -321,11 +327,16 @@ EOF
 		"$MOCK_STATE/image-tag" >/dev/null
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 
+	sed -i 's#^KPANEL_TRUSTED_PROXY_CIDRS=.*#KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.20.0.0/16#' \
+		/home/docker/kpanel/.env
 	docker_port="8080"
 	docker_app_update
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 	grep -Fx 'permission_granted="true"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx 'KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.30.0.0/16' \
+		/home/docker/kpanel/.env >/dev/null
+	test ! -e /home/docker/kpanel/.env.rollback
 
 	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
 	if KPANEL_MOCK_UPDATE_HEALTH_FAIL=1 docker_app_update; then
@@ -337,6 +348,7 @@ EOF
 		"$MOCK_STATE/image-tag" >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
+	test ! -e /home/docker/kpanel/.env.rollback
 
 	docker_app_uninstall
 	[ ! -e /home/docker/kpanel ]

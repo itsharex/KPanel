@@ -58,6 +58,13 @@ import type {
 } from '@/types/api'
 
 type QueryValue = string | number | boolean | undefined
+export interface RequestOptions {
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  body?: unknown
+  query?: Record<string, QueryValue>
+  signal?: AbortSignal
+  unwrapEnvelope?: boolean
+}
 interface ApiEnvelope<T> {
   data?: T
   csrfToken?: string
@@ -470,13 +477,7 @@ async function parsePayload(response: Response): Promise<unknown> {
 
 async function request<T>(
   path: string,
-  options: {
-    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
-    body?: unknown
-    query?: Record<string, QueryValue>
-    signal?: AbortSignal
-    unwrapEnvelope?: boolean
-  } = {},
+  options: RequestOptions = {},
 ): Promise<T> {
   const method = options.method || 'GET'
   const headers = new Headers({ Accept: 'application/json' })
@@ -1651,4 +1652,8 @@ export const api = {
 export function resetApiSecurityState(): void {
   csrfToken = ''
   previousNetworkSample = undefined
+}
+
+export function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  return request<T>(path, options)
 }

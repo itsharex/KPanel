@@ -51,7 +51,15 @@ func (s *Server) StartBackground(ctx context.Context) {
 
 func (s *Server) Close() error {
 	s.closeTerminalSessions()
-	return s.cluster.Close()
+	var aiErr error
+	if s.ai != nil {
+		aiErr = s.ai.Close()
+	}
+	var clusterErr error
+	if s.cluster != nil {
+		clusterErr = s.cluster.Close()
+	}
+	return errors.Join(aiErr, clusterErr)
 }
 
 func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {

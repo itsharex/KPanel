@@ -49,7 +49,7 @@ func (s *Server) handleDiagnosticStart(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
 	}
-	response, err := s.agent.Do(
+	response, err := s.hostOps.Do(
 		r.Context(),
 		http.MethodPost,
 		"/v1/diagnostic-jobs",

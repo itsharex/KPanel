@@ -154,7 +154,7 @@ func (s *Server) handleSiteInstallationInput(w http.ResponseWriter, r *http.Requ
 		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
 		return
 	}
-	response, err := s.agent.Do(
+	response, err := s.hostOps.Do(
 		r.Context(),
 		http.MethodPost,
 		"/v1/site-installations/"+id+"/input",
@@ -203,7 +203,7 @@ func (s *Server) handleDiagnosticInput(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
 		return
 	}
-	response, err := s.agent.Do(
+	response, err := s.hostOps.Do(
 		r.Context(),
 		http.MethodPost,
 		"/v1/diagnostic-jobs/"+id+"/input",
@@ -307,7 +307,7 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
 	}
-	response, err := s.agent.Do(r.Context(), http.MethodDelete, agentPath, "", requestID(r), body)
+	response, err := s.hostOps.Do(r.Context(), http.MethodDelete, agentPath, "", requestID(r), body)
 	if err != nil {
 		_ = s.audit(r, session.User.ID, "site.delete", "site", siteID, "failure", change)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
@@ -368,7 +368,7 @@ func (s *Server) handleSiteWrite(
 		return
 	}
 
-	response, err := s.agent.Do(r.Context(), method, agentPath, "", requestID(r), body)
+	response, err := s.hostOps.Do(r.Context(), method, agentPath, "", requestID(r), body)
 	if err != nil {
 		_ = s.audit(r, session.User.ID, action, "site", targetID, "failure", change)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")

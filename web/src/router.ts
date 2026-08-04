@@ -57,6 +57,18 @@ export const router = createRouter({
           meta: { titleKey: 'route.cluster' },
         },
         {
+          path: 'ai',
+          name: 'ai',
+          component: () => import('@/views/AiView.vue'),
+          meta: { titleKey: 'route.ai' },
+        },
+        {
+          path: 'ai/s/:sessionId',
+          name: 'ai-session',
+          component: () => import('@/views/AiView.vue'),
+          meta: { titleKey: 'route.ai' },
+        },
+        {
           path: 'sites',
           name: 'sites',
           component: () => loadNavigationRoute('/sites'),

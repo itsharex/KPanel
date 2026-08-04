@@ -4,8 +4,8 @@
 
 KPanel 使用两个独立进程：
 
-- `paneld` 以非 root Docker 容器运行，入口使用专用 `internal` 网络，联邦监控使用
-  独立出站网络，默认不发布宿主端口。
+- `paneld` 以非 root Docker 容器运行，入口使用专用 `internal` 网络；联邦监控与 AI Provider
+  复用独立受控出站网络，默认不发布宿主端口。
 - `kejilion-agent` 以受限 systemd 服务运行，只接受本机 Unix Socket 上的类型化请求。
 
 宿主机必须使用 systemd。当前发行版代码路径覆盖 Debian/Ubuntu、

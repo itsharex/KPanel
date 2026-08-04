@@ -20,6 +20,7 @@ export const enUSMessages = {
   'route.setup': 'Setup',
   'route.login': 'Sign in',
   'route.overview': 'Overview',
+  'route.ai': 'AI assistant',
   'route.monitoring': 'Monitoring history',
   'route.cluster': 'Cluster',
   'route.sites': 'Sites',

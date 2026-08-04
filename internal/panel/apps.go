@@ -67,7 +67,7 @@ func (s *Server) handleAppAction(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
 	}
-	response, err := s.agent.Do(r.Context(), http.MethodPost, agentPath, "", requestID(r), body)
+	response, err := s.hostOps.Do(r.Context(), http.MethodPost, agentPath, "", requestID(r), body)
 	if err != nil {
 		_ = s.audit(r, session.User.ID, "app."+action, "application", appID, "failure", change)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
@@ -159,7 +159,7 @@ func (s *Server) handleAppJobInput(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
 		return
 	}
-	response, err := s.agent.Do(
+	response, err := s.hostOps.Do(
 		r.Context(),
 		http.MethodPost,
 		"/v1/app-jobs/"+id+"/input",
