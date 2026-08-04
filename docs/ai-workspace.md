@@ -77,15 +77,8 @@ Vue 三栏工作台 ── REST/SSE ── paneld AgentRuntime
 
 运行数据回滚前先停止 `paneld`，备份 `ai.db*` 与 `ai-secrets.key`；两者必须成对保留。应用市场更新会保留数据目录并自动恢复旧镜像、Agent、Compose 与 `.env`。移除 AI 功能不需要迁移或改写 `panel-state.json`，也不影响 Agent 宿主机状态。
 
-## 轻量验收基线
+## 轻量验收
 
-早期功能分支以 `c9a3419` 为对照，在 Linux/WSL2 上通过生态策略、Go 全量 test/vet、前端 typecheck/test/build、安装器安全测试，以及 Linux amd64/arm64 的 `CGO_ENABLED=0` 构建；全局并发测试验证第三个 mock Run 会等待前两个完成。合入当前主线后必须重新执行发布级 L3 与目标 Linux 实机验收，发布记录以对应版本的 acceptance 文档为准。
+0.42.0 在 154 Debian 13 真机完成发布级 L3、双架构 CGO-free 构建、公开镜像 E2E、隔离 AI 实聊和生产升级。相对发布前主线 0.40.3，同参数 stripped `paneld` 增加 4.06 MiB，两次空闲 RSS 增量为 3.53 MiB 和 3.59 MiB；均低于 30 MiB/25 MiB 目标。两个并行 Mock Run 使用 139.8 MiB/256 MiB，未发生 OOM。
 
-同一环境、同一 stripped 构建参数下：
-
-| 指标 | `c9a3419` | AI 分支 | 增量 | 目标 |
-| --- | ---: | ---: | ---: | ---: |
-| `paneld` | 7,536,802 B | 11,853,986 B | 4,317,184 B（4.12 MiB） | ≤ 30 MiB |
-| 空闲 RSS | 77,856,768 B | 81,788,928 B | 3,932,160 B（3.75 MiB） | ≤ 25 MiB |
-
-Compose 的 `256M` 内存限制保持不变。上述数值是早期功能基线，仅用于判断回归趋势，不替代发布前 L3 与目标 Linux 发行版实机测量。
+Compose 的 `256M` 内存限制保持不变。完整数据、CI/Release 链接、镜像摘要和回滚证据见 [v0.42.0 发布验收](release-v0.42.0-acceptance.md)。
