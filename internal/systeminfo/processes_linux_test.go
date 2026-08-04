@@ -11,7 +11,7 @@ import (
 )
 
 func TestParseProcessStatHandlesSpacesAndIdentity(t *testing.T) {
-	value, err := parseProcessStat("123 (worker pool) S 7 0 0 0 0 0 0 0 0 0 0 10 5 0 0 0 0 0 99")
+	value, err := parseProcessStat("123 (worker pool) S 7 0 0 0 0 0 0 0 0 0 10 5 0 0 0 0 0 99")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestCollectProcessesReturnsBoundedNonSensitiveMetrics(t *testing.T) {
 	if err := os.Mkdir(processRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	stat := "42 (nginx worker) S 1 0 0 0 0 0 0 0 0 0 0 20 10 0 0 0 0 0 123"
+	stat := "42 (nginx worker) S 1 0 0 0 0 0 0 0 0 0 20 10 0 0 0 0 0 123"
 	if err := os.WriteFile(filepath.Join(processRoot, "stat"), []byte(stat), 0o600); err != nil {
 		t.Fatal(err)
 	}
