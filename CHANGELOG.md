@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-08-04
+
+### Added
+
+- 新增 AI 三栏工作台、多会话、会话内 Provider/模型切换、流式回复、工具进度与逐次审批交互。
+- 新增 OpenAI-compatible（Responses 与 Chat Completions）、Anthropic Messages、Gemini `generateContent` 三类流式协议，以及 Provider 测试、模型同步和手工模型管理。
+- 新增原生 Go `AgentRuntime`、受控 KPanel 工具注册表、记忆、流程和进化提案审核；不引入 Hermes、Sidecar、向量数据库或通用宿主机 Shell。
+
+### Security
+
+- API Key 使用 XChaCha20-Poly1305 加密并由独立 `0600` 主密钥保护；响应、日志、审计、模型上下文和工具结果统一限长、脱敏。
+- 公网 Provider 强制 HTTPS，并在解析和重定向阶段拒绝回环、私网、链路本地及保留地址；内网 Provider 必须显式开启，跨源重定向不携带认证头。
+- 只读工具可自动执行，所有写入、删除、容器 exec 和任务输入继续要求普通逐次确认、真实状态回读、版本冲突检查及关联审计。
+
+### Performance
+
+- AI 数据独立使用 CGO-free SQLite WAL；单会话严格串行、全局最多两个 Run，模型步骤、工具调用、消息与结果大小均有界。
+- 对话按 50 条分页并在上下文达到模型窗口 70% 时持久化摘要；前端 AI 页面保持懒加载，Panel 容器内存限制仍为 256 MiB。
+
+### Upgrade Notes
+
+- 新增 `/var/lib/kejilion-panel/ai.db` 与 `ai-secrets.key`，不迁移或扩展现有 `panel-state.json`；未配置 Provider 时不产生模型请求。
+- Panel Compose 从单一内部网络迁移为固定内部网络加受控出口网络；应用市场更新会自动刷新可信代理网段，并在失败时恢复旧镜像、Agent、Compose 与 `.env`。
+- 回滚至 `v0.40.3` 时保留数据目录；旧版本忽略 AI 数据。再次升级前必须成对保留 `ai.db*` 与 `ai-secrets.key`。
+
 ## [0.40.3] - 2026-08-03
 
 ### Changed
