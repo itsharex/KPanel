@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.44.2] - 2026-08-04
+
+### Fixed
+
+- AI 图片和文本附件改用标准 `multipart/form-data` 上传，避免 Base64 JSON 被 ModSecurity 的 `SecRequestBodyNoFilesLimit` 在进入 KPanel 前误拦截；保留原 JSON 协议用于无附件消息和旧客户端兼容。
+- 修复实时工具事件使用零值 `createdAt`，导致工具卡片全部堆在文字前面的时间线错误；工具调用、可见进度说明和后续结果现在按真实发生顺序穿插，模型未输出工具前说明时补充简短的非推理进度提示。
+- 反向代理或 Provider 返回 HTML 错误页时不再把原始 Nginx 页面直接显示给用户，统一转换为可读的网关或模型能力提示。
+
+### Security
+
+- 不放宽 WAF 全局限制；附件仍由服务端重新识别真实类型，并保持单图 4 MiB、单文本 512 KiB、单消息附件总计 8 MiB、消息请求 12 MiB 的边界。multipart 未知字段、重复内容字段和超限请求继续失败关闭。
+
+### Upgrade Notes
+
+- AI SQLite 迁移新增版本 9，将旧工具调用的无效零值创建时间修复为已持久化的更新时间；Provider、密钥、会话、消息、记忆和流程内容不变。回滚到 `v0.44.1` 时旧版本可忽略该迁移记录。
+- 不变更 Compose、端口、Agent 权限、依赖或应用市场安装契约；无需修改 Nginx WAF 镜像中的全局 `SecRequestBodyNoFilesLimit`。
+
 ## [0.44.1] - 2026-08-04
 
 ### Fixed
