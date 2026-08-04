@@ -57,24 +57,36 @@ type Model struct {
 }
 
 type Session struct {
-	ID             string    `json:"id"`
-	UserID         string    `json:"userId"`
-	Title          string    `json:"title"`
-	ProviderID     string    `json:"providerId"`
-	ModelID        string    `json:"modelId"`
-	ProviderName   string    `json:"providerName,omitempty"`
-	ModelName      string    `json:"modelName,omitempty"`
-	Summary        string    `json:"summary,omitempty"`
-	Pinned         bool      `json:"pinned"`
-	Archived       bool      `json:"archived"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
-	LastMessageAt  time.Time `json:"lastMessageAt"`
-	ModelAvailable bool      `json:"modelAvailable"`
-	Running        bool      `json:"running"`
-	ActiveRunID    string    `json:"activeRunId,omitempty"`
-	LastRunID      string    `json:"lastRunId,omitempty"`
-	LastRunStatus  RunStatus `json:"lastRunStatus,omitempty"`
+	ID             string       `json:"id"`
+	UserID         string       `json:"userId"`
+	Title          string       `json:"title"`
+	ProviderID     string       `json:"providerId"`
+	ModelID        string       `json:"modelId"`
+	ProviderName   string       `json:"providerName,omitempty"`
+	ModelName      string       `json:"modelName,omitempty"`
+	Summary        string       `json:"summary,omitempty"`
+	ApprovalMode   ApprovalMode `json:"approvalMode"`
+	Pinned         bool         `json:"pinned"`
+	Archived       bool         `json:"archived"`
+	CreatedAt      time.Time    `json:"createdAt"`
+	UpdatedAt      time.Time    `json:"updatedAt"`
+	LastMessageAt  time.Time    `json:"lastMessageAt"`
+	ModelAvailable bool         `json:"modelAvailable"`
+	Running        bool         `json:"running"`
+	ActiveRunID    string       `json:"activeRunId,omitempty"`
+	LastRunID      string       `json:"lastRunId,omitempty"`
+	LastRunStatus  RunStatus    `json:"lastRunStatus,omitempty"`
+}
+
+type ApprovalMode string
+
+const (
+	ApprovalManual ApprovalMode = "manual"
+	ApprovalAuto   ApprovalMode = "auto"
+)
+
+func (mode ApprovalMode) Valid() bool {
+	return mode == ApprovalManual || mode == ApprovalAuto
 }
 
 type MessageRole string
@@ -119,21 +131,22 @@ type Usage struct {
 }
 
 type Run struct {
-	ID           string    `json:"id"`
-	SessionID    string    `json:"sessionId"`
-	UserID       string    `json:"userId"`
-	ProviderID   string    `json:"providerId"`
-	ProviderName string    `json:"providerName"`
-	ModelID      string    `json:"modelId"`
-	ModelName    string    `json:"modelName"`
-	Status       RunStatus `json:"status"`
-	Step         int       `json:"step"`
-	Usage        Usage     `json:"usage"`
-	ErrorCode    string    `json:"errorCode,omitempty"`
-	ErrorMessage string    `json:"errorMessage,omitempty"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
-	FinishedAt   time.Time `json:"finishedAt,omitempty"`
+	ID           string       `json:"id"`
+	SessionID    string       `json:"sessionId"`
+	UserID       string       `json:"userId"`
+	ProviderID   string       `json:"providerId"`
+	ProviderName string       `json:"providerName"`
+	ModelID      string       `json:"modelId"`
+	ModelName    string       `json:"modelName"`
+	ApprovalMode ApprovalMode `json:"approvalMode"`
+	Status       RunStatus    `json:"status"`
+	Step         int          `json:"step"`
+	Usage        Usage        `json:"usage"`
+	ErrorCode    string       `json:"errorCode,omitempty"`
+	ErrorMessage string       `json:"errorMessage,omitempty"`
+	CreatedAt    time.Time    `json:"createdAt"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
+	FinishedAt   time.Time    `json:"finishedAt,omitempty"`
 }
 
 type ToolCallStatus string

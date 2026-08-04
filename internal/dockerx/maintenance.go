@@ -37,6 +37,27 @@ var (
 	imageIDPattern     = regexp.MustCompile(`^(?:sha256:)?[a-f0-9]{64}$`)
 )
 
+var maintenanceActions = []string{
+	"container_create", "container_access", "image_pull", "image_remove",
+	"network_create", "network_remove", "network_connect", "network_disconnect",
+	"volume_create", "volume_remove", "prune", "container_prune", "image_prune",
+	"network_prune", "volume_prune", "backup_create", "backup_restore", "backup_migrate",
+	"daemon_mirror", "daemon_ipv6",
+}
+
+func MaintenanceActions() []string {
+	return append([]string(nil), maintenanceActions...)
+}
+
+func IsMaintenanceAction(action string) bool {
+	for _, candidate := range maintenanceActions {
+		if action == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 type MaintenanceInput struct {
 	Action                   string                       `json:"action"`
 	Image                    string                       `json:"image,omitempty"`
@@ -206,6 +227,9 @@ func (c *Client) MaintenanceJobs() []MaintenanceJob {
 }
 
 func (c *Client) validateMaintenanceInput(ctx context.Context, input MaintenanceInput) error {
+	if !IsMaintenanceAction(input.Action) {
+		return ErrInvalidDockerJob
+	}
 	switch input.Action {
 	case "container_create":
 		if _, err := c.containerCreatePayload(ctx, input); err != nil {

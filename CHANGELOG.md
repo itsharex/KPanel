@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-08-04
+
+### Added
+
+- AI 新增 Docker 运行容器资源占用只读工具，可一次读取并比较 CPU、内存、网络、块 IO 与 PID；新增受 File Manager 保护规则约束的目录查询、64 KiB 文本读取和带 `resourceVersion` 的文本写入工具。
+- 每个会话新增“手动审批 / 安全自动审批”权限模式；模式在 Run 启动时快照，执行中切换只影响下一轮。
+
+### Fixed
+
+- 修复 `host_docker_task` 向模型声明 `type`、但 Agent 实际严格要求 `action`，导致 Docker 查询误入维护任务并返回 `400 invalid_request` 的问题；Schema 现与 Agent 的全部维护动作及字段保持契约测试一致。
+- Docker 资源类问题现在明确路由到只读工具，禁止使用维护任务；Agent problem 响应不再把原始 JSON 和内部详情直接显示在聊天错误卡片中。
+
+### Security
+
+- 手动审批模式下所有非只读工具逐次确认；安全自动审批仅放行已分类的常规结构化操作，Docker 维护、删除、容器 exec、终端输入和系统核心操作仍不可自动批准。
+- AI 文件工具继续复用现有路径规范化、符号链接防护、保护/只读目录、文本大小、UTF-8、资源版本冲突和审计约束；文件内容不写入审计摘要。
+
+### Upgrade Notes
+
+- `ai.db` 事务迁移新增会话和 Run 的 `approval_mode` 字段，现有会话默认进入 `manual`；旧版本忽略新增列，回滚到 `v0.43.0` 前仍应成对备份 `ai.db*` 与 `ai-secrets.key`。
+- 不新增端口、容器、Sidecar、通用 Shell、通用 HTTP 或依赖；回滚镜像为 `v0.43.0`。
+
 ## [0.43.0] - 2026-08-04
 
 ### Added

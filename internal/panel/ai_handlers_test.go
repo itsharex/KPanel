@@ -46,6 +46,14 @@ func TestAIProviderModelSessionCRUD(t *testing.T) {
 	if sessionResponse.Code != http.StatusCreated {
 		t.Fatalf("session create=%d %s", sessionResponse.Code, sessionResponse.Body.String())
 	}
+	var session ai.Session
+	if err := json.Unmarshal(sessionResponse.Body.Bytes(), &session); err != nil || session.ApprovalMode != ai.ApprovalManual {
+		t.Fatalf("session approval default=%#v err=%v", session, err)
+	}
+	modeResponse := authenticatedRequest(server, http.MethodPatch, "/api/v1/ai/sessions/"+session.ID, []byte(`{"approvalMode":"auto"}`), sessionCookie, csrfCookie, headers)
+	if modeResponse.Code != http.StatusOK || json.Unmarshal(modeResponse.Body.Bytes(), &session) != nil || session.ApprovalMode != ai.ApprovalAuto {
+		t.Fatalf("session approval update=%d %s", modeResponse.Code, modeResponse.Body.String())
+	}
 	list := authenticatedRequest(server, http.MethodGet, "/api/v1/ai/sessions", nil, sessionCookie, csrfCookie, nil)
 	if list.Code != http.StatusOK {
 		t.Fatalf("session list=%d %s", list.Code, list.Body.String())
@@ -84,5 +92,43 @@ func TestAIToolUsesFixedAgentPathAndAudits(t *testing.T) {
 	_, err = tools.Execute(context.Background(), execution, "host_docker_container_action", json.RawMessage(`{"containerId":"bad","action":"remove","resourceVersion":"bad"}`))
 	if err == nil || len(agent.snapshotCalls()) != 1 {
 		t.Fatal("invalid write reached Agent")
+	}
+}
+
+func TestAIFileToolsUseBoundedAgentRoutesAndRedactContent(t *testing.T) {
+	server, _ := newTestServer(t)
+	agent := &stubAgent{response: AgentResponse{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}
+	server.agent = agent
+	tools := &panelAITools{server: server}
+	execution := ai.ToolExecutionContext{UserID: "admin", SessionID: "ses", RunID: "run", ToolCallID: "call"}
+	if _, err := tools.Execute(context.Background(), execution, "host_file_read", json.RawMessage(`{"path":"/tmp/kpanel-ai-test.txt"}`)); err != nil {
+		t.Fatal(err)
+	}
+	version := "sha256:" + strings.Repeat("a", 64)
+	arguments := json.RawMessage(`{"path":"/tmp/kpanel-ai-test.txt","content":"sensitive-value","expectedResourceVersion":"` + version + `"}`)
+	if _, err := tools.Execute(context.Background(), execution, "host_file_write", arguments); err != nil {
+		t.Fatal(err)
+	}
+	calls := agent.snapshotCalls()
+	if len(calls) != 2 || calls[0].path != "/v1/files/text" || calls[0].rawQuery != "path=%2Ftmp%2Fkpanel-ai-test.txt" ||
+		calls[1].path != "/v1/files/content" || calls[1].method != http.MethodPut || calls[1].rawQuery != "path=%2Ftmp%2Fkpanel-ai-test.txt" {
+		t.Fatalf("file tool calls=%#v", calls)
+	}
+	audits, _ := server.store.ListAudit(20, "")
+	for _, event := range audits {
+		encoded, _ := json.Marshal(event.Change)
+		if strings.Contains(string(encoded), "sensitive-value") {
+			t.Fatalf("file content leaked into audit: %s", encoded)
+		}
+	}
+}
+
+func TestAIToolAgentProblemIsSafeAndTraceable(t *testing.T) {
+	server, _ := newTestServer(t)
+	server.agent = &stubAgent{response: AgentResponse{StatusCode: http.StatusBadRequest, ContentType: "application/problem+json", Body: []byte(`{"title":"invalid","status":400,"code":"invalid_request","detail":"secret payload","requestId":"req-123"}`)}}
+	tools := &panelAITools{server: server}
+	_, err := tools.Execute(context.Background(), ai.ToolExecutionContext{UserID: "admin"}, "host_system_summary", json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "invalid_request") || !strings.Contains(err.Error(), "req-123") || strings.Contains(err.Error(), "secret payload") || strings.Contains(err.Error(), "{\"") {
+		t.Fatalf("unsafe or untraceable Agent error: %v", err)
 	}
 }

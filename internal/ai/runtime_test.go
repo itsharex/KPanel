@@ -95,6 +95,7 @@ func TestNativeRuntimeApprovalAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func TestNativeRuntimeApprovedClassifiedWriteRunsWithoutApproval(t *testing.T) {
 	defer store.Close()
 	session, _ := store.CreateSession(context.Background(), Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
 	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "执行常规操作"})
-	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName, ApprovalMode: ApprovalAuto})
 	requiresApproval := false
 	tools := &fakeTools{approval: &requiresApproval}
 	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
@@ -148,6 +149,24 @@ func TestNativeRuntimeApprovedClassifiedWriteRunsWithoutApproval(t *testing.T) {
 	calls, _ := store.ToolCalls(context.Background(), run.ID)
 	if len(calls) != 1 || calls[0].RequiresApproval {
 		t.Fatalf("classified write unexpectedly required approval: %#v", calls)
+	}
+}
+
+func TestNativeRuntimeManualModeRequiresApprovalForClassifiedWrite(t *testing.T) {
+	store, providerService, provider, model := runtimeFixture(t)
+	defer store.Close()
+	session, _ := store.CreateSession(context.Background(), Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName, ApprovalMode: ApprovalManual})
+	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "执行常规操作"})
+	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName, ApprovalMode: ApprovalManual})
+	requiresApproval := false
+	tools := &fakeTools{approval: &requiresApproval}
+	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	if err := runtime.Run(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := store.Run(context.Background(), "admin", run.ID)
+	if loaded.Status != RunPendingApproval || tools.executed != 0 {
+		t.Fatalf("manual mode status=%s executed=%d", loaded.Status, tools.executed)
 	}
 }
 
@@ -397,6 +416,9 @@ func TestNativeRuntimeSilentlyLearnsReusableProcedureAcrossSessions(t *testing.T
 	}
 	if prompt := runtime.systemPrompt(ctx, "admin"); !strings.Contains(prompt, "应用状态恢复") {
 		t.Fatalf("learned procedure was not available to another session: %s", prompt)
+	}
+	if prompt := runtime.systemPrompt(ctx, "admin"); !strings.Contains(prompt, "host_docker_resource_usage") || !strings.Contains(prompt, "Never use host_docker_task for a status or resource query") {
+		t.Fatalf("Docker resource routing rule is missing: %s", prompt)
 	}
 	if err := runtime.generateProposal(ctx, run, provider, "test-key", model, history, false); err != nil {
 		t.Fatal(err)

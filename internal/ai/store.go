@@ -105,7 +105,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
 			provider_id TEXT NOT NULL, model_id TEXT NOT NULL, provider_name TEXT NOT NULL, model_name TEXT NOT NULL,
-			summary TEXT NOT NULL DEFAULT '', summary_cursor TEXT NOT NULL DEFAULT '', pinned INTEGER NOT NULL, archived INTEGER NOT NULL,
+			summary TEXT NOT NULL DEFAULT '', summary_cursor TEXT NOT NULL DEFAULT '', approval_mode TEXT NOT NULL DEFAULT 'manual', pinned INTEGER NOT NULL, archived INTEGER NOT NULL,
 			created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_message_at INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS sessions_user_activity ON sessions(user_id, archived, pinned, last_message_at DESC)`,
 		`CREATE TABLE IF NOT EXISTS messages (
@@ -118,7 +118,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS runs (
 			id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, user_id TEXT NOT NULL,
 			provider_id TEXT NOT NULL, provider_name TEXT NOT NULL, model_id TEXT NOT NULL, model_name TEXT NOT NULL,
-			status TEXT NOT NULL, step INTEGER NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+			approval_mode TEXT NOT NULL DEFAULT 'manual', status TEXT NOT NULL, step INTEGER NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
 			error_code TEXT NOT NULL DEFAULT '', error_message TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, finished_at INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE INDEX IF NOT EXISTS runs_session_status ON runs(session_id, status, created_at DESC)`,
@@ -149,6 +149,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, 0)`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(4, 0)`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, 0)`,
+		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, 0)`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -161,6 +162,8 @@ func (s *Store) migrate(ctx context.Context) error {
 		{"procedures", "retired", "INTEGER NOT NULL DEFAULT 0"},
 		{"providers", "api_mode", "TEXT NOT NULL DEFAULT 'chat_completions'"},
 		{"tool_calls", "provider_data", "BLOB NOT NULL DEFAULT X''"},
+		{"sessions", "approval_mode", "TEXT NOT NULL DEFAULT 'manual'"},
+		{"runs", "approval_mode", "TEXT NOT NULL DEFAULT 'manual'"},
 	} {
 		if err := ensureAIColumn(ctx, tx, column.table, column.name, column.definition); err != nil {
 			return err
@@ -182,6 +185,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("record AI migration: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET applied_at = ? WHERE version = 5 AND applied_at = 0`, millis(s.now())); err != nil {
+		return fmt.Errorf("record AI migration: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET applied_at = ? WHERE version = 6 AND applied_at = 0`, millis(s.now())); err != nil {
 		return fmt.Errorf("record AI migration: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -413,10 +419,13 @@ func (s *Store) CreateSession(ctx context.Context, session Session) (Session, er
 	if session.Title == "" {
 		session.Title = "新会话"
 	}
+	if !session.ApprovalMode.Valid() {
+		session.ApprovalMode = ApprovalManual
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(id,user_id,title,provider_id,model_id,provider_name,
-		model_name,summary,pinned,archived,created_at,updated_at,last_message_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		model_name,summary,approval_mode,pinned,archived,created_at,updated_at,last_message_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		session.ID, session.UserID, session.Title, session.ProviderID, session.ModelID, session.ProviderName,
-		session.ModelName, session.Summary, session.Pinned, session.Archived, millis(now), millis(now), millis(now))
+		session.ModelName, session.Summary, session.ApprovalMode, session.Pinned, session.Archived, millis(now), millis(now), millis(now))
 	session.ModelAvailable = true
 	return session, err
 }
@@ -427,7 +436,7 @@ func (s *Store) Sessions(ctx context.Context, userID, search string, archived bo
 	}
 	pattern := "%" + strings.TrimSpace(search) + "%"
 	rows, err := s.db.QueryContext(ctx, `SELECT s.id,s.user_id,s.title,s.provider_id,s.model_id,s.provider_name,
-		s.model_name,s.summary,s.pinned,s.archived,s.created_at,s.updated_at,s.last_message_at,
+		s.model_name,s.summary,s.approval_mode,s.pinned,s.archived,s.created_at,s.updated_at,s.last_message_at,
 		EXISTS(SELECT 1 FROM providers p JOIN models m ON m.provider_id=p.id WHERE p.id=s.provider_id AND m.id=s.model_id AND p.enabled=1 AND m.enabled=1),
 		EXISTS(SELECT 1 FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','pending_approval')),
 		COALESCE((SELECT r.id FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','pending_approval') ORDER BY r.created_at DESC LIMIT 1),''),
@@ -452,7 +461,7 @@ func (s *Store) Sessions(ctx context.Context, userID, search string, archived bo
 
 func (s *Store) Session(ctx context.Context, userID, id string) (Session, error) {
 	item, err := scanSession(s.db.QueryRowContext(ctx, `SELECT s.id,s.user_id,s.title,s.provider_id,s.model_id,
-		s.provider_name,s.model_name,s.summary,s.pinned,s.archived,s.created_at,s.updated_at,s.last_message_at,
+		s.provider_name,s.model_name,s.summary,s.approval_mode,s.pinned,s.archived,s.created_at,s.updated_at,s.last_message_at,
 		EXISTS(SELECT 1 FROM providers p JOIN models m ON m.provider_id=p.id WHERE p.id=s.provider_id AND m.id=s.model_id AND p.enabled=1 AND m.enabled=1),
 		EXISTS(SELECT 1 FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','pending_approval')),
 		COALESCE((SELECT r.id FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','pending_approval') ORDER BY r.created_at DESC LIMIT 1),''),
@@ -465,7 +474,7 @@ func (s *Store) Session(ctx context.Context, userID, id string) (Session, error)
 	return item, err
 }
 
-func (s *Store) UpdateSession(ctx context.Context, userID, id, title, providerID, modelID, providerName, modelName string, pinned, archived *bool) (Session, error) {
+func (s *Store) UpdateSession(ctx context.Context, userID, id, title, providerID, modelID, providerName, modelName string, pinned, archived *bool, approvalMode *ApprovalMode) (Session, error) {
 	if len(title) > 120 || strings.IndexFunc(title, unicode.IsControl) >= 0 {
 		return Session{}, errors.New("session title is invalid")
 	}
@@ -486,10 +495,16 @@ func (s *Store) UpdateSession(ctx context.Context, userID, id, title, providerID
 	if archived != nil {
 		item.Archived = *archived
 	}
+	if approvalMode != nil {
+		if !approvalMode.Valid() {
+			return Session{}, errors.New("approval mode is invalid")
+		}
+		item.ApprovalMode = *approvalMode
+	}
 	item.UpdatedAt = s.now().UTC()
 	_, err = s.db.ExecContext(ctx, `UPDATE sessions SET title=?,provider_id=?,model_id=?,provider_name=?,model_name=?,
-		pinned=?,archived=?,updated_at=? WHERE id=? AND user_id=?`, item.Title, item.ProviderID, item.ModelID,
-		item.ProviderName, item.ModelName, item.Pinned, item.Archived, millis(item.UpdatedAt), id, userID)
+		approval_mode=?,pinned=?,archived=?,updated_at=? WHERE id=? AND user_id=?`, item.Title, item.ProviderID, item.ModelID,
+		item.ProviderName, item.ModelName, item.ApprovalMode, item.Pinned, item.Archived, millis(item.UpdatedAt), id, userID)
 	return item, err
 }
 
@@ -755,12 +770,15 @@ func (s *Store) CreateRun(ctx context.Context, run Run) (Run, error) {
 	if active > 0 {
 		return Run{}, ErrBusy
 	}
+	if !run.ApprovalMode.Valid() {
+		run.ApprovalMode = ApprovalManual
+	}
 	now := s.now().UTC()
 	run.ID, run.Status, run.CreatedAt, run.UpdatedAt = newID("run"), RunQueued, now, now
 	_, err := s.db.ExecContext(ctx, `INSERT INTO runs(id,session_id,user_id,provider_id,provider_name,model_id,
-		model_name,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`, run.ID, run.SessionID, run.UserID, run.ProviderID, run.ProviderName,
-		run.ModelID, run.ModelName, run.Status, 0, 0, 0, "", "", millis(now), millis(now))
+		model_name,approval_mode,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`, run.ID, run.SessionID, run.UserID, run.ProviderID, run.ProviderName,
+		run.ModelID, run.ModelName, run.ApprovalMode, run.Status, 0, 0, 0, "", "", millis(now), millis(now))
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "unique") {
 		return Run{}, ErrBusy
 	}
@@ -769,18 +787,18 @@ func (s *Store) CreateRun(ctx context.Context, run Run) (Run, error) {
 
 func (s *Store) Run(ctx context.Context, userID, id string) (Run, error) {
 	return s.scanRun(s.db.QueryRowContext(ctx, `SELECT id,session_id,user_id,provider_id,provider_name,model_id,model_name,
-		status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at
+		approval_mode,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at
 		FROM runs WHERE id=? AND user_id=?`, id, userID))
 }
 
 func (s *Store) RunByID(ctx context.Context, id string) (Run, error) {
 	return s.scanRun(s.db.QueryRowContext(ctx, `SELECT id,session_id,user_id,provider_id,provider_name,model_id,model_name,
-		status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at FROM runs WHERE id=?`, id))
+		approval_mode,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at FROM runs WHERE id=?`, id))
 }
 
 func (s *Store) ActiveRun(ctx context.Context, sessionID, userID string) (Run, error) {
 	return s.scanRun(s.db.QueryRowContext(ctx, `SELECT id,session_id,user_id,provider_id,provider_name,model_id,model_name,
-		status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at
+		approval_mode,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at
 		FROM runs WHERE session_id=? AND user_id=? AND status IN ('queued','running','pending_approval')
 		ORDER BY created_at DESC LIMIT 1`, sessionID, userID))
 }
@@ -808,7 +826,7 @@ func (s *Store) scanRun(row scanner) (Run, error) {
 	var item Run
 	var created, updated, finished int64
 	err := row.Scan(&item.ID, &item.SessionID, &item.UserID,
-		&item.ProviderID, &item.ProviderName, &item.ModelID, &item.ModelName, &item.Status, &item.Step,
+		&item.ProviderID, &item.ProviderName, &item.ModelID, &item.ModelName, &item.ApprovalMode, &item.Status, &item.Step,
 		&item.Usage.InputTokens, &item.Usage.OutputTokens, &item.ErrorCode, &item.ErrorMessage, &created, &updated, &finished)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Run{}, ErrNotFound
@@ -907,7 +925,7 @@ func scanSession(row scanner) (Session, error) {
 	var item Session
 	var created, updated, last int64
 	err := row.Scan(&item.ID, &item.UserID, &item.Title, &item.ProviderID, &item.ModelID, &item.ProviderName,
-		&item.ModelName, &item.Summary, &item.Pinned, &item.Archived, &created, &updated, &last,
+		&item.ModelName, &item.Summary, &item.ApprovalMode, &item.Pinned, &item.Archived, &created, &updated, &last,
 		&item.ModelAvailable, &item.Running, &item.ActiveRunID, &item.LastRunID, &item.LastRunStatus)
 	item.CreatedAt, item.UpdatedAt, item.LastMessageAt = fromMillis(created), fromMillis(updated), fromMillis(last)
 	return item, err

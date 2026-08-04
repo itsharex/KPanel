@@ -37,6 +37,24 @@ func TestBearerRequired(t *testing.T) {
 	}
 }
 
+func TestDockerContainerStatsRouteReturnsBoundedBatch(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("Unix Socket integration test")
+	}
+	server := testServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/v1/docker/container-stats", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("container stats status=%d body=%s", response.Code, response.Body.String())
+	}
+	var batch dockerx.ContainerMetricBatch
+	if err := json.Unmarshal(response.Body.Bytes(), &batch); err != nil || batch.Items == nil || batch.Total != 0 {
+		t.Fatalf("container stats batch=%#v err=%v", batch, err)
+	}
+}
+
 func TestTerminalRouteRequiresAuthenticationAndExplicitManager(t *testing.T) {
 	server := testServer(t)
 	body := `{"owner":"panel:test","rows":24,"columns":80}`
@@ -444,6 +462,9 @@ func fakeDockerSocket(t *testing.T) string {
 			switch {
 			case r.URL.Path == "/_ping":
 				_, _ = w.Write([]byte("OK"))
+				return
+			case r.URL.Path == "/containers/json":
+				_, _ = w.Write([]byte(`[]`))
 				return
 			case strings.HasSuffix(r.URL.Path, "/json"):
 				_, _ = w.Write([]byte(`{"Id":"` + strings.Repeat("a", 64) + `","Config":{"Labels":{}},"State":{"Status":"running"}}`))

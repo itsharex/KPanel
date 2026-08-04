@@ -54,6 +54,9 @@ func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
+	if closer, ok := s.Runtime.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
 	return s.Store.Close()
 }
 
@@ -122,7 +125,7 @@ func (s *Service) Send(ctx context.Context, userID, sessionID, content string) (
 	if !errors.Is(activeErr, ErrNotFound) {
 		return Run{}, activeErr
 	}
-	run, err := s.Store.CreateRun(ctx, Run{SessionID: session.ID, UserID: userID, ProviderID: session.ProviderID, ProviderName: session.ProviderName, ModelID: session.ModelID, ModelName: session.ModelName})
+	run, err := s.Store.CreateRun(ctx, Run{SessionID: session.ID, UserID: userID, ProviderID: session.ProviderID, ProviderName: session.ProviderName, ModelID: session.ModelID, ModelName: session.ModelName, ApprovalMode: session.ApprovalMode})
 	if err != nil {
 		return Run{}, err
 	}
@@ -174,7 +177,7 @@ func (s *Service) Retry(ctx context.Context, userID, runID string) (Run, error) 
 	if previous.Status != RunInterrupted && previous.Status != RunFailed {
 		return Run{}, ErrConflict
 	}
-	run, err := s.Store.CreateRun(ctx, Run{SessionID: previous.SessionID, UserID: userID, ProviderID: previous.ProviderID, ProviderName: previous.ProviderName, ModelID: previous.ModelID, ModelName: previous.ModelName})
+	run, err := s.Store.CreateRun(ctx, Run{SessionID: previous.SessionID, UserID: userID, ProviderID: previous.ProviderID, ProviderName: previous.ProviderName, ModelID: previous.ModelID, ModelName: previous.ModelName, ApprovalMode: previous.ApprovalMode})
 	if err != nil {
 		return Run{}, err
 	}

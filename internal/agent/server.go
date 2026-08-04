@@ -280,6 +280,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.fileTrashList)
 	case r.URL.Path == "/v1/files/content":
 		s.fileContent(w, r, requestID)
+	case r.URL.Path == "/v1/files/text":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.fileText)
 	case r.URL.Path == "/v1/files/upload":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.fileUpload)
 	case r.URL.Path == "/v1/files/actions":
@@ -290,6 +292,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.dockerEnvironment)
 	case r.URL.Path == "/v1/docker/containers":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.containerList)
+	case r.URL.Path == "/v1/docker/container-stats":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.containerStats)
 	case r.URL.Path == "/v1/docker/images":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.imageList)
 	case r.URL.Path == "/v1/docker/networks":
@@ -1319,6 +1323,19 @@ func (s *Server) containerList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, contract.PageResult[contract.ContainerSummary]{Items: items})
+}
+
+func (s *Server) containerStats(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_query", "Docker container stats query is invalid", "")
+		return
+	}
+	result, err := s.docker.RunningContainerStats(r.Context(), 64, 4)
+	if err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "docker_unavailable", "Docker container stats are unavailable", safeDetail(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) imageList(w http.ResponseWriter, r *http.Request) {

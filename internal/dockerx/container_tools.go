@@ -45,10 +45,10 @@ type ContainerMetricSample struct {
 }
 
 type ContainerMetricBatch struct {
-	Items     []ContainerMetricSample
-	Total     int
-	Failed    int
-	Truncated int
+	Items     []ContainerMetricSample `json:"items"`
+	Total     int                     `json:"total"`
+	Failed    int                     `json:"failed"`
+	Truncated int                     `json:"truncated"`
 }
 
 type ContainerExecInput struct {

@@ -61,12 +61,13 @@ func TestStoreProviderSessionRunLifecycle(t *testing.T) {
 	if err != nil || !activeSession.Running || activeSession.ActiveRunID != run.ID {
 		t.Fatalf("active session=%#v err=%v", activeSession, err)
 	}
-	updatedSession, err := store.UpdateSession(ctx, "admin", session.ID, "", provider.ID, models[1].ID, provider.Name, models[1].DisplayName, nil, nil)
-	if err != nil || updatedSession.ModelID != models[1].ID {
+	autoMode := ApprovalAuto
+	updatedSession, err := store.UpdateSession(ctx, "admin", session.ID, "", provider.ID, models[1].ID, provider.Name, models[1].DisplayName, nil, nil, &autoMode)
+	if err != nil || updatedSession.ModelID != models[1].ID || updatedSession.ApprovalMode != ApprovalAuto {
 		t.Fatalf("next-turn model update=%#v err=%v", updatedSession, err)
 	}
 	loadedRun, err := store.Run(ctx, "admin", run.ID)
-	if err != nil || loadedRun.ModelID != models[0].ID {
+	if err != nil || loadedRun.ModelID != models[0].ID || loadedRun.ApprovalMode != ApprovalManual {
 		t.Fatalf("active run model snapshot changed=%#v err=%v", loadedRun, err)
 	}
 	if err := store.DeleteProvider(ctx, provider.ID); !errors.Is(err, ErrBusy) {
@@ -205,7 +206,11 @@ func TestOpenStoreMigratesPreSummaryCursorSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	for table, column := range map[string]string{"sessions": "summary_cursor", "memories": "retired", "procedures": "retired", "providers": "api_mode", "tool_calls": "provider_data"} {
+	for _, expected := range []struct{ table, column string }{
+		{"sessions", "summary_cursor"}, {"sessions", "approval_mode"}, {"runs", "approval_mode"},
+		{"memories", "retired"}, {"procedures", "retired"}, {"providers", "api_mode"}, {"tool_calls", "provider_data"},
+	} {
+		table, column := expected.table, expected.column
 		rows, err := store.db.Query(`PRAGMA table_info(` + table + `)`)
 		if err != nil {
 			t.Fatal(err)

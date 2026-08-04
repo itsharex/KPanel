@@ -354,6 +354,7 @@ func (s *Server) aiSession(w http.ResponseWriter, r *http.Request, userID, id st
 		var input struct {
 			Title, ProviderID, ModelID string
 			Pinned, Archived           *bool
+			ApprovalMode               *ai.ApprovalMode
 		}
 		if s.decodeJSON(w, r, &input) != nil {
 			return
@@ -372,7 +373,7 @@ func (s *Server) aiSession(w http.ResponseWriter, r *http.Request, userID, id st
 			}
 			providerName, modelName = provider.Name, model.DisplayName
 		}
-		item, err := s.ai.Store.UpdateSession(r.Context(), userID, id, strings.TrimSpace(input.Title), input.ProviderID, input.ModelID, providerName, modelName, input.Pinned, input.Archived)
+		item, err := s.ai.Store.UpdateSession(r.Context(), userID, id, strings.TrimSpace(input.Title), input.ProviderID, input.ModelID, providerName, modelName, input.Pinned, input.Archived, input.ApprovalMode)
 		s.aiJSON(w, r, item, err, http.StatusOK)
 	case http.MethodDelete:
 		err := s.ai.Store.DeleteSession(r.Context(), userID, id)

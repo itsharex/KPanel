@@ -32,7 +32,15 @@ const (
 	fileThumbnailMaxPixels  = 8_000_000
 	fileThumbnailMaxWidth   = 320
 	fileThumbnailMaxHeight  = 210
+	fileToolTextMaxBytes    = 64 << 10
 )
+
+type fileTextResult struct {
+	Path            string `json:"path"`
+	Content         string `json:"content"`
+	SizeBytes       int64  `json:"sizeBytes"`
+	ResourceVersion string `json:"resourceVersion"`
+}
 
 var errThumbnailUnavailable = errors.New("该图片不能生成缩略图")
 
@@ -104,6 +112,39 @@ func (s *Server) fileContent(w http.ResponseWriter, r *http.Request, requestID s
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPut)
 		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
 	}
+}
+
+// fileText returns a bounded JSON representation for structured consumers.
+// It deliberately reuses File Manager path, symlink and protected-directory checks.
+func (s *Server) fileText(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "path") {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "File query is invalid", "")
+		return
+	}
+	file, entry, err := s.files.Open(r.Context(), r.URL.Query().Get("path"))
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	defer file.Close()
+	if !entry.Editable || entry.SizeBytes > fileToolTextMaxBytes {
+		writeProblem(w, requestID, http.StatusUnprocessableEntity, "text_preview_unavailable", "File is not an editable UTF-8 text file up to 64 KiB", "")
+		return
+	}
+	content, err := io.ReadAll(io.LimitReader(file, fileToolTextMaxBytes+1))
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	if len(content) > fileToolTextMaxBytes || !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+		writeProblem(w, requestID, http.StatusUnprocessableEntity, "text_preview_unavailable", "File is not valid UTF-8 text up to 64 KiB", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, fileTextResult{
+		Path: entry.Path, Content: string(content), SizeBytes: entry.SizeBytes,
+		ResourceVersion: entry.ResourceVersion,
+	})
 }
 
 func (s *Server) fileRead(w http.ResponseWriter, r *http.Request, requestID string) {

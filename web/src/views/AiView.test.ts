@@ -56,14 +56,14 @@ beforeEach(() => {
   ])
   mocks.sessions.mockResolvedValue([{
     id: 's1', title: 'Running', providerId: 'p1', modelId: 'm1', providerName: 'Mock', modelName: 'Mock',
-    pinned: false, archived: false, modelAvailable: true, running: true, activeRunId: 'run-active',
+    approvalMode: 'manual', pinned: false, archived: false, modelAvailable: true, running: true, activeRunId: 'run-active',
     createdAt: '2026-08-04T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z', lastMessageAt: '2026-08-04T00:00:00Z',
   }])
   mocks.messages.mockResolvedValue({ items: [], nextCursor: '' })
   mocks.update.mockImplementation(async (_id, body) => ({
     id: 's1', title: 'Running', providerId: body.providerId || 'p1', modelId: body.modelId || 'm1',
     providerName: body.providerId === 'p2' ? 'Secondary' : 'Primary', modelName: body.modelId === 'm2' ? 'Next' : 'Mock',
-    modelAvailable: true, pinned: false, archived: false, running: true, activeRunId: 'run-active',
+    approvalMode: body.approvalMode || 'manual', modelAvailable: true, pinned: false, archived: false, running: true, activeRunId: 'run-active',
     createdAt: '2026-08-04T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z', lastMessageAt: '2026-08-04T00:00:00Z',
   }))
 })
@@ -111,6 +111,18 @@ describe('AI workspace reconnect', () => {
     expect(mocks.update).toHaveBeenCalledWith('s1',{providerId:'p2',modelId:'m2'})
     expect(wrapper.text()).toContain('下一轮')
     wrapper.unmount()
+  })
+
+  it('switches approval mode for the next run', async () => {
+	const router = await makeRouter()
+	const wrapper = mount(AiView, { global: { plugins: [router] } })
+	await flushPromises()
+	MockEventSource.instances[0]?.emit('run.snapshot',{run:{id:'run-active',sessionId:'s1',providerId:'p1',providerName:'Primary',modelId:'m1',modelName:'Mock',approvalMode:'manual',status:'running',step:1,usage:{inputTokens:0,outputTokens:0,totalTokens:0},createdAt:'',updatedAt:''},toolCalls:[],messages:[]})
+	await wrapper.get('select[aria-label="权限模式"]').setValue('auto')
+	await flushPromises()
+	expect(mocks.update).toHaveBeenCalledWith('s1',{approvalMode:'auto'})
+	expect(wrapper.text()).toContain('下一轮')
+	wrapper.unmount()
   })
 
   it('loads archived conversations from the sidebar filter', async () => {

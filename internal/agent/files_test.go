@@ -73,6 +73,41 @@ func TestFileThumbnailIsBoundedAndVersionProtected(t *testing.T) {
 	}
 }
 
+func TestFileTextReturnsBoundedJSONAndHonorsProtectedPaths(t *testing.T) {
+	server := testServer(t)
+	root := t.TempDir()
+	manager, err := filemanager.New(filemanager.Config{
+		Root: root, ProtectedVirtual: []string{"/protected"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server.files = manager
+	if err := os.WriteFile(filepath.Join(root, "hello.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "protected"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "protected", "secret.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	response := fileRequest(server, http.MethodGet, "/v1/files/text?path=%2Fhello.txt", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("text status=%d body=%s", response.Code, response.Body.String())
+	}
+	var result fileTextResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.Content != "hello" || result.ResourceVersion == "" {
+		t.Fatalf("text result=%#v err=%v", result, err)
+	}
+	protected := fileRequest(server, http.MethodGet, "/v1/files/text?path=%2Fprotected%2Fsecret.txt", "")
+	if protected.Code != http.StatusForbidden || strings.Contains(protected.Body.String(), "secret") {
+		t.Fatalf("protected status=%d body=%s", protected.Code, protected.Body.String())
+	}
+}
+
 func TestFileEndpointsListWriteUploadAndRejectProtectedPaths(t *testing.T) {
 	server := testServer(t)
 	root := t.TempDir()
