@@ -44,13 +44,13 @@ v0.43.1 把 AI 助手从基础对话与结构化调用补齐为轻量运维闭�
 - stripped `paneld`：v0.43.0 为 `12,972,194` B，v0.43.1 为 `13,013,154` B，仅增加 `40,960` B。
 - 两个并行能力保留 256 MiB 限额；完整 Mock 运维验收峰值为 `140.2 MiB / 256 MiB`，未发生 OOM。
 - 多轮工具调用后重启空闲为 `75.23 MiB / 256 MiB`；v0.42.0 同类 Mock 基线为 `72.6 MiB / 256 MiB`，增量约 `2.63 MiB`，低于 25 MiB 目标。
-- 生产升级前 v0.43.0 Docker 统计为 `13.65 MiB / 256 MiB`；升级后 v0.43.1 暖机统计为 `12.91 MiB / 256 MiB`。
+- 生产升级前 v0.43.0 Docker 统计为 `13.65 MiB / 256 MiB`；升级后 v0.43.1 暖机为 `12.91 MiB`，连续观察十分钟为 `13.09 MiB / 256 MiB`。
 
 ## 154 上线结果
 
 - 使用公开应用市场 `KJ_APP_ACTION=update` 原生链路完成 v0.43.0 → v0.43.1 更新，输出 `KPanel 更新完成 / Update Complete`。
 - Agent：`0.43.1 v1alpha1`，服务 `active/running`、`NRestarts=0`；安装二进制与正式镜像 `/release/kejilion-agent` SHA-256 均为 `268f3604b5e1a3a3636db75ee7e9aa5b515ba88f96918771b3e2212ebfb1a4c6`。
-- Panel：`version=0.43.1`、`status=ok`、容器 `healthy`，运行镜像 ID 为正式摘要。
+- Panel：`version=0.43.1`、`status=ok`、容器 `healthy`；连续观察十分钟 Panel/Agent 重启数均为 `0`，运行镜像 ID 为正式摘要。
 - 配置的公共入口 `http://154.36.153.9:8080` 下 `/`、`/ai` 和健康接口均返回 `200`；未登录 Provider API 返回 `401`，无效 Host 返回 `421`。
 - Agent 生产实测进程双排行、`/tmp` 磁盘分析、Nginx 日志尾读和 `nginx -t` 均成功；四项新 capability 全部启用。
 - Panel 继续使用 `65532:65532`、只读根文件系统、`privileged=false`、`cap_drop: ALL`、`no-new-privileges`、256 MiB、128 PIDs、内部与出口双网络及最小出口网关 `/32` 信任。
