@@ -6,11 +6,14 @@ export interface AIProvider {
   endpointScope: 'public' | 'private'; enabled: boolean; apiKeySet: boolean
   apiKeyHint?: string; version: number; createdAt: string; updatedAt: string
 }
-export interface AIModel { id:string;providerId:string;modelId:string;displayName:string;contextWindow:number;toolCalling:boolean;enabled:boolean;isDefault:boolean }
+export interface AIModel { id:string;providerId:string;modelId:string;displayName:string;contextWindow:number;toolCalling:boolean;vision:boolean;reasoning:boolean;enabled:boolean;isDefault:boolean }
 export type AIApprovalMode = 'manual' | 'auto'
-export interface AISession { id:string;title:string;providerId:string;modelId:string;providerName:string;modelName:string;summary?:string;approvalMode:AIApprovalMode;pinned:boolean;archived:boolean;createdAt:string;updatedAt:string;lastMessageAt:string;modelAvailable:boolean;running:boolean;activeRunId?:string;lastRunId?:string;lastRunStatus?:AIRun['status'] }
-export interface AIMessage { id:string;sessionId:string;runId?:string;role:'system'|'user'|'assistant'|'tool';content:string;providerName?:string;modelName?:string;toolCallId?:string;createdAt:string }
-export interface AIRun { id:string;sessionId:string;providerId:string;providerName:string;modelId:string;modelName:string;approvalMode:AIApprovalMode;status:'queued'|'running'|'pending_approval'|'completed'|'failed'|'cancelled'|'interrupted';step:number;usage:{inputTokens:number;outputTokens:number;totalTokens:number};errorCode?:string;errorMessage?:string;createdAt:string;updatedAt:string }
+export type AIThinkingLevel = 'low' | 'medium' | 'high'
+export interface AIAttachment { name:string;mimeType:string;size:number;kind:'image'|'text';previewUrl?:string }
+export interface AIUploadAttachment { name:string;mimeType:string;data:string;size:number;kind:'image'|'text';previewUrl?:string }
+export interface AISession { id:string;title:string;providerId:string;modelId:string;providerName:string;modelName:string;summary?:string;approvalMode:AIApprovalMode;thinkingLevel:AIThinkingLevel;pinned:boolean;archived:boolean;createdAt:string;updatedAt:string;lastMessageAt:string;modelAvailable:boolean;running:boolean;activeRunId?:string;lastRunId?:string;lastRunStatus?:AIRun['status'] }
+export interface AIMessage { id:string;sessionId:string;runId?:string;role:'system'|'user'|'assistant'|'tool';content:string;attachments?:AIAttachment[];providerName?:string;modelName?:string;toolCallId?:string;createdAt:string }
+export interface AIRun { id:string;sessionId:string;providerId:string;providerName:string;modelId:string;modelName:string;approvalMode:AIApprovalMode;thinkingLevel:AIThinkingLevel;status:'queued'|'running'|'pending_approval'|'completed'|'failed'|'cancelled'|'interrupted';step:number;usage:{inputTokens:number;outputTokens:number;totalTokens:number};errorCode?:string;errorMessage?:string;createdAt:string;updatedAt:string }
 export interface AIToolCall { id:string;runId:string;sessionId:string;name:string;arguments?:Record<string,unknown>;argumentsPreview?:string;resultPreview?:string;status:'pending_approval'|'running'|'completed'|'rejected'|'failed';requiresApproval:boolean;createdAt:string;updatedAt:string }
 export interface AIRunSnapshot { run:AIRun;toolCalls:AIToolCall[];messages:AIMessage[] }
 export interface AIEvolutionProposal { id:string;type:'memory'|'procedure';title:string;content:string;status:string;version:number;createdAt:string }

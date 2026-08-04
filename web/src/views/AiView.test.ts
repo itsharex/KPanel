@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   models: vi.fn(),
   sessions: vi.fn(),
   update: vi.fn(),
+  send: vi.fn(),
 }))
 
 vi.mock('@/lib/aiApi', () => ({
@@ -21,7 +22,7 @@ vi.mock('@/lib/aiApi', () => ({
     sessions: {
       list: mocks.sessions,
       messages: mocks.messages,
-      create: mocks.create, update: mocks.update, remove: vi.fn(), send: vi.fn(),
+      create: mocks.create, update: mocks.update, remove: vi.fn(), send: mocks.send,
     },
     runs: { get: vi.fn(), decision: vi.fn(), cancel: vi.fn(), retry: vi.fn(), propose: vi.fn() },
     evolution: { memories: vi.fn(), procedures: vi.fn(), proposals: vi.fn() },
@@ -45,25 +46,27 @@ beforeEach(() => {
   MockEventSource.urls = []
   MockEventSource.instances = []
   vi.stubGlobal('EventSource', MockEventSource)
+  vi.stubGlobal('requestAnimationFrame',(callback:FrameRequestCallback)=>{callback(0);return 1})
+  vi.stubGlobal('cancelAnimationFrame',vi.fn())
   Element.prototype.scrollIntoView = vi.fn()
   mocks.providers.mockResolvedValue([
     { id: 'p1', name: 'Primary', enabled: true },
     { id: 'p2', name: 'Secondary', enabled: true },
   ])
   mocks.models.mockResolvedValue([
-    { id: 'm1', providerId: 'p1', modelId: 'mock', displayName: 'Mock', contextWindow: 8192, enabled: true, isDefault: true, toolCalling: true },
-    { id: 'm2', providerId: 'p2', modelId: 'next', displayName: 'Next', contextWindow: 32768, enabled: true, isDefault: false, toolCalling: true },
+    { id: 'm1', providerId: 'p1', modelId: 'mock', displayName: 'Mock', contextWindow: 8192, enabled: true, isDefault: true, toolCalling: true, vision: true, reasoning: true },
+    { id: 'm2', providerId: 'p2', modelId: 'next', displayName: 'Next', contextWindow: 32768, enabled: true, isDefault: false, toolCalling: true, vision: false, reasoning: false },
   ])
   mocks.sessions.mockResolvedValue([{
     id: 's1', title: 'Running', providerId: 'p1', modelId: 'm1', providerName: 'Mock', modelName: 'Mock',
-    approvalMode: 'manual', pinned: false, archived: false, modelAvailable: true, running: true, activeRunId: 'run-active',
+    approvalMode: 'manual', thinkingLevel:'medium', pinned: false, archived: false, modelAvailable: true, running: true, activeRunId: 'run-active',
     createdAt: '2026-08-04T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z', lastMessageAt: '2026-08-04T00:00:00Z',
   }])
   mocks.messages.mockResolvedValue({ items: [], nextCursor: '' })
   mocks.update.mockImplementation(async (_id, body) => ({
     id: 's1', title: 'Running', providerId: body.providerId || 'p1', modelId: body.modelId || 'm1',
     providerName: body.providerId === 'p2' ? 'Secondary' : 'Primary', modelName: body.modelId === 'm2' ? 'Next' : 'Mock',
-    approvalMode: body.approvalMode || 'manual', modelAvailable: true, pinned: false, archived: false, running: true, activeRunId: 'run-active',
+    approvalMode: body.approvalMode || 'manual', thinkingLevel:body.thinkingLevel||'medium', modelAvailable: true, pinned: false, archived: false, running: true, activeRunId: 'run-active',
     createdAt: '2026-08-04T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z', lastMessageAt: '2026-08-04T00:00:00Z',
   }))
 })
@@ -220,6 +223,47 @@ describe('AI workspace reconnect', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('CPU 使用率正常')
     expect(wrapper.text()).not.toContain('今天想管理什么？')
+    wrapper.unmount()
+  })
+
+  it('keeps process cards and answer inside one assistant turn', async()=>{
+    mocks.messages.mockResolvedValue({items:[{id:'user',sessionId:'s1',runId:'run-active',role:'user',content:'检查',createdAt:''},{id:'answer',sessionId:'s1',runId:'run-active',role:'assistant',content:'正常',modelName:'Mock',createdAt:'2026-08-04T10:20:00Z'}],toolCalls:[{id:'call',runId:'run-active',sessionId:'s1',name:'host_system_summary',status:'completed',requiresApproval:false,createdAt:'',updatedAt:''}]})
+    const router=await makeRouter();const wrapper=mount(AiView,{global:{plugins:[router]}});await flushPromises()
+    const turn=wrapper.get('[data-tool-call-id="call"]').element.closest('.ai-agent-turn')
+    expect(turn).toBe(wrapper.get('[data-message-id="answer"]').element.closest('.ai-agent-turn'))
+    const meta=wrapper.get('.ai-message-meta')
+    expect(meta.element.children.item(0)?.textContent).toContain('复制')
+    expect(meta.element.children.item(1)?.textContent).toBe('Mock')
+    expect(meta.element.children.item(2)?.tagName).toBe('TIME')
+    wrapper.unmount()
+  })
+
+  it('does not force the reader back down after they scroll up',async()=>{
+    const router=await makeRouter();const wrapper=mount(AiView,{global:{plugins:[router]}});await flushPromises()
+    const pane=wrapper.get('.ai-messages').element
+    Object.defineProperties(pane,{scrollHeight:{value:1000,configurable:true},scrollTop:{value:100,writable:true,configurable:true},clientHeight:{value:400,configurable:true}})
+    await wrapper.get('.ai-messages').trigger('scroll')
+    const scroll=vi.mocked(Element.prototype.scrollIntoView);scroll.mockClear()
+    MockEventSource.instances[0]?.emit('message.delta',{delta:'继续输出'})
+    await flushPromises()
+    expect(scroll).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('回到最新')
+    wrapper.unmount()
+  })
+
+  it('updates thinking level and uploads a supported image',async()=>{
+    mocks.send.mockResolvedValue({runId:'run-next'})
+    vi.stubGlobal('FileReader',class {result:string|ArrayBuffer|null=null;error:DOMException|null=null;onload:(()=>void)|null=null;onerror:(()=>void)|null=null;readAsDataURL(){this.result='data:image/png;base64,iVBORw0KGgo=';this.onload?.()}})
+    const router=await makeRouter();const wrapper=mount(AiView,{global:{plugins:[router]}});await flushPromises()
+    await wrapper.get('select[aria-label="思考强度"]').setValue('high');await flushPromises()
+    expect(mocks.update).toHaveBeenCalledWith('s1',{thinkingLevel:'high'})
+    const input=wrapper.get('input[type="file"]')
+    const file=new File([new Uint8Array([137,80,78,71])],'screen.png',{type:'image/png'})
+    Object.defineProperty(input.element,'files',{value:[file],configurable:true})
+    await input.trigger('change');await flushPromises()
+    expect(wrapper.text()).toContain('screen.png')
+    await wrapper.get('button[aria-label="发送"]').trigger('click');await flushPromises()
+    expect(mocks.send).toHaveBeenCalledWith('s1','',expect.arrayContaining([expect.objectContaining({name:'screen.png',kind:'image'})]))
     wrapper.unmount()
   })
 })

@@ -1,6 +1,9 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["<div class=\"ai-code-block\"><button type=\"button\" class=\"ai-code-copy\" data-code-copy aria-label=\"复制代码\">复制</button>{0}</div>", "<div class=\"ai-code-block\"><button type=\"button\" class=\"ai-code-copy\" data-code-copy aria-label=\"Copy code\">Copy</button>{0}</div>"],
+  ["已复制", "Copied"],
+  ["复制", "Copy"],
   ["API 与模型", "APIs and models"],
   ["后台记忆", "Background memories"],
   ["后台流程", "Background procedures"],
