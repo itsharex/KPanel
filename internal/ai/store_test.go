@@ -90,6 +90,115 @@ func TestStoreProviderSessionRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestStoreMigratesExistingModelsToVisionOnce(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ai.db")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := store.SaveProvider(ctx, Provider{Name: "Legacy", Protocol: ProtocolOpenAICompatible, BaseURL: "https://example.com/v1", EndpointScope: EndpointPublic, Enabled: true}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveModels(ctx, provider.ID, []Model{{ModelID: "legacy-model", ContextWindow: 8192, Vision: false, Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE schema_migrations SET applied_at=0 WHERE version=8`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := store.ListModels(ctx, provider.ID)
+	if err != nil || len(models) != 1 || !models[0].Vision {
+		t.Fatalf("legacy model vision migration=%#v err=%v", models, err)
+	}
+	models[0].Vision = false
+	if err := store.SaveModels(ctx, provider.ID, models); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	models, err = store.ListModels(ctx, provider.ID)
+	if err != nil || len(models) != 1 || models[0].Vision {
+		t.Fatalf("completed migration overwrote explicit vision setting=%#v err=%v", models, err)
+	}
+}
+
+func TestProviderPendingApprovalAllowsSyncAndIsCancelledOnDelete(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenStore(filepath.Join(t.TempDir(), "ai.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	provider, err := store.SaveProvider(ctx, Provider{Name: "Legacy", Protocol: ProtocolOpenAICompatible, BaseURL: "https://example.com/v1", EndpointScope: EndpointPublic, Enabled: false}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveModels(ctx, provider.ID, []Model{{ModelID: "model-a", ContextWindow: 8192, Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	models, _ := store.ListModels(ctx, provider.ID)
+	session, err := store.CreateSession(ctx, Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: models[0].ID, ModelName: models[0].DisplayName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.CreateRun(ctx, Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: models[0].ID, ModelName: models[0].DisplayName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Status = RunPendingApproval
+	if err := store.UpdateRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	call, err := store.SaveToolCall(ctx, ToolCall{RunID: run.ID, SessionID: session.ID, Name: "host_file_write", Arguments: json.RawMessage(`{"path":"/tmp/test"}`), Status: ToolPendingApproval, RequiresApproval: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveModels(ctx, provider.ID, []Model{{ModelID: "model-a", ContextWindow: 16384, Vision: true, Enabled: true}}); err != nil {
+		t.Fatalf("pending approval blocked model sync: %v", err)
+	}
+	events := NewEventHub()
+	eventChannel, unsubscribe := events.Subscribe(run.ID)
+	defer unsubscribe()
+	service := &Service{Store: store, Events: events}
+	if err := service.DeleteProvider(ctx, provider.ID); err != nil {
+		t.Fatalf("pending approval blocked provider delete: %v", err)
+	}
+	select {
+	case event := <-eventChannel:
+		if event.Type != "run.cancelled" {
+			t.Fatalf("delete event=%#v", event)
+		}
+	default:
+		t.Fatal("provider delete did not publish run cancellation")
+	}
+	loadedRun, err := store.Run(ctx, "admin", run.ID)
+	if err != nil || loadedRun.Status != RunCancelled || loadedRun.ErrorCode != "provider_deleted" {
+		t.Fatalf("run after provider delete=%#v err=%v", loadedRun, err)
+	}
+	loadedCall, err := store.ToolCall(ctx, run.ID, call.ID)
+	if err != nil || loadedCall.Status != ToolRejected {
+		t.Fatalf("tool call after provider delete=%#v err=%v", loadedCall, err)
+	}
+	loadedSession, err := store.Session(ctx, "admin", session.ID)
+	if err != nil || loadedSession.ModelAvailable {
+		t.Fatalf("session after provider delete=%#v err=%v", loadedSession, err)
+	}
+}
+
 func TestStorePersistsAttachmentsAndThinkingSnapshot(t *testing.T) {
 	store, err := OpenStore(filepath.Join(t.TempDir(), "ai.db"))
 	if err != nil {

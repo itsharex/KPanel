@@ -42,6 +42,9 @@ func TestAIProviderModelSessionCRUD(t *testing.T) {
 	if err := json.Unmarshal(modelsResponse.Body.Bytes(), &models); err != nil || len(models) != 1 {
 		t.Fatalf("models=%#v err=%v", models, err)
 	}
+	if !models[0].Vision {
+		t.Fatalf("manually added model did not default to vision: %#v", models[0])
+	}
 	sessionResponse := authenticatedRequest(server, http.MethodPost, "/api/v1/ai/sessions", []byte(`{"providerId":"`+provider.ID+`","modelId":"`+models[0].ID+`"}`), sessionCookie, csrfCookie, headers)
 	if sessionResponse.Code != http.StatusCreated {
 		t.Fatalf("session create=%d %s", sessionResponse.Code, sessionResponse.Body.String())
@@ -58,7 +61,7 @@ func TestAIProviderModelSessionCRUD(t *testing.T) {
 	if list.Code != http.StatusOK {
 		t.Fatalf("session list=%d %s", list.Code, list.Body.String())
 	}
-	run, err := server.ai.Store.CreateRun(context.Background(), ai.Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: models[0].ID, ModelName: models[0].DisplayName})
+	run, err := server.ai.Store.CreateRun(context.Background(), ai.Run{SessionID: session.ID, UserID: session.UserID, ProviderID: provider.ID, ProviderName: provider.Name, ModelID: models[0].ID, ModelName: models[0].DisplayName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +78,13 @@ func TestAIProviderModelSessionCRUD(t *testing.T) {
 	}
 	if messagesResponse.Code != http.StatusOK || json.Unmarshal(messagesResponse.Body.Bytes(), &messagePage) != nil || len(messagePage.Items) != 1 || len(messagePage.ToolCalls) != 1 || messagePage.ToolCalls[0].ID != "persisted-call" {
 		t.Fatalf("message process history=%d %s", messagesResponse.Code, messagesResponse.Body.String())
+	}
+	deleteResponse := authenticatedRequest(server, http.MethodDelete, "/api/v1/ai/sessions/"+session.ID, nil, sessionCookie, csrfCookie, headers)
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("active session delete=%d %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	if _, err := server.ai.Store.Session(context.Background(), session.UserID, session.ID); !errors.Is(err, ai.ErrNotFound) {
+		t.Fatalf("deleted active session lookup error=%v", err)
 	}
 }
 

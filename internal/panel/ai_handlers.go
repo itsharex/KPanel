@@ -292,7 +292,7 @@ func (s *Server) aiProvider(w http.ResponseWriter, r *http.Request, id string) {
 		item, err := s.ai.Providers.Save(r.Context(), id, input)
 		s.aiJSON(w, r, item, err, http.StatusOK)
 	case http.MethodDelete:
-		err := s.ai.Store.DeleteProvider(r.Context(), id)
+		err := s.ai.DeleteProvider(r.Context(), id)
 		s.aiJSON(w, r, map[string]bool{"deleted": err == nil}, err, http.StatusOK)
 	default:
 		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -326,11 +326,19 @@ func (s *Server) aiModelAdd(w http.ResponseWriter, r *http.Request, providerID s
 		s.writeProblem(w, r, 405, "method_not_allowed", "Method not allowed", "")
 		return
 	}
-	var input ai.Model
+	var input struct {
+		ModelID       string `json:"modelId"`
+		DisplayName   string `json:"displayName"`
+		ContextWindow int    `json:"contextWindow"`
+		ToolCalling   bool   `json:"toolCalling"`
+		Vision        *bool  `json:"vision"`
+		Reasoning     bool   `json:"reasoning"`
+		Enabled       bool   `json:"enabled"`
+		IsDefault     bool   `json:"isDefault"`
+	}
 	if s.decodeJSON(w, r, &input) != nil {
 		return
 	}
-	input.ProviderID = providerID
 	if strings.TrimSpace(input.ModelID) == "" {
 		s.writeValidationProblem(w, r, "modelId", "modelId is required")
 		return
@@ -341,7 +349,14 @@ func (s *Server) aiModelAdd(w http.ResponseWriter, r *http.Request, providerID s
 	if input.ContextWindow <= 0 {
 		input.ContextWindow = 32000
 	}
-	err := s.ai.Store.SaveModels(r.Context(), providerID, []ai.Model{input})
+	vision := true
+	if input.Vision != nil {
+		vision = *input.Vision
+	}
+	model := ai.Model{ProviderID: providerID, ModelID: input.ModelID, DisplayName: input.DisplayName,
+		ContextWindow: input.ContextWindow, ToolCalling: input.ToolCalling, Vision: vision,
+		Reasoning: input.Reasoning, Enabled: input.Enabled, IsDefault: input.IsDefault}
+	err := s.ai.Store.SaveModels(r.Context(), providerID, []ai.Model{model})
 	items, _ := s.ai.Store.ListModels(r.Context(), providerID)
 	s.aiJSON(w, r, items, err, http.StatusCreated)
 }
@@ -405,7 +420,7 @@ func (s *Server) aiSession(w http.ResponseWriter, r *http.Request, userID, id st
 		item, err := s.ai.Store.UpdateSession(r.Context(), userID, id, strings.TrimSpace(input.Title), input.ProviderID, input.ModelID, providerName, modelName, input.Pinned, input.Archived, input.ApprovalMode, input.ThinkingLevel)
 		s.aiJSON(w, r, item, err, http.StatusOK)
 	case http.MethodDelete:
-		err := s.ai.Store.DeleteSession(r.Context(), userID, id)
+		err := s.ai.DeleteSession(r.Context(), userID, id)
 		s.aiJSON(w, r, map[string]bool{"deleted": err == nil}, err, http.StatusOK)
 	default:
 		s.writeProblem(w, r, 405, "method_not_allowed", "Method not allowed", "")

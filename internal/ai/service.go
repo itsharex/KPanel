@@ -82,10 +82,11 @@ func (s *Service) SyncModels(ctx context.Context, providerID string) ([]Model, e
 	}
 	for index := range items {
 		items[index].ProviderID = provider.ID
+		items[index].Vision = true
 		if previous, ok := known[items[index].ModelID]; ok {
-			items[index].Vision, items[index].Reasoning = previous.Vision, previous.Reasoning
+			items[index].Reasoning = previous.Reasoning
 		} else {
-			items[index].Vision, items[index].Reasoning = inferredCapabilities(provider.Protocol, items[index].ModelID)
+			items[index].Reasoning = inferredReasoning(provider.Protocol, items[index].ModelID)
 		}
 	}
 	if err := s.Store.SaveModels(ctx, provider.ID, items); err != nil {
@@ -94,14 +95,40 @@ func (s *Service) SyncModels(ctx context.Context, providerID string) ([]Model, e
 	return s.Store.ListModels(ctx, provider.ID)
 }
 
-func inferredCapabilities(protocol ProviderProtocol, modelID string) (vision, reasoning bool) {
+func (s *Service) DeleteProvider(ctx context.Context, id string) error {
+	cancelled, err := s.Store.DeleteProviderAndCancelPending(ctx, id)
+	if err != nil {
+		return err
+	}
+	if s.Events != nil {
+		for _, run := range cancelled {
+			s.Events.Publish(RunEvent{Type: "run.cancelled", RunID: run.ID, Data: run})
+		}
+	}
+	return nil
+}
+
+func (s *Service) DeleteSession(ctx context.Context, userID, id string) error {
+	active, err := s.Store.ActiveRun(ctx, id, userID)
+	if err == nil {
+		if s.Runtime == nil {
+			return errors.New("AI runtime is unavailable")
+		}
+		if err := s.Runtime.Cancel(ctx, active.ID); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return s.Store.DeleteSession(ctx, userID, id)
+}
+
+func inferredReasoning(protocol ProviderProtocol, modelID string) bool {
 	name := strings.ToLower(modelID)
 	if protocol == ProtocolGemini {
-		return true, strings.Contains(name, "2.5") || strings.Contains(name, "gemini-3")
+		return strings.Contains(name, "2.5") || strings.Contains(name, "gemini-3")
 	}
-	vision = strings.Contains(name, "gpt-4o") || strings.Contains(name, "gpt-4.1") || strings.Contains(name, "gpt-5") || strings.Contains(name, "claude-") || strings.Contains(name, "gemini")
-	reasoning = strings.Contains(name, "gpt-5") || strings.HasPrefix(name, "o1") || strings.HasPrefix(name, "o3") || strings.HasPrefix(name, "o4") || strings.Contains(name, "claude-") || strings.Contains(name, "gemini-2.5") || strings.Contains(name, "gemini-3") || strings.Contains(name, "deepseek-r1") || strings.Contains(name, "qwen3")
-	return vision, reasoning
+	return strings.Contains(name, "gpt-5") || strings.HasPrefix(name, "o1") || strings.HasPrefix(name, "o3") || strings.HasPrefix(name, "o4") || strings.Contains(name, "claude-") || strings.Contains(name, "gemini-2.5") || strings.Contains(name, "gemini-3") || strings.Contains(name, "deepseek-r1") || strings.Contains(name, "qwen3")
 }
 
 func (s *Service) CreateSession(ctx context.Context, userID, providerID, modelID, title string) (Session, error) {

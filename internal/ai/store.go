@@ -102,7 +102,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS models (
 			id TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
 			model_id TEXT NOT NULL, display_name TEXT NOT NULL, context_window INTEGER NOT NULL,
-			tool_calling INTEGER NOT NULL, vision INTEGER NOT NULL DEFAULT 0, reasoning INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL, is_default INTEGER NOT NULL,
+			tool_calling INTEGER NOT NULL, vision INTEGER NOT NULL DEFAULT 1, reasoning INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL, is_default INTEGER NOT NULL,
 			created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(provider_id, model_id))`,
 		`CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
@@ -153,6 +153,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, 0)`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, 0)`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(7, 0)`,
+		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(8, 0)`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -167,7 +168,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		{"tool_calls", "provider_data", "BLOB NOT NULL DEFAULT X''"},
 		{"sessions", "approval_mode", "TEXT NOT NULL DEFAULT 'manual'"},
 		{"runs", "approval_mode", "TEXT NOT NULL DEFAULT 'manual'"},
-		{"models", "vision", "INTEGER NOT NULL DEFAULT 0"},
+		{"models", "vision", "INTEGER NOT NULL DEFAULT 1"},
 		{"models", "reasoning", "INTEGER NOT NULL DEFAULT 0"},
 		{"sessions", "thinking_level", "TEXT NOT NULL DEFAULT 'medium'"},
 		{"messages", "attachments_json", "BLOB NOT NULL DEFAULT X''"},
@@ -199,6 +200,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("record AI migration: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET applied_at = ? WHERE version = 7 AND applied_at = 0`, millis(s.now())); err != nil {
+		return fmt.Errorf("record AI migration: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE models SET vision = 1
+		WHERE EXISTS (SELECT 1 FROM schema_migrations WHERE version = 8 AND applied_at = 0)`); err != nil {
+		return fmt.Errorf("default existing AI models to vision capable: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET applied_at = ? WHERE version = 8 AND applied_at = 0`, millis(s.now())); err != nil {
 		return fmt.Errorf("record AI migration: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -274,6 +282,12 @@ func (s *Store) ProviderHasActiveRun(ctx context.Context, id string) (bool, erro
 	return active > 0, err
 }
 
+func (s *Store) ProviderHasExecutingRun(ctx context.Context, id string) (bool, error) {
+	var active int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE provider_id=? AND status IN ('queued','running')`, id).Scan(&active)
+	return active > 0, err
+}
+
 func (s *Store) SaveProvider(ctx context.Context, provider Provider, expectedVersion int64) (Provider, error) {
 	if provider.Protocol == ProtocolOpenAICompatible && provider.APIMode == "" {
 		provider.APIMode = OpenAIChatCompletions
@@ -314,26 +328,78 @@ func (s *Store) SaveProvider(ctx context.Context, provider Provider, expectedVer
 }
 
 func (s *Store) DeleteProvider(ctx context.Context, id string) error {
-	var active int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE provider_id=? AND status IN ('queued','running','pending_approval')`, id).Scan(&active); err != nil {
-		return err
-	}
-	if active > 0 {
-		return ErrBusy
-	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM providers WHERE id=?`, id)
+	_, err := s.DeleteProviderAndCancelPending(ctx, id)
+	return err
+}
+
+func (s *Store) DeleteProviderAndCancelPending(ctx context.Context, id string) ([]Run, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	defer tx.Rollback()
+	var executing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE provider_id=? AND status IN ('queued','running')`, id).Scan(&executing); err != nil {
+		return nil, err
+	}
+	if executing > 0 {
+		return nil, ErrBusy
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,session_id,user_id,provider_id,provider_name,model_id,model_name,
+		approval_mode,thinking_level,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at
+		FROM runs WHERE provider_id=? AND status=?`, id, RunPendingApproval)
+	if err != nil {
+		return nil, err
+	}
+	pending := []Run{}
+	for rows.Next() {
+		run, scanErr := s.scanRun(rows)
+		if scanErr != nil {
+			rows.Close()
+			return nil, scanErr
+		}
+		pending = append(pending, run)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	if _, err := tx.ExecContext(ctx, `UPDATE tool_calls SET status=?,result_preview=?,updated_at=?
+		WHERE status=? AND run_id IN (SELECT id FROM runs WHERE provider_id=? AND status=?)`,
+		ToolRejected, "Provider deleted before approval", millis(now), ToolPendingApproval, id, RunPendingApproval); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE runs SET status=?,error_code=?,error_message=?,updated_at=?,finished_at=?
+		WHERE provider_id=? AND status=?`, RunCancelled, "provider_deleted", "Provider was deleted before approval",
+		millis(now), millis(now), id, RunPendingApproval); err != nil {
+		return nil, err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM providers WHERE id=?`, id)
+	if err != nil {
+		return nil, err
 	}
 	changed, _ := result.RowsAffected()
 	if changed == 0 {
-		return ErrNotFound
+		return nil, ErrNotFound
 	}
-	return nil
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	for index := range pending {
+		pending[index].Status = RunCancelled
+		pending[index].ErrorCode = "provider_deleted"
+		pending[index].ErrorMessage = "Provider was deleted before approval"
+		pending[index].UpdatedAt = now
+		pending[index].FinishedAt = now
+	}
+	return pending, nil
 }
 
 func (s *Store) SaveModels(ctx context.Context, providerID string, models []Model) error {
-	active, err := s.ProviderHasActiveRun(ctx, providerID)
+	active, err := s.ProviderHasExecutingRun(ctx, providerID)
 	if err != nil {
 		return err
 	}
