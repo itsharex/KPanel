@@ -35,7 +35,7 @@ services:
     networks:
       panel-internal:
         ipv4_address: ${KEJILION_PANEL_IPV4:?Set KEJILION_PANEL_IPV4 to the reserved private address}
-      panel-egress:
+      panel-egress: {}
     healthcheck:
       test: ["CMD", "/paneld", "healthcheck"]
       interval: 30s
