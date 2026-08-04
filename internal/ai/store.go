@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -101,25 +102,25 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS models (
 			id TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
 			model_id TEXT NOT NULL, display_name TEXT NOT NULL, context_window INTEGER NOT NULL,
-			tool_calling INTEGER NOT NULL, enabled INTEGER NOT NULL, is_default INTEGER NOT NULL,
+			tool_calling INTEGER NOT NULL, vision INTEGER NOT NULL DEFAULT 0, reasoning INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL, is_default INTEGER NOT NULL,
 			created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(provider_id, model_id))`,
 		`CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
 			provider_id TEXT NOT NULL, model_id TEXT NOT NULL, provider_name TEXT NOT NULL, model_name TEXT NOT NULL,
-			summary TEXT NOT NULL DEFAULT '', summary_cursor TEXT NOT NULL DEFAULT '', approval_mode TEXT NOT NULL DEFAULT 'manual', pinned INTEGER NOT NULL, archived INTEGER NOT NULL,
+			summary TEXT NOT NULL DEFAULT '', summary_cursor TEXT NOT NULL DEFAULT '', approval_mode TEXT NOT NULL DEFAULT 'manual', thinking_level TEXT NOT NULL DEFAULT 'medium', pinned INTEGER NOT NULL, archived INTEGER NOT NULL,
 			created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_message_at INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS sessions_user_activity ON sessions(user_id, archived, pinned, last_message_at DESC)`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
 			run_id TEXT NOT NULL DEFAULT '', role TEXT NOT NULL, content TEXT NOT NULL,
 			provider_id TEXT NOT NULL DEFAULT '', provider_name TEXT NOT NULL DEFAULT '',
-			model_id TEXT NOT NULL DEFAULT '', model_name TEXT NOT NULL DEFAULT '', tool_call_id TEXT NOT NULL DEFAULT '',
+			model_id TEXT NOT NULL DEFAULT '', model_name TEXT NOT NULL DEFAULT '', tool_call_id TEXT NOT NULL DEFAULT '', attachments_json BLOB NOT NULL DEFAULT X'',
 			created_at INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS messages_session_created ON messages(session_id, created_at DESC, id DESC)`,
 		`CREATE TABLE IF NOT EXISTS runs (
 			id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, user_id TEXT NOT NULL,
 			provider_id TEXT NOT NULL, provider_name TEXT NOT NULL, model_id TEXT NOT NULL, model_name TEXT NOT NULL,
-			approval_mode TEXT NOT NULL DEFAULT 'manual', status TEXT NOT NULL, step INTEGER NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+			approval_mode TEXT NOT NULL DEFAULT 'manual', thinking_level TEXT NOT NULL DEFAULT 'medium', status TEXT NOT NULL, step INTEGER NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
 			error_code TEXT NOT NULL DEFAULT '', error_message TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, finished_at INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE INDEX IF NOT EXISTS runs_session_status ON runs(session_id, status, created_at DESC)`,
@@ -151,6 +152,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(4, 0)`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, 0)`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, 0)`,
+		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(7, 0)`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -165,6 +167,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		{"tool_calls", "provider_data", "BLOB NOT NULL DEFAULT X''"},
 		{"sessions", "approval_mode", "TEXT NOT NULL DEFAULT 'manual'"},
 		{"runs", "approval_mode", "TEXT NOT NULL DEFAULT 'manual'"},
+		{"models", "vision", "INTEGER NOT NULL DEFAULT 0"},
+		{"models", "reasoning", "INTEGER NOT NULL DEFAULT 0"},
+		{"sessions", "thinking_level", "TEXT NOT NULL DEFAULT 'medium'"},
+		{"messages", "attachments_json", "BLOB NOT NULL DEFAULT X''"},
+		{"runs", "thinking_level", "TEXT NOT NULL DEFAULT 'medium'"},
 	} {
 		if err := ensureAIColumn(ctx, tx, column.table, column.name, column.definition); err != nil {
 			return err
@@ -189,6 +196,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("record AI migration: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET applied_at = ? WHERE version = 6 AND applied_at = 0`, millis(s.now())); err != nil {
+		return fmt.Errorf("record AI migration: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET applied_at = ? WHERE version = 7 AND applied_at = 0`, millis(s.now())); err != nil {
 		return fmt.Errorf("record AI migration: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -361,11 +371,11 @@ func (s *Store) SaveModels(ctx context.Context, providerID string, models []Mode
 			return errors.New("model context window is invalid")
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO models(id,provider_id,model_id,display_name,context_window,
-			tool_calling,enabled,is_default,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)
+			tool_calling,vision,reasoning,enabled,is_default,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(provider_id,model_id) DO UPDATE SET display_name=excluded.display_name,
-			context_window=excluded.context_window,tool_calling=excluded.tool_calling,enabled=excluded.enabled,
+			context_window=excluded.context_window,tool_calling=excluded.tool_calling,vision=excluded.vision,reasoning=excluded.reasoning,enabled=excluded.enabled,
 			is_default=excluded.is_default,updated_at=excluded.updated_at`, model.ID, providerID, model.ModelID,
-			model.DisplayName, model.ContextWindow, model.ToolCalling, model.Enabled, model.IsDefault, millis(now), millis(now))
+			model.DisplayName, model.ContextWindow, model.ToolCalling, model.Vision, model.Reasoning, model.Enabled, model.IsDefault, millis(now), millis(now))
 		if err != nil {
 			return err
 		}
@@ -374,7 +384,7 @@ func (s *Store) SaveModels(ctx context.Context, providerID string, models []Mode
 }
 
 func (s *Store) ListModels(ctx context.Context, providerID string) ([]Model, error) {
-	query := `SELECT id,provider_id,model_id,display_name,context_window,tool_calling,enabled,is_default,created_at,updated_at FROM models`
+	query := `SELECT id,provider_id,model_id,display_name,context_window,tool_calling,vision,reasoning,enabled,is_default,created_at,updated_at FROM models`
 	args := []any{}
 	if providerID != "" {
 		query += ` WHERE provider_id=?`
@@ -391,7 +401,7 @@ func (s *Store) ListModels(ctx context.Context, providerID string) ([]Model, err
 		var item Model
 		var created, updated int64
 		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ModelID, &item.DisplayName, &item.ContextWindow,
-			&item.ToolCalling, &item.Enabled, &item.IsDefault, &created, &updated); err != nil {
+			&item.ToolCalling, &item.Vision, &item.Reasoning, &item.Enabled, &item.IsDefault, &created, &updated); err != nil {
 			return nil, err
 		}
 		item.CreatedAt, item.UpdatedAt = fromMillis(created), fromMillis(updated)
@@ -403,9 +413,9 @@ func (s *Store) ListModels(ctx context.Context, providerID string) ([]Model, err
 func (s *Store) Model(ctx context.Context, id string) (Model, error) {
 	var item Model
 	var created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,provider_id,model_id,display_name,context_window,tool_calling,
+	err := s.db.QueryRowContext(ctx, `SELECT id,provider_id,model_id,display_name,context_window,tool_calling,vision,reasoning,
 		enabled,is_default,created_at,updated_at FROM models WHERE id=?`, id).Scan(&item.ID, &item.ProviderID,
-		&item.ModelID, &item.DisplayName, &item.ContextWindow, &item.ToolCalling, &item.Enabled, &item.IsDefault, &created, &updated)
+		&item.ModelID, &item.DisplayName, &item.ContextWindow, &item.ToolCalling, &item.Vision, &item.Reasoning, &item.Enabled, &item.IsDefault, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Model{}, ErrNotFound
 	}
@@ -423,10 +433,13 @@ func (s *Store) CreateSession(ctx context.Context, session Session) (Session, er
 	if !session.ApprovalMode.Valid() {
 		session.ApprovalMode = ApprovalManual
 	}
+	if !session.ThinkingLevel.Valid() {
+		session.ThinkingLevel = ThinkingMedium
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(id,user_id,title,provider_id,model_id,provider_name,
-		model_name,summary,approval_mode,pinned,archived,created_at,updated_at,last_message_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		model_name,summary,approval_mode,thinking_level,pinned,archived,created_at,updated_at,last_message_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		session.ID, session.UserID, session.Title, session.ProviderID, session.ModelID, session.ProviderName,
-		session.ModelName, session.Summary, session.ApprovalMode, session.Pinned, session.Archived, millis(now), millis(now), millis(now))
+		session.ModelName, session.Summary, session.ApprovalMode, session.ThinkingLevel, session.Pinned, session.Archived, millis(now), millis(now), millis(now))
 	session.ModelAvailable = true
 	return session, err
 }
@@ -437,7 +450,7 @@ func (s *Store) Sessions(ctx context.Context, userID, search string, archived bo
 	}
 	pattern := "%" + strings.TrimSpace(search) + "%"
 	rows, err := s.db.QueryContext(ctx, `SELECT s.id,s.user_id,s.title,s.provider_id,s.model_id,s.provider_name,
-		s.model_name,s.summary,s.approval_mode,s.pinned,s.archived,s.created_at,s.updated_at,s.last_message_at,
+		s.model_name,s.summary,s.approval_mode,s.thinking_level,s.pinned,s.archived,s.created_at,s.updated_at,s.last_message_at,
 		EXISTS(SELECT 1 FROM providers p JOIN models m ON m.provider_id=p.id WHERE p.id=s.provider_id AND m.id=s.model_id AND p.enabled=1 AND m.enabled=1),
 		EXISTS(SELECT 1 FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','pending_approval')),
 		COALESCE((SELECT r.id FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','pending_approval') ORDER BY r.created_at DESC LIMIT 1),''),
@@ -462,7 +475,7 @@ func (s *Store) Sessions(ctx context.Context, userID, search string, archived bo
 
 func (s *Store) Session(ctx context.Context, userID, id string) (Session, error) {
 	item, err := scanSession(s.db.QueryRowContext(ctx, `SELECT s.id,s.user_id,s.title,s.provider_id,s.model_id,
-		s.provider_name,s.model_name,s.summary,s.approval_mode,s.pinned,s.archived,s.created_at,s.updated_at,s.last_message_at,
+		s.provider_name,s.model_name,s.summary,s.approval_mode,s.thinking_level,s.pinned,s.archived,s.created_at,s.updated_at,s.last_message_at,
 		EXISTS(SELECT 1 FROM providers p JOIN models m ON m.provider_id=p.id WHERE p.id=s.provider_id AND m.id=s.model_id AND p.enabled=1 AND m.enabled=1),
 		EXISTS(SELECT 1 FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','pending_approval')),
 		COALESCE((SELECT r.id FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','pending_approval') ORDER BY r.created_at DESC LIMIT 1),''),
@@ -475,7 +488,7 @@ func (s *Store) Session(ctx context.Context, userID, id string) (Session, error)
 	return item, err
 }
 
-func (s *Store) UpdateSession(ctx context.Context, userID, id, title, providerID, modelID, providerName, modelName string, pinned, archived *bool, approvalMode *ApprovalMode) (Session, error) {
+func (s *Store) UpdateSession(ctx context.Context, userID, id, title, providerID, modelID, providerName, modelName string, pinned, archived *bool, approvalMode *ApprovalMode, thinkingLevel *ThinkingLevel) (Session, error) {
 	if len(title) > 120 || strings.IndexFunc(title, unicode.IsControl) >= 0 {
 		return Session{}, errors.New("session title is invalid")
 	}
@@ -502,10 +515,16 @@ func (s *Store) UpdateSession(ctx context.Context, userID, id, title, providerID
 		}
 		item.ApprovalMode = *approvalMode
 	}
+	if thinkingLevel != nil {
+		if !thinkingLevel.Valid() {
+			return Session{}, errors.New("thinking level is invalid")
+		}
+		item.ThinkingLevel = *thinkingLevel
+	}
 	item.UpdatedAt = s.now().UTC()
 	_, err = s.db.ExecContext(ctx, `UPDATE sessions SET title=?,provider_id=?,model_id=?,provider_name=?,model_name=?,
-		approval_mode=?,pinned=?,archived=?,updated_at=? WHERE id=? AND user_id=?`, item.Title, item.ProviderID, item.ModelID,
-		item.ProviderName, item.ModelName, item.ApprovalMode, item.Pinned, item.Archived, millis(item.UpdatedAt), id, userID)
+		approval_mode=?,thinking_level=?,pinned=?,archived=?,updated_at=? WHERE id=? AND user_id=?`, item.Title, item.ProviderID, item.ModelID,
+		item.ProviderName, item.ModelName, item.ApprovalMode, item.ThinkingLevel, item.Pinned, item.Archived, millis(item.UpdatedAt), id, userID)
 	return item, err
 }
 
@@ -552,11 +571,15 @@ func (s *Store) AddMessage(ctx context.Context, message Message) (Message, error
 		return Message{}, err
 	}
 	defer tx.Rollback()
+	attachments, err := encodeAttachments(message.Attachments)
+	if err != nil {
+		return Message{}, err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO messages(id,session_id,run_id,role,content,provider_id,provider_name,
-		model_id,model_name,tool_call_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+		model_id,model_name,tool_call_id,attachments_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET content=excluded.content`, message.ID, message.SessionID,
 		message.RunID, message.Role, message.Content, message.ProviderID, message.ProviderName, message.ModelID,
-		message.ModelName, message.ToolCallID, millis(message.CreatedAt))
+		message.ModelName, message.ToolCallID, attachments, millis(message.CreatedAt))
 	if err != nil {
 		return Message{}, err
 	}
@@ -589,7 +612,7 @@ func (s *Store) messagesPage(ctx context.Context, sessionID string, limit int, b
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
-	query := `SELECT id,session_id,run_id,role,content,provider_id,provider_name,model_id,model_name,tool_call_id,created_at FROM messages WHERE session_id=?`
+	query := `SELECT id,session_id,run_id,role,content,provider_id,provider_name,model_id,model_name,tool_call_id,attachments_json,created_at FROM messages WHERE session_id=?`
 	args := []any{sessionID}
 	if conversationOnly {
 		query += ` AND tool_call_id='' AND role IN ('user','assistant')`
@@ -609,8 +632,12 @@ func (s *Store) messagesPage(ctx context.Context, sessionID string, limit int, b
 	for rows.Next() {
 		var item Message
 		var created int64
+		var attachments []byte
 		if err := rows.Scan(&item.ID, &item.SessionID, &item.RunID, &item.Role, &item.Content, &item.ProviderID,
-			&item.ProviderName, &item.ModelID, &item.ModelName, &item.ToolCallID, &created); err != nil {
+			&item.ProviderName, &item.ModelID, &item.ModelName, &item.ToolCallID, &attachments, &created); err != nil {
+			return Page[Message]{}, err
+		}
+		if item.Attachments, err = decodeAttachments(attachments); err != nil {
 			return Page[Message]{}, err
 		}
 		item.CreatedAt = fromMillis(created)
@@ -673,6 +700,13 @@ func (s *Store) ContextMessages(ctx context.Context, sessionID string, contextWi
 		chars := len(summary)
 		for _, item := range messages {
 			chars += len(item.Content)
+			for _, attachment := range item.Attachments {
+				if attachment.Kind == "text" {
+					chars += len(attachment.Data)
+				} else {
+					chars += 16_000
+				}
+			}
 		}
 		if chars > int(float64(contextWindow)*0.7*4) {
 			keepChars, split, running := int(float64(contextWindow)*0.45*4)-len(summary), len(messages), 0
@@ -681,6 +715,13 @@ func (s *Store) ContextMessages(ctx context.Context, sessionID string, contextWi
 			}
 			for index := len(messages) - 1; index >= 0; index-- {
 				running += len(messages[index].Content)
+				for _, attachment := range messages[index].Attachments {
+					if attachment.Kind == "text" {
+						running += len(attachment.Data)
+					} else {
+						running += 16_000
+					}
+				}
 				if running > keepChars {
 					split = index + 1
 					break
@@ -711,7 +752,7 @@ func (s *Store) contextMessageCount(ctx context.Context, sessionID, cursor strin
 
 func (s *Store) contextMessageBatch(ctx context.Context, sessionID, cursor string, limit int) ([]Message, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,session_id,run_id,role,content,provider_id,provider_name,
-		model_id,model_name,tool_call_id,created_at FROM messages WHERE session_id=? AND
+		model_id,model_name,tool_call_id,attachments_json,created_at FROM messages WHERE session_id=? AND
 		(?='' OR (created_at,id)>(SELECT created_at,id FROM messages WHERE id=? AND session_id=?))
 		ORDER BY created_at ASC,id ASC LIMIT ?`, sessionID, cursor, cursor, sessionID, limit)
 	if err != nil {
@@ -722,8 +763,12 @@ func (s *Store) contextMessageBatch(ctx context.Context, sessionID, cursor strin
 	for rows.Next() {
 		var item Message
 		var created int64
+		var attachments []byte
 		if err := rows.Scan(&item.ID, &item.SessionID, &item.RunID, &item.Role, &item.Content, &item.ProviderID,
-			&item.ProviderName, &item.ModelID, &item.ModelName, &item.ToolCallID, &created); err != nil {
+			&item.ProviderName, &item.ModelID, &item.ModelName, &item.ToolCallID, &attachments, &created); err != nil {
+			return nil, err
+		}
+		if item.Attachments, err = decodeAttachments(attachments); err != nil {
 			return nil, err
 		}
 		item.CreatedAt = fromMillis(created)
@@ -774,12 +819,15 @@ func (s *Store) CreateRun(ctx context.Context, run Run) (Run, error) {
 	if !run.ApprovalMode.Valid() {
 		run.ApprovalMode = ApprovalManual
 	}
+	if !run.ThinkingLevel.Valid() {
+		run.ThinkingLevel = ThinkingMedium
+	}
 	now := s.now().UTC()
 	run.ID, run.Status, run.CreatedAt, run.UpdatedAt = newID("run"), RunQueued, now, now
 	_, err := s.db.ExecContext(ctx, `INSERT INTO runs(id,session_id,user_id,provider_id,provider_name,model_id,
-		model_name,approval_mode,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`, run.ID, run.SessionID, run.UserID, run.ProviderID, run.ProviderName,
-		run.ModelID, run.ModelName, run.ApprovalMode, run.Status, 0, 0, 0, "", "", millis(now), millis(now))
+		model_name,approval_mode,thinking_level,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`, run.ID, run.SessionID, run.UserID, run.ProviderID, run.ProviderName,
+		run.ModelID, run.ModelName, run.ApprovalMode, run.ThinkingLevel, run.Status, 0, 0, 0, "", "", millis(now), millis(now))
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "unique") {
 		return Run{}, ErrBusy
 	}
@@ -788,18 +836,18 @@ func (s *Store) CreateRun(ctx context.Context, run Run) (Run, error) {
 
 func (s *Store) Run(ctx context.Context, userID, id string) (Run, error) {
 	return s.scanRun(s.db.QueryRowContext(ctx, `SELECT id,session_id,user_id,provider_id,provider_name,model_id,model_name,
-		approval_mode,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at
+		approval_mode,thinking_level,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at
 		FROM runs WHERE id=? AND user_id=?`, id, userID))
 }
 
 func (s *Store) RunByID(ctx context.Context, id string) (Run, error) {
 	return s.scanRun(s.db.QueryRowContext(ctx, `SELECT id,session_id,user_id,provider_id,provider_name,model_id,model_name,
-		approval_mode,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at FROM runs WHERE id=?`, id))
+		approval_mode,thinking_level,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at FROM runs WHERE id=?`, id))
 }
 
 func (s *Store) ActiveRun(ctx context.Context, sessionID, userID string) (Run, error) {
 	return s.scanRun(s.db.QueryRowContext(ctx, `SELECT id,session_id,user_id,provider_id,provider_name,model_id,model_name,
-		approval_mode,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at
+		approval_mode,thinking_level,status,step,input_tokens,output_tokens,error_code,error_message,created_at,updated_at,finished_at
 		FROM runs WHERE session_id=? AND user_id=? AND status IN ('queued','running','pending_approval')
 		ORDER BY created_at DESC LIMIT 1`, sessionID, userID))
 }
@@ -827,7 +875,7 @@ func (s *Store) scanRun(row scanner) (Run, error) {
 	var item Run
 	var created, updated, finished int64
 	err := row.Scan(&item.ID, &item.SessionID, &item.UserID,
-		&item.ProviderID, &item.ProviderName, &item.ModelID, &item.ModelName, &item.ApprovalMode, &item.Status, &item.Step,
+		&item.ProviderID, &item.ProviderName, &item.ModelID, &item.ModelName, &item.ApprovalMode, &item.ThinkingLevel, &item.Status, &item.Step,
 		&item.Usage.InputTokens, &item.Usage.OutputTokens, &item.ErrorCode, &item.ErrorMessage, &created, &updated, &finished)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Run{}, ErrNotFound
@@ -926,10 +974,47 @@ func scanSession(row scanner) (Session, error) {
 	var item Session
 	var created, updated, last int64
 	err := row.Scan(&item.ID, &item.UserID, &item.Title, &item.ProviderID, &item.ModelID, &item.ProviderName,
-		&item.ModelName, &item.Summary, &item.ApprovalMode, &item.Pinned, &item.Archived, &created, &updated, &last,
+		&item.ModelName, &item.Summary, &item.ApprovalMode, &item.ThinkingLevel, &item.Pinned, &item.Archived, &created, &updated, &last,
 		&item.ModelAvailable, &item.Running, &item.ActiveRunID, &item.LastRunID, &item.LastRunStatus)
 	item.CreatedAt, item.UpdatedAt, item.LastMessageAt = fromMillis(created), fromMillis(updated), fromMillis(last)
 	return item, err
+}
+
+type storedAttachment struct {
+	Name     string `json:"name"`
+	MimeType string `json:"mimeType"`
+	Kind     string `json:"kind"`
+	Data     string `json:"data"`
+}
+
+func encodeAttachments(items []Attachment) ([]byte, error) {
+	if len(items) == 0 {
+		return []byte{}, nil
+	}
+	stored := make([]storedAttachment, 0, len(items))
+	for _, item := range items {
+		stored = append(stored, storedAttachment{Name: item.Name, MimeType: item.MimeType, Kind: item.Kind, Data: base64.StdEncoding.EncodeToString(item.Data)})
+	}
+	return json.Marshal(stored)
+}
+
+func decodeAttachments(data []byte) ([]Attachment, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var stored []storedAttachment
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return nil, fmt.Errorf("decode message attachments: %w", err)
+	}
+	items := make([]Attachment, 0, len(stored))
+	for _, item := range stored {
+		raw, err := base64.StdEncoding.DecodeString(item.Data)
+		if err != nil {
+			return nil, fmt.Errorf("decode message attachment data: %w", err)
+		}
+		items = append(items, Attachment{Name: item.Name, MimeType: item.MimeType, Kind: item.Kind, Size: len(raw), Data: raw})
+	}
+	return items, nil
 }
 
 func newID(prefix string) string {

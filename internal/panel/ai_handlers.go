@@ -2,9 +2,12 @@ package panel
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -186,6 +189,31 @@ func (s *Server) aiMemory(w http.ResponseWriter, r *http.Request, userID, id str
 		s.writeProblem(w, r, 405, "method_not_allowed", "Method not allowed", "")
 	}
 }
+
+func (s *Server) decodeAIMessageJSON(w http.ResponseWriter, r *http.Request, target any) error {
+	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
+		s.writeProblem(w, r, http.StatusUnsupportedMediaType, "json_required", "JSON request body required", "")
+		return errors.New("invalid content type")
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 12<<20)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.writeProblem(w, r, http.StatusRequestEntityTooLarge, "request_too_large", "AI message or attachments are too large", "")
+			return err
+		}
+		s.writeProblem(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON", "")
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		s.writeProblem(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON", "")
+		return errors.New("multiple JSON values")
+	}
+	return nil
+}
 func (s *Server) aiProcedures(w http.ResponseWriter, r *http.Request, userID string) {
 	if r.Method != http.MethodGet {
 		s.writeProblem(w, r, 405, "method_not_allowed", "Method not allowed", "")
@@ -355,6 +383,7 @@ func (s *Server) aiSession(w http.ResponseWriter, r *http.Request, userID, id st
 			Title, ProviderID, ModelID string
 			Pinned, Archived           *bool
 			ApprovalMode               *ai.ApprovalMode
+			ThinkingLevel              *ai.ThinkingLevel
 		}
 		if s.decodeJSON(w, r, &input) != nil {
 			return
@@ -373,7 +402,7 @@ func (s *Server) aiSession(w http.ResponseWriter, r *http.Request, userID, id st
 			}
 			providerName, modelName = provider.Name, model.DisplayName
 		}
-		item, err := s.ai.Store.UpdateSession(r.Context(), userID, id, strings.TrimSpace(input.Title), input.ProviderID, input.ModelID, providerName, modelName, input.Pinned, input.Archived, input.ApprovalMode)
+		item, err := s.ai.Store.UpdateSession(r.Context(), userID, id, strings.TrimSpace(input.Title), input.ProviderID, input.ModelID, providerName, modelName, input.Pinned, input.Archived, input.ApprovalMode, input.ThinkingLevel)
 		s.aiJSON(w, r, item, err, http.StatusOK)
 	case http.MethodDelete:
 		err := s.ai.Store.DeleteSession(r.Context(), userID, id)
@@ -407,11 +436,27 @@ func (s *Server) aiMessages(w http.ResponseWriter, r *http.Request, userID, sess
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"items": page.Items, "nextCursor": page.NextCursor, "toolCalls": calls})
 	case http.MethodPost:
-		var input struct{ Content string }
-		if s.decodeJSON(w, r, &input) != nil {
+		var input struct {
+			Content     string `json:"content"`
+			Attachments []struct {
+				Name     string `json:"name"`
+				MimeType string `json:"mimeType"`
+				Data     string `json:"data"`
+			} `json:"attachments"`
+		}
+		if s.decodeAIMessageJSON(w, r, &input) != nil {
 			return
 		}
-		run, err := s.ai.Send(r.Context(), userID, sessionID, input.Content)
+		attachments := make([]ai.Attachment, 0, len(input.Attachments))
+		for index, item := range input.Attachments {
+			data, decodeErr := base64.StdEncoding.DecodeString(item.Data)
+			if decodeErr != nil {
+				s.writeValidationProblem(w, r, fmt.Sprintf("attachments.%d.data", index), "attachment data must be valid base64")
+				return
+			}
+			attachments = append(attachments, ai.Attachment{Name: item.Name, MimeType: item.MimeType, Data: data})
+		}
+		run, err := s.ai.SendWithAttachments(r.Context(), userID, sessionID, input.Content, attachments)
 		s.aiJSON(w, r, map[string]string{"runId": run.ID}, err, http.StatusAccepted)
 	default:
 		s.writeProblem(w, r, 405, "method_not_allowed", "Method not allowed", "")

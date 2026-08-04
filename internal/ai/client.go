@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,11 +18,12 @@ import (
 )
 
 type ChatMessage struct {
-	Role       string     `json:"role"`
-	Name       string     `json:"name,omitempty"`
-	Content    string     `json:"content,omitempty"`
-	ToolCallID string     `json:"toolCallId,omitempty"`
-	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
+	Role        string       `json:"role"`
+	Name        string       `json:"name,omitempty"`
+	Content     string       `json:"content,omitempty"`
+	ToolCallID  string       `json:"toolCallId,omitempty"`
+	ToolCalls   []ToolCall   `json:"toolCalls,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
 type ToolDefinition struct {
@@ -32,10 +34,12 @@ type ToolDefinition struct {
 }
 
 type CompletionRequest struct {
-	Model    string
-	System   string
-	Messages []ChatMessage
-	Tools    []ToolDefinition
+	Model           string
+	System          string
+	Messages        []ChatMessage
+	Tools           []ToolDefinition
+	ThinkingLevel   ThinkingLevel
+	NativeReasoning bool
 }
 
 type CompletionEvent struct {
@@ -68,6 +72,57 @@ func NewHTTPModelClient() *HTTPModelClient {
 	return &HTTPModelClient{resolver: net.DefaultResolver, timeout: 180 * time.Second}
 }
 
+func chatMessageText(message ChatMessage) string {
+	var value strings.Builder
+	value.WriteString(message.Content)
+	for _, attachment := range message.Attachments {
+		if attachment.Kind != "text" {
+			continue
+		}
+		if value.Len() > 0 {
+			value.WriteString("\n\n")
+		}
+		value.WriteString("<untrusted_attachment name=")
+		encodedName, _ := json.Marshal(attachment.Name)
+		value.Write(encodedName)
+		value.WriteString(">\n")
+		value.Write(attachment.Data)
+		value.WriteString("\n</untrusted_attachment>")
+	}
+	return value.String()
+}
+
+func openAIContent(message ChatMessage, responses bool) any {
+	text := chatMessageText(message)
+	hasImage := false
+	for _, attachment := range message.Attachments {
+		hasImage = hasImage || attachment.Kind == "image"
+	}
+	if !hasImage {
+		return text
+	}
+	blocks := make([]map[string]any, 0, len(message.Attachments)+1)
+	if text != "" {
+		blockType := "text"
+		if responses {
+			blockType = "input_text"
+		}
+		blocks = append(blocks, map[string]any{"type": blockType, "text": text})
+	}
+	for _, attachment := range message.Attachments {
+		if attachment.Kind != "image" {
+			continue
+		}
+		dataURL := "data:" + attachment.MimeType + ";base64," + base64.StdEncoding.EncodeToString(attachment.Data)
+		if responses {
+			blocks = append(blocks, map[string]any{"type": "input_image", "image_url": dataURL})
+		} else {
+			blocks = append(blocks, map[string]any{"type": "image_url", "image_url": map[string]any{"url": dataURL}})
+		}
+	}
+	return blocks
+}
+
 func (c *HTTPModelClient) Stream(ctx context.Context, provider Provider, apiKey string, request CompletionRequest, emit func(CompletionEvent) error) error {
 	switch provider.Protocol {
 	case ProtocolOpenAICompatible:
@@ -87,8 +142,8 @@ func (c *HTTPModelClient) Stream(ctx context.Context, provider Provider, apiKey 
 func (c *HTTPModelClient) streamOpenAIResponses(ctx context.Context, provider Provider, apiKey string, request CompletionRequest, emit func(CompletionEvent) error) error {
 	input := make([]any, 0, len(request.Messages))
 	for _, message := range request.Messages {
-		if message.Content != "" && message.ToolCallID == "" {
-			input = append(input, map[string]any{"role": message.Role, "content": message.Content})
+		if (message.Content != "" || len(message.Attachments) > 0) && message.ToolCallID == "" {
+			input = append(input, map[string]any{"role": message.Role, "content": openAIContent(message, true)})
 		}
 		for _, call := range message.ToolCalls {
 			input = append(input, responsesProviderItems(provider.ID, call.ProviderData)...)
@@ -105,6 +160,9 @@ func (c *HTTPModelClient) streamOpenAIResponses(ctx context.Context, provider Pr
 	payload := map[string]any{
 		"model": request.Model, "instructions": request.System, "input": input, "stream": true, "store": false,
 		"include": []string{"reasoning.encrypted_content"},
+	}
+	if request.NativeReasoning && request.ThinkingLevel.Valid() {
+		payload["reasoning"] = map[string]any{"effort": request.ThinkingLevel}
 	}
 	if len(request.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(request.Tools))
@@ -409,7 +467,7 @@ func (c *HTTPModelClient) do(ctx context.Context, provider Provider, apiKey, met
 func (c *HTTPModelClient) streamOpenAI(ctx context.Context, provider Provider, apiKey string, request CompletionRequest, emit func(CompletionEvent) error) error {
 	messages := []map[string]any{{"role": "system", "content": request.System}}
 	for _, message := range request.Messages {
-		item := map[string]any{"role": message.Role, "content": message.Content}
+		item := map[string]any{"role": message.Role, "content": openAIContent(message, false)}
 		if message.ToolCallID != "" {
 			item["tool_call_id"] = message.ToolCallID
 		}
@@ -423,6 +481,9 @@ func (c *HTTPModelClient) streamOpenAI(ctx context.Context, provider Provider, a
 		messages = append(messages, item)
 	}
 	payload := map[string]any{"model": request.Model, "messages": messages, "stream": true, "stream_options": map[string]bool{"include_usage": true}}
+	if request.NativeReasoning && request.ThinkingLevel.Valid() {
+		payload["reasoning_effort"] = request.ThinkingLevel
+	}
 	if len(request.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(request.Tools))
 		for _, tool := range request.Tools {
@@ -500,10 +561,22 @@ func (c *HTTPModelClient) streamAnthropic(ctx context.Context, provider Provider
 		case message.ToolCallID != "":
 			messages = append(messages, map[string]any{"role": "user", "content": []map[string]any{{"type": "tool_result", "tool_use_id": message.ToolCallID, "content": message.Content}}})
 		default:
-			messages = append(messages, map[string]any{"role": message.Role, "content": message.Content})
+			blocks := make([]map[string]any, 0, len(message.Attachments)+1)
+			for _, attachment := range message.Attachments {
+				if attachment.Kind == "image" {
+					blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": attachment.MimeType, "data": base64.StdEncoding.EncodeToString(attachment.Data)}})
+				}
+			}
+			if text := chatMessageText(message); text != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": text})
+			}
+			messages = append(messages, map[string]any{"role": message.Role, "content": blocks})
 		}
 	}
 	payload := map[string]any{"model": request.Model, "system": request.System, "messages": messages, "max_tokens": 4096, "stream": true}
+	if request.NativeReasoning && request.ThinkingLevel.Valid() {
+		payload["output_config"] = map[string]any{"effort": request.ThinkingLevel}
+	}
 	if len(request.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(request.Tools))
 		for _, tool := range request.Tools {
@@ -573,8 +646,15 @@ func (c *HTTPModelClient) streamGemini(ctx context.Context, provider Provider, a
 			role = "model"
 		}
 		parts := make([]map[string]any, 0, 1+len(message.ToolCalls))
-		if message.Content != "" && message.ToolCallID == "" {
-			parts = append(parts, map[string]any{"text": message.Content})
+		if message.ToolCallID == "" {
+			if text := chatMessageText(message); text != "" {
+				parts = append(parts, map[string]any{"text": text})
+			}
+			for _, attachment := range message.Attachments {
+				if attachment.Kind == "image" {
+					parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": attachment.MimeType, "data": base64.StdEncoding.EncodeToString(attachment.Data)}})
+				}
+			}
 		}
 		for _, call := range message.ToolCalls {
 			var args any = map[string]any{}
@@ -588,6 +668,9 @@ func (c *HTTPModelClient) streamGemini(ctx context.Context, provider Provider, a
 		contents = append(contents, map[string]any{"role": role, "parts": parts})
 	}
 	payload := map[string]any{"systemInstruction": map[string]any{"parts": []map[string]string{{"text": request.System}}}, "contents": contents}
+	if request.NativeReasoning && request.ThinkingLevel.Valid() {
+		payload["generationConfig"] = map[string]any{"thinkingConfig": map[string]any{"thinkingLevel": request.ThinkingLevel}}
+	}
 	if len(request.Tools) > 0 {
 		declarations := make([]map[string]any, 0, len(request.Tools))
 		for _, tool := range request.Tools {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -62,7 +63,7 @@ func TestStoreProviderSessionRunLifecycle(t *testing.T) {
 		t.Fatalf("active session=%#v err=%v", activeSession, err)
 	}
 	autoMode := ApprovalAuto
-	updatedSession, err := store.UpdateSession(ctx, "admin", session.ID, "", provider.ID, models[1].ID, provider.Name, models[1].DisplayName, nil, nil, &autoMode)
+	updatedSession, err := store.UpdateSession(ctx, "admin", session.ID, "", provider.ID, models[1].ID, provider.Name, models[1].DisplayName, nil, nil, &autoMode, nil)
 	if err != nil || updatedSession.ModelID != models[1].ID || updatedSession.ApprovalMode != ApprovalAuto {
 		t.Fatalf("next-turn model update=%#v err=%v", updatedSession, err)
 	}
@@ -86,6 +87,43 @@ func TestStoreProviderSessionRunLifecycle(t *testing.T) {
 	}
 	if loaded.ModelAvailable {
 		t.Fatal("deleted provider must leave session history but make model unavailable")
+	}
+}
+
+func TestStorePersistsAttachmentsAndThinkingSnapshot(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "ai.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	provider, err := store.SaveProvider(ctx, Provider{Name: "mock", Protocol: ProtocolOpenAICompatible, BaseURL: "https://example.com/v1", EndpointScope: EndpointPublic, Enabled: true}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveModels(ctx, provider.ID, []Model{{ModelID: "vision", DisplayName: "Vision", ContextWindow: 32000, ToolCalling: true, Vision: true, Reasoning: true, Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	models, _ := store.ListModels(ctx, provider.ID)
+	session, err := store.CreateSession(ctx, Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: models[0].ID, ModelName: models[0].DisplayName, ThinkingLevel: ThinkingHigh})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.CreateRun(ctx, Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: models[0].ID, ModelName: models[0].DisplayName, ThinkingLevel: session.ThinkingLevel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleUser, Content: "analyze", Attachments: []Attachment{{Name: "note.txt", MimeType: "text/plain", Kind: "text", Size: 5, Data: []byte("hello")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.ConversationMessages(ctx, session.ID, 10)
+	if err != nil || len(items) != 1 || len(items[0].Attachments) != 1 || string(items[0].Attachments[0].Data) != "hello" {
+		t.Fatalf("items=%#v err=%v", items, err)
+	}
+	public, _ := json.Marshal(items[0])
+	if strings.Contains(string(public), "aGVsbG8=") || run.ThinkingLevel != ThinkingHigh {
+		t.Fatalf("attachment data leaked or thinking snapshot lost: %s run=%#v", public, run)
 	}
 }
 

@@ -209,6 +209,42 @@ func TestGeminiStream(t *testing.T) {
 	}
 }
 
+func TestMultimodalAndThinkingPayloads(t *testing.T) {
+	image := Attachment{Name: "screen.png", MimeType: "image/png", Kind: "image", Size: 3, Data: []byte{1, 2, 3}}
+	tests := []struct {
+		name     string
+		provider Provider
+		markers  []string
+		stream   string
+	}{
+		{name: "openai chat", provider: Provider{Protocol: ProtocolOpenAICompatible}, markers: []string{`"reasoning_effort":"high"`, `"type":"image_url"`, `data:image/png;base64,AQID`}, stream: "data: [DONE]\n\n"},
+		{name: "openai responses", provider: Provider{Protocol: ProtocolOpenAICompatible, APIMode: OpenAIResponses}, markers: []string{`"reasoning":{"effort":"high"}`, `"type":"input_image"`, `data:image/png;base64,AQID`}, stream: "data: {\"type\":\"response.completed\",\"response\":{}}\n\n"},
+		{name: "anthropic", provider: Provider{Protocol: ProtocolAnthropic}, markers: []string{`"output_config":{"effort":"high"}`, `"type":"image"`, `"data":"AQID"`}, stream: "data: {\"type\":\"message_stop\"}\n\n"},
+		{name: "gemini", provider: Provider{Protocol: ProtocolGemini}, markers: []string{`"thinkingConfig":{"thinkingLevel":"high"}`, `"inlineData"`, `"data":"AQID"`}, stream: "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}\n\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				for _, marker := range test.markers {
+					if !strings.Contains(string(body), marker) {
+						t.Fatalf("payload missing %s: %s", marker, body)
+					}
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, test.stream)
+			}))
+			defer server.Close()
+			provider := test.provider
+			provider.BaseURL, provider.EndpointScope = server.URL, EndpointPrivate
+			err := NewHTTPModelClient().Stream(context.Background(), provider, "key", CompletionRequest{Model: "model", System: "system", Messages: []ChatMessage{{Role: "user", Content: "analyze", Attachments: []Attachment{image}}}, ThinkingLevel: ThinkingHigh, NativeReasoning: true}, func(CompletionEvent) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestGeminiModelDiscoveryUsesHeaderKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" || r.Header.Get("X-Goog-Api-Key") != "key" || r.URL.RawQuery != "" {

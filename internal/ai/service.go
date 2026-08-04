@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 type Service struct {
@@ -73,13 +75,33 @@ func (s *Service) SyncModels(ctx context.Context, providerID string) ([]Model, e
 	if err != nil {
 		return nil, err
 	}
+	existing, _ := s.Store.ListModels(ctx, provider.ID)
+	known := make(map[string]Model, len(existing))
+	for _, item := range existing {
+		known[item.ModelID] = item
+	}
 	for index := range items {
 		items[index].ProviderID = provider.ID
+		if previous, ok := known[items[index].ModelID]; ok {
+			items[index].Vision, items[index].Reasoning = previous.Vision, previous.Reasoning
+		} else {
+			items[index].Vision, items[index].Reasoning = inferredCapabilities(provider.Protocol, items[index].ModelID)
+		}
 	}
 	if err := s.Store.SaveModels(ctx, provider.ID, items); err != nil {
 		return nil, err
 	}
 	return s.Store.ListModels(ctx, provider.ID)
+}
+
+func inferredCapabilities(protocol ProviderProtocol, modelID string) (vision, reasoning bool) {
+	name := strings.ToLower(modelID)
+	if protocol == ProtocolGemini {
+		return true, strings.Contains(name, "2.5") || strings.Contains(name, "gemini-3")
+	}
+	vision = strings.Contains(name, "gpt-4o") || strings.Contains(name, "gpt-4.1") || strings.Contains(name, "gpt-5") || strings.Contains(name, "claude-") || strings.Contains(name, "gemini")
+	reasoning = strings.Contains(name, "gpt-5") || strings.HasPrefix(name, "o1") || strings.HasPrefix(name, "o3") || strings.HasPrefix(name, "o4") || strings.Contains(name, "claude-") || strings.Contains(name, "gemini-2.5") || strings.Contains(name, "gemini-3") || strings.Contains(name, "deepseek-r1") || strings.Contains(name, "qwen3")
+	return vision, reasoning
 }
 
 func (s *Service) CreateSession(ctx context.Context, userID, providerID, modelID, title string) (Session, error) {
@@ -99,9 +121,13 @@ func (s *Service) CreateSession(ctx context.Context, userID, providerID, modelID
 }
 
 func (s *Service) Send(ctx context.Context, userID, sessionID, content string) (Run, error) {
+	return s.SendWithAttachments(ctx, userID, sessionID, content, nil)
+}
+
+func (s *Service) SendWithAttachments(ctx context.Context, userID, sessionID, content string, attachments []Attachment) (Run, error) {
 	content = strings.TrimSpace(content)
-	if content == "" || len(content) > MaxUserMessageBytes {
-		return Run{}, errors.New("message must be between 1 byte and 16 KiB")
+	if (content == "" && len(attachments) == 0) || len(content) > MaxUserMessageBytes {
+		return Run{}, errors.New("message must contain text or attachments and text must not exceed 16 KiB")
 	}
 	session, err := s.Store.Session(ctx, userID, sessionID)
 	if err != nil {
@@ -110,14 +136,25 @@ func (s *Service) Send(ctx context.Context, userID, sessionID, content string) (
 	if !session.ModelAvailable {
 		return Run{}, errors.New("session model is unavailable")
 	}
+	attachments, err = validateAttachments(attachments)
+	if err != nil {
+		return Run{}, err
+	}
 	if session.Title == "新会话" {
-		if err := s.Store.SetInitialSessionTitle(ctx, userID, session.ID, sessionTitleFromMessage(content)); err != nil {
+		titleSource := content
+		if titleSource == "" && len(attachments) > 0 {
+			titleSource = "分析 " + attachments[0].Name
+		}
+		if err := s.Store.SetInitialSessionTitle(ctx, userID, session.ID, sessionTitleFromMessage(titleSource)); err != nil {
 			return Run{}, err
 		}
 	}
 	active, activeErr := s.Store.ActiveRun(ctx, session.ID, userID)
 	if activeErr == nil {
-		if _, err := s.Store.AddMessage(ctx, Message{SessionID: session.ID, RunID: active.ID, Role: RoleUser, Content: content}); err != nil {
+		if err := s.validateAttachmentModel(ctx, active.ModelID, attachments); err != nil {
+			return Run{}, err
+		}
+		if _, err := s.Store.AddMessage(ctx, Message{SessionID: session.ID, RunID: active.ID, Role: RoleUser, Content: content, Attachments: attachments}); err != nil {
 			return Run{}, err
 		}
 		return active, nil
@@ -125,11 +162,14 @@ func (s *Service) Send(ctx context.Context, userID, sessionID, content string) (
 	if !errors.Is(activeErr, ErrNotFound) {
 		return Run{}, activeErr
 	}
-	run, err := s.Store.CreateRun(ctx, Run{SessionID: session.ID, UserID: userID, ProviderID: session.ProviderID, ProviderName: session.ProviderName, ModelID: session.ModelID, ModelName: session.ModelName, ApprovalMode: session.ApprovalMode})
+	if err := s.validateAttachmentModel(ctx, session.ModelID, attachments); err != nil {
+		return Run{}, err
+	}
+	run, err := s.Store.CreateRun(ctx, Run{SessionID: session.ID, UserID: userID, ProviderID: session.ProviderID, ProviderName: session.ProviderName, ModelID: session.ModelID, ModelName: session.ModelName, ApprovalMode: session.ApprovalMode, ThinkingLevel: session.ThinkingLevel})
 	if err != nil {
 		return Run{}, err
 	}
-	if _, err := s.Store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleUser, Content: content}); err != nil {
+	if _, err := s.Store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleUser, Content: content, Attachments: attachments}); err != nil {
 		run.Status, run.ErrorCode, run.ErrorMessage = RunFailed, "message_store_failed", err.Error()
 		_ = s.Store.UpdateRun(ctx, run)
 		return Run{}, err
@@ -140,6 +180,60 @@ func (s *Service) Send(ctx context.Context, userID, sessionID, content string) (
 		}
 	}()
 	return run, nil
+}
+
+func (s *Service) validateAttachmentModel(ctx context.Context, modelID string, attachments []Attachment) error {
+	for _, item := range attachments {
+		if item.Kind != "image" {
+			continue
+		}
+		model, err := s.Store.Model(ctx, modelID)
+		if err != nil {
+			return err
+		}
+		if !model.Vision {
+			return errors.New("selected model is not configured for image input")
+		}
+		break
+	}
+	return nil
+}
+
+func validateAttachments(items []Attachment) ([]Attachment, error) {
+	if len(items) > 4 {
+		return nil, errors.New("a message can contain at most 4 attachments")
+	}
+	allowedText := map[string]bool{".txt": true, ".log": true, ".md": true, ".json": true, ".yaml": true, ".yml": true, ".toml": true, ".ini": true, ".conf": true, ".csv": true, ".xml": true, ".html": true, ".css": true, ".js": true, ".ts": true, ".vue": true, ".go": true, ".py": true, ".sh": true}
+	allowedImages := map[string]bool{"image/png": true, "image/jpeg": true, "image/webp": true, "image/gif": true}
+	total := 0
+	validated := make([]Attachment, 0, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(filepath.Base(item.Name))
+		if name == "" || name == "." || len(name) > 160 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+			return nil, errors.New("attachment name is invalid")
+		}
+		if len(item.Data) == 0 {
+			return nil, errors.New("attachment is empty")
+		}
+		total += len(item.Data)
+		if total > 8<<20 {
+			return nil, errors.New("attachments exceed the 8 MiB message limit")
+		}
+		detected := strings.Split(http.DetectContentType(item.Data), ";")[0]
+		kind := ""
+		if allowedImages[detected] {
+			if len(item.Data) > 4<<20 {
+				return nil, errors.New("each image must not exceed 4 MiB")
+			}
+			kind = "image"
+		} else if allowedText[strings.ToLower(filepath.Ext(name))] && len(item.Data) <= 512<<10 && utf8.Valid(item.Data) && !strings.ContainsRune(string(item.Data), '\x00') {
+			kind, detected = "text", "text/plain"
+		} else {
+			return nil, errors.New("unsupported attachment; use PNG, JPEG, WebP, GIF, or UTF-8 text/code/config files")
+		}
+		validated = append(validated, Attachment{Name: name, MimeType: detected, Size: len(item.Data), Kind: kind, Data: append([]byte(nil), item.Data...)})
+	}
+	return validated, nil
 }
 
 func sessionTitleFromMessage(content string) string {
@@ -177,7 +271,7 @@ func (s *Service) Retry(ctx context.Context, userID, runID string) (Run, error) 
 	if previous.Status != RunInterrupted && previous.Status != RunFailed {
 		return Run{}, ErrConflict
 	}
-	run, err := s.Store.CreateRun(ctx, Run{SessionID: previous.SessionID, UserID: userID, ProviderID: previous.ProviderID, ProviderName: previous.ProviderName, ModelID: previous.ModelID, ModelName: previous.ModelName, ApprovalMode: previous.ApprovalMode})
+	run, err := s.Store.CreateRun(ctx, Run{SessionID: previous.SessionID, UserID: userID, ProviderID: previous.ProviderID, ProviderName: previous.ProviderName, ModelID: previous.ModelID, ModelName: previous.ModelName, ApprovalMode: previous.ApprovalMode, ThinkingLevel: previous.ThinkingLevel})
 	if err != nil {
 		return Run{}, err
 	}

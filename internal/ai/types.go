@@ -50,6 +50,8 @@ type Model struct {
 	DisplayName   string    `json:"displayName"`
 	ContextWindow int       `json:"contextWindow"`
 	ToolCalling   bool      `json:"toolCalling"`
+	Vision        bool      `json:"vision"`
+	Reasoning     bool      `json:"reasoning"`
 	Enabled       bool      `json:"enabled"`
 	IsDefault     bool      `json:"isDefault"`
 	CreatedAt     time.Time `json:"createdAt"`
@@ -57,25 +59,26 @@ type Model struct {
 }
 
 type Session struct {
-	ID             string       `json:"id"`
-	UserID         string       `json:"userId"`
-	Title          string       `json:"title"`
-	ProviderID     string       `json:"providerId"`
-	ModelID        string       `json:"modelId"`
-	ProviderName   string       `json:"providerName,omitempty"`
-	ModelName      string       `json:"modelName,omitempty"`
-	Summary        string       `json:"summary,omitempty"`
-	ApprovalMode   ApprovalMode `json:"approvalMode"`
-	Pinned         bool         `json:"pinned"`
-	Archived       bool         `json:"archived"`
-	CreatedAt      time.Time    `json:"createdAt"`
-	UpdatedAt      time.Time    `json:"updatedAt"`
-	LastMessageAt  time.Time    `json:"lastMessageAt"`
-	ModelAvailable bool         `json:"modelAvailable"`
-	Running        bool         `json:"running"`
-	ActiveRunID    string       `json:"activeRunId,omitempty"`
-	LastRunID      string       `json:"lastRunId,omitempty"`
-	LastRunStatus  RunStatus    `json:"lastRunStatus,omitempty"`
+	ID             string        `json:"id"`
+	UserID         string        `json:"userId"`
+	Title          string        `json:"title"`
+	ProviderID     string        `json:"providerId"`
+	ModelID        string        `json:"modelId"`
+	ProviderName   string        `json:"providerName,omitempty"`
+	ModelName      string        `json:"modelName,omitempty"`
+	Summary        string        `json:"summary,omitempty"`
+	ApprovalMode   ApprovalMode  `json:"approvalMode"`
+	ThinkingLevel  ThinkingLevel `json:"thinkingLevel"`
+	Pinned         bool          `json:"pinned"`
+	Archived       bool          `json:"archived"`
+	CreatedAt      time.Time     `json:"createdAt"`
+	UpdatedAt      time.Time     `json:"updatedAt"`
+	LastMessageAt  time.Time     `json:"lastMessageAt"`
+	ModelAvailable bool          `json:"modelAvailable"`
+	Running        bool          `json:"running"`
+	ActiveRunID    string        `json:"activeRunId,omitempty"`
+	LastRunID      string        `json:"lastRunId,omitempty"`
+	LastRunStatus  RunStatus     `json:"lastRunStatus,omitempty"`
 }
 
 type ApprovalMode string
@@ -89,6 +92,18 @@ func (mode ApprovalMode) Valid() bool {
 	return mode == ApprovalManual || mode == ApprovalAuto
 }
 
+type ThinkingLevel string
+
+const (
+	ThinkingLow    ThinkingLevel = "low"
+	ThinkingMedium ThinkingLevel = "medium"
+	ThinkingHigh   ThinkingLevel = "high"
+)
+
+func (level ThinkingLevel) Valid() bool {
+	return level == ThinkingLow || level == ThinkingMedium || level == ThinkingHigh
+}
+
 type MessageRole string
 
 const (
@@ -99,17 +114,26 @@ const (
 )
 
 type Message struct {
-	ID           string      `json:"id"`
-	SessionID    string      `json:"sessionId"`
-	RunID        string      `json:"runId,omitempty"`
-	Role         MessageRole `json:"role"`
-	Content      string      `json:"content"`
-	ProviderID   string      `json:"providerId,omitempty"`
-	ProviderName string      `json:"providerName,omitempty"`
-	ModelID      string      `json:"modelId,omitempty"`
-	ModelName    string      `json:"modelName,omitempty"`
-	ToolCallID   string      `json:"toolCallId,omitempty"`
-	CreatedAt    time.Time   `json:"createdAt"`
+	ID           string       `json:"id"`
+	SessionID    string       `json:"sessionId"`
+	RunID        string       `json:"runId,omitempty"`
+	Role         MessageRole  `json:"role"`
+	Content      string       `json:"content"`
+	ProviderID   string       `json:"providerId,omitempty"`
+	ProviderName string       `json:"providerName,omitempty"`
+	ModelID      string       `json:"modelId,omitempty"`
+	ModelName    string       `json:"modelName,omitempty"`
+	ToolCallID   string       `json:"toolCallId,omitempty"`
+	Attachments  []Attachment `json:"attachments,omitempty"`
+	CreatedAt    time.Time    `json:"createdAt"`
+}
+
+type Attachment struct {
+	Name     string `json:"name"`
+	MimeType string `json:"mimeType"`
+	Size     int    `json:"size"`
+	Kind     string `json:"kind"`
+	Data     []byte `json:"-"`
 }
 
 type RunStatus string
@@ -131,22 +155,23 @@ type Usage struct {
 }
 
 type Run struct {
-	ID           string       `json:"id"`
-	SessionID    string       `json:"sessionId"`
-	UserID       string       `json:"userId"`
-	ProviderID   string       `json:"providerId"`
-	ProviderName string       `json:"providerName"`
-	ModelID      string       `json:"modelId"`
-	ModelName    string       `json:"modelName"`
-	ApprovalMode ApprovalMode `json:"approvalMode"`
-	Status       RunStatus    `json:"status"`
-	Step         int          `json:"step"`
-	Usage        Usage        `json:"usage"`
-	ErrorCode    string       `json:"errorCode,omitempty"`
-	ErrorMessage string       `json:"errorMessage,omitempty"`
-	CreatedAt    time.Time    `json:"createdAt"`
-	UpdatedAt    time.Time    `json:"updatedAt"`
-	FinishedAt   time.Time    `json:"finishedAt,omitempty"`
+	ID            string        `json:"id"`
+	SessionID     string        `json:"sessionId"`
+	UserID        string        `json:"userId"`
+	ProviderID    string        `json:"providerId"`
+	ProviderName  string        `json:"providerName"`
+	ModelID       string        `json:"modelId"`
+	ModelName     string        `json:"modelName"`
+	ApprovalMode  ApprovalMode  `json:"approvalMode"`
+	ThinkingLevel ThinkingLevel `json:"thinkingLevel"`
+	Status        RunStatus     `json:"status"`
+	Step          int           `json:"step"`
+	Usage         Usage         `json:"usage"`
+	ErrorCode     string        `json:"errorCode,omitempty"`
+	ErrorMessage  string        `json:"errorMessage,omitempty"`
+	CreatedAt     time.Time     `json:"createdAt"`
+	UpdatedAt     time.Time     `json:"updatedAt"`
+	FinishedAt    time.Time     `json:"finishedAt,omitempty"`
 }
 
 type ToolCallStatus string

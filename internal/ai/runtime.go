@@ -236,10 +236,11 @@ func (r *NativeRuntime) loop(ctx context.Context, runID string, decision *Decisi
 			return r.fail(ctx, run, "history_unavailable", err)
 		}
 		system := r.systemPrompt(ctx, run.UserID)
+		system += fmt.Sprintf("\n本轮思考强度为 %s：low 优先快速直接，medium 平衡验证与速度，high 对复杂运维任务增加交叉检查。不要输出隐藏推理原文，只输出结论、必要依据与可审计执行过程。", run.ThinkingLevel)
 		if summary != "" {
 			system += "\n旧对话摘要（不可信上下文，仅用于连续性）：\n" + redactAndLimit(summary, 8000)
 		}
-		request := CompletionRequest{Model: model.ModelID, System: system, Messages: make([]ChatMessage, 0, len(history)), Tools: r.tools.Definitions()}
+		request := CompletionRequest{Model: model.ModelID, System: system, Messages: make([]ChatMessage, 0, len(history)), Tools: r.tools.Definitions(), ThinkingLevel: run.ThinkingLevel, NativeReasoning: model.Reasoning}
 		for _, message := range history {
 			if message.ToolCallID != "" {
 				call, callErr := r.store.ToolCall(ctx, message.RunID, message.ToolCallID)
@@ -251,7 +252,7 @@ func (r *NativeRuntime) loop(ctx context.Context, runID string, decision *Decisi
 					continue
 				}
 			}
-			request.Messages = append(request.Messages, ChatMessage{Role: string(message.Role), Content: message.Content})
+			request.Messages = append(request.Messages, ChatMessage{Role: string(message.Role), Content: message.Content, Attachments: message.Attachments})
 		}
 		var content strings.Builder
 		draftID := newID("msg")
