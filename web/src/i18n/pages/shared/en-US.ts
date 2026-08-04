@@ -1,6 +1,10 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["API 与模型", "APIs and models"],
+  ["后台记忆", "Background memories"],
+  ["后台流程", "Background procedures"],
+  ["待处理", "Pending"],
   ["阿里云", "Alibaba Cloud"],
   ["版本不兼容", "Version is not compatible"],
   ["编辑器加载失败", "Failed to load editor"],
@@ -107,7 +111,7 @@ export default [
   ["回滚“{0}”到哪个版本？", "Which version should “{0}” be rolled back to?"],
   ["退休流程“{0}”？", "Retire procedure “{0}”?"],
   ["AI 设置", "AI settings"],
-  ["连接模型服务，管理会影响后续对话的记忆与流程。", "Connect model services and manage memories and procedures used in future conversations."],
+  ["连接模型服务；系统会在后台学习稳定偏好和成功流程，可随时停用或回滚。", "Connect model services. KPanel learns stable preferences and successful procedures in the background, and you can disable or roll them back at any time."],
   ["关闭", "Close"],
   ["模型连接", "Model connections"],
   ["个 API", " APIs"],
@@ -144,9 +148,9 @@ export default [
   ["上下文窗口", "Context window"],
   ["添加模型", "Add model"],
   ["退休", "Retire"],
-  ["暂无已批准记忆", "No approved memories"],
+  ["尚未学习到可复用记忆", "No reusable memories learned yet"],
   ["回滚版本", "Roll back version"],
-  ["暂无已批准流程", "No approved procedures"],
+  ["尚未学习到可复用流程", "No reusable procedures learned yet"],
   ["· 待审核", "· Pending review"],
   ["拒绝", "Reject"],
   ["批准生效", "Approve and activate"],

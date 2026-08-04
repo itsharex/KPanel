@@ -460,7 +460,6 @@
   .ai-workspace--drawer .ai-session-overlay { inset: 0; }
   .ai-chat-header { min-height: 58px; padding: 8px 12px; }
   .ai-chat-controls .ai-context,.ai-chat-controls .ai-connection { display: none; }
-  .ai-chat-controls .ai-propose-button { display: none; }
   .ai-chat-title { min-width: 0; flex: 1; }
   .ai-messages { padding: 25px 14px 28px; }
   .ai-message { gap: 8px; }

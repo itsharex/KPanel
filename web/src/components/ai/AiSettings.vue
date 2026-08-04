@@ -13,6 +13,12 @@ const form=reactive({name:'OpenAI',protocol:'openai_compatible' as AIProtocol,ap
 const modelForm=reactive({providerId:'',modelId:'',displayName:'',contextWindow:32000,toolCalling:true})
 const selectedProvider=computed(()=>props.providers.find(item=>item.id===modelForm.providerId))
 const selectedModels=computed(()=>props.models.filter(item=>item.providerId===modelForm.providerId))
+const settingsTabs=computed(()=>[
+  {id:'providers' as const,label:'API 与模型',count:0},
+  {id:'memories' as const,label:'后台记忆',count:0},
+  {id:'procedures' as const,label:'后台流程',count:0},
+  {id:'proposals' as const,label:'待处理',count:proposals.value.length},
+])
 const providerPresets:Array<{id:string;name:string;protocol:AIProtocol;apiMode?:AIOpenAIAPIMode;baseUrl:string;endpointScope:'public'|'private'}>=[
   {id:'openai',name:'OpenAI',protocol:'openai_compatible',apiMode:'responses',baseUrl:'https://api.openai.com/v1',endpointScope:'public'},
   {id:'anthropic',name:'Anthropic',protocol:'anthropic',baseUrl:'https://api.anthropic.com/v1',endpointScope:'public'},
@@ -52,9 +58,9 @@ onMounted(loadEvolution)
 <template>
   <div class="ai-settings-backdrop" @click.self="emit('close')">
     <section class="ai-settings" role="dialog" aria-modal="true" aria-label="AI 设置">
-      <header><div><span class="eyebrow">AI workspace</span><h2>AI 设置</h2><p>连接模型服务，管理会影响后续对话的记忆与流程。</p></div><button class="icon-button" aria-label="关闭" @click="emit('close')"><X :size="19"/></button></header>
+      <header><div><span class="eyebrow">AI workspace</span><h2>AI 设置</h2><p>连接模型服务；系统会在后台学习稳定偏好和成功流程，可随时停用或回滚。</p></div><button class="icon-button" aria-label="关闭" @click="emit('close')"><X :size="19"/></button></header>
       <nav class="ai-settings__tabs">
-        <button v-for="item in [{id:'providers',label:'API 与模型',count:0},{id:'memories',label:'记忆',count:0},{id:'procedures',label:'流程',count:0},{id:'proposals',label:'进化提案',count:proposals.length}]" :key="item.id" :class="{active:tab===item.id}" @click="tab=item.id as typeof tab"><span>{{ item.label }}</span><i v-if="item.count">{{item.count}}</i></button>
+        <button v-for="item in settingsTabs" :key="item.id" :class="{active:tab===item.id}" @click="tab=item.id"><span>{{ item.label }}</span><i v-if="item.count">{{item.count}}</i></button>
       </nav>
       <p v-if="error" class="ai-inline-error">{{ error }}</p>
       <p v-if="notice" class="ai-inline-success"><CheckCircle2 :size="15"/>{{notice}}</p>
@@ -82,8 +88,8 @@ onMounted(loadEvolution)
         </div>
       </div>
       <div v-else class="ai-settings__body ai-evolution-list">
-        <template v-if="tab==='memories'"><article v-for="item in memories" :key="item.id"><div><strong>{{item.title}}</strong><small>v{{item.version}} · {{item.retired?'已退休':item.enabled?'生效中':'已停用'}}</small></div><p>{{item.content}}</p><footer v-if="!item.retired"><button class="button" @click="toggleMemory(item)">{{item.enabled?'停用':'启用'}}</button><button class="button" @click="removeMemory(item)">退休</button></footer></article><p v-if="!memories.length" class="ai-empty-mini">暂无已批准记忆</p></template>
-        <template v-if="tab==='procedures'"><article v-for="item in procedures" :key="item.id"><div><strong>{{item.title}}</strong><small>v{{item.version}} · {{item.retired?'已退休':item.enabled?'生效中':'已停用'}}</small></div><p>{{item.condition}}</p><footer v-if="!item.retired"><button class="button" @click="toggleProcedure(item)">{{item.enabled?'停用':'启用'}}</button><button class="button" @click="rollbackProcedure(item)">回滚版本</button><button class="button" @click="removeProcedure(item)">退休</button></footer></article><p v-if="!procedures.length" class="ai-empty-mini">暂无已批准流程</p></template>
+        <template v-if="tab==='memories'"><article v-for="item in memories" :key="item.id"><div><strong>{{item.title}}</strong><small>v{{item.version}} · {{item.retired?'已退休':item.enabled?'生效中':'已停用'}}</small></div><p>{{item.content}}</p><footer v-if="!item.retired"><button class="button" @click="toggleMemory(item)">{{item.enabled?'停用':'启用'}}</button><button class="button" @click="removeMemory(item)">退休</button></footer></article><p v-if="!memories.length" class="ai-empty-mini">尚未学习到可复用记忆</p></template>
+        <template v-if="tab==='procedures'"><article v-for="item in procedures" :key="item.id"><div><strong>{{item.title}}</strong><small>v{{item.version}} · {{item.retired?'已退休':item.enabled?'生效中':'已停用'}}</small></div><p>{{item.condition}}</p><footer v-if="!item.retired"><button class="button" @click="toggleProcedure(item)">{{item.enabled?'停用':'启用'}}</button><button class="button" @click="rollbackProcedure(item)">回滚版本</button><button class="button" @click="removeProcedure(item)">退休</button></footer></article><p v-if="!procedures.length" class="ai-empty-mini">尚未学习到可复用流程</p></template>
         <template v-if="tab==='proposals'"><article v-for="item in proposals" :key="item.id"><div><strong>{{item.title}}</strong><small>{{item.type}} · 待审核</small></div><p>{{item.content}}</p><footer><button class="button" @click="proposal(item.id,false)">拒绝</button><button class="button button--primary" @click="proposal(item.id,true)">批准生效</button></footer></article><p v-if="!proposals.length" class="ai-empty-mini">暂无待审核提案</p></template>
       </div>
     </section>

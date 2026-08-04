@@ -42,6 +42,7 @@ type fakeTools struct {
 func (f *fakeTools) Definitions() []ToolDefinition {
 	return []ToolDefinition{{Name: "host_action", Description: "test", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: f.readOnly}}
 }
+func (f *fakeTools) DryRun(string, json.RawMessage) error { return nil }
 func (f *fakeTools) RequiresApproval(string, json.RawMessage) bool {
 	if f.approval != nil {
 		return *f.approval
@@ -360,6 +361,92 @@ func (c *retryClient) Stream(_ context.Context, _ Provider, _ string, _ Completi
 	return emit(CompletionEvent{Delta: "done", Done: true})
 }
 func (*retryClient) Models(context.Context, Provider, string) ([]Model, error) { return nil, nil }
+
+type learningClient struct{ output string }
+
+func (c *learningClient) Stream(_ context.Context, _ Provider, _ string, _ CompletionRequest, emit func(CompletionEvent) error) error {
+	if err := emit(CompletionEvent{Delta: c.output}); err != nil {
+		return err
+	}
+	return emit(CompletionEvent{Done: true})
+}
+func (*learningClient) Models(context.Context, Provider, string) ([]Model, error) { return nil, nil }
+
+func TestNativeRuntimeSilentlyLearnsReusableProcedureAcrossSessions(t *testing.T) {
+	store, providers, provider, model := runtimeFixture(t)
+	defer store.Close()
+	ctx := context.Background()
+	session, _ := store.CreateSession(ctx, Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, _ = store.AddMessage(ctx, Message{SessionID: session.ID, Role: RoleUser, Content: "检查并恢复应用状态"})
+	run, _ := store.CreateRun(ctx, Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, err := store.SaveToolCall(ctx, ToolCall{ID: "learn-1", RunID: run.ID, SessionID: session.ID, Name: "host_action", Arguments: json.RawMessage(`{"resourceVersion":"sha256:test"}`), Status: ToolCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := `{"decision":"procedure","confidence":0.96,"title":"应用状态恢复","content":"检查并恢复应用状态","condition":"应用异常且需要恢复时","steps":[{"tool":"host_action","arguments":{"resourceVersion":"sha256:test"}}]}`
+	requiresApproval := false
+	runtime, _ := NewNativeRuntime(store, providers, &learningClient{output: output}, &fakeTools{approval: &requiresApproval}, NewEventHub())
+	history, _, _ := store.ContextMessages(ctx, session.ID, model.ContextWindow)
+	if err := runtime.generateProposal(ctx, run, provider, "test-key", model, history, false); err != nil {
+		t.Fatal(err)
+	}
+	procedures, _ := store.Procedures(ctx, "admin")
+	pending, _ := store.Proposals(ctx, "admin", EvolutionPending)
+	if len(procedures) != 1 || !procedures[0].Enabled || len(pending) != 0 {
+		t.Fatalf("procedures=%#v pending=%#v", procedures, pending)
+	}
+	if prompt := runtime.systemPrompt(ctx, "admin"); !strings.Contains(prompt, "应用状态恢复") {
+		t.Fatalf("learned procedure was not available to another session: %s", prompt)
+	}
+	if err := runtime.generateProposal(ctx, run, provider, "test-key", model, history, false); err != nil {
+		t.Fatal(err)
+	}
+	procedures, _ = store.Procedures(ctx, "admin")
+	if len(procedures) != 1 {
+		t.Fatalf("duplicate learning created %d procedures", len(procedures))
+	}
+}
+
+func TestNativeRuntimeSkipsLowConfidenceLearning(t *testing.T) {
+	store, providers, provider, model := runtimeFixture(t)
+	defer store.Close()
+	ctx := context.Background()
+	session, _ := store.CreateSession(ctx, Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, _ = store.AddMessage(ctx, Message{SessionID: session.ID, Role: RoleUser, Content: "记住当前 CPU 数值"})
+	run, _ := store.CreateRun(ctx, Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	runtime, _ := NewNativeRuntime(store, providers, &learningClient{output: `{"decision":"memory","confidence":0.4,"title":"CPU","content":"当前 CPU 为 10%"}`}, &fakeTools{}, NewEventHub())
+	history, _, _ := store.ContextMessages(ctx, session.ID, model.ContextWindow)
+	if err := runtime.generateProposal(ctx, run, provider, "test-key", model, history, false); err != nil {
+		t.Fatal(err)
+	}
+	memories, _ := store.Memories(ctx, "admin")
+	if len(memories) != 0 {
+		t.Fatalf("low-confidence transient memory became active: %#v", memories)
+	}
+}
+
+func TestNativeRuntimeDoesNotSilentlyLearnProtectedProcedure(t *testing.T) {
+	store, providers, provider, model := runtimeFixture(t)
+	defer store.Close()
+	ctx := context.Background()
+	session, _ := store.CreateSession(ctx, Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, _ = store.AddMessage(ctx, Message{SessionID: session.ID, Role: RoleUser, Content: "执行核心维护"})
+	run, _ := store.CreateRun(ctx, Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	for _, id := range []string{"protected-1", "protected-2"} {
+		_, _ = store.SaveToolCall(ctx, ToolCall{ID: id, RunID: run.ID, SessionID: session.ID, Name: "host_action", Arguments: json.RawMessage(`{}`), Status: ToolCompleted})
+	}
+	output := `{"decision":"procedure","confidence":0.99,"title":"核心维护","content":"执行维护","condition":"需要维护时","steps":[{"tool":"host_action","arguments":{}}]}`
+	runtime, _ := NewNativeRuntime(store, providers, &learningClient{output: output}, &fakeTools{}, NewEventHub())
+	history, _, _ := store.ContextMessages(ctx, session.ID, model.ContextWindow)
+	if err := runtime.generateProposal(ctx, run, provider, "test-key", model, history, false); err != nil {
+		t.Fatal(err)
+	}
+	procedures, _ := store.Procedures(ctx, "admin")
+	pending, _ := store.Proposals(ctx, "admin", EvolutionPending)
+	if len(procedures) != 0 || len(pending) != 0 {
+		t.Fatalf("protected workflow was learned: procedures=%#v pending=%#v", procedures, pending)
+	}
+}
 
 func TestRuntimeRetriesOnlyBeforeStreamOutput(t *testing.T) {
 	for _, test := range []struct {
