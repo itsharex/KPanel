@@ -389,7 +389,7 @@ func (s *Server) aiMessages(w http.ResponseWriter, r *http.Request, userID, sess
 	}
 	switch r.Method {
 	case http.MethodGet:
-		page, err := s.ai.Store.MessagesPage(r.Context(), sessionID, 50, r.URL.Query().Get("cursor"))
+		page, err := s.ai.Store.ConversationMessagesPage(r.Context(), sessionID, 50, r.URL.Query().Get("cursor"))
 		s.aiJSON(w, r, page, err, http.StatusOK)
 	case http.MethodPost:
 		var input struct{ Content string }
@@ -470,7 +470,7 @@ func (s *Server) aiRunEvents(w http.ResponseWriter, r *http.Request, session aut
 		return true
 	}
 	calls, _ := s.ai.Store.ToolCalls(r.Context(), id)
-	messages, _ := s.ai.Store.Messages(r.Context(), run.SessionID, 50)
+	messages, _ := s.ai.Store.ConversationMessages(r.Context(), run.SessionID, 50)
 	if !write("run.snapshot", map[string]any{"run": run, "toolCalls": calls, "messages": messages}) {
 		return
 	}

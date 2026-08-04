@@ -35,11 +35,18 @@ type fakeTools struct {
 	mu         sync.Mutex
 	executed   int
 	readOnly   bool
+	approval   *bool
 	executeErr error
 }
 
 func (f *fakeTools) Definitions() []ToolDefinition {
 	return []ToolDefinition{{Name: "host_action", Description: "test", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: f.readOnly}}
+}
+func (f *fakeTools) RequiresApproval(string, json.RawMessage) bool {
+	if f.approval != nil {
+		return *f.approval
+	}
+	return !f.readOnly
 }
 func (f *fakeTools) Execute(context.Context, ToolExecutionContext, string, json.RawMessage) (string, error) {
 	f.mu.Lock()
@@ -118,6 +125,28 @@ func TestNativeRuntimeReadOnlyToolRunsWithoutApproval(t *testing.T) {
 	loaded, _ := store.Run(context.Background(), "admin", run.ID)
 	if loaded.Status != RunCompleted || tools.executed != 1 {
 		t.Fatalf("status=%s executed=%d", loaded.Status, tools.executed)
+	}
+}
+
+func TestNativeRuntimeApprovedClassifiedWriteRunsWithoutApproval(t *testing.T) {
+	store, providerService, provider, model := runtimeFixture(t)
+	defer store.Close()
+	session, _ := store.CreateSession(context.Background(), Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "执行常规操作"})
+	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	requiresApproval := false
+	tools := &fakeTools{approval: &requiresApproval}
+	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	if err := runtime.Run(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := store.Run(context.Background(), "admin", run.ID)
+	if loaded.Status != RunCompleted || tools.executed != 1 {
+		t.Fatalf("status=%s executed=%d", loaded.Status, tools.executed)
+	}
+	calls, _ := store.ToolCalls(context.Background(), run.ID)
+	if len(calls) != 1 || calls[0].RequiresApproval {
+		t.Fatalf("classified write unexpectedly required approval: %#v", calls)
 	}
 }
 

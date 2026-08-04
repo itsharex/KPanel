@@ -88,6 +88,48 @@ func TestStoreProviderSessionRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestStoreInitialTitleAndConversationMessages(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenStore(filepath.Join(t.TempDir(), "ai.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	session, err := store.CreateSession(ctx, Session{UserID: "admin", ProviderID: "provider", ModelID: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetInitialSessionTitle(ctx, "admin", session.ID, "查询 CPU 使用情况"); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = store.AddMessage(ctx, Message{SessionID: session.ID, Role: RoleUser, Content: "查询 CPU"})
+	_, _ = store.AddMessage(ctx, Message{SessionID: session.ID, Role: RoleTool, ToolCallID: "call-1", Content: "internal tool result"})
+	_, _ = store.AddMessage(ctx, Message{SessionID: session.ID, Role: RoleUser, ToolCallID: "legacy-call", Content: "legacy internal tool result"})
+	_, _ = store.AddMessage(ctx, Message{SessionID: session.ID, Role: RoleAssistant, Content: "CPU 正常"})
+	if err := store.SetInitialSessionTitle(ctx, "admin", session.ID, "不应覆盖"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Session(ctx, "admin", session.ID)
+	if err != nil || loaded.Title != "查询 CPU 使用情况" {
+		t.Fatalf("session title=%q err=%v", loaded.Title, err)
+	}
+	page, err := store.ConversationMessagesPage(ctx, session.ID, 50, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 || page.Items[0].Role != RoleUser || page.Items[1].Role != RoleAssistant {
+		t.Fatalf("conversation messages=%#v", page.Items)
+	}
+	latest, err := store.ConversationMessagesPage(ctx, session.ID, 1, "")
+	if err != nil || len(latest.Items) != 1 || latest.Items[0].Role != RoleAssistant || latest.NextCursor == "" {
+		t.Fatalf("latest conversation page=%#v err=%v", latest, err)
+	}
+	earlier, err := store.ConversationMessagesPage(ctx, session.ID, 1, latest.NextCursor)
+	if err != nil || len(earlier.Items) != 1 || earlier.Items[0].Role != RoleUser {
+		t.Fatalf("earlier conversation page=%#v err=%v", earlier, err)
+	}
+}
+
 func TestOpenStoreInterruptsRunningRunAndPreservesApproval(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ai.db")
 	store, err := OpenStore(path)

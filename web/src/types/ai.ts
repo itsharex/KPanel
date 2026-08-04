@@ -8,7 +8,7 @@ export interface AIProvider {
 }
 export interface AIModel { id:string;providerId:string;modelId:string;displayName:string;contextWindow:number;toolCalling:boolean;enabled:boolean;isDefault:boolean }
 export interface AISession { id:string;title:string;providerId:string;modelId:string;providerName:string;modelName:string;summary?:string;pinned:boolean;archived:boolean;createdAt:string;updatedAt:string;lastMessageAt:string;modelAvailable:boolean;running:boolean;activeRunId?:string;lastRunId?:string;lastRunStatus?:AIRun['status'] }
-export interface AIMessage { id:string;sessionId:string;runId?:string;role:'system'|'user'|'assistant'|'tool';content:string;providerName?:string;modelName?:string;createdAt:string }
+export interface AIMessage { id:string;sessionId:string;runId?:string;role:'system'|'user'|'assistant'|'tool';content:string;providerName?:string;modelName?:string;toolCallId?:string;createdAt:string }
 export interface AIRun { id:string;sessionId:string;providerId:string;providerName:string;modelId:string;modelName:string;status:'queued'|'running'|'pending_approval'|'completed'|'failed'|'cancelled'|'interrupted';step:number;usage:{inputTokens:number;outputTokens:number;totalTokens:number};errorCode?:string;errorMessage?:string;createdAt:string;updatedAt:string }
 export interface AIToolCall { id:string;runId:string;sessionId:string;name:string;arguments?:Record<string,unknown>;argumentsPreview?:string;resultPreview?:string;status:'pending_approval'|'running'|'completed'|'rejected'|'failed';requiresApproval:boolean;createdAt:string;updatedAt:string }
 export interface AIRunSnapshot { run:AIRun;toolCalls:AIToolCall[];messages:AIMessage[] }

@@ -493,6 +493,18 @@ func (s *Store) UpdateSession(ctx context.Context, userID, id, title, providerID
 	return item, err
 }
 
+func (s *Store) SetInitialSessionTitle(ctx context.Context, userID, id, title string) error {
+	if title == "" || len(title) > 120 || strings.IndexFunc(title, unicode.IsControl) >= 0 {
+		return errors.New("session title is invalid")
+	}
+	now := s.now().UTC()
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET title=?,updated_at=?
+		WHERE id=? AND user_id=? AND title='新会话'
+		AND NOT EXISTS(SELECT 1 FROM messages WHERE session_id=? AND role='user' AND tool_call_id='')`,
+		title, millis(now), id, userID, id)
+	return err
+}
+
 func (s *Store) DeleteSession(ctx context.Context, userID, id string) error {
 	var active int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE session_id=? AND status IN ('queued','running','pending_approval')`, id).Scan(&active); err != nil {
@@ -544,17 +556,33 @@ func (s *Store) Messages(ctx context.Context, sessionID string, limit int) ([]Me
 	return page.Items, err
 }
 
+func (s *Store) ConversationMessages(ctx context.Context, sessionID string, limit int) ([]Message, error) {
+	page, err := s.ConversationMessagesPage(ctx, sessionID, limit, "")
+	return page.Items, err
+}
+
+func (s *Store) ConversationMessagesPage(ctx context.Context, sessionID string, limit int, before string) (Page[Message], error) {
+	return s.messagesPage(ctx, sessionID, limit, before, true)
+}
+
 func (s *Store) MessagesPage(ctx context.Context, sessionID string, limit int, before string) (Page[Message], error) {
+	return s.messagesPage(ctx, sessionID, limit, before, false)
+}
+
+func (s *Store) messagesPage(ctx context.Context, sessionID string, limit int, before string, conversationOnly bool) (Page[Message], error) {
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
 	query := `SELECT id,session_id,run_id,role,content,provider_id,provider_name,model_id,model_name,tool_call_id,created_at FROM messages WHERE session_id=?`
 	args := []any{sessionID}
+	if conversationOnly {
+		query += ` AND tool_call_id='' AND role IN ('user','assistant')`
+	}
 	if before != "" {
-		query += ` AND (created_at,id)<(SELECT created_at,id FROM messages WHERE id=? AND session_id=?)`
+		query += ` AND (created_at,rowid)<(SELECT created_at,rowid FROM messages WHERE id=? AND session_id=?)`
 		args = append(args, before, sessionID)
 	}
-	query += ` ORDER BY created_at DESC,id DESC LIMIT ?`
+	query += ` ORDER BY created_at DESC,rowid DESC LIMIT ?`
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

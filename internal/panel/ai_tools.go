@@ -16,6 +16,53 @@ import (
 
 type panelAITools struct{ server *Server }
 
+func (t *panelAITools) RequiresApproval(name string, arguments json.RawMessage) bool {
+	for _, definition := range t.Definitions() {
+		if definition.Name == name && definition.ReadOnly {
+			return false
+		}
+	}
+	switch name {
+	case "host_diagnostic_start":
+		return false
+	case "host_app_action":
+		var input struct{ Action string }
+		if json.Unmarshal(arguments, &input) != nil {
+			return true
+		}
+		switch input.Action {
+		case "install", "start", "stop", "restart", "check_update", "update", "direct_access":
+			return false
+		default:
+			return true
+		}
+	case "host_docker_container_action":
+		var input struct{ Action string }
+		if json.Unmarshal(arguments, &input) != nil {
+			return true
+		}
+		switch input.Action {
+		case "start", "stop", "restart":
+			return false
+		default:
+			return true
+		}
+	case "host_site_change":
+		var input struct{ Operation string }
+		if json.Unmarshal(arguments, &input) != nil {
+			return true
+		}
+		switch input.Operation {
+		case "create", "update":
+			return false
+		default:
+			return true
+		}
+	default:
+		return true
+	}
+}
+
 func (t *panelAITools) DryRun(name string, arguments json.RawMessage) error {
 	for _, definition := range t.Definitions() {
 		if definition.Name == name {

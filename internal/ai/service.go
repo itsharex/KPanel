@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 type Service struct {
@@ -106,6 +107,11 @@ func (s *Service) Send(ctx context.Context, userID, sessionID, content string) (
 	if !session.ModelAvailable {
 		return Run{}, errors.New("session model is unavailable")
 	}
+	if session.Title == "新会话" {
+		if err := s.Store.SetInitialSessionTitle(ctx, userID, session.ID, sessionTitleFromMessage(content)); err != nil {
+			return Run{}, err
+		}
+	}
 	active, activeErr := s.Store.ActiveRun(ctx, session.ID, userID)
 	if activeErr == nil {
 		if _, err := s.Store.AddMessage(ctx, Message{SessionID: session.ID, RunID: active.ID, Role: RoleUser, Content: content}); err != nil {
@@ -131,6 +137,29 @@ func (s *Service) Send(ctx context.Context, userID, sessionID, content string) (
 		}
 	}()
 	return run, nil
+}
+
+func sessionTitleFromMessage(content string) string {
+	content = strings.Map(func(value rune) rune {
+		if unicode.IsControl(value) {
+			return ' '
+		}
+		return value
+	}, strings.TrimSpace(content))
+	content = strings.Join(strings.Fields(content), " ")
+	for _, separator := range []string{"。", "！", "？", "\n", ". ", "! ", "? "} {
+		if index := strings.Index(content, separator); index > 0 {
+			content = strings.TrimSpace(content[:index])
+		}
+	}
+	characters := []rune(content)
+	if len(characters) > 36 {
+		content = strings.TrimSpace(string(characters[:36])) + "…"
+	}
+	if content == "" {
+		return "新会话"
+	}
+	return content
 }
 
 func (s *Service) Resume(runID string, decision Decision) {

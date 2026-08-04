@@ -86,17 +86,14 @@ describe('AI workspace reconnect', () => {
     wrapper.unmount()
   })
 
-  it('creates a conversation with an explicitly selected provider and model', async () => {
+  it('creates a conversation immediately with the default model', async () => {
     const router = await makeRouter()
-    mocks.create.mockResolvedValue({ id: 's2', title: '巡检', providerId: 'p2', modelId: 'm2', providerName: 'Secondary', modelName: 'Next', modelAvailable: true, pinned: false, archived: false, running: false, createdAt: '', updatedAt: '', lastMessageAt: '' })
+    mocks.create.mockResolvedValue({ id: 's2', title: '新会话', providerId: 'p1', modelId: 'm1', providerName: 'Primary', modelName: 'Mock', modelAvailable: true, pinned: false, archived: false, running: false, createdAt: '', updatedAt: '', lastMessageAt: '' })
     const wrapper = mount(AiView, { global: { plugins: [router] } })
     await flushPromises()
     await wrapper.get('.ai-new-chat').trigger('click')
-    await wrapper.get('select[aria-label="新会话模型"]').setValue('m2')
-    await wrapper.get('.ai-new-session-form input').setValue('巡检')
-    await wrapper.get('.ai-new-session-dialog .button--primary').trigger('click')
     await flushPromises()
-    expect(mocks.create).toHaveBeenCalledWith('p2','m2','巡检')
+    expect(mocks.create).toHaveBeenCalledWith('p1','m1')
     expect(router.currentRoute.value.fullPath).toBe('/ai/s/s2')
     wrapper.unmount()
   })
@@ -123,6 +120,46 @@ describe('AI workspace reconnect', () => {
     await wrapper.get('button[aria-label="查看已归档会话"]').trigger('click')
     await flushPromises()
     expect(mocks.sessions).toHaveBeenCalledWith('',true)
+    wrapper.unmount()
+  })
+
+  it('never renders internal tool messages as user conversation text', async () => {
+    const router = await makeRouter()
+    const wrapper = mount(AiView, { global: { plugins: [router] } })
+    await flushPromises()
+    MockEventSource.instances[0]?.emit('run.snapshot',{
+      run:{id:'run-active',sessionId:'s1',providerId:'p1',providerName:'Primary',modelId:'m1',modelName:'Mock',status:'running',step:1,usage:{inputTokens:0,outputTokens:0,totalTokens:0},createdAt:'',updatedAt:''},
+      toolCalls:[],
+      messages:[
+        {id:'user',sessionId:'s1',role:'user',content:'查询 CPU',createdAt:''},
+        {id:'tool',sessionId:'s1',role:'tool',toolCallId:'call-1',content:'<tool_result>secret raw data</tool_result>',createdAt:''},
+        {id:'legacy',sessionId:'s1',role:'user',toolCallId:'call-2',content:'legacy raw data',createdAt:''},
+      ],
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('查询 CPU')
+    expect(wrapper.text()).not.toContain('secret raw data')
+    expect(wrapper.text()).not.toContain('legacy raw data')
+    wrapper.unmount()
+  })
+
+  it('keeps the completed answer visible while history reconciles', async () => {
+    const router = await makeRouter()
+    const wrapper = mount(AiView, { global: { plugins: [router] } })
+    await flushPromises()
+    const stream=MockEventSource.instances[0]
+    stream?.emit('run.snapshot',{
+      run:{id:'run-active',sessionId:'s1',providerId:'p1',providerName:'Primary',modelId:'m1',modelName:'Mock',status:'running',step:1,usage:{inputTokens:0,outputTokens:0,totalTokens:0},createdAt:'',updatedAt:''},
+      toolCalls:[],messages:[{id:'user',sessionId:'s1',role:'user',content:'查询 CPU',createdAt:''}],
+    })
+    stream?.emit('message.completed',{id:'answer',sessionId:'s1',runId:'run-active',role:'assistant',content:'CPU 使用率正常',modelName:'Mock',createdAt:''})
+    await flushPromises()
+    expect(wrapper.text()).toContain('CPU 使用率正常')
+    mocks.messages.mockReturnValueOnce(new Promise(()=>{}))
+    stream?.emit('run.completed',{id:'run-active',sessionId:'s1',providerId:'p1',providerName:'Primary',modelId:'m1',modelName:'Mock',status:'completed',step:2,usage:{inputTokens:1,outputTokens:1,totalTokens:2},createdAt:'',updatedAt:''})
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('CPU 使用率正常')
+    expect(wrapper.text()).not.toContain('今天想管理什么？')
     wrapper.unmount()
   })
 })
