@@ -42,6 +42,14 @@ type fileTextResult struct {
 	ResourceVersion string `json:"resourceVersion"`
 }
 
+type fileTailResult struct {
+	Path            string `json:"path"`
+	Content         string `json:"content"`
+	SizeBytes       int64  `json:"sizeBytes"`
+	ResourceVersion string `json:"resourceVersion"`
+	Truncated       bool   `json:"truncated"`
+}
+
 var errThumbnailUnavailable = errors.New("该图片不能生成缩略图")
 
 func (s *Server) fileList(w http.ResponseWriter, r *http.Request) {
@@ -144,6 +152,61 @@ func (s *Server) fileText(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, fileTextResult{
 		Path: entry.Path, Content: string(content), SizeBytes: entry.SizeBytes,
 		ResourceVersion: entry.ResourceVersion,
+	})
+}
+
+func (s *Server) fileTail(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "path", "maxBytes") {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "File tail query is invalid", "")
+		return
+	}
+	maxBytes := int64(32 << 10)
+	if raw := r.URL.Query().Get("maxBytes"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 1024 || parsed > fileToolTextMaxBytes {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_limit", "File tail limit must be between 1024 and 65536 bytes", "")
+			return
+		}
+		maxBytes = parsed
+	}
+	file, entry, err := s.files.Open(r.Context(), r.URL.Query().Get("path"))
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	defer file.Close()
+	start := entry.SizeBytes - maxBytes
+	if start < 0 {
+		start = 0
+	}
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	if len(content) > int(maxBytes) {
+		content = content[:maxBytes]
+	}
+	if start > 0 {
+		if newline := bytes.IndexByte(content, '\n'); newline >= 0 {
+			content = content[newline+1:]
+		}
+	}
+	for removed := 0; start > 0 && len(content) > 0 && !utf8.Valid(content) && removed < utf8.UTFMax-1; removed++ {
+		content = content[1:]
+	}
+	if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+		writeProblem(w, requestID, http.StatusUnprocessableEntity, "text_preview_unavailable", "File tail is not valid UTF-8 text", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, fileTailResult{
+		Path: entry.Path, Content: string(content), SizeBytes: entry.SizeBytes,
+		ResourceVersion: entry.ResourceVersion, Truncated: start > 0,
 	})
 }
 

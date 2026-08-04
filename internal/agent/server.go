@@ -64,24 +64,25 @@ type monitoringHistoryProvider interface {
 }
 
 type Server struct {
-	tokenHash       [32]byte
-	version         string
-	protocolVersion string
-	webRoot         string
-	system          *systeminfo.Collector
-	systemManager   *systemmanage.Manager
-	sites           *sites.Discoverer
-	sitesManager    *sites.Manager
-	docker          *dockerx.Client
-	appMarket       *appmarket.Service
-	diagnostics     *diagnostics.Service
-	webEnvironment  *webenv.Service
-	files           *filemanager.Manager
-	siteIcons       siteIconProvider
-	monitoring      monitoringHistoryProvider
-	terminals       *terminal.Manager
-	thumbnailGate   chan struct{}
-	now             func() time.Time
+	tokenHash        [32]byte
+	version          string
+	protocolVersion  string
+	webRoot          string
+	system           *systeminfo.Collector
+	systemManager    *systemmanage.Manager
+	sites            *sites.Discoverer
+	sitesManager     *sites.Manager
+	docker           *dockerx.Client
+	appMarket        *appmarket.Service
+	diagnostics      *diagnostics.Service
+	webEnvironment   *webenv.Service
+	files            *filemanager.Manager
+	siteIcons        siteIconProvider
+	monitoring       monitoringHistoryProvider
+	terminals        *terminal.Manager
+	thumbnailGate    chan struct{}
+	storageUsageGate chan struct{}
+	now              func() time.Time
 }
 
 func (s *Server) Close() {
@@ -164,24 +165,25 @@ func NewServer(config Config) (*Server, error) {
 		}
 	}
 	return &Server{
-		tokenHash:       sha256.Sum256(config.Token),
-		version:         config.Version,
-		protocolVersion: config.ProtocolVersion,
-		webRoot:         config.WebRoot,
-		system:          config.System,
-		systemManager:   config.SystemManager,
-		sites:           config.Sites,
-		sitesManager:    config.SitesManager,
-		docker:          config.Docker,
-		appMarket:       config.AppMarket,
-		diagnostics:     config.Diagnostics,
-		webEnvironment:  config.WebEnvironment,
-		files:           config.Files,
-		siteIcons:       config.SiteIcons,
-		monitoring:      config.Monitoring,
-		terminals:       config.Terminals,
-		thumbnailGate:   make(chan struct{}, 2),
-		now:             config.Now,
+		tokenHash:        sha256.Sum256(config.Token),
+		version:          config.Version,
+		protocolVersion:  config.ProtocolVersion,
+		webRoot:          config.WebRoot,
+		system:           config.System,
+		systemManager:    config.SystemManager,
+		sites:            config.Sites,
+		sitesManager:     config.SitesManager,
+		docker:           config.Docker,
+		appMarket:        config.AppMarket,
+		diagnostics:      config.Diagnostics,
+		webEnvironment:   config.WebEnvironment,
+		files:            config.Files,
+		siteIcons:        config.SiteIcons,
+		monitoring:       config.Monitoring,
+		terminals:        config.Terminals,
+		thumbnailGate:    make(chan struct{}, 2),
+		storageUsageGate: make(chan struct{}, 1),
+		now:              config.Now,
 	}, nil
 }
 
@@ -232,6 +234,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemTelemetry)
 	case r.URL.Path == "/v1/system/public-network":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.publicNetwork)
+	case r.URL.Path == "/v1/system/processes":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemProcesses)
+	case r.URL.Path == "/v1/system/storage-usage":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemStorageUsage)
 	case r.URL.Path == "/v1/monitoring/history":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.monitoringHistory)
 	case r.URL.Path == "/v1/system/actions":
@@ -282,6 +288,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.fileContent(w, r, requestID)
 	case r.URL.Path == "/v1/files/text":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.fileText)
+	case r.URL.Path == "/v1/files/tail":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.fileTail)
 	case r.URL.Path == "/v1/files/upload":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.fileUpload)
 	case r.URL.Path == "/v1/files/actions":
@@ -294,6 +302,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.containerList)
 	case r.URL.Path == "/v1/docker/container-stats":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.containerStats)
+	case r.URL.Path == "/v1/nginx/test":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.nginxTest)
+	case r.URL.Path == "/v1/nginx/reload":
+		s.requireMethod(w, r, requestID, http.MethodPost, s.nginxReload)
 	case r.URL.Path == "/v1/docker/images":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.imageList)
 	case r.URL.Path == "/v1/docker/networks":
@@ -427,6 +439,8 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	checks.Wait()
 	items := []contract.Capability{
 		{ID: "system.read", Enabled: true, Methods: []string{"GET"}},
+		{ID: "system.processes.read", Enabled: true, Methods: []string{"GET"}},
+		{ID: "system.storage.read", Enabled: true, Methods: []string{"GET"}},
 		{ID: "monitoring.history.read", Enabled: s.monitoring != nil, Reason: reasonUnless(s.monitoring != nil, "历史监控服务未配置"), Methods: []string{"GET"}},
 		{ID: "apps.read", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "apps.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
@@ -437,6 +451,8 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		{ID: "docker.lifecycle", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
 		{ID: "docker.exec", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
 		{ID: "docker.maintenance", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET", "POST"}},
+		{ID: "nginx.validate", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
+		{ID: "nginx.reload", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
 		{ID: "sites.write", Enabled: siteWriteErr == nil, Reason: reasonIf(siteWriteErr, "网站写入依赖未就绪"), Methods: []string{"POST", "PATCH"}},
 		{ID: "sites.wordpress.install", Enabled: wordPressWriteErr == nil, Reason: reasonIf(wordPressWriteErr, "WordPress 一键搭建条件不满足"), Methods: []string{"POST"}},
 		{ID: "sites.proxy.install", Enabled: proxyWriteErr == nil, Reason: reasonIf(proxyWriteErr, "kejilion.sh IP+端口反向代理命令不可用"), Methods: []string{"POST"}},
@@ -515,6 +531,43 @@ func (s *Server) publicNetwork(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3500*time.Millisecond)
 	defer cancel()
 	writeJSON(w, http.StatusOK, s.system.PublicNetwork(ctx))
+}
+
+func (s *Server) systemProcesses(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_query", "Process query is invalid", "")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	result, err := s.system.Processes(ctx)
+	if err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "process_metrics_unavailable", "Process metrics are unavailable", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) systemStorageUsage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "path") || r.URL.Query().Get("path") == "" {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_query", "Storage usage query is invalid", "")
+		return
+	}
+	select {
+	case s.storageUsageGate <- struct{}{}:
+		defer func() { <-s.storageUsageGate }()
+	default:
+		writeProblem(w, requestIDFrom(w), http.StatusTooManyRequests, "storage_usage_busy", "Another storage usage analysis is already running", "")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	result, err := s.system.StorageUsage(ctx, r.URL.Query().Get("path"))
+	if err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusUnprocessableEntity, "storage_usage_unavailable", "Storage usage analysis is unavailable", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) monitoringHistory(w http.ResponseWriter, r *http.Request) {
@@ -1336,6 +1389,42 @@ func (s *Server) containerStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) nginxTest(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_query", "Nginx test query is invalid", "")
+		return
+	}
+	err := s.docker.NginxTest(r.Context())
+	if err == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": true, "checkedAt": s.now().UTC()})
+		return
+	}
+	var commandError *dockerx.NginxExecError
+	if errors.As(err, &commandError) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"valid": false, "error": safeDetail(commandError), "checkedAt": s.now().UTC(),
+		})
+		return
+	}
+	writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "nginx_unavailable", "Managed Nginx is unavailable", safeDetail(err))
+}
+
+func (s *Server) nginxReload(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_query", "Nginx reload query is invalid", "")
+		return
+	}
+	if err := s.docker.NginxTest(r.Context()); err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusUnprocessableEntity, "nginx_config_invalid", "Nginx configuration validation failed", safeDetail(err))
+		return
+	}
+	if err := s.docker.NginxReload(r.Context()); err != nil {
+		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "nginx_reload_failed", "Nginx reload failed", safeDetail(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"valid": true, "reloaded": true, "reloadedAt": s.now().UTC()})
 }
 
 func (s *Server) imageList(w http.ResponseWriter, r *http.Request) {

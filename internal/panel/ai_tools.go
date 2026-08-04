@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	pathpkg "path"
 	"strings"
 	"time"
 
@@ -37,6 +38,21 @@ var dockerMaintenanceToolSchema = json.RawMessage(`{
   "additionalProperties":false
 }`)
 
+var systemActionToolSchema = json.RawMessage(`{
+  "type":"object","required":["action"],
+  "properties":{
+    "action":{"enum":["hostname","ssh-port","ssh-defense","dns","timezone","swap","mirror","ip-preference","kernel-tuning","bbr","bbrv3","update","cleanup","reboot"]},
+    "hostname":{"type":"string"},"port":{"type":"integer","minimum":1,"maximum":65535},
+    "servers":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":4},
+    "timezone":{"type":"string"},"swapSizeMiB":{"type":"integer","minimum":0},
+    "mirrorPreset":{"enum":["cn-default","cn-edu","abroad","smart"]},
+    "preference":{"enum":["ipv4","system_default"]},
+    "profile":{"enum":["high","balanced","web","stream","game","off"]},
+    "maintenancePolicy":{"enum":["install","update","uninstall","full","cache","standard"]},
+    "confirmation":{"type":"string"},"enabled":{"type":"boolean"}
+  },"additionalProperties":false
+}`)
+
 func (t *panelAITools) RequiresApproval(name string, arguments json.RawMessage) bool {
 	for _, definition := range t.Definitions() {
 		if definition.Name == name && definition.ReadOnly {
@@ -48,6 +64,17 @@ func (t *panelAITools) RequiresApproval(name string, arguments json.RawMessage) 
 		return false
 	case "host_file_write":
 		return false
+	case "host_file_trash", "host_nginx_reload":
+		return false
+	case "host_system_action":
+		var input struct {
+			Action            string `json:"action"`
+			MaintenancePolicy string `json:"maintenancePolicy"`
+		}
+		if json.Unmarshal(arguments, &input) != nil {
+			return true
+		}
+		return input.Action != "cleanup" || input.MaintenancePolicy != "cache"
 	case "host_app_action":
 		var input struct{ Action string }
 		if json.Unmarshal(arguments, &input) != nil {
@@ -103,6 +130,8 @@ func (t *panelAITools) Definitions() []ai.ToolDefinition {
 	readSchema := json.RawMessage(`{"type":"object","additionalProperties":false}`)
 	return []ai.ToolDefinition{
 		{Name: "host_system_summary", Description: "读取宿主机系统概览与 resourceVersion", Schema: readSchema, ReadOnly: true},
+		{Name: "host_system_processes", Description: "采样宿主机进程 CPU 与内存排行，只返回 PID、父 PID、名称、状态、UID、CPU、内存和启动标识，不返回命令行敏感参数", Schema: readSchema, ReadOnly: true},
+		{Name: "host_system_storage_usage", Description: "对固定安全根目录执行有界磁盘占用分析，返回其直接子项的递归占用排行；用于定位磁盘空间大户", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"enum":["/","/home","/home/docker","/home/web","/opt","/root","/srv","/tmp","/usr","/var","/var/lib/docker","/var/log"]}},"additionalProperties":false}`), ReadOnly: true},
 		{Name: "host_public_network", Description: "读取宿主机公网网络信息", Schema: readSchema, ReadOnly: true},
 		{Name: "host_sites_list", Description: "读取网站列表与 resourceVersion", Schema: readSchema, ReadOnly: true},
 		{Name: "host_apps_list", Description: "读取应用列表、状态与 resourceVersion", Schema: readSchema, ReadOnly: true},
@@ -114,14 +143,18 @@ func (t *panelAITools) Definitions() []ai.ToolDefinition {
 		{Name: "host_docker_networks", Description: "读取 Docker 网络", Schema: readSchema, ReadOnly: true},
 		{Name: "host_docker_volumes", Description: "读取 Docker 卷", Schema: readSchema, ReadOnly: true},
 		{Name: "host_docker_jobs", Description: "读取 Docker 后台任务", Schema: readSchema, ReadOnly: true},
-		{Name: "host_system_action", Description: "执行 KPanel 已注册的结构化系统操作", Schema: json.RawMessage(`{"type":"object","required":["action"],"properties":{"action":{"type":"string"},"hostname":{"type":"string"},"port":{"type":"integer"},"servers":{"type":"array","items":{"type":"string"}},"hostsOperation":{"type":"string"},"hostsEntry":{"type":"string"},"resourceVersion":{"type":"string"}},"additionalProperties":true}`)},
+		{Name: "host_system_action", Description: "执行 KPanel 已注册的结构化系统操作；磁盘清理使用 action=cleanup，maintenancePolicy=cache 或 standard，先读取磁盘占用再执行", Schema: systemActionToolSchema},
 		{Name: "host_app_action", Description: "安装、启停、更新或卸载已注册应用", Schema: json.RawMessage(`{"type":"object","required":["appId","action"],"properties":{"appId":{"type":"string"},"action":{"enum":["install","start","stop","restart","check_update","update","uninstall","direct_access"]},"hostPort":{"type":"integer"},"accessMode":{"type":"string"},"resourceVersion":{"type":"string"}},"additionalProperties":false}`)},
 		{Name: "host_docker_container_action", Description: "启停、重启或删除容器", Schema: json.RawMessage(`{"type":"object","required":["containerId","action","resourceVersion"],"properties":{"containerId":{"type":"string"},"action":{"enum":["start","stop","restart","remove"]},"resourceVersion":{"type":"string"}},"additionalProperties":false}`)},
 		{Name: "host_diagnostic_start", Description: "启动固定诊断检查并返回任务 ID", Schema: json.RawMessage(`{"type":"object","required":["checkId"],"properties":{"checkId":{"type":"string"}},"additionalProperties":false}`)},
 		{Name: "host_docker_task", Description: "仅在用户明确要求修改 Docker 配置、创建/删除资源、清理或备份时启动结构化维护任务；状态和资源占用查询禁止使用此工具", Schema: dockerMaintenanceToolSchema},
 		{Name: "host_file_list", Description: "列出受 KPanel File Manager 保护规则约束的目录，返回文件 resourceVersion", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","maxLength":4096},"limit":{"type":"integer","minimum":1,"maximum":200},"search":{"type":"string","maxLength":128}},"additionalProperties":false}`), ReadOnly: true},
 		{Name: "host_file_read", Description: "读取受 KPanel File Manager 保护规则约束的 UTF-8 文本文件，最大 64 KiB", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","maxLength":4096}},"additionalProperties":false}`), ReadOnly: true},
+		{Name: "host_file_tail", Description: "读取受保护规则约束的大型 UTF-8 日志文件尾部，适合查看 Nginx 与服务错误日志", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","maxLength":4096},"maxBytes":{"type":"integer","minimum":1024,"maximum":65536}},"additionalProperties":false}`), ReadOnly: true},
 		{Name: "host_file_write", Description: "使用 resourceVersion 覆盖现有 UTF-8 文本文件，最大 64 KiB；受保护和只读目录永远不可写", Schema: json.RawMessage(`{"type":"object","required":["path","content","expectedResourceVersion"],"properties":{"path":{"type":"string","maxLength":4096},"content":{"type":"string","maxLength":65536},"expectedResourceVersion":{"type":"string"}},"additionalProperties":false}`)},
+		{Name: "host_file_trash", Description: "把最多 20 个已读取且版本未变化的文件或目录移入 KPanel 回收站；不执行永久删除，核心路径仍不可触碰", Schema: json.RawMessage(`{"type":"object","required":["sources","expectedResourceVersions"],"properties":{"sources":{"type":"array","items":{"type":"string","maxLength":4096},"minItems":1,"maxItems":20},"expectedResourceVersions":{"type":"object","additionalProperties":{"type":"string"}}},"additionalProperties":false}`)},
+		{Name: "host_nginx_test", Description: "对 KPanel 管理的 Nginx 容器执行固定 nginx -t，返回语法错误位置；修改配置后必须先调用", Schema: readSchema, ReadOnly: true},
+		{Name: "host_nginx_reload", Description: "先执行固定 nginx -t，通过后才安全 reload KPanel 管理的 Nginx；配置无效时拒绝重载", Schema: readSchema},
 		{Name: "host_site_change", Description: "创建、更新或删除网站配置", Schema: json.RawMessage(`{"type":"object","required":["operation"],"properties":{"operation":{"enum":["create","update","delete"]},"siteId":{"type":"string"},"payload":{"type":"object"}},"additionalProperties":false}`)},
 		{Name: "host_job_input", Description: "向已存在的 KPanel 交互任务提交输入", Schema: json.RawMessage(`{"type":"object","required":["kind","jobId","data"],"properties":{"kind":{"enum":["site","app","diagnostic"]},"jobId":{"type":"string"},"data":{"type":"string","maxLength":16384}},"additionalProperties":false}`)},
 		{Name: "host_docker_exec", Description: "在指定 Docker 容器内执行受 Agent 校验的命令", Schema: json.RawMessage(`{"type":"object","required":["containerId","resourceVersion","command"],"properties":{"containerId":{"type":"string"},"resourceVersion":{"type":"string"},"command":{"type":"array","items":{"type":"string"},"maxItems":32}},"additionalProperties":false}`)},
@@ -134,19 +167,34 @@ func (t *panelAITools) Execute(ctx context.Context, execution ai.ToolExecutionCo
 	}
 	readPaths := map[string]string{
 		"host_system_summary": "/v1/system/summary", "host_public_network": "/v1/system/public-network", "host_sites_list": "/v1/sites",
+		"host_system_processes": "/v1/system/processes", "host_nginx_test": "/v1/nginx/test",
 		"host_apps_list": "/v1/apps", "host_diagnostics_list": "/v1/diagnostics", "host_docker_summary": "/v1/docker/summary",
 		"host_docker_containers": "/v1/docker/containers", "host_docker_images": "/v1/docker/images", "host_docker_networks": "/v1/docker/networks",
 		"host_docker_volumes": "/v1/docker/volumes", "host_docker_jobs": "/v1/docker/jobs", "host_docker_resource_usage": "/v1/docker/container-stats",
 	}
 	requestID := newRequestID()
-	if name == "host_file_list" || name == "host_file_read" {
+	if name == "host_system_storage_usage" {
 		var input struct {
-			Path   string `json:"path"`
-			Limit  int    `json:"limit,omitempty"`
-			Search string `json:"search,omitempty"`
+			Path string `json:"path"`
+		}
+		if err := decodeStrictToolArguments(arguments, &input); err != nil || !aiStorageRoot(input.Path) {
+			return "", errors.New("invalid storage usage query")
+		}
+		response, err := t.server.hostOps.Get(ctx, "/v1/system/storage-usage", url.Values{"path": []string{input.Path}}.Encode(), requestID)
+		return t.finish(execution, name, input.Path, requestID, nil, response, err)
+	}
+	if name == "host_file_list" || name == "host_file_read" || name == "host_file_tail" {
+		var input struct {
+			Path     string `json:"path"`
+			Limit    int    `json:"limit,omitempty"`
+			Search   string `json:"search,omitempty"`
+			MaxBytes int    `json:"maxBytes,omitempty"`
 		}
 		if err := decodeStrictToolArguments(arguments, &input); err != nil || input.Path == "" || len(input.Path) > 4096 || len(input.Search) > 128 {
 			return "", errors.New("invalid file query")
+		}
+		if name != "host_file_list" && !aiFileReadable(input.Path) {
+			return "", errors.New("AI access to sensitive file content is forbidden")
 		}
 		values := url.Values{"path": []string{input.Path}}
 		path := "/v1/files/text"
@@ -162,6 +210,15 @@ func (t *panelAITools) Execute(ctx context.Context, execution ai.ToolExecutionCo
 			if input.Search != "" {
 				values.Set("search", input.Search)
 			}
+		} else if name == "host_file_tail" {
+			path = "/v1/files/tail"
+			if input.MaxBytes == 0 {
+				input.MaxBytes = 32 << 10
+			}
+			if input.MaxBytes < 1024 || input.MaxBytes > 64<<10 {
+				return "", errors.New("invalid file tail limit")
+			}
+			values.Set("maxBytes", fmt.Sprint(input.MaxBytes))
 		}
 		response, err := t.server.hostOps.Get(ctx, path, values.Encode(), requestID)
 		return t.finish(execution, name, input.Path, requestID, nil, response, err)
@@ -190,7 +247,7 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 	switch name {
 	case "host_system_action":
 		var input contract.SystemActionRequest
-		if err = json.Unmarshal(raw, &input); err != nil {
+		if err = decodeStrictToolArguments(raw, &input); err != nil {
 			return
 		}
 		if field, detail := validateSystemAction(&input); field != "" {
@@ -277,12 +334,37 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 		if err = decodeStrictToolArguments(raw, &input); err != nil {
 			return
 		}
-		if input.Path == "" || len(input.Path) > 4096 || len(input.Content) > 64<<10 || !resourceVersionPattern.MatchString(input.ExpectedResourceVersion) {
+		if input.Path == "" || len(input.Path) > 4096 || len(input.Content) > 64<<10 || !resourceVersionPattern.MatchString(input.ExpectedResourceVersion) || !aiFileMutable(input.Path) {
 			err = errors.New("invalid file write request")
 			return
 		}
 		method, path, target = http.MethodPut, "/v1/files/content", input.Path
 		body, err = json.Marshal(contract.FileWriteRequest{Content: input.Content, ExpectedResourceVersion: input.ExpectedResourceVersion})
+	case "host_file_trash":
+		var input struct {
+			Sources                  []string          `json:"sources"`
+			ExpectedResourceVersions map[string]string `json:"expectedResourceVersions"`
+		}
+		if err = decodeStrictToolArguments(raw, &input); err != nil {
+			return
+		}
+		if len(input.Sources) < 1 || len(input.Sources) > 20 || len(input.ExpectedResourceVersions) != len(input.Sources) {
+			err = errors.New("invalid file trash request")
+			return
+		}
+		for _, source := range input.Sources {
+			if source == "" || len(source) > 4096 || !resourceVersionPattern.MatchString(input.ExpectedResourceVersions[source]) || !aiFileMutable(source) {
+				err = errors.New("invalid file trash source or resourceVersion")
+				return
+			}
+		}
+		method, path, target = http.MethodPost, "/v1/files/actions", input.Sources[0]
+		body, err = json.Marshal(contract.FileActionRequest{Action: "trash", Sources: input.Sources, ExpectedResourceVersions: input.ExpectedResourceVersions})
+	case "host_nginx_reload":
+		if err = decodeStrictToolArguments(raw, &struct{}{}); err != nil {
+			return
+		}
+		method, path, target, body = http.MethodPost, "/v1/nginx/reload", "nginx", []byte(`{}`)
 	case "host_site_change":
 		var input struct {
 			Operation, SiteID string
@@ -388,6 +470,67 @@ func safeArgumentSummary(raw json.RawMessage) map[string]any {
 		}
 	}
 	return value
+}
+
+func aiFileReadable(raw string) bool {
+	clean, ok := normalizedAIFilePath(raw)
+	if !ok || hasPathPrefix(clean, "/proc") || hasPathPrefix(clean, "/sys") || hasPathPrefix(clean, "/dev") ||
+		hasPathPrefix(clean, "/etc/ssl/private") || hasPathPrefix(clean, "/etc/letsencrypt") ||
+		hasPathPrefix(clean, "/etc/wireguard") || hasPathPrefix(clean, "/var/lib/docker/swarm") ||
+		hasPathPrefix(clean, "/home/docker/kpanel") || strings.Contains(clean, "/.ssh/") || strings.HasSuffix(clean, "/.ssh") {
+		return false
+	}
+	base := strings.ToLower(pathpkg.Base(clean))
+	if base == "shadow" || base == "gshadow" || base == "credentials" || base == "credentials.json" ||
+		base == "auth.json" || base == "agent.token" || base == "token" || base == "secrets" ||
+		base == "id_rsa" || base == "id_ed25519" || base == "id_ecdsa" || base == "id_dsa" ||
+		strings.HasPrefix(base, ".env") || strings.HasSuffix(base, ".key") || strings.HasSuffix(base, ".pem") ||
+		strings.HasSuffix(base, ".p12") || strings.HasSuffix(base, ".pfx") || base == "environ" {
+		return false
+	}
+	return true
+}
+
+func aiFileMutable(raw string) bool {
+	clean, ok := normalizedAIFilePath(raw)
+	if !ok || strings.Contains(clean, "/.ssh/") || strings.HasSuffix(clean, "/.ssh") {
+		return false
+	}
+	for _, prefix := range []string{
+		"/proc", "/sys", "/dev", "/run", "/boot", "/usr", "/bin", "/sbin", "/lib", "/lib64",
+		"/var/lib/kejilion-panel", "/var/lib/docker", "/home/docker/kpanel", "/etc/kejilion-panel",
+		"/etc/systemd", "/etc/sudoers.d", "/etc/pam.d", "/etc/security", "/etc/ssh", "/var/spool/cron",
+	} {
+		if hasPathPrefix(clean, prefix) {
+			return false
+		}
+	}
+	switch clean {
+	case "/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow", "/etc/sudoers", "/etc/fstab", "/etc/crontab":
+		return false
+	}
+	return true
+}
+
+func normalizedAIFilePath(raw string) (string, bool) {
+	if raw == "" || len(raw) > 4096 || strings.IndexByte(raw, 0) >= 0 || !strings.HasPrefix(raw, "/") {
+		return "", false
+	}
+	clean := pathpkg.Clean(raw)
+	return clean, clean != "/"
+}
+
+func hasPathPrefix(value, prefix string) bool {
+	return value == prefix || strings.HasPrefix(value, strings.TrimSuffix(prefix, "/")+"/")
+}
+
+func aiStorageRoot(value string) bool {
+	switch value {
+	case "/", "/home", "/home/docker", "/home/web", "/opt", "/root", "/srv", "/tmp", "/usr", "/var", "/var/lib/docker", "/var/log":
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeStrictToolArguments(raw json.RawMessage, target any) error {

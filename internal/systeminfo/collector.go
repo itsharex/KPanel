@@ -26,6 +26,7 @@ type Collector struct {
 	LegacySwapPath             string
 	Now                        func() time.Time
 	CPUSampleInterval          time.Duration
+	ProcessSampleInterval      time.Duration
 	PublicNetworkLookupEnabled bool
 	PublicNetworkLookup        func(context.Context) (contract.PublicNetworkSummary, error)
 	PublicNetworkCacheTTL      time.Duration
@@ -44,6 +45,7 @@ func NewCollector() *Collector {
 		SwapPath: "/swapfile", LegacySwapPath: "/var/lib/kejilion-panel/system/swapfile",
 		Now:                        time.Now,
 		CPUSampleInterval:          150 * time.Millisecond,
+		ProcessSampleInterval:      300 * time.Millisecond,
 		PublicNetworkLookupEnabled: true,
 		PublicNetworkLookup:        lookupPublicNetwork,
 		PublicNetworkCacheTTL:      30 * time.Minute,
@@ -69,6 +71,9 @@ func (c *Collector) prepareDefaults() {
 		}
 		if c.Now == nil {
 			c.Now = time.Now
+		}
+		if c.ProcessSampleInterval <= 0 {
+			c.ProcessSampleInterval = 300 * time.Millisecond
 		}
 		if c.PublicNetworkCacheTTL <= 0 {
 			c.PublicNetworkCacheTTL = 30 * time.Minute

@@ -39,6 +39,16 @@ type fakeTools struct {
 	executeErr error
 }
 
+func TestRedactAndLimitRemovesCommonCredentialsAndPrivateKeys(t *testing.T) {
+	input := "password=hunter2 token=abc123 {\"apiKey\":\"key-value\"}\n-----BEGIN PRIVATE KEY-----\nsecret-body\n-----END PRIVATE KEY-----\n"
+	result := redactAndLimit(input, 4096)
+	for _, secret := range []string{"hunter2", "abc123", "key-value", "secret-body"} {
+		if strings.Contains(result, secret) {
+			t.Fatalf("redaction leaked %q: %s", secret, result)
+		}
+	}
+}
+
 func (f *fakeTools) Definitions() []ToolDefinition {
 	return []ToolDefinition{{Name: "host_action", Description: "test", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: f.readOnly}}
 }

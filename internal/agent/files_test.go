@@ -108,6 +108,39 @@ func TestFileTextReturnsBoundedJSONAndHonorsProtectedPaths(t *testing.T) {
 	}
 }
 
+func TestFileTailReadsLargeUTF8LogAndHonorsProtectedPaths(t *testing.T) {
+	server := testServer(t)
+	root := t.TempDir()
+	manager, err := filemanager.New(filemanager.Config{Root: root, ProtectedVirtual: []string{"/protected"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server.files = manager
+	content := strings.Repeat("old line\n", 1000) + "latest error\n"
+	if err := os.WriteFile(filepath.Join(root, "nginx.log"), []byte(content), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "protected"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "protected", "secret.log"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	response := fileRequest(server, http.MethodGet, "/v1/files/tail?path=%2Fnginx.log&maxBytes=1024", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("tail status=%d body=%s", response.Code, response.Body.String())
+	}
+	var result fileTailResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || !result.Truncated || !strings.Contains(result.Content, "latest error") || result.ResourceVersion == "" {
+		t.Fatalf("tail result=%#v err=%v", result, err)
+	}
+	protected := fileRequest(server, http.MethodGet, "/v1/files/tail?path=%2Fprotected%2Fsecret.log", "")
+	if protected.Code != http.StatusForbidden || strings.Contains(protected.Body.String(), "secret") {
+		t.Fatalf("protected tail status=%d body=%s", protected.Code, protected.Body.String())
+	}
+}
+
 func TestFileEndpointsListWriteUploadAndRejectProtectedPaths(t *testing.T) {
 	server := testServer(t)
 	root := t.TempDir()
