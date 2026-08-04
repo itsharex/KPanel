@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -36,6 +38,7 @@ type fakeTools struct {
 	executed   int
 	readOnly   bool
 	approval   *bool
+	dryRunErr  error
 	executeErr error
 }
 
@@ -52,7 +55,7 @@ func TestRedactAndLimitRemovesCommonCredentialsAndPrivateKeys(t *testing.T) {
 func (f *fakeTools) Definitions() []ToolDefinition {
 	return []ToolDefinition{{Name: "host_action", Description: "test", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: f.readOnly}}
 }
-func (f *fakeTools) DryRun(string, json.RawMessage) error { return nil }
+func (f *fakeTools) DryRun(string, json.RawMessage) error { return f.dryRunErr }
 func (f *fakeTools) RequiresApproval(string, json.RawMessage) bool {
 	if f.approval != nil {
 		return *f.approval
@@ -91,6 +94,52 @@ func TestNativeRuntimeReplansAfterResourceVersionConflict(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("resource-version conflict was not added to model context")
+	}
+}
+
+func TestNativeRuntimeReplansAfterInvalidToolArguments(t *testing.T) {
+	store, providerService, provider, model := runtimeFixture(t)
+	defer store.Close()
+	session, _ := store.CreateSession(context.Background(), Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "inspect"})
+	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	tools := &fakeTools{readOnly: true, executeErr: fmt.Errorf("%w: json: unknown field ignored", ErrToolArguments)}
+	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	if err := runtime.Run(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := store.Run(context.Background(), "admin", run.ID)
+	if loaded.Status != RunCompleted || tools.executed != 1 {
+		t.Fatalf("invalid arguments should be returned to the model for correction, status=%s executed=%d", loaded.Status, tools.executed)
+	}
+	messages, _ := store.Messages(context.Background(), session.ID, 50)
+	found := false
+	for _, message := range messages {
+		found = found || strings.Contains(message.Content, "Schema")
+	}
+	if !found {
+		t.Fatal("argument validation failure was not added to model context")
+	}
+}
+
+func TestNativeRuntimeValidatesArgumentsBeforeApprovalOrExecution(t *testing.T) {
+	store, providerService, provider, model := runtimeFixture(t)
+	defer store.Close()
+	session, _ := store.CreateSession(context.Background(), Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "change"})
+	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	tools := &fakeTools{dryRunErr: errors.New(`json: unknown field "unexpected"`)}
+	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	if err := runtime.Run(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := store.Run(context.Background(), "admin", run.ID)
+	if loaded.Status != RunCompleted || tools.executed != 0 {
+		t.Fatalf("invalid arguments reached approval or execution, status=%s executed=%d", loaded.Status, tools.executed)
+	}
+	calls, _ := store.ToolCalls(context.Background(), run.ID)
+	if len(calls) != 1 || calls[0].Status != ToolFailed || calls[0].RequiresApproval {
+		t.Fatalf("invalid call was not rejected before approval: %#v", calls)
 	}
 }
 

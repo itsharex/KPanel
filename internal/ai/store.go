@@ -19,10 +19,11 @@ import (
 )
 
 var (
-	ErrNotFound     = errors.New("AI record not found")
-	ErrConflict     = errors.New("AI record changed")
-	ErrBusy         = errors.New("AI run is already active")
-	ErrToolConflict = errors.New("host resource version changed")
+	ErrNotFound      = errors.New("AI record not found")
+	ErrConflict      = errors.New("AI record changed")
+	ErrBusy          = errors.New("AI run is already active")
+	ErrToolConflict  = errors.New("host resource version changed")
+	ErrToolArguments = errors.New("tool arguments are invalid")
 )
 
 type Store struct {

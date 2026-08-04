@@ -155,6 +155,54 @@ describe('AI workspace reconnect', () => {
     wrapper.unmount()
   })
 
+  it('renders stable process cards before the answer from the same run', async () => {
+    const router = await makeRouter()
+    const wrapper = mount(AiView, { global: { plugins: [router] } })
+    await flushPromises()
+    const stream=MockEventSource.instances[0]
+    const run={id:'run-active',sessionId:'s1',providerId:'p1',providerName:'Primary',modelId:'m1',modelName:'Mock',status:'running',step:2,usage:{inputTokens:0,outputTokens:0,totalTokens:0},createdAt:'',updatedAt:''}
+    const first={id:'call-1',runId:'run-active',sessionId:'s1',name:'host_system_summary',status:'completed',requiresApproval:false,createdAt:'',updatedAt:''}
+    const second={id:'call-2',runId:'run-active',sessionId:'s1',name:'host_system_processes',status:'completed',requiresApproval:false,createdAt:'',updatedAt:''}
+    stream?.emit('run.snapshot',{
+      run,
+      toolCalls:[first,second],
+      messages:[
+        {id:'user',sessionId:'s1',runId:'run-active',role:'user',content:'inspect resources',createdAt:''},
+        {id:'answer',sessionId:'s1',runId:'run-active',role:'assistant',content:'resources are healthy',modelName:'Mock',createdAt:''},
+      ],
+    })
+    await flushPromises()
+    const firstElement=wrapper.get('[data-tool-call-id="call-1"]').element
+    const secondElement=wrapper.get('[data-tool-call-id="call-2"]').element
+    const answerElement=wrapper.get('[data-message-id="answer"]').element
+    expect(firstElement.compareDocumentPosition(secondElement)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(secondElement.compareDocumentPosition(answerElement)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    stream?.emit('tool.completed',{...first,resultPreview:'updated'})
+    await flushPromises()
+    const updatedFirst=wrapper.get('[data-tool-call-id="call-1"]').element
+    const stableSecond=wrapper.get('[data-tool-call-id="call-2"]').element
+    expect(updatedFirst.compareDocumentPosition(stableSecond)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('restores the latest process cards with conversation history', async () => {
+    mocks.messages.mockResolvedValue({
+      items:[
+        {id:'user',sessionId:'s1',runId:'run-active',role:'user',content:'inspect resources',createdAt:''},
+        {id:'answer',sessionId:'s1',runId:'run-active',role:'assistant',content:'resources are healthy',modelName:'Mock',createdAt:''},
+      ],
+      toolCalls:[{id:'persisted-call',runId:'run-active',sessionId:'s1',name:'host_system_summary',status:'completed',requiresApproval:false,createdAt:'',updatedAt:''}],
+      nextCursor:'',
+    })
+    const router = await makeRouter()
+    const wrapper = mount(AiView, { global: { plugins: [router] } })
+    await flushPromises()
+    const process=wrapper.get('[data-tool-call-id="persisted-call"]').element
+    const answer=wrapper.get('[data-message-id="answer"]').element
+    expect(process.compareDocumentPosition(answer)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    wrapper.unmount()
+  })
+
   it('keeps the completed answer visible while history reconciles', async () => {
     const router = await makeRouter()
     const wrapper = mount(AiView, { global: { plugins: [router] } })

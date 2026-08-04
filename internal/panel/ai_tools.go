@@ -54,13 +54,19 @@ var systemActionToolSchema = json.RawMessage(`{
   },"additionalProperties":false
 }`)
 
-var nginxReloadToolSchema = json.RawMessage(`{
-  "type":"object",
-  "properties":{"reason":{"type":"string","maxLength":500}},
-  "additionalProperties":false
-}`)
+const toolReasonMaxRunes = 500
+
+var toolReasonSchema = map[string]any{
+	"type":        "string",
+	"maxLength":   toolReasonMaxRunes,
+	"description": "Optional model explanation for this tool call. KPanel removes it before validation, approval, audit, and host execution.",
+}
 
 func (t *panelAITools) RequiresApproval(name string, arguments json.RawMessage) bool {
+	arguments, err := normalizeToolArguments(arguments)
+	if err != nil {
+		return true
+	}
 	for _, definition := range t.Definitions() {
 		if definition.Name == name && definition.ReadOnly {
 			return false
@@ -121,12 +127,16 @@ func (t *panelAITools) RequiresApproval(name string, arguments json.RawMessage) 
 }
 
 func (t *panelAITools) DryRun(name string, arguments json.RawMessage) error {
+	arguments, err := normalizeToolArguments(arguments)
+	if err != nil {
+		return err
+	}
 	for _, definition := range t.Definitions() {
 		if definition.Name == name {
 			if definition.ReadOnly {
-				return nil
+				return validateReadToolArguments(name, arguments)
 			}
-			_, _, _, _, err := t.prepareWrite(name, arguments)
+			_, _, _, _, err = t.prepareWrite(name, arguments)
 			return err
 		}
 	}
@@ -135,7 +145,7 @@ func (t *panelAITools) DryRun(name string, arguments json.RawMessage) error {
 
 func (t *panelAITools) Definitions() []ai.ToolDefinition {
 	readSchema := json.RawMessage(`{"type":"object","additionalProperties":false}`)
-	return []ai.ToolDefinition{
+	definitions := []ai.ToolDefinition{
 		{Name: "host_system_summary", Description: "读取宿主机系统概览与 resourceVersion", Schema: readSchema, ReadOnly: true},
 		{Name: "host_system_processes", Description: "采样宿主机进程 CPU 与内存排行，只返回 PID、父 PID、名称、状态、UID、CPU、内存和启动标识，不返回命令行敏感参数", Schema: readSchema, ReadOnly: true},
 		{Name: "host_system_storage_usage", Description: "对固定安全根目录执行有界磁盘占用分析，返回其直接子项的递归占用排行；用于定位磁盘空间大户", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"enum":["/","/home","/home/docker","/home/web","/opt","/root","/srv","/tmp","/usr","/var","/var/lib/docker","/var/log"]}},"additionalProperties":false}`), ReadOnly: true},
@@ -161,16 +171,40 @@ func (t *panelAITools) Definitions() []ai.ToolDefinition {
 		{Name: "host_file_write", Description: "使用 resourceVersion 覆盖现有 UTF-8 文本文件，最大 64 KiB；受保护和只读目录永远不可写", Schema: json.RawMessage(`{"type":"object","required":["path","content","expectedResourceVersion"],"properties":{"path":{"type":"string","maxLength":4096},"content":{"type":"string","maxLength":65536},"expectedResourceVersion":{"type":"string"}},"additionalProperties":false}`)},
 		{Name: "host_file_trash", Description: "把最多 20 个已读取且版本未变化的文件或目录移入 KPanel 回收站；不执行永久删除，核心路径仍不可触碰", Schema: json.RawMessage(`{"type":"object","required":["sources","expectedResourceVersions"],"properties":{"sources":{"type":"array","items":{"type":"string","maxLength":4096},"minItems":1,"maxItems":20},"expectedResourceVersions":{"type":"object","additionalProperties":{"type":"string"}}},"additionalProperties":false}`)},
 		{Name: "host_nginx_test", Description: "对 KPanel 管理的 Nginx 容器执行固定 nginx -t，返回语法错误位置；修改配置后必须先调用", Schema: readSchema, ReadOnly: true},
-		{Name: "host_nginx_reload", Description: "先执行固定 nginx -t，通过后才安全 reload KPanel 管理的 Nginx；配置无效时拒绝重载。可附带简短 reason 说明重载原因", Schema: nginxReloadToolSchema},
+		{Name: "host_nginx_reload", Description: "先执行固定 nginx -t，通过后才安全 reload KPanel 管理的 Nginx；配置无效时拒绝重载", Schema: readSchema},
 		{Name: "host_site_change", Description: "创建、更新或删除网站配置", Schema: json.RawMessage(`{"type":"object","required":["operation"],"properties":{"operation":{"enum":["create","update","delete"]},"siteId":{"type":"string"},"payload":{"type":"object"}},"additionalProperties":false}`)},
 		{Name: "host_job_input", Description: "向已存在的 KPanel 交互任务提交输入", Schema: json.RawMessage(`{"type":"object","required":["kind","jobId","data"],"properties":{"kind":{"enum":["site","app","diagnostic"]},"jobId":{"type":"string"},"data":{"type":"string","maxLength":16384}},"additionalProperties":false}`)},
 		{Name: "host_docker_exec", Description: "在指定 Docker 容器内执行受 Agent 校验的命令", Schema: json.RawMessage(`{"type":"object","required":["containerId","resourceVersion","command"],"properties":{"containerId":{"type":"string"},"resourceVersion":{"type":"string"},"command":{"type":"array","items":{"type":"string"},"maxItems":32}},"additionalProperties":false}`)},
 	}
+	for index := range definitions {
+		definitions[index].Schema = withToolReasonMetadata(definitions[index].Schema)
+	}
+	return definitions
 }
 
 func (t *panelAITools) Execute(ctx context.Context, execution ai.ToolExecutionContext, name string, arguments json.RawMessage) (string, error) {
 	if t == nil || t.server == nil {
 		return "", errors.New("panel tool service is unavailable")
+	}
+	var err error
+	arguments, err = normalizeToolArguments(arguments)
+	if err != nil {
+		return "", toolArgumentError(err)
+	}
+	known, readOnly := false, false
+	for _, definition := range t.Definitions() {
+		if definition.Name == name {
+			known, readOnly = true, definition.ReadOnly
+			break
+		}
+	}
+	if !known {
+		return "", errors.New("unknown KPanel tool")
+	}
+	if readOnly {
+		if err := validateReadToolArguments(name, arguments); err != nil {
+			return "", toolArgumentError(err)
+		}
 	}
 	readPaths := map[string]string{
 		"host_system_summary": "/v1/system/summary", "host_public_network": "/v1/system/public-network", "host_sites_list": "/v1/sites",
@@ -231,12 +265,15 @@ func (t *panelAITools) Execute(ctx context.Context, execution ai.ToolExecutionCo
 		return t.finish(execution, name, input.Path, requestID, nil, response, err)
 	}
 	if path := readPaths[name]; path != "" {
+		if err := decodeStrictToolArguments(arguments, &struct{}{}); err != nil {
+			return "", errors.New("invalid read tool arguments")
+		}
 		response, err := t.server.hostOps.Get(ctx, path, "", requestID)
 		return t.finish(execution, name, path, requestID, nil, response, err)
 	}
 	method, path, target, body, err := t.prepareWrite(name, arguments)
 	if err != nil {
-		return "", err
+		return "", toolArgumentError(err)
 	}
 	change := map[string]any{"tool": name, "target": target, "sessionId": execution.SessionID, "runId": execution.RunID, "toolCallId": execution.ToolCallID, "arguments": safeArgumentSummary(arguments)}
 	if err := t.server.store.AppendAudit(store.AuditEvent{ID: newRequestID(), OccurredAt: time.Now().UTC(), ActorType: "user", ActorID: execution.UserID, Action: "ai.tool." + name, TargetKind: "host_operation", TargetID: target, Result: "intent", RequestID: requestID, Change: change}, 10_000); err != nil {
@@ -269,7 +306,7 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 			HostPort                    *int `json:"hostPort"`
 			AccessMode, ResourceVersion *string
 		}
-		if err = json.Unmarshal(raw, &input); err != nil {
+		if err = decodeStrictToolArguments(raw, &input); err != nil {
 			return
 		}
 		if !appIDPattern.MatchString(input.AppID) {
@@ -297,7 +334,7 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 		body, err = json.Marshal(payload)
 	case "host_docker_container_action":
 		var input struct{ ContainerID, Action, ResourceVersion string }
-		if err = json.Unmarshal(raw, &input); err != nil {
+		if err = decodeStrictToolArguments(raw, &input); err != nil {
 			return
 		}
 		public := "/api/v1/docker/containers/" + input.ContainerID + "/" + input.Action
@@ -313,7 +350,7 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 		var input struct {
 			CheckID string `json:"checkId"`
 		}
-		if err = json.Unmarshal(raw, &input); err != nil {
+		if err = decodeStrictToolArguments(raw, &input); err != nil {
 			return
 		}
 		if !diagnosticCheckIDPattern.MatchString(input.CheckID) {
@@ -368,13 +405,7 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 		method, path, target = http.MethodPost, "/v1/files/actions", input.Sources[0]
 		body, err = json.Marshal(contract.FileActionRequest{Action: "trash", Sources: input.Sources, ExpectedResourceVersions: input.ExpectedResourceVersions})
 	case "host_nginx_reload":
-		var input struct {
-			Reason string `json:"reason,omitempty"`
-		}
-		if err = decodeStrictToolArguments(raw, &input); err != nil || utf8.RuneCountInString(input.Reason) > 500 {
-			if err == nil {
-				err = errors.New("invalid nginx reload reason")
-			}
+		if err = decodeStrictToolArguments(raw, &struct{}{}); err != nil {
 			return
 		}
 		method, path, target, body = http.MethodPost, "/v1/nginx/reload", "nginx", []byte(`{}`)
@@ -383,7 +414,7 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 			Operation, SiteID string
 			Payload           json.RawMessage
 		}
-		if err = json.Unmarshal(raw, &input); err != nil {
+		if err = decodeStrictToolArguments(raw, &input); err != nil {
 			return
 		}
 		switch input.Operation {
@@ -408,7 +439,7 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 		body = input.Payload
 	case "host_job_input":
 		var input struct{ Kind, JobID, Data string }
-		if err = json.Unmarshal(raw, &input); err != nil {
+		if err = decodeStrictToolArguments(raw, &input); err != nil {
 			return
 		}
 		if !siteIDPattern.MatchString(input.JobID) || input.Data == "" || len(input.Data) > 16<<10 || strings.IndexByte(input.Data, 0) >= 0 {
@@ -429,7 +460,7 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 			ResourceVersion string   `json:"resourceVersion"`
 			Command         []string `json:"command"`
 		}
-		if err = json.Unmarshal(raw, &input); err != nil {
+		if err = decodeStrictToolArguments(raw, &input); err != nil {
 			return
 		}
 		if !containerIDPattern.MatchString(input.ContainerID) || !resourceVersionPattern.MatchString(input.ResourceVersion) || len(input.Command) == 0 || len(input.Command) > 32 {
@@ -470,6 +501,87 @@ func (t *panelAITools) finish(execution ai.ToolExecutionContext, name, target, r
 		return "", fmt.Errorf("Agent request failed (HTTP %d)", response.StatusCode)
 	}
 	return string(response.Body), nil
+}
+
+func withToolReasonMetadata(schema json.RawMessage) json.RawMessage {
+	var document map[string]any
+	if err := json.Unmarshal(schema, &document); err != nil || document["type"] != "object" {
+		return schema
+	}
+	properties, ok := document["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		document["properties"] = properties
+	}
+	properties["reason"] = toolReasonSchema
+	updated, err := json.Marshal(document)
+	if err != nil {
+		return schema
+	}
+	return updated
+}
+
+func toolArgumentError(err error) error {
+	return fmt.Errorf("%w: %v", ai.ErrToolArguments, err)
+}
+
+func normalizeToolArguments(raw json.RawMessage) (json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var arguments map[string]json.RawMessage
+	if err := decoder.Decode(&arguments); err != nil || arguments == nil {
+		return nil, errors.New("invalid tool arguments")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, errors.New("invalid tool arguments")
+	}
+	if encodedReason, ok := arguments["reason"]; ok {
+		var reason string
+		if err := json.Unmarshal(encodedReason, &reason); err != nil || utf8.RuneCountInString(reason) > toolReasonMaxRunes {
+			return nil, errors.New("invalid tool reason metadata")
+		}
+		delete(arguments, "reason")
+	}
+	normalized, err := json.Marshal(arguments)
+	if err != nil {
+		return nil, errors.New("invalid tool arguments")
+	}
+	return normalized, nil
+}
+
+func validateReadToolArguments(name string, raw json.RawMessage) error {
+	switch name {
+	case "host_system_storage_usage":
+		var input struct {
+			Path string `json:"path"`
+		}
+		if err := decodeStrictToolArguments(raw, &input); err != nil || !aiStorageRoot(input.Path) {
+			return errors.New("invalid storage usage query")
+		}
+	case "host_file_list", "host_file_read", "host_file_tail":
+		var input struct {
+			Path     string `json:"path"`
+			Limit    int    `json:"limit,omitempty"`
+			Search   string `json:"search,omitempty"`
+			MaxBytes int    `json:"maxBytes,omitempty"`
+		}
+		if err := decodeStrictToolArguments(raw, &input); err != nil || input.Path == "" || len(input.Path) > 4096 || len(input.Search) > 128 {
+			return errors.New("invalid file query")
+		}
+		if name == "host_file_list" && (input.Limit < 0 || input.Limit > 200) {
+			return errors.New("invalid file list limit")
+		}
+		if name == "host_file_tail" && (input.MaxBytes != 0 && (input.MaxBytes < 1024 || input.MaxBytes > 64<<10)) {
+			return errors.New("invalid file tail limit")
+		}
+		if name != "host_file_list" && !aiFileReadable(input.Path) {
+			return errors.New("AI access to sensitive file content is forbidden")
+		}
+	default:
+		if err := decodeStrictToolArguments(raw, &struct{}{}); err != nil {
+			return errors.New("invalid read tool arguments")
+		}
+	}
+	return nil
 }
 
 func safeArgumentSummary(raw json.RawMessage) map[string]any {

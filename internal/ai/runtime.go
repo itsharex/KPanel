@@ -198,10 +198,13 @@ func (r *NativeRuntime) loop(ctx context.Context, runID string, decision *Decisi
 			}
 		} else {
 			if err := r.executeTool(ctx, &run, &call); err != nil {
-				if !errors.Is(err, ErrToolConflict) {
+				if errors.Is(err, ErrToolArguments) {
+					if err := r.recordToolArgumentFailure(ctx, run, call, err); err != nil {
+						return err
+					}
+				} else if !errors.Is(err, ErrToolConflict) {
 					return r.fail(ctx, run, "tool_failed", err)
-				}
-				if err := r.recordToolConflict(ctx, run, call); err != nil {
+				} else if err := r.recordToolConflict(ctx, run, call); err != nil {
 					return err
 				}
 			}
@@ -341,11 +344,25 @@ func (r *NativeRuntime) loop(ctx context.Context, runID string, decision *Decisi
 				return r.fail(ctx, run, "unknown_tool", fmt.Errorf("unknown tool %q", call.Name))
 			}
 			call.RunID, call.SessionID = run.ID, run.SessionID
+			call.ArgumentsPreview = redactAndLimit(string(call.Arguments), 4096)
+			if validationErr := r.tools.DryRun(call.Name, call.Arguments); validationErr != nil {
+				call.Status = ToolFailed
+				call.ResultPreview = redactAndLimit(validationErr.Error(), 4096)
+				call, err = r.store.SaveToolCall(ctx, call)
+				if err != nil {
+					return err
+				}
+				r.events.Publish(RunEvent{Type: "tool.completed", RunID: run.ID, Data: call})
+				if err := r.recordToolArgumentFailure(ctx, run, call, fmt.Errorf("%w: %v", ErrToolArguments, validationErr)); err != nil {
+					return err
+				}
+				conflicted = true
+				break
+			}
 			call.RequiresApproval = r.tools.RequiresApproval(call.Name, call.Arguments)
 			if run.ApprovalMode == ApprovalManual && !definition.ReadOnly {
 				call.RequiresApproval = true
 			}
-			call.ArgumentsPreview = redactAndLimit(string(call.Arguments), 4096)
 			if call.RequiresApproval {
 				call.Status = ToolPendingApproval
 				call, err = r.store.SaveToolCall(ctx, call)
@@ -365,6 +382,13 @@ func (r *NativeRuntime) loop(ctx context.Context, runID string, decision *Decisi
 				return err
 			}
 			if err := r.executeTool(ctx, &run, &call); err != nil {
+				if errors.Is(err, ErrToolArguments) {
+					if err := r.recordToolArgumentFailure(ctx, run, call, err); err != nil {
+						return err
+					}
+					conflicted = true
+					break
+				}
 				if !errors.Is(err, ErrToolConflict) {
 					return r.fail(ctx, run, "tool_failed", err)
 				}
@@ -431,6 +455,16 @@ func (r *NativeRuntime) executeTool(ctx context.Context, run *Run, call *ToolCal
 func (r *NativeRuntime) recordToolConflict(ctx context.Context, run Run, call ToolCall) error {
 	_, err := r.store.AddMessage(ctx, Message{SessionID: run.SessionID, RunID: run.ID, Role: RoleTool, ToolCallID: call.ID,
 		Content: "宿主机真实状态已变化，原工具调用未执行。请重新读取状态和 resourceVersion 后再规划，不得重放旧写入。"})
+	return err
+}
+
+func (r *NativeRuntime) recordToolArgumentFailure(ctx context.Context, run Run, call ToolCall, cause error) error {
+	detail := strings.TrimSpace(strings.TrimPrefix(cause.Error(), ErrToolArguments.Error()+":"))
+	content := "工具参数未通过本地校验，宿主机操作没有执行。请严格按照当前工具 Schema 修正参数后重新规划，不得重放旧参数。"
+	if detail != "" {
+		content += "\n校验结果：" + redactAndLimit(detail, 512)
+	}
+	_, err := r.store.AddMessage(ctx, Message{SessionID: run.SessionID, RunID: run.ID, Role: RoleTool, ToolCallID: call.ID, Content: content})
 	return err
 }
 

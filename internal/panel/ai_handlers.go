@@ -384,14 +384,28 @@ func (s *Server) aiSession(w http.ResponseWriter, r *http.Request, userID, id st
 }
 
 func (s *Server) aiMessages(w http.ResponseWriter, r *http.Request, userID, sessionID string) {
-	if _, err := s.ai.Store.Session(r.Context(), userID, sessionID); err != nil {
+	session, err := s.ai.Store.Session(r.Context(), userID, sessionID)
+	if err != nil {
 		s.aiJSON(w, r, nil, err, 0)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		page, err := s.ai.Store.ConversationMessagesPage(r.Context(), sessionID, 50, r.URL.Query().Get("cursor"))
-		s.aiJSON(w, r, page, err, http.StatusOK)
+		cursor := r.URL.Query().Get("cursor")
+		page, err := s.ai.Store.ConversationMessagesPage(r.Context(), sessionID, 50, cursor)
+		if err != nil {
+			s.aiJSON(w, r, nil, err, 0)
+			return
+		}
+		calls := []ai.ToolCall{}
+		if cursor == "" && session.LastRunID != "" {
+			calls, err = s.ai.Store.ToolCalls(r.Context(), session.LastRunID)
+			if err != nil {
+				s.aiJSON(w, r, nil, err, 0)
+				return
+			}
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"items": page.Items, "nextCursor": page.NextCursor, "toolCalls": calls})
 	case http.MethodPost:
 		var input struct{ Content string }
 		if s.decodeJSON(w, r, &input) != nil {

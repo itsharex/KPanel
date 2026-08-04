@@ -28,6 +28,7 @@ func TestAIToolApprovalBoundary(t *testing.T) {
 		{name: "host_file_trash", arguments: `{}`, approval: false},
 		{name: "host_nginx_test", arguments: `{}`, approval: false},
 		{name: "host_nginx_reload", arguments: `{}`, approval: false},
+		{name: "host_nginx_reload", arguments: `{"reason":"configuration was validated"}`, approval: false},
 		{name: "host_diagnostic_start", arguments: `{"checkId":"system"}`, approval: false},
 		{name: "host_app_action", arguments: `{"action":"install"}`, approval: false},
 		{name: "host_app_action", arguments: `{"action":"restart"}`, approval: false},
@@ -65,19 +66,88 @@ func TestOperationsToolArgumentsAreStrictAndRecoverable(t *testing.T) {
 	if _, _, _, _, err := tools.prepareWrite("host_file_trash", json.RawMessage(`{"sources":["/tmp/old.log"],"expectedResourceVersions":{}}`)); err == nil {
 		t.Fatal("trash without a current resourceVersion was accepted")
 	}
-	method, path, target, body, err = tools.prepareWrite("host_nginx_reload", json.RawMessage(`{"reason":"配置修改后验证通过"}`))
+	normalized, err := normalizeToolArguments(json.RawMessage(`{"reason":"配置修改后验证通过"}`))
+	if err != nil || string(normalized) != `{}` {
+		t.Fatalf("normalize nginx reload arguments=%s err=%v", normalized, err)
+	}
+	method, path, target, body, err = tools.prepareWrite("host_nginx_reload", normalized)
 	if err != nil || method != "POST" || path != "/v1/nginx/reload" || target != "nginx" || string(body) != `{}` {
 		t.Fatalf("nginx reload method=%q path=%q target=%q body=%s err=%v", method, path, target, body, err)
 	}
-	if _, _, _, _, err := tools.prepareWrite("host_nginx_reload", json.RawMessage(`{"reason":"ok","unknown":true}`)); err == nil {
+	if _, _, _, _, err := tools.prepareWrite("host_nginx_reload", json.RawMessage(`{"unknown":true}`)); err == nil {
 		t.Fatal("unknown nginx reload field was accepted")
 	}
-	oversized, _ := json.Marshal(map[string]string{"reason": strings.Repeat("修", 501)})
-	if _, _, _, _, err := tools.prepareWrite("host_nginx_reload", oversized); err == nil {
-		t.Fatal("oversized nginx reload reason was accepted")
-	}
 	if summary := safeArgumentSummary(json.RawMessage(`{"reason":"configuration contains a secret"}`)); summary["reason"] != "[REDACTED]" {
-		t.Fatalf("nginx reload reason was retained in audit summary: %#v", summary)
+		t.Fatalf("tool reason was retained in audit summary: %#v", summary)
+	}
+}
+
+func TestAllAIToolSchemasExposeUniversalReasonMetadata(t *testing.T) {
+	definitions := (&panelAITools{}).Definitions()
+	if len(definitions) == 0 {
+		t.Fatal("AI tool registry is empty")
+	}
+	for _, definition := range definitions {
+		t.Run(definition.Name, func(t *testing.T) {
+			var schema map[string]any
+			if err := json.Unmarshal(definition.Schema, &schema); err != nil {
+				t.Fatal(err)
+			}
+			if schema["type"] != "object" || schema["additionalProperties"] != false {
+				t.Fatalf("tool schema boundary changed: %#v", schema)
+			}
+			properties, _ := schema["properties"].(map[string]any)
+			reason, _ := properties["reason"].(map[string]any)
+			if reason["type"] != "string" || reason["maxLength"] != float64(toolReasonMaxRunes) {
+				t.Fatalf("universal reason metadata missing: %#v", reason)
+			}
+		})
+	}
+}
+
+func TestToolArgumentNormalizationIsGeneralAndFailClosed(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty", raw: `{}`, want: `{}`},
+		{name: "read tool metadata", raw: `{"reason":"inspect host"}`, want: `{}`},
+		{name: "write tool metadata", raw: `{"action":"cleanup","reason":"disk is full"}`, want: `{"action":"cleanup"}`},
+		{name: "unicode limit", raw: `{"reason":"` + strings.Repeat("修", toolReasonMaxRunes) + `"}`, want: `{}`},
+		{name: "wrong metadata type", raw: `{"reason":{"text":"why"}}`, wantErr: true},
+		{name: "oversized metadata", raw: `{"reason":"` + strings.Repeat("修", toolReasonMaxRunes+1) + `"}`, wantErr: true},
+		{name: "non object", raw: `[]`, wantErr: true},
+		{name: "null", raw: `null`, wantErr: true},
+		{name: "trailing JSON", raw: `{} {}`, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := normalizeToolArguments(json.RawMessage(test.raw))
+			if (err != nil) != test.wantErr {
+				t.Fatalf("normalize error=%v wantErr=%v", err, test.wantErr)
+			}
+			if !test.wantErr && string(got) != test.want {
+				t.Fatalf("normalized=%s want=%s", got, test.want)
+			}
+		})
+	}
+}
+
+func TestUniversalReasonMetadataDoesNotRelaxBusinessArguments(t *testing.T) {
+	tools := &panelAITools{}
+	if err := tools.DryRun("host_system_summary", json.RawMessage(`{"reason":"inspect"}`)); err != nil {
+		t.Fatalf("read tool reason was rejected: %v", err)
+	}
+	if err := tools.DryRun("host_system_summary", json.RawMessage(`{"reason":"inspect","unknown":true}`)); err == nil {
+		t.Fatal("unknown read tool field was accepted")
+	}
+	if err := tools.DryRun("host_system_action", json.RawMessage(`{"action":"cleanup","maintenancePolicy":"cache","reason":"free disk"}`)); err != nil {
+		t.Fatalf("write tool reason was rejected: %v", err)
+	}
+	if err := tools.DryRun("host_system_action", json.RawMessage(`{"action":"cleanup","maintenancePolicy":"cache","unknown":true}`)); err == nil {
+		t.Fatal("unknown write tool field was accepted")
 	}
 }
 
@@ -153,6 +223,9 @@ func TestDockerMaintenanceToolSchemaMatchesAgentContract(t *testing.T) {
 		validFields[name] = true
 	}
 	for name := range properties {
+		if name == "reason" {
+			continue
+		}
 		if !validFields[name] {
 			t.Fatalf("schema property %q is not accepted by MaintenanceInput", name)
 		}

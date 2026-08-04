@@ -58,6 +58,24 @@ func TestAIProviderModelSessionCRUD(t *testing.T) {
 	if list.Code != http.StatusOK {
 		t.Fatalf("session list=%d %s", list.Code, list.Body.String())
 	}
+	run, err := server.ai.Store.CreateRun(context.Background(), ai.Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: models[0].ID, ModelName: models[0].DisplayName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.ai.Store.SaveToolCall(context.Background(), ai.ToolCall{ID: "persisted-call", RunID: run.ID, SessionID: session.ID, Name: "host_system_summary", Arguments: json.RawMessage(`{}`), Status: ai.ToolCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.ai.Store.AddMessage(context.Background(), ai.Message{SessionID: session.ID, RunID: run.ID, Role: ai.RoleAssistant, Content: "healthy"}); err != nil {
+		t.Fatal(err)
+	}
+	messagesResponse := authenticatedRequest(server, http.MethodGet, "/api/v1/ai/sessions/"+session.ID+"/messages", nil, sessionCookie, csrfCookie, nil)
+	var messagePage struct {
+		Items     []ai.Message  `json:"items"`
+		ToolCalls []ai.ToolCall `json:"toolCalls"`
+	}
+	if messagesResponse.Code != http.StatusOK || json.Unmarshal(messagesResponse.Body.Bytes(), &messagePage) != nil || len(messagePage.Items) != 1 || len(messagePage.ToolCalls) != 1 || messagePage.ToolCalls[0].ID != "persisted-call" {
+		t.Fatalf("message process history=%d %s", messagesResponse.Code, messagesResponse.Body.String())
+	}
 }
 
 func TestAIToolMapsAgentVersionConflictForReplanning(t *testing.T) {
@@ -77,13 +95,16 @@ func TestAIToolUsesFixedAgentPathAndAudits(t *testing.T) {
 	server.agent = agent
 	tools := &panelAITools{server: server}
 	execution := ai.ToolExecutionContext{UserID: "admin", SessionID: "ses-1", RunID: "run-1", ToolCallID: "call-1"}
-	result, err := tools.Execute(context.Background(), execution, "host_system_summary", json.RawMessage(`{}`))
+	result, err := tools.Execute(context.Background(), execution, "host_system_summary", json.RawMessage(`{"reason":"inspect resources"}`))
 	if err != nil || result != "{\"ok\":true}" {
 		t.Fatalf("result=%q err=%v", result, err)
 	}
 	calls := agent.snapshotCalls()
 	if len(calls) != 1 || calls[0].path != "/v1/system/summary" || calls[0].method != http.MethodGet {
 		t.Fatalf("calls=%#v", calls)
+	}
+	if _, err := tools.Execute(context.Background(), execution, "host_system_summary", json.RawMessage(`{"unknown":true}`)); !errors.Is(err, ai.ErrToolArguments) || len(agent.snapshotCalls()) != 1 {
+		t.Fatalf("unknown read arguments were not rejected before Agent: %v", err)
 	}
 	audits, _ := server.store.ListAudit(10, "")
 	if len(audits) == 0 || audits[0].Change["sessionId"] != "ses-1" || audits[0].Change["runId"] != "run-1" || audits[0].Change["toolCallId"] != "call-1" {
@@ -92,6 +113,26 @@ func TestAIToolUsesFixedAgentPathAndAudits(t *testing.T) {
 	_, err = tools.Execute(context.Background(), execution, "host_docker_container_action", json.RawMessage(`{"containerId":"bad","action":"remove","resourceVersion":"bad"}`))
 	if err == nil || len(agent.snapshotCalls()) != 1 {
 		t.Fatal("invalid write reached Agent")
+	}
+}
+
+func TestAIToolReasonMetadataIsStrippedBeforeNginxReloadAndAudit(t *testing.T) {
+	server, _ := newTestServer(t)
+	agent := &stubAgent{response: AgentResponse{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}
+	server.agent = agent
+	tools := &panelAITools{server: server}
+	execution := ai.ToolExecutionContext{UserID: "admin", SessionID: "ses", RunID: "run", ToolCallID: "call"}
+	if _, err := tools.Execute(context.Background(), execution, "host_nginx_reload", json.RawMessage(`{"reason":"configuration validated"}`)); err != nil {
+		t.Fatal(err)
+	}
+	calls := agent.snapshotCalls()
+	if len(calls) != 1 || calls[0].path != "/v1/nginx/reload" || calls[0].method != http.MethodPost || string(calls[0].body) != `{}` {
+		t.Fatalf("nginx reload Agent call=%#v", calls)
+	}
+	audits, _ := server.store.ListAudit(10, "")
+	encoded, _ := json.Marshal(audits)
+	if strings.Contains(string(encoded), "configuration validated") || strings.Contains(string(encoded), `"reason"`) {
+		t.Fatalf("reason metadata reached audit: %s", encoded)
 	}
 }
 
