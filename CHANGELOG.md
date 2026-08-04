@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.42.1] - 2026-08-04
+
+### Fixed
+
+- 修复应用市场安装或从 0.40.x 升级到 0.42.0 后，宿主机 Nginx 通过 HTTPS 域名反向代理 KPanel 时因出口网络网关未被识别为可信代理而返回 `421 host_validation_failed` 的问题。
+- 安装和更新现在同时迁移内部代理网段与出口网络的宿主机网关地址，现有 `KPANEL_PUBLIC_URL`、端口、数据和自定义环境项保持不变。
+
+### Security
+
+- 仅将 KPanel 专用出口网络的宿主机网关单地址加入可信代理（IPv4 `/32`、IPv6 `/128`），不信任整个出口网段；Host、Origin、CSRF 和 HTTPS 转发校验继续生效。
+
+### Upgrade Notes
+
+- 受影响的 0.42.0 实例可再次执行应用市场更新升级至 0.42.1；更新会原子刷新 `KPANEL_TRUSTED_PROXY_CIDRS` 并重建 Panel 容器，失败时恢复原 `.env`、Compose、Agent 与镜像。
+
 ## [0.42.0] - 2026-08-04
 
 ### Added

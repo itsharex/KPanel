@@ -47,7 +47,11 @@ case "$1 ${2:-}" in
 	"network inspect")
 		require_state
 		if [ "${3:-}" = "--format" ]; then
-			printf '%s\n' '172.30.0.0/16'
+			case "${5:-}" in
+				kejilion-panel-internal) printf '%s\n' '172.30.0.0/16' ;;
+				kejilion-panel-egress) printf '%s\n' '172.31.0.1' ;;
+				*) exit 2 ;;
+			esac
 			exit 0
 		fi
 		[ -f "$state/network" ]
@@ -274,7 +278,7 @@ EOF
 	fi
 	grep -F 'KEJILION_PANEL_ALLOW_IP_HOSTS: ${KPANEL_ALLOW_IP_HOSTS:-true}' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx 'KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.30.0.0/16' \
+	grep -Fx 'KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.30.0.0/16,172.31.0.1/32' \
 		/home/docker/kpanel/.env >/dev/null
 	grep -F 'KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS: ${KPANEL_CLUSTER_PRIVATE_CIDRS:-}' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
@@ -334,7 +338,7 @@ EOF
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 	grep -Fx 'permission_granted="true"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx 'KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.30.0.0/16' \
+	grep -Fx 'KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.30.0.0/16,172.31.0.1/32' \
 		/home/docker/kpanel/.env >/dev/null
 	test ! -e /home/docker/kpanel/.env.rollback
 

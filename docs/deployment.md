@@ -199,6 +199,8 @@ k fd panel.example.com 127.0.0.1 8080
 
 来自显式可信代理 CIDR 的请求可以使用代理传递的 HTTPS `Host` 和
 `X-Forwarded-Proto`，无需把 `KEJILION_PANEL_PUBLIC_URL` 从直连地址改成域名。
+应用市场安装和更新会自动信任 KPanel 内部网络以及出口网络的宿主机网关单地址
+（IPv4 `/32`、IPv6 `/128`），从而支持宿主机 Nginx 转发，但不会信任整个出口网段。
 该路径会自动启用 Secure Cookie，并从 `X-Real-IP` 或安全解析后的
 `X-Forwarded-For` 恢复客户端地址；非可信来源不能利用这些请求头绕过 Host/Origin 校验。
 
