@@ -62,7 +62,6 @@ export default [
   ["查看容器健康", "Review container health"],
   ["巡检网站和应用", "Inspect sites and applications"],
   ["你", "You"],
-  ["查看结构化参数与结果", "View structured arguments and results"],
   ["等待批准", "Awaiting approval"],
   ["正在执行", "Running"],
   ["已完成", "Completed"],

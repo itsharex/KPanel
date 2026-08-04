@@ -188,6 +188,29 @@ describe('AI workspace reconnect', () => {
     wrapper.unmount()
   })
 
+  it('interleaves visible progress and tool execution by occurrence time', async()=>{
+    mocks.messages.mockResolvedValue({
+      items:[
+        {id:'user',sessionId:'s1',runId:'run-active',role:'user',content:'检查并修复服务',createdAt:'2026-08-04T10:00:00.000Z'},
+        {id:'plan',sessionId:'s1',runId:'run-active',role:'assistant',content:'我先读取当前配置。',modelName:'Mock',createdAt:'2026-08-04T10:00:01.000Z'},
+        {id:'finding',sessionId:'s1',runId:'run-active',role:'assistant',content:'已定位到配置中的重复项，继续验证。',modelName:'Mock',createdAt:'2026-08-04T10:00:03.000Z'},
+        {id:'answer',sessionId:'s1',runId:'run-active',role:'assistant',content:'修复完成，服务运行正常。',modelName:'Mock',createdAt:'2026-08-04T10:00:05.000Z'},
+      ],
+      toolCalls:[
+        {id:'read',runId:'run-active',sessionId:'s1',name:'host_file_read',status:'completed',requiresApproval:false,createdAt:'2026-08-04T10:00:02.000Z',updatedAt:'2026-08-04T10:00:02.500Z'},
+        {id:'test',runId:'run-active',sessionId:'s1',name:'host_nginx_test',status:'completed',requiresApproval:false,createdAt:'2026-08-04T10:00:04.000Z',updatedAt:'2026-08-04T10:00:04.500Z'},
+      ],
+      nextCursor:'',
+    })
+    const router=await makeRouter();const wrapper=mount(AiView,{global:{plugins:[router]}});await flushPromises()
+    const elements=['[data-message-id="plan"]','[data-tool-call-id="read"]','[data-message-id="finding"]','[data-tool-call-id="test"]','[data-message-id="answer"]'].map(selector=>wrapper.get(selector).element)
+    for(let index=0;index<elements.length-1;index++)expect(elements[index]!.compareDocumentPosition(elements[index+1]!)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(new Set(elements.map(element=>element.closest('.ai-agent-turn'))).size).toBe(1)
+    expect(wrapper.findAll('.ai-message-meta')).toHaveLength(1)
+    expect(wrapper.get('[data-tool-call-id="read"]').classes()).toContain('ai-tool-card--inline')
+    wrapper.unmount()
+  })
+
   it('restores the latest process cards with conversation history', async () => {
     mocks.messages.mockResolvedValue({
       items:[
