@@ -12,6 +12,7 @@ import (
 	pathpkg "path"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kejilion/kejilion-panel/internal/ai"
 	"github.com/kejilion/kejilion-panel/internal/contract"
@@ -51,6 +52,12 @@ var systemActionToolSchema = json.RawMessage(`{
     "maintenancePolicy":{"enum":["install","update","uninstall","full","cache","standard"]},
     "confirmation":{"type":"string"},"enabled":{"type":"boolean"}
   },"additionalProperties":false
+}`)
+
+var nginxReloadToolSchema = json.RawMessage(`{
+  "type":"object",
+  "properties":{"reason":{"type":"string","maxLength":500}},
+  "additionalProperties":false
 }`)
 
 func (t *panelAITools) RequiresApproval(name string, arguments json.RawMessage) bool {
@@ -154,7 +161,7 @@ func (t *panelAITools) Definitions() []ai.ToolDefinition {
 		{Name: "host_file_write", Description: "使用 resourceVersion 覆盖现有 UTF-8 文本文件，最大 64 KiB；受保护和只读目录永远不可写", Schema: json.RawMessage(`{"type":"object","required":["path","content","expectedResourceVersion"],"properties":{"path":{"type":"string","maxLength":4096},"content":{"type":"string","maxLength":65536},"expectedResourceVersion":{"type":"string"}},"additionalProperties":false}`)},
 		{Name: "host_file_trash", Description: "把最多 20 个已读取且版本未变化的文件或目录移入 KPanel 回收站；不执行永久删除，核心路径仍不可触碰", Schema: json.RawMessage(`{"type":"object","required":["sources","expectedResourceVersions"],"properties":{"sources":{"type":"array","items":{"type":"string","maxLength":4096},"minItems":1,"maxItems":20},"expectedResourceVersions":{"type":"object","additionalProperties":{"type":"string"}}},"additionalProperties":false}`)},
 		{Name: "host_nginx_test", Description: "对 KPanel 管理的 Nginx 容器执行固定 nginx -t，返回语法错误位置；修改配置后必须先调用", Schema: readSchema, ReadOnly: true},
-		{Name: "host_nginx_reload", Description: "先执行固定 nginx -t，通过后才安全 reload KPanel 管理的 Nginx；配置无效时拒绝重载", Schema: readSchema},
+		{Name: "host_nginx_reload", Description: "先执行固定 nginx -t，通过后才安全 reload KPanel 管理的 Nginx；配置无效时拒绝重载。可附带简短 reason 说明重载原因", Schema: nginxReloadToolSchema},
 		{Name: "host_site_change", Description: "创建、更新或删除网站配置", Schema: json.RawMessage(`{"type":"object","required":["operation"],"properties":{"operation":{"enum":["create","update","delete"]},"siteId":{"type":"string"},"payload":{"type":"object"}},"additionalProperties":false}`)},
 		{Name: "host_job_input", Description: "向已存在的 KPanel 交互任务提交输入", Schema: json.RawMessage(`{"type":"object","required":["kind","jobId","data"],"properties":{"kind":{"enum":["site","app","diagnostic"]},"jobId":{"type":"string"},"data":{"type":"string","maxLength":16384}},"additionalProperties":false}`)},
 		{Name: "host_docker_exec", Description: "在指定 Docker 容器内执行受 Agent 校验的命令", Schema: json.RawMessage(`{"type":"object","required":["containerId","resourceVersion","command"],"properties":{"containerId":{"type":"string"},"resourceVersion":{"type":"string"},"command":{"type":"array","items":{"type":"string"},"maxItems":32}},"additionalProperties":false}`)},
@@ -361,7 +368,13 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 		method, path, target = http.MethodPost, "/v1/files/actions", input.Sources[0]
 		body, err = json.Marshal(contract.FileActionRequest{Action: "trash", Sources: input.Sources, ExpectedResourceVersions: input.ExpectedResourceVersions})
 	case "host_nginx_reload":
-		if err = decodeStrictToolArguments(raw, &struct{}{}); err != nil {
+		var input struct {
+			Reason string `json:"reason,omitempty"`
+		}
+		if err = decodeStrictToolArguments(raw, &input); err != nil || utf8.RuneCountInString(input.Reason) > 500 {
+			if err == nil {
+				err = errors.New("invalid nginx reload reason")
+			}
 			return
 		}
 		method, path, target, body = http.MethodPost, "/v1/nginx/reload", "nginx", []byte(`{}`)
@@ -464,7 +477,7 @@ func safeArgumentSummary(raw json.RawMessage) map[string]any {
 	if json.Unmarshal(raw, &value) != nil {
 		return map[string]any{"valid": false}
 	}
-	for _, key := range []string{"data", "content", "password", "token", "apiKey", "key", "command"} {
+	for _, key := range []string{"data", "content", "password", "token", "apiKey", "key", "command", "reason"} {
 		if _, ok := value[key]; ok {
 			value[key] = "[REDACTED]"
 		}

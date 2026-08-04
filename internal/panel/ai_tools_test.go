@@ -65,6 +65,20 @@ func TestOperationsToolArgumentsAreStrictAndRecoverable(t *testing.T) {
 	if _, _, _, _, err := tools.prepareWrite("host_file_trash", json.RawMessage(`{"sources":["/tmp/old.log"],"expectedResourceVersions":{}}`)); err == nil {
 		t.Fatal("trash without a current resourceVersion was accepted")
 	}
+	method, path, target, body, err = tools.prepareWrite("host_nginx_reload", json.RawMessage(`{"reason":"配置修改后验证通过"}`))
+	if err != nil || method != "POST" || path != "/v1/nginx/reload" || target != "nginx" || string(body) != `{}` {
+		t.Fatalf("nginx reload method=%q path=%q target=%q body=%s err=%v", method, path, target, body, err)
+	}
+	if _, _, _, _, err := tools.prepareWrite("host_nginx_reload", json.RawMessage(`{"reason":"ok","unknown":true}`)); err == nil {
+		t.Fatal("unknown nginx reload field was accepted")
+	}
+	oversized, _ := json.Marshal(map[string]string{"reason": strings.Repeat("修", 501)})
+	if _, _, _, _, err := tools.prepareWrite("host_nginx_reload", oversized); err == nil {
+		t.Fatal("oversized nginx reload reason was accepted")
+	}
+	if summary := safeArgumentSummary(json.RawMessage(`{"reason":"configuration contains a secret"}`)); summary["reason"] != "[REDACTED]" {
+		t.Fatalf("nginx reload reason was retained in audit summary: %#v", summary)
+	}
 }
 
 func TestAIFileBoundarySeparatesOperationsFromSecretsAndCore(t *testing.T) {
