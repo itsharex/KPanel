@@ -481,7 +481,8 @@ async function request<T>(
 ): Promise<T> {
   const method = options.method || 'GET'
   const headers = new Headers({ Accept: 'application/json' })
-  if (options.body !== undefined) headers.set('Content-Type', 'application/json')
+  const multipart = typeof FormData !== 'undefined' && options.body instanceof FormData
+  if (options.body !== undefined && !multipart) headers.set('Content-Type', 'application/json')
   if (method !== 'GET' && csrfToken) headers.set('X-CSRF-Token', csrfToken)
 
   let response: Response
@@ -491,7 +492,11 @@ async function request<T>(
       credentials: 'same-origin',
       cache: 'no-store',
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: options.body === undefined
+        ? undefined
+        : multipart
+          ? options.body as FormData
+          : JSON.stringify(options.body),
       signal: options.signal,
     })
   } catch (error) {
@@ -510,13 +515,18 @@ async function request<T>(
     const fieldError = problem?.fieldErrors
       ? Object.values(problem.fieldErrors).find((value) => value.trim() !== '')
       : undefined
+    const textError = typeof payload === 'string'
+      ? /<!doctype|<html[\s>]/i.test(payload)
+        ? `请求被反向代理或安全网关拒绝（HTTP ${response.status}）`
+        : payload
+      : ''
     const message =
       envelope?.error?.message ||
       envelope?.message ||
       problem?.detail ||
       fieldError ||
       problem?.title ||
-      (typeof payload === 'string' ? payload : '') ||
+      textError ||
       `请求失败（HTTP ${response.status}）`
     throw new ApiError(
       message,

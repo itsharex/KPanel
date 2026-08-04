@@ -1,15 +1,48 @@
 package panel
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/kejilion/kejilion-panel/internal/ai"
 )
+
+func TestAIMessageAcceptsMultipartAttachmentsWithoutBase64JSON(t *testing.T) {
+	server, _ := newTestServer(t)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("content", "分析图片"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("attachments", "screen.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	png := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}
+	if _, err := part.Write(png); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/ai/sessions/test/messages", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+	content, attachments, err := server.decodeAIMessage(response, request)
+	if err != nil || response.Code != http.StatusOK {
+		t.Fatalf("multipart decode status=%d body=%s err=%v", response.Code, response.Body.String(), err)
+	}
+	if content != "分析图片" || len(attachments) != 1 || attachments[0].Name != "screen.png" || !bytes.Equal(attachments[0].Data, png) {
+		t.Fatalf("content=%q attachments=%#v", content, attachments)
+	}
+}
 
 func TestAIProviderModelSessionCRUD(t *testing.T) {
 	server, tokenPath := newTestServer(t)

@@ -154,6 +154,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, 0)`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(7, 0)`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(8, 0)`,
+		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(9, 0)`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -207,6 +208,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("default existing AI models to vision capable: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET applied_at = ? WHERE version = 8 AND applied_at = 0`, millis(s.now())); err != nil {
+		return fmt.Errorf("record AI migration: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tool_calls SET created_at = updated_at
+		WHERE created_at <= 0 AND EXISTS (SELECT 1 FROM schema_migrations WHERE version = 9 AND applied_at = 0)`); err != nil {
+		return fmt.Errorf("repair AI tool call timeline: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET applied_at = ? WHERE version = 9 AND applied_at = 0`, millis(s.now())); err != nil {
 		return fmt.Errorf("record AI migration: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -968,6 +976,8 @@ func (s *Store) SaveToolCall(ctx context.Context, call ToolCall) (ToolCall, erro
 	now := s.now().UTC()
 	if call.ID == "" {
 		call.ID = newID("tool")
+	}
+	if call.CreatedAt.IsZero() {
 		call.CreatedAt = now
 	}
 	call.UpdatedAt = now

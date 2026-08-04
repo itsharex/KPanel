@@ -1,6 +1,13 @@
 import { apiRequest } from '@/lib/api'
 import type { AIMessage, AIModel, AIProvider, AIRun, AISession, AIToolCall, AIEvolutionProposal, AIMemory, AIProcedure, AIUploadAttachment } from '@/types/ai'
 
+function messageForm(content:string,attachments:AIUploadAttachment[]):FormData {
+  const form=new FormData()
+  form.set('content',content)
+  for(const attachment of attachments)form.append('attachments',attachment.file,attachment.name)
+  return form
+}
+
 export const aiApi = {
   providers: {
     list: () => apiRequest<AIProvider[]>('/ai/providers'),
@@ -18,7 +25,9 @@ export const aiApi = {
     update: (id:string,body:Partial<AISession>) => apiRequest<AISession>(`/ai/sessions/${encodeURIComponent(id)}`,{method:'PATCH',body}),
     remove: (id:string) => apiRequest<{deleted:boolean}>(`/ai/sessions/${encodeURIComponent(id)}`,{method:'DELETE'}),
     messages: (id:string,cursor?:string) => apiRequest<{items:AIMessage[];nextCursor?:string;toolCalls?:AIToolCall[]}>(`/ai/sessions/${encodeURIComponent(id)}/messages`,{query:{cursor}}),
-    send: (id:string,content:string,attachments:AIUploadAttachment[]=[]) => apiRequest<{runId:string}>(`/ai/sessions/${encodeURIComponent(id)}/messages`,{method:'POST',body:{content,attachments:attachments.map(({name,mimeType,data})=>({name,mimeType,data}))}}),
+    send: (id:string,content:string,attachments:AIUploadAttachment[]=[]) => attachments.length
+      ? apiRequest<{runId:string}>(`/ai/sessions/${encodeURIComponent(id)}/messages`,{method:'POST',body:messageForm(content,attachments)})
+      : apiRequest<{runId:string}>(`/ai/sessions/${encodeURIComponent(id)}/messages`,{method:'POST',body:{content}}),
   },
   runs: {
     get: (id:string) => apiRequest<AIRun>(`/ai/runs/${encodeURIComponent(id)}`),

@@ -10,7 +10,7 @@ export interface AIModel { id:string;providerId:string;modelId:string;displayNam
 export type AIApprovalMode = 'manual' | 'auto'
 export type AIThinkingLevel = 'low' | 'medium' | 'high'
 export interface AIAttachment { name:string;mimeType:string;size:number;kind:'image'|'text';previewUrl?:string }
-export interface AIUploadAttachment { name:string;mimeType:string;data:string;size:number;kind:'image'|'text';previewUrl?:string }
+export interface AIUploadAttachment { name:string;mimeType:string;data:string;file:File;size:number;kind:'image'|'text';previewUrl?:string }
 export interface AISession { id:string;title:string;providerId:string;modelId:string;providerName:string;modelName:string;summary?:string;approvalMode:AIApprovalMode;thinkingLevel:AIThinkingLevel;pinned:boolean;archived:boolean;createdAt:string;updatedAt:string;lastMessageAt:string;modelAvailable:boolean;running:boolean;activeRunId?:string;lastRunId?:string;lastRunStatus?:AIRun['status'] }
 export interface AIMessage { id:string;sessionId:string;runId?:string;role:'system'|'user'|'assistant'|'tool';content:string;attachments?:AIAttachment[];providerName?:string;modelName?:string;toolCallId?:string;createdAt:string }
 export interface AIRun { id:string;sessionId:string;providerId:string;providerName:string;modelId:string;modelName:string;approvalMode:AIApprovalMode;thinkingLevel:AIThinkingLevel;status:'queued'|'running'|'pending_approval'|'completed'|'failed'|'cancelled'|'interrupted';step:number;usage:{inputTokens:number;outputTokens:number;totalTokens:number};errorCode?:string;errorMessage?:string;createdAt:string;updatedAt:string }

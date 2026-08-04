@@ -12,6 +12,17 @@ import (
 	"testing"
 )
 
+func TestProviderHTTPErrorHidesRawHTMLAndExtractsJSONMessage(t *testing.T) {
+	htmlErr := providerHTTPError(http.StatusBadRequest, []byte("<html><head><title>400 Bad Request</title></head><body>nginx</body></html>"))
+	if strings.Contains(strings.ToLower(htmlErr.Error()), "<html") || !strings.Contains(htmlErr.Error(), "HTTP 400") || !strings.Contains(htmlErr.Error(), "图片") {
+		t.Fatalf("unsafe HTML provider error: %v", htmlErr)
+	}
+	jsonErr := providerHTTPError(http.StatusBadRequest, []byte(`{"error":{"message":"model does not support images"}}`))
+	if jsonErr.Error() != "model does not support images" {
+		t.Fatalf("JSON provider error=%v", jsonErr)
+	}
+}
+
 func TestOpenAICompatibleStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer test-key" {

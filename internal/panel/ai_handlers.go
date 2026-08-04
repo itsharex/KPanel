@@ -214,6 +214,94 @@ func (s *Server) decodeAIMessageJSON(w http.ResponseWriter, r *http.Request, tar
 	}
 	return nil
 }
+
+type aiMessageInput struct {
+	Content     string `json:"content"`
+	Attachments []struct {
+		Name     string `json:"name"`
+		MimeType string `json:"mimeType"`
+		Data     string `json:"data"`
+	} `json:"attachments"`
+}
+
+func (s *Server) decodeAIMessage(w http.ResponseWriter, r *http.Request) (string, []ai.Attachment, error) {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		s.writeProblem(w, r, http.StatusUnsupportedMediaType, "message_media_type_required", "Use JSON or multipart form data", "")
+		return "", nil, err
+	}
+	if mediaType == "application/json" {
+		var input aiMessageInput
+		if err := s.decodeAIMessageJSON(w, r, &input); err != nil {
+			return "", nil, err
+		}
+		attachments := make([]ai.Attachment, 0, len(input.Attachments))
+		for index, item := range input.Attachments {
+			data, decodeErr := base64.StdEncoding.DecodeString(item.Data)
+			if decodeErr != nil {
+				s.writeValidationProblem(w, r, fmt.Sprintf("attachments.%d.data", index), "attachment data must be valid base64")
+				return "", nil, decodeErr
+			}
+			attachments = append(attachments, ai.Attachment{Name: item.Name, MimeType: item.MimeType, Data: data})
+		}
+		return input.Content, attachments, nil
+	}
+	if mediaType != "multipart/form-data" {
+		s.writeProblem(w, r, http.StatusUnsupportedMediaType, "message_media_type_required", "Use JSON or multipart form data", "")
+		return "", nil, errors.New("unsupported AI message content type")
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 12<<20)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.writeProblem(w, r, http.StatusRequestEntityTooLarge, "request_too_large", "AI message or attachments are too large", "")
+		} else {
+			s.writeProblem(w, r, http.StatusBadRequest, "invalid_multipart", "Invalid multipart form data", "")
+		}
+		return "", nil, err
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+		for name := range r.MultipartForm.Value {
+			if name != "content" {
+				s.writeValidationProblem(w, r, name, "unknown message field")
+				return "", nil, errors.New("unknown multipart value field")
+			}
+		}
+		for name := range r.MultipartForm.File {
+			if name != "attachments" {
+				s.writeValidationProblem(w, r, name, "unknown attachment field")
+				return "", nil, errors.New("unknown multipart file field")
+			}
+		}
+		if len(r.MultipartForm.Value["content"]) > 1 {
+			s.writeValidationProblem(w, r, "content", "content must be provided at most once")
+			return "", nil, errors.New("duplicate multipart content")
+		}
+	}
+
+	files := r.MultipartForm.File["attachments"]
+	attachments := make([]ai.Attachment, 0, len(files))
+	for index, header := range files {
+		file, openErr := header.Open()
+		if openErr != nil {
+			s.writeValidationProblem(w, r, fmt.Sprintf("attachments.%d", index), "attachment could not be read")
+			return "", nil, openErr
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, (4<<20)+1))
+		closeErr := file.Close()
+		if readErr != nil || closeErr != nil {
+			if readErr == nil {
+				readErr = closeErr
+			}
+			s.writeValidationProblem(w, r, fmt.Sprintf("attachments.%d", index), "attachment could not be read")
+			return "", nil, readErr
+		}
+		attachments = append(attachments, ai.Attachment{Name: header.Filename, MimeType: header.Header.Get("Content-Type"), Data: data})
+	}
+	return r.FormValue("content"), attachments, nil
+}
 func (s *Server) aiProcedures(w http.ResponseWriter, r *http.Request, userID string) {
 	if r.Method != http.MethodGet {
 		s.writeProblem(w, r, 405, "method_not_allowed", "Method not allowed", "")
@@ -451,27 +539,11 @@ func (s *Server) aiMessages(w http.ResponseWriter, r *http.Request, userID, sess
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"items": page.Items, "nextCursor": page.NextCursor, "toolCalls": calls})
 	case http.MethodPost:
-		var input struct {
-			Content     string `json:"content"`
-			Attachments []struct {
-				Name     string `json:"name"`
-				MimeType string `json:"mimeType"`
-				Data     string `json:"data"`
-			} `json:"attachments"`
-		}
-		if s.decodeAIMessageJSON(w, r, &input) != nil {
+		content, attachments, decodeErr := s.decodeAIMessage(w, r)
+		if decodeErr != nil {
 			return
 		}
-		attachments := make([]ai.Attachment, 0, len(input.Attachments))
-		for index, item := range input.Attachments {
-			data, decodeErr := base64.StdEncoding.DecodeString(item.Data)
-			if decodeErr != nil {
-				s.writeValidationProblem(w, r, fmt.Sprintf("attachments.%d.data", index), "attachment data must be valid base64")
-				return
-			}
-			attachments = append(attachments, ai.Attachment{Name: item.Name, MimeType: item.MimeType, Data: data})
-		}
-		run, err := s.ai.SendWithAttachments(r.Context(), userID, sessionID, input.Content, attachments)
+		run, err := s.ai.SendWithAttachments(r.Context(), userID, sessionID, content, attachments)
 		s.aiJSON(w, r, map[string]string{"runId": run.ID}, err, http.StatusAccepted)
 	default:
 		s.writeProblem(w, r, 405, "method_not_allowed", "Method not allowed", "")

@@ -90,6 +90,25 @@ describe('API client', () => {
     })
   })
 
+  it('does not expose raw reverse-proxy HTML errors in the interface', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce(
+        new Response('<html><head><title>400 Bad Request</title></head><body>nginx</body></html>', {
+          status: 400,
+          headers: { 'content-type': 'text/html' },
+        }),
+      ),
+    )
+
+    const error = await api.sites.list().catch((reason: unknown) => reason)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({
+      status: 400,
+      message: '请求被反向代理或安全网关拒绝（HTTP 400）',
+    })
+  })
+
   it('normalizes site create and update responses from the Agent contract', async () => {
     const createdRaw = {
       id: 'a'.repeat(32),

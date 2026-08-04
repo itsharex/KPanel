@@ -807,6 +807,32 @@ func sortedToolCalls(parts map[int]*ToolCall) []ToolCall {
 
 func providerHTTPError(status int, body []byte) error {
 	message := strings.TrimSpace(string(body))
+	var payload struct {
+		Message string `json:"message"`
+		Detail  string `json:"detail"`
+		Title   string `json:"title"`
+		Error   struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) == nil {
+		switch {
+		case strings.TrimSpace(payload.Error.Message) != "":
+			message = payload.Error.Message
+		case strings.TrimSpace(payload.Message) != "":
+			message = payload.Message
+		case strings.TrimSpace(payload.Detail) != "":
+			message = payload.Detail
+		case strings.TrimSpace(payload.Title) != "":
+			message = payload.Title
+		}
+	} else if strings.Contains(strings.ToLower(message), "<html") || strings.Contains(strings.ToLower(message), "<!doctype") {
+		if status == http.StatusRequestEntityTooLarge {
+			message = "模型 API 拒绝了过大的请求（HTTP 413），请上传更小的图片或检查 API 网关请求体上限"
+		} else {
+			message = fmt.Sprintf("模型 API 拒绝了请求（HTTP %d），请确认所选模型支持当前输入（如图片）并检查 API 端点协议", status)
+		}
+	}
 	if len(message) > 1000 {
 		message = message[:1000]
 	}

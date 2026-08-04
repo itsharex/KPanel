@@ -51,6 +51,9 @@ func TestStoreProviderSessionRunLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if call.CreatedAt.IsZero() || call.UpdatedAt.IsZero() {
+		t.Fatalf("tool call timestamps missing: %#v", call)
+	}
 	loadedCall, err := store.ToolCall(ctx, run.ID, call.ID)
 	if err != nil || string(loadedCall.ProviderData) != string(providerData) {
 		t.Fatalf("provider-native tool context was not persisted: %s, %v", loadedCall.ProviderData, err)
@@ -133,6 +136,37 @@ func TestStoreMigratesExistingModelsToVisionOnce(t *testing.T) {
 	models, err = store.ListModels(ctx, provider.ID)
 	if err != nil || len(models) != 1 || models[0].Vision {
 		t.Fatalf("completed migration overwrote explicit vision setting=%#v err=%v", models, err)
+	}
+}
+
+func TestStoreRepairsLegacyZeroToolCallTimestamp(t *testing.T) {
+	ctx := context.Background()
+	store, _, provider, model := runtimeFixture(t)
+	defer store.Close()
+	session, err := store.CreateSession(ctx, Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.CreateRun(ctx, Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := store.SaveToolCall(ctx, ToolCall{ID: "legacy-call", RunID: run.ID, SessionID: session.ID, Name: "host_action", Arguments: json.RawMessage(`{}`), Status: ToolCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE tool_calls SET created_at=-62135596800000 WHERE id=?`, call.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE schema_migrations SET applied_at=0 WHERE version=9`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.ToolCall(ctx, run.ID, call.ID)
+	if err != nil || loaded.CreatedAt.IsZero() || !loaded.CreatedAt.Equal(loaded.UpdatedAt) {
+		t.Fatalf("repaired tool call=%#v err=%v", loaded, err)
 	}
 }
 

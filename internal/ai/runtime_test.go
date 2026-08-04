@@ -69,6 +69,30 @@ func (f *fakeTools) Execute(context.Context, ToolExecutionContext, string, json.
 	return `{"status":"ok"}`, f.executeErr
 }
 
+func TestNativeRuntimeAddsVisibleProgressBeforeSilentToolCall(t *testing.T) {
+	store, providerService, provider, model := runtimeFixture(t)
+	defer store.Close()
+	session, _ := store.CreateSession(context.Background(), Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "检查"})
+	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, &fakeTools{readOnly: true}, NewEventHub())
+	if err := runtime.Run(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	messages, _ := store.Messages(context.Background(), session.ID, 50)
+	calls, _ := store.ToolCalls(context.Background(), run.ID)
+	var progress *Message
+	for index := range messages {
+		if messages[index].Role == RoleAssistant && messages[index].Content == "正在执行下一项结构化检查。" {
+			progress = &messages[index]
+			break
+		}
+	}
+	if progress == nil || len(calls) != 1 || progress.CreatedAt.After(calls[0].CreatedAt) {
+		t.Fatalf("progress=%#v calls=%#v", progress, calls)
+	}
+}
+
 func TestNativeRuntimeReplansAfterResourceVersionConflict(t *testing.T) {
 	store, providerService, provider, model := runtimeFixture(t)
 	defer store.Close()
