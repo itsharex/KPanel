@@ -570,6 +570,7 @@ func TestRuntimeRetriesOnlyBeforeStreamOutput(t *testing.T) {
 			_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, RunID: run.ID, Role: RoleUser, Content: "test"})
 			client := &retryClient{emitBefore: test.emitBefore, failures: test.failures}
 			runtime, _ := NewNativeRuntime(store, providers, client, &fakeTools{readOnly: true}, NewEventHub())
+			defer runtime.Close()
 			_ = runtime.Run(context.Background(), run.ID)
 			loaded, _ := store.Run(context.Background(), "admin", run.ID)
 			if string(loaded.Status) != test.wantStatus || client.calls != test.calls {
