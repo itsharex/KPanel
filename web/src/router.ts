@@ -6,6 +6,7 @@ import {
   finishRouteNavigation,
   loadNavigationRoute,
 } from '@/lib/navigation'
+import { resolveNavigationScroll } from '@/lib/navigationScroll'
 import { useSession } from '@/stores/session'
 import type { MessageKey } from '@/i18n/messages/zh-CN'
 
@@ -19,7 +20,7 @@ declare module 'vue-router' {
 
 export const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior: () => ({ top: 0 }),
+  scrollBehavior: (to, from, savedPosition) => resolveNavigationScroll(to.path, from.path, savedPosition),
   routes: [
     {
       path: '/setup',
