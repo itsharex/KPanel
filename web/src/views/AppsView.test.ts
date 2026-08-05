@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { renderToString, type SSRContext } from 'vue/server-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -84,6 +85,10 @@ vi.mock('@/stores/toast', () => ({
 
 interface AppsBindings {
   inventory: Ref<AppMarketInventory | undefined>
+  appSearchCatalog: ComputedRef<Array<{
+    item: AppMarketInventory['items'][number]
+    searchText: string
+  }>>
   filteredApps: ComputedRef<AppMarketInventory['items']>
   selected: ComputedRef<AppMarketInventory['items'][number] | undefined>
   sites: Ref<Site[]>
@@ -124,6 +129,46 @@ interface AppsBindings {
   consumeUpdateIntent: () => Promise<void>
   refreshAfterSelfUpdate: (job: AppInstallJob) => boolean
 }
+
+describe('AppsView catalog filtering performance', () => {
+  it('defers offscreen icon decoding and card rendering', () => {
+    const source = readFileSync(new URL('./AppsView.vue', import.meta.url), 'utf8')
+
+    expect(source).toContain('loading="lazy"')
+    expect(source).toContain('decoding="async"')
+    expect(source).toMatch(/\.app-card\s*\{[^}]*content-visibility:\s*auto;/)
+  })
+
+  it('reuses the sorted search catalog while filters and queries change', () => {
+    const view = setupView()
+    const current = inventory('catalog-version')
+    const first = current.items[0]
+    if (!first) throw new Error('test inventory is incomplete')
+    current.items.push({
+      ...first,
+      id: 'builtin-99',
+      num: 99,
+      token: 'notes',
+      name_zh: 'Notes',
+      name_en: 'Notes',
+      desc_zh: '笔记服务',
+      cat: 'productivity',
+      runtime: { ...first.runtime, installed: false, state: 'unknown' },
+    })
+    view.inventory.value = current
+    view.status.value = 'all'
+
+    view.search.value = 'cloud'
+    const catalog = view.appSearchCatalog.value
+    expect(view.filteredApps.value.map((item) => item.id)).toEqual(['builtin-13'])
+    expect(view.appSearchCatalog.value).toBe(catalog)
+
+    view.search.value = ''
+    view.category.value = 'productivity'
+    expect(view.filteredApps.value.map((item) => item.id)).toEqual(['builtin-99'])
+    expect(view.appSearchCatalog.value).toBe(catalog)
+  })
+})
 
 function setupView(): AppsBindings {
   const component = AppsView as unknown as {

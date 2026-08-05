@@ -89,6 +89,11 @@ interface FileBindings {
   markThumbnailFailed: (path: string) => void
   entryIconKind: (entry: TestFileEntry) => string
   currentPath: { value: string }
+  search: { value: string }
+  entries: { value: TestFileEntry[] }
+  entrySearchCatalog: {
+    value: Array<{ entry: TestFileEntry; searchName: string }>
+  }
   directory: {
     value?: {
       path: string
@@ -179,6 +184,8 @@ beforeEach(() => {
     innerWidth: 1280,
     innerHeight: 720,
     confirm: vi.fn(() => true),
+    setTimeout: vi.fn(() => 1),
+    clearTimeout: vi.fn(),
     localStorage: {
       getItem: vi.fn(),
       setItem: vi.fn(),
@@ -266,6 +273,13 @@ describe('FilesView route path', () => {
 })
 
 describe('FilesView large icon layout', () => {
+  it('skips layout and paint work for offscreen directory entries', () => {
+    const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
+
+    expect(source).toMatch(/\.file-row--entry\s*\{[^}]*content-visibility:\s*auto;/)
+    expect(source).toMatch(/\.file-grid-card\s*\{[^}]*content-visibility:\s*auto;/)
+  })
+
   it('defaults to the list and persists the selected layout', () => {
     const view = setupView()
 
@@ -321,6 +335,27 @@ describe('FilesView large icon layout', () => {
 })
 
 describe('FilesView directory loading', () => {
+  it('reuses the sorted directory catalog while the search query changes', () => {
+    const view = setupView()
+    view.directory.value = {
+      path: '/',
+      entries: [testEntry('zeta.log'), testEntry('alpha.txt'), testEntry('beta.txt')],
+    }
+
+    view.search.value = 'txt'
+    const catalog = view.entrySearchCatalog.value
+    view.search.value = ''
+    expect(view.entries.value.map((entry) => entry.name)).toEqual([
+      'alpha.txt',
+      'beta.txt',
+      'zeta.log',
+    ])
+
+    view.search.value = 'txt'
+    expect(view.entries.value.map((entry) => entry.name)).toEqual(['alpha.txt', 'beta.txt'])
+    expect(view.entrySearchCatalog.value).toBe(catalog)
+  })
+
   it('keeps the collapsed sidebar offset scoped through a custom property', () => {
     const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
 

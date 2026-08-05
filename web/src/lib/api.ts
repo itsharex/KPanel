@@ -882,16 +882,35 @@ export const api = {
       onUpdate?: (overview: SystemOverview) => void,
     ): Promise<SystemOverview> => {
       type Capability = { id: string; enabled: boolean; reason?: string; methods?: string[] }
-      const [system, agent] = await Promise.all([
-        request<RawSystemSummary>('/system/summary', { signal }),
-        request<RawAgentHealth>('/agent/health', { signal }),
-      ])
+      const systemRequest = request<RawSystemSummary>('/system/summary', { signal })
+      const agentRequest = request<RawAgentHealth>('/agent/health', { signal })
+      const capabilitiesRequest = request<ApiList<Capability> | Capability[]>('/capabilities', { signal })
+        .catch(() => undefined)
+      const sitesRequest = request<ApiList<RawSite> | RawSite[]>('/sites', { signal })
+        .catch(() => undefined)
+      const dockerRequest = request<RawDockerSummary>('/docker/summary', { signal })
+        .catch(() => undefined)
+      const containersRequest = request<ApiList<RawContainer> | RawContainer[]>('/docker/containers', { signal })
+        .catch(() => undefined)
+      const publicNetworkRequest = request<RawPublicNetworkSummary>('/system/public-network', { signal })
+        .catch(() => undefined)
+      const appsRequest = request<AppMarketInventory>('/apps', { signal })
+        .catch(() => undefined)
+      const [system, agent] = await Promise.all([systemRequest, agentRequest])
       let capabilitiesResult: ApiList<Capability> | Capability[] | undefined
       let sitesResult: ApiList<RawSite> | RawSite[] | undefined
       let appsResult: AppMarketInventory | undefined
       let dockerResult: RawDockerSummary | undefined
       let containersResult: ApiList<RawContainer> | RawContainer[] | undefined
       let publicNetwork: RawPublicNetworkSummary | undefined = system.publicNetwork
+      let capabilities: SystemOverview['management']['capabilities'] = {}
+      let sitesSummary: SystemOverview['sites']
+      let containersSummary: SystemOverview['containers']
+      let appsSummary: SystemOverview['apps']
+      let services: SystemOverview['services'] = []
+      let previousOverview: SystemOverview | undefined
+      let revision = 0
+      let builtRevision = -1
       const rootDisk = system.disks.find((disk) => disk.mountPoint === '/') || system.disks[0]
       const rates = networkRates(system)
       const knownServices = [
@@ -901,43 +920,65 @@ export const api = {
         { id: 'php74', name: 'PHP 7.4' },
         { id: 'redis', name: 'Redis' },
       ]
-      const build = (): SystemOverview => {
-        const sites = normalizeList(sitesResult).items.map(normalizeSite)
+      const refreshServices = () => {
+        if (!dockerResult) {
+          services = []
+          return
+        }
         const containers = normalizeList(containersResult).items
-        const capabilities = Object.fromEntries(
-          normalizeList(capabilitiesResult).items.map((capability) => [
-            capability.id,
-            {
-              enabled: capability.enabled,
-              reason: capability.reason,
-              methods: capability.methods,
-            },
-          ]),
-        )
-        const services: SystemOverview['services'] = dockerResult
-          ? [
-              {
-                id: 'docker',
-                name: 'Docker Engine',
-                state: dockerResult.available ? 'running' : 'stopped',
-                version: dockerResult.serverVersion,
-              },
-              ...knownServices.flatMap((known) => {
-                const container = containers.find((item) => item.name.replace(/^\/+/, '') === known.id)
-                if (!container) return []
-                const state: SystemOverview['services'][number]['state'] =
-                  container.state === 'running'
-                    ? 'running'
-                    : container.state === 'paused' || container.state === 'restarting'
-                      ? 'degraded'
-                      : ['exited', 'dead', 'created'].includes(container.state)
-                        ? 'stopped'
-                        : 'unknown'
-                return [{ id: known.id, name: known.name, state, detail: container.image }]
-              }),
-            ]
-          : []
-        return {
+        services = [
+          {
+            id: 'docker',
+            name: 'Docker Engine',
+            state: dockerResult.available ? 'running' : 'stopped',
+            version: dockerResult.serverVersion,
+          },
+          ...knownServices.flatMap((known) => {
+            const container = containers.find((item) => item.name.replace(/^\/+/, '') === known.id)
+            if (!container) return []
+            const state: SystemOverview['services'][number]['state'] =
+              container.state === 'running'
+                ? 'running'
+                : container.state === 'paused' || container.state === 'restarting'
+                  ? 'degraded'
+                  : ['exited', 'dead', 'created'].includes(container.state)
+                    ? 'stopped'
+                    : 'unknown'
+            return [{ id: known.id, name: known.name, state, detail: container.image }]
+          }),
+        ]
+      }
+      const publicNetworkSummary = (): SystemOverview['publicNetwork'] => ({
+        ipv4: publicNetwork?.ipv4,
+        ipv6: publicNetwork?.ipv6,
+        isp: publicNetwork?.isp,
+        country: publicNetwork?.country,
+        countryCode: publicNetwork?.countryCode,
+        region: publicNetwork?.region,
+        city: publicNetwork?.city,
+        timezone: publicNetwork?.timezone,
+        source: publicNetwork?.source,
+        updatedAt: publicNetwork?.updatedAt,
+      })
+      const build = (): SystemOverview => {
+        if (previousOverview && builtRevision === revision) return previousOverview
+        if (previousOverview) {
+          previousOverview = {
+            ...previousOverview,
+            publicNetwork: publicNetworkSummary(),
+            management:
+              previousOverview.management.capabilities === capabilities
+                ? previousOverview.management
+                : { ...previousOverview.management, capabilities },
+            services,
+            sites: sitesSummary,
+            containers: containersSummary,
+            apps: appsSummary,
+          }
+          builtRevision = revision
+          return previousOverview
+        }
+        const overview: SystemOverview = {
         hostname: system.hostname,
         os: system.os,
         osId: system.osId,
@@ -981,18 +1022,7 @@ export const api = {
           tcpConnections: system.network.tcpConnections || 0,
           udpConnections: system.network.udpConnections || 0,
         },
-        publicNetwork: {
-          ipv4: publicNetwork?.ipv4,
-          ipv6: publicNetwork?.ipv6,
-          isp: publicNetwork?.isp,
-          country: publicNetwork?.country,
-          countryCode: publicNetwork?.countryCode,
-          region: publicNetwork?.region,
-          city: publicNetwork?.city,
-          timezone: publicNetwork?.timezone,
-          source: publicNetwork?.source,
-          updatedAt: publicNetwork?.updatedAt,
-        },
+        publicNetwork: publicNetworkSummary(),
         management: {
           ssh: {
             ports: system.management?.ssh?.ports || [],
@@ -1070,53 +1100,81 @@ export const api = {
         },
         services,
         agent: normalizeAgent(agent),
-        sites:
-          sitesResult === undefined
-            ? undefined
-            : {
-                total: sites.length,
-                healthy: sites.filter((site) => site.health === 'healthy').length,
-                drifted: sites.filter((site) => site.consistency !== 'synced').length,
-              },
-        containers: dockerResult
-          ? { total: dockerResult.containers, running: dockerResult.running, stopped: dockerResult.stopped }
-          : undefined,
-        apps: appsResult
-          ? {
-              total: appsResult.items.length,
-              installed: appsResult.installed,
-              running: appsResult.running,
-              updateAvailable: appsResult.updateAvailable,
-            }
-          : undefined,
+        sites: sitesSummary,
+        containers: containersSummary,
+        apps: appsSummary,
         }
+        previousOverview = overview
+        builtRevision = revision
+        return overview
       }
 
       onUpdate?.(build())
       const emit = () => onUpdate?.(build())
       await Promise.allSettled([
-        request<ApiList<Capability> | Capability[]>('/capabilities', { signal }).then((value) => {
+        capabilitiesRequest.then((value) => {
+          if (value === undefined) return
           capabilitiesResult = value
+          capabilities = Object.fromEntries(
+            normalizeList(capabilitiesResult).items.map((capability) => [
+              capability.id,
+              {
+                enabled: capability.enabled,
+                reason: capability.reason,
+                methods: capability.methods,
+              },
+            ]),
+          )
+          revision += 1
           emit()
         }),
-        request<ApiList<RawSite> | RawSite[]>('/sites', { signal }).then((value) => {
+        sitesRequest.then((value) => {
+          if (value === undefined) return
           sitesResult = value
+          const sites = normalizeList(sitesResult).items.map(normalizeSite)
+          sitesSummary = {
+            total: sites.length,
+            healthy: sites.filter((site) => site.health === 'healthy').length,
+            drifted: sites.filter((site) => site.consistency !== 'synced').length,
+          }
+          revision += 1
           emit()
         }),
-        request<RawDockerSummary>('/docker/summary', { signal }).then((value) => {
+        dockerRequest.then((value) => {
+          if (value === undefined) return
           dockerResult = value
+          containersSummary = {
+            total: dockerResult.containers,
+            running: dockerResult.running,
+            stopped: dockerResult.stopped,
+          }
+          refreshServices()
+          revision += 1
           emit()
         }),
-        request<ApiList<RawContainer> | RawContainer[]>('/docker/containers', { signal }).then((value) => {
+        containersRequest.then((value) => {
+          if (value === undefined) return
           containersResult = value
+          refreshServices()
+          revision += 1
           emit()
         }),
-        request<RawPublicNetworkSummary>('/system/public-network', { signal }).then((value) => {
+        publicNetworkRequest.then((value) => {
+          if (value === undefined) return
           publicNetwork = value
+          revision += 1
           emit()
         }),
-        request<AppMarketInventory>('/apps', { signal }).then((value) => {
+        appsRequest.then((value) => {
+          if (value === undefined) return
           appsResult = value
+          appsSummary = {
+            total: appsResult.items.length,
+            installed: appsResult.installed,
+            running: appsResult.running,
+            updateAvailable: appsResult.updateAvailable,
+          }
+          revision += 1
           emit()
         }),
       ])
@@ -1396,7 +1454,7 @@ export const api = {
       signal?: AbortSignal,
     ): Promise<FileDirectory> =>
       request<FileDirectory>('/files', {
-        query: { path, limit: 500, offset: options?.offset, search: options?.search },
+        query: { path, limit: 100, offset: options?.offset, search: options?.search },
         signal,
       }),
     contentUrl: (path: string, disposition: 'inline' | 'attachment' = 'inline'): string =>

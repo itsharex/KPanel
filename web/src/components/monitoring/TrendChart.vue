@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   nearestTimestamp,
   normalizeTrendChartWidth,
+  parseMonitoringTimestamp,
   svgClientXToViewBox,
   svgViewBoxXToClient,
   trendSelectionFromViewBox,
@@ -68,7 +69,7 @@ let observer: ResizeObserver | undefined
 const normalizedSeries = computed(() => props.series.map((series) => ({
   ...series,
   points: series.points.reduce<NormalizedPoint[]>((result, point) => {
-    const time = Date.parse(point.at)
+    const time = parseMonitoringTimestamp(point.at)
     if (Number.isFinite(time) && Number.isFinite(point.value)) {
       result.push({ at: point.at, time, value: point.value })
     }

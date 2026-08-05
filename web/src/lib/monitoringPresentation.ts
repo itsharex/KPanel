@@ -21,6 +21,21 @@ export function monitoringWindowFromQuery(startValue: unknown, endValue: unknown
   return { start: new Date(start).toISOString(), end: new Date(end).toISOString() }
 }
 
+const monitoringTimestampCache = new Map<string, number>()
+const monitoringTimestampCacheLimit = 4_096
+
+export function parseMonitoringTimestamp(value: string): number {
+  const cached = monitoringTimestampCache.get(value)
+  if (cached !== undefined) return cached
+
+  const parsed = Date.parse(value)
+  if (monitoringTimestampCache.size >= monitoringTimestampCacheLimit) {
+    monitoringTimestampCache.clear()
+  }
+  monitoringTimestampCache.set(value, parsed)
+  return parsed
+}
+
 export function normalizeTrendChartWidth(measured: number, fallback = 720): number {
   const width = Number.isFinite(measured) && measured > 0 ? measured : fallback
   return Math.max(320, Math.round(width))
@@ -123,7 +138,7 @@ export function trendSelectionFromViewBox(
 }
 
 function latestContainerTime(container: MonitoringContainerSeries): number | undefined {
-  const value = Date.parse(container.points.at(-1)?.collectedAt || '')
+  const value = parseMonitoringTimestamp(container.points.at(-1)?.collectedAt || '')
   return Number.isFinite(value) ? value : undefined
 }
 
@@ -150,11 +165,11 @@ export function sliceMonitoringHistory(
   start: string,
   end: string,
 ): MonitoringHistory {
-  const startTime = Date.parse(start)
-  const endTime = Date.parse(end)
+  const startTime = parseMonitoringTimestamp(start)
+  const endTime = parseMonitoringTimestamp(end)
   if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || startTime >= endTime) return history
   const inside = (collectedAt: string) => {
-    const time = Date.parse(collectedAt)
+    const time = parseMonitoringTimestamp(collectedAt)
     return Number.isFinite(time) && time >= startTime && time <= endTime
   }
   return {

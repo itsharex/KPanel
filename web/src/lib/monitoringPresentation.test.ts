@@ -7,6 +7,7 @@ import {
   nearestTimestamp,
   newestContainerSampleTime,
   normalizeTrendChartWidth,
+  parseMonitoringTimestamp,
   sliceMonitoringHistory,
   svgClientXToViewBox,
   svgViewBoxXToClient,
@@ -79,6 +80,16 @@ describe('monitoring presentation', () => {
     expect(nearestTimestamp(times, -100)).toBe(10)
     expect(nearestTimestamp(times, 100)).toBe(30)
     expect(nearestTimestamp(times, 24)).toBe(20)
+  })
+
+  it('parses repeated chart timestamps once across charts', () => {
+    const parse = vi.spyOn(Date, 'parse')
+    const timestamp = '2026-08-05T14:00:00.123Z'
+
+    expect(parseMonitoringTimestamp(timestamp)).toBe(Date.UTC(2026, 7, 5, 14, 0, 0, 123))
+    expect(parseMonitoringTimestamp(timestamp)).toBe(Date.UTC(2026, 7, 5, 14, 0, 0, 123))
+    expect(parse).toHaveBeenCalledTimes(1)
+    parse.mockRestore()
   })
 
   it('uses the SVG screen matrix before the bounding box fallback', () => {

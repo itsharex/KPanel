@@ -143,13 +143,8 @@ let unmounted = false
 const fileViewStorageKey = 'kpanel:files:view:v1'
 const thumbnailSourceMaxBytes = 12 * 1024 * 1024
 
-const entries = computed(() => {
-  const query = search.value.trim().toLocaleLowerCase()
-  const values = query
-    ? (directory.value?.entries || []).filter((entry) =>
-    entry.name.toLocaleLowerCase().includes(query),
-      )
-    : [...(directory.value?.entries || [])]
+const sortedEntries = computed(() => {
+  const values = [...(directory.value?.entries || [])]
   values.sort((left, right) => {
     if (left.kind === 'directory' && right.kind !== 'directory') return -1
     if (left.kind !== 'directory' && right.kind === 'directory') return 1
@@ -161,6 +156,18 @@ const entries = computed(() => {
     return sortDescending.value ? -result : result
   })
   return values
+})
+const entrySearchCatalog = computed(() =>
+  sortedEntries.value.map((entry) => ({ entry, searchName: entry.name.toLocaleLowerCase() })),
+)
+
+const entries = computed(() => {
+  const query = search.value.trim().toLocaleLowerCase()
+  return query
+    ? entrySearchCatalog.value
+      .filter(({ searchName }) => searchName.includes(query))
+      .map(({ entry }) => entry)
+    : sortedEntries.value
 })
 
 const breadcrumbs = computed(() => {
@@ -1940,6 +1947,8 @@ onBeforeUnmount(() => {
   position: relative;
   display: grid;
   min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 190px;
   gap: 7px;
   padding: 10px;
   border: 1px solid transparent;
@@ -2085,6 +2094,8 @@ onBeforeUnmount(() => {
 }
 
 .file-row--entry {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 58px;
   font: inherit;
   cursor: default;
 }

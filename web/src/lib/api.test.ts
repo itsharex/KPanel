@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api, normalizeList, resetApiSecurityState } from './api'
+import type { SystemOverview } from '@/types/api'
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers)
@@ -627,9 +628,13 @@ describe('API client', () => {
       },
       collectedAt,
     }
+    let resolveSystem!: (response: Response) => void
+    const systemResponse = new Promise<Response>((resolve) => {
+      resolveSystem = resolve
+    })
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse(system))
+      .mockImplementationOnce(() => systemResponse)
       .mockResolvedValueOnce(
         jsonResponse({
           status: 'ok',
@@ -660,7 +665,11 @@ describe('API client', () => {
       )
     vi.stubGlobal('fetch', fetchMock)
 
-    const overview = await api.overview.get()
+    const updates: SystemOverview[] = []
+    const overviewRequest = api.overview.get(undefined, (value) => updates.push(value))
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8))
+    resolveSystem(jsonResponse(system))
+    const overview = await overviewRequest
 
     expect(overview.hostname).toBe('legacy-host')
     expect(overview.osId).toBe('debian')
@@ -720,6 +729,36 @@ describe('API client', () => {
       source: 'ipinfo.io',
     })
     expect(overview.apps).toEqual({ total: 4, installed: 3, running: 2, updateAvailable: 1 })
+    expect(updates).toHaveLength(7)
+    expect(overview).toBe(updates.at(-1))
+    expect(new Set(updates.map((value) => value.cpu)).size).toBe(1)
+    const capabilityUpdates = updates.filter(
+      (value) => value.management.capabilities['system.read'],
+    )
+    expect(capabilityUpdates.length).toBeGreaterThan(1)
+    expect(new Set(capabilityUpdates.map((value) => value.management.capabilities)).size).toBe(1)
+  })
+
+  it('limits the initial file directory page while preserving offset pagination', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        path: '/home',
+        entries: [],
+        offset: 100,
+        total: 500,
+        truncated: true,
+        nextOffset: 200,
+        readAt: '2026-08-05T14:00:00Z',
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.files.list('/home', { offset: 100 })
+
+    const requestURL = String(fetchMock.mock.calls[0]?.[0])
+    expect(requestURL).toContain('/api/v1/files?')
+    expect(requestURL).toContain('limit=100')
+    expect(requestURL).toContain('offset=100')
   })
 
   it('normalizes kejilion.sh and legacy swap artifacts separately', async () => {

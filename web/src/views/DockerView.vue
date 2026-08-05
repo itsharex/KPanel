@@ -205,36 +205,58 @@ const availableImageTags = computed(() =>
 )
 const createNetworks = computed(() => data.value?.networks || [])
 
+const sortedContainers = computed(() =>
+  sortDockerContainers(data.value?.containers || [], resourceSort.value),
+)
+const containerCatalog = computed(() => sortedContainers.value.map((item) => ({
+  item,
+  searchText: [item.name, item.image, item.project].filter(Boolean).join('\u0000').toLowerCase(),
+})))
+const sortedImages = computed(() =>
+  sortDockerImages(data.value?.images || [], resourceSort.value),
+)
+const imageCatalog = computed(() => sortedImages.value.map((item) => ({
+  item,
+  searchText: [item.id, ...item.tags].join('\u0000').toLowerCase(),
+})))
+const sortedNetworks = computed(() =>
+  sortDockerNetworks(data.value?.networks || [], resourceSort.value),
+)
+const networkCatalog = computed(() => sortedNetworks.value.map((item) => ({
+  item,
+  searchText: `${item.name}\u0000${item.driver}`.toLowerCase(),
+})))
+const sortedVolumes = computed(() =>
+  sortDockerVolumes(data.value?.volumes || [], resourceSort.value),
+)
+const volumeCatalog = computed(() => sortedVolumes.value.map((item) => ({
+  item,
+  searchText: `${item.name}\u0000${item.driver}`.toLowerCase(),
+})))
+
 const filteredContainers = computed(() => {
   const query = search.value.trim().toLowerCase()
-  const values = query ? (data.value?.containers || []).filter(
-    (item) =>
-      item.name.toLowerCase().includes(query) ||
-      item.image.toLowerCase().includes(query) ||
-      item.project?.toLowerCase().includes(query),
-  ) : [...(data.value?.containers || [])]
-  return sortDockerContainers(values, resourceSort.value)
+  return query
+    ? containerCatalog.value.filter(({ searchText }) => searchText.includes(query)).map(({ item }) => item)
+    : sortedContainers.value
 })
 const filteredImages = computed(() => {
   const query = search.value.trim().toLowerCase()
-  const values = query ? (data.value?.images || []).filter(
-    (item) => item.id.toLowerCase().includes(query) || item.tags.some((tag) => tag.toLowerCase().includes(query)),
-  ) : [...(data.value?.images || [])]
-  return sortDockerImages(values, resourceSort.value)
+  return query
+    ? imageCatalog.value.filter(({ searchText }) => searchText.includes(query)).map(({ item }) => item)
+    : sortedImages.value
 })
 const filteredNetworks = computed(() => {
   const query = search.value.trim().toLowerCase()
-  const values = query ? (data.value?.networks || []).filter(
-    (item) => item.name.toLowerCase().includes(query) || item.driver.toLowerCase().includes(query),
-  ) : [...(data.value?.networks || [])]
-  return sortDockerNetworks(values, resourceSort.value)
+  return query
+    ? networkCatalog.value.filter(({ searchText }) => searchText.includes(query)).map(({ item }) => item)
+    : sortedNetworks.value
 })
 const filteredVolumes = computed(() => {
   const query = search.value.trim().toLowerCase()
-  const values = query ? (data.value?.volumes || []).filter(
-    (item) => item.name.toLowerCase().includes(query) || item.driver.toLowerCase().includes(query),
-  ) : [...(data.value?.volumes || [])]
-  return sortDockerVolumes(values, resourceSort.value)
+  return query
+    ? volumeCatalog.value.filter(({ searchText }) => searchText.includes(query)).map(({ item }) => item)
+    : sortedVolumes.value
 })
 
 const visibleResourceCount = computed(() => {

@@ -102,9 +102,32 @@ const activeJobCancellable = computed(
     activeJob.value?.stage !== 'cancelling',
 )
 
+const sortedApps = computed(() =>
+  [...(inventory.value?.items || [])].sort((left, right) => {
+    if (left.id === recentInstalledID.value) return -1
+    if (right.id === recentInstalledID.value) return 1
+    if (left.runtime.installed !== right.runtime.installed) return left.runtime.installed ? -1 : 1
+    return (left.num || 9999) - (right.num || 9999)
+  }),
+)
+const appSearchCatalog = computed(() =>
+  sortedApps.value.map((item) => ({
+    item,
+    searchText: [item.name_zh, item.name_en, item.desc_zh, item.token, item.runtime.containerName]
+      .filter(Boolean)
+      .join('\u0000')
+      .toLowerCase(),
+  })),
+)
+
 const filteredApps = computed(() => {
   const needle = search.value.trim().toLowerCase()
-  return (inventory.value?.items || []).filter((item) => {
+  const candidates = needle
+    ? appSearchCatalog.value
+      .filter(({ searchText }) => searchText.includes(needle))
+      .map(({ item }) => item)
+    : sortedApps.value
+  return candidates.filter((item) => {
     if (category.value !== 'all' && item.cat !== category.value) return false
     if (source.value !== 'all' && item.source !== source.value) return false
     if (status.value === 'installed' && !item.runtime.installed) return false
@@ -116,15 +139,7 @@ const filteredApps = computed(() => {
     ) {
       return false
     }
-    if (!needle) return true
-    return [item.name_zh, item.name_en, item.desc_zh, item.token, item.runtime.containerName]
-      .filter(Boolean)
-      .some((value) => value!.toLowerCase().includes(needle))
-  }).sort((left, right) => {
-    if (left.id === recentInstalledID.value) return -1
-    if (right.id === recentInstalledID.value) return 1
-    if (left.runtime.installed !== right.runtime.installed) return left.runtime.installed ? -1 : 1
-    return (left.num || 9999) - (right.num || 9999)
+    return true
   })
 })
 
@@ -969,7 +984,14 @@ watch(
       >
         <button class="app-card__main" type="button" @click="openDetails(item)">
           <span class="app-card__icon">
-            <img :src="item.icon" :alt="`${item.name_zh} 图标`" width="128" height="128" loading="lazy" />
+            <img
+              :src="item.icon"
+              :alt="`${item.name_zh} 图标`"
+              width="128"
+              height="128"
+              loading="lazy"
+              decoding="async"
+            />
           </span>
           <span class="app-card__body">
             <span class="app-card__title">
@@ -1684,6 +1706,8 @@ watch(
   display: flex;
   min-width: 0;
   flex-direction: column;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 230px;
   border: 1px solid var(--border);
   border-radius: 18px;
   background: var(--surface);
