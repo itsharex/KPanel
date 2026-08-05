@@ -105,7 +105,7 @@ func TestSSHPortChangeUsesKejilionSinglePortSemantics(t *testing.T) {
 	mainPath := filepath.Join(etcRoot, "ssh", "sshd_config")
 	fragmentPath := filepath.Join(etcRoot, "ssh", "sshd_config.d", "provider.conf")
 	scriptPath := filepath.Join(t.TempDir(), "kejilion.sh")
-	mustWrite(t, scriptPath, "permission_granted=\"true\"\nKJ_SSH_PORT_NONINTERACTIVE=1\nkpanel_protocol_active() { :; }\nkpanel_ssh_port_noninteractive() { new_ssh_port \"$new_port\"; echo KPANEL_SSH_RESULT applied; }\n")
+	mustWrite(t, scriptPath, "permission_granted=\"true\"\nKJ_SSH_PORT_NONINTERACTIVE=1\nkpanel_protocol_active() { :; }\nkpanel_ssh_port_noninteractive() { new_ssh_port \"$new_port\"; ss -H -ltn >/dev/null; echo KPANEL_SSH_RESULT applied; }\n")
 	manager.dnsScript = func() (string, error) { return scriptPath, nil }
 	mustWrite(
 		t,
@@ -161,7 +161,7 @@ func TestSSHPortCapabilityRequiresTrustedKejilionProtocol(t *testing.T) {
 		t.Fatalf("legacy script unexpectedly enabled SSH port writes: %#v", capability)
 	}
 
-	mustWrite(t, scriptPath, "permission_granted=\"true\"\nKJ_SSH_PORT_NONINTERACTIVE=1\nkpanel_protocol_active() { :; }\nkpanel_ssh_port_noninteractive() { new_ssh_port \"$new_port\"; echo KPANEL_SSH_RESULT applied; }\n")
+	mustWrite(t, scriptPath, "permission_granted=\"true\"\nKJ_SSH_PORT_NONINTERACTIVE=1\nkpanel_protocol_active() { :; }\nkpanel_ssh_port_noninteractive() { new_ssh_port \"$new_port\"; ss -H -ltn >/dev/null; echo KPANEL_SSH_RESULT applied; }\n")
 	capability = findCapability(manager.Capabilities(), "system.ssh-port.write")
 	if !capability.Enabled {
 		t.Fatalf("trusted SSH port protocol unexpectedly disabled: %#v", capability)

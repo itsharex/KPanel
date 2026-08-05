@@ -213,6 +213,8 @@ func (m *Manager) Capabilities() []contract.Capability {
 		return contract.Capability{ID: id, Enabled: true, Methods: []string{"POST"}}
 	}
 	_, hostnamectlErr := m.runner.LookPath("hostnamectl")
+	_, sshdErr := m.runner.LookPath("sshd")
+	_, ssErr := m.runner.LookPath("ss")
 	_, timedatectlErr := m.runner.LookPath("timedatectl")
 	_, systemctlErr := m.runner.LookPath("systemctl")
 	_, mkswapErr := m.runner.LookPath("mkswap")
@@ -290,7 +292,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 	}
 	return []contract.Capability{
 		capability("system.hostname.write", hostnamectlErr == nil, "hostnamectl 不可用"),
-		capability("system.ssh-port.write", envErr == nil && bashErr == nil && sshScriptErr == nil && sshConfig, "请更新本机 kejilion.sh 以启用 KPanel SSH 端口协议"),
+		capability("system.ssh-port.write", envErr == nil && bashErr == nil && sshdErr == nil && ssErr == nil && sshScriptErr == nil && sshConfig, "请更新本机 kejilion.sh 并安装 OpenSSH/ss 以启用 KPanel SSH 端口协议"),
 		capability(
 			"system.ssh-defense.write",
 			systemdRunErr == nil && helperErr == nil && envErr == nil && bashErr == nil && f2bScriptErr == nil,
@@ -860,6 +862,7 @@ func trustedKejilionSSHPortContent(content []byte) bool {
 		strings.Contains(value, "kpanel_protocol_active") &&
 		strings.Contains(value, "kpanel_ssh_port_noninteractive") &&
 		strings.Contains(value, "new_ssh_port \"$new_port\"") &&
+		strings.Contains(value, "ss -H -ltn") &&
 		strings.Contains(value, "KPANEL_SSH_RESULT applied")
 }
 

@@ -40,7 +40,7 @@ IPinfo IPv4/IPv6 HTTPS 端点，成功结果缓存 30 分钟；外部查询超�
 | 业务 | 脚本产物识别 | Web 技术前置条件 |
 | --- | --- | --- |
 | 主机名 | kernel hostname | hostname 规则校验、原子更新、回读 |
-| SSH 端口 | `sshd_config` 与片段 | 调用本机可信 `kejilion.sh ssh-port` 非交互适配入口；脚本复用原有 `new_ssh_port` 主业务，Agent 负责结构化校验、执行前备份和结果回读 |
+| SSH 端口 | `sshd_config` 与片段 | 调用本机可信 `kejilion.sh ssh-port` 非交互适配入口；脚本复用原有 `new_ssh_port` 主业务，并强制验证配置语法与新端口监听；Agent 负责结构化校验、执行前备份和结果回读 |
 | SSH 防御 | `k f2b status|enable|disable` | 读取真实 Fail2Ban SSH jail；开启由后台任务安装并验证，关闭仅停用服务与自启、保留配置 |
 | DNS | `resolv.conf`、systemd-resolved 与脚本 DNS 协议 | 调用本机可信 `kejilion.sh` 固定非交互入口；systemd-resolved 使用原生配置，其他管理器沿用脚本的 `resolv.conf` 写入与锁定语义 |
 | 时区 | `/etc/timezone` 或 `localtime` | 有效 IANA 时区名称、回读 |
