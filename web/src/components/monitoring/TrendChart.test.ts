@@ -66,6 +66,77 @@ describe('TrendChart', () => {
     wrapper.unmount()
   })
 
+  it('uses stable ids, line styles and container highlighting', async () => {
+    const wrapper = mount(TrendChart, {
+      props: {
+        highlightGroup: 'container-a',
+        series: [
+          {
+            id: 'container-a:rx', group: 'container-a', label: 'same name · 接收', color: 'blue',
+            points: [{ at: '2026-08-05T00:00:00Z', value: 10 }],
+          },
+          {
+            id: 'container-b:tx', group: 'container-b', label: 'same name · 发送', color: 'orange', dash: 'dashed',
+            points: [{ at: '2026-08-05T00:00:00Z', value: 20 }],
+          },
+        ],
+      },
+    })
+    const paths = wrapper.findAll('.trend-chart__line')
+    expect(paths).toHaveLength(2)
+    expect(paths[0]!.classes()).not.toContain('is-muted')
+    expect(paths[1]!.classes()).toContain('is-muted')
+    expect(paths[1]!.attributes('stroke-dasharray')).toBe('7 5')
+    wrapper.unmount()
+  })
+
+  it('breaks a line across missing buckets and suppresses stale hover values', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(elementBox)
+    const wrapper = mount(TrendChart, {
+      props: {
+        series: [{
+          id: 'container:cpu', label: '容器 · CPU', color: 'blue',
+          maxGapMilliseconds: 90_000,
+          maxPointDistanceMilliseconds: 30_000,
+          points: [
+            { at: '2026-08-05T00:00:00Z', value: 10 },
+            { at: '2026-08-05T00:03:00Z', value: 20 },
+          ],
+        }],
+      },
+    })
+    expect(wrapper.get('.trend-chart__line').attributes('d')?.match(/M/g)).toHaveLength(2)
+
+    wrapper.get('svg').element.dispatchEvent(new MouseEvent('pointermove', {
+      bubbles: true,
+      clientX: 360,
+      clientY: 80,
+    }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.trend-chart__tooltip').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the five-container detailed chart bounded to ten SVG paths', () => {
+    const start = Date.parse('2026-08-01T00:00:00Z')
+    const series: TrendSeries[] = Array.from({ length: 10 }, (_, seriesIndex) => ({
+      id: `container-${Math.floor(seriesIndex / 2)}:${seriesIndex % 2}`,
+      group: `container-${Math.floor(seriesIndex / 2)}`,
+      label: `容器 ${Math.floor(seriesIndex / 2) + 1} · ${seriesIndex % 2 ? '发送' : '接收'}`,
+      color: `hsl(${seriesIndex * 36} 70% 50%)`,
+      dash: seriesIndex % 2 ? 'dashed' : 'solid',
+      points: Array.from({ length: 720 }, (_, pointIndex) => ({
+        at: new Date(start + pointIndex * 60_000).toISOString(),
+        value: seriesIndex * 100 + pointIndex,
+      })),
+    }))
+    const wrapper = mount(TrendChart, { props: { series, showLegend: false } })
+    expect(wrapper.findAll('.trend-chart__line')).toHaveLength(10)
+    expect(wrapper.findAll('.trend-chart__line[stroke-dasharray="7 5"]')).toHaveLength(5)
+    expect(wrapper.find('.trend-chart__legend').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('emits one normalized time range after a horizontal drag', async () => {
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(elementBox)
     const wrapper = mount(TrendChart, {

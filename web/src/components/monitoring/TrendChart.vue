@@ -11,8 +11,13 @@ import {
 } from '@/lib/monitoringPresentation'
 
 export interface TrendSeries {
+  id?: string
+  group?: string
   label: string
   color: string
+  dash?: 'solid' | 'dashed'
+  maxGapMilliseconds?: number
+  maxPointDistanceMilliseconds?: number
   latestLabel?: string
   points: Array<{ at: string; value: number }>
 }
@@ -30,12 +35,14 @@ const props = withDefaults(defineProps<{
   maxValue?: number
   selectable?: boolean
   showLegend?: boolean
+  highlightGroup?: string
 }>(), {
   formatter: (value: number) => value.toFixed(1),
   zeroBased: true,
   maxValue: undefined,
   selectable: true,
   showLegend: true,
+  highlightGroup: undefined,
 })
 
 const emit = defineEmits<{
@@ -48,6 +55,7 @@ const padding = { top: 16, right: 12, bottom: 28, left: 64 }
 const canvas = ref<HTMLDivElement>()
 const width = ref(defaultWidth)
 const hoveredTime = ref<number>()
+const hoverTargetTime = ref<number>()
 const tooltipX = ref<number>()
 const tooltipOnLeft = ref(false)
 const dragOriginX = ref<number>()
@@ -102,7 +110,16 @@ const hoveredPoints = computed(() => {
   if (hoveredTime.value === undefined) return []
   return normalizedSeries.value.flatMap((series) => {
     const point = nearestPoint(series.points, hoveredTime.value as number)
-    return point ? [{ ...point, label: series.label, color: series.color }] : []
+    const tolerance = series.maxPointDistanceMilliseconds
+    if (!point || (Number.isFinite(tolerance) && hoverTargetTime.value !== undefined &&
+      Math.abs(point.time - hoverTargetTime.value) > (tolerance as number))) return []
+    return [{
+      ...point,
+      id: series.id || series.label,
+      group: series.group,
+      label: series.label,
+      color: series.color,
+    }]
   })
 })
 
@@ -156,11 +173,16 @@ function yFor(value: number): number {
   return padding.top + (1 - (value - bounds.value.minimumValue) / span) * plotHeight()
 }
 
-function linePath(points: NormalizedPoint[]): string {
+function linePath(points: NormalizedPoint[], maxGapMilliseconds?: number): string {
   if (!bounds.value.hasData) return ''
-  return points.map((point, index) =>
-    `${index === 0 ? 'M' : 'L'}${xFor(point.time).toFixed(2)},${yFor(point.value).toFixed(2)}`,
-  ).join(' ')
+  let previousTime: number | undefined
+  return points.map((point, index) => {
+    const gap = previousTime === undefined ? 0 : point.time - previousTime
+    const startsSegment = index === 0 || (Number.isFinite(maxGapMilliseconds) &&
+      gap > (maxGapMilliseconds as number))
+    previousTime = point.time
+    return `${startsSegment ? 'M' : 'L'}${xFor(point.time).toFixed(2)},${yFor(point.value).toFixed(2)}`
+  }).join(' ')
 }
 
 function nearestPoint(points: NormalizedPoint[], target: number): NormalizedPoint | undefined {
@@ -201,6 +223,7 @@ function onPointerMove(event: PointerEvent): void {
   const clamped = Math.min(width.value - padding.right, Math.max(padding.left, svgX))
   const ratio = (clamped - padding.left) / plotWidth()
   const target = bounds.value.minimumTime + ratio * (bounds.value.maximumTime - bounds.value.minimumTime)
+  hoverTargetTime.value = target
   const nearest = nearestTimestamp(interactionTimes.value, target)
   hoveredTime.value = nearest
   if (nearest === undefined) return
@@ -269,6 +292,7 @@ function resetPointer(): void {
 
 function clearHover(): void {
   hoveredTime.value = undefined
+  hoverTargetTime.value = undefined
   tooltipX.value = undefined
   tooltipOnLeft.value = false
 }
@@ -310,7 +334,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="trend-chart">
     <div v-if="showLegend" class="trend-chart__legend">
-      <span v-for="item in normalizedSeries" :key="item.label">
+      <span v-for="item in normalizedSeries" :key="item.id || item.label">
         <i :style="{ backgroundColor: item.color }" />
         {{ item.label }}
         <strong>{{ trendLegendLabel(item.latestLabel, lastValue(item), formatter) }}</strong>
@@ -343,10 +367,12 @@ onBeforeUnmount(() => {
         </g>
         <path
           v-for="item in normalizedSeries"
-          :key="item.label"
-          :d="linePath(item.points)"
+          :key="item.id || item.label"
+          :d="linePath(item.points, item.maxGapMilliseconds)"
           :stroke="item.color"
+          :stroke-dasharray="item.dash === 'dashed' ? '7 5' : undefined"
           class="trend-chart__line"
+          :class="{ 'is-muted': highlightGroup && item.group !== highlightGroup }"
         />
         <rect
           v-if="selectionRect"
@@ -366,7 +392,7 @@ onBeforeUnmount(() => {
           />
           <circle
             v-for="point in hoveredPoints"
-            :key="point.label"
+            :key="point.id"
             :cx="hoverX"
             :cy="yFor(point.value)"
             r="4"
@@ -385,7 +411,7 @@ onBeforeUnmount(() => {
         :style="tooltipStyle"
       >
         <time>{{ timeLabel(tooltipTime, true) }}</time>
-        <span v-for="point in hoveredPoints" :key="point.label">
+        <span v-for="point in hoveredPoints" :key="point.id">
           <i :style="{ backgroundColor: point.color }" />
           {{ point.label }}
           <strong>{{ formatter(point.value) }}</strong>
@@ -416,8 +442,9 @@ onBeforeUnmount(() => {
 .trend-chart__tick { fill: var(--muted); font-size: 10.5px; }
 .trend-chart__line {
   fill: none; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
+  vector-effect: non-scaling-stroke; transition: opacity .14s ease;
 }
+.trend-chart__line.is-muted { opacity: .14; }
 .trend-chart__selection {
   fill: color-mix(in srgb, var(--brand) 18%, transparent); stroke: var(--brand);
   stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none;

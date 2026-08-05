@@ -4,7 +4,7 @@ import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/MonitoringView/en-US').then((module) => module.default))
-import { ArrowLeft, Box, Cpu, Database, HardDrive, MemoryStick, Network, RadioTower, RefreshCw, RotateCcw } from '@lucide/vue'
+import { ArrowLeft, Box, Cpu, Database, HardDrive, MemoryStick, Network, RadioTower, RefreshCw, RotateCcw, Search } from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
@@ -24,6 +24,14 @@ import {
   newestContainerSampleTime,
   sliceMonitoringHistory,
 } from '@/lib/monitoringPresentation'
+import {
+  assignMonitoringContainerColorSlots,
+  monitoringContainerColors,
+  monitoringContainerSelectionLimit,
+  readMonitoringContainerPreference,
+  reconcileMonitoringContainerIDs,
+  writeMonitoringContainerPreference,
+} from '@/lib/monitoringContainerSelection'
 import {
   latestOperatorLatency,
   mergeOperatorLatencyVisibility,
@@ -59,7 +67,16 @@ const history = shallowRef<MonitoringHistory>()
 const route = useRoute()
 const router = useRouter()
 const selectedRange = ref<MonitoringRange>('24h')
-const selectedContainerId = ref('')
+const restoredContainerPreference = readMonitoringContainerPreference()
+const selectedContainerIds = ref<string[]>(restoredContainerPreference?.ids || [])
+const selectedContainerColorSlots = ref<Record<string, number>>(restoredContainerPreference?.slots || {})
+const containerSearch = ref('')
+const containerSelectionError = ref('')
+const highlightedContainerId = ref('')
+const containerCPUMode = ref<'peak' | 'average'>('peak')
+const containerMemoryMode = ref<'bytes' | 'percent'>('bytes')
+const containerNetworkMode = ref<'total' | 'direction'>('total')
+const containerBlockMode = ref<'total' | 'direction'>('total')
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
@@ -79,12 +96,43 @@ const historyStorageBytes = computed(() =>
 const historyStorageLimit = computed(() =>
   (history.value?.storage.maxStorageBytes || 0) + (history.value?.storage.maxRollupStorageBytes || 0),
 )
-const selectedContainer = computed<MonitoringContainerSeries | undefined>(() => {
-  const containers = history.value?.containers || []
-  return containers.find((item) => item.containerId === selectedContainerId.value) || containers[0]
-})
-const latestContainer = computed(() => selectedContainer.value?.points.at(-1))
 const newestContainerSample = computed(() => newestContainerSampleTime(history.value?.containers || []))
+const containerCatalog = computed<MonitoringContainerSeries[]>(() => {
+  const current = history.value?.containers || []
+  const root = rootHistory.value?.range === selectedRange.value ? rootHistory.value.containers : []
+  const result = current.map((container) => container)
+  const known = new Set(result.map((container) => container.containerId))
+  for (const container of root) {
+    if (!known.has(container.containerId)) result.push({ ...container, points: [] })
+  }
+  return result
+})
+const selectedContainers = computed(() => {
+  const byID = new Map(containerCatalog.value.map((container) => [container.containerId, container]))
+  return selectedContainerIds.value.flatMap((id) => {
+    const container = byID.get(id)
+    return container ? [container] : []
+  })
+})
+const filteredContainers = computed(() => {
+  const query = containerSearch.value.trim().toLocaleLowerCase()
+  if (!query) return containerCatalog.value
+  return containerCatalog.value.filter((container) =>
+    container.name.toLocaleLowerCase().includes(query) ||
+    container.image.toLocaleLowerCase().includes(query) ||
+    container.containerId.toLocaleLowerCase().includes(query))
+})
+const duplicateContainerNames = computed(() => {
+  const counts = new Map<string, number>()
+  for (const container of containerCatalog.value) counts.set(container.name, (counts.get(container.name) || 0) + 1)
+  return new Set(Array.from(counts).filter(([, count]) => count > 1).map(([name]) => name))
+})
+const containerHasAverage = computed(() => selectedContainers.value.some((container) =>
+  container.points.some((point) => (point.cpuSampleCount || 0) > 0)))
+const containerIntervalMilliseconds = computed(() => Math.max(
+  history.value?.bucketSeconds || 1,
+  history.value?.storage.containerIntervalSeconds || 1,
+) * 1_000)
 const selectedMetric = computed<MonitoringMetric | undefined>(() => normalizeMonitoringMetric(route.query.metric))
 const zoomWindowLabel = computed(() => activeWindow.value
   ? `${formatWindowTime(activeWindow.value.start)} – ${formatWindowTime(activeWindow.value.end)}`
@@ -214,77 +262,137 @@ const operatorLatencyChart = computed<TrendSeries[]>(() => operatorLatencyRoutes
   .filter((series) => series.points.length > 0))
 const operatorLatencyVisibleCount = computed(() => operatorLatencyRoutes.value
   .filter((series) => operatorLatencyVisibility.value[series.id]).length)
-const containerCPU = computed<TrendSeries[]>(() => {
-  const points = selectedContainer.value?.points || []
-  const hasAverage = points.some((point) => (point.cpuSampleCount || 0) > 0)
-  const series: TrendSeries[] = [{
-    label: hasAverage ? 'CPU 峰值' : 'CPU',
-    color: 'var(--brand)',
-    points: points.map((point) => ({ at: point.collectedAt, value: point.cpuPercent })),
-  }]
-  if (hasAverage) {
-    series.push({
-      label: 'CPU 平均',
-      color: 'var(--blue)',
-      points: points.flatMap((point) => (point.cpuSampleCount || 0) > 0
-        ? [{ at: point.collectedAt, value: point.cpuAveragePercent || 0 }]
-        : []),
-    })
-  }
-  return series
-})
-const containerMemory = computed<TrendSeries[]>(() => [{
-  label: '内存',
-  color: 'var(--violet)',
-  points: (selectedContainer.value?.points || []).map((point) => ({
+const containerCPU = computed<TrendSeries[]>(() => selectedContainers.value.flatMap((container) => {
+  const average = containerCPUMode.value === 'average'
+  const points = average
+    ? container.points.flatMap((point) => (point.cpuSampleCount || 0) > 0
+      ? [{ at: point.collectedAt, value: point.cpuAveragePercent || 0 }]
+      : [])
+    : container.points.map((point) => ({ at: point.collectedAt, value: point.cpuPercent }))
+  return points.length ? [containerTrendSeries(container, `cpu-${containerCPUMode.value}`, average ? 'CPU 平均' : 'CPU 峰值', points)] : []
+}))
+const containerMemory = computed<TrendSeries[]>(() => selectedContainers.value.flatMap((container) => {
+  const percentage = containerMemoryMode.value === 'percent'
+  const points = container.points.map((point) => ({
     at: point.collectedAt,
-    value: point.memoryPercent,
-  })),
-}])
-const containerNetwork = computed<TrendSeries[]>(() => [
-  {
-    label: '接收',
-    color: 'var(--brand)',
-    points: (selectedContainer.value?.points || []).map((point) => ({
+    value: percentage ? point.memoryPercent : point.memoryBytes,
+  }))
+  return points.length ? [containerTrendSeries(container, `memory-${containerMemoryMode.value}`, percentage ? '限额占比' : '实际用量', points)] : []
+}))
+const containerNetwork = computed<TrendSeries[]>(() => selectedContainers.value.flatMap((container) => {
+  if (containerNetworkMode.value === 'total') {
+    const points = container.points.map((point) => ({
       at: point.collectedAt,
-      value: point.networkRxBytesPerSecond,
-    })),
-  },
-  {
-    label: '发送',
-    color: 'var(--blue)',
-    points: (selectedContainer.value?.points || []).map((point) => ({
+      value: point.networkRxBytesPerSecond + point.networkTxBytesPerSecond,
+    }))
+    return points.length ? [containerTrendSeries(container, 'network-total', '总吞吐', points)] : []
+  }
+  return [
+    containerTrendSeries(container, 'network-rx', '接收', container.points.map((point) => ({
+      at: point.collectedAt, value: point.networkRxBytesPerSecond,
+    }))),
+    containerTrendSeries(container, 'network-tx', '发送', container.points.map((point) => ({
+      at: point.collectedAt, value: point.networkTxBytesPerSecond,
+    })), 'dashed'),
+  ].filter((series) => series.points.length)
+}))
+const containerBlock = computed<TrendSeries[]>(() => selectedContainers.value.flatMap((container) => {
+  if (containerBlockMode.value === 'total') {
+    const points = container.points.map((point) => ({
       at: point.collectedAt,
-      value: point.networkTxBytesPerSecond,
-    })),
-  },
-])
-const containerBlock = computed<TrendSeries[]>(() => [
-  {
-    label: '块读取',
-    color: 'var(--brand)',
-    points: (selectedContainer.value?.points || []).map((point) => ({
-      at: point.collectedAt,
-      value: point.blockReadBytesPerSecond || 0,
-    })),
-  },
-  {
-    label: '块写入',
-    color: 'var(--amber)',
-    points: (selectedContainer.value?.points || []).map((point) => ({
-      at: point.collectedAt,
-      value: point.blockWriteBytesPerSecond || 0,
-    })),
-  },
-])
+      value: (point.blockReadBytesPerSecond || 0) + (point.blockWriteBytesPerSecond || 0),
+    }))
+    return points.length ? [containerTrendSeries(container, 'block-total', '总 I/O', points)] : []
+  }
+  return [
+    containerTrendSeries(container, 'block-read', '读取', container.points.map((point) => ({
+      at: point.collectedAt, value: point.blockReadBytesPerSecond || 0,
+    }))),
+    containerTrendSeries(container, 'block-write', '写入', container.points.map((point) => ({
+      at: point.collectedAt, value: point.blockWriteBytesPerSecond || 0,
+    })), 'dashed'),
+  ].filter((series) => series.points.length)
+}))
+
+function containerColor(containerId: string): string {
+  const slot = selectedContainerColorSlots.value[containerId] ?? 0
+  return monitoringContainerColors[slot] || monitoringContainerColors[0]
+}
+
+function containerSeriesName(container: MonitoringContainerSeries): string {
+  return duplicateContainerNames.value.has(container.name)
+    ? `${container.name} · ${container.containerId.slice(0, 8)}`
+    : container.name
+}
+
+function containerTrendSeries(
+  container: MonitoringContainerSeries,
+  metric: string,
+  metricLabel: string,
+  points: Array<{ at: string; value: number }>,
+  dash: 'solid' | 'dashed' = 'solid',
+): TrendSeries {
+  return {
+    id: `${container.containerId}:${metric}`,
+    group: container.containerId,
+    label: `${containerSeriesName(container)} · ${metricLabel}`,
+    color: containerColor(container.containerId),
+    dash,
+    maxGapMilliseconds: containerIntervalMilliseconds.value * 1.75,
+    maxPointDistanceMilliseconds: containerIntervalMilliseconds.value * 0.75,
+    points,
+  }
+}
 
 function percent(used?: number, total?: number): number {
   if (!used || !total) return 0
   return Math.min(100, Math.max(0, (used / total) * 100))
 }
 
-function selectContainer(container: MonitoringContainerSeries): void {
-  selectedContainerId.value = container.containerId
+function persistContainerSelection(ids: string[]): void {
+  selectedContainerColorSlots.value = assignMonitoringContainerColorSlots(
+    ids,
+    selectedContainerColorSlots.value,
+  )
+  selectedContainerIds.value = ids
+  writeMonitoringContainerPreference({ ids, slots: selectedContainerColorSlots.value })
+}
+
+function reconcileContainerSelection(containers: MonitoringContainerSeries[]): void {
+  const ids = reconcileMonitoringContainerIDs(containers, selectedContainerIds.value)
+  if (ids.length) persistContainerSelection(ids)
+}
+
+function restoreContainerCheckbox(event: Event | undefined, checked: boolean): void {
+  if (event?.target instanceof HTMLInputElement) event.target.checked = checked
+}
+
+function toggleContainer(container: MonitoringContainerSeries, event?: Event): void {
+  containerSelectionError.value = ''
+  const selected = selectedContainerIds.value.includes(container.containerId)
+  if (selected) {
+    if (selectedContainerIds.value.length <= 1) {
+      containerSelectionError.value = '至少保留一个容器用于对比。'
+      restoreContainerCheckbox(event, true)
+      return
+    }
+    persistContainerSelection(selectedContainerIds.value.filter((id) => id !== container.containerId))
+    return
+  }
+  if (selectedContainerIds.value.length >= monitoringContainerSelectionLimit) {
+    containerSelectionError.value = `最多同时比较 ${monitoringContainerSelectionLimit} 个容器，请先取消一个。`
+    restoreContainerCheckbox(event, false)
+    return
+  }
+  persistContainerSelection([...selectedContainerIds.value, container.containerId])
+}
+
+function containerSelected(containerId: string): boolean {
+  return selectedContainerIds.value.includes(containerId)
+}
+
+function latestContainerPoint(container: MonitoringContainerSeries) {
+  return container.points.at(-1)
 }
 
 function containerIsHistorical(container: MonitoringContainerSeries): boolean {
@@ -345,9 +453,7 @@ async function load(mode: HistoryLoadMode = 'initial', query = activeWindow.valu
       operatorLatencyVisibility.value,
       result.operatorLatency || [],
     )
-    if (!result.containers.some((item) => item.containerId === selectedContainerId.value)) {
-      selectedContainerId.value = result.containers[0]?.containerId || ''
-    }
+    reconcileContainerSelection(containerCatalog.value)
   } catch (reason) {
     if (!(reason instanceof DOMException && reason.name === 'AbortError')) {
       const message = reason instanceof ApiError
@@ -490,6 +596,14 @@ async function focusSelectedMetric(): Promise<void> {
 }
 
 watch([selectedMetric, () => history.value?.host.length], () => void focusSelectedMetric(), { flush: 'post' })
+watch(containerHasAverage, (available) => {
+  if (!available && containerCPUMode.value === 'average') containerCPUMode.value = 'peak'
+})
+watch(selectedContainerIds, (ids) => {
+  if (highlightedContainerId.value && !ids.includes(highlightedContainerId.value)) {
+    highlightedContainerId.value = ''
+  }
+})
 watch(
   [() => route.query.range, () => route.query.start, () => route.query.end],
   applyRouteState,
@@ -640,23 +754,38 @@ onBeforeUnmount(() => controller?.abort())
             <span class="section-heading__icon"><Box :size="18" /></span>
             <div><h2>容器监控</h2><p>运行中容器每 5 分钟采样一次，最多记录 32 个。</p></div>
           </div>
-          <span>{{ history.containers.length }} 个容器有历史数据</span>
+          <span>{{ containerCatalog.length }} 个容器有历史数据 · 已选 {{ selectedContainerIds.length }}/{{ monitoringContainerSelectionLimit }}</span>
         </header>
 
-        <div v-if="history.containers.length" class="container-layout">
+        <div v-if="containerCatalog.length" class="container-layout">
           <div class="container-list-shell">
+            <label class="container-search">
+              <Search :size="15" />
+              <input v-model="containerSearch" type="search" aria-label="搜索容器名称、镜像或 ID" placeholder="搜索容器名称、镜像或 ID" />
+            </label>
+            <p class="container-selection-note">默认选择当前资源占用靠前的 3 个容器，最多同时比较 5 个。</p>
+            <p v-if="containerSelectionError" class="container-selection-error" role="status">{{ containerSelectionError }}</p>
             <div class="container-list">
-              <button
-                v-for="container in history.containers"
+              <label
+                v-for="container in filteredContainers"
                 :key="container.containerId"
                 class="container-row"
                 :class="{
-                  'container-row--active': selectedContainer?.containerId === container.containerId,
+                  'container-row--active': containerSelected(container.containerId),
                   'container-row--historical': containerIsHistorical(container),
                 }"
-                type="button"
-                @click="selectContainer(container)"
               >
+                <input
+                  type="checkbox"
+                  :checked="containerSelected(container.containerId)"
+                  :aria-label="container.name"
+                  @change="toggleContainer(container, $event)"
+                />
+                <i
+                  class="container-row__color"
+                  :class="{ 'is-visible': containerSelected(container.containerId) }"
+                  :style="containerSelected(container.containerId) ? { background: containerColor(container.containerId) } : undefined"
+                />
                 <span>
                   <span class="container-row__title">
                     <strong>{{ container.name }}</strong>
@@ -665,29 +794,61 @@ onBeforeUnmount(() => controller?.abort())
                   <small>{{ containerImageLabel(container) }}</small>
                 </span>
                 <span>
-                  <strong>{{ formatPercent(container.points.at(-1)?.cpuPercent) }}</strong>
-                  <small>{{ formatBytes(container.points.at(-1)?.memoryBytes) }}</small>
+                  <strong>{{ latestContainerPoint(container) ? formatPercent(latestContainerPoint(container)?.cpuPercent) : '—' }}</strong>
+                  <small>{{ latestContainerPoint(container) ? formatBytes(latestContainerPoint(container)?.memoryBytes) : '当前窗口无数据' }}</small>
                 </span>
-              </button>
+              </label>
+              <p v-if="!filteredContainers.length" class="container-list-empty">没有匹配的容器</p>
             </div>
           </div>
-          <div class="container-detail">
+          <div class="container-compare">
             <header>
               <div>
-                <h3>{{ selectedContainer?.name }}</h3>
-                <p>{{ selectedContainer ? containerImageLabel(selectedContainer) : '' }}</p>
-              </div>
-              <div class="container-detail__latest">
-                <span>CPU <strong>{{ formatPercent(latestContainer?.cpuPercent) }}</strong></span>
-                <span>内存 <strong>{{ formatBytes(latestContainer?.memoryBytes) }}</strong></span>
-                <span>进程 <strong>{{ latestContainer?.pids || 0 }}</strong></span>
+                <h3>容器对比</h3>
+                <p>颜色代表容器；详细模式下实线和虚线代表不同方向。</p>
               </div>
             </header>
+            <div class="selected-container-strip" aria-label="已选择的容器">
+              <div
+                v-for="container in selectedContainers"
+                :key="container.containerId"
+                class="selected-container-card"
+                :class="{ 'is-highlighted': highlightedContainerId === container.containerId }"
+                tabindex="0"
+                @mouseenter="highlightedContainerId = container.containerId"
+                @mouseleave="highlightedContainerId = ''"
+                @focus="highlightedContainerId = container.containerId"
+                @blur="highlightedContainerId = ''"
+              >
+                <i :style="{ background: containerColor(container.containerId) }" />
+                <span><strong>{{ containerSeriesName(container) }}</strong><small>{{ containerIsHistorical(container) ? '历史容器' : containerImageLabel(container) }}</small></span>
+                <span v-if="latestContainerPoint(container)">
+                  <small>CPU {{ formatPercent(latestContainerPoint(container)?.cpuPercent) }}</small>
+                  <small>内存 {{ formatBytes(latestContainerPoint(container)?.memoryBytes) }}</small>
+                  <small>进程 {{ latestContainerPoint(container)?.pids || 0 }}</small>
+                </span>
+                <span v-else><small>当前窗口无数据</small></span>
+              </div>
+            </div>
             <div class="container-charts">
-              <article><strong>CPU</strong><TrendChart :series="containerCPU" :formatter="formatPercent" :selectable="!updating" @select-range="zoomToRange" /></article>
-              <article><strong>内存</strong><TrendChart :series="containerMemory" :formatter="formatPercent" :max-value="100" :selectable="!updating" @select-range="zoomToRange" /></article>
-              <article><strong>磁盘 I/O</strong><TrendChart :series="containerBlock" :formatter="formatRate" :selectable="!updating" @select-range="zoomToRange" /></article>
-              <article><strong>网络</strong><TrendChart :series="containerNetwork" :formatter="formatRate" :selectable="!updating" @select-range="zoomToRange" /></article>
+              <article>
+                <header><strong>CPU</strong><div class="chart-switch"><button :class="{ 'is-active': containerCPUMode === 'peak' }" type="button" @click="containerCPUMode = 'peak'">峰值</button><button :class="{ 'is-active': containerCPUMode === 'average' }" type="button" :disabled="!containerHasAverage" @click="containerCPUMode = 'average'">平均</button></div></header>
+                <TrendChart :series="containerCPU" :formatter="formatPercent" :show-legend="false" :highlight-group="highlightedContainerId" :selectable="!updating" @select-range="zoomToRange" />
+              </article>
+              <article>
+                <header><strong>内存</strong><div class="chart-switch"><button :class="{ 'is-active': containerMemoryMode === 'bytes' }" type="button" @click="containerMemoryMode = 'bytes'">实际用量</button><button :class="{ 'is-active': containerMemoryMode === 'percent' }" type="button" @click="containerMemoryMode = 'percent'">限额占比</button></div></header>
+                <TrendChart :series="containerMemory" :formatter="containerMemoryMode === 'bytes' ? formatBytes : formatPercent" :max-value="containerMemoryMode === 'percent' ? 100 : undefined" :show-legend="false" :highlight-group="highlightedContainerId" :selectable="!updating" @select-range="zoomToRange" />
+              </article>
+              <article>
+                <header><strong>磁盘 I/O</strong><div class="chart-switch"><button :class="{ 'is-active': containerBlockMode === 'total' }" type="button" @click="containerBlockMode = 'total'">合计</button><button :class="{ 'is-active': containerBlockMode === 'direction' }" type="button" @click="containerBlockMode = 'direction'">读 / 写</button></div></header>
+                <div v-if="containerBlockMode === 'direction'" class="line-style-key"><span><i />读取</span><span><i class="is-dashed" />写入</span></div>
+                <TrendChart :series="containerBlock" :formatter="formatRate" :show-legend="false" :highlight-group="highlightedContainerId" :selectable="!updating" @select-range="zoomToRange" />
+              </article>
+              <article>
+                <header><strong>网络</strong><div class="chart-switch"><button :class="{ 'is-active': containerNetworkMode === 'total' }" type="button" @click="containerNetworkMode = 'total'">总吞吐</button><button :class="{ 'is-active': containerNetworkMode === 'direction' }" type="button" @click="containerNetworkMode = 'direction'">接收 / 发送</button></div></header>
+                <div v-if="containerNetworkMode === 'direction'" class="line-style-key"><span><i />接收</span><span><i class="is-dashed" />发送</span></div>
+                <TrendChart :series="containerNetwork" :formatter="formatRate" :show-legend="false" :highlight-group="highlightedContainerId" :selectable="!updating" @select-range="zoomToRange" />
+              </article>
             </div>
           </div>
         </div>
@@ -842,16 +1003,27 @@ onBeforeUnmount(() => controller?.abort())
 .operator-latency-note { margin: 0 0 2px; color: var(--muted); font-size: .7rem; }
 .operator-latency-empty { display: grid; min-height: 210px; place-items: center; color: var(--muted); font-size: .8rem; }
 .container-section { padding: 18px; }
-.section-heading h2, .container-detail h3 { margin: 0; font-size: 1rem; }
-.section-heading p, .container-detail p { margin: 3px 0 0; color: var(--muted); font-size: .76rem; }
+.section-heading h2, .container-compare h3 { margin: 0; font-size: 1rem; }
+.section-heading p, .container-compare > header p { margin: 3px 0 0; color: var(--muted); font-size: .76rem; }
 .container-layout { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 14px; }
-.container-list-shell { position: relative; min-width: 0; min-height: 0; }
-.container-list { position: absolute; inset: 0; overflow: auto; padding-right: 4px; }
+.container-list-shell { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
+.container-search {
+  display: flex; min-height: 36px; align-items: center; gap: 8px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 9px; color: var(--muted); background: var(--surface);
+}
+.container-search:focus-within { border-color: var(--brand); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 12%, transparent); }
+.container-search input { min-width: 0; width: 100%; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; font-size: .76rem; }
+.container-selection-note { margin: 8px 2px 4px; color: var(--muted); font-size: .68rem; line-height: 1.45; }
+.container-selection-error { margin: 4px 2px; color: var(--amber); font-size: .7rem; }
+.container-list { min-height: 360px; max-height: 680px; overflow: auto; padding-right: 4px; }
 .container-row {
   display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px;
   padding: 11px 12px; border: 1px solid transparent; border-radius: 10px;
   color: var(--text); background: transparent; text-align: left; cursor: pointer;
 }
+.container-row input { width: 15px; height: 15px; flex: 0 0 auto; margin: 0; accent-color: var(--brand); }
+.container-row__color { width: 8px; height: 28px; flex: 0 0 auto; border-radius: 999px; opacity: 0; }
+.container-row__color.is-visible { opacity: 1; }
 .container-row + .container-row { margin-top: 4px; }
 .container-row:hover, .container-row--active {
   border-color: color-mix(in srgb, var(--brand) 40%, var(--border)); background: var(--brand-soft);
@@ -871,15 +1043,32 @@ onBeforeUnmount(() => controller?.abort())
   max-width: 180px; margin-top: 3px; overflow: hidden; color: var(--muted);
   font-size: .7rem; text-overflow: ellipsis; white-space: nowrap;
 }
-.container-detail {
+.container-list-empty { padding: 28px 8px; color: var(--muted); font-size: .76rem; text-align: center; }
+.container-compare {
   min-width: 0; padding: 14px; border: 1px solid var(--border);
   border-radius: 12px; background: var(--surface-subtle);
 }
-.container-detail__latest { display: flex; gap: 14px; color: var(--muted); font-size: .74rem; }
-.container-detail__latest strong { color: var(--text); }
+.selected-container-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 12px 0; }
+.selected-container-card {
+  display: grid; min-width: 0; grid-template-columns: 8px minmax(0, 1fr); gap: 2px 9px; padding: 9px 10px;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--surface); outline: 0;
+  transition: border-color .14s ease, box-shadow .14s ease;
+}
+.selected-container-card.is-highlighted, .selected-container-card:focus-visible { border-color: var(--brand); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 11%, transparent); }
+.selected-container-card > i { width: 8px; height: 100%; min-height: 30px; grid-row: 1 / 3; border-radius: 999px; }
+.selected-container-card > span { display: flex; min-width: 0; gap: 8px; justify-content: space-between; }
+.selected-container-card > span strong, .selected-container-card > span small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selected-container-card > span strong { color: var(--text); font-size: .74rem; }
+.selected-container-card > span small { color: var(--muted); font-size: .66rem; }
 .container-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .container-charts > article { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
-.container-charts > article > strong { display: block; margin-bottom: 4px; font-size: .78rem; }
+.container-charts > article > header { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; }
+.container-charts > article > header > strong { font-size: .78rem; }
+.container-charts .chart-switch button:disabled { cursor: not-allowed; opacity: .45; }
+.line-style-key { display: flex; min-height: 22px; align-items: center; justify-content: flex-end; gap: 12px; color: var(--muted); font-size: .66rem; }
+.line-style-key span { display: inline-flex; align-items: center; gap: 5px; }
+.line-style-key i { width: 18px; height: 0; border-top: 2px solid currentColor; }
+.line-style-key i.is-dashed { border-top-style: dashed; }
 .monitoring-footnote { color: var(--muted); font-size: .74rem; text-align: center; }
 @media (max-width: 1180px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -892,6 +1081,9 @@ onBeforeUnmount(() => controller?.abort())
   .monitoring-zoom-strip__actions { width: 100%; margin-left: 0; }
   .monitoring-zoom-strip__actions button { flex: 1; justify-content: center; }
   .summary-grid, .chart-grid, .container-layout { grid-template-columns: 1fr; }
+  .container-list { min-height: 0; max-height: 360px; }
+  .selected-container-strip { display: flex; overflow-x: auto; padding-bottom: 4px; }
+  .selected-container-card { min-width: 220px; }
   .chart-card--wide { grid-column: auto; }
   .container-list-shell { min-height: 0; }
   .container-list { position: static; max-height: 240px; }
