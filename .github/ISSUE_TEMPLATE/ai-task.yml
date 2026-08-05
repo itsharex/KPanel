@@ -1,0 +1,103 @@
+name: AI 协作任务
+description: 为 Codex、Claude 或其他智能体登记可并行、可交接的 KPanel 工作项
+title: "[AI] "
+body:
+  - type: dropdown
+    id: provider
+    attributes:
+      label: 首选智能体
+      options:
+        - Codex
+        - Claude
+        - Codex + Claude
+        - 其他
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: 任务角色
+      options:
+        - 分析
+        - 开发
+        - 验证
+        - 集成
+        - 发布
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标与交付物
+      description: 明确要解决的问题、最终产物和完成定义。
+    validations:
+      required: true
+  - type: textarea
+    id: paths
+    attributes:
+      label: 允许、禁止与共享路径
+      description: 分别列出允许修改、禁止修改和可能与其他任务共享的文件或目录。
+      placeholder: |
+        允许：
+        禁止：
+        共享契约：
+    validations:
+      required: true
+  - type: input
+    id: base_ref
+    attributes:
+      label: 基线提交或引用
+      placeholder: origin/main 或完整 commit
+    validations:
+      required: true
+  - type: textarea
+    id: workspace
+    attributes:
+      label: 分支与 worktree
+      description: 创建后补充分支、worktree 绝对路径和当前负责人。
+      placeholder: |
+        分支：
+        worktree：
+        当前负责人：
+  - type: dropdown
+    id: verification
+    attributes:
+      label: 验证等级
+      options:
+        - L0
+        - L1
+        - L2
+        - L3
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收命令与人工检查
+      description: 写出可复现命令、预期结果和必须保留的证据。
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依赖、冲突与目标版本
+      placeholder: |
+        依赖 Issue：
+        冲突任务：
+        目标版本：
+  - type: checkboxes
+    id: permissions
+    attributes:
+      label: 已授权动作
+      description: 未勾选的动作一律视为未授权；发布和部署仍需当前用户明确指令。
+      options:
+        - label: 允许修改任务范围内文件
+        - label: 允许创建本地聚焦提交
+        - label: 允许推送任务分支
+        - label: 允许集成到 main
+        - label: 允许打标签、发布或部署
+  - type: textarea
+    id: handoff
+    attributes:
+      label: 交接与最终结果
+      description: 每次移交或完成时更新提交、验证、风险、回滚点和下一责任人。

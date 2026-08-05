@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
 description: "完成 KPanel 版本准备、CI、GitHub Release、Docker Hub、应用市场契约核对和公开镜像验收"
-version: "1.2"
+version: "1.4"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, apps_repo]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-02T13:05:00Z"
+updated: "2026-08-05T00:00:00+08:00"
 ---
 
 # Release KPanel
@@ -19,7 +19,12 @@ updated: "2026-08-02T13:05:00Z"
 
 ## Prerequisites
 
-- 已阅读 `AGENTS.md` 和 `PROJECT_RULES.md`，并取得用户对本次发布、推送的明确授权。
+- 已阅读 `AGENTS.md`、`PROJECT_RULES.md` 和 `docs/project-management.md`，并取得用户对本次
+  发布、推送的明确授权。
+- 发布范围已经由协调中心按精确提交哈希确认；当前只有一个发布任务、一个候选 worktree 和
+  一个候选分支。新功能继续在独立分支开发，不得进入已冻结候选。
+- 发布 AI Task Issue 已登记唯一发布负责人；主要实现任务与最终验证/发布任务相互独立。多个 AI
+  可用时，优先由另一种智能体复核提交清单、风险和回滚点。
 - `${{project_dir}}` 是本次发布使用的独立、干净 KPanel 工作树，远端为
   `kejilion/KPanel`；不得切换到其他并发会话的工作树执行。
 - `${{apps_repo}}` 指向 `kejilion/apps` 本地仓库，默认 `C:\GitHub\kejilion\apps`；只有
@@ -34,7 +39,9 @@ updated: "2026-08-02T13:05:00Z"
 
 ### 1. 预检发布状态
 
-确认目标版本尚未作为正式 Release 发布，目标镜像标签尚未被占用，并记录回滚点：
+先列出活跃 KPanel 任务和 `git worktree list`，确认候选 worktree 未被其他任务使用，且发布范围
+只包含协调中心批准的提交。再确认目标版本尚未作为正式 Release 发布、目标镜像标签尚未被占用，
+并记录回滚点：
 
 ```bash
 git fetch origin --tags
@@ -48,7 +55,8 @@ git tag --list "v${{version}}"
 可追溯版本；若版本已占用，必须提升版本号。把 `origin/main` 的提交记为发布基线；
 正式推送前若远端已前移，必须停止并重新审计，不得顺带合入其他会话或功能的代码。
 
-**Expected output:** 发布基线明确，目标版本未占用，记录 `${{previous_version}}` 对应源码和镜像回滚点。
+**Expected output:** 发布单写者成立，候选提交清单和基线明确，目标版本未占用，记录
+`${{previous_version}}` 对应源码和镜像回滚点。
 
 ### 2. 准备一致的版本变更
 
@@ -76,6 +84,9 @@ bash scripts/check-version-consistency.sh
 ```
 
 ### 3. 执行 L3 发布前核验
+
+进入本步骤即冻结候选。此后新增功能默认进入下一版本；若候选文件、分支或 `HEAD` 发生任何变化，
+本轮 L3 结果作废，必须先按 `docs/project-management.md` 的冲突恢复流程重建候选，再重新核验。
 
 在 Linux、WSL 或 CI 等支持 Bash、Go、Node 和 Docker 的环境执行：
 
@@ -105,18 +116,19 @@ docker run --rm \
 
 ### 4. 提交发布候选并等待 CI
 
-仅暂存发布范围文件，提交后先推送 `feature/release-v${{version}}-candidate`，让 Linux CI
+仅暂存发布范围文件，提交后先推送 `release/v${{version}}-candidate`，让 Linux CI
 独立验证准确的待发布提交：
 
 ```bash
 git add VERSION CHANGELOG.md internal/version/version.go \
   web/package.json web/package-lock.json
 git commit -m "chore: prepare KPanel ${{version}}"
-git push origin HEAD:refs/heads/feature/release-v${{version}}-candidate
+git push origin HEAD:refs/heads/release/v${{version}}-candidate
 ```
 
 如果发布工作流本身需要修复，应将 `.github/workflows/release.yml` 纳入同一独立修复提交。
-等待候选 CI 成功，不得只依据本地测试继续发布。随后再次读取远端 `main`；只有它仍与步骤 1
+推送候选前再次核对本地 `HEAD`、候选提交清单和 `origin/main`。等待候选 CI 成功，不得只依据
+本地测试继续发布。随后再次读取远端 `main`；只有它仍与步骤 1
 记录的基线完全一致，才允许安全快进并等待 `main` CI：
 
 ```bash
@@ -128,7 +140,7 @@ git push origin HEAD:main
 
 ### 5. 创建不可变版本标签并监控 Release
 
-创建 annotated tag 并推送：
+打标签前第三次核对 `main`、候选和已通过 CI 的提交哈希完全一致，再创建 annotated tag 并推送：
 
 ```bash
 git tag -a "v${{version}}" -m "KPanel ${{version}}"
@@ -249,3 +261,5 @@ py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
 - 若失败发生在正式产物生成之后，修复后发布新的 patch 版本，不移动或覆盖旧 tag。
 - 若仅生成 draft Release，不得手工公开；镜像成功且线上验收通过后才允许公开。
 - 源码回滚与镜像回滚分别记录；历史源码 tag 不代表一定存在可用 Docker 镜像。
+- 发布 worktree 的分支、`HEAD` 或文件被外部任务改变时立即停止；不得重置他人改动，迁移到新的
+  专用候选 worktree 并重新执行受影响门禁。
