@@ -49,6 +49,23 @@ describe('TrendChart', () => {
     wrapper.unmount()
   })
 
+  it('can hide a duplicate persistent legend without disabling the chart', () => {
+    const wrapper = mount(TrendChart, {
+      props: {
+        showLegend: false,
+        series: [{
+          label: '电信 · 北京',
+          color: 'blue',
+          points: [{ at: '2026-08-05T00:00:00Z', value: 20 }],
+        }],
+      },
+    })
+
+    expect(wrapper.find('.trend-chart__legend').exists()).toBe(false)
+    expect(wrapper.find('.trend-chart__canvas').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('emits one normalized time range after a horizontal drag', async () => {
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(elementBox)
     const wrapper = mount(TrendChart, {

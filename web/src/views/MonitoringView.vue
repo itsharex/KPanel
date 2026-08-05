@@ -205,7 +205,6 @@ const operatorLatencyChart = computed<TrendSeries[]>(() => operatorLatencyRoutes
   .map((series) => ({
     label: operatorLatencyLabel(series),
     color: operatorLatencyColors[series.id] || 'var(--brand)',
-    latestLabel: latestLatencyLabel(series),
     points: series.points.flatMap((point) => point.latencyMilliseconds === null
       ? []
       : [{ at: point.collectedAt, value: point.latencyMilliseconds }]),
@@ -319,11 +318,7 @@ function latestLatencyLabel(series: MonitoringOperatorLatencySeries): string {
   const latency = latestOperatorLatency(series)
   if (latency === undefined) return '等待采样'
   if (latency === null) return '超时'
-  const latest = series.points.at(-1)
-  const success = latest?.successCount || 0
-  const total = success + (latest?.failureCount || 0)
-  const availability = total > 0 ? ` · ${Math.round((success / total) * 100)}%` : ''
-  return `${formatLatency(latency)}${availability}`
+  return formatLatency(latency)
 }
 
 type HistoryLoadMode = 'initial' | 'refresh' | 'zoom'
@@ -688,6 +683,7 @@ onBeforeUnmount(() => controller?.abort())
           :series="operatorLatencyChart"
           :formatter="formatLatency"
           :selectable="!updating"
+          :show-legend="false"
           @select-range="zoomToRange"
         />
         <div v-else-if="operatorLatencyVisibleCount === 0" class="operator-latency-empty">

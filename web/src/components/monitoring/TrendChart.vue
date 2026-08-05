@@ -29,11 +29,13 @@ const props = withDefaults(defineProps<{
   zeroBased?: boolean
   maxValue?: number
   selectable?: boolean
+  showLegend?: boolean
 }>(), {
   formatter: (value: number) => value.toFixed(1),
   zeroBased: true,
   maxValue: undefined,
   selectable: true,
+  showLegend: true,
 })
 
 const emit = defineEmits<{
@@ -307,7 +309,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="trend-chart">
-    <div class="trend-chart__legend">
+    <div v-if="showLegend" class="trend-chart__legend">
       <span v-for="item in normalizedSeries" :key="item.label">
         <i :style="{ backgroundColor: item.color }" />
         {{ item.label }}
@@ -430,10 +432,14 @@ onBeforeUnmount(() => {
 }
 .trend-chart__tooltip.is-left { transform: translateX(calc(-100% - 10px)); }
 .trend-chart__tooltip.is-dense {
-  width: min(360px, calc(100% - 20px)); grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(340px, calc(100% - 20px)); grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px; row-gap: 7px;
 }
 .trend-chart__tooltip.is-dense time { grid-column: 1 / -1; }
-.trend-chart__tooltip.is-dense span { min-width: 0; white-space: nowrap; }
+.trend-chart__tooltip.is-dense span {
+  min-width: 0; grid-template-columns: auto max-content max-content;
+  justify-content: start; column-gap: 6px; white-space: nowrap;
+}
 .trend-chart__tooltip time { color: var(--muted); font-size: .72rem; }
 .trend-chart__tooltip span { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 7px; font-size: .76rem; }
 .trend-chart__tooltip strong { color: var(--text); }
