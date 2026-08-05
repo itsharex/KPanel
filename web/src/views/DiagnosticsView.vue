@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from '@/i18n'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
@@ -220,6 +220,13 @@ function setFullscreen(enabled: boolean): void {
   document.body.classList.toggle('diagnostic-fullscreen-open', enabled)
 }
 
+watch(
+  () => activeJob.value?.interactive,
+  (interactive) => {
+    if (interactive && fullscreen.value) setFullscreen(false)
+  },
+)
+
 function handleKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && fullscreen.value) setFullscreen(false)
 }
@@ -314,6 +321,7 @@ onBeforeUnmount(() => {
                 <Play :size="16" /> {{ hasActiveJob ? '任务运行中' : '开始体检' }}
               </button>
               <button
+                v-if="!activeJob?.interactive"
                 class="diagnostic-fullscreen-toggle"
                 type="button"
                 :title="fullscreen ? t('common.exitFullscreen') : t('common.enterFullscreen')"

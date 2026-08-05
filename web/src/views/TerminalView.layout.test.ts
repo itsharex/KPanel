@@ -28,20 +28,25 @@ describe('multi-host terminal workspace layout', () => {
     )
   })
 
+  it('uses the terminal clipboard menu instead of the browser context menu', () => {
+    expect(hostTerminalSource).toContain('@contextmenu="clipboardMenu?.open($event)"')
+    expect(hostTerminalSource).toContain('@paste.capture="clipboardMenu?.handlePaste($event)"')
+    expect(hostTerminalSource).toContain('terminal.attachCustomKeyEventHandler')
+  })
+
   it('merges connection status into the session tabs without a duplicate terminal header', () => {
     expect(terminalSource).toContain('class="terminal-tab__status"')
     expect(terminalSource).toContain('@state-change="item.state = $event"')
     expect(hostTerminalSource).not.toContain('<header>')
-    expect(hostTerminalSource).toContain('class="host-terminal__scroll-bottom"')
+    expect(hostTerminalSource).toContain('class="host-terminal__toolbar"')
   })
 
-  it('provides a viewport-sized terminal mode while keeping session tabs available', () => {
-    expect(terminalSource).toContain("'is-fullscreen': fullscreen")
-    expect(terminalSource).toContain('v-if="sessions.length || fullscreen"')
-    expect(terminalSource).toContain("t('common.exitFullscreen')")
-    expect(terminalSource).toMatch(
-      /\.terminal-workspace\.is-fullscreen\s*\{[^}]*position:fixed;[^}]*inset:0;[^}]*height:100dvh;/,
+  it('moves fullscreen ownership into the shared terminal controls', () => {
+    expect(terminalSource).not.toContain('terminal-fullscreen-toggle')
+    expect(hostTerminalSource).toContain('<TerminalToolbar')
+    expect(hostTerminalSource).toContain("'is-fullscreen': fullscreen")
+    expect(hostTerminalSource).toMatch(
+      /\.host-terminal\.is-fullscreen\s*\{[^}]*position:fixed;[^}]*inset:0;[^}]*height:100dvh;/,
     )
-    expect(terminalSource).toMatch(/\.terminal-workspace\.is-fullscreen \.terminal-connections\s*\{[^}]*display:none;/)
   })
 })

@@ -9,6 +9,10 @@ const diagnosticsSource = readFileSync(
   new URL('../../views/DiagnosticsView.vue', import.meta.url),
   'utf8',
 )
+const environmentSource = readFileSync(
+  new URL('../../views/EnvironmentView.vue', import.meta.url),
+  'utf8',
+)
 
 describe('interactive task terminal layout', () => {
   it('reserves an explicit row for the input composer', () => {
@@ -28,5 +32,22 @@ describe('interactive task terminal layout', () => {
     expect(terminalSource).toMatch(
       /\.interactive-terminal__screen :deep\(\.xterm-viewport\)\s*\{[^}]*overflow-y: scroll !important;[^}]*overscroll-behavior: contain;/,
     )
+  })
+
+  it('shares the terminal clipboard behavior with host terminals', () => {
+    expect(terminalSource).toContain('@contextmenu="clipboardMenu?.open($event)"')
+    expect(terminalSource).toContain('@paste.capture="clipboardMenu?.handlePaste($event)"')
+    expect(terminalSource).toContain('terminal.attachCustomKeyEventHandler')
+  })
+
+  it('uses the shared top and fullscreen controls in every interactive task terminal', () => {
+    expect(terminalSource).toContain('<TerminalToolbar')
+    expect(terminalSource).toContain('@scroll-top="scrollToTop"')
+    expect(terminalSource).toContain('@toggle-fullscreen="toggleFullscreen"')
+    expect(terminalSource).toMatch(
+      /\.interactive-terminal\.is-fullscreen\s*\{[^}]*position: fixed;[^}]*inset: 0;[^}]*height: 100dvh;/,
+    )
+    expect(diagnosticsSource).toContain('v-if="!activeJob?.interactive"')
+    expect(environmentSource).not.toContain('allow-fullscreen')
   })
 })

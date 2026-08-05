@@ -4,8 +4,10 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { ArrowDownToLine } from '@lucide/vue'
 import { api } from '@/lib/api'
+import TerminalContextMenu from '@/components/terminal/TerminalContextMenu.vue'
+import TerminalToolbar from '@/components/terminal/TerminalToolbar.vue'
+import { useTerminalFullscreen } from '@/composables/useTerminalFullscreen'
 import { useI18n } from '@/i18n'
 import { openTerminalURL } from '@/lib/terminalLinks'
 import { containWheelScroll } from '@/lib/scroll'
@@ -25,7 +27,9 @@ const props = defineProps<{
 const { t } = useI18n()
 
 const host = ref<HTMLElement>()
+const fullscreenTarget = ref<HTMLElement>()
 const composerInput = ref<HTMLInputElement>()
+const clipboardMenu = ref<InstanceType<typeof TerminalContextMenu>>()
 const connectionState = ref<'connecting' | 'connected' | 'finished' | 'error'>('connecting')
 const terminalInputOpen = ref(Boolean(props.inputOpen))
 const pendingLine = ref('')
@@ -42,6 +46,8 @@ let disposed = false
 let polling = false
 
 const inputFlushInterval = 24
+
+const { fullscreen, toggleFullscreen } = useTerminalFullscreen(fullscreenTarget, fitTerminal)
 
 function terminalThemeColor(name: string, fallback: string): string {
   if (!host.value) return fallback
@@ -69,9 +75,13 @@ function writeTerminalOutput(data: string | Uint8Array): void {
   })
 }
 
-function scrollToBottom(): void {
-  terminal?.scrollToBottom()
+function scrollToTop(): void {
+  terminal?.scrollToTop()
   terminal?.focus()
+}
+
+function fitTerminal(): void {
+  fitAddon?.fit()
 }
 
 function containTerminalWheel(event: WheelEvent): void {
@@ -238,6 +248,7 @@ onMounted(() => {
   terminal.loadAddon(new WebLinksAddon((_event, uri) => void openTerminalURL(uri)))
   // A remote script may print OSC 52; never allow it to write the browser clipboard.
   terminal.parser.registerOscHandler(52, () => true)
+  terminal.attachCustomKeyEventHandler((event) => clipboardMenu.value?.handleKeyEvent(event) ?? true)
   terminal.onData(queueInput)
   if (host.value) {
     terminal.open(host.value)
@@ -264,7 +275,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="interactive-terminal" :class="{ 'is-compact': props.compact }">
+  <section
+    ref="fullscreenTarget"
+    class="interactive-terminal"
+    :class="{
+      'is-compact': props.compact,
+      'is-fullscreen': fullscreen,
+    }"
+  >
     <header>
       <div>
         <strong>
@@ -305,10 +323,21 @@ onBeforeUnmount(() => {
                   : '正在连接'
           }}
         </span>
-        <button type="button" :title="t('terminal.scrollToBottom')" :aria-label="t('terminal.scrollToBottom')" @click="scrollToBottom"><ArrowDownToLine :size="17" /></button>
+        <TerminalToolbar
+          :fullscreen="fullscreen"
+          @scroll-top="scrollToTop"
+          @toggle-fullscreen="toggleFullscreen"
+        />
       </div>
     </header>
-    <div ref="host" class="interactive-terminal__screen" @click="terminal?.focus()" @wheel="containTerminalWheel" />
+    <div
+      ref="host"
+      class="interactive-terminal__screen"
+      @click="terminal?.focus()"
+      @wheel="containTerminalWheel"
+      @contextmenu="clipboardMenu?.open($event)"
+      @paste.capture="clipboardMenu?.handlePaste($event)"
+    />
     <form
       v-if="terminalInputOpen"
       class="interactive-terminal__composer"
@@ -328,6 +357,12 @@ onBeforeUnmount(() => {
       />
       <button type="submit">发送</button>
     </form>
+    <TerminalContextMenu
+      ref="clipboardMenu"
+      :get-terminal="() => terminal"
+      :can-paste="terminalInputOpen && connectionState !== 'finished'"
+      :contained="fullscreen"
+    />
   </section>
 </template>
 
@@ -353,6 +388,17 @@ onBeforeUnmount(() => {
   border-radius: var(--terminal-shell-radius, 12px);
   background: var(--terminal-background);
   box-shadow: var(--terminal-shell-shadow, inset 0 1px 0 rgb(255 255 255 / 3%));
+}
+
+.interactive-terminal.is-fullscreen {
+  position: fixed;
+  z-index: 6000;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 .interactive-terminal header {
@@ -424,25 +470,15 @@ onBeforeUnmount(() => {
   overscroll-behavior: contain;
 }
 
-.interactive-terminal__actions button {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  border: 1px solid var(--terminal-border);
-  border-radius: 8px;
-  color: var(--terminal-muted);
-  background: transparent;
-}
-
-.interactive-terminal__actions button:hover {
-  color: var(--terminal-text);
-  border-color: var(--terminal-accent);
-}
-
 .interactive-terminal.is-compact .interactive-terminal__screen {
   height: min(30vh, 260px);
   min-height: 200px;
+}
+
+.interactive-terminal.is-fullscreen .interactive-terminal__screen,
+.interactive-terminal.is-fullscreen.is-compact .interactive-terminal__screen {
+  height: auto;
+  min-height: 0;
 }
 
 .interactive-terminal__composer {

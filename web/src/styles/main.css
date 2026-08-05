@@ -4719,6 +4719,21 @@ div.resource-name {
 }
 
 /* Modal */
+html.terminal-fullscreen-open,
+body.terminal-fullscreen-open {
+  overflow: hidden;
+}
+
+/* Modal effects create containing blocks that otherwise clip fixed terminal fullscreen. */
+body.terminal-fullscreen-open .modal-backdrop {
+  backdrop-filter: none;
+}
+
+body.terminal-fullscreen-open .modal-panel {
+  animation: none;
+  transform: none;
+}
+
 .modal-backdrop {
   position: fixed;
   z-index: 100;

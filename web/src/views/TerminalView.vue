@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Circle, Laptop, LoaderCircle, Maximize2, Minimize2, Plus, RefreshCw, Server, ShieldCheck, SquareTerminal, X } from '@lucide/vue'
+import { Circle, Laptop, LoaderCircle, Plus, RefreshCw, Server, ShieldCheck, SquareTerminal, X } from '@lucide/vue'
 import HostTerminal from '@/components/terminal/HostTerminal.vue'
 import { api, ApiError } from '@/lib/api'
 import type { ClusterHost, ClusterHostList } from '@/types/api'
@@ -25,7 +25,6 @@ const loading = ref(true)
 const openingHostId = ref('')
 const errorMessage = ref('')
 const search = ref('')
-const fullscreen = ref(false)
 let controller: AbortController | undefined
 
 const hosts = computed(() => {
@@ -92,23 +91,11 @@ function sessionStateLabel(state: OpenTerminal['state']): string {
   return t('terminal.connecting')
 }
 
-function setFullscreen(enabled: boolean): void {
-  fullscreen.value = enabled
-  document.body.classList.toggle('terminal-fullscreen-open', enabled)
-}
-
-function handleKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && fullscreen.value) setFullscreen(false)
-}
-
 onMounted(() => {
-  window.addEventListener('keydown', handleKeydown)
   void loadHosts()
 })
 onBeforeUnmount(() => {
   controller?.abort()
-  window.removeEventListener('keydown', handleKeydown)
-  document.body.classList.remove('terminal-fullscreen-open')
 })
 </script>
 
@@ -125,7 +112,7 @@ onBeforeUnmount(() => {
 
     <div v-if="errorMessage" class="terminal-alert" role="alert">{{ errorMessage }}</div>
 
-    <section class="terminal-workspace" :class="{ 'is-fullscreen': fullscreen }">
+    <section class="terminal-workspace">
       <aside class="terminal-connections">
         <header>
           <div><strong>连接列表</strong><small>{{ hosts.length }} 台主机</small></div>
@@ -145,7 +132,7 @@ onBeforeUnmount(() => {
       </aside>
 
       <main class="terminal-stage">
-        <div v-if="sessions.length || fullscreen" class="terminal-tabs-bar">
+        <div v-if="sessions.length" class="terminal-tabs-bar">
           <nav v-if="sessions.length" class="terminal-tabs" aria-label="已打开终端">
             <button v-for="item in sessions" :key="item.id" type="button" class="terminal-tab" :class="{ 'is-active': item.id === activeSessionId }" :title="`${item.hostName} · ${sessionStateLabel(item.state)}`" @click="activeSessionId = item.id">
               <span class="terminal-tab__status" :class="`is-${item.state}`" aria-hidden="true" />
@@ -154,10 +141,6 @@ onBeforeUnmount(() => {
               <X :size="14" @click.stop="removeSession(item.id)" />
             </button>
           </nav>
-          <button class="terminal-fullscreen-toggle" type="button" :title="fullscreen ? t('common.exitFullscreen') : t('common.enterFullscreen')" :aria-label="fullscreen ? t('common.exitFullscreen') : t('common.enterFullscreen')" @click="setFullscreen(!fullscreen)">
-            <Minimize2 v-if="fullscreen" :size="17" />
-            <Maximize2 v-else :size="17" />
-          </button>
         </div>
         <div v-if="!sessions.length" class="terminal-empty"><span><SquareTerminal :size="34" /></span><h2>选择一台主机开始</h2><p>左侧会明确标记本机、可加密直连的 KPanel，以及仅提供监控的轻量节点。</p></div>
         <HostTerminal v-for="item in sessions" v-show="item.id === activeSessionId" :key="item.id" :session-id="item.id" :host-name="item.hostName" :initial-offset="item.offset" @state-change="item.state = $event" />
@@ -174,9 +157,6 @@ onBeforeUnmount(() => {
 .terminal-heading p { max-width:850px; margin:0; color:var(--text-muted); }
 .terminal-alert { border:1px solid color-mix(in srgb,var(--danger) 34%,var(--border)); border-radius:10px; padding:11px 13px; color:var(--danger); background:color-mix(in srgb,var(--danger) 8%,var(--surface)); }
 .terminal-workspace { display:grid; height:clamp(560px,calc(100vh - 220px),760px); min-height:560px; grid-template-columns:280px minmax(0,1fr); overflow:hidden; border:1px solid var(--border); border-radius:16px; background:var(--surface); box-shadow:var(--shadow-sm); }
-.terminal-workspace.is-fullscreen { position:fixed; z-index:5000; inset:0; width:100vw; height:100dvh; min-height:0; grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr); border:0; border-radius:0; }
-.terminal-workspace.is-fullscreen .terminal-connections { display:none; }
-:global(body.terminal-fullscreen-open) { overflow:hidden; }
 .terminal-connections { display:grid; min-width:0; min-height:0; grid-template-rows:auto auto minmax(0,1fr); overflow:hidden; border-right:1px solid var(--border); background:color-mix(in srgb,var(--surface) 92%,var(--brand) 8%); }
 .terminal-connections>header { display:flex; align-items:center; justify-content:space-between; padding:17px 16px 12px; color:var(--brand); }
 .terminal-connections>header div { display:grid; gap:2px; color:var(--text); }
@@ -194,7 +174,7 @@ onBeforeUnmount(() => {
 .terminal-host em.is-ready { color:var(--success); }
 .terminal-connections__empty { display:flex; align-items:center; justify-content:center; gap:8px; min-height:180px; padding:20px; color:var(--text-muted); text-align:center; }
 .terminal-stage { display:grid; grid-template-rows:auto minmax(0,1fr); min-width:0; min-height:0; padding:12px; background:color-mix(in srgb,var(--terminal-shell-background,#0b1214) 96%,var(--surface)); }
-.terminal-tabs-bar { display:grid; min-width:0; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px; padding-bottom:9px; }
+.terminal-tabs-bar { min-width:0; padding-bottom:9px; }
 .terminal-tabs { display:flex; min-width:0; gap:5px; overflow-x:auto; scrollbar-width:thin; }
 .terminal-tab { display:flex; flex:0 0 auto; align-items:center; gap:7px; max-width:220px; border:1px solid var(--terminal-shell-border,#29383a); border-radius:8px; padding:7px 9px; color:var(--terminal-shell-muted,#8a9695); background:var(--terminal-shell-panel,#111a1d); }
 .terminal-tab.is-active { color:var(--terminal-shell-text,#d8dddc); border-color:var(--brand); }
@@ -204,9 +184,6 @@ onBeforeUnmount(() => {
 .terminal-tab__status.is-connecting { color:var(--warning); background:var(--warning); animation:terminal-pulse 1.4s ease-in-out infinite; }
 .terminal-tab__status.is-reconnecting { color:var(--danger); background:var(--danger); animation:terminal-pulse 1s ease-in-out infinite; }
 .terminal-tab__status.is-finished { color:var(--terminal-shell-muted,#8a9695); background:var(--terminal-shell-muted,#8a9695); }
-.terminal-fullscreen-toggle { display:grid; width:34px; height:34px; place-items:center; border:1px solid var(--terminal-shell-border,#29383a); border-radius:8px; color:var(--terminal-shell-muted,#8a9695); background:var(--terminal-shell-panel,#111a1d); }
-.terminal-fullscreen-toggle:hover { color:var(--terminal-shell-text,#d8dddc); border-color:var(--brand); }
-.terminal-workspace.is-fullscreen .terminal-stage { padding:10px; }
 .terminal-empty { display:grid; place-content:center; justify-items:center; padding:36px; color:var(--terminal-shell-muted,#8a9695); text-align:center; }
 .terminal-empty span { display:grid; width:72px; height:72px; place-items:center; border:1px solid var(--terminal-shell-border,#29383a); border-radius:20px; color:var(--brand); background:var(--terminal-shell-panel,#111a1d); }
 .terminal-empty h2 { margin:18px 0 5px; color:var(--terminal-shell-text,#d8dddc); }
