@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/FilesView/en-US').then((module) => module.default))
@@ -53,15 +53,24 @@ import type { FileActionInput, FileDirectory, FileEntry, FileTrashEntry } from '
 
 const CodeEditor = defineAsyncComponent(() => import('@/components/files/CodeEditor.vue'))
 const route = useRoute()
+const router = useRouter()
 
 type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash'
 
 function requestedFilePath(value: unknown): string | undefined {
   const candidate = Array.isArray(value) ? value[0] : value
-  if (typeof candidate !== 'string' || !candidate.startsWith('/') || candidate.length > 4096 || candidate.includes('\0')) {
+  if (
+    typeof candidate !== 'string'
+    || !candidate.startsWith('/')
+    || candidate.length > 4096
+    || candidate.includes('\0')
+    || candidate.includes('\\')
+  ) {
     return undefined
   }
-  if (candidate.split('/').includes('..')) return undefined
+  if (candidate !== '/' && candidate.slice(1).split('/').some((part) => !part || part === '.' || part === '..')) {
+    return undefined
+  }
   return candidate
 }
 type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
@@ -223,8 +232,8 @@ function normalizedArchiveName(name: string, format: ArchiveFormat): string {
   return `${withoutArchiveSuffix(name.trim())}${archiveSuffix(format)}`
 }
 
-async function loadDirectory(path = currentPath.value, append = false): Promise<void> {
-  if (append && !directory.value?.nextOffset) return
+async function loadDirectory(path = currentPath.value, append = false): Promise<string | undefined> {
+  if (append && !directory.value?.nextOffset) return undefined
   directoryController?.abort()
   const controller = new AbortController()
   directoryController = controller
@@ -239,6 +248,7 @@ async function loadDirectory(path = currentPath.value, append = false): Promise<
       },
       controller.signal,
     )
+    if (controller.signal.aborted || directoryController !== controller) return undefined
     if (append && directory.value?.path === result.path) {
       const known = new Set(directory.value.entries.map((entry) => entry.path))
       directory.value = {
@@ -257,15 +267,24 @@ async function loadDirectory(path = currentPath.value, append = false): Promise<
       selectionAnchor.value = undefined
       thumbnailFailures.value = new Set()
     }
+    return result.path
   } catch (error) {
-    if (controller.signal.aborted) return
+    if (controller.signal.aborted) return undefined
     toast.danger('目录读取失败', errorMessage(error))
+    return undefined
   } finally {
     if (directoryController === controller) {
       loading.value = false
       directoryController = undefined
     }
   }
+}
+
+async function navigateDirectory(path: string): Promise<void> {
+  const resolvedPath = await loadDirectory(path)
+  const routePath = requestedFilePath(route.query.path) || '/'
+  if (!resolvedPath || resolvedPath === routePath) return
+  await router.push({ name: 'files', query: { path: resolvedPath } })
 }
 
 function setViewMode(mode: FileViewMode): void {
@@ -289,7 +308,7 @@ function restoreViewMode(): void {
 function openEntry(entry: FileEntry): void {
   contextMenu.value = undefined
   if (entry.kind === 'directory') {
-    void loadDirectory(entry.path)
+    void navigateDirectory(entry.path)
     return
   }
   if (entry.kind === 'file') void openPreview(entry)
@@ -934,8 +953,8 @@ watch(
   () => route.query.path,
   (value, previous) => {
     if (value === previous) return
-    const path = requestedFilePath(value)
-    if (path && path !== currentPath.value) void loadDirectory(path)
+    const path = requestedFilePath(value) || '/'
+    if (path !== currentPath.value) void loadDirectory(path)
   },
 )
 
@@ -994,7 +1013,7 @@ onBeforeUnmount(() => {
     </div>
 
     <nav class="file-shortcuts" aria-label="常用目录">
-      <button v-for="item in ['/', '/home', '/root', '/etc', '/var']" :key="item" type="button" @click="loadDirectory(item)">
+      <button v-for="item in ['/', '/home', '/root', '/etc', '/var']" :key="item" type="button" @click="navigateDirectory(item)">
         {{ item === '/' ? '根目录 /' : item }}
       </button>
     </nav>
@@ -1015,7 +1034,7 @@ onBeforeUnmount(() => {
             :key="item.path"
             type="button"
             :disabled="item.path === currentPath"
-            @click="loadDirectory(item.path)"
+            @click="navigateDirectory(item.path)"
           >
             <HardDrive v-if="index === 0" :size="15" />
             <span>{{ item.name }}</span>

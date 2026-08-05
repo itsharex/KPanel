@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { createSSRApp, ssrContextKey } from 'vue'
+import { createSSRApp, nextTick, reactive, ssrContextKey } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView.vue'
 
@@ -12,10 +12,12 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn(),
   danger: vi.fn(),
   route: { query: {} as Record<string, unknown> },
+  push: vi.fn(),
 }))
 
 vi.mock('vue-router', () => ({
   useRoute: () => mocks.route,
+  useRouter: () => ({ push: mocks.push }),
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -41,9 +43,30 @@ vi.mock('@/stores/toast', () => ({
   }),
 }))
 
+interface FileDirectoryResult {
+  path: string
+  entries: TestFileEntry[]
+  offset: number
+  total: number
+  truncated: boolean
+  readAt: string
+}
+
+function testDirectory(path: string): FileDirectoryResult {
+  return {
+    path,
+    entries: [],
+    offset: 0,
+    total: 0,
+    truncated: false,
+    readAt: '2026-07-30T00:00:00Z',
+  }
+}
+
 interface FileBindings {
   requestedFilePath: (value: unknown) => string | undefined
-  loadDirectory: (path?: string, append?: boolean) => Promise<void>
+  loadDirectory: (path?: string, append?: boolean) => Promise<string | undefined>
+  navigateDirectory: (path: string) => Promise<void>
   savePreview: (content?: string) => Promise<void>
   submitDialog: () => Promise<void>
   cancelArchive: () => void
@@ -148,7 +171,10 @@ function setupView(): FileBindings {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.route.query = {}
+  mocks.route = reactive({ query: {} as Record<string, unknown> })
+  mocks.push.mockImplementation(async (location: { query?: Record<string, unknown> }) => {
+    mocks.route.query = location.query || {}
+  })
   vi.stubGlobal('window', {
     innerWidth: 1280,
     innerHeight: 720,
@@ -158,14 +184,7 @@ beforeEach(() => {
       setItem: vi.fn(),
     },
   })
-  mocks.list.mockResolvedValue({
-    path: '/web',
-    entries: [],
-    offset: 0,
-    total: 0,
-    truncated: false,
-    readAt: '2026-07-30T00:00:00Z',
-  })
+  mocks.list.mockResolvedValue(testDirectory('/web'))
   mocks.action.mockResolvedValue({ action: 'trash', succeeded: [], failed: [] })
   mocks.trash.mockResolvedValue({ entries: [], total: 0, readAt: '2026-07-30T00:00:00Z' })
   mocks.write.mockImplementation(async (_path: string, _content: string, _version: string) => ({
@@ -181,7 +200,68 @@ describe('FilesView route path', () => {
     expect(view.requestedFilePath(['/root/project'])).toBe('/root/project')
     expect(view.requestedFilePath('../etc')).toBeUndefined()
     expect(view.requestedFilePath('/home/../etc')).toBeUndefined()
+    expect(view.requestedFilePath('/home//example')).toBeUndefined()
+    expect(view.requestedFilePath('/home/./example')).toBeUndefined()
+    expect(view.requestedFilePath('/home\\example')).toBeUndefined()
     expect(view.requestedFilePath(`/home/${'x'.repeat(4096)}`)).toBeUndefined()
+  })
+
+  it('records successful directory navigation once using the Agent-confirmed path', async () => {
+    mocks.route.query = { path: '/home' }
+    mocks.list.mockResolvedValueOnce(testDirectory('/home/project'))
+    const view = setupView()
+
+    await view.navigateDirectory('/home/project/')
+    await nextTick()
+
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+    expect(mocks.push).toHaveBeenCalledOnce()
+    expect(mocks.push).toHaveBeenCalledWith({
+      name: 'files',
+      query: { path: '/home/project' },
+    })
+  })
+
+  it('loads browser history changes including the bare files route', async () => {
+    mocks.route.query = { path: '/home/project' }
+    mocks.list.mockImplementation(async (path: string) => testDirectory(path))
+    const view = setupView()
+    view.currentPath.value = '/home/project'
+
+    mocks.route.query = { path: '/home' }
+    await vi.waitFor(() => expect(view.currentPath.value).toBe('/home'))
+    mocks.route.query = {}
+    await vi.waitFor(() => expect(view.currentPath.value).toBe('/'))
+
+    expect(mocks.list.mock.calls.map(([path]) => path)).toEqual(['/home', '/'])
+    expect(mocks.push).not.toHaveBeenCalled()
+  })
+
+  it('does not record failed or superseded directory navigation', async () => {
+    let resolveSlow: ((value: FileDirectoryResult) => void) | undefined
+    mocks.list.mockImplementation((path: string) => {
+      if (path === '/slow') {
+        return new Promise<FileDirectoryResult>((resolve) => {
+          resolveSlow = resolve
+        })
+      }
+      return Promise.resolve(testDirectory(path))
+    })
+    const view = setupView()
+
+    const slow = view.navigateDirectory('/slow')
+    await view.navigateDirectory('/fast')
+    resolveSlow?.(testDirectory('/slow'))
+    await slow
+
+    expect(view.currentPath.value).toBe('/fast')
+    expect(mocks.push).toHaveBeenCalledTimes(1)
+    expect(mocks.push).toHaveBeenCalledWith({ name: 'files', query: { path: '/fast' } })
+
+    mocks.push.mockClear()
+    mocks.list.mockRejectedValueOnce(new Error('missing'))
+    await view.navigateDirectory('/missing')
+    expect(mocks.push).not.toHaveBeenCalled()
   })
 })
 
