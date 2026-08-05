@@ -299,6 +299,8 @@ EOF
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -Fx 'ProtectHome=false' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	grep -Fx 'ProtectSystem=false' \
+		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -F 'kpanel_report_failed_install' \
 		"$PROJECT_DIR/packaging/kejilion-app/kpanel.conf" >/dev/null
 	if grep -F '请运行：systemctl status kejilion-agent' \
@@ -306,8 +308,10 @@ EOF
 		echo "KPanel installer still points users at a unit removed by cleanup" >&2
 		exit 1
 	fi
-	grep -Fx 'ReadWritePaths=/' \
-		/home/docker/kpanel/kejilion-agent.service >/dev/null
+	if grep -q '^ReadWritePaths=' /home/docker/kpanel/kejilion-agent.service; then
+		echo "KPanel app unit relies on ineffective root write exceptions" >&2
+		exit 1
+	fi
 	grep -Fx 'ReadOnlyPaths=/home/docker/kpanel/data/panel' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	test -f /home/docker/kpanel/secrets/agent.token

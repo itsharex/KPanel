@@ -39,9 +39,10 @@
 
 - 不开放新的 TCP、SSH、WebSocket 或 Agent 公网监听端口；
 - Panel 继续无特权运行，宿主机 PTY 仅由 root Agent 创建；
-- Agent 主服务继续保留 `ProtectSystem=strict`。主机终端由 Agent 通过固定参数创建独立 transient
-  systemd PTY，获得与 root SSH 一致的宿主机写能力，支持 `apt`、`dnf` 等系统维护；该放宽不继承到
-  应用、建站、体检、环境任务或其他 Agent API；
+- Agent 主服务因文件管理根目录为 `/` 而保持宿主机文件系统可写，Panel 状态目录继续通过
+  `ReadOnlyPaths` 独立保护。主机终端仍由 Agent 通过固定参数创建独立 transient systemd PTY，
+  以独立生命周期和审计边界提供 `apt`、`dnf` 等系统维护能力；其他 Agent API 仍只能调用各自的
+  固定适配器；
 - 远端终端只允许已激活且 scope 为
   `cluster.summary.read cluster.terminal.open` 的 v2 控制端；
 - 现有 v1 和旧 v2 授权不自动扩权，管理员必须撤销后重新配对；
@@ -122,8 +123,8 @@ Panel 公共会话 ID 使用独立 256 位随机值并绑定当前管理员 ID�
 - UTF-8 输入、整行预输入、控制键、24 ms 合并、窗口缩放、5000 行滚动、智能跟随、手动回到底部、
   输出截断、断线重连和 URL 安全跳转；
 - 以超过单屏高度的主机和体检命令列表复核独立滚动，确认终端输出和预输入框始终可见；
-- 在 `ProtectSystem=strict` 的测试 Agent 内启动主机终端，验证 transient PTY 可写系统目录并能运行
-  系统维护命令；同时验证应用、建站、体检和环境任务没有获得该权限；
+- 从测试 Agent 启动主机终端，验证 transient PTY 拥有独立 systemd 单元、可写系统目录并能运行
+  系统维护命令；同时验证应用、建站、体检和环境任务仍只能调用各自的固定适配器；
 - 本机 Panel/Agent 退出关闭 PTY；远端关闭成功或链路中断后的闲置回收、过期索引回收均符合约定；
 - `amd64`、`arm64`，Chrome/Edge 桌面与移动端布局；
 - CPU、内存、连接数和 16 会话上限下的资源预算。

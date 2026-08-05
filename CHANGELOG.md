@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 修复 systemd 257 等版本中 `ProtectSystem=strict` 无法被 `ReadWritePaths=/` 可靠覆盖，导致文件管理在 `/etc`、`/var/local` 等宿主机目录创建内容时返回 `read-only file system` 的问题；Panel 状态目录继续通过 `ReadOnlyPaths` 独立保护。
+
 ## [0.47.0] - 2026-08-05
 
 ### Added

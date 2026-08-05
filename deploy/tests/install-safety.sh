@@ -184,17 +184,22 @@ grep -Fx 'ReadOnlyPaths=/var/lib/kejilion-panel/panel' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
 grep -Fx 'ProtectHome=false' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
+grep -Fx 'ProtectSystem=false' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
+if grep -Fx 'ProtectSystem=strict' \
+	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null; then
+	echo "Agent unit remounts the file manager root read-only" >&2
+	exit 1
+fi
 if grep -Fx 'ProtectHome=read-only' \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null; then
 	echo "Agent unit makes the file manager root read-only" >&2
 	exit 1
 fi
-if grep '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" |
-	grep -F '/var/lib/kejilion-panel/panel' >/dev/null; then
-	echo "Agent unit can write the Panel authentication and audit data tree" >&2
+if grep -q '^ReadWritePaths=' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service"; then
+	echo "Agent unit relies on ineffective root write exceptions" >&2
 	exit 1
 fi
-grep -Fx 'ReadWritePaths=/' "$PROJECT_DIR/deploy/systemd/kejilion-agent.service" >/dev/null
 grep -F 'SYSTEM_STATE_DIR=/var/lib/kejilion-panel/system' \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null
 grep -F 'WORDPRESS_STATE_DIR=/var/lib/kejilion-panel/wordpress-jobs' \
