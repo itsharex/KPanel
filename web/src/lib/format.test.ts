@@ -4,6 +4,7 @@ import { clampPercent, formatBytes, formatDuration, formatHostDateTime, formatPe
 describe('format helpers', () => {
   it('formats binary byte values without losing units', () => {
     expect(formatBytes(0)).toBe('0 B')
+    expect(formatBytes(0.5)).toBe('1 B')
     expect(formatBytes(1024)).toBe('1.0 KB')
     expect(formatBytes(1024 ** 3 * 1.5)).toBe('1.5 GB')
     expect(formatBytes(undefined)).toBe('—')

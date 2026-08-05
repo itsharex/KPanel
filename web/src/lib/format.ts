@@ -21,7 +21,10 @@ export function formatBytes(value?: number, decimals = 1): string {
 
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
   const base = 1024
-  const index = Math.min(Math.floor(Math.log(Math.abs(value)) / Math.log(base)), units.length - 1)
+  const index = Math.min(
+    Math.max(0, Math.floor(Math.log(Math.abs(value)) / Math.log(base))),
+    units.length - 1,
+  )
   const scaled = value / Math.pow(base, index)
 
   return `${scaled.toFixed(index === 0 ? 0 : decimals)} ${units[index]}`
