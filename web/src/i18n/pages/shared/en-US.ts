@@ -91,7 +91,7 @@ export default [
   ["执行中", "Under implementation"],
   ["终端", "Terminal"],
   ["重启中", "Restarting"],
-  ["资源历史趋势，移动鼠标查看准确刻度", "Resource history. Move the pointer across a chart for exact values."],
+  ["资源历史趋势，移动鼠标查看准确刻度，横向拖动可框选放大", "Resource history trend. Move the pointer for exact values, or drag horizontally to zoom."],
   ["PHP 站点", "PHP Site"],
   ["Qwen / 百炼", "Qwen / Bailian"],
   ["智谱 GLM", "Zhipu GLM"],

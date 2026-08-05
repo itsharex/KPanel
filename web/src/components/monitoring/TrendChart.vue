@@ -5,6 +5,7 @@ import {
   normalizeTrendChartWidth,
   svgClientXToViewBox,
   svgViewBoxXToClient,
+  trendSelectionFromViewBox,
   trendLegendLabel,
   uniqueSeriesTimes,
 } from '@/lib/monitoringPresentation'
@@ -27,11 +28,17 @@ const props = withDefaults(defineProps<{
   formatter?: (value: number) => string
   zeroBased?: boolean
   maxValue?: number
+  selectable?: boolean
 }>(), {
   formatter: (value: number) => value.toFixed(1),
   zeroBased: true,
   maxValue: undefined,
+  selectable: true,
 })
+
+const emit = defineEmits<{
+  selectRange: [selection: { start: string; end: string }]
+}>()
 
 const defaultWidth = 720
 const height = 210
@@ -41,6 +48,11 @@ const width = ref(defaultWidth)
 const hoveredTime = ref<number>()
 const tooltipX = ref<number>()
 const tooltipOnLeft = ref(false)
+const dragOriginX = ref<number>()
+const dragCurrentX = ref<number>()
+let activePointerId: number | undefined
+let pendingDragX: number | undefined
+let dragFrame: number | undefined
 let observer: ResizeObserver | undefined
 
 const normalizedSeries = computed(() => props.series.map((series) => ({
@@ -106,6 +118,24 @@ const tooltipStyle = computed(() => ({
     : `${tooltipX.value}px`,
 }))
 
+const selectionRect = computed(() => {
+  if (dragOriginX.value === undefined || dragCurrentX.value === undefined) return undefined
+  const selection = trendSelectionFromViewBox(
+    dragOriginX.value,
+    dragCurrentX.value,
+    padding.left,
+    width.value - padding.right,
+    bounds.value.minimumTime,
+    bounds.value.maximumTime,
+  )
+  if (!selection) return undefined
+  const left = Math.min(dragOriginX.value, dragCurrentX.value)
+  const right = Math.max(dragOriginX.value, dragCurrentX.value)
+  const clampedLeft = Math.min(width.value - padding.right, Math.max(padding.left, left))
+  const clampedRight = Math.min(width.value - padding.right, Math.max(padding.left, right))
+  return { x: clampedLeft, width: clampedRight - clampedLeft }
+})
+
 function plotWidth(): number {
   return width.value - padding.left - padding.right
 }
@@ -152,6 +182,20 @@ function onPointerMove(event: PointerEvent): void {
   const svg = event.currentTarget as SVGSVGElement
   const svgX = svgClientXToViewBox(svg, event.clientX, event.clientY, width.value)
   if (svgX === undefined) return
+  if (activePointerId !== undefined && event.pointerId === activePointerId) {
+    pendingDragX = svgX
+    if (dragFrame === undefined) {
+      dragFrame = requestAnimationFrame(() => {
+        dragCurrentX.value = pendingDragX
+        dragFrame = undefined
+      })
+    }
+    if (Math.abs(svgX - (dragOriginX.value || svgX)) >= 12) {
+      event.preventDefault()
+      clearHover()
+    }
+    return
+  }
   const clamped = Math.min(width.value - padding.right, Math.max(padding.left, svgX))
   const ratio = (clamped - padding.left) / plotWidth()
   const target = bounds.value.minimumTime + ratio * (bounds.value.maximumTime - bounds.value.minimumTime)
@@ -170,6 +214,55 @@ function onPointerMove(event: PointerEvent): void {
   const localX = Math.min(canvasRect.width, Math.max(0, clientX - canvasRect.left))
   tooltipX.value = localX
   tooltipOnLeft.value = localX > canvasRect.width / 2
+}
+
+function pointerID(event: PointerEvent): number {
+  return Number.isFinite(event.pointerId) ? event.pointerId : 0
+}
+
+function onPointerDown(event: PointerEvent): void {
+  if (!props.selectable || !bounds.value.hasData || (event.pointerType === 'mouse' && event.button !== 0)) return
+  const svg = event.currentTarget as SVGSVGElement
+  const svgX = svgClientXToViewBox(svg, event.clientX, event.clientY, width.value)
+  if (svgX === undefined || svgX < padding.left || svgX > width.value - padding.right) return
+  activePointerId = pointerID(event)
+  dragOriginX.value = svgX
+  dragCurrentX.value = svgX
+  svg.setPointerCapture?.(activePointerId)
+  clearHover()
+}
+
+function finishPointer(event: PointerEvent): void {
+  if (activePointerId === undefined || pointerID(event) !== activePointerId) return
+  const svg = event.currentTarget as SVGSVGElement
+  const svgX = svgClientXToViewBox(svg, event.clientX, event.clientY, width.value)
+  const selection = svgX === undefined || dragOriginX.value === undefined
+    ? undefined
+    : trendSelectionFromViewBox(
+      dragOriginX.value,
+      svgX,
+      padding.left,
+      width.value - padding.right,
+      bounds.value.minimumTime,
+      bounds.value.maximumTime,
+    )
+  svg.releasePointerCapture?.(activePointerId)
+  resetPointer()
+  if (selection) {
+    emit('selectRange', {
+      start: new Date(selection.start).toISOString(),
+      end: new Date(selection.end).toISOString(),
+    })
+  }
+}
+
+function resetPointer(): void {
+  if (dragFrame !== undefined) cancelAnimationFrame(dragFrame)
+  dragFrame = undefined
+  pendingDragX = undefined
+  activePointerId = undefined
+  dragOriginX.value = undefined
+  dragCurrentX.value = undefined
 }
 
 function clearHover(): void {
@@ -206,7 +299,10 @@ onMounted(() => {
   }
 })
 
-onBeforeUnmount(() => observer?.disconnect())
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  resetPointer()
+})
 </script>
 
 <template>
@@ -221,10 +317,15 @@ onBeforeUnmount(() => observer?.disconnect())
     <div v-if="bounds.hasData" ref="canvas" class="trend-chart__canvas">
       <svg
         :viewBox="`0 0 ${width} ${height}`"
+        :class="{ 'is-selectable': selectable }"
         role="img"
-        aria-label="资源历史趋势，移动鼠标查看准确刻度"
+        aria-label="资源历史趋势，移动鼠标查看准确刻度，横向拖动可框选放大"
+        @pointerdown="onPointerDown"
         @pointermove="onPointerMove"
-        @pointerleave="clearHover"
+        @pointerup="finishPointer"
+        @pointercancel="resetPointer"
+        @lostpointercapture="resetPointer"
+        @pointerleave="activePointerId === undefined && clearHover()"
       >
         <g v-for="tick in yTicks" :key="tick.y">
           <line
@@ -244,6 +345,14 @@ onBeforeUnmount(() => observer?.disconnect())
           :d="linePath(item.points)"
           :stroke="item.color"
           class="trend-chart__line"
+        />
+        <rect
+          v-if="selectionRect"
+          :x="selectionRect.x"
+          :y="padding.top"
+          :width="selectionRect.width"
+          :height="height - padding.top - padding.bottom"
+          class="trend-chart__selection"
         />
         <template v-if="hoveredPoints.length">
           <line
@@ -300,11 +409,16 @@ onBeforeUnmount(() => observer?.disconnect())
 .trend-chart__legend strong { color: var(--text); font-size: .86rem; }
 .trend-chart__canvas { position: relative; overflow: hidden; margin-top: 4px; }
 .trend-chart svg { display: block; width: 100%; height: 184px; touch-action: pan-y; }
+.trend-chart svg.is-selectable { cursor: crosshair; }
 .trend-chart__grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 4 6; }
 .trend-chart__tick { fill: var(--muted); font-size: 10.5px; }
 .trend-chart__line {
   fill: none; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
+}
+.trend-chart__selection {
+  fill: color-mix(in srgb, var(--brand) 18%, transparent); stroke: var(--brand);
+  stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none;
 }
 .trend-chart__cursor { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
 .trend-chart__point { fill: var(--surface); stroke-width: 2.5; vector-effect: non-scaling-stroke; }

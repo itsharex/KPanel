@@ -495,6 +495,91 @@ func TestLongHistoryUsesHourlyRollupsWithBoundedBuckets(t *testing.T) {
 	}
 }
 
+func TestHistoryBetweenValidatesBoundsAndUsesBoundedBuckets(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	service, err := New(Config{
+		StateDir: t.TempDir(),
+		System:   fakeSystemSource{summary: testSummary(1_000, 2_000)},
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	invalid := [][2]time.Time{
+		{now.Add(-time.Hour), now.Add(-time.Hour)},
+		{now, now.Add(time.Minute)},
+		{now.Add(-7 * time.Hour), now},
+		{now.Add(-31 * 24 * time.Hour), now.Add(-31*24*time.Hour + time.Hour)},
+	}
+	for _, window := range invalid {
+		if _, historyErr := service.HistoryBetween(
+			context.Background(), "6h", window[0], window[1],
+		); !errors.Is(historyErr, ErrInvalidWindow) {
+			t.Fatalf("invalid window %s..%s error = %v", window[0], window[1], historyErr)
+		}
+	}
+
+	tests := []struct {
+		duration time.Duration
+		hourly   bool
+		want     time.Duration
+	}{
+		{duration: time.Hour, want: time.Minute},
+		{duration: 24 * time.Hour, want: 5 * time.Minute},
+		{duration: 30 * 24 * time.Hour, want: 2 * time.Hour},
+		{duration: 24 * time.Hour, hourly: true, want: time.Hour},
+		{duration: 180 * 24 * time.Hour, hourly: true, want: 12 * time.Hour},
+	}
+	for _, test := range tests {
+		if got := dynamicHistoryBucket(test.duration, test.hourly); got != test.want {
+			t.Fatalf("bucket duration=%s hourly=%v got=%s want=%s", test.duration, test.hourly, got, test.want)
+		}
+	}
+}
+
+func TestHistoryBetweenChoosesRawOrHourlyBySelectionAge(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	service, err := New(Config{
+		StateDir: t.TempDir(),
+		System:   fakeSystemSource{summary: testSummary(1_000, 2_000)},
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recentAt := now.Add(-2 * time.Hour)
+	oldAt := now.Add(-60 * 24 * time.Hour)
+	if err := service.appendRecord(maximumRollupRecord(recentAt)); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.appendHourlyRecord(maximumRollupRecord(oldAt)); err != nil {
+		t.Fatal(err)
+	}
+
+	recent, err := service.HistoryBetween(
+		context.Background(), "12m", recentAt.Add(-time.Hour), recentAt.Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent.Host) != 1 || !recent.Host[0].CollectedAt.Equal(recentAt) ||
+		recent.BucketSeconds != int(time.Minute.Seconds()) {
+		t.Fatalf("recent custom history = %#v", recent)
+	}
+
+	old, err := service.HistoryBetween(
+		context.Background(), "12m", oldAt.Add(-time.Hour), oldAt.Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(old.Host) != 1 || !old.Host[0].CollectedAt.Equal(oldAt) ||
+		old.BucketSeconds != int(time.Hour.Seconds()) {
+		t.Fatalf("old custom history = %#v", old)
+	}
+}
+
 func TestHourlyRollupRestoresCurrentHourAfterRestart(t *testing.T) {
 	dir := t.TempDir()
 	current := time.Date(2026, 8, 5, 0, 10, 0, 0, time.UTC)
@@ -1292,6 +1377,45 @@ func BenchmarkHistoryWindowMatrix(b *testing.B) {
 			for index := 0; index < b.N; index++ {
 				var historyErr error
 				history, historyErr = service.History(context.Background(), rangeValue)
+				if historyErr != nil {
+					b.Fatal(historyErr)
+				}
+				data, marshalErr := json.Marshal(history)
+				if marshalErr != nil {
+					b.Fatal(marshalErr)
+				}
+				responseBytes = len(data)
+			}
+			containerPoints := 0
+			for _, series := range history.Containers {
+				containerPoints += len(series.Points)
+			}
+			b.ReportMetric(float64(responseBytes), "response-B")
+			b.ReportMetric(float64(history.ScannedBytes), "scanned-B")
+			b.ReportMetric(float64(len(history.Host)), "host-points")
+			b.ReportMetric(float64(containerPoints), "container-points")
+		})
+	}
+
+	customWindows := []struct {
+		name  string
+		start time.Time
+		end   time.Time
+	}{
+		{name: "zoom-recent-6h", start: now.Add(-6 * time.Hour), end: now},
+		{name: "zoom-old-24h", start: now.Add(-60 * 24 * time.Hour), end: now.Add(-59 * 24 * time.Hour)},
+		{name: "zoom-old-7d", start: now.Add(-180 * 24 * time.Hour), end: now.Add(-173 * 24 * time.Hour)},
+	}
+	for _, window := range customWindows {
+		b.Run(window.name, func(b *testing.B) {
+			var responseBytes int
+			var history contract.MonitoringHistory
+			b.ReportAllocs()
+			for index := 0; index < b.N; index++ {
+				var historyErr error
+				history, historyErr = service.HistoryBetween(
+					context.Background(), "12m", window.start, window.end,
+				)
 				if historyErr != nil {
 					b.Fatal(historyErr)
 				}

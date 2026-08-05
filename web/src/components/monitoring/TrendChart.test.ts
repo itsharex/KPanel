@@ -48,4 +48,56 @@ describe('TrendChart', () => {
     expect(tooltip.text()).toContain('线路 9')
     wrapper.unmount()
   })
+
+  it('emits one normalized time range after a horizontal drag', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(elementBox)
+    const wrapper = mount(TrendChart, {
+      props: {
+        series: [{
+          label: 'CPU', color: 'blue', points: [
+            { at: '2026-08-05T00:00:00Z', value: 10 },
+            { at: '2026-08-05T01:00:00Z', value: 20 },
+          ],
+        }],
+      },
+    })
+    const svg = wrapper.get('svg')
+    svg.element.dispatchEvent(new MouseEvent('pointerdown', {
+      bubbles: true, clientX: 600, clientY: 80, button: 0,
+    }))
+    svg.element.dispatchEvent(new MouseEvent('pointerup', {
+      bubbles: true, clientX: 200, clientY: 80, button: 0,
+    }))
+    await wrapper.vm.$nextTick()
+
+    const selection = wrapper.emitted('selectRange')?.[0]?.[0] as { start: string; end: string }
+    expect(Date.parse(selection.start)).toBeLessThan(Date.parse(selection.end))
+    expect(Date.parse(selection.start)).toBeGreaterThan(Date.parse('2026-08-05T00:00:00Z'))
+    expect(Date.parse(selection.end)).toBeLessThan(Date.parse('2026-08-05T01:00:00Z'))
+    wrapper.unmount()
+  })
+
+  it('ignores a short accidental drag', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(elementBox)
+    const wrapper = mount(TrendChart, {
+      props: {
+        series: [{
+          label: 'CPU', color: 'blue', points: [
+            { at: '2026-08-05T00:00:00Z', value: 10 },
+            { at: '2026-08-05T01:00:00Z', value: 20 },
+          ],
+        }],
+      },
+    })
+    const svg = wrapper.get('svg')
+    svg.element.dispatchEvent(new MouseEvent('pointerdown', {
+      bubbles: true, clientX: 300, clientY: 80, button: 0,
+    }))
+    svg.element.dispatchEvent(new MouseEvent('pointerup', {
+      bubbles: true, clientX: 306, clientY: 80, button: 0,
+    }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('selectRange')).toBeUndefined()
+    wrapper.unmount()
+  })
 })

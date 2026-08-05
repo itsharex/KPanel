@@ -43,7 +43,10 @@ var (
 	hourlyFilePattern = regexp.MustCompile(`^hourly-(\d{4}-\d{2})\.jsonl$`)
 	ErrBusy           = errors.New("monitoring history query is busy")
 	ErrInvalidRange   = errors.New("invalid monitoring history range")
+	ErrInvalidWindow  = errors.New("invalid monitoring history window")
 )
+
+const customWindowClockGrace = 15 * time.Minute
 
 type SystemSource interface {
 	CollectRuntime(context.Context) (contract.SystemSummary, error)
@@ -673,15 +676,76 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 	if err != nil {
 		return contract.MonitoringHistory{}, err
 	}
+	now := s.now().UTC()
+	return s.queryHistory(ctx, spec, now.Add(-spec.duration), now, spec.bucket, spec.hourly)
+}
+
+// HistoryBetween returns a bounded drill-down inside the retention represented by requestedRange.
+// Recent long-range selections use raw samples; older selections use hourly rollups.
+func (s *Service) HistoryBetween(
+	ctx context.Context,
+	requestedRange string,
+	requestedStart time.Time,
+	requestedEnd time.Time,
+) (contract.MonitoringHistory, error) {
+	spec, err := parseRange(requestedRange)
+	if err != nil {
+		return contract.MonitoringHistory{}, err
+	}
+	now := s.now().UTC()
+	start := requestedStart.UTC()
+	end := requestedEnd.UTC()
+	if start.IsZero() || end.IsZero() || !start.Before(end) || end.After(now) ||
+		end.Sub(start) > spec.duration {
+		return contract.MonitoringHistory{}, ErrInvalidWindow
+	}
+
+	rawCutoff := now.Add(-time.Duration(s.retentionDays) * 24 * time.Hour)
+	hourly := spec.hourly && start.Before(rawCutoff)
+	retentionDays := s.retentionDays
+	if hourly {
+		retentionDays = s.rollupRetentionDays
+	}
+	oldestAllowed := now.Add(-time.Duration(retentionDays)*24*time.Hour - customWindowClockGrace)
+	if start.Before(oldestAllowed) {
+		return contract.MonitoringHistory{}, ErrInvalidWindow
+	}
+	return s.queryHistory(ctx, spec, start, end, dynamicHistoryBucket(end.Sub(start), hourly), hourly)
+}
+
+func dynamicHistoryBucket(duration time.Duration, hourly bool) time.Duration {
+	candidates := []time.Duration{
+		time.Minute, 2 * time.Minute, 5 * time.Minute, 10 * time.Minute, 15 * time.Minute,
+		30 * time.Minute, time.Hour, 2 * time.Hour, 3 * time.Hour, 6 * time.Hour,
+		12 * time.Hour, 24 * time.Hour,
+	}
+	minimum := time.Minute
+	if hourly {
+		minimum = time.Hour
+	}
+	for _, candidate := range candidates {
+		if candidate >= minimum && duration/candidate <= 360 {
+			return candidate
+		}
+	}
+	return 24 * time.Hour
+}
+
+func (s *Service) queryHistory(
+	ctx context.Context,
+	spec rangeSpec,
+	start time.Time,
+	end time.Time,
+	bucket time.Duration,
+	hourly bool,
+) (contract.MonitoringHistory, error) {
 	if !s.acquireQuerySlots(spec.querySlots) {
 		return contract.MonitoringHistory{}, ErrBusy
 	}
 	defer s.releaseQuerySlots(spec.querySlots)
-	now := s.now().UTC()
-	start := now.Add(-spec.duration)
 	result := contract.MonitoringHistory{
-		Range: spec.name, StartedAt: start, EndedAt: now,
-		BucketSeconds:   int(spec.bucket.Seconds()),
+		Range: spec.name, StartedAt: start, EndedAt: end,
+		BucketSeconds:   int(bucket.Seconds()),
 		Host:            []contract.MonitoringHostPoint{},
 		Containers:      []contract.MonitoringContainerSeries{},
 		OperatorLatency: operatorLatencyCatalog(),
@@ -697,7 +761,7 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 		operatorLatencySeries[series.ID] = series
 	}
 	scan := s.scanRecords
-	if spec.hourly {
+	if hourly {
 		scan = s.scanHourlyRecords
 	}
 	consume := func(record diskRecord) {
@@ -717,7 +781,7 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 		}
 		hostCopy := host
 		previousHost = &hostCopy
-		hostPoints = appendHostBucket(hostPoints, host, spec.bucket)
+		hostPoints = appendHostBucket(hostPoints, host, bucket)
 		for _, container := range record.Containers {
 			if _, exists := containerPoints[container.ID]; !exists && len(containerPoints) >= maxScannedSeries {
 				oldestID, oldestAt := oldestContainerSeries(containerPoints)
@@ -767,7 +831,7 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 			if container.Image != "" {
 				series.Image = container.Image
 			}
-			series.Points = appendContainerBucket(series.Points, point, spec.bucket)
+			series.Points = appendContainerBucket(series.Points, point, bucket)
 		}
 		for _, latency := range record.OperatorLatency {
 			series := operatorLatencySeries[latency.ID]
@@ -790,16 +854,16 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 				value := latency.LatencyMilliseconds
 				point.LatencyMilliseconds = &value
 			}
-			series.Points = appendOperatorLatencyBucket(series.Points, point, spec.bucket)
+			series.Points = appendOperatorLatencyBucket(series.Points, point, bucket)
 		}
 	}
-	scanned, skipped, err := scan(ctx, start, now, consume)
+	scanned, skipped, err := scan(ctx, start, end, consume)
 	if err != nil {
 		return contract.MonitoringHistory{}, err
 	}
-	if spec.hourly {
+	if hourly {
 		if current, ok := s.currentHourlyRecord(); ok &&
-			!current.CollectedAt.Before(start) && !current.CollectedAt.After(now) {
+			!current.CollectedAt.Before(start) && !current.CollectedAt.After(end) {
 			consume(current)
 		}
 	}

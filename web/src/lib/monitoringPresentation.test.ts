@@ -5,8 +5,10 @@ import {
   nearestTimestamp,
   newestContainerSampleTime,
   normalizeTrendChartWidth,
+  sliceMonitoringHistory,
   svgClientXToViewBox,
   svgViewBoxXToClient,
+  trendSelectionFromViewBox,
   trendLegendLabel,
   uniqueSeriesTimes,
 } from './monitoringPresentation'
@@ -95,6 +97,22 @@ describe('monitoring presentation', () => {
     expect(svgViewBoxXToClient(svg, 360, 720)).toBe(550)
   })
 
+  it('normalizes and clamps a reverse drag selection', () => {
+    expect(trendSelectionFromViewBox(720, 40, 64, 708, 1_000, 2_000)).toEqual({
+      start: 1_000,
+      end: 2_000,
+    })
+    expect(trendSelectionFromViewBox(500, 200, 100, 700, 0, 600)).toEqual({
+      start: 100,
+      end: 400,
+    })
+  })
+
+  it('ignores accidental and invalid drag selections', () => {
+    expect(trendSelectionFromViewBox(100, 108, 64, 708, 1_000, 2_000)).toBeUndefined()
+    expect(trendSelectionFromViewBox(100, 200, 64, 64, 1_000, 2_000)).toBeUndefined()
+  })
+
   it('marks only containers older than the newest sample as historical', () => {
     const current = container('current', '2026-07-31T12:10:00Z')
     const old = container('old', '2026-07-31T12:05:00Z')
@@ -105,5 +123,23 @@ describe('monitoring presentation', () => {
     expect(isHistoricalContainer(current, newest)).toBe(false)
     expect(isHistoricalContainer(old, newest)).toBe(true)
     expect(isHistoricalContainer(empty, newest)).toBe(true)
+  })
+
+  it('creates an immediate bounded preview without mutating the source history', () => {
+    const source = {
+      range: '24h' as const,
+      startedAt: '2026-08-05T00:00:00Z',
+      endedAt: '2026-08-05T02:00:00Z',
+      bucketSeconds: 60,
+      host: [
+        { collectedAt: '2026-08-05T00:00:00Z' },
+        { collectedAt: '2026-08-05T01:00:00Z' },
+        { collectedAt: '2026-08-05T02:00:00Z' },
+      ],
+      containers: [], operatorLatency: [], storage: {}, scannedBytes: 0, skippedLines: 0, truncatedSeries: 0,
+    } as unknown as import('@/types/api').MonitoringHistory
+    const preview = sliceMonitoringHistory(source, '2026-08-05T00:30:00Z', '2026-08-05T01:30:00Z')
+    expect(preview.host.map((point) => point.collectedAt)).toEqual(['2026-08-05T01:00:00Z'])
+    expect(source.host).toHaveLength(3)
   })
 })

@@ -61,6 +61,7 @@ type siteIconProvider interface {
 
 type monitoringHistoryProvider interface {
 	History(context.Context, string) (contract.MonitoringHistory, error)
+	HistoryBetween(context.Context, string, time.Time, time.Time) (contract.MonitoringHistory, error)
 }
 
 type Server struct {
@@ -577,12 +578,12 @@ func (s *Server) monitoringHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	values := r.URL.Query()
-	if len(values) > 1 || len(values["range"]) > 1 {
+	if len(values) > 3 || len(values["range"]) > 1 || len(values["start"]) > 1 || len(values["end"]) > 1 {
 		writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_query", "监控查询参数无效", "")
 		return
 	}
 	for key := range values {
-		if key != "range" {
+		if key != "range" && key != "start" && key != "end" {
 			writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_query", "监控查询参数无效", "")
 			return
 		}
@@ -598,11 +599,31 @@ func (s *Server) monitoringHistory(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, requestID, http.StatusServiceUnavailable, "monitoring_unavailable", "历史监控尚未就绪", "")
 		return
 	}
-	result, err := s.monitoring.History(r.Context(), rangeValue)
+	startValue, startPresent := values["start"]
+	endValue, endPresent := values["end"]
+	if startPresent != endPresent || (startPresent && (startValue[0] == "" || endValue[0] == "")) {
+		writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_window", "监控时间区间无效", "")
+		return
+	}
+	var result contract.MonitoringHistory
+	var err error
+	if startPresent {
+		start, startErr := time.Parse(time.RFC3339Nano, startValue[0])
+		end, endErr := time.Parse(time.RFC3339Nano, endValue[0])
+		if startErr != nil || endErr != nil {
+			writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_window", "监控时间区间无效", "")
+			return
+		}
+		result, err = s.monitoring.HistoryBetween(r.Context(), rangeValue, start, end)
+	} else {
+		result, err = s.monitoring.History(r.Context(), rangeValue)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, monitoring.ErrInvalidRange):
 			writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_range", "监控时间范围无效", "")
+		case errors.Is(err, monitoring.ErrInvalidWindow):
+			writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_window", "监控时间区间无效", "")
 		case errors.Is(err, monitoring.ErrBusy):
 			writeProblem(w, requestID, http.StatusTooManyRequests, "monitoring_busy", "历史监控查询繁忙", "")
 		default:

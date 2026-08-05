@@ -1,4 +1,4 @@
-import type { MonitoringContainerSeries } from '@/types/api'
+import type { MonitoringContainerSeries, MonitoringHistory } from '@/types/api'
 
 export function normalizeTrendChartWidth(measured: number, fallback = 720): number {
   const width = Number.isFinite(measured) && measured > 0 ? measured : fallback
@@ -75,6 +75,32 @@ export function svgViewBoxXToClient(
   return rect.left + (viewBoxX / viewBoxWidth) * rect.width
 }
 
+export interface TrendTimeSelection {
+  start: number
+  end: number
+}
+
+export function trendSelectionFromViewBox(
+  originX: number,
+  currentX: number,
+  plotLeft: number,
+  plotRight: number,
+  minimumTime: number,
+  maximumTime: number,
+  minimumPixels = 12,
+): TrendTimeSelection | undefined {
+  if (![originX, currentX, plotLeft, plotRight, minimumTime, maximumTime].every(Number.isFinite) ||
+    plotRight <= plotLeft || maximumTime <= minimumTime) return undefined
+  const clampedOrigin = Math.min(plotRight, Math.max(plotLeft, originX))
+  const clampedCurrent = Math.min(plotRight, Math.max(plotLeft, currentX))
+  if (Math.abs(clampedCurrent - clampedOrigin) < minimumPixels) return undefined
+  const left = Math.min(clampedOrigin, clampedCurrent)
+  const right = Math.max(clampedOrigin, clampedCurrent)
+  const span = maximumTime - minimumTime
+  const timeFor = (value: number) => minimumTime + ((value - plotLeft) / (plotRight - plotLeft)) * span
+  return { start: timeFor(left), end: timeFor(right) }
+}
+
 function latestContainerTime(container: MonitoringContainerSeries): number | undefined {
   const value = Date.parse(container.points.at(-1)?.collectedAt || '')
   return Number.isFinite(value) ? value : undefined
@@ -96,4 +122,32 @@ export function isHistoricalContainer(
   if (newestSampleTime === undefined) return false
   const latest = latestContainerTime(container)
   return latest === undefined || latest < newestSampleTime
+}
+
+export function sliceMonitoringHistory(
+  history: MonitoringHistory,
+  start: string,
+  end: string,
+): MonitoringHistory {
+  const startTime = Date.parse(start)
+  const endTime = Date.parse(end)
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || startTime >= endTime) return history
+  const inside = (collectedAt: string) => {
+    const time = Date.parse(collectedAt)
+    return Number.isFinite(time) && time >= startTime && time <= endTime
+  }
+  return {
+    ...history,
+    startedAt: start,
+    endedAt: end,
+    host: history.host.filter((point) => inside(point.collectedAt)),
+    containers: history.containers.map((container) => ({
+      ...container,
+      points: container.points.filter((point) => inside(point.collectedAt)),
+    })).filter((container) => container.points.length > 0),
+    operatorLatency: history.operatorLatency?.map((series) => ({
+      ...series,
+      points: series.points.filter((point) => inside(point.collectedAt)),
+    })),
+  }
 }

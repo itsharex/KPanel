@@ -844,6 +844,11 @@ export interface DockerContainerStats {
 
 export type MonitoringRange = '1h' | '6h' | '24h' | '7d' | '30d' | '3m' | '6m' | '12m'
 
+export interface MonitoringHistoryQuery {
+  start: string
+  end: string
+}
+
 export interface MonitoringHostPoint {
   collectedAt: string
   cpuPercent: number

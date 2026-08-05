@@ -1137,6 +1137,15 @@ describe('API client', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ range: '12m' }))
     await expect(api.monitoring.history('12m')).resolves.toMatchObject({ range: '12m' })
     expect(fetchMock.mock.calls[2]?.[0]).toBe('/api/v1/monitoring/history?range=12m')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ range: '12m' }))
+    await expect(api.monitoring.history('12m', {
+      start: '2026-08-04T00:00:00.000Z',
+      end: '2026-08-05T00:00:00.000Z',
+    })).resolves.toMatchObject({ range: '12m' })
+    expect(fetchMock.mock.calls[3]?.[0]).toBe(
+      '/api/v1/monitoring/history?range=12m&start=2026-08-04T00%3A00%3A00.000Z&end=2026-08-05T00%3A00%3A00.000Z',
+    )
   })
 
   it('normalizes null and legacy null-item list responses', () => {

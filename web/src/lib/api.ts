@@ -34,6 +34,7 @@ import type {
   AppTerminalChunk,
   LoginRequest,
   MonitoringHistory,
+  MonitoringHistoryQuery,
   MonitoringRange,
   PanelSettings,
   SecurityEntranceSettings,
@@ -1575,9 +1576,13 @@ export const api = {
       normalizeList(await request<ApiList<DockerMaintenanceJob> | DockerMaintenanceJob[]>('/docker/jobs', { signal })),
   },
   monitoring: {
-    history: (range: MonitoringRange, signal?: AbortSignal): Promise<MonitoringHistory> =>
+    history: (
+      range: MonitoringRange,
+      query?: MonitoringHistoryQuery,
+      signal?: AbortSignal,
+    ): Promise<MonitoringHistory> =>
       request<MonitoringHistory>('/monitoring/history', {
-        query: { range },
+        query: { range, start: query?.start, end: query?.end },
         signal,
       }),
   },

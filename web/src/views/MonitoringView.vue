@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/MonitoringView/en-US').then((module) => module.default))
-import { Box, Cpu, Database, HardDrive, MemoryStick, Network, RadioTower, RefreshCw } from '@lucide/vue'
+import { ArrowLeft, Box, Cpu, Database, HardDrive, MemoryStick, Network, RadioTower, RefreshCw, RotateCcw } from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
@@ -17,7 +17,11 @@ import {
   normalizeMonitoringMetric,
   type MonitoringMetric,
 } from '@/lib/monitoringNavigation'
-import { isHistoricalContainer, newestContainerSampleTime } from '@/lib/monitoringPresentation'
+import {
+  isHistoricalContainer,
+  newestContainerSampleTime,
+  sliceMonitoringHistory,
+} from '@/lib/monitoringPresentation'
 import {
   latestOperatorLatency,
   mergeOperatorLatencyVisibility,
@@ -26,6 +30,7 @@ import {
 import type {
   MonitoringContainerSeries,
   MonitoringHistory,
+  MonitoringHistoryQuery,
   MonitoringHostPoint,
   MonitoringOperatorLatencySeries,
   MonitoringRange,
@@ -58,6 +63,11 @@ const error = ref('')
 const diskChartMode = ref<'capacity' | 'io'>('capacity')
 const networkChartMode = ref<'traffic' | 'connections'>('traffic')
 const operatorLatencyVisibility = ref<Record<string, boolean>>({})
+const activeWindow = ref<MonitoringHistoryQuery>()
+const zoomStack = ref<Array<MonitoringHistoryQuery | null>>([])
+const rootHistory = shallowRef<MonitoringHistory>()
+const updating = ref(false)
+const interactionError = ref('')
 let controller: AbortController | undefined
 
 const latestHost = computed<MonitoringHostPoint | undefined>(() => history.value?.host.at(-1))
@@ -74,6 +84,9 @@ const selectedContainer = computed<MonitoringContainerSeries | undefined>(() => 
 const latestContainer = computed(() => selectedContainer.value?.points.at(-1))
 const newestContainerSample = computed(() => newestContainerSampleTime(history.value?.containers || []))
 const selectedMetric = computed<MonitoringMetric | undefined>(() => normalizeMonitoringMetric(route.query.metric))
+const zoomWindowLabel = computed(() => activeWindow.value
+  ? `${formatWindowTime(activeWindow.value.start)} – ${formatWindowTime(activeWindow.value.end)}`
+  : '')
 
 const hostCPU = computed<TrendSeries[]>(() => {
   const points = history.value?.host || []
@@ -313,15 +326,24 @@ function latestLatencyLabel(series: MonitoringOperatorLatencySeries): string {
   return `${formatLatency(latency)}${availability}`
 }
 
-async function load(silent = false): Promise<void> {
+type HistoryLoadMode = 'initial' | 'refresh' | 'zoom'
+
+async function load(mode: HistoryLoadMode = 'initial', query = activeWindow.value): Promise<void> {
   controller?.abort()
-  controller = new AbortController()
-  if (silent) refreshing.value = true
-  else loading.value = true
-  error.value = ''
+  const requestController = new AbortController()
+  controller = requestController
+  const range = selectedRange.value
+  if (mode === 'initial') loading.value = true
+  if (mode === 'refresh') refreshing.value = true
+  if (mode === 'zoom') updating.value = true
+  if (mode === 'initial') error.value = ''
+  interactionError.value = ''
   try {
-    const result = await api.monitoring.history(selectedRange.value, controller.signal)
+    const result = await api.monitoring.history(range, query, requestController.signal)
+    if (controller !== requestController) return
     history.value = result
+    activeWindow.value = query ? { ...query } : undefined
+    if (!query) rootHistory.value = result
     operatorLatencyVisibility.value = mergeOperatorLatencyVisibility(
       operatorLatencyVisibility.value,
       result.operatorLatency || [],
@@ -331,20 +353,84 @@ async function load(silent = false): Promise<void> {
     }
   } catch (reason) {
     if (!(reason instanceof DOMException && reason.name === 'AbortError')) {
-      error.value = reason instanceof ApiError
+      const message = reason instanceof ApiError
         ? reason.message
         : '无法读取历史监控数据，请检查 Agent 状态后重试。'
+      if (mode === 'initial' && !history.value) error.value = message
+      else interactionError.value = message
     }
   } finally {
-    loading.value = false
-    refreshing.value = false
+    if (controller === requestController) {
+      loading.value = false
+      refreshing.value = false
+      updating.value = false
+    }
   }
 }
 
 function changeRange(range: MonitoringRange): void {
-  if (range === selectedRange.value) return
+  if (range === selectedRange.value) {
+    if (activeWindow.value) resetZoom()
+    return
+  }
   selectedRange.value = range
-  void load()
+  activeWindow.value = undefined
+  zoomStack.value = []
+  rootHistory.value = undefined
+  history.value = undefined
+  void load('initial', undefined)
+}
+
+function zoomToRange(selection: MonitoringHistoryQuery): void {
+  if (!history.value || updating.value) return
+  const start = Date.parse(selection.start)
+  const end = Date.parse(selection.end)
+  const minimumDuration = Math.max(1, history.value.bucketSeconds) * 2_000
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < minimumDuration) {
+    interactionError.value = '框选区间太短，请选择至少两个数据桶。'
+    return
+  }
+  const next = { start: new Date(start).toISOString(), end: new Date(end).toISOString() }
+  zoomStack.value = [...zoomStack.value, activeWindow.value ? { ...activeWindow.value } : null].slice(-16)
+  activeWindow.value = next
+  history.value = sliceMonitoringHistory(history.value, next.start, next.end)
+  void load('zoom', next)
+}
+
+function backZoom(): void {
+  if (!zoomStack.value.length) return
+  controller?.abort()
+  const stack = [...zoomStack.value]
+  const previous = stack.pop() || undefined
+  zoomStack.value = stack
+  activeWindow.value = previous ? { ...previous } : undefined
+  interactionError.value = ''
+  if (!previous && rootHistory.value) {
+    history.value = rootHistory.value
+    updating.value = false
+    refreshing.value = false
+    return
+  }
+  void load('zoom', previous)
+}
+
+function resetZoom(): void {
+  controller?.abort()
+  activeWindow.value = undefined
+  zoomStack.value = []
+  interactionError.value = ''
+  updating.value = false
+  refreshing.value = false
+  if (rootHistory.value) history.value = rootHistory.value
+  else void load('initial', undefined)
+}
+
+function formatWindowTime(value: string): string {
+  const time = Date.parse(value)
+  if (!Number.isFinite(time)) return '—'
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(time))
 }
 
 function chartIsSelected(...metrics: MonitoringMetric[]): boolean {
@@ -363,15 +449,15 @@ async function focusSelectedMetric(): Promise<void> {
 
 watch([selectedMetric, () => history.value?.host.length], () => void focusSelectedMetric(), { flush: 'post' })
 
-onMounted(() => void load())
+onMounted(() => void load('initial', undefined))
 onBeforeUnmount(() => controller?.abort())
 </script>
 
 <template>
-  <section class="monitoring-page">
+  <section class="monitoring-page" :class="{ 'is-updating': updating }">
     <PageHeader title="历史监控" description="轻量沉淀主机与容器资源趋势，数据仅保存在当前服务器。">
       <template #actions>
-        <button class="button button--secondary" type="button" :disabled="refreshing" @click="load(true)">
+        <button class="button button--secondary" type="button" :disabled="refreshing || updating" @click="load('refresh')">
           <RefreshCw :size="16" :class="{ 'is-spinning': refreshing }" />
           刷新
         </button>
@@ -393,6 +479,24 @@ onBeforeUnmount(() => controller?.abort())
         最近采样 {{ formatDateTime(history.storage.lastSampleAt) }}
       </span>
     </div>
+
+    <div class="monitoring-zoom-strip" :class="{ 'is-loading': updating }">
+      <span v-if="activeWindow"><strong>已放大</strong> {{ zoomWindowLabel }}</span>
+      <span v-else>在任意趋势图上横向拖动，即可同步框选放大全部图表。</span>
+      <span v-if="updating" class="monitoring-zoom-strip__loading" title="正在读取更精细的数据">
+        <RefreshCw :size="14" class="is-spinning" /> 正在读取更精细的数据
+      </span>
+      <div v-if="activeWindow" class="monitoring-zoom-strip__actions">
+        <button type="button" aria-label="返回" :disabled="updating" @click="backZoom">
+          <ArrowLeft :size="14" /> 返回
+        </button>
+        <button type="button" aria-label="重置" @click="resetZoom">
+          <RotateCcw :size="14" /> 重置
+        </button>
+      </div>
+    </div>
+
+    <div v-if="interactionError" class="monitoring-warning">{{ interactionError }}</div>
 
     <LoadingState v-if="loading" :rows="4" cards label="正在读取历史监控数据" />
     <ErrorState v-else-if="error" title="历史监控读取失败" :message="error" @retry="load()" />
@@ -437,7 +541,7 @@ onBeforeUnmount(() => controller?.abort())
           :class="{ 'chart-card--selected': chartIsSelected('cpu', 'load') }"
         >
           <header><div><Cpu :size="18" /><strong>CPU 与负载</strong></div><span>{{ history.host.length }} 个点</span></header>
-          <TrendChart :series="hostCPU" :formatter="formatPercent" :max-value="100" />
+          <TrendChart :series="hostCPU" :formatter="formatPercent" :max-value="100" :selectable="!updating" @select-range="zoomToRange" />
         </article>
         <article
           id="host-memory-history"
@@ -445,7 +549,7 @@ onBeforeUnmount(() => controller?.abort())
           :class="{ 'chart-card--selected': chartIsSelected('memory') }"
         >
           <header><div><MemoryStick :size="18" /><strong>内存</strong></div><span>内存 / Swap</span></header>
-          <TrendChart :series="hostMemory" :formatter="formatPercent" :max-value="100" />
+          <TrendChart :series="hostMemory" :formatter="formatPercent" :max-value="100" :selectable="!updating" @select-range="zoomToRange" />
         </article>
         <article
           id="host-disk-history"
@@ -463,6 +567,8 @@ onBeforeUnmount(() => controller?.abort())
             :series="activeHostDisk"
             :formatter="diskChartMode === 'io' ? formatRate : formatPercent"
             :max-value="diskChartMode === 'capacity' ? 100 : undefined"
+            :selectable="!updating"
+            @select-range="zoomToRange"
           />
         </article>
         <article
@@ -477,7 +583,7 @@ onBeforeUnmount(() => controller?.abort())
               <button type="button" :class="{ 'is-active': networkChartMode === 'connections' }" @click="networkChartMode = 'connections'">连接数</button>
             </div>
           </header>
-          <TrendChart :series="activeHostNetwork" :formatter="networkChartMode === 'traffic' ? formatRate : (value) => value.toFixed(0)" />
+          <TrendChart :series="activeHostNetwork" :formatter="networkChartMode === 'traffic' ? formatRate : (value) => value.toFixed(0)" :selectable="!updating" @select-range="zoomToRange" />
         </article>
       </div>
       <EmptyState v-else title="正在积累历史数据" description="功能启用后约 1 分钟生成首个主机采样点，刷新页面即可查看。" />
@@ -532,10 +638,10 @@ onBeforeUnmount(() => controller?.abort())
               </div>
             </header>
             <div class="container-charts">
-              <article><strong>CPU</strong><TrendChart :series="containerCPU" :formatter="formatPercent" /></article>
-              <article><strong>内存</strong><TrendChart :series="containerMemory" :formatter="formatPercent" :max-value="100" /></article>
-              <article><strong>磁盘 I/O</strong><TrendChart :series="containerBlock" :formatter="formatRate" /></article>
-              <article><strong>网络</strong><TrendChart :series="containerNetwork" :formatter="formatRate" /></article>
+              <article><strong>CPU</strong><TrendChart :series="containerCPU" :formatter="formatPercent" :selectable="!updating" @select-range="zoomToRange" /></article>
+              <article><strong>内存</strong><TrendChart :series="containerMemory" :formatter="formatPercent" :max-value="100" :selectable="!updating" @select-range="zoomToRange" /></article>
+              <article><strong>磁盘 I/O</strong><TrendChart :series="containerBlock" :formatter="formatRate" :selectable="!updating" @select-range="zoomToRange" /></article>
+              <article><strong>网络</strong><TrendChart :series="containerNetwork" :formatter="formatRate" :selectable="!updating" @select-range="zoomToRange" /></article>
             </div>
           </div>
         </div>
@@ -581,6 +687,8 @@ onBeforeUnmount(() => controller?.abort())
           v-if="operatorLatencyChart.length"
           :series="operatorLatencyChart"
           :formatter="formatLatency"
+          :selectable="!updating"
+          @select-range="zoomToRange"
         />
         <div v-else-if="operatorLatencyVisibleCount === 0" class="operator-latency-empty">
           已隐藏全部线路，选择上方线路即可显示。
@@ -599,6 +707,8 @@ onBeforeUnmount(() => controller?.abort())
 
 <style scoped>
 .monitoring-page { display: grid; gap: 18px; }
+.monitoring-page :deep(.trend-chart__line) { transition: opacity .14s ease; }
+.monitoring-page.is-updating :deep(.trend-chart__line) { opacity: .72; }
 .monitoring-toolbar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px; border: 1px solid var(--border);
   border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm);
@@ -609,6 +719,22 @@ onBeforeUnmount(() => controller?.abort())
 }
 .range-button:hover, .range-button--active { color: var(--brand-strong); background: var(--brand-soft); }
 .monitoring-toolbar__meta { margin-left: auto; padding-right: 8px; color: var(--muted); font-size: .78rem; }
+.monitoring-zoom-strip {
+  display: flex; min-height: 38px; align-items: center; gap: 12px; padding: 7px 11px;
+  border: 1px solid var(--border); border-radius: 10px; color: var(--muted);
+  background: var(--surface-subtle); font-size: .76rem;
+}
+.monitoring-zoom-strip.is-loading { border-color: color-mix(in srgb, var(--brand) 28%, var(--border)); }
+.monitoring-zoom-strip strong { color: var(--text); }
+.monitoring-zoom-strip__loading { display: inline-flex; align-items: center; gap: 6px; color: var(--brand-strong); }
+.monitoring-zoom-strip__actions { display: inline-flex; gap: 4px; margin-left: auto; }
+.monitoring-zoom-strip__actions button {
+  display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 9px;
+  border: 1px solid var(--border); border-radius: 7px; color: var(--text-soft);
+  background: var(--surface); font-size: .72rem; cursor: pointer;
+}
+.monitoring-zoom-strip__actions button:hover:not(:disabled) { color: var(--brand-strong); border-color: var(--brand); }
+.monitoring-zoom-strip__actions button:disabled { cursor: wait; opacity: .55; }
 .summary-grid, .chart-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .summary-card, .chart-card, .container-section {
   border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-sm);
@@ -715,6 +841,9 @@ onBeforeUnmount(() => controller?.abort())
 @media (max-width: 780px) {
   .monitoring-toolbar { flex-wrap: wrap; }
   .monitoring-toolbar__meta { width: 100%; margin-left: 0; padding: 4px 8px; }
+  .monitoring-zoom-strip { flex-wrap: wrap; }
+  .monitoring-zoom-strip__actions { width: 100%; margin-left: 0; }
+  .monitoring-zoom-strip__actions button { flex: 1; justify-content: center; }
   .summary-grid, .chart-grid, .container-layout { grid-template-columns: 1fr; }
   .chart-card--wide { grid-column: auto; }
   .container-list-shell { min-height: 0; }
