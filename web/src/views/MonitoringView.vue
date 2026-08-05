@@ -774,6 +774,10 @@ onBeforeUnmount(() => controller?.abort())
                   'container-row--active': containerSelected(container.containerId),
                   'container-row--historical': containerIsHistorical(container),
                 }"
+                @mouseenter="containerSelected(container.containerId) && (highlightedContainerId = container.containerId)"
+                @mouseleave="highlightedContainerId = ''"
+                @focusin="containerSelected(container.containerId) && (highlightedContainerId = container.containerId)"
+                @focusout="highlightedContainerId = ''"
               >
                 <input
                   type="checkbox"
@@ -786,16 +790,17 @@ onBeforeUnmount(() => controller?.abort())
                   :class="{ 'is-visible': containerSelected(container.containerId) }"
                   :style="containerSelected(container.containerId) ? { background: containerColor(container.containerId) } : undefined"
                 />
-                <span>
+                <span class="container-row__identity">
                   <span class="container-row__title">
-                    <strong>{{ container.name }}</strong>
+                    <strong :title="container.name">{{ container.name }}</strong>
                     <em v-if="containerIsHistorical(container)">历史</em>
                   </span>
-                  <small>{{ containerImageLabel(container) }}</small>
+                  <small :title="containerImageLabel(container)">{{ containerImageLabel(container) }}</small>
                 </span>
-                <span>
+                <span class="container-row__metrics">
                   <strong>{{ latestContainerPoint(container) ? formatPercent(latestContainerPoint(container)?.cpuPercent) : '—' }}</strong>
-                  <small>{{ latestContainerPoint(container) ? formatBytes(latestContainerPoint(container)?.memoryBytes) : '当前窗口无数据' }}</small>
+                  <small v-if="latestContainerPoint(container)">{{ formatBytes(latestContainerPoint(container)?.memoryBytes) }}</small>
+                  <small v-else>当前窗口无数据</small>
                 </span>
               </label>
               <p v-if="!filteredContainers.length" class="container-list-empty">没有匹配的容器</p>
@@ -808,26 +813,23 @@ onBeforeUnmount(() => controller?.abort())
                 <p>颜色代表容器；详细模式下实线和虚线代表不同方向。</p>
               </div>
             </header>
-            <div class="selected-container-strip" aria-label="已选择的容器">
+            <div class="selected-container-strip" role="list" aria-label="已选择的容器">
               <div
                 v-for="container in selectedContainers"
                 :key="container.containerId"
                 class="selected-container-card"
                 :class="{ 'is-highlighted': highlightedContainerId === container.containerId }"
+                role="listitem"
                 tabindex="0"
+                :aria-label="`聚焦 ${containerSeriesName(container)} 曲线`"
                 @mouseenter="highlightedContainerId = container.containerId"
                 @mouseleave="highlightedContainerId = ''"
                 @focus="highlightedContainerId = container.containerId"
                 @blur="highlightedContainerId = ''"
               >
                 <i :style="{ background: containerColor(container.containerId) }" />
-                <span><strong>{{ containerSeriesName(container) }}</strong><small>{{ containerIsHistorical(container) ? '历史容器' : containerImageLabel(container) }}</small></span>
-                <span v-if="latestContainerPoint(container)">
-                  <small>CPU {{ formatPercent(latestContainerPoint(container)?.cpuPercent) }}</small>
-                  <small>内存 {{ formatBytes(latestContainerPoint(container)?.memoryBytes) }}</small>
-                  <small>进程 {{ latestContainerPoint(container)?.pids || 0 }}</small>
-                </span>
-                <span v-else><small>当前窗口无数据</small></span>
+                <strong :title="containerSeriesName(container)">{{ containerSeriesName(container) }}</strong>
+                <small>{{ latestContainerPoint(container) ? formatPercent(latestContainerPoint(container)?.cpuPercent) : '—' }}</small>
               </div>
             </div>
             <div class="container-charts">
@@ -1017,12 +1019,12 @@ onBeforeUnmount(() => controller?.abort())
 .container-selection-error { margin: 4px 2px; color: var(--amber); font-size: .7rem; }
 .container-list { min-height: 360px; max-height: 680px; overflow: auto; padding-right: 4px; }
 .container-row {
-  display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 11px 12px; border: 1px solid transparent; border-radius: 10px;
+  display: grid; width: 100%; grid-template-columns: 16px 6px minmax(0, 1fr) minmax(64px, auto);
+  align-items: center; gap: 10px; padding: 10px; border: 1px solid transparent; border-radius: 10px;
   color: var(--text); background: transparent; text-align: left; cursor: pointer;
 }
 .container-row input { width: 15px; height: 15px; flex: 0 0 auto; margin: 0; accent-color: var(--brand); }
-.container-row__color { width: 8px; height: 28px; flex: 0 0 auto; border-radius: 999px; opacity: 0; }
+.container-row__color { width: 6px; height: 28px; border-radius: 999px; opacity: 0; }
 .container-row__color.is-visible { opacity: 1; }
 .container-row + .container-row { margin-top: 4px; }
 .container-row:hover, .container-row--active {
@@ -1030,8 +1032,8 @@ onBeforeUnmount(() => controller?.abort())
 }
 .container-row--historical { color: var(--muted); background: var(--surface-subtle); opacity: .66; }
 .container-row--historical:hover, .container-row--historical.container-row--active { opacity: 1; }
-.container-row > span { min-width: 0; }
-.container-row > span:last-child { flex: 0 0 auto; text-align: right; }
+.container-row__identity { min-width: 0; }
+.container-row__metrics { min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
 .container-row strong, .container-row small { display: block; }
 .container-row__title { display: flex; min-width: 0; align-items: center; gap: 7px; }
 .container-row__title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1040,26 +1042,25 @@ onBeforeUnmount(() => controller?.abort())
   background: color-mix(in srgb, var(--muted) 12%, transparent); font-size: .62rem; font-style: normal;
 }
 .container-row small {
-  max-width: 180px; margin-top: 3px; overflow: hidden; color: var(--muted);
+  max-width: 100%; margin-top: 3px; overflow: hidden; color: var(--muted);
   font-size: .7rem; text-overflow: ellipsis; white-space: nowrap;
 }
+.container-row__metrics strong { font-size: .78rem; }
 .container-list-empty { padding: 28px 8px; color: var(--muted); font-size: .76rem; text-align: center; }
 .container-compare {
   min-width: 0; padding: 14px; border: 1px solid var(--border);
   border-radius: 12px; background: var(--surface-subtle);
 }
-.selected-container-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 12px 0; }
+.selected-container-strip { display: flex; gap: 6px; margin: 10px 0; overflow-x: auto; padding-bottom: 2px; }
 .selected-container-card {
-  display: grid; min-width: 0; grid-template-columns: 8px minmax(0, 1fr); gap: 2px 9px; padding: 9px 10px;
-  border: 1px solid var(--border); border-radius: 9px; background: var(--surface); outline: 0;
+  display: flex; min-width: 120px; min-height: 34px; flex: 1 1 0; align-items: center; gap: 7px; padding: 0 9px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); outline: 0;
   transition: border-color .14s ease, box-shadow .14s ease;
 }
 .selected-container-card.is-highlighted, .selected-container-card:focus-visible { border-color: var(--brand); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 11%, transparent); }
-.selected-container-card > i { width: 8px; height: 100%; min-height: 30px; grid-row: 1 / 3; border-radius: 999px; }
-.selected-container-card > span { display: flex; min-width: 0; gap: 8px; justify-content: space-between; }
-.selected-container-card > span strong, .selected-container-card > span small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.selected-container-card > span strong { color: var(--text); font-size: .74rem; }
-.selected-container-card > span small { color: var(--muted); font-size: .66rem; }
+.selected-container-card > i { width: 6px; height: 18px; flex: 0 0 auto; border-radius: 999px; }
+.selected-container-card > strong { min-width: 0; flex: 1; overflow: hidden; color: var(--text); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.selected-container-card > small { flex: 0 0 auto; color: var(--muted); font-size: .66rem; font-variant-numeric: tabular-nums; }
 .container-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .container-charts > article { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
 .container-charts > article > header { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; }
@@ -1082,8 +1083,6 @@ onBeforeUnmount(() => controller?.abort())
   .monitoring-zoom-strip__actions button { flex: 1; justify-content: center; }
   .summary-grid, .chart-grid, .container-layout { grid-template-columns: 1fr; }
   .container-list { min-height: 0; max-height: 360px; }
-  .selected-container-strip { display: flex; overflow-x: auto; padding-bottom: 4px; }
-  .selected-container-card { min-width: 220px; }
   .chart-card--wide { grid-column: auto; }
   .container-list-shell { min-height: 0; }
   .container-list { position: static; max-height: 240px; }

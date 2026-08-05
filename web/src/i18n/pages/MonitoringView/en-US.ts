@@ -55,7 +55,6 @@ export default [
   ["最多同时比较 {0} 个容器，请先取消一个。", "Compare up to {0} containers at once. Deselect one first."],
   ["没有匹配的容器", "No matching containers"],
   ["当前窗口无数据", "No data in this window"],
-  ["进程", "Processes"],
   ["上传", "Upload"],
   ["天 · 上限", "Chile"],
   ["条异常记录。", "An anomaly record."],
