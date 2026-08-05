@@ -842,11 +842,13 @@ export interface DockerContainerStats {
   collectedAt: string
 }
 
-export type MonitoringRange = '1h' | '6h' | '24h' | '7d' | '30d'
+export type MonitoringRange = '1h' | '6h' | '24h' | '7d' | '30d' | '3m' | '6m' | '12m'
 
 export interface MonitoringHostPoint {
   collectedAt: string
   cpuPercent: number
+  cpuAveragePercent?: number
+  cpuSampleCount?: number
   cpuCores: number
   loadOne: number
   loadFive: number
@@ -874,6 +876,8 @@ export interface MonitoringHostPoint {
 export interface MonitoringContainerPoint {
   collectedAt: string
   cpuPercent: number
+  cpuAveragePercent?: number
+  cpuSampleCount?: number
   memoryBytes: number
   memoryLimitBytes: number
   memoryPercent: number
@@ -898,6 +902,8 @@ export interface MonitoringContainerSeries {
 export interface MonitoringOperatorLatencyPoint {
   collectedAt: string
   latencyMilliseconds: number | null
+  successCount?: number
+  failureCount?: number
 }
 
 export interface MonitoringOperatorLatencySeries {
@@ -929,6 +935,11 @@ export interface MonitoringStorageStatus {
   lastOperatorLatencySuccessful?: number
   lastOperatorLatencyFailed?: number
   storageLimitReached: boolean
+  rollupRetentionDays?: number
+  rollupStorageBytes?: number
+  maxRollupStorageBytes?: number
+  lastRollupAt?: string
+  rollupStorageLimitReached?: boolean
 }
 
 export interface MonitoringHistory {

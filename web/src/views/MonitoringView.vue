@@ -37,6 +37,9 @@ const ranges: Array<{ value: MonitoringRange; label: string }> = [
   { value: '24h', label: '24 小时' },
   { value: '7d', label: '7 天' },
   { value: '30d', label: '30 天' },
+  { value: '3m', label: '3 个月' },
+  { value: '6m', label: '6 个月' },
+  { value: '12m', label: '12 个月' },
 ]
 const operatorLabels: Record<MonitoringOperatorLatencySeries['operator'], string> = {
   telecom: '电信', unicom: '联通', mobile: '移动',
@@ -58,6 +61,12 @@ const operatorLatencyVisibility = ref<Record<string, boolean>>({})
 let controller: AbortController | undefined
 
 const latestHost = computed<MonitoringHostPoint | undefined>(() => history.value?.host.at(-1))
+const historyStorageBytes = computed(() =>
+  (history.value?.storage.storageBytes || 0) + (history.value?.storage.rollupStorageBytes || 0),
+)
+const historyStorageLimit = computed(() =>
+  (history.value?.storage.maxStorageBytes || 0) + (history.value?.storage.maxRollupStorageBytes || 0),
+)
 const selectedContainer = computed<MonitoringContainerSeries | undefined>(() => {
   const containers = history.value?.containers || []
   return containers.find((item) => item.containerId === selectedContainerId.value) || containers[0]
@@ -66,21 +75,33 @@ const latestContainer = computed(() => selectedContainer.value?.points.at(-1))
 const newestContainerSample = computed(() => newestContainerSampleTime(history.value?.containers || []))
 const selectedMetric = computed<MonitoringMetric | undefined>(() => normalizeMonitoringMetric(route.query.metric))
 
-const hostCPU = computed<TrendSeries[]>(() => [
-  {
-    label: 'CPU',
+const hostCPU = computed<TrendSeries[]>(() => {
+  const points = history.value?.host || []
+  const hasAverage = points.some((point) => (point.cpuSampleCount || 0) > 0)
+  const series: TrendSeries[] = [{
+    label: hasAverage ? 'CPU 峰值' : 'CPU',
     color: 'var(--brand)',
-    points: (history.value?.host || []).map((point) => ({ at: point.collectedAt, value: point.cpuPercent })),
-  },
-  {
+    points: points.map((point) => ({ at: point.collectedAt, value: point.cpuPercent })),
+  }]
+  if (hasAverage) {
+    series.push({
+      label: 'CPU 平均',
+      color: 'var(--blue)',
+      points: points.flatMap((point) => (point.cpuSampleCount || 0) > 0
+        ? [{ at: point.collectedAt, value: point.cpuAveragePercent || 0 }]
+        : []),
+    })
+  }
+  series.push({
     label: '1 分钟负载占核',
     color: 'var(--violet)',
-    points: (history.value?.host || []).map((point) => ({
+    points: points.map((point) => ({
       at: point.collectedAt,
       value: point.cpuCores > 0 ? (point.loadOne / point.cpuCores) * 100 : 0,
     })),
-  },
-])
+  })
+  return series
+})
 const hostMemory = computed<TrendSeries[]>(() => {
   const series: TrendSeries[] = [{
     label: '内存',
@@ -179,14 +200,25 @@ const operatorLatencyChart = computed<TrendSeries[]>(() => operatorLatencyRoutes
   .filter((series) => series.points.length > 0))
 const operatorLatencyVisibleCount = computed(() => operatorLatencyRoutes.value
   .filter((series) => operatorLatencyVisibility.value[series.id]).length)
-const containerCPU = computed<TrendSeries[]>(() => [{
-  label: 'CPU',
-  color: 'var(--brand)',
-  points: (selectedContainer.value?.points || []).map((point) => ({
-    at: point.collectedAt,
-    value: point.cpuPercent,
-  })),
-}])
+const containerCPU = computed<TrendSeries[]>(() => {
+  const points = selectedContainer.value?.points || []
+  const hasAverage = points.some((point) => (point.cpuSampleCount || 0) > 0)
+  const series: TrendSeries[] = [{
+    label: hasAverage ? 'CPU 峰值' : 'CPU',
+    color: 'var(--brand)',
+    points: points.map((point) => ({ at: point.collectedAt, value: point.cpuPercent })),
+  }]
+  if (hasAverage) {
+    series.push({
+      label: 'CPU 平均',
+      color: 'var(--blue)',
+      points: points.flatMap((point) => (point.cpuSampleCount || 0) > 0
+        ? [{ at: point.collectedAt, value: point.cpuAveragePercent || 0 }]
+        : []),
+    })
+  }
+  return series
+})
 const containerMemory = computed<TrendSeries[]>(() => [{
   label: '内存',
   color: 'var(--violet)',
@@ -245,6 +277,10 @@ function containerIsHistorical(container: MonitoringContainerSeries): boolean {
   return isHistoricalContainer(container, newestContainerSample.value)
 }
 
+function containerImageLabel(container: MonitoringContainerSeries): string {
+  return container.image || '镜像信息未保留'
+}
+
 function toggleOperatorLatency(id: string): void {
   operatorLatencyVisibility.value = {
     ...operatorLatencyVisibility.value,
@@ -270,7 +306,11 @@ function latestLatencyLabel(series: MonitoringOperatorLatencySeries): string {
   const latency = latestOperatorLatency(series)
   if (latency === undefined) return '等待采样'
   if (latency === null) return '超时'
-  return formatLatency(latency)
+  const latest = series.points.at(-1)
+  const success = latest?.successCount || 0
+  const total = success + (latest?.failureCount || 0)
+  const availability = total > 0 ? ` · ${Math.round((success / total) * 100)}%` : ''
+  return `${formatLatency(latency)}${availability}`
 }
 
 async function load(silent = false): Promise<void> {
@@ -375,12 +415,18 @@ onBeforeUnmount(() => controller?.abort())
         </article>
         <article class="summary-card">
           <span class="summary-card__icon is-violet"><Database :size="19" /></span>
-          <div><span>历史数据</span><strong>{{ formatBytes(history.storage.storageBytes) }}</strong></div>
-          <small>保留 {{ history.storage.retentionDays }} 天 · 上限 {{ formatBytes(history.storage.maxStorageBytes) }}</small>
+          <div><span>历史数据</span><strong>{{ formatBytes(historyStorageBytes) }}</strong></div>
+          <small>
+            原始 {{ history.storage.retentionDays }} 天 · 趋势 {{ history.storage.rollupRetentionDays || 0 }} 天 ·
+            上限 {{ formatBytes(historyStorageLimit) }}
+          </small>
         </article>
       </div>
 
-      <div v-if="history.storage.lastError || history.storage.storageLimitReached" class="monitoring-warning">
+      <div
+        v-if="history.storage.lastError || history.storage.storageLimitReached || history.storage.rollupStorageLimitReached"
+        class="monitoring-warning"
+      >
         {{ history.storage.lastError || '历史数据已达到固定存储上限，系统将优先保留最新数据。' }}
       </div>
 
@@ -464,7 +510,7 @@ onBeforeUnmount(() => controller?.abort())
                     <strong>{{ container.name }}</strong>
                     <em v-if="containerIsHistorical(container)">历史</em>
                   </span>
-                  <small>{{ container.image }}</small>
+                  <small>{{ containerImageLabel(container) }}</small>
                 </span>
                 <span>
                   <strong>{{ formatPercent(container.points.at(-1)?.cpuPercent) }}</strong>
@@ -475,7 +521,10 @@ onBeforeUnmount(() => controller?.abort())
           </div>
           <div class="container-detail">
             <header>
-              <div><h3>{{ selectedContainer?.name }}</h3><p>{{ selectedContainer?.image }}</p></div>
+              <div>
+                <h3>{{ selectedContainer?.name }}</h3>
+                <p>{{ selectedContainer ? containerImageLabel(selectedContainer) : '' }}</p>
+              </div>
               <div class="container-detail__latest">
                 <span>CPU <strong>{{ formatPercent(latestContainer?.cpuPercent) }}</strong></span>
                 <span>内存 <strong>{{ formatBytes(latestContainer?.memoryBytes) }}</strong></span>
@@ -483,7 +532,7 @@ onBeforeUnmount(() => controller?.abort())
               </div>
             </header>
             <div class="container-charts">
-              <article><strong>CPU</strong><TrendChart :series="containerCPU" :formatter="formatPercent" :max-value="100" /></article>
+              <article><strong>CPU</strong><TrendChart :series="containerCPU" :formatter="formatPercent" /></article>
               <article><strong>内存</strong><TrendChart :series="containerMemory" :formatter="formatPercent" :max-value="100" /></article>
               <article><strong>磁盘 I/O</strong><TrendChart :series="containerBlock" :formatter="formatRate" /></article>
               <article><strong>网络</strong><TrendChart :series="containerNetwork" :formatter="formatRate" /></article>
@@ -551,7 +600,7 @@ onBeforeUnmount(() => controller?.abort())
 <style scoped>
 .monitoring-page { display: grid; gap: 18px; }
 .monitoring-toolbar {
-  display: flex; align-items: center; gap: 8px; padding: 6px; border: 1px solid var(--border);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px; border: 1px solid var(--border);
   border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm);
 }
 .range-button {

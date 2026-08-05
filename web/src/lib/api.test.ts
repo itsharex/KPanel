@@ -1133,6 +1133,10 @@ describe('API client', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ range: '30d' }))
     await expect(api.monitoring.history('30d')).resolves.toMatchObject({ range: '30d' })
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/monitoring/history?range=30d')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ range: '12m' }))
+    await expect(api.monitoring.history('12m')).resolves.toMatchObject({ range: '12m' })
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('/api/v1/monitoring/history?range=12m')
   })
 
   it('normalizes null and legacy null-item list responses', () => {

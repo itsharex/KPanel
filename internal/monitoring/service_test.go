@@ -1,6 +1,7 @@
 package monitoring
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -440,6 +441,317 @@ func TestHistorySkipsCorruptRecordsAndRejectsUnknownRange(t *testing.T) {
 	}
 }
 
+func TestLongHistoryUsesHourlyRollupsWithBoundedBuckets(t *testing.T) {
+	now := time.Date(2026, 8, 5, 1, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	current := now.Add(-time.Minute)
+	service, err := New(Config{
+		StateDir: dir,
+		System:   fakeSystemSource{summary: testSummary(1_000, 2_000)},
+		Now:      func() time.Time { return current },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	current = now
+	if err := service.Sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "hourly-2026-08.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() <= 0 {
+		t.Fatalf("hourly rollup was not persisted: size=%d", info.Size())
+	}
+
+	tests := []struct {
+		rangeValue string
+		duration   time.Duration
+		bucket     time.Duration
+	}{
+		{rangeValue: "3m", duration: 90 * 24 * time.Hour, bucket: 6 * time.Hour},
+		{rangeValue: "6m", duration: 180 * 24 * time.Hour, bucket: 12 * time.Hour},
+		{rangeValue: "12m", duration: 365 * 24 * time.Hour, bucket: 24 * time.Hour},
+	}
+	for _, test := range tests {
+		spec, parseErr := parseRange(test.rangeValue)
+		if parseErr != nil || spec.duration != test.duration || spec.bucket != test.bucket ||
+			spec.querySlots != 2 || !spec.hourly {
+			t.Fatalf("unexpected %s range: %#v err=%v", test.rangeValue, spec, parseErr)
+		}
+		history, historyErr := service.History(context.Background(), test.rangeValue)
+		if historyErr != nil {
+			t.Fatal(historyErr)
+		}
+		if len(history.Host) != 1 || !history.Host[0].CollectedAt.Equal(current) ||
+			history.ScannedBytes != info.Size() ||
+			history.BucketSeconds != int(test.bucket.Seconds()) {
+			t.Fatalf("unexpected %s history: %#v", test.rangeValue, history)
+		}
+	}
+}
+
+func TestHourlyRollupRestoresCurrentHourAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	current := time.Date(2026, 8, 5, 0, 10, 0, 0, time.UTC)
+	system := &fakeSystemSource{summary: testSummary(1_000, 2_000)}
+	service, err := New(Config{
+		StateDir: dir, System: system, Now: func() time.Time { return current },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	current = current.Add(10 * time.Minute)
+	restarted, err := New(Config{
+		StateDir: dir, System: system, Now: func() time.Time { return current },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	current = time.Date(2026, 8, 5, 1, 0, 0, 0, time.UTC)
+	if err := restarted.Sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	history, err := restarted.History(context.Background(), "3m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Host) != 1 || !history.Host[0].CollectedAt.Equal(current) {
+		t.Fatalf("restart did not restore and close current hour: %#v", history.Host)
+	}
+	var persisted []diskRecord
+	if _, _, err := restarted.scanHourlyRecords(
+		context.Background(), current.Add(-time.Hour), current,
+		func(record diskRecord) { persisted = append(persisted, record) },
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted) != 1 ||
+		!persisted[0].CollectedAt.Equal(time.Date(2026, 8, 5, 0, 20, 0, 0, time.UTC)) {
+		t.Fatalf("restart did not persist restored partial hour: %#v", persisted)
+	}
+}
+
+func TestLongHistorySkipsCorruptRollupsAndPrunesExpiredMonths(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	old := filepath.Join(dir, "hourly-2025-07.jsonl")
+	boundary := filepath.Join(dir, "hourly-2025-08.jsonl")
+	current := filepath.Join(dir, "hourly-2026-08.jsonl")
+	for _, path := range []string{old, boundary} {
+		if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(current, []byte("{not-json}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(Config{
+		StateDir: dir,
+		System:   fakeSystemSource{summary: testSummary(0, 0)},
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expired hourly shard remains: %v", err)
+	}
+	if _, err := os.Stat(boundary); err != nil {
+		t.Fatalf("boundary hourly shard was removed: %v", err)
+	}
+	history, err := service.History(context.Background(), "12m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if history.SkippedLines != 2 || len(history.Host) != 0 {
+		t.Fatalf("corrupt hourly history result = %#v", history)
+	}
+}
+
+func TestLongHistoryPrioritizesRecentlyActiveContainersAcrossChurn(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	service, err := New(Config{
+		StateDir: t.TempDir(),
+		System:   fakeSystemSource{summary: testSummary(0, 0)},
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const containerCount = maxScannedSeries + 8
+	for index := 0; index < containerCount; index++ {
+		at := now.Add(-time.Duration(containerCount-index) * time.Hour)
+		record := diskRecord{
+			Version: recordVersion, CollectedAt: at,
+			Host:             hostPoint(testSummary(uint64(index), uint64(index)), at),
+			ContainerSampled: true, DockerAvailable: true, ContainerTotal: 1,
+			Containers: []diskContainerPoint{{
+				ID: fmt.Sprintf("%064x", index), Name: fmt.Sprintf("container-%02d", index),
+				Image: "example:test", MemoryBytes: uint64(index + 1), MemoryLimitBytes: 1 << 30,
+			}},
+		}
+		if err := service.appendHourlyRecord(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, err := service.History(context.Background(), "3m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Containers) != maxHistorySeries {
+		t.Fatalf("container series=%d, want %d", len(history.Containers), maxHistorySeries)
+	}
+	newestID := fmt.Sprintf("%064x", containerCount-1)
+	foundNewest := false
+	for _, series := range history.Containers {
+		if series.ContainerID == newestID {
+			foundNewest = true
+		}
+	}
+	if !foundNewest {
+		t.Fatalf("newest container %q was crowded out by stale series", newestID)
+	}
+}
+
+func TestMaximumHourlyRollupFitsAnnualStorageBudget(t *testing.T) {
+	at := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	compacted := compactHourlyRecord(maximumRollupRecord(at))
+	data, err := json.Marshal(compacted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Monthly shards retain the boundary month, so physical storage can include
+	// up to 31 additional days even though queries remain limited to 365 days.
+	projected := int64(len(data)+1) * 24 * (defaultRollupDays + 31)
+	t.Logf("maximum hourly rollup=%d bytes/record annual=%d bytes", len(data), projected)
+	if projected >= defaultMaxRollupBytes {
+		t.Fatalf("maximum annual rollup projection=%d, budget=%d", projected, defaultMaxRollupBytes)
+	}
+	for _, container := range compacted.Containers {
+		if len(container.Name) > maxHistoricalContainerMetadataBytes || container.Image != "" {
+			t.Fatalf("unbounded hourly container metadata: %#v", container)
+		}
+	}
+}
+
+func TestHourlyRollupKeepsPeaksAndLatestCounters(t *testing.T) {
+	at := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	first := maximumRollupRecord(at)
+	first.Host.NetworkRxPeakRate = 0
+	first.Containers[0].NetworkRxPeakRate = 0
+	first.Host.CPUPercent = 90
+	first.Host.MemoryUsedBytes = 6
+	first.Host.MemoryTotalBytes = 10
+	first.Host.NetworkRxBytes = 100
+	first.Containers[0].CPUPercent = 80
+	first.Containers[0].MemoryPercent = 70
+	first.Containers[0].NetworkRxBytes = 100
+	middle := maximumRollupRecord(at.Add(time.Minute))
+	middle.Host.NetworkRxPeakRate = 0
+	middle.Containers[0].NetworkRxPeakRate = 0
+	middle.Host.CPUPercent = 50
+	middle.Host.MemoryUsedBytes = 4
+	middle.Host.MemoryTotalBytes = 10
+	middle.Host.NetworkRxBytes = 400
+	middle.Containers[0].CPUPercent = 50
+	middle.Containers[0].MemoryPercent = 50
+	middle.Containers[0].NetworkRxBytes = 400
+	last := maximumRollupRecord(at.Add(59 * time.Minute))
+	last.Host.NetworkRxPeakRate = 0
+	last.Containers[0].NetworkRxPeakRate = 0
+	last.Host.CPUPercent = 10
+	last.Host.MemoryUsedBytes = 2
+	last.Host.MemoryTotalBytes = 10
+	last.Host.NetworkRxBytes = 500
+	last.Containers[0].CPUPercent = 20
+	last.Containers[0].MemoryPercent = 30
+	last.Containers[0].NetworkRxBytes = 500
+	first.OperatorLatency[0].Reachable = false
+	first.OperatorLatency[0].SuccessCount = 0
+	first.OperatorLatency[0].FailureCount = 0
+	middle.OperatorLatency[0].Reachable = true
+	middle.OperatorLatency[0].LatencyMilliseconds = 30
+	middle.OperatorLatency[0].SuccessCount = 0
+	middle.OperatorLatency[0].FailureCount = 0
+	last.OperatorLatency[0].Reachable = false
+	last.OperatorLatency[0].SuccessCount = 0
+	last.OperatorLatency[0].FailureCount = 0
+
+	accumulator := newHourlyAccumulator(first)
+	accumulator.add(middle)
+	accumulator.add(last)
+	got := accumulator.finalized()
+	if got.Host.CPUPercent != 90 || got.Host.CPUAveragePercent != 50 ||
+		got.Host.CPUSampleCount != 3 || got.Host.MemoryUsedBytes != 6 ||
+		got.Host.NetworkRxBytes != 500 || got.Host.NetworkRxPeakRate != 5 {
+		t.Fatalf("unexpected hourly host aggregation: %#v", got.Host)
+	}
+	if len(got.Containers) != defaultMaxContainers || got.Containers[0].CPUPercent != 80 ||
+		got.Containers[0].CPUAveragePercent != 50 || got.Containers[0].CPUSampleCount != 3 ||
+		got.Containers[0].MemoryPercent != 70 || got.Containers[0].NetworkRxBytes != 500 ||
+		got.Containers[0].NetworkRxPeakRate != 5 {
+		t.Fatalf("unexpected hourly container aggregation: %#v", got.Containers)
+	}
+	if got.OperatorLatency[0].SuccessCount != 1 || got.OperatorLatency[0].FailureCount != 2 ||
+		!got.OperatorLatency[0].Reachable || got.OperatorLatency[0].LatencyMilliseconds != 30 {
+		t.Fatalf("unexpected hourly latency aggregation: %#v", got.OperatorLatency[0])
+	}
+}
+
+func TestLongBucketKeepsWeightedCPUAveragePeaksAndAvailability(t *testing.T) {
+	at := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	host := appendHostBucket(nil, contract.MonitoringHostPoint{
+		CollectedAt: at, CPUPercent: 90, CPUAveragePercent: 40, CPUSampleCount: 60,
+		LoadOne: 8, TCPConnections: 100, NetworkRxRate: 5,
+	}, 6*time.Hour)
+	host = appendHostBucket(host, contract.MonitoringHostPoint{
+		CollectedAt: at.Add(time.Hour), CPUPercent: 70, CPUAveragePercent: 20, CPUSampleCount: 30,
+		LoadOne: 2, TCPConnections: 20, NetworkRxRate: 3,
+	}, 6*time.Hour)
+	if len(host) != 1 || host[0].CPUPercent != 90 || host[0].CPUAveragePercent != 100.0/3.0 ||
+		host[0].CPUSampleCount != 90 || host[0].LoadOne != 8 || host[0].TCPConnections != 100 ||
+		host[0].NetworkRxRate != 5 {
+		t.Fatalf("unexpected long host bucket: %#v", host)
+	}
+
+	container := appendContainerBucket(nil, contract.MonitoringContainerPoint{
+		CollectedAt: at, CPUPercent: 80, CPUAveragePercent: 30, CPUSampleCount: 12, PIDs: 40,
+	}, 6*time.Hour)
+	container = appendContainerBucket(container, contract.MonitoringContainerPoint{
+		CollectedAt: at.Add(time.Hour), CPUPercent: 60, CPUAveragePercent: 10, CPUSampleCount: 6, PIDs: 10,
+	}, 6*time.Hour)
+	if len(container) != 1 || container[0].CPUAveragePercent != 70.0/3.0 ||
+		container[0].CPUSampleCount != 18 || container[0].PIDs != 40 {
+		t.Fatalf("unexpected long container bucket: %#v", container)
+	}
+
+	latencyA := 20.0
+	latencyB := 30.0
+	latency := appendOperatorLatencyBucket(nil, contract.MonitoringOperatorLatencyPoint{
+		CollectedAt: at, LatencyMilliseconds: &latencyA, SuccessCount: 10, FailureCount: 2,
+	}, 6*time.Hour)
+	latency = appendOperatorLatencyBucket(latency, contract.MonitoringOperatorLatencyPoint{
+		CollectedAt: at.Add(time.Hour), LatencyMilliseconds: &latencyB, SuccessCount: 8, FailureCount: 4,
+	}, 6*time.Hour)
+	if len(latency) != 1 || latency[0].LatencyMilliseconds == nil ||
+		*latency[0].LatencyMilliseconds != 30 || latency[0].SuccessCount != 18 ||
+		latency[0].FailureCount != 6 {
+		t.Fatalf("unexpected long latency bucket: %#v", latency)
+	}
+}
+
 func TestPruneKeepsThirtyDaysAndRemovesExpiredShard(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	dir := t.TempDir()
@@ -503,6 +815,115 @@ func TestAppendRejectsSymlinkShard(t *testing.T) {
 	}
 }
 
+func TestAppendHourlyRejectsSymlinkShard(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires additional privileges on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("protected"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "hourly-2026-08.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(Config{
+		StateDir: dir,
+		System:   fakeSystemSource{summary: testSummary(0, 0)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.appendHourlyRecord(maximumRollupRecord(
+		time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC),
+	)); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("hourly symlink error = %v", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "protected" {
+		t.Fatalf("hourly symlink target changed: %q, %v", data, err)
+	}
+}
+
+func TestRollupConfigurationRejectsUnboundedRetentionAndStorage(t *testing.T) {
+	base := Config{
+		StateDir: t.TempDir(),
+		System:   fakeSystemSource{summary: testSummary(0, 0)},
+	}
+	tooLong := base
+	tooLong.RollupRetentionDays = defaultRollupDays + 1
+	if _, err := New(tooLong); err == nil {
+		t.Fatal("unbounded rollup retention was accepted")
+	}
+	tooLarge := base
+	tooLarge.MaxRollupStorageBytes = defaultMaxRollupBytes + 1
+	if _, err := New(tooLarge); err == nil {
+		t.Fatal("unbounded rollup storage was accepted")
+	}
+}
+
+func TestHourlyRollupFailureDoesNotBlockRawSampling(t *testing.T) {
+	current := time.Date(2026, 8, 5, 0, 59, 0, 0, time.UTC)
+	dir := t.TempDir()
+	service, err := New(Config{
+		StateDir: dir,
+		System:   fakeSystemSource{summary: testSummary(0, 0)},
+		Now:      func() time.Time { return current },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	hourlyPath := filepath.Join(dir, "hourly-2026-08.jsonl")
+	file, err := os.OpenFile(hourlyPath, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxRollupShardBytes); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	current = current.Add(time.Minute)
+	if err := service.Sample(context.Background()); err != nil {
+		t.Fatalf("rollup failure blocked raw sample: %v", err)
+	}
+	status := service.Status()
+	if !strings.Contains(status.LastError, "hourly monitoring shard storage limit reached") {
+		t.Fatalf("rollup failure was not reported: %#v", status)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "metrics-2026-08-05.jsonl"))
+	if err != nil || bytes.Count(data, []byte{'\n'}) != 2 {
+		t.Fatalf("raw samples after rollup failure = %d err=%v", bytes.Count(data, []byte{'\n'}), err)
+	}
+	if currentRecord, ok := service.currentHourlyRecord(); !ok ||
+		!currentRecord.CollectedAt.Equal(current) {
+		t.Fatalf("hourly accumulator did not advance after failure: %#v, %v", currentRecord, ok)
+	}
+	if err := os.Remove(hourlyPath); err != nil {
+		t.Fatal(err)
+	}
+	current = current.Add(time.Hour)
+	if err := service.Sample(context.Background()); err != nil {
+		t.Fatalf("rollup did not recover after storage became writable: %v", err)
+	}
+	rollupData, err := os.ReadFile(hourlyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recovered diskRecord
+	if err := json.Unmarshal(bytes.TrimSpace(rollupData), &recovered); err != nil {
+		t.Fatal(err)
+	}
+	if !recovered.CollectedAt.Equal(current.Add(-time.Hour)) {
+		t.Fatalf("recovered rollup hour = %s", recovered.CollectedAt)
+	}
+}
+
 func TestCompactRecordFitsDailyStorageBudgetAtMaximumContainerCount(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	hostOnly := diskRecord{
@@ -519,13 +940,14 @@ func TestCompactRecordFitsDailyStorageBudgetAtMaximumContainerCount(t *testing.T
 	}
 	for index := 0; index < defaultMaxContainers; index++ {
 		full.Containers = append(full.Containers, diskContainerPoint{
-			ID: strings.Repeat("a", 64), Name: "container-name-1234567890",
-			Image:      "registry.example.test/namespace/application:latest",
+			ID: strings.Repeat("a", 64), Name: strings.Repeat("n", 128),
+			Image:      strings.Repeat("i", 256),
 			CPUPercent: 100, MemoryBytes: 1 << 30, MemoryLimitBytes: 2 << 30,
 			MemoryPercent: 50, NetworkRxBytes: 1 << 40, NetworkTxBytes: 1 << 40,
 			BlockReadBytes: 1 << 40, BlockWriteBytes: 1 << 40, PIDs: 999,
 		})
 	}
+	full = compactRawRecord(full)
 	hostData, err := json.Marshal(hostOnly)
 	if err != nil {
 		t.Fatal(err)
@@ -551,6 +973,12 @@ func TestCompactRecordFitsDailyStorageBudgetAtMaximumContainerCount(t *testing.T
 			"maximum retention projection = %d bytes, budget=%d",
 			projectedRetentionBytes, defaultMaxStorageBytes,
 		)
+	}
+	for _, container := range full.Containers {
+		if len(container.Name) > maxHistoricalContainerMetadataBytes ||
+			len(container.Image) > maxHistoricalContainerMetadataBytes {
+			t.Fatalf("unbounded raw container metadata: %#v", container)
+		}
 	}
 }
 
@@ -624,13 +1052,16 @@ func TestMaximumThirtyDayResponseFitsPanelAgentLimit(t *testing.T) {
 			series.Points[pointIndex] = contract.MonitoringOperatorLatencyPoint{
 				CollectedAt:         now.Add(-time.Duration(pointIndex) * 2 * time.Hour),
 				LatencyMilliseconds: &value,
+				SuccessCount:        24,
+				FailureCount:        24,
 			}
 		}
 	}
 	for index := range history.Host {
 		history.Host[index] = contract.MonitoringHostPoint{
 			CollectedAt: now.Add(-time.Duration(index) * 2 * time.Hour),
-			CPUPercent:  100, CPUCores: 64, MemoryUsedBytes: 1 << 40,
+			CPUPercent:  100, CPUAveragePercent: 99.9, CPUSampleCount: 120,
+			CPUCores: 64, MemoryUsedBytes: 1 << 40,
 			MemoryTotalBytes: 2 << 40, DiskUsedBytes: 1 << 40, DiskTotalBytes: 2 << 40,
 			NetworkRxBytes: 1 << 50, NetworkTxBytes: 1 << 50,
 			NetworkRxRate: 1 << 30, NetworkTxRate: 1 << 30,
@@ -645,7 +1076,8 @@ func TestMaximumThirtyDayResponseFitsPanelAgentLimit(t *testing.T) {
 		for pointIndex := range series.Points {
 			series.Points[pointIndex] = contract.MonitoringContainerPoint{
 				CollectedAt: now.Add(-time.Duration(pointIndex) * 2 * time.Hour),
-				CPUPercent:  100, MemoryBytes: 1 << 40, MemoryLimitBytes: 2 << 40,
+				CPUPercent:  100, CPUAveragePercent: 99.9, CPUSampleCount: 24,
+				MemoryBytes: 1 << 40, MemoryLimitBytes: 2 << 40,
 				MemoryPercent: 50, NetworkRxBytes: 1 << 50, NetworkTxBytes: 1 << 50,
 				NetworkRxRate: 1 << 30, NetworkTxRate: 1 << 30,
 				BlockReadBytes: 1 << 50, BlockWriteBytes: 1 << 50, PIDs: 999,
@@ -663,7 +1095,78 @@ func TestMaximumThirtyDayResponseFitsPanelAgentLimit(t *testing.T) {
 	}
 }
 
-func TestThirtyDayHistoryUsesExclusiveQueryCapacity(t *testing.T) {
+func TestMaximumTwelveMonthResponseFitsPanelAgentLimit(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	const pointCount = 365 + 1
+	history := maximumHistoryFixture(now, "12m", 24*time.Hour, pointCount)
+	data, err := json.Marshal(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const panelAgentResponseLimit = 8 << 20
+	t.Logf("maximum twelve-month response=%d bytes", len(data))
+	if len(data) >= panelAgentResponseLimit {
+		t.Fatalf("maximum history response = %d bytes, limit=%d", len(data), panelAgentResponseLimit)
+	}
+}
+
+func maximumHistoryFixture(
+	now time.Time,
+	rangeValue string,
+	bucket time.Duration,
+	pointCount int,
+) contract.MonitoringHistory {
+	history := contract.MonitoringHistory{
+		Range: rangeValue, StartedAt: now.Add(-time.Duration(pointCount-1) * bucket), EndedAt: now,
+		BucketSeconds:   int(bucket.Seconds()),
+		Host:            make([]contract.MonitoringHostPoint, pointCount),
+		Containers:      make([]contract.MonitoringContainerSeries, maxHistorySeries),
+		OperatorLatency: operatorLatencyCatalog(),
+	}
+	for seriesIndex := range history.OperatorLatency {
+		series := &history.OperatorLatency[seriesIndex]
+		series.Points = make([]contract.MonitoringOperatorLatencyPoint, pointCount)
+		for pointIndex := range series.Points {
+			value := 999.9
+			series.Points[pointIndex] = contract.MonitoringOperatorLatencyPoint{
+				CollectedAt:         now.Add(-time.Duration(pointIndex) * bucket),
+				LatencyMilliseconds: &value,
+				SuccessCount:        120,
+				FailureCount:        120,
+			}
+		}
+	}
+	for index := range history.Host {
+		history.Host[index] = contract.MonitoringHostPoint{
+			CollectedAt: now.Add(-time.Duration(index) * bucket),
+			CPUPercent:  100, CPUAveragePercent: 99.9, CPUSampleCount: 1440,
+			CPUCores: 64, MemoryUsedBytes: 1 << 40,
+			MemoryTotalBytes: 2 << 40, DiskUsedBytes: 1 << 40, DiskTotalBytes: 2 << 40,
+			NetworkRxBytes: 1 << 50, NetworkTxBytes: 1 << 50,
+			NetworkRxRate: 1 << 30, NetworkTxRate: 1 << 30,
+		}
+	}
+	for seriesIndex := range history.Containers {
+		series := &history.Containers[seriesIndex]
+		series.ContainerID = fmt.Sprintf("%064x", seriesIndex)
+		series.Name = "container-name-1234567890"
+		series.Image = "registry.example.test/namespace/application:latest"
+		series.Points = make([]contract.MonitoringContainerPoint, pointCount)
+		for pointIndex := range series.Points {
+			series.Points[pointIndex] = contract.MonitoringContainerPoint{
+				CollectedAt: now.Add(-time.Duration(pointIndex) * bucket),
+				CPUPercent:  100, CPUAveragePercent: 99.9, CPUSampleCount: 288,
+				MemoryBytes: 1 << 40, MemoryLimitBytes: 2 << 40,
+				MemoryPercent: 50, NetworkRxBytes: 1 << 50, NetworkTxBytes: 1 << 50,
+				NetworkRxRate: 1 << 30, NetworkTxRate: 1 << 30,
+				BlockReadBytes: 1 << 50, BlockWriteBytes: 1 << 50, PIDs: 999,
+			}
+		}
+	}
+	return history
+}
+
+func TestLongHistoryUsesExclusiveQueryCapacity(t *testing.T) {
 	service, err := New(Config{
 		StateDir: t.TempDir(),
 		System:   fakeSystemSource{summary: testSummary(0, 0)},
@@ -671,13 +1174,17 @@ func TestThirtyDayHistoryUsesExclusiveQueryCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, rangeValue := range []string{"30d", "3m", "6m", "12m"} {
+		service.querySlots <- struct{}{}
+		if _, err := service.History(context.Background(), rangeValue); !errors.Is(err, ErrBusy) {
+			t.Fatalf("%s query with occupied capacity error = %v, want busy", rangeValue, err)
+		}
+		if len(service.querySlots) != 1 {
+			t.Fatalf("failed %s query leaked capacity: %d", rangeValue, len(service.querySlots))
+		}
+		<-service.querySlots
+	}
 	service.querySlots <- struct{}{}
-	if _, err := service.History(context.Background(), "30d"); !errors.Is(err, ErrBusy) {
-		t.Fatalf("30-day query with occupied capacity error = %v, want busy", err)
-	}
-	if len(service.querySlots) != 1 {
-		t.Fatalf("failed 30-day query leaked capacity: %d", len(service.querySlots))
-	}
 	if _, err := service.History(context.Background(), "7d"); err != nil {
 		t.Fatalf("short query did not use remaining capacity: %v", err)
 	}
@@ -717,4 +1224,176 @@ func BenchmarkHistoryThirtyDays(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func BenchmarkHistoryTwelveMonthsThirtyTwoContainers(b *testing.B) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	service, err := New(Config{
+		StateDir: b.TempDir(),
+		System:   fakeSystemSource{summary: testSummary(0, 0)},
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	for index := 365 * 24; index >= 0; index-- {
+		at := now.Add(-time.Duration(index) * time.Hour)
+		record := maximumRollupRecord(at)
+		if err := service.appendHourlyRecord(record); err != nil {
+			b.Fatal(err)
+		}
+	}
+	var responseBytes int
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		history, historyErr := service.History(context.Background(), "12m")
+		if historyErr != nil {
+			b.Fatal(historyErr)
+		}
+		data, marshalErr := json.Marshal(history)
+		if marshalErr != nil {
+			b.Fatal(marshalErr)
+		}
+		responseBytes = len(data)
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(responseBytes), "response-B")
+}
+
+func BenchmarkHistoryWindowMatrix(b *testing.B) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	service, err := New(Config{
+		StateDir: b.TempDir(),
+		System:   fakeSystemSource{summary: testSummary(0, 0)},
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	for index := 30 * 24 * 60; index >= 0; index-- {
+		at := now.Add(-time.Duration(index) * time.Minute)
+		if err := service.appendRecord(maximumRawRecord(at)); err != nil {
+			b.Fatalf("prepare raw history at %s: %v", at, err)
+		}
+	}
+	for index := 365 * 24; index >= 0; index-- {
+		at := now.Add(-time.Duration(index) * time.Hour)
+		if err := service.appendHourlyRecord(maximumRollupRecord(at)); err != nil {
+			b.Fatalf("prepare hourly history at %s: %v", at, err)
+		}
+	}
+
+	for _, rangeValue := range []string{"1h", "6h", "24h", "7d", "30d", "3m", "6m", "12m"} {
+		b.Run(rangeValue, func(b *testing.B) {
+			var responseBytes int
+			var history contract.MonitoringHistory
+			b.ReportAllocs()
+			for index := 0; index < b.N; index++ {
+				var historyErr error
+				history, historyErr = service.History(context.Background(), rangeValue)
+				if historyErr != nil {
+					b.Fatal(historyErr)
+				}
+				data, marshalErr := json.Marshal(history)
+				if marshalErr != nil {
+					b.Fatal(marshalErr)
+				}
+				responseBytes = len(data)
+			}
+			containerPoints := 0
+			for _, series := range history.Containers {
+				containerPoints += len(series.Points)
+			}
+			b.ReportMetric(float64(responseBytes), "response-B")
+			b.ReportMetric(float64(history.ScannedBytes), "scanned-B")
+			b.ReportMetric(float64(len(history.Host)), "host-points")
+			b.ReportMetric(float64(containerPoints), "container-points")
+		})
+	}
+}
+
+func BenchmarkHourlyRollupUpdateThirtyTwoContainers(b *testing.B) {
+	start := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	service, err := New(Config{
+		StateDir: b.TempDir(),
+		System:   fakeSystemSource{summary: testSummary(0, 0)},
+		Now:      func() time.Time { return start },
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		record := maximumRollupRecord(start.Add(time.Duration(index) * time.Minute))
+		if err := service.updateHourly(record); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func maximumRollupRecord(at time.Time) diskRecord {
+	record := diskRecord{
+		Version: recordVersion, CollectedAt: at,
+		Host:             hostPoint(testSummary(uint64(at.Unix()), uint64(at.Unix())), at),
+		ContainerSampled: true, DockerAvailable: true, ContainerTotal: defaultMaxContainers,
+	}
+	record.Host.CPUAveragePercent = 99.9
+	record.Host.CPUSampleCount = 60
+	record.Host.NetworkRxPeakRate = 1 << 30
+	record.Host.NetworkTxPeakRate = 1 << 30
+	record.Host.DiskReadPeakRate = 1 << 30
+	record.Host.DiskWritePeakRate = 1 << 30
+	for _, target := range operatorLatencyTargets {
+		record.OperatorLatency = append(record.OperatorLatency, diskOperatorLatencyPoint{
+			ID: target.ID, LatencyMilliseconds: 999.9, Reachable: true,
+			SuccessCount: 6, FailureCount: 6,
+		})
+	}
+	for index := 0; index < defaultMaxContainers; index++ {
+		record.Containers = append(record.Containers, diskContainerPoint{
+			ID: fmt.Sprintf("%064x", index), Name: strings.Repeat("n", 128),
+			Image:      strings.Repeat("i", 256),
+			CPUPercent: 100, CPUAveragePercent: 99.9, CPUSampleCount: 12,
+			MemoryBytes: 1 << 30, MemoryLimitBytes: 2 << 30,
+			MemoryPercent: 50, NetworkRxBytes: uint64(at.Unix()) + uint64(index),
+			NetworkTxBytes: uint64(at.Unix()) + uint64(index), BlockReadBytes: 1 << 40,
+			BlockWriteBytes: 1 << 40, PIDs: 999,
+			NetworkRxPeakRate: 1 << 30, NetworkTxPeakRate: 1 << 30,
+			BlockReadPeakRate: 1 << 30, BlockWritePeakRate: 1 << 30,
+		})
+	}
+	return record
+}
+
+func maximumRawRecord(at time.Time) diskRecord {
+	record := maximumRollupRecord(at)
+	record.Host.CPUAveragePercent = 0
+	record.Host.CPUSampleCount = 0
+	record.Host.NetworkRxPeakRate = 0
+	record.Host.NetworkTxPeakRate = 0
+	record.Host.DiskReadPeakRate = 0
+	record.Host.DiskWritePeakRate = 0
+	for index := range record.Containers {
+		container := &record.Containers[index]
+		container.CPUAveragePercent = 0
+		container.CPUSampleCount = 0
+		container.NetworkRxPeakRate = 0
+		container.NetworkTxPeakRate = 0
+		container.BlockReadPeakRate = 0
+		container.BlockWritePeakRate = 0
+	}
+	for index := range record.OperatorLatency {
+		record.OperatorLatency[index].SuccessCount = 0
+		record.OperatorLatency[index].FailureCount = 0
+	}
+	if at.Minute()%5 != 0 {
+		record.ContainerSampled = false
+		record.DockerAvailable = false
+		record.ContainerTotal = 0
+		record.Containers = nil
+		record.OperatorLatency = nil
+	}
+	return record
 }

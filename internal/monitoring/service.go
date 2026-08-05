@@ -29,6 +29,9 @@ const (
 	defaultSampleTimeout    = 30 * time.Second
 	defaultMaxDailyBytes    = int64(4 << 20)
 	defaultMaxStorageBytes  = int64(128 << 20)
+	defaultRollupDays       = 365
+	defaultMaxRollupBytes   = int64(128 << 20)
+	maxRollupShardBytes     = int64(16 << 20)
 	maxHistoryLineBytes     = 256 << 10
 	maxHistorySeries        = 32
 	maxScannedSeries        = 64
@@ -37,6 +40,7 @@ const (
 
 var (
 	metricFilePattern = regexp.MustCompile(`^metrics-(\d{4}-\d{2}-\d{2})\.jsonl$`)
+	hourlyFilePattern = regexp.MustCompile(`^hourly-(\d{4}-\d{2})\.jsonl$`)
 	ErrBusy           = errors.New("monitoring history query is busy")
 	ErrInvalidRange   = errors.New("invalid monitoring history range")
 )
@@ -63,6 +67,8 @@ type Config struct {
 	MaxContainers           int
 	MaxDailyBytes           int64
 	MaxStorageBytes         int64
+	RollupRetentionDays     int
+	MaxRollupStorageBytes   int64
 }
 
 type Service struct {
@@ -79,7 +85,11 @@ type Service struct {
 	maxContainers           int
 	maxDailyBytes           int64
 	maxStorageBytes         int64
+	rollupRetentionDays     int
+	maxRollupStorageBytes   int64
 	querySlots              chan struct{}
+	rollupMu                sync.Mutex
+	hourly                  *hourlyAccumulator
 
 	mu                    sync.RWMutex
 	status                contract.MonitoringStorageStatus
@@ -112,43 +122,57 @@ type diskOperatorLatencyPoint struct {
 	ID                  string  `json:"i"`
 	LatencyMilliseconds float64 `json:"m,omitempty"`
 	Reachable           bool    `json:"r,omitempty"`
+	SuccessCount        int     `json:"s,omitempty"`
+	FailureCount        int     `json:"f,omitempty"`
 }
 
 type diskHostPoint struct {
-	CPUPercent       float64 `json:"cp"`
-	CPUCores         int     `json:"cc"`
-	LoadOne          float64 `json:"l1"`
-	LoadFive         float64 `json:"l5"`
-	LoadFifteen      float64 `json:"l15"`
-	MemoryUsedBytes  uint64  `json:"mu"`
-	MemoryTotalBytes uint64  `json:"mt"`
-	SwapUsedBytes    uint64  `json:"su"`
-	SwapTotalBytes   uint64  `json:"st"`
-	DiskUsedBytes    uint64  `json:"du"`
-	DiskTotalBytes   uint64  `json:"dt"`
-	DiskPercent      float64 `json:"dp"`
-	DiskIOAvailable  bool    `json:"di,omitempty"`
-	DiskReadBytes    uint64  `json:"dr,omitempty"`
-	DiskWriteBytes   uint64  `json:"dw,omitempty"`
-	NetworkRxBytes   uint64  `json:"nr"`
-	NetworkTxBytes   uint64  `json:"nt"`
-	TCPConnections   int     `json:"tc"`
-	UDPConnections   int     `json:"uc"`
+	CPUPercent        float64 `json:"cp"`
+	CPUAveragePercent float64 `json:"ca,omitempty"`
+	CPUSampleCount    int     `json:"cn,omitempty"`
+	CPUCores          int     `json:"cc"`
+	LoadOne           float64 `json:"l1"`
+	LoadFive          float64 `json:"l5"`
+	LoadFifteen       float64 `json:"l15"`
+	MemoryUsedBytes   uint64  `json:"mu"`
+	MemoryTotalBytes  uint64  `json:"mt"`
+	SwapUsedBytes     uint64  `json:"su"`
+	SwapTotalBytes    uint64  `json:"st"`
+	DiskUsedBytes     uint64  `json:"du"`
+	DiskTotalBytes    uint64  `json:"dt"`
+	DiskPercent       float64 `json:"dp"`
+	DiskIOAvailable   bool    `json:"di,omitempty"`
+	DiskReadBytes     uint64  `json:"dr,omitempty"`
+	DiskWriteBytes    uint64  `json:"dw,omitempty"`
+	NetworkRxBytes    uint64  `json:"nr"`
+	NetworkTxBytes    uint64  `json:"nt"`
+	TCPConnections    int     `json:"tc"`
+	UDPConnections    int     `json:"uc"`
+	NetworkRxPeakRate float64 `json:"rp,omitempty"`
+	NetworkTxPeakRate float64 `json:"tp,omitempty"`
+	DiskReadPeakRate  float64 `json:"rdp,omitempty"`
+	DiskWritePeakRate float64 `json:"wdp,omitempty"`
 }
 
 type diskContainerPoint struct {
-	ID               string  `json:"i"`
-	Name             string  `json:"n"`
-	Image            string  `json:"m"`
-	CPUPercent       float64 `json:"cp"`
-	MemoryBytes      uint64  `json:"mu"`
-	MemoryLimitBytes uint64  `json:"ml"`
-	MemoryPercent    float64 `json:"mp"`
-	NetworkRxBytes   uint64  `json:"nr"`
-	NetworkTxBytes   uint64  `json:"nt"`
-	BlockReadBytes   uint64  `json:"br"`
-	BlockWriteBytes  uint64  `json:"bw"`
-	PIDs             uint64  `json:"p"`
+	ID                 string  `json:"i"`
+	Name               string  `json:"n"`
+	Image              string  `json:"m"`
+	CPUPercent         float64 `json:"cp"`
+	CPUAveragePercent  float64 `json:"ca,omitempty"`
+	CPUSampleCount     int     `json:"cn,omitempty"`
+	MemoryBytes        uint64  `json:"mu"`
+	MemoryLimitBytes   uint64  `json:"ml"`
+	MemoryPercent      float64 `json:"mp"`
+	NetworkRxBytes     uint64  `json:"nr"`
+	NetworkTxBytes     uint64  `json:"nt"`
+	BlockReadBytes     uint64  `json:"br"`
+	BlockWriteBytes    uint64  `json:"bw"`
+	PIDs               uint64  `json:"p"`
+	NetworkRxPeakRate  float64 `json:"rp,omitempty"`
+	NetworkTxPeakRate  float64 `json:"tp,omitempty"`
+	BlockReadPeakRate  float64 `json:"rdp,omitempty"`
+	BlockWritePeakRate float64 `json:"wdp,omitempty"`
 }
 
 func New(config Config) (*Service, error) {
@@ -200,6 +224,18 @@ func New(config Config) (*Service, error) {
 	if config.MaxStorageBytes > defaultMaxStorageBytes {
 		return nil, errors.New("monitoring storage limit is too large")
 	}
+	if config.RollupRetentionDays <= 0 {
+		config.RollupRetentionDays = defaultRollupDays
+	}
+	if config.RollupRetentionDays > defaultRollupDays {
+		return nil, fmt.Errorf("monitoring rollup retention cannot exceed %d days", defaultRollupDays)
+	}
+	if config.MaxRollupStorageBytes <= 0 {
+		config.MaxRollupStorageBytes = defaultMaxRollupBytes
+	}
+	if config.MaxRollupStorageBytes > defaultMaxRollupBytes {
+		return nil, errors.New("monitoring rollup storage limit is too large")
+	}
 	if err := os.MkdirAll(config.StateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create monitoring state directory: %w", err)
 	}
@@ -214,12 +250,18 @@ func New(config Config) (*Service, error) {
 		operatorLatencyInterval: config.OperatorLatencyInterval,
 		retentionDays:           config.RetentionDays, maxContainers: config.MaxContainers,
 		maxDailyBytes: config.MaxDailyBytes, maxStorageBytes: config.MaxStorageBytes,
-		querySlots: make(chan struct{}, 2), containerCPU: make(map[string]containerCPUCounter),
+		rollupRetentionDays:   config.RollupRetentionDays,
+		maxRollupStorageBytes: config.MaxRollupStorageBytes,
+		querySlots:            make(chan struct{}, 2), containerCPU: make(map[string]containerCPUCounter),
 	}
 	service.status = service.baseStatus()
 	bytes, limitReached, _ := service.prune(config.Now().UTC())
 	service.status.StorageBytes = bytes
 	service.status.StorageLimitReached = limitReached
+	rollupBytes, rollupLimitReached, _ := service.pruneHourly(config.Now().UTC())
+	service.status.RollupStorageBytes = rollupBytes
+	service.status.RollupStorageLimitReached = rollupLimitReached
+	_ = service.restoreCurrentHour(config.Now().UTC())
 	return service, nil
 }
 
@@ -231,6 +273,8 @@ func (s *Service) baseStatus() contract.MonitoringStorageStatus {
 		OperatorLatencyIntervalSeconds: int(s.operatorLatencyInterval.Seconds()),
 		OperatorLatencyAvailable:       s.operatorLatency != nil,
 		MaxContainers:                  s.maxContainers, MaxStorageBytes: s.maxStorageBytes,
+		RollupRetentionDays:   s.rollupRetentionDays,
+		MaxRollupStorageBytes: s.maxRollupStorageBytes,
 	}
 }
 
@@ -324,8 +368,10 @@ func (s *Service) Sample(ctx context.Context) error {
 			point := diskOperatorLatencyPoint{ID: item.target.ID, Reachable: item.reachable}
 			if item.reachable {
 				point.LatencyMilliseconds = item.milliseconds
+				point.SuccessCount = 1
 				operatorLatencySuccessful++
 			} else {
+				point.FailureCount = 1
 				operatorLatencyFailed++
 			}
 			record.OperatorLatency = append(record.OperatorLatency, point)
@@ -336,6 +382,7 @@ func (s *Service) Sample(ctx context.Context) error {
 		s.recordFailure(err)
 		return err
 	}
+	rollupErr := s.updateHourly(record)
 	bytes, limitReached, pruneErr := s.prune(now)
 	if pruneErr != nil {
 		s.recordFailure(pruneErr)
@@ -351,6 +398,9 @@ func (s *Service) Sample(ctx context.Context) error {
 	status.LastContainerRecorded = len(record.Containers)
 	status.LastContainerFailed = record.ContainerFailed
 	status.LastContainerTruncated = record.ContainerTruncated
+	status.RollupStorageBytes = s.status.RollupStorageBytes
+	status.RollupStorageLimitReached = s.status.RollupStorageLimitReached
+	status.LastRollupAt = s.status.LastRollupAt
 	if includeOperatorLatency {
 		status.LastOperatorLatencyAt = &now
 		status.LastOperatorLatencySuccessful = operatorLatencySuccessful
@@ -360,7 +410,9 @@ func (s *Service) Sample(ctx context.Context) error {
 		status.LastOperatorLatencySuccessful = s.status.LastOperatorLatencySuccessful
 		status.LastOperatorLatencyFailed = s.status.LastOperatorLatencyFailed
 	}
-	if dockerErr != nil {
+	if rollupErr != nil {
+		status.LastError = boundedError(rollupErr)
+	} else if dockerErr != nil {
 		status.LastError = boundedError(dockerErr)
 	}
 	s.status = status
@@ -429,7 +481,8 @@ func hostPoint(summary contract.SystemSummary, _ time.Time) diskHostPoint {
 func (point diskHostPoint) contractPoint(at time.Time) contract.MonitoringHostPoint {
 	return contract.MonitoringHostPoint{
 		CollectedAt: at,
-		CPUPercent:  point.CPUPercent, CPUCores: point.CPUCores,
+		CPUPercent:  point.CPUPercent, CPUAveragePercent: point.CPUAveragePercent,
+		CPUSampleCount: point.CPUSampleCount, CPUCores: point.CPUCores,
 		LoadOne: point.LoadOne, LoadFive: point.LoadFive, LoadFifteen: point.LoadFifteen,
 		MemoryUsedBytes: point.MemoryUsedBytes, MemoryTotalBytes: point.MemoryTotalBytes,
 		SwapUsedBytes: point.SwapUsedBytes, SwapTotalBytes: point.SwapTotalBytes,
@@ -438,6 +491,8 @@ func (point diskHostPoint) contractPoint(at time.Time) contract.MonitoringHostPo
 		DiskIOAvailable: point.DiskIOAvailable,
 		DiskReadBytes:   point.DiskReadBytes, DiskWriteBytes: point.DiskWriteBytes,
 		NetworkRxBytes: point.NetworkRxBytes, NetworkTxBytes: point.NetworkTxBytes,
+		NetworkRxRate: point.NetworkRxPeakRate, NetworkTxRate: point.NetworkTxPeakRate,
+		DiskReadRate: point.DiskReadPeakRate, DiskWriteRate: point.DiskWritePeakRate,
 		TCPConnections: point.TCPConnections, UDPConnections: point.UDPConnections,
 	}
 }
@@ -458,6 +513,7 @@ func rootDisk(disks []contract.DiskSummary) contract.DiskSummary {
 }
 
 func (s *Service) appendRecord(record diskRecord) error {
+	record = compactRawRecord(record)
 	data, err := json.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("encode monitoring sample: %w", err)
@@ -586,6 +642,7 @@ type rangeSpec struct {
 	duration   time.Duration
 	bucket     time.Duration
 	querySlots int
+	hourly     bool
 }
 
 func parseRange(value string) (rangeSpec, error) {
@@ -600,6 +657,12 @@ func parseRange(value string) (rangeSpec, error) {
 		return rangeSpec{name: "7d", duration: 7 * 24 * time.Hour, bucket: 30 * time.Minute, querySlots: 1}, nil
 	case "30d":
 		return rangeSpec{name: "30d", duration: 30 * 24 * time.Hour, bucket: 2 * time.Hour, querySlots: 2}, nil
+	case "3m":
+		return rangeSpec{name: "3m", duration: 90 * 24 * time.Hour, bucket: 6 * time.Hour, querySlots: 2, hourly: true}, nil
+	case "6m":
+		return rangeSpec{name: "6m", duration: 180 * 24 * time.Hour, bucket: 12 * time.Hour, querySlots: 2, hourly: true}, nil
+	case "12m":
+		return rangeSpec{name: "12m", duration: 365 * 24 * time.Hour, bucket: 24 * time.Hour, querySlots: 2, hourly: true}, nil
 	default:
 		return rangeSpec{}, ErrInvalidRange
 	}
@@ -633,15 +696,23 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 		series := &result.OperatorLatency[index]
 		operatorLatencySeries[series.ID] = series
 	}
-	scanned, skipped, err := s.scanRecords(ctx, start, now, func(record diskRecord) {
+	scan := s.scanRecords
+	if spec.hourly {
+		scan = s.scanHourlyRecords
+	}
+	consume := func(record diskRecord) {
 		host := record.Host.contractPoint(record.CollectedAt)
 		if previousHost != nil {
 			seconds := host.CollectedAt.Sub(previousHost.CollectedAt).Seconds()
-			host.NetworkRxRate = counterRate(previousHost.NetworkRxBytes, host.NetworkRxBytes, seconds)
-			host.NetworkTxRate = counterRate(previousHost.NetworkTxBytes, host.NetworkTxBytes, seconds)
+			host.NetworkRxRate = maxFloat64(host.NetworkRxRate,
+				counterRate(previousHost.NetworkRxBytes, host.NetworkRxBytes, seconds))
+			host.NetworkTxRate = maxFloat64(host.NetworkTxRate,
+				counterRate(previousHost.NetworkTxBytes, host.NetworkTxBytes, seconds))
 			if previousHost.DiskIOAvailable && host.DiskIOAvailable {
-				host.DiskReadRate = counterRate(previousHost.DiskReadBytes, host.DiskReadBytes, seconds)
-				host.DiskWriteRate = counterRate(previousHost.DiskWriteBytes, host.DiskWriteBytes, seconds)
+				host.DiskReadRate = maxFloat64(host.DiskReadRate,
+					counterRate(previousHost.DiskReadBytes, host.DiskReadBytes, seconds))
+				host.DiskWriteRate = maxFloat64(host.DiskWriteRate,
+					counterRate(previousHost.DiskWriteBytes, host.DiskWriteBytes, seconds))
 			}
 		}
 		hostCopy := host
@@ -649,22 +720,37 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 		hostPoints = appendHostBucket(hostPoints, host, spec.bucket)
 		for _, container := range record.Containers {
 			if _, exists := containerPoints[container.ID]; !exists && len(containerPoints) >= maxScannedSeries {
+				oldestID, oldestAt := oldestContainerSeries(containerPoints)
+				if oldestID != "" && record.CollectedAt.After(oldestAt) {
+					delete(containerPoints, oldestID)
+					delete(previousContainers, oldestID)
+				} else {
+					result.TruncatedSeries++
+					continue
+				}
 				result.TruncatedSeries++
-				continue
 			}
 			point := contract.MonitoringContainerPoint{
 				CollectedAt: record.CollectedAt, CPUPercent: container.CPUPercent,
-				MemoryBytes: container.MemoryBytes, MemoryLimitBytes: container.MemoryLimitBytes,
+				CPUAveragePercent: container.CPUAveragePercent,
+				CPUSampleCount:    container.CPUSampleCount,
+				MemoryBytes:       container.MemoryBytes, MemoryLimitBytes: container.MemoryLimitBytes,
 				MemoryPercent: container.MemoryPercent, NetworkRxBytes: container.NetworkRxBytes,
 				NetworkTxBytes: container.NetworkTxBytes, BlockReadBytes: container.BlockReadBytes,
 				BlockWriteBytes: container.BlockWriteBytes, PIDs: container.PIDs,
+				NetworkRxRate: container.NetworkRxPeakRate, NetworkTxRate: container.NetworkTxPeakRate,
+				BlockReadRate: container.BlockReadPeakRate, BlockWriteRate: container.BlockWritePeakRate,
 			}
 			if previous, ok := previousContainers[container.ID]; ok {
 				seconds := point.CollectedAt.Sub(previous.CollectedAt).Seconds()
-				point.NetworkRxRate = counterRate(previous.NetworkRxBytes, point.NetworkRxBytes, seconds)
-				point.NetworkTxRate = counterRate(previous.NetworkTxBytes, point.NetworkTxBytes, seconds)
-				point.BlockReadRate = counterRate(previous.BlockReadBytes, point.BlockReadBytes, seconds)
-				point.BlockWriteRate = counterRate(previous.BlockWriteBytes, point.BlockWriteBytes, seconds)
+				point.NetworkRxRate = maxFloat64(point.NetworkRxRate,
+					counterRate(previous.NetworkRxBytes, point.NetworkRxBytes, seconds))
+				point.NetworkTxRate = maxFloat64(point.NetworkTxRate,
+					counterRate(previous.NetworkTxBytes, point.NetworkTxBytes, seconds))
+				point.BlockReadRate = maxFloat64(point.BlockReadRate,
+					counterRate(previous.BlockReadBytes, point.BlockReadBytes, seconds))
+				point.BlockWriteRate = maxFloat64(point.BlockWriteRate,
+					counterRate(previous.BlockWriteBytes, point.BlockWriteBytes, seconds))
 			}
 			previousContainers[container.ID] = point
 			series := containerPoints[container.ID]
@@ -675,8 +761,12 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 				}
 				containerPoints[container.ID] = series
 			}
-			series.Name = container.Name
-			series.Image = container.Image
+			if container.Name != "" {
+				series.Name = container.Name
+			}
+			if container.Image != "" {
+				series.Image = container.Image
+			}
 			series.Points = appendContainerBucket(series.Points, point, spec.bucket)
 		}
 		for _, latency := range record.OperatorLatency {
@@ -684,16 +774,34 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 			if series == nil {
 				continue
 			}
-			point := contract.MonitoringOperatorLatencyPoint{CollectedAt: record.CollectedAt}
+			point := contract.MonitoringOperatorLatencyPoint{
+				CollectedAt:  record.CollectedAt,
+				SuccessCount: latency.SuccessCount,
+				FailureCount: latency.FailureCount,
+			}
+			if point.SuccessCount == 0 && point.FailureCount == 0 {
+				if latency.Reachable {
+					point.SuccessCount = 1
+				} else {
+					point.FailureCount = 1
+				}
+			}
 			if latency.Reachable {
 				value := latency.LatencyMilliseconds
 				point.LatencyMilliseconds = &value
 			}
 			series.Points = appendOperatorLatencyBucket(series.Points, point, spec.bucket)
 		}
-	})
+	}
+	scanned, skipped, err := scan(ctx, start, now, consume)
 	if err != nil {
 		return contract.MonitoringHistory{}, err
+	}
+	if spec.hourly {
+		if current, ok := s.currentHourlyRecord(); ok &&
+			!current.CollectedAt.Before(start) && !current.CollectedAt.After(now) {
+			consume(current)
+		}
 	}
 	result.ScannedBytes = scanned
 	result.SkippedLines = skipped
@@ -709,6 +817,25 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 	}
 	result.Containers = series
 	return result, nil
+}
+
+func oldestContainerSeries(
+	series map[string]*contract.MonitoringContainerSeries,
+) (string, time.Time) {
+	var oldestID string
+	var oldestAt time.Time
+	for id, item := range series {
+		point, ok := latestContainerPoint(*item)
+		if !ok {
+			return id, time.Time{}
+		}
+		if oldestID == "" || point.CollectedAt.Before(oldestAt) ||
+			(point.CollectedAt.Equal(oldestAt) && id < oldestID) {
+			oldestID = id
+			oldestAt = point.CollectedAt
+		}
+	}
+	return oldestID, oldestAt
 }
 
 func (s *Service) acquireQuerySlots(count int) bool {
@@ -825,6 +952,13 @@ func counterRate(previous uint64, current uint64, seconds float64) float64 {
 	return float64(current-previous) / seconds
 }
 
+func maxFloat64(left float64, right float64) float64 {
+	if right > left {
+		return right
+	}
+	return left
+}
+
 func operatorLatencyCatalog() []contract.MonitoringOperatorLatencySeries {
 	series := make([]contract.MonitoringOperatorLatencySeries, 0, len(operatorLatencyTargets))
 	for _, target := range operatorLatencyTargets {
@@ -852,12 +986,13 @@ func appendOperatorLatencyBucket(
 		return points
 	}
 	last := &points[len(points)-1]
+	last.SuccessCount += point.SuccessCount
+	last.FailureCount += point.FailureCount
 	if point.LatencyMilliseconds != nil &&
 		(last.LatencyMilliseconds == nil || *point.LatencyMilliseconds > *last.LatencyMilliseconds) {
-		*last = point
-	} else if last.LatencyMilliseconds == nil {
-		last.CollectedAt = point.CollectedAt
+		last.LatencyMilliseconds = point.LatencyMilliseconds
 	}
+	last.CollectedAt = point.CollectedAt
 	return points
 }
 
@@ -880,6 +1015,8 @@ func appendHostBucket(
 	if point.CPUPercent > last.CPUPercent {
 		last.CPUPercent = point.CPUPercent
 	}
+	mergeCPUAverage(&last.CPUAveragePercent, &last.CPUSampleCount,
+		point.CPUAveragePercent, point.CPUSampleCount)
 	if ratio(point.MemoryUsedBytes, point.MemoryTotalBytes) >
 		ratio(last.MemoryUsedBytes, last.MemoryTotalBytes) {
 		last.MemoryUsedBytes = point.MemoryUsedBytes
@@ -913,11 +1050,15 @@ func appendHostBucket(
 	last.DiskIOAvailable = point.DiskIOAvailable
 	last.DiskReadBytes = point.DiskReadBytes
 	last.DiskWriteBytes = point.DiskWriteBytes
-	last.LoadOne = point.LoadOne
-	last.LoadFive = point.LoadFive
-	last.LoadFifteen = point.LoadFifteen
-	last.TCPConnections = point.TCPConnections
-	last.UDPConnections = point.UDPConnections
+	last.LoadOne = maxFloat64(last.LoadOne, point.LoadOne)
+	last.LoadFive = maxFloat64(last.LoadFive, point.LoadFive)
+	last.LoadFifteen = maxFloat64(last.LoadFifteen, point.LoadFifteen)
+	if point.TCPConnections > last.TCPConnections {
+		last.TCPConnections = point.TCPConnections
+	}
+	if point.UDPConnections > last.UDPConnections {
+		last.UDPConnections = point.UDPConnections
+	}
 	return points
 }
 
@@ -940,6 +1081,8 @@ func appendContainerBucket(
 	if point.CPUPercent > last.CPUPercent {
 		last.CPUPercent = point.CPUPercent
 	}
+	mergeCPUAverage(&last.CPUAveragePercent, &last.CPUSampleCount,
+		point.CPUAveragePercent, point.CPUSampleCount)
 	if point.MemoryPercent > last.MemoryPercent {
 		last.MemoryBytes = point.MemoryBytes
 		last.MemoryLimitBytes = point.MemoryLimitBytes
@@ -962,8 +1105,25 @@ func appendContainerBucket(
 	last.NetworkTxBytes = point.NetworkTxBytes
 	last.BlockReadBytes = point.BlockReadBytes
 	last.BlockWriteBytes = point.BlockWriteBytes
-	last.PIDs = point.PIDs
+	if point.PIDs > last.PIDs {
+		last.PIDs = point.PIDs
+	}
 	return points
+}
+
+func mergeCPUAverage(
+	average *float64,
+	count *int,
+	nextAverage float64,
+	nextCount int,
+) {
+	if nextCount <= 0 {
+		return
+	}
+	totalCount := *count + nextCount
+	*average = (*average*float64(*count) + nextAverage*float64(nextCount)) /
+		float64(totalCount)
+	*count = totalCount
 }
 
 func ratio(used uint64, total uint64) float64 {

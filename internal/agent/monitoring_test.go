@@ -68,6 +68,14 @@ func TestMonitoringHistoryRequiresAuthAndStrictRange(t *testing.T) {
 	if response.Code != http.StatusOK || provider.rangeValue != "30d" {
 		t.Fatalf("30-day history status=%d range=%q body=%s", response.Code, provider.rangeValue, response.Body.String())
 	}
+
+	request = httptest.NewRequest(http.MethodGet, "/v1/monitoring/history?range=12m", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || provider.rangeValue != "12m" {
+		t.Fatalf("12-month history status=%d range=%q body=%s", response.Code, provider.rangeValue, response.Body.String())
+	}
 }
 
 func TestMonitoringHistoryMapsBusyAndUnavailable(t *testing.T) {
