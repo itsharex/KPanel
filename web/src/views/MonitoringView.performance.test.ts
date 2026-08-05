@@ -9,6 +9,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {} }),
+  useRouter: () => ({
+    back: vi.fn(),
+    push: vi.fn(),
+    replace: vi.fn(),
+  }),
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -51,6 +56,10 @@ const emptyHistory = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.stubGlobal('localStorage', {
+    getItem: vi.fn(() => null),
+    setItem: vi.fn(),
+  })
   mocks.history.mockResolvedValue(emptyHistory)
 })
 

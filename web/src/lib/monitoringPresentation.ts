@@ -10,7 +10,7 @@ const monitoringRanges = new Set<MonitoringRange>(['1h', '6h', '24h', '7d', '30d
 export function monitoringRangeFromQuery(value: unknown): MonitoringRange {
   return typeof value === 'string' && monitoringRanges.has(value as MonitoringRange)
     ? value as MonitoringRange
-    : '24h'
+    : '6h'
 }
 
 export function monitoringWindowFromQuery(startValue: unknown, endValue: unknown): MonitoringHistoryQuery | undefined {

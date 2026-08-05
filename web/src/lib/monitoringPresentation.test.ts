@@ -41,8 +41,8 @@ function container(id: string, collectedAt?: string): MonitoringContainerSeries 
 describe('monitoring presentation', () => {
   it('normalizes supported monitoring route state', () => {
     expect(monitoringRangeFromQuery('12m')).toBe('12m')
-    expect(monitoringRangeFromQuery(['12m'])).toBe('24h')
-    expect(monitoringRangeFromQuery('invalid')).toBe('24h')
+    expect(monitoringRangeFromQuery(['12m'])).toBe('6h')
+    expect(monitoringRangeFromQuery('invalid')).toBe('6h')
     expect(monitoringWindowFromQuery(
       '2026-08-04T00:00:00+08:00',
       '2026-08-05T00:00:00+08:00',
