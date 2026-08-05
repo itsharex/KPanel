@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { MonitoringContainerSeries } from '@/types/api'
 import {
   isHistoricalContainer,
+  monitoringRangeFromQuery,
+  monitoringWindowFromQuery,
   nearestTimestamp,
   newestContainerSampleTime,
   normalizeTrendChartWidth,
@@ -36,6 +38,26 @@ function container(id: string, collectedAt?: string): MonitoringContainerSeries 
 }
 
 describe('monitoring presentation', () => {
+  it('normalizes supported monitoring route state', () => {
+    expect(monitoringRangeFromQuery('12m')).toBe('12m')
+    expect(monitoringRangeFromQuery(['12m'])).toBe('24h')
+    expect(monitoringRangeFromQuery('invalid')).toBe('24h')
+    expect(monitoringWindowFromQuery(
+      '2026-08-04T00:00:00+08:00',
+      '2026-08-05T00:00:00+08:00',
+    )).toEqual({
+      start: '2026-08-03T16:00:00.000Z',
+      end: '2026-08-04T16:00:00.000Z',
+    })
+  })
+
+  it('rejects partial, repeated, invalid and reversed monitoring route windows', () => {
+    expect(monitoringWindowFromQuery('2026-08-04T00:00:00Z', undefined)).toBeUndefined()
+    expect(monitoringWindowFromQuery(['2026-08-04T00:00:00Z'], '2026-08-05T00:00:00Z')).toBeUndefined()
+    expect(monitoringWindowFromQuery('invalid', '2026-08-05T00:00:00Z')).toBeUndefined()
+    expect(monitoringWindowFromQuery('2026-08-05T00:00:00Z', '2026-08-04T00:00:00Z')).toBeUndefined()
+  })
+
   it('fills the rendered chart width and keeps a safe fallback', () => {
     expect(normalizeTrendChartWidth(1440)).toBe(1440)
     expect(normalizeTrendChartWidth(0)).toBe(720)

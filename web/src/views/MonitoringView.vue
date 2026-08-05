@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/MonitoringView/en-US').then((module) => module.default))
@@ -19,6 +19,8 @@ import {
 } from '@/lib/monitoringNavigation'
 import {
   isHistoricalContainer,
+  monitoringRangeFromQuery,
+  monitoringWindowFromQuery,
   newestContainerSampleTime,
   sliceMonitoringHistory,
 } from '@/lib/monitoringPresentation'
@@ -55,6 +57,7 @@ const regionLabels: Record<MonitoringOperatorLatencySeries['region'], string> = 
 
 const history = shallowRef<MonitoringHistory>()
 const route = useRoute()
+const router = useRouter()
 const selectedRange = ref<MonitoringRange>('24h')
 const selectedContainerId = ref('')
 const loading = ref(true)
@@ -64,7 +67,6 @@ const diskChartMode = ref<'capacity' | 'io'>('capacity')
 const networkChartMode = ref<'traffic' | 'connections'>('traffic')
 const operatorLatencyVisibility = ref<Record<string, boolean>>({})
 const activeWindow = ref<MonitoringHistoryQuery>()
-const zoomStack = ref<Array<MonitoringHistoryQuery | null>>([])
 const rootHistory = shallowRef<MonitoringHistory>()
 const updating = ref(false)
 const interactionError = ref('')
@@ -368,12 +370,10 @@ function changeRange(range: MonitoringRange): void {
     if (activeWindow.value) resetZoom()
     return
   }
-  selectedRange.value = range
-  activeWindow.value = undefined
-  zoomStack.value = []
-  rootHistory.value = undefined
-  history.value = undefined
-  void load('initial', undefined)
+  void router.push({
+    query: monitoringRouteQuery(range),
+    state: { monitoringZoomDepth: 0 },
+  })
 }
 
 function zoomToRange(selection: MonitoringHistoryQuery): void {
@@ -386,38 +386,85 @@ function zoomToRange(selection: MonitoringHistoryQuery): void {
     return
   }
   const next = { start: new Date(start).toISOString(), end: new Date(end).toISOString() }
-  zoomStack.value = [...zoomStack.value, activeWindow.value ? { ...activeWindow.value } : null].slice(-16)
   activeWindow.value = next
   history.value = sliceMonitoringHistory(history.value, next.start, next.end)
-  void load('zoom', next)
+  const depth = currentZoomDepth()
+  const location = {
+    query: monitoringRouteQuery(selectedRange.value, next),
+    state: { monitoringZoomDepth: Math.min(32, depth + 1) },
+  }
+  if (depth >= 32) void router.replace(location)
+  else void router.push(location)
 }
 
 function backZoom(): void {
-  if (!zoomStack.value.length) return
-  controller?.abort()
-  const stack = [...zoomStack.value]
-  const previous = stack.pop() || undefined
-  zoomStack.value = stack
-  activeWindow.value = previous ? { ...previous } : undefined
-  interactionError.value = ''
-  if (!previous && rootHistory.value) {
-    history.value = rootHistory.value
-    updating.value = false
-    refreshing.value = false
-    return
-  }
-  void load('zoom', previous)
+  if (!activeWindow.value) return
+  if (currentZoomDepth() > 0) router.back()
+  else resetZoom()
 }
 
 function resetZoom(): void {
   controller?.abort()
-  activeWindow.value = undefined
-  zoomStack.value = []
   interactionError.value = ''
   updating.value = false
   refreshing.value = false
-  if (rootHistory.value) history.value = rootHistory.value
-  else void load('initial', undefined)
+  const depth = currentZoomDepth()
+  if (depth > 0) {
+    window.history.go(-depth)
+    return
+  }
+  void router.replace({
+    query: monitoringRouteQuery(selectedRange.value),
+    state: { monitoringZoomDepth: 0 },
+  })
+}
+
+function monitoringRouteQuery(range: MonitoringRange, query?: MonitoringHistoryQuery) {
+  const next: LocationQueryRaw = { ...route.query, range }
+  delete next.start
+  delete next.end
+  if (query) {
+    next.start = query.start
+    next.end = query.end
+  }
+  return next
+}
+
+function currentZoomDepth(): number {
+  if (typeof window === 'undefined') return 0
+  const value = window.history.state?.monitoringZoomDepth
+  return Number.isInteger(value) && value >= 0 && value <= 32 ? value : 0
+}
+
+function ensureZoomHistoryState(): void {
+  if (typeof window === 'undefined') return
+  const value = window.history.state?.monitoringZoomDepth
+  if (Number.isInteger(value) && value >= 0 && value <= 32) return
+  window.history.replaceState({ ...window.history.state, monitoringZoomDepth: 0 }, '')
+}
+
+function applyRouteState(): void {
+  ensureZoomHistoryState()
+  const nextRange = monitoringRangeFromQuery(route.query.range)
+  const nextWindow = monitoringWindowFromQuery(route.query.start, route.query.end)
+  const rangeChanged = nextRange !== selectedRange.value
+  selectedRange.value = nextRange
+  activeWindow.value = nextWindow
+  interactionError.value = ''
+
+  if (rangeChanged) {
+    rootHistory.value = undefined
+    history.value = undefined
+  }
+  if (!nextWindow && rootHistory.value?.range === nextRange) {
+    controller?.abort()
+    history.value = rootHistory.value
+    loading.value = false
+    refreshing.value = false
+    updating.value = false
+    return
+  }
+  void load(history.value ? 'zoom' : 'initial', nextWindow)
 }
 
 function formatWindowTime(value: string): string {
@@ -443,8 +490,12 @@ async function focusSelectedMetric(): Promise<void> {
 }
 
 watch([selectedMetric, () => history.value?.host.length], () => void focusSelectedMetric(), { flush: 'post' })
+watch(
+  [() => route.query.range, () => route.query.start, () => route.query.end],
+  applyRouteState,
+  { immediate: true },
+)
 
-onMounted(() => void load('initial', undefined))
 onBeforeUnmount(() => controller?.abort())
 </script>
 

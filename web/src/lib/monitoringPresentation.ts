@@ -1,4 +1,25 @@
-import type { MonitoringContainerSeries, MonitoringHistory } from '@/types/api'
+import type {
+  MonitoringContainerSeries,
+  MonitoringHistory,
+  MonitoringHistoryQuery,
+  MonitoringRange,
+} from '@/types/api'
+
+const monitoringRanges = new Set<MonitoringRange>(['1h', '6h', '24h', '7d', '30d', '3m', '6m', '12m'])
+
+export function monitoringRangeFromQuery(value: unknown): MonitoringRange {
+  return typeof value === 'string' && monitoringRanges.has(value as MonitoringRange)
+    ? value as MonitoringRange
+    : '24h'
+}
+
+export function monitoringWindowFromQuery(startValue: unknown, endValue: unknown): MonitoringHistoryQuery | undefined {
+  if (typeof startValue !== 'string' || typeof endValue !== 'string') return undefined
+  const start = Date.parse(startValue)
+  const end = Date.parse(endValue)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) return undefined
+  return { start: new Date(start).toISOString(), end: new Date(end).toISOString() }
+}
 
 export function normalizeTrendChartWidth(measured: number, fallback = 720): number {
   const width = Number.isFinite(measured) && measured > 0 ? measured : fallback
