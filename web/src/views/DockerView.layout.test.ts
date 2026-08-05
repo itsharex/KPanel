@@ -14,6 +14,12 @@ describe('Docker resource toolbar layout', () => {
     expect(dockerSource).toMatch(/@media \(max-width: 1000px\)[\s\S]*?\.resource-section__header > \.card-actions\s*\{[^}]*width:\s*100%;[^}]*margin-left:\s*0;[^}]*flex-wrap:\s*wrap;/)
   })
 
+  it('keeps resource titles and descriptions stacked instead of running together', () => {
+    expect(dockerSource).toMatch(
+      /\.resource-section__header > div:first-child > div\s*\{[^}]*display:\s*grid;[^}]*gap:\s*3px;/,
+    )
+  })
+
   it('exposes right-click menus for every daily Docker resource', () => {
     expect(dockerSource).toContain('@contextmenu="showContainerContext($event, container)"')
     expect(dockerSource).toContain('@contextmenu="showImageContext($event, image)"')

@@ -866,7 +866,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="toolbar-card">
+    <section class="toolbar-card toolbar-card--search-tabs">
       <div class="search-field">
         <Search :size="17" aria-hidden="true" />
         <input v-model="search" type="search" placeholder="搜索域名、目录或上游地址" aria-label="搜索网站" />

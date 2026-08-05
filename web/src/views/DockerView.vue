@@ -1486,6 +1486,7 @@ onBeforeUnmount(() => {
 .resource-section { padding: 0; overflow: hidden; }
 .resource-section__header { min-height: 76px; padding: 18px; border-bottom: 1px solid var(--border); align-items: center; }
 .resource-section__header > div:first-child { grid-template-columns: auto minmax(0, 1fr); align-items: center; flex: 1 1 auto; min-width: 0; }
+.resource-section__header > div:first-child > div { display: grid; min-width: 0; gap: 3px; }
 .resource-section__header > .card-actions { margin-left: auto; justify-content: flex-end; }
 .resource-section .table-scroll, .resource-section > .empty-state { margin: 0; }
 .docker-table { min-width: 1320px; }

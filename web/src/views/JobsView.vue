@@ -115,7 +115,7 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
-    <section class="toolbar-card">
+    <section class="toolbar-card toolbar-card--search-tabs">
       <div class="search-field">
         <Search :size="17" />
         <input v-model="search" type="search" placeholder="搜索变更、资源或记录 ID" aria-label="搜索变更记录" />

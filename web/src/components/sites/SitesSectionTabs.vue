@@ -19,7 +19,10 @@
 }
 
 .sites-section-tabs a {
+  display: grid;
   min-width: 108px;
+  min-height: 40px;
+  place-items: center;
   padding: 9px 15px;
   border-radius: 10px;
   color: var(--muted);
