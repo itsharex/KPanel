@@ -34,19 +34,23 @@ describe('multi-host terminal workspace layout', () => {
     expect(hostTerminalSource).toContain('terminal.attachCustomKeyEventHandler')
   })
 
-  it('merges connection status into the session tabs without a duplicate terminal header', () => {
+  it('keeps session tabs and terminal actions in one dark toolbar row', () => {
     expect(terminalSource).toContain('class="terminal-tab__status"')
     expect(terminalSource).toContain('@state-change="item.state = $event"')
-    expect(hostTerminalSource).not.toContain('<header>')
-    expect(hostTerminalSource).toContain('class="host-terminal__toolbar"')
+    expect(terminalSource).toContain('class="terminal-tabs-bar"')
+    expect(terminalSource).toContain('<TerminalToolbar')
+    expect(terminalSource).toMatch(
+      /\.terminal-tabs-bar\s*\{[^}]*display:flex;[^}]*background:var\(--terminal-shell-panel/,
+    )
   })
 
-  it('moves fullscreen ownership into the shared terminal controls', () => {
+  it('fills the whole terminal stage so tabs remain switchable', () => {
     expect(terminalSource).not.toContain('terminal-fullscreen-toggle')
-    expect(hostTerminalSource).toContain('<TerminalToolbar')
-    expect(hostTerminalSource).toContain("'is-fullscreen': fullscreen")
-    expect(hostTerminalSource).toMatch(
-      /\.host-terminal\.is-fullscreen\s*\{[^}]*position:fixed;[^}]*inset:0;[^}]*height:100dvh;/,
+    expect(terminalSource).toContain("'is-fullscreen': workspaceFullscreen")
+    expect(terminalSource).toContain('@click="selectSession(item.id)"')
+    expect(terminalSource).toMatch(
+      /\.terminal-stage\.is-fullscreen\s*\{[^}]*position:fixed;[^}]*inset:0;[^}]*height:100dvh;/,
     )
+    expect(hostTerminalSource).toContain('defineExpose({ scrollToTop, scheduleResize })')
   })
 })

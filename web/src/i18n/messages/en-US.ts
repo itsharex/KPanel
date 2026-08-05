@@ -41,6 +41,8 @@ export const enUSMessages = {
   'terminal.scrollToBottom': 'Jump to latest output',
   'terminal.toolbar': 'Terminal actions',
   'terminal.scrollToTop': 'Jump to top',
+  'terminal.fillPage': 'Fill webpage',
+  'terminal.restoreWindow': 'Restore window',
   'terminal.inputPlaceholder': 'Compose a command, then press Enter to send the whole line',
   'terminal.send': 'Send',
   'terminal.inputFailed': 'Input failed to send. Reconnecting.',

@@ -26,8 +26,8 @@ const { t } = useI18n()
     </button>
     <button
       type="button"
-      :title="fullscreen ? t('common.exitFullscreen') : t('common.enterFullscreen')"
-      :aria-label="fullscreen ? t('common.exitFullscreen') : t('common.enterFullscreen')"
+      :title="fullscreen ? t('terminal.restoreWindow') : t('terminal.fillPage')"
+      :aria-label="fullscreen ? t('terminal.restoreWindow') : t('terminal.fillPage')"
       @click.stop="emit('toggleFullscreen')"
     >
       <Minimize2 v-if="fullscreen" :size="17" />

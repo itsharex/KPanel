@@ -27,7 +27,6 @@ const props = defineProps<{
 const { t } = useI18n()
 
 const host = ref<HTMLElement>()
-const fullscreenTarget = ref<HTMLElement>()
 const composerInput = ref<HTMLInputElement>()
 const clipboardMenu = ref<InstanceType<typeof TerminalContextMenu>>()
 const connectionState = ref<'connecting' | 'connected' | 'finished' | 'error'>('connecting')
@@ -47,7 +46,7 @@ let polling = false
 
 const inputFlushInterval = 24
 
-const { fullscreen, toggleFullscreen } = useTerminalFullscreen(fullscreenTarget, fitTerminal)
+const { fullscreen, toggleFullscreen } = useTerminalFullscreen(fitTerminal)
 
 function terminalThemeColor(name: string, fallback: string): string {
   if (!host.value) return fallback
@@ -276,7 +275,6 @@ onBeforeUnmount(() => {
 
 <template>
   <section
-    ref="fullscreenTarget"
     class="interactive-terminal"
     :class="{
       'is-compact': props.compact,

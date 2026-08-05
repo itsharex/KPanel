@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance } from 'vue'
 import { Circle, Laptop, LoaderCircle, Plus, RefreshCw, Server, ShieldCheck, SquareTerminal, X } from '@lucide/vue'
 import HostTerminal from '@/components/terminal/HostTerminal.vue'
+import TerminalToolbar from '@/components/terminal/TerminalToolbar.vue'
+import { useTerminalFullscreen } from '@/composables/useTerminalFullscreen'
 import { api, ApiError } from '@/lib/api'
 import type { ClusterHost, ClusterHostList } from '@/types/api'
 import { usePhraseCatalog } from '@/i18n/phrase'
@@ -18,6 +20,11 @@ interface OpenTerminal {
   state: 'connecting' | 'connected' | 'reconnecting' | 'finished'
 }
 
+interface HostTerminalHandle {
+  scrollToTop: () => void
+  scheduleResize: () => void
+}
+
 const inventory = ref<ClusterHostList>()
 const sessions = ref<OpenTerminal[]>([])
 const activeSessionId = ref('')
@@ -25,7 +32,18 @@ const loading = ref(true)
 const openingHostId = ref('')
 const errorMessage = ref('')
 const search = ref('')
+const terminalRefs = new Map<string, HostTerminalHandle>()
 let controller: AbortController | undefined
+
+function refreshActiveTerminal(): void {
+  terminalRefs.get(activeSessionId.value)?.scheduleResize()
+}
+
+const {
+  fullscreen: workspaceFullscreen,
+  toggleFullscreen: toggleWorkspaceFullscreen,
+  exitFullscreen: exitWorkspaceFullscreen,
+} = useTerminalFullscreen(refreshActiveTerminal)
 
 const hosts = computed(() => {
   const needle = search.value.trim().toLowerCase()
@@ -75,7 +93,30 @@ function removeSession(id: string): void {
   const index = sessions.value.findIndex((item) => item.id === id)
   if (index < 0) return
   sessions.value.splice(index, 1)
+  terminalRefs.delete(id)
   if (activeSessionId.value === id) activeSessionId.value = sessions.value[Math.max(0, index - 1)]?.id || ''
+  if (!sessions.value.length) exitWorkspaceFullscreen()
+}
+
+function setTerminalRef(
+  id: string,
+  instance: Element | ComponentPublicInstance | null,
+): void {
+  const handle = instance as unknown as Partial<HostTerminalHandle> | null
+  if (typeof handle?.scrollToTop === 'function' && typeof handle.scheduleResize === 'function') {
+    terminalRefs.set(id, handle as HostTerminalHandle)
+  } else {
+    terminalRefs.delete(id)
+  }
+}
+
+function selectSession(id: string): void {
+  activeSessionId.value = id
+  void nextTick(refreshActiveTerminal)
+}
+
+function scrollActiveTerminalToTop(): void {
+  terminalRefs.get(activeSessionId.value)?.scrollToTop()
 }
 
 function hostStateLabel(host: ClusterHost): string {
@@ -131,19 +172,24 @@ onBeforeUnmount(() => {
         </div>
       </aside>
 
-      <main class="terminal-stage">
+      <main class="terminal-stage" :class="{ 'is-fullscreen': workspaceFullscreen }">
         <div v-if="sessions.length" class="terminal-tabs-bar">
           <nav v-if="sessions.length" class="terminal-tabs" aria-label="已打开终端">
-            <button v-for="item in sessions" :key="item.id" type="button" class="terminal-tab" :class="{ 'is-active': item.id === activeSessionId }" :title="`${item.hostName} · ${sessionStateLabel(item.state)}`" @click="activeSessionId = item.id">
+            <button v-for="item in sessions" :key="item.id" type="button" class="terminal-tab" :class="{ 'is-active': item.id === activeSessionId }" :title="`${item.hostName} · ${sessionStateLabel(item.state)}`" @click="selectSession(item.id)">
               <span class="terminal-tab__status" :class="`is-${item.state}`" aria-hidden="true" />
               <SquareTerminal :size="14" /><span class="terminal-tab__name">{{ item.hostName }}</span>
               <span class="sr-only">{{ sessionStateLabel(item.state) }}</span>
               <X :size="14" @click.stop="removeSession(item.id)" />
             </button>
           </nav>
+          <TerminalToolbar
+            :fullscreen="workspaceFullscreen"
+            @scroll-top="scrollActiveTerminalToTop"
+            @toggle-fullscreen="toggleWorkspaceFullscreen"
+          />
         </div>
         <div v-if="!sessions.length" class="terminal-empty"><span><SquareTerminal :size="34" /></span><h2>选择一台主机开始</h2><p>左侧会明确标记本机、可加密直连的 KPanel，以及仅提供监控的轻量节点。</p></div>
-        <HostTerminal v-for="item in sessions" v-show="item.id === activeSessionId" :key="item.id" :session-id="item.id" :host-name="item.hostName" :initial-offset="item.offset" @state-change="item.state = $event" />
+        <HostTerminal v-for="item in sessions" v-show="item.id === activeSessionId" :key="item.id" :ref="(instance) => setTerminalRef(item.id, instance)" :session-id="item.id" :host-name="item.hostName" :initial-offset="item.offset" @state-change="item.state = $event" />
       </main>
     </section>
   </div>
@@ -174,8 +220,12 @@ onBeforeUnmount(() => {
 .terminal-host em.is-ready { color:var(--success); }
 .terminal-connections__empty { display:flex; align-items:center; justify-content:center; gap:8px; min-height:180px; padding:20px; color:var(--text-muted); text-align:center; }
 .terminal-stage { display:grid; grid-template-rows:auto minmax(0,1fr); min-width:0; min-height:0; padding:12px; background:color-mix(in srgb,var(--terminal-shell-background,#0b1214) 96%,var(--surface)); }
-.terminal-tabs-bar { min-width:0; padding-bottom:9px; }
-.terminal-tabs { display:flex; min-width:0; gap:5px; overflow-x:auto; scrollbar-width:thin; }
+.terminal-stage.is-fullscreen { position:fixed; z-index:6000; inset:0; width:100vw; height:100dvh; min-height:0; padding:0; border:0; }
+.terminal-tabs-bar { display:flex; min-width:0; align-items:center; gap:12px; padding:8px 10px; border:1px solid var(--terminal-shell-border,#29383a); border-bottom:0; border-radius:var(--terminal-shell-radius,12px) var(--terminal-shell-radius,12px) 0 0; background:var(--terminal-shell-panel,#111a1d); }
+.terminal-tabs { display:flex; min-width:0; flex:1; gap:5px; overflow-x:auto; scrollbar-width:thin; }
+.terminal-stage.is-fullscreen .terminal-tabs-bar { border-width:0 0 1px; border-radius:0; }
+.terminal-stage :deep(.host-terminal) { border-top:0; border-radius:0 0 var(--terminal-shell-radius,12px) var(--terminal-shell-radius,12px); }
+.terminal-stage.is-fullscreen :deep(.host-terminal) { border-width:0; border-radius:0; }
 .terminal-tab { display:flex; flex:0 0 auto; align-items:center; gap:7px; max-width:220px; border:1px solid var(--terminal-shell-border,#29383a); border-radius:8px; padding:7px 9px; color:var(--terminal-shell-muted,#8a9695); background:var(--terminal-shell-panel,#111a1d); }
 .terminal-tab.is-active { color:var(--terminal-shell-text,#d8dddc); border-color:var(--brand); }
 .terminal-tab__name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

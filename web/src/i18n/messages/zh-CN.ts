@@ -39,6 +39,8 @@ export const zhCNMessages = {
   'terminal.scrollToBottom': '回到最新输出',
   'terminal.toolbar': '终端操作',
   'terminal.scrollToTop': '回到顶部',
+  'terminal.fillPage': '铺满网页',
+  'terminal.restoreWindow': '恢复窗口',
   'terminal.inputPlaceholder': '预输入命令，按 Enter 整行发送',
   'terminal.send': '发送',
   'terminal.inputFailed': '输入发送失败，正在重连。',

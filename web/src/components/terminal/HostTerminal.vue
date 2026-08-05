@@ -5,8 +5,6 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import TerminalContextMenu from '@/components/terminal/TerminalContextMenu.vue'
-import TerminalToolbar from '@/components/terminal/TerminalToolbar.vue'
-import { useTerminalFullscreen } from '@/composables/useTerminalFullscreen'
 import { api, ApiError } from '@/lib/api'
 import { openTerminalURL } from '@/lib/terminalLinks'
 import { containWheelScroll } from '@/lib/scroll'
@@ -26,7 +24,6 @@ const emit = defineEmits<{
 }>()
 
 const host = ref<HTMLElement>()
-const fullscreenTarget = ref<HTMLElement>()
 const composerInput = ref<HTMLInputElement>()
 const clipboardMenu = ref<InstanceType<typeof TerminalContextMenu>>()
 const pendingLine = ref('')
@@ -48,8 +45,6 @@ let lastRows = 0
 let lastColumns = 0
 let reconnectAttempts = 0
 const inputFlushInterval = 24
-
-const { fullscreen, toggleFullscreen } = useTerminalFullscreen(fullscreenTarget, scheduleResize)
 
 watch(state, (value) => emit('stateChange', value), { immediate: true })
 
@@ -167,6 +162,8 @@ function scheduleResize(): void {
   }, 100)
 }
 
+defineExpose({ scrollToTop, scheduleResize })
+
 onMounted(() => {
   terminal = new Terminal({
     cursorBlink: true,
@@ -218,7 +215,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section ref="fullscreenTarget" class="host-terminal" :class="{ 'is-fullscreen': fullscreen }">
+  <section class="host-terminal">
     <div
       ref="host"
       class="host-terminal__screen terminal-screen"
@@ -227,12 +224,6 @@ onBeforeUnmount(() => {
       @contextmenu="clipboardMenu?.open($event)"
       @paste.capture="clipboardMenu?.handlePaste($event)"
     >
-      <TerminalToolbar
-        class="host-terminal__toolbar"
-        :fullscreen="fullscreen"
-        @scroll-top="scrollToTop"
-        @toggle-fullscreen="toggleFullscreen"
-      />
     </div>
     <form class="host-terminal__composer" @submit.prevent="submitPendingLine">
       <input ref="composerInput" v-model="pendingLine" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="8192" :placeholder="t('terminal.inputPlaceholder')" :disabled="state === 'finished'" />
@@ -242,16 +233,13 @@ onBeforeUnmount(() => {
       ref="clipboardMenu"
       :get-terminal="() => terminal"
       :can-paste="state !== 'finished'"
-      :contained="fullscreen"
     />
   </section>
 </template>
 
 <style scoped>
 .host-terminal { display:grid; height:100%; grid-template-rows:minmax(0,1fr) auto; min-height:0; overflow:hidden; border:1px solid var(--terminal-shell-border,#29383a); border-radius:var(--terminal-shell-radius,12px); background:var(--terminal-shell-background,#0b1214); box-shadow:var(--terminal-shell-shadow); }
-.host-terminal.is-fullscreen { position:fixed; z-index:6000; inset:0; width:100vw; height:100dvh; min-height:0; border:0; border-radius:0; }
 .host-terminal__screen { position:relative; min-width:0; min-height:0; overflow:hidden; overscroll-behavior:contain; padding:10px 7px; }
-.host-terminal__toolbar { position:absolute; z-index:4; top:9px; right:10px; }
 .host-terminal__screen :deep(.xterm) { height:100%; }
 .host-terminal__screen :deep(.xterm-viewport) { overflow-y:scroll !important; overscroll-behavior:contain; }
 .host-terminal__composer { position:relative; z-index:2; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:9px 10px; border-top:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }

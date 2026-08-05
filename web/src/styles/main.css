@@ -4724,7 +4724,7 @@ body.terminal-fullscreen-open {
   overflow: hidden;
 }
 
-/* Modal effects create containing blocks that otherwise clip fixed terminal fullscreen. */
+/* Modal effects create containing blocks that otherwise clip webpage-filling terminals. */
 body.terminal-fullscreen-open .modal-backdrop {
   backdrop-filter: none;
 }
