@@ -1107,12 +1107,12 @@ describe('API client', () => {
       containers: [],
       storage: {
         enabled: true,
-        retentionDays: 7,
+        retentionDays: 30,
         hostIntervalSeconds: 60,
         containerIntervalSeconds: 300,
         maxContainers: 32,
         storageBytes: 0,
-        maxStorageBytes: 33554432,
+        maxStorageBytes: 134217728,
         lastContainerTotal: 0,
         lastContainerRecorded: 0,
         lastContainerFailed: 0,
@@ -1129,6 +1129,10 @@ describe('API client', () => {
     await expect(api.monitoring.history('7d')).resolves.toMatchObject({ range: '7d' })
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/monitoring/history?range=7d')
     expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('GET')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ range: '30d' }))
+    await expect(api.monitoring.history('30d')).resolves.toMatchObject({ range: '30d' })
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/monitoring/history?range=30d')
   })
 
   it('normalizes null and legacy null-item list responses', () => {

@@ -36,6 +36,7 @@ const ranges: Array<{ value: MonitoringRange; label: string }> = [
   { value: '6h', label: '6 小时' },
   { value: '24h', label: '24 小时' },
   { value: '7d', label: '7 天' },
+  { value: '30d', label: '30 天' },
 ]
 const operatorLabels: Record<MonitoringOperatorLatencySeries['operator'], string> = {
   telecom: '电信', unicom: '联通', mobile: '移动',

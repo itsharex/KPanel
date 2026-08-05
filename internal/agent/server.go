@@ -589,7 +589,7 @@ func (s *Server) monitoringHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	rangeValue := values.Get("range")
 	switch rangeValue {
-	case "", "1h", "6h", "24h", "7d":
+	case "", "1h", "6h", "24h", "7d", "30d":
 	default:
 		writeProblem(w, requestID, http.StatusUnprocessableEntity, "invalid_monitoring_range", "监控时间范围无效", "")
 		return

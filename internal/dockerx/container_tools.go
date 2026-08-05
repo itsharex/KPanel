@@ -25,17 +25,21 @@ const (
 var containerEnvNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 
 type ContainerStats struct {
-	ContainerID   string    `json:"containerId"`
-	CPUPercent    float64   `json:"cpuPercent"`
-	MemoryBytes   uint64    `json:"memoryBytes"`
-	MemoryLimit   uint64    `json:"memoryLimitBytes"`
-	MemoryPercent float64   `json:"memoryPercent"`
-	NetworkRx     uint64    `json:"networkRxBytes"`
-	NetworkTx     uint64    `json:"networkTxBytes"`
-	BlockRead     uint64    `json:"blockReadBytes"`
-	BlockWrite    uint64    `json:"blockWriteBytes"`
-	PIDs          uint64    `json:"pids"`
-	CollectedAt   time.Time `json:"collectedAt"`
+	ContainerID          string    `json:"containerId"`
+	CPUPercent           float64   `json:"cpuPercent"`
+	CPUTotalUsage        uint64    `json:"-"`
+	SystemCPUUsage       uint64    `json:"-"`
+	CPUOnlineCPUs        uint64    `json:"-"`
+	CPUCountersAvailable bool      `json:"-"`
+	MemoryBytes          uint64    `json:"memoryBytes"`
+	MemoryLimit          uint64    `json:"memoryLimitBytes"`
+	MemoryPercent        float64   `json:"memoryPercent"`
+	NetworkRx            uint64    `json:"networkRxBytes"`
+	NetworkTx            uint64    `json:"networkTxBytes"`
+	BlockRead            uint64    `json:"blockReadBytes"`
+	BlockWrite           uint64    `json:"blockWriteBytes"`
+	PIDs                 uint64    `json:"pids"`
+	CollectedAt          time.Time `json:"collectedAt"`
 }
 
 type ContainerMetricSample struct {
@@ -91,10 +95,10 @@ func (c *Client) ContainerStats(ctx context.Context, id string) (ContainerStats,
 	if _, err := c.inspect(ctx, id); err != nil {
 		return ContainerStats{}, err
 	}
-	return c.containerStats(ctx, id)
+	return c.containerStats(ctx, id, false)
 }
 
-func (c *Client) containerStats(ctx context.Context, id string) (ContainerStats, error) {
+func (c *Client) containerStats(ctx context.Context, id string, oneShot bool) (ContainerStats, error) {
 	var raw struct {
 		CPUStats struct {
 			CPUUsage struct {
@@ -133,7 +137,10 @@ func (c *Client) containerStats(ctx context.Context, id string) (ContainerStats,
 			Current uint64 `json:"current"`
 		} `json:"pids_stats"`
 	}
-	query := url.Values{"stream": {"false"}, "one-shot": {"true"}}
+	query := url.Values{
+		"stream":   {"false"},
+		"one-shot": {fmt.Sprintf("%t", oneShot)},
+	}
 	if err := c.getJSON(ctx, "/containers/"+id+"/stats?"+query.Encode(), &raw); err != nil {
 		return ContainerStats{}, err
 	}
@@ -168,7 +175,11 @@ func (c *Client) containerStats(ctx context.Context, id string) (ContainerStats,
 		memoryPercent = float64(memory) / float64(raw.MemoryStats.Limit) * 100
 	}
 	result := ContainerStats{
-		ContainerID: id, CPUPercent: cpuPercent, MemoryBytes: memory,
+		ContainerID: id, CPUPercent: cpuPercent,
+		CPUTotalUsage:  raw.CPUStats.CPUUsage.TotalUsage,
+		SystemCPUUsage: raw.CPUStats.SystemCPUUsage,
+		CPUOnlineCPUs:  onlineCPUs, CPUCountersAvailable: onlineCPUs > 0,
+		MemoryBytes: memory,
 		MemoryLimit: raw.MemoryStats.Limit, MemoryPercent: memoryPercent,
 		PIDs: raw.PidsStats.Current, CollectedAt: c.now().UTC(),
 	}
@@ -236,7 +247,7 @@ func (c *Client) RunningContainerStats(
 			defer group.Done()
 			for index := range indexes {
 				item := running[index]
-				stats, err := c.containerStats(ctx, item.ID)
+				stats, err := c.containerStats(ctx, item.ID, true)
 				if err != nil {
 					continue
 				}

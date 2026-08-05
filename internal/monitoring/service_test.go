@@ -147,6 +147,8 @@ func TestSampleAndHistoryPersistBoundedHostAndContainerMetrics(t *testing.T) {
 		t.Fatalf("unexpected container history: %#v", history.Containers)
 	}
 	if history.Storage.StorageBytes <= 0 || history.Storage.LastContainerRecorded != 1 ||
+		history.Storage.RetentionDays != defaultRetentionDays ||
+		history.Storage.MaxStorageBytes != defaultMaxStorageBytes ||
 		docker.calls != 2 {
 		t.Fatalf("unexpected storage status: %#v calls=%d", history.Storage, docker.calls)
 	}
@@ -156,6 +158,90 @@ func TestSampleAndHistoryPersistBoundedHostAndContainerMetrics(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("history shard permissions = %o", info.Mode().Perm())
+	}
+}
+
+func TestContainerHistoryCPUUsesIntervalCounters(t *testing.T) {
+	current := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	system := &fakeSystemSource{summary: testSummary(1_000, 2_000)}
+	docker := &fakeDockerSource{batch: dockerx.ContainerMetricBatch{
+		Total: 1,
+		Items: []dockerx.ContainerMetricSample{{
+			Name: "web", Image: "nginx:latest",
+			ContainerStats: dockerx.ContainerStats{
+				ContainerID: strings.Repeat("a", 64), CPUPercent: 99,
+				CPUTotalUsage: 1_000, SystemCPUUsage: 10_000,
+				CPUOnlineCPUs: 2, CPUCountersAvailable: true,
+			},
+		}},
+	}}
+	service, err := New(Config{
+		StateDir: t.TempDir(), System: system, Docker: docker,
+		Now: func() time.Time { return current }, ContainerInterval: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	current = current.Add(time.Minute)
+	docker.batch.Items[0].CPUTotalUsage = 1_250
+	docker.batch.Items[0].SystemCPUUsage = 11_000
+	if err := service.Sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	history, err := service.History(context.Background(), "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Containers) != 1 || len(history.Containers[0].Points) != 2 {
+		t.Fatalf("unexpected container history: %#v", history.Containers)
+	}
+	points := history.Containers[0].Points
+	if points[0].CPUPercent != 0 || points[1].CPUPercent != 50 {
+		t.Fatalf("container CPU history = %#v, want first baseline 0 then interval 50%%", points)
+	}
+}
+
+func TestContainerHistoryCPUResetsInvalidCounters(t *testing.T) {
+	previous := containerCPUCounter{
+		totalUsage: 2_000, systemUsage: 20_000, onlineCPUs: 2, available: true,
+	}
+	multiCore := containerCPUCounter{
+		totalUsage: 3_000, systemUsage: 21_000, onlineCPUs: 4, available: true,
+	}
+	if got := containerCPUPercent(previous, multiCore); got != 400 {
+		t.Fatalf("multi-core CPU = %f, want Docker-compatible 400%%", got)
+	}
+	reset := containerCPUCounter{
+		totalUsage: 100, systemUsage: 21_000, onlineCPUs: 2, available: true,
+	}
+	if got := containerCPUPercent(previous, reset); got != 0 {
+		t.Fatalf("CPU after counter reset = %f, want 0", got)
+	}
+	if got := containerCPUPercent(previous, containerCPUCounter{}); got != 0 {
+		t.Fatalf("CPU without counters = %f, want 0", got)
+	}
+}
+
+func TestContainerHistoryCPUResetsBaselineAfterCollectionFailure(t *testing.T) {
+	service := &Service{containerCPU: make(map[string]containerCPUCounter)}
+	id := strings.Repeat("b", 64)
+	first := dockerx.ContainerMetricSample{ContainerStats: dockerx.ContainerStats{
+		ContainerID: id, CPUTotalUsage: 1_000, SystemCPUUsage: 10_000,
+		CPUOnlineCPUs: 2, CPUCountersAvailable: true,
+	}}
+	second := first
+	second.CPUTotalUsage = 1_250
+	second.SystemCPUUsage = 11_000
+	if got := service.containerCPUPercentages([]dockerx.ContainerMetricSample{first})[0]; got != 0 {
+		t.Fatalf("first CPU sample = %f, want 0", got)
+	}
+	service.resetContainerCPU()
+	if got := service.containerCPUPercentages([]dockerx.ContainerMetricSample{second})[0]; got != 0 {
+		t.Fatalf("CPU after failed collection reset = %f, want 0", got)
 	}
 }
 
@@ -349,18 +435,21 @@ func TestHistorySkipsCorruptRecordsAndRejectsUnknownRange(t *testing.T) {
 	if history.SkippedLines != 1 || len(history.Host) != 0 {
 		t.Fatalf("corrupt history result = %#v", history)
 	}
-	if _, err := service.History(context.Background(), "30d"); !errors.Is(err, ErrInvalidRange) {
+	if _, err := service.History(context.Background(), "31d"); !errors.Is(err, ErrInvalidRange) {
 		t.Fatalf("unknown range error = %v", err)
 	}
 }
 
-func TestPruneRemovesExpiredShardButPreservesUnrelatedFiles(t *testing.T) {
+func TestPruneKeepsThirtyDaysAndRemovesExpiredShard(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	dir := t.TempDir()
-	oldShard := filepath.Join(dir, "metrics-2026-07-20.jsonl")
+	retainedShard := filepath.Join(dir, "metrics-2026-07-01.jsonl")
+	oldShard := filepath.Join(dir, "metrics-2026-06-30.jsonl")
 	unrelated := filepath.Join(dir, "keep.txt")
-	if err := os.WriteFile(oldShard, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
+	for _, path := range []string{retainedShard, oldShard} {
+		if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(unrelated, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
@@ -374,6 +463,9 @@ func TestPruneRemovesExpiredShardButPreservesUnrelatedFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(oldShard); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expired shard remains: %v", err)
+	}
+	if _, err := os.Stat(retainedShard); err != nil {
+		t.Fatalf("shard inside 30-day retention was removed: %v", err)
 	}
 	if _, err := os.Stat(unrelated); err != nil {
 		t.Fatalf("unrelated file was removed: %v", err)
@@ -453,6 +545,13 @@ func TestCompactRecordFitsDailyStorageBudgetAtMaximumContainerCount(t *testing.T
 			projectedDailyBytes, len(hostData), len(fullData), defaultMaxDailyBytes,
 		)
 	}
+	projectedRetentionBytes := projectedDailyBytes * (defaultRetentionDays + 1)
+	if projectedRetentionBytes >= defaultMaxStorageBytes {
+		t.Fatalf(
+			"maximum retention projection = %d bytes, budget=%d",
+			projectedRetentionBytes, defaultMaxStorageBytes,
+		)
+	}
 }
 
 func TestBucketAggregationKeepsResourcePeaksAndLatestCounters(t *testing.T) {
@@ -507,29 +606,30 @@ func TestBucketAggregationKeepsResourcePeaksAndLatestCounters(t *testing.T) {
 	}
 }
 
-func TestMaximumSevenDayResponseFitsPanelAgentLimit(t *testing.T) {
+func TestMaximumThirtyDayResponseFitsPanelAgentLimit(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	const pointCount = 30*12 + 1
 	history := contract.MonitoringHistory{
-		Range: "7d", StartedAt: now.Add(-7 * 24 * time.Hour), EndedAt: now,
-		BucketSeconds:   int((30 * time.Minute).Seconds()),
-		Host:            make([]contract.MonitoringHostPoint, 7*24*2),
+		Range: "30d", StartedAt: now.Add(-30 * 24 * time.Hour), EndedAt: now,
+		BucketSeconds:   int((2 * time.Hour).Seconds()),
+		Host:            make([]contract.MonitoringHostPoint, pointCount),
 		Containers:      make([]contract.MonitoringContainerSeries, maxHistorySeries),
 		OperatorLatency: operatorLatencyCatalog(),
 	}
 	for seriesIndex := range history.OperatorLatency {
 		series := &history.OperatorLatency[seriesIndex]
-		series.Points = make([]contract.MonitoringOperatorLatencyPoint, 7*24*2)
+		series.Points = make([]contract.MonitoringOperatorLatencyPoint, pointCount)
 		for pointIndex := range series.Points {
 			value := 999.9
 			series.Points[pointIndex] = contract.MonitoringOperatorLatencyPoint{
-				CollectedAt:         now.Add(-time.Duration(pointIndex) * 30 * time.Minute),
+				CollectedAt:         now.Add(-time.Duration(pointIndex) * 2 * time.Hour),
 				LatencyMilliseconds: &value,
 			}
 		}
 	}
 	for index := range history.Host {
 		history.Host[index] = contract.MonitoringHostPoint{
-			CollectedAt: now.Add(-time.Duration(index) * 30 * time.Minute),
+			CollectedAt: now.Add(-time.Duration(index) * 2 * time.Hour),
 			CPUPercent:  100, CPUCores: 64, MemoryUsedBytes: 1 << 40,
 			MemoryTotalBytes: 2 << 40, DiskUsedBytes: 1 << 40, DiskTotalBytes: 2 << 40,
 			NetworkRxBytes: 1 << 50, NetworkTxBytes: 1 << 50,
@@ -541,10 +641,10 @@ func TestMaximumSevenDayResponseFitsPanelAgentLimit(t *testing.T) {
 		series.ContainerID = strings.Repeat("a", 64)
 		series.Name = "container-name-1234567890"
 		series.Image = "registry.example.test/namespace/application:latest"
-		series.Points = make([]contract.MonitoringContainerPoint, 7*24*2)
+		series.Points = make([]contract.MonitoringContainerPoint, pointCount)
 		for pointIndex := range series.Points {
 			series.Points[pointIndex] = contract.MonitoringContainerPoint{
-				CollectedAt: now.Add(-time.Duration(pointIndex) * 30 * time.Minute),
+				CollectedAt: now.Add(-time.Duration(pointIndex) * 2 * time.Hour),
 				CPUPercent:  100, MemoryBytes: 1 << 40, MemoryLimitBytes: 2 << 40,
 				MemoryPercent: 50, NetworkRxBytes: 1 << 50, NetworkTxBytes: 1 << 50,
 				NetworkRxRate: 1 << 30, NetworkTxRate: 1 << 30,
@@ -557,13 +657,44 @@ func TestMaximumSevenDayResponseFitsPanelAgentLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	const panelAgentResponseLimit = 8 << 20
-	t.Logf("maximum seven-day response=%d bytes", len(data))
+	t.Logf("maximum thirty-day response=%d bytes", len(data))
 	if len(data) >= panelAgentResponseLimit {
 		t.Fatalf("maximum history response = %d bytes, limit=%d", len(data), panelAgentResponseLimit)
 	}
 }
 
-func BenchmarkHistorySevenDays(b *testing.B) {
+func TestThirtyDayHistoryUsesExclusiveQueryCapacity(t *testing.T) {
+	service, err := New(Config{
+		StateDir: t.TempDir(),
+		System:   fakeSystemSource{summary: testSummary(0, 0)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.querySlots <- struct{}{}
+	if _, err := service.History(context.Background(), "30d"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("30-day query with occupied capacity error = %v, want busy", err)
+	}
+	if len(service.querySlots) != 1 {
+		t.Fatalf("failed 30-day query leaked capacity: %d", len(service.querySlots))
+	}
+	if _, err := service.History(context.Background(), "7d"); err != nil {
+		t.Fatalf("short query did not use remaining capacity: %v", err)
+	}
+	<-service.querySlots
+}
+
+func TestThirtyDayRangeUsesBoundedTwoHourBuckets(t *testing.T) {
+	spec, err := parseRange("30d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.duration != 30*24*time.Hour || spec.bucket != 2*time.Hour || spec.querySlots != 2 {
+		t.Fatalf("unexpected 30-day range: %#v", spec)
+	}
+}
+
+func BenchmarkHistoryThirtyDays(b *testing.B) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	service, err := New(Config{
 		StateDir: b.TempDir(),
@@ -573,7 +704,7 @@ func BenchmarkHistorySevenDays(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	for index := 0; index < 7*24*60; index++ {
+	for index := 0; index < 30*24*60; index++ {
 		at := now.Add(-time.Duration(index) * time.Minute)
 		record := diskRecord{Version: recordVersion, CollectedAt: at, Host: hostPoint(testSummary(uint64(index), uint64(index)), at)}
 		if err := service.appendRecord(record); err != nil {
@@ -582,7 +713,7 @@ func BenchmarkHistorySevenDays(b *testing.B) {
 	}
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		if _, err := service.History(context.Background(), "7d"); err != nil {
+		if _, err := service.History(context.Background(), "30d"); err != nil {
 			b.Fatal(err)
 		}
 	}

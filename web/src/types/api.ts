@@ -842,7 +842,7 @@ export interface DockerContainerStats {
   collectedAt: string
 }
 
-export type MonitoringRange = '1h' | '6h' | '24h' | '7d'
+export type MonitoringRange = '1h' | '6h' | '24h' | '7d' | '30d'
 
 export interface MonitoringHostPoint {
   collectedAt: string

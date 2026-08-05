@@ -5,6 +5,7 @@ export default [
   ["1 分钟负载占核", "1 minute load core"],
   ["1 小时", "1 hour"],
   ["24 小时", "24 hours"],
+  ["30 天", "30 days"],
   ["6 小时", "6 hours"],
   ["7 天", "7 days"],
   ["保留", "Reservations"],

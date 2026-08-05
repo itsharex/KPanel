@@ -21,14 +21,14 @@ import (
 
 const (
 	recordVersion           = 1
-	defaultRetentionDays    = 7
+	defaultRetentionDays    = 30
 	defaultMaxContainers    = 32
 	defaultMaxContainerJobs = 2
 	defaultHostInterval     = time.Minute
 	defaultContainerEvery   = 5 * time.Minute
 	defaultSampleTimeout    = 30 * time.Second
 	defaultMaxDailyBytes    = int64(4 << 20)
-	defaultMaxStorageBytes  = int64(32 << 20)
+	defaultMaxStorageBytes  = int64(128 << 20)
 	maxHistoryLineBytes     = 256 << 10
 	maxHistorySeries        = 32
 	maxScannedSeries        = 64
@@ -85,6 +85,14 @@ type Service struct {
 	status                contract.MonitoringStorageStatus
 	nextContainerAt       time.Time
 	nextOperatorLatencyAt time.Time
+	containerCPU          map[string]containerCPUCounter
+}
+
+type containerCPUCounter struct {
+	totalUsage  uint64
+	systemUsage uint64
+	onlineCPUs  uint64
+	available   bool
 }
 
 type diskRecord struct {
@@ -206,7 +214,7 @@ func New(config Config) (*Service, error) {
 		operatorLatencyInterval: config.OperatorLatencyInterval,
 		retentionDays:           config.RetentionDays, maxContainers: config.MaxContainers,
 		maxDailyBytes: config.MaxDailyBytes, maxStorageBytes: config.MaxStorageBytes,
-		querySlots: make(chan struct{}, 2),
+		querySlots: make(chan struct{}, 2), containerCPU: make(map[string]containerCPUCounter),
 	}
 	service.status = service.baseStatus()
 	bytes, limitReached, _ := service.prune(config.Now().UTC())
@@ -288,16 +296,18 @@ func (s *Service) Sample(ctx context.Context) error {
 		cancel()
 		if err != nil {
 			dockerErr = err
+			s.resetContainerCPU()
 		} else {
 			record.DockerAvailable = true
 			record.ContainerTotal = batch.Total
 			record.ContainerFailed = batch.Failed
 			record.ContainerTruncated = batch.Truncated
 			record.Containers = make([]diskContainerPoint, 0, len(batch.Items))
-			for _, item := range batch.Items {
+			cpuPercentages := s.containerCPUPercentages(batch.Items)
+			for index, item := range batch.Items {
 				record.Containers = append(record.Containers, diskContainerPoint{
 					ID: item.ContainerID, Name: boundedText(item.Name, 128),
-					Image: boundedText(item.Image, 256), CPUPercent: item.CPUPercent,
+					Image: boundedText(item.Image, 256), CPUPercent: cpuPercentages[index],
 					MemoryBytes: item.MemoryBytes, MemoryLimitBytes: item.MemoryLimit,
 					MemoryPercent: item.MemoryPercent, NetworkRxBytes: item.NetworkRx,
 					NetworkTxBytes: item.NetworkTx, BlockReadBytes: item.BlockRead,
@@ -356,6 +366,49 @@ func (s *Service) Sample(ctx context.Context) error {
 	s.status = status
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *Service) containerCPUPercentages(items []dockerx.ContainerMetricSample) []float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	percentages := make([]float64, len(items))
+	next := make(map[string]containerCPUCounter, len(items))
+	for index, item := range items {
+		current := containerCPUCounter{
+			totalUsage: item.CPUTotalUsage, systemUsage: item.SystemCPUUsage,
+			onlineCPUs: item.CPUOnlineCPUs, available: item.CPUCountersAvailable,
+		}
+		if !current.available {
+			percentages[index] = item.CPUPercent
+			continue
+		}
+		if previous, ok := s.containerCPU[item.ContainerID]; ok {
+			percentages[index] = containerCPUPercent(previous, current)
+		}
+		next[item.ContainerID] = current
+	}
+	s.containerCPU = next
+	return percentages
+}
+
+func (s *Service) resetContainerCPU() {
+	s.mu.Lock()
+	s.containerCPU = make(map[string]containerCPUCounter)
+	s.mu.Unlock()
+}
+
+func containerCPUPercent(previous containerCPUCounter, current containerCPUCounter) float64 {
+	if !previous.available || !current.available || current.onlineCPUs == 0 ||
+		current.totalUsage < previous.totalUsage || current.systemUsage <= previous.systemUsage {
+		return 0
+	}
+	cpuDelta := current.totalUsage - previous.totalUsage
+	if cpuDelta == 0 {
+		return 0
+	}
+	systemDelta := current.systemUsage - previous.systemUsage
+	return float64(cpuDelta) / float64(systemDelta) * float64(current.onlineCPUs) * 100
 }
 
 func hostPoint(summary contract.SystemSummary, _ time.Time) diskHostPoint {
@@ -477,7 +530,10 @@ func (s *Service) prune(now time.Time) (int64, bool, error) {
 		date time.Time
 		size int64
 	}
-	cutoffDate := midnightUTC(now).AddDate(0, 0, -(s.retentionDays - 1))
+	// Keep the boundary day's shard so a rolling N-day query remains complete
+	// regardless of the current time of day. The directory byte limit still
+	// bounds the additional partial shard.
+	cutoffDate := midnightUTC(now.AddDate(0, 0, -s.retentionDays))
 	shards := make([]shard, 0, len(entries))
 	var total int64
 	for _, entry := range entries {
@@ -526,21 +582,24 @@ func midnightUTC(value time.Time) time.Time {
 }
 
 type rangeSpec struct {
-	name     string
-	duration time.Duration
-	bucket   time.Duration
+	name       string
+	duration   time.Duration
+	bucket     time.Duration
+	querySlots int
 }
 
 func parseRange(value string) (rangeSpec, error) {
 	switch value {
 	case "", "24h":
-		return rangeSpec{name: "24h", duration: 24 * time.Hour, bucket: 2 * time.Minute}, nil
+		return rangeSpec{name: "24h", duration: 24 * time.Hour, bucket: 2 * time.Minute, querySlots: 1}, nil
 	case "1h":
-		return rangeSpec{name: "1h", duration: time.Hour, bucket: time.Minute}, nil
+		return rangeSpec{name: "1h", duration: time.Hour, bucket: time.Minute, querySlots: 1}, nil
 	case "6h":
-		return rangeSpec{name: "6h", duration: 6 * time.Hour, bucket: time.Minute}, nil
+		return rangeSpec{name: "6h", duration: 6 * time.Hour, bucket: time.Minute, querySlots: 1}, nil
 	case "7d":
-		return rangeSpec{name: "7d", duration: 7 * 24 * time.Hour, bucket: 30 * time.Minute}, nil
+		return rangeSpec{name: "7d", duration: 7 * 24 * time.Hour, bucket: 30 * time.Minute, querySlots: 1}, nil
+	case "30d":
+		return rangeSpec{name: "30d", duration: 30 * 24 * time.Hour, bucket: 2 * time.Hour, querySlots: 2}, nil
 	default:
 		return rangeSpec{}, ErrInvalidRange
 	}
@@ -551,12 +610,10 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 	if err != nil {
 		return contract.MonitoringHistory{}, err
 	}
-	select {
-	case s.querySlots <- struct{}{}:
-		defer func() { <-s.querySlots }()
-	default:
+	if !s.acquireQuerySlots(spec.querySlots) {
 		return contract.MonitoringHistory{}, ErrBusy
 	}
+	defer s.releaseQuerySlots(spec.querySlots)
 	now := s.now().UTC()
 	start := now.Add(-spec.duration)
 	result := contract.MonitoringHistory{
@@ -652,6 +709,31 @@ func (s *Service) History(ctx context.Context, requestedRange string) (contract.
 	}
 	result.Containers = series
 	return result, nil
+}
+
+func (s *Service) acquireQuerySlots(count int) bool {
+	if count < 1 || count > cap(s.querySlots) {
+		return false
+	}
+	acquired := 0
+	for acquired < count {
+		select {
+		case s.querySlots <- struct{}{}:
+			acquired++
+		default:
+			for range acquired {
+				<-s.querySlots
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) releaseQuerySlots(count int) {
+	for range count {
+		<-s.querySlots
+	}
 }
 
 func (s *Service) Status() contract.MonitoringStorageStatus {

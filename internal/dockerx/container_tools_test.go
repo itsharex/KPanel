@@ -16,7 +16,7 @@ func TestContainerStatsReturnsBoundedSingleSample(t *testing.T) {
 		case "/containers/" + id + "/json":
 			_ = json.NewEncoder(response).Encode(managedInspect(id, "2026-01-01T00:00:00Z", 0))
 		case "/containers/" + id + "/stats":
-			if request.URL.Query().Get("stream") != "false" || request.URL.Query().Get("one-shot") != "true" {
+			if request.URL.Query().Get("stream") != "false" || request.URL.Query().Get("one-shot") != "false" {
 				t.Fatalf("unexpected stats query: %s", request.URL.RawQuery)
 			}
 			_, _ = response.Write([]byte(`{
@@ -38,10 +38,21 @@ func TestContainerStatsReturnsBoundedSingleSample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.CPUPercent != 20 || stats.MemoryBytes != 900 || stats.MemoryPercent != 45 ||
+	if stats.CPUPercent != 20 || !stats.CPUCountersAvailable ||
+		stats.CPUTotalUsage != 300 || stats.SystemCPUUsage != 3000 || stats.CPUOnlineCPUs != 2 ||
+		stats.MemoryBytes != 900 || stats.MemoryPercent != 45 ||
 		stats.NetworkRx != 11 || stats.NetworkTx != 13 ||
 		stats.BlockRead != 17 || stats.BlockWrite != 19 || stats.PIDs != 7 {
 		t.Fatalf("unexpected container stats: %#v", stats)
+	}
+	encoded, err := json.Marshal(stats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, internalField := range []string{"CPUTotalUsage", "SystemCPUUsage", "CPUOnlineCPUs", "CPUCountersAvailable"} {
+		if strings.Contains(string(encoded), internalField) {
+			t.Fatalf("internal CPU counter %q leaked into API response: %s", internalField, encoded)
+		}
 	}
 }
 
@@ -93,6 +104,9 @@ func TestRunningContainerStatsUsesOneListWithoutInspectAndBoundsWork(t *testing.
 			statsCalls++
 			if strings.HasSuffix(request.URL.Path, "/json") {
 				t.Fatal("bulk monitoring performed a container inspect")
+			}
+			if request.URL.Query().Get("stream") != "false" || request.URL.Query().Get("one-shot") != "true" {
+				t.Fatalf("unexpected bulk stats query: %s", request.URL.RawQuery)
 			}
 			_, _ = response.Write([]byte(`{
 				"cpu_stats":{"cpu_usage":{"total_usage":300},"system_cpu_usage":3000,"online_cpus":2},

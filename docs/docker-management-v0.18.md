@@ -15,7 +15,7 @@ KPanel 0.18 把原“Docker 工具箱”拆为环境、容器、镜像、网络�
 | 环境 | 备份/还原/迁移 | 后台归档 `/home/docker` 到 `/home/docker/.kpanel-backups`；还原拒绝同名项目覆盖，迁移只用既有 SSH 密钥与 known_hosts |
 | 环境 | 卸载 | 显示明确入口和影响，但交回 `k docker`/SSH；网页不能在销毁自身运行环境后继续核验或回滚 |
 | 容器 | 创建、启动、停止、重启、删除 | 结构化创建端口、卷、环境变量和启动参数；脚本和 Web 都从 Docker Engine 立即发现相同容器 |
-| 容器 | 进入、日志、占用 | 归属明确且安全配置通过的容器开放有界日志和单次控制台；性能使用 Docker one-shot stats |
+| 容器 | 进入、日志、占用 | 归属明确且安全配置通过的容器开放有界日志和单次控制台；性能详情使用 Docker 双周期 CPU stats，批量历史采样使用 one-shot 累计计数并在相邻轮次间计算 |
 | 容器 | 允许/阻止 IP+端口 | 使用脚本相同的 `DOCKER-USER` TCP/UDP ACCEPT/DROP 规则形态和 `/etc/iptables/rules.v4` |
 | 镜像 | 获取、更新、删除 | 拉取同一 tag 即更新；单个删除和未使用镜像清理均为后台任务 |
 | 网络 | 创建、加入、退出、删除 | 直接写 Docker Engine；系统网络和 KPanel 网络受保护 |

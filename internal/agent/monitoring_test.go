@@ -40,7 +40,7 @@ func TestMonitoringHistoryRequiresAuthAndStrictRange(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		"/v1/monitoring/history?range=30d",
+		"/v1/monitoring/history?range=31d",
 		"/v1/monitoring/history?range=6h&range=24h",
 		"/v1/monitoring/history?range=6h&unknown=1",
 	} {
@@ -59,6 +59,14 @@ func TestMonitoringHistoryRequiresAuthAndStrictRange(t *testing.T) {
 	server.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || provider.rangeValue != "6h" {
 		t.Fatalf("history status=%d range=%q body=%s", response.Code, provider.rangeValue, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/v1/monitoring/history?range=30d", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || provider.rangeValue != "30d" {
+		t.Fatalf("30-day history status=%d range=%q body=%s", response.Code, provider.rangeValue, response.Body.String())
 	}
 }
 
