@@ -1,0 +1,445 @@
+/* Desktop mode (Windows-style overlay).
+   Imported by main.css. Rendered on top of the classic app shell so switching
+   modes is instant and reversible. */
+
+.desktop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--bg);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Wallpaper ---------------------------------------------------------------- */
+
+.desktop__wallpaper {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 82% 8%, color-mix(in srgb, var(--brand-soft) 60%, transparent), transparent 42%),
+    radial-gradient(110% 95% at 12% 88%, color-mix(in srgb, var(--violet) 22%, transparent), transparent 46%),
+    linear-gradient(160deg, var(--sidebar) 0%, var(--bg) 74%);
+}
+
+.desktop__aurora {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(72px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.desktop__aurora--one {
+  width: 46vw;
+  height: 46vw;
+  left: -8vw;
+  top: -12vw;
+  background: color-mix(in srgb, var(--brand) 30%, transparent);
+}
+
+.desktop__aurora--two {
+  width: 52vw;
+  height: 52vw;
+  right: -12vw;
+  bottom: -18vw;
+  background: color-mix(in srgb, var(--blue) 22%, transparent);
+}
+
+.desktop__aurora--three {
+  width: 30vw;
+  height: 30vw;
+  right: 30vw;
+  top: 40vh;
+  background: color-mix(in srgb, var(--violet) 16%, transparent);
+}
+
+/* Top bar (classic-mode switch) ------------------------------------------- */
+
+.desktop__topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: flex-end;
+  padding: 14px 16px;
+  pointer-events: none;
+}
+
+.desktop__mode-switch {
+  pointer-events: auto;
+}
+
+.desktop__classic-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  color: color-mix(in srgb, var(--text) 84%, transparent);
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 999px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  font-size: 12.5px;
+  transition: background 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
+}
+
+.desktop__classic-button:hover {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+/* Icon grid ---------------------------------------------------------------- */
+
+.desktop__icons {
+  position: relative;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 14px;
+  align-content: start;
+  padding: 72px 28px 88px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.desktop__icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 8px 11px;
+  color: color-mix(in srgb, var(--text) 90%, transparent);
+  background: transparent;
+  border: 0;
+  border-radius: 14px;
+  cursor: default;
+  transition: background 0.14s ease, transform 0.14s ease;
+}
+
+.desktop__icon:hover {
+  background: color-mix(in srgb, var(--surface) 46%, transparent);
+}
+
+.desktop__icon:active {
+  transform: scale(0.96);
+}
+
+.desktop__icon-glyph {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  color: color-mix(in srgb, var(--brand) 92%, white 4%);
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 18px;
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.desktop__icon-label {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.25;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 28%);
+}
+
+/* Window ------------------------------------------------------------------- */
+
+.desktop-window {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 420px;
+  min-height: 280px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 22px 60px rgb(0 0 0 / 30%), 0 6px 18px rgb(0 0 0 / 16%);
+  opacity: 0;
+  transform: scale(0.94) translateY(10px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  will-change: transform, opacity;
+}
+
+.desktop-window--open {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
+.desktop-window--focused {
+  border-color: color-mix(in srgb, var(--brand) 52%, var(--border-strong));
+  box-shadow: 0 26px 66px rgb(0 0 0 / 34%), 0 0 0 1px color-mix(in srgb, var(--brand) 14%, transparent);
+}
+
+.desktop-window--maximized {
+  inset: 8px 8px 56px;
+  border-radius: 12px;
+  transition: none;
+}
+
+.desktop-window--minimized {
+  opacity: 0;
+  transform: translateY(60px) scale(0.9);
+  pointer-events: none;
+}
+
+.desktop-window--closing {
+  opacity: 0;
+  transform: scale(0.92) translateY(14px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.desktop-window__titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 8px 0 13px;
+  color: var(--text-soft);
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.desktop-window__titlebar:active {
+  cursor: grabbing;
+}
+
+.desktop-window__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.desktop-window__title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-window__actions {
+  display: flex;
+  gap: 2px;
+}
+
+.desktop-window__action {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.desktop-window__action:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.desktop-window__action--close:hover {
+  color: #fff;
+  background: var(--danger);
+}
+
+.desktop-window__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 0 0 12px 12px;
+}
+
+.desktop-window__body :deep(.page-content),
+.desktop-window__body :deep(.app-shell__main) {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Resize handles ----------------------------------------------------------- */
+
+.desktop-window__resize {
+  position: absolute;
+  z-index: 5;
+  touch-action: none;
+}
+
+.desktop-window__resize--n { top: 0; left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.desktop-window__resize--s { bottom: 0; left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.desktop-window__resize--e { top: 10px; bottom: 10px; right: 0; width: 6px; cursor: ew-resize; }
+.desktop-window__resize--w { top: 10px; bottom: 10px; left: 0; width: 6px; cursor: ew-resize; }
+.desktop-window__resize--ne { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.desktop-window__resize--nw { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.desktop-window__resize--se { bottom: 0; right: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.desktop-window__resize--sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+
+/* Taskbar ------------------------------------------------------------------ */
+
+.desktop__taskbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  padding: 0 12px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.desktop__taskbar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 180px;
+  padding: 6px 11px;
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.desktop__taskbar-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop__taskbar-item:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.desktop__taskbar-item--active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+}
+
+.desktop__taskbar-item--minimized {
+  color: var(--muted);
+}
+
+/* Context menu ------------------------------------------------------------- */
+
+.desktop__context-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 6px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.desktop__context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.desktop__context-menu button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--brand) 13%, transparent);
+}
+
+.desktop__context-separator {
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--border);
+}
+
+.desktop-menu-enter-active,
+.desktop-menu-leave-active {
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.desktop-menu-enter-from,
+.desktop-menu-leave-to {
+  opacity: 0;
+  transform: scale(0.96) translateY(-4px);
+}
+
+/* Mobile: icons flow naturally, taskbar stays on-screen, top switch shrinks. */
+
+@media (max-width: 680px) {
+  .desktop__icons {
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 8px;
+    padding: 68px 12px 84px;
+  }
+
+  .desktop__icon-glyph {
+    width: 52px;
+    height: 52px;
+  }
+
+  .desktop__classic-button span {
+    display: none;
+  }
+
+  .desktop__classic-button {
+    padding: 8px 10px;
+  }
+
+  .desktop-window {
+    min-width: 320px;
+    min-height: 220px;
+  }
+
+  .desktop-window--maximized {
+    inset: 4px 4px 48px;
+  }
+
+  .desktop__taskbar {
+    height: 44px;
+  }
+}

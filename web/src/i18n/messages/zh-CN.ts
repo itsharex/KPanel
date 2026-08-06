@@ -153,6 +153,21 @@ export const zhCNMessages = {
   'error.validationFailed': '输入内容未通过校验。',
   'error.requestFailed': '请求失败，请稍后重试。',
   'error.httpStatus': '请求失败（HTTP {status}）。',
+
+  'desktop.switchClassic': '切换回经典模式',
+  'desktop.enterDesktop': '进入桌面模式',
+  'desktop.gridLabel': '桌面应用',
+  'desktop.taskbarLabel': '任务栏',
+  'desktop.minimize': '最小化',
+  'desktop.maximize': '最大化',
+  'desktop.restore': '还原',
+  'desktop.close': '关闭',
+  'desktop.menuRefresh': '刷新桌面',
+  'desktop.menuDark': '切换到深色主题',
+  'desktop.menuLight': '切换到浅色主题',
+  'desktop.menuAbout': '关于',
+  'desktop.aboutTitle': '桌面模式',
+  'desktop.aboutMessage': 'KPanel 桌面模式：双击图标打开窗口，窗口可多开、缩放与拖动；点击右上角可切换回经典模式。',
 } as const
 
 export type MessageKey = keyof typeof zhCNMessages

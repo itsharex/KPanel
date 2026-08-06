@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Boxes,
@@ -14,6 +14,7 @@ import {
   LogOut,
   LoaderCircle,
   Menu,
+  Monitor,
   Moon,
   Network,
   PanelLeftClose,
@@ -32,6 +33,7 @@ import { useSession } from '@/stores/session'
 import { usePanelState } from '@/stores/panel'
 import { useTheme } from '@/stores/theme'
 import { useToast } from '@/stores/toast'
+import { useDesktopMode } from '@/stores/desktopMode'
 import { api } from '@/lib/api'
 import {
   prefetchNavigationRoute,
@@ -62,12 +64,17 @@ const navigation: NavigationItem[] = [
   { labelKey: 'route.settings', to: '/settings', icon: Settings },
 ]
 
+// Desktop mode is an opt-in overlay; load it lazily so the main bundle stays
+// lean for the default classic experience.
+const DesktopView = defineAsyncComponent(() => import('@/components/desktop/DesktopView.vue'))
+
 const route = useRoute()
 const router = useRouter()
 const session = useSession()
 const panel = usePanelState()
 const theme = useTheme()
 const toast = useToast()
+const desktop = useDesktopMode()
 const i18n = useI18n()
 const menuOpen = ref(false)
 const signingOut = ref(false)
@@ -216,7 +223,6 @@ watch(
     <Transition name="fade">
       <button v-if="menuOpen" class="mobile-overlay" type="button" :aria-label="i18n.t('nav.close')" @click="closeMenu" />
     </Transition>
-
     <aside
       class="sidebar"
       :class="{
@@ -325,6 +331,9 @@ watch(
         <div class="topbar__actions">
           <StatusBadge :status="agentStatus.status" :label="agentStatus.label" subtle />
           <LanguageSelector compact />
+          <button class="icon-button" type="button" :aria-label="i18n.t('desktop.enterDesktop')" :title="i18n.t('desktop.enterDesktop')" @click="desktop.enterDesktop()">
+            <Monitor :size="18" />
+          </button>
           <button class="icon-button" type="button" :aria-label="i18n.t('nav.themeToggle')" @click="toggleTheme">
             <Sun v-if="theme.resolved.value === 'dark'" :size="18" />
             <Moon v-else :size="18" />
@@ -338,5 +347,7 @@ watch(
         <RouterView />
       </main>
     </div>
+
+    <DesktopView v-if="desktop.mode.value === 'desktop'" />
   </div>
 </template>
