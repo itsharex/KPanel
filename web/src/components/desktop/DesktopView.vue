@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Component } from 'vue'
 import { ArrowLeft, RefreshCw, Sun, Moon, Info, AppWindow } from '@lucide/vue'
 import DesktopWindow from '@/components/desktop/DesktopWindow.vue'
-import { desktopApps, findDesktopApp } from '@/lib/desktopApps'
+import { DEFAULT_WINDOW_GRADIENT, desktopApps, findDesktopApp } from '@/lib/desktopApps'
 import { useDesktopMode } from '@/stores/desktopMode'
 import { useTheme } from '@/stores/theme'
 import { useToast } from '@/stores/toast'
@@ -26,11 +26,25 @@ const focusedWindow = computed(() =>
 )
 
 const contextMenu = ref<{ x: number; y: number; open: boolean }>({ x: 0, y: 0, open: false })
+/** Icons currently playing their open-bounce animation. */
+const bouncingIcon = ref<string>('')
+let bounceTimer: number | undefined
+
+function gradientFor(path: string): string {
+  const gradient = findDesktopApp(path)?.gradient ?? DEFAULT_WINDOW_GRADIENT
+  return `linear-gradient(145deg, ${gradient[0]} 0%, ${gradient[1]} 100%)`
+}
 
 function openApp(path: string): void {
   const app = findDesktopApp(path)
   if (!app) return
-  desktop.openWindow(app.path, app.labelKey, app.allowMultiple)
+  // Play a quick bounce on the icon before opening the window.
+  if (bouncingIcon.value === path) return
+  bouncingIcon.value = path
+  window.setTimeout(() => {
+    bouncingIcon.value = ''
+    desktop.openWindow(app.path, app.labelKey, app.allowMultiple)
+  }, 180)
 }
 
 function windowIcon(path: string): Component {
@@ -90,6 +104,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('resize', onViewportResize)
+  if (bounceTimer) window.clearTimeout(bounceTimer)
 })
 
 function onViewportResize(): void {
@@ -125,13 +140,17 @@ function onViewportResize(): void {
         v-for="app in desktopApps"
         :key="app.path"
         class="desktop__icon"
+        :class="{ 'desktop__icon--bouncing': bouncingIcon === app.path }"
         type="button"
         role="gridcell"
         :aria-label="i18n.t(app.labelKey)"
+        :title="i18n.t(app.labelKey)"
         @dblclick="openApp(app.path)"
-        @pointerenter="undefined"
       >
-        <span class="desktop__icon-glyph">
+        <span
+          class="desktop__icon-glyph"
+          :style="{ background: gradientFor(app.path) }"
+        >
           <component :is="app.icon" :size="30" :stroke-width="1.6" aria-hidden="true" />
         </span>
         <span class="desktop__icon-label">{{ i18n.t(app.labelKey) }}</span>
@@ -189,12 +208,17 @@ function onViewportResize(): void {
         :aria-pressed="windowState.id === focusedWindow?.id"
         @click="onTaskbarClick(windowState.id)"
       >
-        <component
-          :is="findDesktopApp(windowState.path)?.icon"
-          :size="15"
-          :stroke-width="2"
-          aria-hidden="true"
-        />
+        <span
+          class="desktop__taskbar-glyph"
+          :style="{ background: gradientFor(windowState.path) }"
+        >
+          <component
+            :is="findDesktopApp(windowState.path)?.icon"
+            :size="15"
+            :stroke-width="2"
+            aria-hidden="true"
+          />
+        </span>
         <span>{{ windowTitle(windowState.titleKey) }}</span>
       </button>
     </footer>

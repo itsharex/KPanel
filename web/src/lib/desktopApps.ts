@@ -25,21 +25,92 @@ export interface DesktopApp {
   labelKey: MessageKey
   icon: Component
   allowMultiple: boolean
+  /** App-tile gradient so each icon reads like a distinct application. */
+  gradient: [string, string]
 }
 
 export const desktopApps: DesktopApp[] = [
-  { path: '/overview', labelKey: 'route.overview', icon: LayoutDashboard, allowMultiple: true },
-  { path: '/ai', labelKey: 'route.ai', icon: Bot, allowMultiple: true },
-  { path: '/sites', labelKey: 'route.sites', icon: Boxes, allowMultiple: true },
-  { path: '/apps', labelKey: 'route.apps', icon: Store, allowMultiple: true },
-  { path: '/docker', labelKey: 'route.docker', icon: Container, allowMultiple: true },
-  { path: '/files', labelKey: 'route.files', icon: Folder, allowMultiple: true },
-  { path: '/terminal', labelKey: 'route.terminal', icon: SquareTerminal, allowMultiple: false },
-  { path: '/diagnostics', labelKey: 'route.diagnostics', icon: HeartPulse, allowMultiple: true },
-  { path: '/cluster', labelKey: 'route.cluster', icon: Network, allowMultiple: true },
-  { path: '/activity', labelKey: 'route.activity', icon: ClipboardList, allowMultiple: true },
-  { path: '/settings', labelKey: 'route.settings', icon: Settings, allowMultiple: true },
+  {
+    path: '/overview',
+    labelKey: 'route.overview',
+    icon: LayoutDashboard,
+    allowMultiple: true,
+    gradient: ['#2dd4bf', '#0f766e'],
+  },
+  {
+    path: '/ai',
+    labelKey: 'route.ai',
+    icon: Bot,
+    allowMultiple: true,
+    gradient: ['#a78bfa', '#6d28d9'],
+  },
+  {
+    path: '/sites',
+    labelKey: 'route.sites',
+    icon: Boxes,
+    allowMultiple: true,
+    gradient: ['#60a5fa', '#1d4ed8'],
+  },
+  {
+    path: '/apps',
+    labelKey: 'route.apps',
+    icon: Store,
+    allowMultiple: true,
+    gradient: ['#fbbf24', '#d97706'],
+  },
+  {
+    path: '/docker',
+    labelKey: 'route.docker',
+    icon: Container,
+    allowMultiple: true,
+    gradient: ['#22d3ee', '#0369a1'],
+  },
+  {
+    path: '/files',
+    labelKey: 'route.files',
+    icon: Folder,
+    allowMultiple: true,
+    gradient: ['#facc15', '#ca8a04'],
+  },
+  {
+    path: '/terminal',
+    labelKey: 'route.terminal',
+    icon: SquareTerminal,
+    allowMultiple: false,
+    gradient: ['#94a3b8', '#1e293b'],
+  },
+  {
+    path: '/diagnostics',
+    labelKey: 'route.diagnostics',
+    icon: HeartPulse,
+    allowMultiple: true,
+    gradient: ['#fb7185', '#be123c'],
+  },
+  {
+    path: '/cluster',
+    labelKey: 'route.cluster',
+    icon: Network,
+    allowMultiple: true,
+    gradient: ['#818cf8', '#4338ca'],
+  },
+  {
+    path: '/activity',
+    labelKey: 'route.activity',
+    icon: ClipboardList,
+    allowMultiple: true,
+    gradient: ['#34d399', '#047857'],
+  },
+  {
+    path: '/settings',
+    labelKey: 'route.settings',
+    icon: Settings,
+    allowMultiple: true,
+    gradient: ['#cbd5e1', '#64748b'],
+  },
 ]
+
+/** Neutral gradient for windows whose app is not in the catalogue. */
+export const DEFAULT_WINDOW_GRADIENT: [string, string] = ['#a78bfa', '#6d28d9']
 
 export function findDesktopApp(path: string): DesktopApp | undefined {
   return desktopApps.find((app) => app.path === path)

@@ -4,6 +4,7 @@ import type { Component } from 'vue'
 import { Minimize, Square, Copy, X } from '@lucide/vue'
 import { createWindowRouter, reactiveRouteFor, resolveWindowComponent } from '@/lib/desktopWindowRoute'
 import { windowRouteKey, windowRouterKey } from '@/lib/desktopRouteKeys'
+import { DEFAULT_WINDOW_GRADIENT, findDesktopApp } from '@/lib/desktopApps'
 import { useDesktopMode } from '@/stores/desktopMode'
 import { useI18n } from '@/i18n'
 import { useWindowGesture } from '@/composables/useWindowGesture'
@@ -37,6 +38,11 @@ provide(windowRouteKey, reactiveRouteFor(router))
 const isFocused = computed(() => desktop.focusedId.value === props.windowState.id)
 
 const title = computed(() => i18n.t(props.windowState.titleKey as Parameters<typeof i18n.t>[0]))
+
+const windowGradient = computed(() => {
+  const gradient = findDesktopApp(props.windowState.path)?.gradient ?? DEFAULT_WINDOW_GRADIENT
+  return `linear-gradient(145deg, ${gradient[0]} 0%, ${gradient[1]} 100%)`
+})
 
 function isMaximized(): boolean {
   return props.windowState.maximized
@@ -115,7 +121,12 @@ const handleEdges = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const
       @dblclick="onToggleMaximize"
     >
       <div class="desktop-window__title">
-        <component :is="icon" :size="15" :stroke-width="2" aria-hidden="true" />
+        <span
+          class="desktop-window__app-glyph"
+          :style="{ background: windowGradient }"
+        >
+          <component :is="icon" :size="13" :stroke-width="2.2" aria-hidden="true" />
+        </span>
         <span>{{ title }}</span>
       </div>
       <div class="desktop-window__actions">
