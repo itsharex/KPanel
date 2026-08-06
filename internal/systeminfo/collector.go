@@ -336,9 +336,17 @@ func (c *Collector) readNetwork(out *contract.NetworkSummary) error {
 	if data == "" {
 		return errors.New("read network: unavailable /proc/net/dev")
 	}
+	// Prefer routed interfaces so loopback and container/VPN layers do not
+	// count the same traffic more than once.
+	defaultRoutes := c.defaultRouteInterfaces()
 	for _, line := range strings.Split(data, "\n") {
-		_, values, ok := strings.Cut(line, ":")
+		name, values, ok := strings.Cut(line, ":")
 		if !ok {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		if name == "lo" || (len(defaultRoutes) > 0 && !defaultRoutes[name]) ||
+			(len(defaultRoutes) == 0 && virtualNetworkInterface(name)) {
 			continue
 		}
 		fields := strings.Fields(values)
@@ -353,6 +361,44 @@ func (c *Collector) readNetwork(out *contract.NetworkSummary) error {
 	out.TCPConnections = c.connectionCount("net/tcp") + c.connectionCount("net/tcp6")
 	out.UDPConnections = c.connectionCount("net/udp") + c.connectionCount("net/udp6")
 	return nil
+}
+
+func (c *Collector) defaultRouteInterfaces() map[string]bool {
+	result := make(map[string]bool)
+	for _, line := range strings.Split(c.readOptional("net/route"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[1] != "00000000" {
+			continue
+		}
+		flags, err := strconv.ParseUint(fields[3], 16, 64)
+		if err == nil && flags&1 != 0 {
+			result[fields[0]] = true
+		}
+	}
+	const ipv6Default = "00000000000000000000000000000000"
+	for _, line := range strings.Split(c.readOptional("net/ipv6_route"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 10 || fields[0] != ipv6Default || fields[1] != "00" {
+			continue
+		}
+		flags, err := strconv.ParseUint(fields[8], 16, 64)
+		if err == nil && flags&1 != 0 {
+			result[fields[9]] = true
+		}
+	}
+	return result
+}
+
+func virtualNetworkInterface(name string) bool {
+	for _, prefix := range []string{
+		"docker", "veth", "br-", "virbr", "cni", "flannel", "kube",
+		"tun", "tap", "wg", "tailscale", "zt", "vmnet", "vboxnet",
+	} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Collector) readDiskIO() contract.DiskIOSummary {
@@ -454,21 +500,43 @@ func (c *Collector) readDisks() []contract.DiskSummary {
 			continue
 		}
 		seen[mountPoint] = true
-		total, free, ok := diskUsage(mountPoint)
+		total, used, usagePercent, ok := diskUsage(mountPoint)
 		if !ok || total == 0 {
 			continue
 		}
-		used := total - free
 		result = append(result, contract.DiskSummary{
 			Device:       unescapeMount(fields[0]),
 			MountPoint:   mountPoint,
 			FileSystem:   fields[2],
 			TotalBytes:   total,
 			UsedBytes:    used,
-			UsagePercent: roundPercent(float64(used) * 100 / float64(total)),
+			UsagePercent: usagePercent,
 		})
 	}
 	return result
+}
+
+func diskCapacity(blocks, free, available, blockSize uint64) (
+	total, used uint64,
+	usagePercent float64,
+	ok bool,
+) {
+	if blockSize == 0 || free > blocks || available > blocks || blocks > ^uint64(0)/blockSize {
+		return 0, 0, 0, false
+	}
+	usedBlocks := blocks - free
+	if usedBlocks > ^uint64(0)/blockSize || available > ^uint64(0)-usedBlocks {
+		return 0, 0, 0, false
+	}
+	total = blocks * blockSize
+	used = usedBlocks * blockSize
+	// Match df: Bfree determines actual used blocks, while Bavail determines
+	// the non-root capacity used for the displayed percentage.
+	usableBlocks := usedBlocks + available
+	if usableBlocks > 0 {
+		usagePercent = roundPercent(float64(usedBlocks) * 100 / float64(usableBlocks))
+	}
+	return total, used, usagePercent, true
 }
 
 func (c *Collector) readOptional(name string) string {

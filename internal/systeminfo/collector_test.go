@@ -55,7 +55,7 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	if got.Memory.TotalBytes != 8*1024*1024 || got.Memory.UsedBytes != 6*1024*1024 {
 		t.Fatalf("unexpected memory: %#v", got.Memory)
 	}
-	if got.Network.ReceivedBytes != 3000 || got.Network.SentBytes != 7000 {
+	if got.Network.ReceivedBytes != 2000 || got.Network.SentBytes != 5000 {
 		t.Fatalf("unexpected network: %#v", got.Network)
 	}
 	if got.Network.TCPConnections != 1 {
@@ -178,6 +178,69 @@ func TestCPUUsagePercentUsesIntervalDelta(t *testing.T) {
 	after := cpuTimes{total: 1_200, idle: 900}
 	if got := cpuUsagePercent(before, after); got != 50 {
 		t.Fatalf("cpuUsagePercent() = %v, want 50", got)
+	}
+}
+
+func TestReadNetworkPrefersDefaultRouteInterfaces(t *testing.T) {
+	procRoot := t.TempDir()
+	netRoot := filepath.Join(procRoot, "net")
+	if err := os.MkdirAll(netRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dev := "Inter-| Receive | Transmit\n" +
+		" lo: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n" +
+		" eth0: 1000 0 0 0 0 0 0 0 2000 0 0 0 0 0 0 0\n" +
+		" docker0: 3000 0 0 0 0 0 0 0 4000 0 0 0 0 0 0 0\n" +
+		" wg0: 5000 0 0 0 0 0 0 0 6000 0 0 0 0 0 0 0\n"
+	route := "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n" +
+		"eth0 00000000 0100000A 0003 0 0 100 00000000 0 0 0\n" +
+		"docker0 000011AC 00000000 0001 0 0 0 0000FFFF 0 0 0\n"
+	for name, data := range map[string]string{"dev": dev, "route": route} {
+		if err := os.WriteFile(filepath.Join(netRoot, name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var got contract.NetworkSummary
+	if err := (&Collector{ProcRoot: procRoot}).readNetwork(&got); err != nil {
+		t.Fatalf("readNetwork() error = %v", err)
+	}
+	if got.ReceivedBytes != 1000 || got.SentBytes != 2000 {
+		t.Fatalf("readNetwork() = %#v, want only default-route interface counters", got)
+	}
+}
+
+func TestReadNetworkFallbackExcludesLoopbackAndVirtualInterfaces(t *testing.T) {
+	procRoot := t.TempDir()
+	netRoot := filepath.Join(procRoot, "net")
+	if err := os.MkdirAll(netRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dev := "Inter-| Receive | Transmit\n" +
+		" lo: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n" +
+		" ens3: 1000 0 0 0 0 0 0 0 2000 0 0 0 0 0 0 0\n" +
+		" docker0: 3000 0 0 0 0 0 0 0 4000 0 0 0 0 0 0 0\n" +
+		" veth1234: 5000 0 0 0 0 0 0 0 6000 0 0 0 0 0 0 0\n"
+	if err := os.WriteFile(filepath.Join(netRoot, "dev"), []byte(dev), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var got contract.NetworkSummary
+	if err := (&Collector{ProcRoot: procRoot}).readNetwork(&got); err != nil {
+		t.Fatalf("readNetwork() error = %v", err)
+	}
+	if got.ReceivedBytes != 1000 || got.SentBytes != 2000 {
+		t.Fatalf("readNetwork() = %#v, want only non-virtual interface counters", got)
+	}
+}
+
+func TestDiskCapacityExcludesReservedBlocksFromUsedBytes(t *testing.T) {
+	total, used, usagePercent, ok := diskCapacity(1000, 200, 150, 4096)
+	if !ok || total != 1000*4096 || used != 800*4096 || usagePercent != 84.21 {
+		t.Fatalf(
+			"diskCapacity() = total %d, used %d, percent %v, ok %v",
+			total, used, usagePercent, ok,
+		)
 	}
 }
 

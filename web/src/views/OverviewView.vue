@@ -70,6 +70,7 @@ const data = ref<SystemOverview>()
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
+const waitingForNextSample = '等待下一次采样'
 const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
@@ -834,8 +835,12 @@ onBeforeUnmount(() => {
               label="实时网络"
               :icon="Network"
               tone="blue"
-              :value="formatRate(data.network.receiveBytesPerSecond + data.network.transmitBytesPerSecond)"
-              :detail="`↓ ${formatRate(data.network.receiveBytesPerSecond)} · ↑ ${formatRate(data.network.transmitBytesPerSecond)}`"
+              :value="data.network.rateAvailable
+                ? formatRate(data.network.receiveBytesPerSecond + data.network.transmitBytesPerSecond)
+                : '—'"
+              :detail="data.network.rateAvailable
+                ? `↓ ${formatRate(data.network.receiveBytesPerSecond)} · ↑ ${formatRate(data.network.transmitBytesPerSecond)}`
+                : waitingForNextSample"
             />
           </RouterLink>
         </div>

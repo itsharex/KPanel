@@ -667,8 +667,10 @@ describe('API client', () => {
 
     const updates: SystemOverview[] = []
     const overviewRequest = api.overview.get(undefined, (value) => updates.push(value))
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8))
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/system/summary')
     resolveSystem(jsonResponse(system))
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8))
     const overview = await overviewRequest
 
     expect(overview.hostname).toBe('legacy-host')
@@ -718,7 +720,11 @@ describe('API client', () => {
       frequencyMHz: 2450.5,
     })
     expect(overview.load).toMatchObject({ one: 0.2, five: 0.1, fifteen: 0.1 })
-    expect(overview.network).toMatchObject({ tcpConnections: 12, udpConnections: 3 })
+    expect(overview.network).toMatchObject({
+      tcpConnections: 12,
+      udpConnections: 3,
+      rateAvailable: false,
+    })
     expect(overview.publicNetwork).toMatchObject({
       ipv4: '203.0.113.8',
       ipv6: '2001:db8::8',
@@ -737,6 +743,49 @@ describe('API client', () => {
     )
     expect(capabilityUpdates.length).toBeGreaterThan(1)
     expect(new Set(capabilityUpdates.map((value) => value.management.capabilities)).size).toBe(1)
+
+    const nextCollectedAt = '2026-07-25T10:00:20Z'
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({
+        ...system,
+        network: { ...system.network, receivedBytes: 500, sentBytes: 600 },
+        collectedAt: nextCollectedAt,
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        status: 'ok',
+        version: '0.1.3',
+        protocolVersion: 'v1',
+        readOnly: false,
+        checkedAt: nextCollectedAt,
+      }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({
+        available: false,
+        containers: 0,
+        running: 0,
+        stopped: 0,
+        images: 0,
+        collectedAt: nextCollectedAt,
+      }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse(system.publicNetwork))
+      .mockResolvedValueOnce(jsonResponse({
+        schemaVersion: 1,
+        categories: [],
+        items: [],
+        installed: 0,
+        running: 0,
+        updateAvailable: 0,
+        collectedAt: nextCollectedAt,
+      }))
+
+    const refreshedOverview = await api.overview.get()
+    expect(refreshedOverview.network).toMatchObject({
+      receiveBytesPerSecond: 20,
+      transmitBytesPerSecond: 20,
+      rateAvailable: true,
+    })
   })
 
   it('limits the initial file directory page while preserving offset pagination', async () => {

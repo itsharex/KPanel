@@ -378,7 +378,7 @@ let previousNetworkSample:
   | { receivedBytes: number; sentBytes: number; collectedAtMs: number }
   | undefined
 
-function networkRates(system: RawSystemSummary): { receive: number; transmit: number } {
+function networkRates(system: RawSystemSummary): { receive: number; transmit: number; available: boolean } {
   const current = {
     receivedBytes: system.network.receivedBytes,
     sentBytes: system.network.sentBytes,
@@ -393,12 +393,13 @@ function networkRates(system: RawSystemSummary): { receive: number; transmit: nu
     current.receivedBytes < previous.receivedBytes ||
     current.sentBytes < previous.sentBytes
   ) {
-    return { receive: 0, transmit: 0 }
+    return { receive: 0, transmit: 0, available: false }
   }
   const elapsedSeconds = (current.collectedAtMs - previous.collectedAtMs) / 1_000
   return {
     receive: (current.receivedBytes - previous.receivedBytes) / elapsedSeconds,
     transmit: (current.sentBytes - previous.sentBytes) / elapsedSeconds,
+    available: true,
   }
 }
 
@@ -882,7 +883,8 @@ export const api = {
       onUpdate?: (overview: SystemOverview) => void,
     ): Promise<SystemOverview> => {
       type Capability = { id: string; enabled: boolean; reason?: string; methods?: string[] }
-      const systemRequest = request<RawSystemSummary>('/system/summary', { signal })
+      // Keep the CPU sample isolated from the optional requests triggered by this page.
+      const system = await request<RawSystemSummary>('/system/summary', { signal })
       const agentRequest = request<RawAgentHealth>('/agent/health', { signal })
       const capabilitiesRequest = request<ApiList<Capability> | Capability[]>('/capabilities', { signal })
         .catch(() => undefined)
@@ -896,7 +898,7 @@ export const api = {
         .catch(() => undefined)
       const appsRequest = request<AppMarketInventory>('/apps', { signal })
         .catch(() => undefined)
-      const [system, agent] = await Promise.all([systemRequest, agentRequest])
+      const agent = await agentRequest
       let capabilitiesResult: ApiList<Capability> | Capability[] | undefined
       let sitesResult: ApiList<RawSite> | RawSite[] | undefined
       let appsResult: AppMarketInventory | undefined
@@ -1017,6 +1019,7 @@ export const api = {
         network: {
           receiveBytesPerSecond: rates.receive,
           transmitBytesPerSecond: rates.transmit,
+          rateAvailable: rates.available,
           totalReceivedBytes: system.network.receivedBytes,
           totalTransmittedBytes: system.network.sentBytes,
           tcpConnections: system.network.tcpConnections || 0,

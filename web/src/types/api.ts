@@ -97,6 +97,7 @@ export interface ServiceStatus {
 export interface NetworkSummary {
   receiveBytesPerSecond: number
   transmitBytesPerSecond: number
+  rateAvailable: boolean
   totalReceivedBytes?: number
   totalTransmittedBytes?: number
   tcpConnections: number

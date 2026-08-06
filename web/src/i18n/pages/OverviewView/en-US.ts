@@ -132,6 +132,7 @@ export default [
   ["上次执行失败", "Previous Implementation Failed"],
   ["实时监控", "Live monitoring"],
   ["实时网络", "Real-time network"],
+  ["等待下一次采样", "Waiting for the next sample"],
   ["实时资源状态与 kejilion.sh 系统工具统一入口；所有配置均以宿主机实际状态为准。", "Real-time resource status aligns access to kejilion.sh system tools; all configurations are based on the actual host state."],
   ["使用 {0} 的原生锁与非交互模式；完成后提示是否需要重启。", "Use {0} primary lock and non-interactive mode; hint if restart is needed after completion."],
   ["使用独立 systemd 后台任务执行宿主机对应的软件包管理器固定序列；不接受包名或命令，不自动重启服务器。", "Runs a fixed package-manager sequence in an independent systemd background job. Package names and arbitrary commands are not accepted, and the server is not rebooted automatically."],
