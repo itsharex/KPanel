@@ -176,6 +176,15 @@
   pointer-events: none;
 }
 
+/* App-market and site icons: the image sits on the gradient tile. */
+.desktop__icon-img {
+  position: relative;
+  z-index: 1;
+  border-radius: 10px;
+  object-fit: contain;
+  background: transparent;
+}
+
 .desktop__icon:hover .desktop__icon-glyph {
   transform: translateY(-4px) scale(1.06);
   box-shadow:
@@ -529,4 +538,37 @@
   .desktop__taskbar {
     height: 44px;
   }
+}
+
+/* Detail dialog for app/site entries ------------------------------------- */
+
+.desktop__detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.desktop__detail dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.desktop__detail dd {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.desktop__detail-url a {
+  color: var(--brand);
+  text-decoration: none;
+}
+
+.desktop__detail-url a:hover {
+  text-decoration: underline;
 }

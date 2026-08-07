@@ -168,6 +168,17 @@ export const zhCNMessages = {
   'desktop.menuAbout': '关于',
   'desktop.aboutTitle': '桌面模式',
   'desktop.aboutMessage': 'KPanel 桌面模式：双击图标打开窗口，窗口可多开、缩放与拖动；点击右上角可切换回经典模式。',
+  'desktop.entryOpen': '打开',
+  'desktop.entryDetails': '详情',
+  'desktop.detailType': '类型',
+  'desktop.detailApp': '应用',
+  'desktop.detailSite': '网站',
+  'desktop.detailStatus': '状态',
+  'desktop.detailDomain': '域名',
+  'desktop.detailType2': '网站类型',
+  'desktop.detailURL': '入口地址',
+  'desktop.detailUnknown': '未知',
+  'desktop.entriesLoading': '正在加载应用与网站…',
 } as const
 
 export type MessageKey = keyof typeof zhCNMessages
