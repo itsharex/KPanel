@@ -119,10 +119,13 @@
   position: relative;
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(88px, max-content));
+  grid-auto-rows: min-content;
+  gap: 6px 4px;
+  justify-content: start;
   align-content: start;
-  padding: 72px 28px 88px;
+  /* Leave room for the right-hand monitor panel so icons never hide under it. */
+  padding: 72px 284px 88px 20px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -132,6 +135,7 @@
   flex-direction: column;
   align-items: center;
   gap: 9px;
+  width: 88px;
   padding: 13px 8px 11px;
   color: color-mix(in srgb, var(--text) 90%, transparent);
   background: transparent;
@@ -508,9 +512,14 @@
 
 @media (max-width: 680px) {
   .desktop__icons {
-    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-    gap: 8px;
-    padding: 68px 12px 84px;
+    grid-template-columns: repeat(auto-fill, minmax(80px, max-content));
+    gap: 4px;
+    justify-content: start;
+    padding: 68px 10px 84px;
+  }
+
+  .desktop__icon {
+    width: 80px;
   }
 
   .desktop__icon-glyph {
@@ -571,4 +580,107 @@
 
 .desktop__detail-url a:hover {
   text-decoration: underline;
+}
+
+/* Desktop monitor panel ------------------------------------------------ */
+
+.desktop-monitor {
+  position: absolute;
+  top: 64px;
+  right: 16px;
+  z-index: 15;
+  width: 252px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 14px 16px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.desktop-monitor__header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.desktop-monitor__header svg {
+  color: var(--brand);
+}
+
+.desktop-monitor__loading {
+  padding: 18px 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.desktop-monitor__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+
+.desktop-monitor__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.desktop-monitor__row dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.desktop-monitor__row dt svg {
+  color: color-mix(in srgb, var(--brand) 72%, transparent);
+}
+
+.desktop-monitor__row dd {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.desktop-monitor__network {
+  display: flex;
+  gap: 8px;
+}
+
+.desktop-monitor__track {
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  overflow: hidden;
+}
+
+.desktop-monitor__track span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand), var(--brand-strong));
+  transition: width 0.6s ease;
+}
+
+@media (max-width: 680px) {
+  .desktop-monitor {
+    display: none;
+  }
 }

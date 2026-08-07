@@ -12,6 +12,7 @@ import {
 } from '@lucide/vue'
 import DesktopWindow from '@/components/desktop/DesktopWindow.vue'
 import DesktopEntryIcon from '@/components/desktop/DesktopEntryIcon.vue'
+import DesktopMonitor from '@/components/desktop/DesktopMonitor.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { DEFAULT_WINDOW_GRADIENT, desktopApps, findDesktopApp } from '@/lib/desktopApps'
 import { loadDesktopEntries, type DesktopEntries, type DesktopEntry } from '@/lib/desktopEntries'
@@ -241,6 +242,8 @@ function onViewportResize(): void {
         />
       </template>
     </div>
+
+    <DesktopMonitor />
 
     <DesktopWindow
       v-for="windowState in openWindows"

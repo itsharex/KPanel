@@ -179,6 +179,15 @@ export const zhCNMessages = {
   'desktop.detailURL': '入口地址',
   'desktop.detailUnknown': '未知',
   'desktop.entriesLoading': '正在加载应用与网站…',
+  'desktop.monitorTitle': '服务器监控',
+  'desktop.monitorLabel': '服务器监控面板',
+  'desktop.monitorCPU': 'CPU',
+  'desktop.monitorCPUValue': '{percent} · {cores} 核',
+  'desktop.monitorMemory': '内存',
+  'desktop.monitorDisk': '磁盘',
+  'desktop.monitorNetwork': '网络',
+  'desktop.monitorLoad': '负载',
+  'desktop.monitorUptime': '运行时长',
 } as const
 
 export type MessageKey = keyof typeof zhCNMessages

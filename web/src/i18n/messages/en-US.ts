@@ -181,4 +181,13 @@ export const enUSMessages = {
   'desktop.detailURL': 'Entry URL',
   'desktop.detailUnknown': 'Unknown',
   'desktop.entriesLoading': 'Loading apps and sites…',
+  'desktop.monitorTitle': 'Server monitor',
+  'desktop.monitorLabel': 'Server monitor panel',
+  'desktop.monitorCPU': 'CPU',
+  'desktop.monitorCPUValue': '{percent} · {cores} cores',
+  'desktop.monitorMemory': 'Memory',
+  'desktop.monitorDisk': 'Disk',
+  'desktop.monitorNetwork': 'Network',
+  'desktop.monitorLoad': 'Load',
+  'desktop.monitorUptime': 'Uptime',
 } satisfies LocaleMessages
