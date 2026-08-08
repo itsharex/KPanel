@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, provide, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, provide, ref, shallowRef, watch } from 'vue'
 import type { Component } from 'vue'
 import { Copy, LoaderCircle, Maximize2, Minus, RotateCw, TriangleAlert, X } from '@lucide/vue'
 import { createWindowRouter, reactiveRouteFor, resolveWindowComponent } from '@/lib/desktopWindowRoute'
@@ -34,7 +34,9 @@ const desktop = useDesktopMode()
 const i18n = useI18n()
 const toast = useToast()
 const router = createWindowRouter(props.windowState.path, undefined, handoffDesktopRoute)
-const component = ref<Component>()
+// Vue component definitions must stay raw. A deep ref proxies object-based
+// SFCs and triggers a runtime warning every time a desktop window opens.
+const component = shallowRef<Component>()
 const open = ref(false)
 const closing = ref(false)
 const loading = ref(true)

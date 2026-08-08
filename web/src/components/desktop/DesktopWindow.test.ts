@@ -35,7 +35,7 @@ describe('DesktopWindow lazy view loading', () => {
     const wrapper = mount(DesktopWindow, {
       props: {
         windowState,
-        icon: { template: '<span />' },
+        icon: () => null,
       },
     })
 
@@ -48,5 +48,28 @@ describe('DesktopWindow lazy view loading', () => {
     expect(routeMocks.resolveWindowComponent).toHaveBeenCalledTimes(2)
     expect(wrapper.find('.desktop-window__load-error').exists()).toBe(true)
     wrapper.unmount()
+  })
+
+  it('keeps lazily loaded page components out of Vue reactivity', async () => {
+    routeMocks.resolveWindowComponent.mockResolvedValue({
+      name: 'DesktopPageFixture',
+      template: '<main data-testid="desktop-page-fixture" />',
+    })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const desktop = useDesktopMode()
+    const id = desktop.openWindow('/overview', 'route.overview', false)
+    const windowState = desktop.windows.value.find((item) => item.id === id)!
+    const wrapper = mount(DesktopWindow, {
+      props: {
+        windowState,
+        icon: () => null,
+      },
+    })
+
+    await flushPromises()
+    expect(wrapper.find('[data-testid="desktop-page-fixture"]').exists()).toBe(true)
+    expect(warning.mock.calls.flat().join(' ')).not.toContain('made a reactive object')
+    wrapper.unmount()
+    warning.mockRestore()
   })
 })
