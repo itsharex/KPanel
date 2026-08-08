@@ -274,6 +274,18 @@ describe('AI workspace reconnect', () => {
     wrapper.unmount()
   })
 
+  it('confines automatic follow scrolling to the AI message pane',async()=>{
+    const router=await makeRouter();const wrapper=mount(AiView,{global:{plugins:[router]}});await flushPromises()
+    const pane=wrapper.get('.ai-messages').element as HTMLElement
+    Object.defineProperties(pane,{scrollHeight:{value:1000,configurable:true},scrollTop:{value:0,writable:true,configurable:true},clientHeight:{value:400,configurable:true}})
+    const scrollIntoView=vi.mocked(Element.prototype.scrollIntoView);scrollIntoView.mockClear()
+    MockEventSource.instances[0]?.emit('message.delta',{delta:'continue output'})
+    await flushPromises()
+    expect(pane.scrollTop).toBe(1000)
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('updates thinking level and uploads a supported image',async()=>{
     mocks.send.mockResolvedValue({runId:'run-next'})
     vi.stubGlobal('FileReader',class {result:string|ArrayBuffer|null=null;error:DOMException|null=null;onload:(()=>void)|null=null;onerror:(()=>void)|null=null;readAsDataURL(){this.result='data:image/png;base64,iVBORw0KGgo=';this.onload?.()}})

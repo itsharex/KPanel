@@ -16,6 +16,7 @@ describe('desktop visual and interaction contract', () => {
   it('removes the root scrollbar gutter while desktop mode owns the viewport', () => {
     expect(styles).toMatch(/html\.desktop-mode-open\s*\{[^}]*scrollbar-gutter:\s*auto;[^}]*scrollbar-width:\s*none;/)
     expect(styles).toContain('html.desktop-mode-open::-webkit-scrollbar')
+    expect(styles).toMatch(/\.desktop\s*\{[^}]*width:\s*100vw;[^}]*height:\s*100vh;[^}]*height:\s*100dvh;/)
   })
 
   it('lets every supported in-window fullscreen surface escape window clipping', () => {
