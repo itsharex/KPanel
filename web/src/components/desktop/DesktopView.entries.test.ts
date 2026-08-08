@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import DesktopView from '@/components/desktop/DesktopView.vue'
-import { resetDesktopModeForTest } from '@/stores/desktopMode'
+import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
 import type { DesktopEntries } from '@/lib/desktopEntries'
 
 vi.mock('@/lib/desktopEntries', async (importOriginal) => {
@@ -57,6 +57,22 @@ describe('DesktopView dynamic entries', () => {
     expect(srcs).toContain('/api/v1/apps/nginx/icon')
     expect(srcs).toContain('/api/v1/sites/blog/icon')
     expect(wrapper.findAll('.desktop__icon-glyph--dynamic')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('opens the matching application-market detail from an app context menu', async () => {
+    const desktop = useDesktopMode()
+    const wrapper = mount(DesktopView)
+    await nextTick()
+    await nextTick()
+
+    await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
+    await nextTick()
+    await wrapper.findAll('.desktop__context-menu [role="menuitem"]')[1]?.trigger('click')
+
+    expect(desktop.windows.value).toHaveLength(1)
+    expect(desktop.windows.value[0]?.path).toBe('/apps?app=nginx')
+    expect(wrapper.find('.desktop__detail').exists()).toBe(false)
     wrapper.unmount()
   })
 })

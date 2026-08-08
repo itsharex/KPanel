@@ -129,7 +129,7 @@ interface AppsBindings {
   requestCancelJob: () => void
   confirmCancelJob: () => Promise<void>
   dismissJob: () => void
-  consumeUpdateIntent: () => Promise<void>
+  consumeRouteIntent: () => Promise<void>
   refreshAfterSelfUpdate: (job: AppInstallJob) => boolean
 }
 
@@ -857,13 +857,26 @@ describe('AppsView script management', () => {
 })
 
 describe('AppsView application mutations', () => {
+  it('opens the requested application detail from a desktop route intent', async () => {
+    const view = setupView()
+    view.inventory.value = inventory('detail-version')
+    mocks.route.query = { app: 'builtin-13' }
+    mocks.route.fullPath = '/apps?app=builtin-13'
+
+    await view.consumeRouteIntent()
+
+    expect(view.selected.value?.id).toBe('builtin-13')
+    expect(view.confirmAction.value).toBeUndefined()
+    expect(mocks.routerReplace).toHaveBeenCalledWith({ query: {} })
+  })
+
   it('opens the existing KPanel update confirmation from the sidebar intent', async () => {
     const view = setupView()
     view.inventory.value = kpanelInventory('kpanel-version')
     mocks.route.query = { app: 'kpanel', action: 'update' }
     mocks.route.fullPath = '/apps?app=kpanel&action=update'
 
-    await view.consumeUpdateIntent()
+    await view.consumeRouteIntent()
 
     expect(view.selected.value?.id).toBe('thirdparty-kpanel')
     expect(view.confirmAction.value).toBe('update')

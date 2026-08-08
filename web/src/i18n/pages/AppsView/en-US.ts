@@ -143,4 +143,6 @@ export default [
   ["IP + 端口", "IP+port"],
   ["IP + 端口访问", "IP + port access"],
   ["KPanel 更新能力尚未就绪。", "KPanel update capability is not ready."],
+  ['无法打开应用详情', 'Unable to open app details'],
+  ['应用目录中没有找到对应应用。', 'The matching app was not found in the catalog.'],
 ] as const satisfies PhraseCatalog

@@ -289,7 +289,24 @@ function onEntryMenuOpen(): void {
 function onEntryMenuDetails(): void {
   const entry = menuEntry.value
   closeContextMenu()
-  if (entry) detailEntry.value = entry
+  if (!entry) return
+  if (entry.kind === 'app') {
+    const app = findDesktopApp('/apps')
+    if (!app) return
+    const windowId = desktop.openWindow(
+      `/apps?app=${encodeURIComponent(entry.id)}`,
+      app.labelKey,
+      app.allowMultiple,
+      true,
+    )
+    if (windowId === 0) {
+      toast.show(i18n.t('desktop.windowLimitTitle'), {
+        message: i18n.t('desktop.windowLimitMessage'),
+      })
+    }
+    return
+  }
+  detailEntry.value = entry
 }
 
 function onTaskbarClick(windowId: number): void {

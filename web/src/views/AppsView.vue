@@ -342,23 +342,39 @@ function routeQueryValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-async function clearUpdateIntent(): Promise<void> {
+async function clearAppIntent(): Promise<void> {
   const query = { ...route.query }
   delete query.app
   delete query.action
   await router.replace({ query })
 }
 
-async function consumeUpdateIntent(): Promise<void> {
+async function consumeRouteIntent(): Promise<void> {
+  const appIntent = routeQueryValue(route.query.app)
+  const actionIntent = routeQueryValue(route.query.action)
   if (
     route.name !== 'apps' ||
-    routeQueryValue(route.query.app) !== kpanelAppToken ||
-    routeQueryValue(route.query.action) !== 'update' ||
+    !appIntent ||
     !inventory.value
   ) {
     return
   }
-  await clearUpdateIntent()
+
+  if (!actionIntent) {
+    await clearAppIntent()
+    const item = inventory.value.items.find(
+      (candidate) => candidate.id === appIntent || candidate.token === appIntent,
+    )
+    if (!item) {
+      toast.danger('无法打开应用详情', '应用目录中没有找到对应应用。')
+      return
+    }
+    openDetails(item)
+    return
+  }
+
+  if (appIntent !== kpanelAppToken || actionIntent !== 'update') return
+  await clearAppIntent()
   const item = inventory.value.items.find((candidate) => candidate.token === kpanelAppToken)
   if (!item) {
     toast.danger('无法打开更新', '应用目录中没有找到 KPanel。')
@@ -841,7 +857,7 @@ function openURL(item: AppMarketItem): string {
 }
 
 onMounted(() => {
-  void Promise.all([load(), restoreBackgroundJob()]).then(() => consumeUpdateIntent())
+  void Promise.all([load(), restoreBackgroundJob()]).then(() => consumeRouteIntent())
 })
 onBeforeUnmount(() => {
   controller?.abort()
@@ -857,7 +873,7 @@ watch(installPort, () => {
 
 watch(
   () => route.fullPath,
-  () => void consumeUpdateIntent(),
+  () => void consumeRouteIntent(),
 )
 
 function syncJobPollingForWindow(active: boolean): void {
