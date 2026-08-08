@@ -1141,6 +1141,21 @@ body.desktop-mode-open::-webkit-scrollbar {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 20%);
 }
 
+.desktop-window__app-glyph--image {
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface-raised) 90%, transparent);
+  border-radius: 7px;
+}
+
+.desktop-window__app-glyph--image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .desktop-window__body {
   position: relative;
   flex: 1 1 auto;

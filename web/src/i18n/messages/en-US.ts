@@ -188,6 +188,7 @@ export const enUSMessages = {
   'desktop.entryOpen': 'Open',
   'desktop.entryScriptManage': 'Script management',
   'desktop.scriptWindowTitle': 'Script terminal',
+  'desktop.namedScriptWindowTitle': '{name} Script Terminal',
   'desktop.entryDetails': 'Details',
   'desktop.entryRename': 'Rename',
   'desktop.renameTitle': 'Rename website icon',

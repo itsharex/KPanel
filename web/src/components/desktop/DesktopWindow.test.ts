@@ -72,4 +72,32 @@ describe('DesktopWindow lazy view loading', () => {
     wrapper.unmount()
     warning.mockRestore()
   })
+
+  it('uses supplied application chrome and falls back when its icon fails', async () => {
+    routeMocks.resolveWindowComponent.mockResolvedValue({
+      name: 'ScriptPageFixture',
+      template: '<main />',
+    })
+    const desktop = useDesktopMode()
+    const id = desktop.openWindow('/app-script/openclaw', 'desktop.scriptWindowTitle', false)
+    const windowState = desktop.windows.value.find((item) => item.id === id)!
+    const wrapper = mount(DesktopWindow, {
+      props: {
+        windowState,
+        icon: { template: '<svg data-testid="fallback-script-icon" />' },
+        iconUrl: '/api/v1/apps/openclaw/icon',
+        title: 'OpenClaw 的脚本终端',
+      },
+    })
+
+    await flushPromises()
+    expect(wrapper.attributes('aria-label')).toBe('OpenClaw 的脚本终端')
+    expect(wrapper.find('.desktop-window__title').text()).toContain('OpenClaw 的脚本终端')
+    const image = wrapper.find('.desktop-window__app-glyph img')
+    expect(image.attributes('src')).toBe('/api/v1/apps/openclaw/icon')
+
+    await image.trigger('error')
+    expect(wrapper.find('[data-testid="fallback-script-icon"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })

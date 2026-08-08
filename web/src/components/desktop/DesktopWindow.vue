@@ -28,6 +28,8 @@ import type { DesktopWindowState } from '@/stores/desktopMode'
 const props = defineProps<{
   windowState: DesktopWindowState
   icon: Component
+  iconUrl?: string
+  title?: string
 }>()
 
 const desktop = useDesktopMode()
@@ -42,6 +44,7 @@ const closing = ref(false)
 const loading = ref(true)
 const loadError = ref(false)
 const checkingClose = ref(false)
+const iconFailed = ref(false)
 let closeTimer: number | undefined
 let openFrame: number | undefined
 let loadSequence = 0
@@ -74,7 +77,12 @@ provide(desktopWindowCloseGuardKey, {
   },
 })
 
-const title = computed(() => i18n.t(props.windowState.titleKey as Parameters<typeof i18n.t>[0]))
+const title = computed(() => props.title || i18n.t(props.windowState.titleKey as Parameters<typeof i18n.t>[0]))
+
+watch(
+  () => props.iconUrl,
+  () => { iconFailed.value = false },
+)
 
 function componentPath(path: string): string {
   return path.startsWith('/ai/s/') ? '/ai' : path
@@ -318,9 +326,17 @@ const handleEdges = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const
       <div class="desktop-window__title">
         <span
           class="desktop-window__app-glyph"
-          :style="{ background: windowGradient }"
+          :class="{ 'desktop-window__app-glyph--image': iconUrl && !iconFailed }"
+          :style="iconUrl && !iconFailed ? undefined : { background: windowGradient }"
         >
-          <component :is="icon" :size="13" :stroke-width="2.2" aria-hidden="true" />
+          <img
+            v-if="iconUrl && !iconFailed"
+            :src="iconUrl"
+            alt=""
+            draggable="false"
+            @error="iconFailed = true"
+          >
+          <component v-else :is="icon" :size="13" :stroke-width="2.2" aria-hidden="true" />
         </span>
         <span>{{ title }}</span>
       </div>

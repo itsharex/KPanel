@@ -83,7 +83,7 @@ describe('dedicated desktop app script terminal', () => {
     const wrapper = await mountView()
 
     expect(mocks.action).toHaveBeenCalledWith('openclaw', 'manage', { resourceVersion: 'rv-1' })
-    expect(wrapper.text()).toContain('OpenClaw')
+    expect(wrapper.find('.app-script-page__header').exists()).toBe(false)
     expect(wrapper.findComponent({ name: 'AppInteractiveTerminal' }).props()).toMatchObject({
       jobId: 'job-1',
       kind: 'app',

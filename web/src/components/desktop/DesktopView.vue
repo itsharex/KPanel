@@ -279,7 +279,21 @@ function windowIcon(path: string): Component {
   return findDesktopApp(path)?.icon ?? AppWindow
 }
 
-function windowTitle(titleKey: string): string {
+function scriptWindowEntry(path: string): DesktopEntry | undefined {
+  const match = path.match(/^\/app-script\/([A-Za-z0-9_-]{1,128})(?:[?#]|$)/)
+  if (!match) return undefined
+  const appID = match[1]
+  return entries.value?.apps.find((entry) => entry.id === appID)
+    ?? entries.value?.visible.find((entry) => entry.kind === 'app' && entry.id === appID)
+}
+
+function windowIconURL(path: string): string | undefined {
+  return scriptWindowEntry(path)?.iconURL
+}
+
+function windowTitle(titleKey: string, path?: string): string {
+  const entry = path ? scriptWindowEntry(path) : undefined
+  if (entry) return i18n.t('desktop.namedScriptWindowTitle', { name: entry.name })
   return i18n.t(titleKey as Parameters<typeof i18n.t>[0])
 }
 
@@ -637,6 +651,8 @@ function onViewportResize(): void {
       :key="windowState.id"
       :window-state="windowState"
       :icon="windowIcon(windowState.path)"
+      :icon-url="windowIconURL(windowState.path)"
+      :title="windowTitle(windowState.titleKey, windowState.path)"
     />
 
     <Transition name="desktop-menu">
@@ -744,7 +760,7 @@ function onViewportResize(): void {
           }"
           type="button"
           :data-window-id="windowState.id"
-          :aria-label="windowTitle(windowState.titleKey)"
+          :aria-label="windowTitle(windowState.titleKey, windowState.path)"
           :aria-pressed="windowState.id === focusedWindow?.id"
           @click="onTaskbarClick(windowState.id)"
         >
@@ -759,7 +775,7 @@ function onViewportResize(): void {
               aria-hidden="true"
             />
           </span>
-          <span class="desktop__taskbar-label">{{ windowTitle(windowState.titleKey) }}</span>
+          <span class="desktop__taskbar-label">{{ windowTitle(windowState.titleKey, windowState.path) }}</span>
           <i aria-hidden="true" />
         </button>
       </div>

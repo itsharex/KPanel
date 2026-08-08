@@ -186,6 +186,7 @@ export const zhCNMessages = {
   'desktop.entryOpen': '打开',
   'desktop.entryScriptManage': '脚本管理',
   'desktop.scriptWindowTitle': '脚本终端',
+  'desktop.namedScriptWindowTitle': '{name} 的脚本终端',
   'desktop.entryDetails': '详情',
   'desktop.entryRename': '重命名',
   'desktop.renameTitle': '重命名网站图标',

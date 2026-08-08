@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { LoaderCircle, RefreshCw, ShieldCheck, SquareTerminal, TriangleAlert } from '@lucide/vue'
+import { LoaderCircle, RefreshCw, SquareTerminal, TriangleAlert } from '@lucide/vue'
 import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
 import { ApiError, api } from '@/lib/api'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
@@ -20,8 +20,6 @@ let controller: AbortController | undefined
 
 const activeJobStorageKey = 'kpanel:active-app-job'
 const appID = computed(() => String(route.params.appId || ''))
-const appName = computed(() => item.value?.name_zh || item.value?.name_en || '应用脚本终端')
-
 function isActiveJob(value?: AppInstallJob): boolean {
   return value?.status === 'queued' || value?.status === 'running'
 }
@@ -113,14 +111,6 @@ onBeforeUnmount(() => controller?.abort())
 
 <template>
   <section class="app-script-page">
-    <header class="app-script-page__header">
-      <span class="app-script-page__icon"><SquareTerminal :size="22" /></span>
-      <div>
-        <strong>{{ appName }}</strong>
-        <small><ShieldCheck :size="13" /><span>通过 KPanel 结构化应用动作连接 kejilion.sh</span></small>
-      </div>
-    </header>
-
     <div v-if="loading" class="app-script-page__state" role="status">
       <LoaderCircle class="spin" :size="24" />
       <strong>正在启动脚本终端…</strong>
@@ -161,50 +151,6 @@ onBeforeUnmount(() => controller?.abort())
   flex-direction: column;
   overflow: hidden;
   background: var(--terminal-shell-background);
-}
-
-.app-script-page__header {
-  display: flex;
-  min-height: 62px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  color: var(--terminal-shell-text);
-  background: var(--terminal-shell-panel);
-  border-bottom: 1px solid var(--terminal-shell-border);
-}
-
-.app-script-page__header > div {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.app-script-page__header strong {
-  overflow: hidden;
-  font-size: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.app-script-page__header small {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--terminal-shell-muted);
-  font-size: 10px;
-}
-
-.app-script-page__icon {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 auto;
-  place-items: center;
-  color: #d8fff5;
-  background: linear-gradient(145deg, #34d399, #0f766e);
-  border-radius: 11px;
 }
 
 .app-script-page__terminal {
