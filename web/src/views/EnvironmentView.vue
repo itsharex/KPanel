@@ -72,9 +72,12 @@ let summaryController: AbortController | undefined
 let catalogController: AbortController | undefined
 let backupsController: AbortController | undefined
 let jobsController: AbortController | undefined
+let pollController: AbortController | undefined
 let pollTimer: number | undefined
+let pollGeneration = 0
 let catalogLoaded = false
 let backupsLoaded = false
+let disposed = false
 
 const auxiliaryWarning = computed(() =>
   Object.values(auxiliaryErrors).filter(Boolean).join('；'),
@@ -221,21 +224,42 @@ async function load(silent = false): Promise<void> {
   }
 }
 
-function schedulePoll(): void {
+function stopJobPolling(): void {
+  pollGeneration += 1
   if (pollTimer) window.clearTimeout(pollTimer)
-  if (activeJob.value) pollTimer = window.setTimeout(() => void pollActiveJob(), 1200)
+  pollTimer = undefined
+  pollController?.abort()
+  pollController = undefined
 }
 
-async function pollActiveJob(): Promise<void> {
+function schedulePoll(delay = 1200): void {
+  stopJobPolling()
+  if (disposed || !activeJob.value) return
+  const generation = pollGeneration
+  pollTimer = window.setTimeout(() => {
+    pollTimer = undefined
+    if (!disposed && generation === pollGeneration) void pollActiveJob(generation)
+  }, delay)
+}
+
+async function pollActiveJob(generation: number): Promise<void> {
+  if (disposed || generation !== pollGeneration) return
   const current = activeJob.value
   if (!current) return
+  const requestController = new AbortController()
+  pollController?.abort()
+  pollController = requestController
   try {
-    const updated = await api.webEnvironment.job(current.id)
+    const updated = await api.webEnvironment.job(current.id, requestController.signal)
+    if (disposed || generation !== pollGeneration || requestController.signal.aborted) return
     jobs.value = jobs.value.map((item) => (item.id === updated.id ? updated : item))
     if (['queued', 'running', 'waiting_input'].includes(updated.status)) schedulePoll()
     else await load(true)
-  } catch {
-    pollTimer = window.setTimeout(() => void pollActiveJob(), 2200)
+  } catch (reason) {
+    if (disposed || generation !== pollGeneration || requestController.signal.aborted || isAbort(reason)) return
+    schedulePoll(2200)
+  } finally {
+    if (pollController === requestController) pollController = undefined
   }
 }
 
@@ -342,11 +366,12 @@ function openTerminal(job?: WebEnvironmentJob): void {
 onMounted(() => void load())
 watch(section, () => loadSectionData())
 onBeforeUnmount(() => {
+  disposed = true
   summaryController?.abort()
   catalogController?.abort()
   backupsController?.abort()
   jobsController?.abort()
-  if (pollTimer) window.clearTimeout(pollTimer)
+  stopJobPolling()
 })
 </script>
 

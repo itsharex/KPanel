@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
@@ -10,8 +10,10 @@ import { openTerminalURL } from '@/lib/terminalLinks'
 import { containWheelScroll } from '@/lib/scroll'
 import { takeTerminalInputChunk, terminalInputShouldFlushImmediately, terminalLineSubmission } from '@/lib/terminalInput'
 import { useI18n } from '@/i18n'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 
 const { t } = useI18n()
+const desktopWindowActive = inject(desktopWindowActiveKey, computed(() => true))
 
 const props = defineProps<{
   sessionId: string
@@ -41,6 +43,7 @@ let inputSending = false
 // older Panel responses that did not include the initial offset field.
 let offset = Number.isFinite(props.initialOffset) && props.initialOffset >= 0 ? props.initialOffset : 0
 let disposed = false
+let mounted = false
 let lastRows = 0
 let lastColumns = 0
 let reconnectAttempts = 0
@@ -123,7 +126,8 @@ function submitPendingLine(): void {
 }
 
 async function poll(): Promise<void> {
-  if (disposed || state.value === 'finished') return
+  pollTimer = undefined
+  if (disposed || !desktopWindowActive.value || state.value === 'finished') return
   pollController?.abort()
   pollController = new AbortController()
   try {
@@ -135,7 +139,7 @@ async function poll(): Promise<void> {
     reconnectAttempts = 0
     if (state.value === 'connected' && inputQueue) void flushInput()
     if (chunk.exitError) writeTerminalOutput(`\r\n\x1b[31m[KPanel] ${chunk.exitError}\x1b[0m\r\n`)
-    if (state.value !== 'finished') pollTimer = window.setTimeout(() => void poll(), 0)
+    if (desktopWindowActive.value && state.value !== 'finished') pollTimer = window.setTimeout(() => void poll(), 0)
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
     if (reason instanceof ApiError && reason.code === 'terminal_not_found') {
@@ -145,7 +149,7 @@ async function poll(): Promise<void> {
     state.value = 'reconnecting'
     reconnectAttempts++
     const retryDelay = Math.min(5000, 500 * 2 ** Math.min(reconnectAttempts - 1, 3))
-    pollTimer = window.setTimeout(() => void poll(), retryDelay)
+    if (desktopWindowActive.value) pollTimer = window.setTimeout(() => void poll(), retryDelay)
   }
 }
 
@@ -164,7 +168,18 @@ function scheduleResize(): void {
 
 defineExpose({ scrollToTop, scheduleResize })
 
+watch(desktopWindowActive, (active) => {
+  if (active) {
+    if (mounted && state.value !== 'finished') void poll()
+    return
+  }
+  pollController?.abort()
+  if (pollTimer) window.clearTimeout(pollTimer)
+  pollTimer = undefined
+})
+
 onMounted(() => {
+  mounted = true
   terminal = new Terminal({
     cursorBlink: true,
     cursorStyle: 'bar',
@@ -199,11 +214,12 @@ onMounted(() => {
     scheduleResize()
     window.requestAnimationFrame(() => composerInput.value?.focus())
   }
-  void poll()
+  if (desktopWindowActive.value) void poll()
 })
 
 onBeforeUnmount(() => {
   disposed = true
+  mounted = false
   pollController?.abort()
   if (pollTimer) window.clearTimeout(pollTimer)
   if (inputTimer) window.clearTimeout(inputTimer)

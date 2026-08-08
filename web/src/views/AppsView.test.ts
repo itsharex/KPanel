@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs'
-import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
+import { createSSRApp, ref, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { renderToString, type SSRContext } from 'vue/server-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppsView from './AppsView.vue'
 import { ApiError } from '@/lib/api'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import type { AppInstallJob, AppMarketInventory, Site } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
@@ -118,6 +119,8 @@ interface AppsBindings {
   checkUpdate: () => Promise<void>
   confirmMutation: () => Promise<void>
   refreshJob: (id: string) => Promise<void>
+  startJobPolling: (job: AppInstallJob) => void
+  syncJobPollingForWindow: (active: boolean) => void
   revealInstalledApp: (appID: string) => Promise<void>
   addDomain: () => Promise<void>
   removeDomain: (site: Site) => Promise<void>
@@ -137,6 +140,11 @@ describe('AppsView catalog filtering performance', () => {
     expect(source).toContain('loading="lazy"')
     expect(source).toContain('decoding="async"')
     expect(source).toMatch(/\.app-card\s*\{[^}]*content-visibility:\s*auto;/)
+  })
+
+  it('pauses the interactive terminal stream while its desktop window is inactive', () => {
+    const source = readFileSync(new URL('./AppsView.vue', import.meta.url), 'utf8')
+    expect(source).toContain('v-if="activeJob.interactive && windowActive"')
   })
 
   it('reuses the sorted search catalog while filters and queries change', () => {
@@ -170,12 +178,13 @@ describe('AppsView catalog filtering performance', () => {
   })
 })
 
-function setupView(): AppsBindings {
+function setupView(windowActive?: Ref<boolean>): AppsBindings {
   const component = AppsView as unknown as {
     setup: (props: Record<string, never>, context: { expose: () => void }) => AppsBindings
   }
   const app = createSSRApp({ render: () => null })
   app.provide(ssrContextKey, { modules: new Set<string>() })
+  if (windowActive) app.provide(desktopWindowActiveKey, windowActive)
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
   try {
     return app.runWithContext(() => component.setup({}, { expose: () => undefined }))
@@ -734,6 +743,33 @@ describe('AppsView script management', () => {
 
     expect(view.activeJob.value).toEqual(job)
     expect(window.localStorage.getItem('kpanel:active-app-job')).toBe(job.id)
+  })
+
+  it('throttles background job polling and refreshes immediately when the window is focused', async () => {
+    const job: AppInstallJob = {
+      id: 'b'.repeat(32),
+      appId: 'builtin-13',
+      appName: 'Cloudreve',
+      action: 'update',
+      status: 'running',
+      stage: 'executing',
+      progress: 25,
+      logs: [],
+      createdAt: '2026-07-28T00:00:00Z',
+    }
+    const windowActive = ref(false)
+    mocks.job.mockResolvedValue(job)
+    const view = setupView(windowActive)
+
+    view.startJobPolling(job)
+
+    expect(mocks.job).not.toHaveBeenCalled()
+    expect(window.setTimeout).toHaveBeenLastCalledWith(expect.any(Function), 15_000)
+
+    view.syncJobPollingForWindow(true)
+    await Promise.resolve()
+
+    expect(mocks.job).toHaveBeenCalledOnce()
   })
 
   it('clears an update job only when the persisted job no longer exists', async () => {

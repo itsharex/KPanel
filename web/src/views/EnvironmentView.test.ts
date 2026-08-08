@@ -1,5 +1,5 @@
 import { createSSRApp, ssrContextKey, type Ref } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import EnvironmentView from './EnvironmentView.vue'
 import { api } from '@/lib/api'
 import type { WebEnvironmentBackup, WebEnvironmentJob, WebEnvironmentSummary } from '@/types/api'
@@ -45,6 +45,15 @@ interface EnvironmentBindings {
   load: (silent?: boolean) => Promise<void>
   loadBackups: (force?: boolean) => Promise<void>
   start: (input: Record<string, unknown>) => Promise<void>
+  stopJobPolling: () => void
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => {
+    resolve = next
+  })
+  return { promise, resolve }
 }
 
 function setupView(): EnvironmentBindings {
@@ -87,6 +96,16 @@ function summary(): WebEnvironmentSummary {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.useFakeTimers()
+  vi.stubGlobal('window', {
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+  })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('EnvironmentView background jobs', () => {
@@ -141,5 +160,39 @@ describe('EnvironmentView background jobs', () => {
       '任务已转入后台',
       '关闭终端或刷新页面都不会中断执行。',
     )
+  })
+
+  it('does not restart job polling after lifecycle cleanup while a request is in flight', async () => {
+    const job: WebEnvironmentJob = {
+      id: 'c'.repeat(32),
+      action: 'backup.create',
+      target: 'web',
+      status: 'running',
+      stage: 'running',
+      progress: 1,
+      message: 'running',
+      createdAt: '2026-07-28T00:00:00Z',
+    }
+    const pending = deferred<WebEnvironmentJob>()
+    let requestSignal: AbortSignal | undefined
+    mocks.start.mockResolvedValueOnce(job)
+    vi.mocked(api.webEnvironment.job).mockImplementationOnce((_id, signal) => {
+      requestSignal = signal
+      return pending.promise
+    })
+    const view = setupView()
+    view.summary.value = summary()
+    await view.start({ action: 'backup.create' })
+
+    await vi.advanceTimersByTimeAsync(1_200)
+    expect(api.webEnvironment.job).toHaveBeenCalledTimes(1)
+
+    view.stopJobPolling()
+    expect(requestSignal?.aborted).toBe(true)
+    pending.resolve({ ...job, progress: 20 })
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(2_300)
+
+    expect(api.webEnvironment.job).toHaveBeenCalledTimes(1)
   })
 })

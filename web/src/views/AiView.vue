@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute,useRouter } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 import { Archive, ArchiveRestore, ArrowDown, Bot, Brain, Check, CheckCircle2, ChevronLeft, CircleStop, Copy, FileText, Image, LoaderCircle, Menu, MessageSquarePlus, Paperclip, Pencil, Pin, Search, Send, Settings2, ShieldCheck, Sparkles, Trash2, Wifi, WifiOff, X } from '@lucide/vue'
 import AiMarkdown from '@/components/ai/AiMarkdown.vue'
 import AiSettings from '@/components/ai/AiSettings.vue'
 import { aiApi,runEventURL } from '@/lib/aiApi'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import type { AIApprovalMode,AIMessage,AIModel,AIProvider,AIRun,AIRunSnapshot,AISession,AIToolCall,AIThinkingLevel,AIUploadAttachment } from '@/types/ai'
 
 usePhraseCatalog(() => import('@/i18n/pages/AiView/en-US').then((module) => module.default))
 
 const route=useRoute();const router=useRouter()
+const desktopWindowActive=inject(desktopWindowActiveKey,computed(()=>true))
 const providers=ref<AIProvider[]>([]);const models=ref<AIModel[]>([]);const sessions=ref<AISession[]>([]);const messages=ref<AIMessage[]>([]);const toolCalls=ref<AIToolCall[]>([])
 const currentRun=ref<AIRun>();const streamText=ref('');const search=ref('');const input=ref('');const error=ref('');const loading=ref(true);const sending=ref(false);const connected=ref(false);const settingsOpen=ref(false);const sessionDrawer=ref(false)
 const attachments=ref<AIUploadAttachment[]>([]);const followOutput=ref(true);const copiedMessage=ref('')
@@ -59,7 +61,7 @@ function hasActivityLink(name:string){return ['host_app_action','host_diagnostic
 function toolStatusLabel(call:AIToolCall){if(call.status==='pending_approval')return '等待批准';if(call.status==='running')return '正在执行';if(call.status==='completed')return '已完成';if(call.status==='failed')return '执行失败';if(call.status==='rejected')return '已拒绝';return call.status}
 function scrollBottom(force=false,smooth=false){if(!force&&!followOutput.value)return;if(force)followOutput.value=true;void nextTick(()=>messageEnd.value?.scrollIntoView({behavior:smooth?'smooth':'auto'}))}
 function onMessagesScroll(){const pane=messagesPane.value;if(!pane)return;followOutput.value=pane.scrollHeight-pane.scrollTop-pane.clientHeight<96}
-function appendStream(delta:string){streamQueue+=delta;if(!streamFrame)streamFrame=requestAnimationFrame(flushStreamFrame)}
+function appendStream(delta:string){streamQueue+=delta;if(desktopWindowActive.value&&!streamFrame)streamFrame=requestAnimationFrame(flushStreamFrame)}
 function flushStreamFrame(){streamFrame=0;if(streamQueue){const count=Math.max(2,Math.min(96,Math.ceil(streamQueue.length/10)));streamText.value+=streamQueue.slice(0,count);streamQueue=streamQueue.slice(count);scrollBottom();if(streamQueue)streamFrame=requestAnimationFrame(flushStreamFrame);else if(completedStreamMessage)finalizeStreamMessage()}else if(completedStreamMessage)finalizeStreamMessage()}
 function finalizeStreamMessage(){const value=completedStreamMessage;if(!value)return;completedStreamMessage=undefined;streamText.value='';const index=messages.value.findIndex(item=>item.id===value.id);if(index>=0)messages.value.splice(index,1,value);else messages.value.push(value);scrollBottom()}
 function resetStream(){if(streamFrame)cancelAnimationFrame(streamFrame);streamFrame=0;streamQueue='';completedStreamMessage=undefined;streamText.value=''}
@@ -94,7 +96,7 @@ async function refreshAfterSessionLeaves(item:AISession){const wasActive=item.id
 async function archive(item:AISession){try{await aiApi.sessions.update(item.id,{archived:true});await refreshAfterSessionLeaves(item)}catch(reason){error.value=reason instanceof Error?reason.message:'会话归档失败'}}
 async function restore(item:AISession){try{await aiApi.sessions.update(item.id,{archived:false});await refreshAfterSessionLeaves(item)}catch(reason){error.value=reason instanceof Error?reason.message:'会话恢复失败'}}
 async function remove(item:AISession){if(!confirm(`删除会话“${item.title}”？此操作不可恢复。`))return;try{await aiApi.sessions.remove(item.id);await refreshAfterSessionLeaves(item)}catch(reason){error.value=reason instanceof Error?reason.message:'会话删除失败'}}
-watch(activeId,loadMessages);watch(search,()=>{if(searchTimer)window.clearTimeout(searchTimer);searchTimer=window.setTimeout(refreshSessions,250)})
+watch(activeId,loadMessages);watch(search,()=>{if(searchTimer)window.clearTimeout(searchTimer);searchTimer=window.setTimeout(refreshSessions,250)});watch(desktopWindowActive,active=>{if(!active){if(streamFrame)cancelAnimationFrame(streamFrame);streamFrame=0;return}if(streamQueue){streamText.value+=streamQueue;streamQueue='';if(completedStreamMessage)finalizeStreamMessage();else scrollBottom()}})
 onMounted(loadAll);onBeforeUnmount(()=>{closeStream();resetStream();if(searchTimer)window.clearTimeout(searchTimer)})
 </script>
 

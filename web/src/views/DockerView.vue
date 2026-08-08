@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/DockerView/en-US').then((module) => module.default))
@@ -34,6 +34,7 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import { ApiError, api } from '@/lib/api'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import {
   sortDockerContainers,
   sortDockerImages,
@@ -86,6 +87,7 @@ interface CreateEnvironmentRow {
 
 const panel = usePanelState()
 const toast = useToast()
+const windowActive = inject(desktopWindowActiveKey, computed(() => true))
 const data = ref<DockerInventory>()
 const loading = ref(true)
 const refreshing = ref(false)
@@ -162,8 +164,15 @@ let controller: AbortController | undefined
 let logController: AbortController | undefined
 let statsController: AbortController | undefined
 let statsTimer: number | undefined
+let statsPollGeneration = 0
 let jobTimer: number | undefined
+let jobController: AbortController | undefined
+let jobPollGeneration = 0
+let pollingJobID = ''
 const activeDockerJobKey = 'kpanel.active-docker-job'
+const activeJobPollDelay = 1_500
+const backgroundJobPollDelay = 15_000
+const statsPollDelay = 3_000
 
 const tabs = computed(() => [
   { id: 'containers' as const, label: '容器', icon: Container, count: String(data.value?.containers.length || 0) },
@@ -418,13 +427,30 @@ async function loadPublicIPv4(): Promise<void> {
 }
 
 function stopJobPolling(): void {
-  if (jobTimer) window.clearInterval(jobTimer)
+  jobPollGeneration += 1
+  pollingJobID = ''
+  if (jobTimer) window.clearTimeout(jobTimer)
   jobTimer = undefined
+  jobController?.abort()
+  jobController = undefined
 }
 
-async function refreshJob(id: string): Promise<void> {
+function scheduleJobPoll(id: string, generation: number, delay: number): void {
+  if (generation !== jobPollGeneration || pollingJobID !== id) return
+  if (jobTimer) window.clearTimeout(jobTimer)
+  jobTimer = window.setTimeout(() => {
+    jobTimer = undefined
+    void refreshJob(id, generation)
+  }, delay)
+}
+
+async function refreshJob(id: string, generation = jobPollGeneration): Promise<void> {
+  if (jobController) return
+  const requestController = new AbortController()
+  jobController = requestController
   try {
-    const job = await api.docker.job(id)
+    const job = await api.docker.job(id, requestController.signal)
+    if (generation !== jobPollGeneration || jobController !== requestController) return
     activeJob.value = job
     if (job.status === 'queued' || job.status === 'running') return
     stopJobPolling()
@@ -438,18 +464,41 @@ async function refreshJob(id: string): Promise<void> {
     } else {
       toast.danger('Docker 后台任务失败', job.message || '请刷新资源后重试。')
     }
-  } catch {
-    stopJobPolling()
-    window.localStorage.removeItem(activeDockerJobKey)
+  } catch (reason) {
+    if (reason instanceof DOMException && reason.name === 'AbortError') return
+    if (generation !== jobPollGeneration || jobController !== requestController) return
+    if (reason instanceof ApiError && reason.status === 404) {
+      stopJobPolling()
+      activeJob.value = undefined
+      window.localStorage.removeItem(activeDockerJobKey)
+    }
+  } finally {
+    if (jobController === requestController) jobController = undefined
+    if (
+      generation === jobPollGeneration &&
+      pollingJobID === id
+    ) {
+      scheduleJobPoll(
+        id,
+        generation,
+        windowActive.value ? activeJobPollDelay : backgroundJobPollDelay,
+      )
+    }
   }
 }
 
-function startJobPolling(job: DockerMaintenanceJob): void {
+function beginJobPolling(id: string, immediate = windowActive.value): void {
   stopJobPolling()
+  window.localStorage.setItem(activeDockerJobKey, id)
+  pollingJobID = id
+  const generation = jobPollGeneration
+  if (immediate) void refreshJob(id, generation)
+  else scheduleJobPoll(id, generation, backgroundJobPollDelay)
+}
+
+function startJobPolling(job: DockerMaintenanceJob, immediate = windowActive.value): void {
   activeJob.value = job
-  window.localStorage.setItem(activeDockerJobKey, job.id)
-  void refreshJob(job.id)
-  jobTimer = window.setInterval(() => void refreshJob(job.id), 1_500)
+  beginJobPolling(job.id, immediate)
 }
 
 async function restoreBackgroundJob(): Promise<void> {
@@ -461,8 +510,13 @@ async function restoreBackgroundJob(): Promise<void> {
       if (job.status === 'queued' || job.status === 'running') startJobPolling(job)
       else window.localStorage.removeItem(activeDockerJobKey)
       return
-    } catch {
-      window.localStorage.removeItem(activeDockerJobKey)
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 404) {
+        window.localStorage.removeItem(activeDockerJobKey)
+      } else {
+        beginJobPolling(saved)
+        return
+      }
     }
   }
   try {
@@ -734,36 +788,74 @@ function closeLogs(): void {
   selectedContainer.value = undefined
 }
 
-async function refreshStats(): Promise<void> {
-  if (!selectedContainer.value) return
+function stopStatsPolling(): void {
+  statsPollGeneration += 1
+  if (statsTimer) window.clearTimeout(statsTimer)
+  statsTimer = undefined
   statsController?.abort()
-  statsController = new AbortController()
+  statsController = undefined
+  statsLoading.value = false
+}
+
+function scheduleStatsRefresh(containerID: string, generation: number): void {
+  if (
+    generation !== statsPollGeneration ||
+    !windowActive.value ||
+    !statsOpen.value ||
+    selectedContainer.value?.id !== containerID
+  ) {
+    return
+  }
+  if (statsTimer) window.clearTimeout(statsTimer)
+  statsTimer = window.setTimeout(() => {
+    statsTimer = undefined
+    void refreshStats(generation)
+  }, statsPollDelay)
+}
+
+async function refreshStats(generation = statsPollGeneration): Promise<void> {
+  const container = selectedContainer.value
+  if (!container || !statsOpen.value || !windowActive.value || statsController) return
+  const requestController = new AbortController()
+  statsController = requestController
   statsLoading.value = !stats.value
   statsError.value = ''
   try {
-    stats.value = await api.docker.stats(selectedContainer.value.id, statsController.signal)
+    const next = await api.docker.stats(container.id, requestController.signal)
+    if (
+      generation !== statsPollGeneration ||
+      statsController !== requestController ||
+      !windowActive.value ||
+      !statsOpen.value ||
+      selectedContainer.value?.id !== container.id
+    ) {
+      return
+    }
+    stats.value = next
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
+    if (generation !== statsPollGeneration || statsController !== requestController) return
     statsError.value = reason instanceof ApiError ? reason.message : '无法读取容器性能数据。'
   } finally {
-    statsLoading.value = false
+    if (statsController === requestController) {
+      statsController = undefined
+      statsLoading.value = false
+    }
+    scheduleStatsRefresh(container.id, generation)
   }
 }
 
 function showStats(container: DockerContainer): void {
+  stopStatsPolling()
   contextMenu.value = undefined
   selectedContainer.value = container
   stats.value = undefined
   statsOpen.value = true
-  void refreshStats()
-  if (statsTimer) window.clearInterval(statsTimer)
-  statsTimer = window.setInterval(() => void refreshStats(), 3_000)
+  if (windowActive.value) void refreshStats()
 }
 
 function closeStats(): void {
-  statsController?.abort()
-  if (statsTimer) window.clearInterval(statsTimer)
-  statsTimer = undefined
+  stopStatsPolling()
   statsOpen.value = false
   stats.value = undefined
   selectedContainer.value = undefined
@@ -871,14 +963,32 @@ onMounted(() => {
   void restoreBackgroundJob()
 })
 
+watch(windowActive, (active) => {
+  const job = activeJob.value
+  const jobID = job && (job.status === 'queued' || job.status === 'running')
+    ? job.id
+    : pollingJobID
+  if (jobID) {
+    beginJobPolling(jobID, active)
+  }
+
+  if (!active) {
+    stopStatsPolling()
+    return
+  }
+  if (statsOpen.value && selectedContainer.value) {
+    stopStatsPolling()
+    void refreshStats()
+  }
+})
+
 onBeforeUnmount(() => {
   window.removeEventListener('click', closeContextMenuOnOutsideClick)
   window.removeEventListener('resize', closeContextMenu)
   window.removeEventListener('scroll', closeContextMenu, true)
   controller?.abort()
   logController?.abort()
-  statsController?.abort()
-  if (statsTimer) window.clearInterval(statsTimer)
+  stopStatsPolling()
   stopJobPolling()
 })
 </script>
@@ -1398,7 +1508,7 @@ onBeforeUnmount(() => {
         <article><small>进程数</small><strong>{{ stats.pids }}</strong></article>
         <article><small>采样时间</small><strong class="stats-time">{{ formatDateTime(stats.collectedAt) }}</strong></article>
       </div>
-      <template #footer><button class="button button--secondary" type="button" @click="refreshStats"><RefreshCw :size="15" /> 刷新</button><button class="button button--secondary" type="button" @click="closeStats">关闭</button></template>
+      <template #footer><button class="button button--secondary" type="button" @click="refreshStats()"><RefreshCw :size="15" /> 刷新</button><button class="button button--secondary" type="button" @click="closeStats">关闭</button></template>
     </ModalDialog>
 
     <ModalDialog :open="consoleOpen" :title="`${selectedContainer?.name || '容器'} 控制台`" description="单次命令通过容器内 /bin/sh 执行，最长 20 秒；命令本身不写入审计或任务日志。" size="large" @close="closeConsole">

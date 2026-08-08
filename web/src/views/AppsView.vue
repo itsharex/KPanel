@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
@@ -36,6 +36,7 @@ import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
 import { ApiError, api } from '@/lib/api'
 import { appAccessURL, matchingAppProxySites } from '@/lib/appAccess'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import { isKPanelSelfUpdate, kpanelAppID, kpanelAppToken } from '@/lib/kpanelUpdate'
 import { reloadPanelInterface } from '@/lib/pageLifecycle'
 import { useToast } from '@/stores/toast'
@@ -77,13 +78,18 @@ const cancellingJob = ref(false)
 const toast = useToast()
 const route = useRoute()
 const router = useRouter()
+const windowActive = inject(desktopWindowActiveKey, computed(() => true))
 let controller: AbortController | undefined
 let jobController: AbortController | undefined
 let jobTimer: number | undefined
+let jobPollGeneration = 0
+let pollingJobID = ''
 let installPortController: AbortController | undefined
 let installPortTimer: number | undefined
 let recentInstalledTimer: number | undefined
 const activeJobStorageKey = 'kpanel:active-app-job'
+const activeJobPollDelay = 2_000
+const backgroundJobPollDelay = 15_000
 
 const selected = computed(() => inventory.value?.items.find((item) => item.id === selectedID.value))
 const selectedPort = computed(() =>
@@ -378,17 +384,30 @@ function refreshAfterSelfUpdate(job: AppInstallJob): boolean {
 }
 
 function stopJobPolling(): void {
-  if (jobTimer) window.clearInterval(jobTimer)
+  jobPollGeneration += 1
+  pollingJobID = ''
+  if (jobTimer) window.clearTimeout(jobTimer)
   jobTimer = undefined
   jobController?.abort()
   jobController = undefined
 }
 
-async function refreshJob(id: string): Promise<void> {
-  jobController?.abort()
-  jobController = new AbortController()
+function scheduleJobPoll(id: string, generation: number, delay: number): void {
+  if (generation !== jobPollGeneration || pollingJobID !== id) return
+  if (jobTimer) window.clearTimeout(jobTimer)
+  jobTimer = window.setTimeout(() => {
+    jobTimer = undefined
+    void refreshJob(id, generation)
+  }, delay)
+}
+
+async function refreshJob(id: string, generation = jobPollGeneration): Promise<void> {
+  if (jobController) return
+  const requestController = new AbortController()
+  jobController = requestController
   try {
-    const job = await api.apps.job(id, jobController.signal)
+    const job = await api.apps.job(id, requestController.signal)
+    if (generation !== jobPollGeneration || jobController !== requestController) return
     const previousStatus = activeJob.value?.status
     activeJob.value = job
     if (isActiveJob(job)) return
@@ -410,19 +429,34 @@ async function refreshJob(id: string): Promise<void> {
     }
   } catch (reason) {
     if (reason instanceof DOMException && reason.name === 'AbortError') return
+    if (generation !== jobPollGeneration || jobController !== requestController) return
     if (reason instanceof ApiError && reason.status === 404) {
       stopJobPolling()
       activeJob.value = undefined
       window.localStorage.removeItem(activeJobStorageKey)
     }
+  } finally {
+    if (jobController === requestController) jobController = undefined
+    if (
+      generation === jobPollGeneration &&
+      pollingJobID === id
+    ) {
+      scheduleJobPoll(
+        id,
+        generation,
+        windowActive.value ? activeJobPollDelay : backgroundJobPollDelay,
+      )
+    }
   }
 }
 
-function beginJobPolling(id: string): void {
+function beginJobPolling(id: string, immediate = windowActive.value): void {
   stopJobPolling()
   window.localStorage.setItem(activeJobStorageKey, id)
-  void refreshJob(id)
-  jobTimer = window.setInterval(() => void refreshJob(id), 2_000)
+  pollingJobID = id
+  const generation = jobPollGeneration
+  if (immediate) void refreshJob(id, generation)
+  else scheduleJobPoll(id, generation, backgroundJobPollDelay)
 }
 
 function startJobPolling(job: AppInstallJob): void {
@@ -825,6 +859,15 @@ watch(
   () => route.fullPath,
   () => void consumeUpdateIntent(),
 )
+
+function syncJobPollingForWindow(active: boolean): void {
+  const job = activeJob.value
+  const jobID = job && isActiveJob(job) ? job.id : pollingJobID
+  if (!jobID) return
+  beginJobPolling(jobID, active)
+}
+
+watch(windowActive, syncJobPollingForWindow)
 </script>
 
 <template>
@@ -1400,7 +1443,7 @@ watch(
           <strong>{{ activeJob.progress || 0 }}%</strong>
         </div>
         <AppInteractiveTerminal
-          v-if="activeJob.interactive"
+          v-if="activeJob.interactive && windowActive"
           :key="activeJob.id"
           :job-id="activeJob.id"
           :input-open="activeJob.inputOpen"

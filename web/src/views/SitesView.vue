@@ -74,8 +74,11 @@ const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
 let installationMonitor: ReturnType<typeof setTimeout> | undefined
+let installationPollController: AbortController | undefined
+let installationPollGeneration = 0
 let recentCreatedTimer: ReturnType<typeof setTimeout> | undefined
 let focusedInstallationID = ''
+let disposed = false
 
 const installStageLabels: Record<string, string> = {
   submitting: '提交配置',
@@ -540,25 +543,50 @@ function dismissInstallationTask(): void {
   formError.value = ''
 }
 
-function monitorInstallation(id?: string): void {
-  if (!id) return
+function stopInstallationMonitor(): void {
+  installationPollGeneration += 1
   if (installationMonitor) clearTimeout(installationMonitor)
+  installationMonitor = undefined
+  installationPollController?.abort()
+  installationPollController = undefined
+}
+
+function monitorInstallation(id?: string): void {
+  stopInstallationMonitor()
+  if (!id || disposed) return
+  const generation = installationPollGeneration
+
+  const scheduleNextPoll = (delay: number): void => {
+    if (disposed || generation !== installationPollGeneration) return
+    installationMonitor = setTimeout(() => {
+      installationMonitor = undefined
+      if (!disposed && generation === installationPollGeneration) void poll()
+    }, delay)
+  }
+
   const poll = async (): Promise<void> => {
+    if (disposed || generation !== installationPollGeneration) return
+    const requestController = new AbortController()
+    installationPollController?.abort()
+    installationPollController = requestController
     try {
-      const progress = await api.sites.installation(id)
+      const progress = await api.sites.installation(id, requestController.signal)
+      if (disposed || generation !== installationPollGeneration || requestController.signal.aborted) return
       installProgress.value = progress
       if (progress.status === 'queued' || progress.status === 'running') {
         submitting.value = true
-        installationMonitor = setTimeout(() => void poll(), 2_000)
+        scheduleNextPoll(2_000)
         return
       }
       submitting.value = false
       if (progress.status === 'succeeded') {
         toast.success('后台建站已完成', `${progress.domain || '网站'} 已完成脚本执行与产物对账。`)
         await load(true)
+        if (disposed || generation !== installationPollGeneration) return
         if (!editorOpen.value) await revealCreatedSite(progress.domain || form.primaryDomain)
       }
     } catch (reason) {
+      if (disposed || generation !== installationPollGeneration || requestController.signal.aborted) return
       if (isTransientAgentError(reason)) {
         submitting.value = true
         formError.value = ''
@@ -570,7 +598,7 @@ function monitorInstallation(id?: string): void {
             message: 'Agent 暂时不可用，后台建站任务不受影响，正在自动重连。',
           }
         }
-        installationMonitor = setTimeout(() => void poll(), 2_000)
+        scheduleNextPoll(2_000)
         return
       }
       submitting.value = false
@@ -588,6 +616,8 @@ function monitorInstallation(id?: string): void {
         stage: 'failed',
         message,
       }
+    } finally {
+      if (installationPollController === requestController) installationPollController = undefined
     }
   }
   void poll()
@@ -793,8 +823,9 @@ function sitePublicURL(site: Site): string {
 
 onMounted(() => void load())
 onBeforeUnmount(() => {
+  disposed = true
   controller?.abort()
-  if (installationMonitor) clearTimeout(installationMonitor)
+  stopInstallationMonitor()
   if (recentCreatedTimer) clearTimeout(recentCreatedTimer)
 })
 </script>

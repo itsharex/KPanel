@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance } from 'vue'
 import { Circle, Laptop, LoaderCircle, Plus, RefreshCw, Server, ShieldCheck, SquareTerminal, X } from '@lucide/vue'
 import HostTerminal from '@/components/terminal/HostTerminal.vue'
 import TerminalToolbar from '@/components/terminal/TerminalToolbar.vue'
@@ -8,9 +8,12 @@ import { api, ApiError } from '@/lib/api'
 import type { ClusterHost, ClusterHostList } from '@/types/api'
 import { usePhraseCatalog } from '@/i18n/phrase'
 import { useI18n } from '@/i18n'
+import { desktopCloseGuardCoordinator, desktopWindowCloseGuardKey } from '@/lib/desktopRouteKeys'
 
 usePhraseCatalog(() => import('@/i18n/pages/TerminalView/en-US').then((module) => module.default))
 const { t } = useI18n()
+const desktopWindowCloseGuards = inject(desktopWindowCloseGuardKey, undefined)
+let unregisterWindowCloseGuard: (() => void) | undefined
 
 interface OpenTerminal {
   id: string
@@ -133,9 +136,17 @@ function sessionStateLabel(state: OpenTerminal['state']): string {
 }
 
 onMounted(() => {
+  const guard = () => {
+    const activeCount = sessions.value.filter((session) => session.state !== 'finished').length
+    return !activeCount || window.confirm(`关闭窗口将断开 ${activeCount} 个终端会话，是否继续？`)
+  }
+  unregisterWindowCloseGuard = desktopWindowCloseGuards
+    ? desktopWindowCloseGuards.register(guard)
+    : desktopCloseGuardCoordinator.register('classic-terminal', guard)
   void loadHosts()
 })
 onBeforeUnmount(() => {
+  unregisterWindowCloseGuard?.()
   controller?.abort()
 })
 </script>

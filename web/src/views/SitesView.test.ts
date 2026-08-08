@@ -1,6 +1,7 @@
 import { createSSRApp, nextTick, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SitesView from './SitesView.vue'
+import { api } from '@/lib/api'
 import type { Site, SiteInstallationProgress } from '@/types/api'
 
 vi.mock('@/lib/api', () => ({
@@ -52,7 +53,17 @@ interface SitesBindings {
   recipeOptions: Array<{ recipe: string }>
   closeEditor: () => void
   focusInstallationPanel: (force?: boolean) => Promise<void>
+  monitorInstallation: (id?: string) => void
   revealCreatedSite: (domain: string) => Promise<void>
+  stopInstallationMonitor: () => void
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => {
+    resolve = next
+  })
+  return { promise, resolve }
 }
 
 function setupView(): SitesBindings {
@@ -85,6 +96,7 @@ function site(domain: string): Site {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks()
   vi.useFakeTimers()
 })
 
@@ -199,5 +211,32 @@ describe('SitesView creation experience', () => {
     expect(view.editorOpen.value).toBe(false)
     expect(view.recentCreatedDomain.value).toBe('new.example.com')
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+  })
+
+  it('does not restart installation polling after lifecycle cleanup while a request is in flight', async () => {
+    const pending = deferred<SiteInstallationProgress>()
+    let requestSignal: AbortSignal | undefined
+    vi.mocked(api.sites.installation).mockImplementationOnce((_id, signal) => {
+      requestSignal = signal
+      return pending.promise
+    })
+    const view = setupView()
+
+    view.monitorInstallation('site-job-in-flight')
+    expect(api.sites.installation).toHaveBeenCalledTimes(1)
+
+    view.stopInstallationMonitor()
+    expect(requestSignal?.aborted).toBe(true)
+    pending.resolve({
+      id: 'site-job-in-flight',
+      status: 'running',
+      stage: 'installing',
+      progress: 45,
+      message: '仍在执行',
+    })
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(2_100)
+
+    expect(api.sites.installation).toHaveBeenCalledTimes(1)
   })
 })

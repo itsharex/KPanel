@@ -1,7 +1,116 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { createSSRApp, nextTick, ref, ssrContextKey, type Ref } from 'vue'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import DockerView from './DockerView.vue'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
+import type { DockerContainer, DockerContainerStats, DockerMaintenanceJob } from '@/types/api'
+
+const mocks = vi.hoisted(() => ({
+  job: vi.fn(),
+  stats: vi.fn(),
+}))
+
+vi.mock('@/lib/api', () => ({
+  ApiError: class MockApiError extends Error {
+    readonly status: number
+
+    constructor(message: string, status = 0) {
+      super(message)
+      this.status = status
+    }
+  },
+  api: {
+    docker: {
+      job: mocks.job,
+      stats: mocks.stats,
+    },
+  },
+}))
 
 const dockerSource = readFileSync(new URL('./DockerView.vue', import.meta.url), 'utf8')
+
+interface DockerBindings {
+  stats: Ref<DockerContainerStats | undefined>
+  startJobPolling: (job: DockerMaintenanceJob) => void
+  restoreBackgroundJob: () => Promise<void>
+  refreshJob: (id: string) => Promise<void>
+  showStats: (container: DockerContainer) => void
+  refreshStats: () => Promise<void>
+}
+
+function setupView(windowActive: Ref<boolean>): DockerBindings {
+  const component = DockerView as unknown as {
+    setup: (props: Record<string, never>, context: { expose: () => void }) => DockerBindings
+  }
+  const app = createSSRApp({ render: () => null })
+  app.provide(ssrContextKey, { modules: new Set<string>() })
+  app.provide(desktopWindowActiveKey, windowActive)
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  try {
+    return app.runWithContext(() => component.setup({}, { expose: () => undefined }))
+  } finally {
+    warn.mockRestore()
+  }
+}
+
+function runningJob(): DockerMaintenanceJob {
+  return {
+    id: 'd'.repeat(32),
+    action: 'prune',
+    status: 'running',
+    stage: 'running',
+    progress: 20,
+    createdAt: '2026-08-08T00:00:00Z',
+  }
+}
+
+function container(): DockerContainer {
+  return {
+    id: 'c'.repeat(64),
+    name: 'web',
+    image: 'nginx:latest',
+    state: 'running',
+    access: 'managed',
+    consistency: 'synced',
+    ports: [],
+    networks: ['bridge'],
+    mounts: [],
+  }
+}
+
+function sampleStats(cpuPercent: number): DockerContainerStats {
+  return {
+    containerId: 'c'.repeat(64),
+    cpuPercent,
+    memoryBytes: 1,
+    memoryLimitBytes: 2,
+    memoryPercent: 50,
+    networkRxBytes: 3,
+    networkTxBytes: 4,
+    blockReadBytes: 5,
+    blockWriteBytes: 6,
+    pids: 7,
+    collectedAt: '2026-08-08T00:00:00Z',
+  }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  const storage = new Map<string, string>()
+  vi.stubGlobal('window', {
+    localStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    },
+    setTimeout: vi.fn(() => 1),
+    clearTimeout: vi.fn(),
+  })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('Docker resource toolbar layout', () => {
   it('keeps resource actions aligned to the right on desktop', () => {
@@ -27,5 +136,82 @@ describe('Docker resource toolbar layout', () => {
     expect(dockerSource).toContain('@contextmenu="showVolumeContext($event, volume)"')
     expect(dockerSource).toContain('class="docker-context-menu"')
     expect(dockerSource).toContain('role="menu"')
+  })
+})
+
+describe('Docker desktop polling', () => {
+  it('throttles a running maintenance job while the window is inactive', async () => {
+    const job = runningJob()
+    const windowActive = ref(false)
+    mocks.job.mockResolvedValue(job)
+    const view = setupView(windowActive)
+
+    view.startJobPolling(job)
+
+    expect(mocks.job).not.toHaveBeenCalled()
+    expect(window.setTimeout).toHaveBeenLastCalledWith(expect.any(Function), 15_000)
+
+    windowActive.value = true
+    await nextTick()
+
+    expect(mocks.job).toHaveBeenCalledOnce()
+  })
+
+  it('does not overlap a slow maintenance-job request', async () => {
+    let resolveJob: ((value: DockerMaintenanceJob) => void) | undefined
+    mocks.job.mockReturnValueOnce(
+      new Promise<DockerMaintenanceJob>((resolve) => {
+        resolveJob = resolve
+      }),
+    )
+    const view = setupView(ref(true))
+    const job = runningJob()
+
+    view.startJobPolling(job)
+    await view.refreshJob(job.id)
+
+    expect(mocks.job).toHaveBeenCalledOnce()
+    resolveJob?.(job)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(window.setTimeout).toHaveBeenLastCalledWith(expect.any(Function), 1_500)
+  })
+
+  it('keeps a persisted maintenance job after a transient restore failure', async () => {
+    const job = runningJob()
+    window.localStorage.setItem('kpanel.active-docker-job', job.id)
+    mocks.job.mockRejectedValueOnce(new Error('temporary network failure'))
+    const view = setupView(ref(false))
+
+    await view.restoreBackgroundJob()
+
+    expect(window.localStorage.getItem('kpanel.active-docker-job')).toBe(job.id)
+    expect(window.setTimeout).toHaveBeenLastCalledWith(expect.any(Function), 15_000)
+  })
+
+  it('aborts a slow stats request on blur and ignores its late response', async () => {
+    let resolveStats: ((value: DockerContainerStats) => void) | undefined
+    mocks.stats.mockReturnValueOnce(
+      new Promise<DockerContainerStats>((resolve) => {
+        resolveStats = resolve
+      }),
+    )
+    const windowActive = ref(true)
+    const view = setupView(windowActive)
+
+    view.showStats(container())
+    await view.refreshStats()
+
+    expect(mocks.stats).toHaveBeenCalledOnce()
+    const signal = mocks.stats.mock.calls[0]?.[1] as AbortSignal
+
+    windowActive.value = false
+    await nextTick()
+    expect(signal.aborted).toBe(true)
+
+    resolveStats?.(sampleStats(99))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(view.stats.value).toBeUndefined()
   })
 })

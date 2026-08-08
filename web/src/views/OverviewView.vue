@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
 import { RouterLink } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
@@ -43,6 +43,7 @@ import OperatingSystemIcon from '@/components/overview/OperatingSystemIcon.vue'
 import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import { ApiError, api } from '@/lib/api'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import {
   clampPercent,
   formatBytes,
@@ -73,6 +74,7 @@ const error = ref('')
 const waitingForNextSample = '等待下一次采样'
 const panel = usePanelState()
 const toast = useToast()
+const windowActive = inject(desktopWindowActiveKey, computed(() => true))
 let controller: AbortController | undefined
 let refreshTimer: number | undefined
 let maintenanceController: AbortController | undefined
@@ -716,9 +718,23 @@ async function load(silent = false): Promise<void> {
 }
 
 onMounted(() => {
-  refreshActive = true
-  void load()
-  refreshTimer = window.setInterval(() => void load(true), 20_000)
+  if (windowActive.value) {
+    refreshActive = true
+    void load()
+    refreshTimer = window.setInterval(() => void load(true), 20_000)
+  }
+})
+
+watch(windowActive, (active) => {
+  refreshActive = active
+  if (!active) {
+    controller?.abort()
+    if (refreshTimer) window.clearInterval(refreshTimer)
+    refreshTimer = undefined
+    return
+  }
+  void load(Boolean(data.value))
+  if (!refreshTimer) refreshTimer = window.setInterval(() => void load(true), 20_000)
 })
 
 onBeforeUnmount(() => {

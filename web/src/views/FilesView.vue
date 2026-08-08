@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
@@ -47,6 +47,11 @@ import {
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { ApiError, api } from '@/lib/api'
+import {
+  desktopCloseGuardCoordinator,
+  desktopWindowActiveKey,
+  desktopWindowCloseGuardKey,
+} from '@/lib/desktopRouteKeys'
 import type { CodeLanguage } from '@/lib/code-editor-language'
 import { useToast } from '@/stores/toast'
 import type { FileActionInput, FileDirectory, FileEntry, FileTrashEntry } from '@/types/api'
@@ -54,6 +59,10 @@ import type { FileActionInput, FileDirectory, FileEntry, FileTrashEntry } from '
 const CodeEditor = defineAsyncComponent(() => import('@/components/files/CodeEditor.vue'))
 const route = useRoute()
 const router = useRouter()
+const desktopWindowActive = inject(desktopWindowActiveKey, computed(() => true))
+const desktopWindowCloseGuards = inject(desktopWindowCloseGuardKey, undefined)
+const filesPage = ref<HTMLElement>()
+let unregisterWindowCloseGuard: (() => void) | undefined
 
 type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash'
 
@@ -920,10 +929,13 @@ function handleWindowClick(event: MouseEvent): void {
 }
 
 function handleFileShortcut(event: KeyboardEvent): void {
+  if (!desktopWindowActive.value) return
   const target = event.target as HTMLElement | null
+  const focusInside = filesPage.value?.contains(document.activeElement)
+  if (!filesPage.value || (!filesPage.value.contains(target) && !focusInside)) return
   if (
     previewEntry.value ||
-    target?.matches('input, textarea, select, [contenteditable="true"]')
+    target?.matches('input, textarea, select, button, a, [role="menuitem"], [contenteditable="true"]')
   ) {
     return
   }
@@ -949,7 +961,17 @@ function handleFileShortcut(event: KeyboardEvent): void {
   }
 }
 
+function focusFilesPage(event: PointerEvent): void {
+  const target = event.target as HTMLElement
+  if (target.closest('button, a, input, textarea, select, [contenteditable="true"]')) return
+  filesPage.value?.focus({ preventScroll: true })
+}
+
 onMounted(() => {
+  const guard = () => !previewDirty.value || window.confirm('文件尚未保存，确认关闭窗口吗？')
+  unregisterWindowCloseGuard = desktopWindowCloseGuards
+    ? desktopWindowCloseGuards.register(guard)
+    : desktopCloseGuardCoordinator.register('classic-files', guard)
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleFileShortcut)
   restoreViewMode()
@@ -973,6 +995,7 @@ watch(search, () => {
 })
 
 onBeforeUnmount(() => {
+  unregisterWindowCloseGuard?.()
   unmounted = true
   directoryController?.abort()
   archiveController?.abort()
@@ -983,7 +1006,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="files-page">
+  <section ref="filesPage" class="files-page" tabindex="-1" @pointerdown="focusFilesPage">
     <PageHeader title="文件管理" description="轻量管理宿主机文件；KPanel 凭据与状态目录已隔离保护。">
       <template #actions>
         <button class="button button--secondary" type="button" :disabled="loading" @click="loadDirectory()">

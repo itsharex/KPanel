@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
 }))
 
-vi.mock('vue-router', () => ({
+vi.mock('vue-router', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-router')>(),
   useRoute: () => mocks.route,
   useRouter: () => ({ push: mocks.push }),
 }))
@@ -81,6 +82,7 @@ interface FileBindings {
   invertSelection: () => void
   preventNativeSelection: (event: Event) => void
   handleFileShortcut: (event: KeyboardEvent) => void
+  filesPage: { value?: HTMLElement }
   openDialog: (action: 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash', entry?: TestFileEntry) => void
   setViewMode: (mode: 'list' | 'grid') => void
   restoreViewMode: () => void
@@ -191,6 +193,7 @@ beforeEach(() => {
       setItem: vi.fn(),
     },
   })
+  vi.stubGlobal('document', { activeElement: null })
   mocks.list.mockResolvedValue(testDirectory('/web'))
   mocks.action.mockResolvedValue({ action: 'trash', succeeded: [], failed: [] })
   mocks.trash.mockResolvedValue({ entries: [], total: 0, readAt: '2026-07-30T00:00:00Z' })
@@ -712,15 +715,53 @@ describe('FilesView directory loading', () => {
     const second = testEntry('b.txt')
     view.directory.value = { path: '/', entries: [first, second] }
     const preventDefault = vi.fn()
+    const target = { matches: vi.fn(() => false) } as unknown as HTMLElement
+    view.filesPage.value = {
+      contains: (node: Node | null) => node === target,
+    } as HTMLElement
 
     view.handleFileShortcut({
       key: 'a',
       ctrlKey: true,
       preventDefault,
+      target,
     } as unknown as KeyboardEvent)
 
     expect(preventDefault).toHaveBeenCalled()
     expect([...view.selected.value]).toEqual([first.path, second.path])
+  })
+
+  it('ignores destructive shortcuts when focus is outside the files page', () => {
+    const view = setupView()
+    const entry = testEntry('outside.txt')
+    view.directory.value = { path: '/', entries: [entry] }
+    view.selected.value = new Set([entry.path])
+    view.filesPage.value = { contains: () => false } as unknown as HTMLElement
+    const preventDefault = vi.fn()
+
+    view.handleFileShortcut({
+      key: 'Delete',
+      preventDefault,
+      target: { matches: vi.fn(() => false) },
+    } as unknown as KeyboardEvent)
+
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(view.dialogAction.value).toBeUndefined()
+  })
+
+  it('ignores file shortcuts while a toolbar or menu button has focus', () => {
+    const view = setupView()
+    const entry = testEntry('button-focus.txt')
+    const target = { matches: vi.fn(() => true) } as unknown as HTMLElement
+    view.directory.value = { path: '/', entries: [entry] }
+    view.selected.value = new Set([entry.path])
+    view.filesPage.value = { contains: (node: Node | null) => node === target } as HTMLElement
+    const preventDefault = vi.fn()
+
+    view.handleFileShortcut({ key: 'Delete', preventDefault, target } as unknown as KeyboardEvent)
+
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(view.dialogAction.value).toBeUndefined()
   })
 
   it('copies to the page clipboard, clears selection, and does not execute a file action', () => {

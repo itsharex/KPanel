@@ -105,4 +105,5 @@ export default [
   ["TAR.GZ（推荐）", "TAR.GZ (recommended)"],
   ["TAR（不压缩）", "TAR (no compression)"],
   ["ZIP（跨平台）", "ZIP (cross platform)"],
+  ["文件尚未保存，确认关闭窗口吗？", "The file has unsaved changes. Close this window anyway?"],
 ] as const satisfies PhraseCatalog

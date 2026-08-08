@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from '@/i18n'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
@@ -29,6 +29,7 @@ import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import { ApiError, api } from '@/lib/api'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import { formatDateTime } from '@/lib/format'
 import { containWheelScroll } from '@/lib/scroll'
 import { useToast } from '@/stores/toast'
@@ -47,11 +48,15 @@ const error = ref('')
 const fullscreen = ref(false)
 const toast = useToast()
 const { t } = useI18n()
+const windowActive = inject(desktopWindowActiveKey, computed(() => true))
 let controller: AbortController | undefined
 let pollController: AbortController | undefined
 let pollTimer: number | undefined
-let pollInFlight = false
 let pollFailures = 0
+let pollGeneration = 0
+let pollingJobID = ''
+const activePollDelay = 2_000
+const backgroundPollDelay = 15_000
 
 const categories = computed(() => catalog.value?.categories || [])
 const visibleChecks = computed(() =>
@@ -95,19 +100,30 @@ function sourceHost(value: string): string {
 }
 
 function stopPolling(): void {
-  if (pollTimer) window.clearInterval(pollTimer)
+  pollGeneration += 1
+  pollingJobID = ''
+  if (pollTimer) window.clearTimeout(pollTimer)
   pollTimer = undefined
   pollController?.abort()
   pollController = undefined
 }
 
-async function refreshJob(id: string): Promise<void> {
-  if (pollInFlight) return
-  pollInFlight = true
+function schedulePoll(id: string, generation: number, delay: number): void {
+  if (generation !== pollGeneration || pollingJobID !== id) return
+  if (pollTimer) window.clearTimeout(pollTimer)
+  pollTimer = window.setTimeout(() => {
+    pollTimer = undefined
+    void refreshJob(id, generation)
+  }, delay)
+}
+
+async function refreshJob(id: string, generation = pollGeneration): Promise<void> {
+  if (pollController) return
   const requestController = new AbortController()
   pollController = requestController
   try {
     const next = await api.diagnostics.job(id, requestController.signal)
+    if (generation !== pollGeneration || pollController !== requestController) return
     pollFailures = 0
     const previous = activeJob.value?.status
     activeJob.value = next
@@ -122,7 +138,11 @@ async function refreshJob(id: string): Promise<void> {
       }
     }
   } catch (reason) {
-    if (!(reason instanceof DOMException && reason.name === 'AbortError')) {
+    if (
+      generation === pollGeneration &&
+      pollController === requestController &&
+      !(reason instanceof DOMException && reason.name === 'AbortError')
+    ) {
       pollFailures += 1
       if (pollFailures >= 3) {
         toast.danger('体检进度刷新中断', '后台任务可能仍在运行，请稍后点击刷新重新连接。')
@@ -131,16 +151,28 @@ async function refreshJob(id: string): Promise<void> {
     }
   } finally {
     if (pollController === requestController) pollController = undefined
-    pollInFlight = false
+    if (
+      generation === pollGeneration &&
+      pollingJobID === id &&
+      hasActiveJob.value
+    ) {
+      schedulePoll(
+        id,
+        generation,
+        windowActive.value ? activePollDelay : backgroundPollDelay,
+      )
+    }
   }
 }
 
-function startPolling(job: DiagnosticJob): void {
+function startPolling(job: DiagnosticJob, immediate = windowActive.value): void {
   stopPolling()
   pollFailures = 0
   activeJob.value = job
-  void refreshJob(job.id)
-  pollTimer = window.setInterval(() => void refreshJob(job.id), 2_000)
+  pollingJobID = job.id
+  const generation = pollGeneration
+  if (immediate) void refreshJob(job.id, generation)
+  else schedulePoll(job.id, generation, backgroundPollDelay)
 }
 
 async function load(silent = false): Promise<void> {
@@ -226,6 +258,12 @@ watch(
     if (interactive && fullscreen.value) setFullscreen(false)
   },
 )
+
+watch(windowActive, (active) => {
+  const job = activeJob.value
+  if (!job || (job.status !== 'queued' && job.status !== 'running')) return
+  startPolling(job, active)
+})
 
 function handleKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && fullscreen.value) setFullscreen(false)
@@ -341,7 +379,7 @@ onBeforeUnmount(() => {
             <StatusBadge v-if="activeJob" :status="activeJob.status" />
           </div>
           <AppInteractiveTerminal
-            v-if="activeJob?.interactive"
+            v-if="activeJob?.interactive && windowActive"
             class="diagnostic-interactive-terminal"
             :job-id="activeJob.id"
             :input-open="activeJob.inputOpen"

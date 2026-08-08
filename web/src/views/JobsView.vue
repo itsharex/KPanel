@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CheckCircle2, Clock3, LoaderCircle, RefreshCw, RotateCw, Search, TimerReset } from '@lucide/vue'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
@@ -12,6 +12,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import { ApiError, api } from '@/lib/api'
 import { formatDateTime, relativeTime, shortId } from '@/lib/format'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import type { Job, JobStatus } from '@/types/api'
 
 type JobFilter = 'all' | 'active' | 'succeeded' | 'failed'
@@ -23,6 +24,7 @@ const error = ref('')
 const search = ref('')
 const filter = ref<JobFilter>('all')
 const selectedJob = ref<Job>()
+const desktopWindowActive = inject(desktopWindowActiveKey, computed(() => true))
 let controller: AbortController | undefined
 let timer: number | undefined
 
@@ -93,10 +95,15 @@ async function load(options: { silent?: boolean } = {}): Promise<void> {
 }
 
 onMounted(() => {
-  void load()
+  if (desktopWindowActive.value) void load()
   timer = window.setInterval(() => {
-    if (jobs.value.some((job) => isActive(job.status))) void load({ silent: true })
+    if (desktopWindowActive.value && jobs.value.some((job) => isActive(job.status))) void load({ silent: true })
   }, 4_000)
+})
+
+watch(desktopWindowActive, (active) => {
+  if (active) void load({ silent: true })
+  else controller?.abort()
 })
 
 onBeforeUnmount(() => {

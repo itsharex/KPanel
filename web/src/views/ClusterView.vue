@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/ClusterView/en-US').then((module) => module.default))
@@ -31,6 +31,7 @@ import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import OperatingSystemIcon from '@/components/overview/OperatingSystemIcon.vue'
 import { ApiError, api } from '@/lib/api'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import {
   clampPercent,
@@ -51,6 +52,7 @@ import type {
 } from '@/types/api'
 
 const toast = useToast()
+const windowActive = inject(desktopWindowActiveKey, computed(() => true))
 const inventory = ref<ClusterHostList>()
 const loading = ref(true)
 const refreshing = ref(false)
@@ -730,17 +732,34 @@ function shortFingerprint(value?: string): string {
 }
 
 function onVisibilityChange(): void {
-  if (!document.hidden) void load(true)
+  if (!document.hidden && windowActive.value) void load(true)
 }
 
 onMounted(() => {
   restoreViewMode()
   restoreHostOrder()
-  void load()
-  pollTimer = window.setInterval(() => {
-    if (!document.hidden) void load(true)
-  }, 15_000)
+  if (windowActive.value) {
+    void load()
+    pollTimer = window.setInterval(() => {
+      if (!document.hidden && windowActive.value) void load(true)
+    }, 15_000)
+  }
   document.addEventListener('visibilitychange', onVisibilityChange)
+})
+
+watch(windowActive, (active) => {
+  if (!active) {
+    loadController?.abort()
+    if (pollTimer) window.clearInterval(pollTimer)
+    pollTimer = undefined
+    return
+  }
+  void load(Boolean(inventory.value))
+  if (!pollTimer) {
+    pollTimer = window.setInterval(() => {
+      if (!document.hidden && windowActive.value) void load(true)
+    }, 15_000)
+  }
 })
 
 onBeforeUnmount(() => {

@@ -1,6 +1,8 @@
-import { createSSRApp, ssrContextKey } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { createSSRApp, nextTick, ref, ssrContextKey, type Ref } from 'vue'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import DiagnosticsView from './DiagnosticsView.vue'
+import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import type { DiagnosticJob } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
@@ -29,14 +31,16 @@ vi.mock('@/stores/toast', () => ({
 
 interface DiagnosticBindings {
   refreshJob: (id: string) => Promise<void>
+  startPolling: (job: DiagnosticJob) => void
 }
 
-function setupView(): DiagnosticBindings {
+function setupView(windowActive?: Ref<boolean>): DiagnosticBindings {
   const component = DiagnosticsView as unknown as {
     setup: (props: Record<string, never>, context: { expose: () => void }) => DiagnosticBindings
   }
   const app = createSSRApp({ render: () => null })
   app.provide(ssrContextKey, { modules: new Set<string>() })
+  if (windowActive) app.provide(desktopWindowActiveKey, windowActive)
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
   try {
     return app.runWithContext(() => component.setup({}, { expose: () => undefined }))
@@ -64,9 +68,22 @@ function runningJob(): DiagnosticJob {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.stubGlobal('window', {
+    setTimeout: vi.fn(() => 1),
+    clearTimeout: vi.fn(),
+  })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('DiagnosticsView polling', () => {
+  it('pauses the interactive terminal stream while its desktop window is inactive', () => {
+    const source = readFileSync(new URL('./DiagnosticsView.vue', import.meta.url), 'utf8')
+    expect(source).toContain('v-if="activeJob?.interactive && windowActive"')
+  })
+
   it('does not cancel or duplicate a slow in-flight refresh', async () => {
     let resolveJob: ((job: DiagnosticJob) => void) | undefined
     mocks.job.mockReturnValueOnce(
@@ -97,5 +114,22 @@ describe('DiagnosticsView polling', () => {
       '体检进度刷新中断',
       '后台任务可能仍在运行，请稍后点击刷新重新连接。',
     )
+  })
+
+  it('uses a low-frequency background poll and refreshes immediately after focus returns', async () => {
+    const job = runningJob()
+    const windowActive = ref(false)
+    mocks.job.mockResolvedValue(job)
+    const view = setupView(windowActive)
+
+    view.startPolling(job)
+
+    expect(mocks.job).not.toHaveBeenCalled()
+    expect(window.setTimeout).toHaveBeenLastCalledWith(expect.any(Function), 15_000)
+
+    windowActive.value = true
+    await nextTick()
+
+    expect(mocks.job).toHaveBeenCalledOnce()
   })
 })

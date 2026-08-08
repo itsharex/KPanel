@@ -17,4 +17,5 @@ export default [
   ['已打开终端', 'Open terminals'],
   ['选择一台主机开始', 'Select a host to begin'],
   ['左侧会明确标记本机、可加密直连的 KPanel，以及仅提供监控的轻量节点。', 'The list distinguishes the local host, encrypted KPanel connections, and monitoring-only lightweight nodes.'],
+  ['关闭窗口将断开 {0} 个终端会话，是否继续？', 'Closing this window will disconnect {0} terminal session(s). Continue?'],
 ] satisfies PhraseCatalog
