@@ -105,6 +105,7 @@ func TestNativeRuntimeAddsVisibleProgressBeforeSilentToolCall(t *testing.T) {
 	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "检查"})
 	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
 	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, &fakeTools{readOnly: true}, NewEventHub())
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +130,7 @@ func TestNativeRuntimeReplansAfterResourceVersionConflict(t *testing.T) {
 	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "执行"})
 	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
 	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, &fakeTools{executeErr: ErrToolConflict}, NewEventHub())
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -158,6 +160,7 @@ func TestNativeRuntimeReplansAfterInvalidToolArguments(t *testing.T) {
 	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
 	tools := &fakeTools{readOnly: true, executeErr: fmt.Errorf("%w: json: unknown field ignored", ErrToolArguments)}
 	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -223,6 +226,7 @@ func TestNativeRuntimeReplansAfterAgentBusinessRejection(t *testing.T) {
 	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
 	tools := &fakeTools{readOnly: true, executeErr: &ToolRejectedError{StatusCode: 422, Code: "file_symlink_rejected", RequestID: "req-safe"}}
 	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -248,6 +252,7 @@ func TestNativeRuntimeStopsRepeatedIdenticalFailedToolCall(t *testing.T) {
 	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
 	tools := &fakeTools{readOnly: true, executeErr: fmt.Errorf("%w: invalid", ErrToolArguments)}
 	runtime, _ := NewNativeRuntime(store, providerService, &repeatedFailureClient{failures: 3}, tools, NewEventHub())
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err == nil {
 		t.Fatal("repeated identical failures did not stop the run")
 	}
@@ -275,6 +280,7 @@ func TestNativeRuntimeBoundsDistinctRecoverableToolFailures(t *testing.T) {
 	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
 	tools := &fakeTools{readOnly: true, executeErr: &ToolRejectedError{StatusCode: 422, Code: "request_rejected"}}
 	runtime, _ := NewNativeRuntime(store, providerService, &repeatedFailureClient{failures: MaxRecoverableToolFailures, vary: true}, tools, NewEventHub())
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err == nil {
 		t.Fatal("recoverable failure budget did not stop the run")
 	}
@@ -292,6 +298,7 @@ func TestNativeRuntimeValidatesArgumentsBeforeApprovalOrExecution(t *testing.T) 
 	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
 	tools := &fakeTools{dryRunErr: errors.New(`json: unknown field "unexpected"`)}
 	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -342,6 +349,7 @@ func TestNativeRuntimeReadOnlyToolRunsWithoutApproval(t *testing.T) {
 	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
 	tools := &fakeTools{readOnly: true}
 	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -360,6 +368,7 @@ func TestNativeRuntimeApprovedClassifiedWriteRunsWithoutApproval(t *testing.T) {
 	requiresApproval := false
 	tools := &fakeTools{approval: &requiresApproval}
 	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -382,6 +391,7 @@ func TestNativeRuntimeManualModeRequiresApprovalForClassifiedWrite(t *testing.T)
 	requiresApproval := false
 	tools := &fakeTools{approval: &requiresApproval}
 	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	defer runtime.Close()
 	if err := runtime.Run(context.Background(), run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -423,6 +433,7 @@ func TestServiceQueuesMessageIntoActiveSessionRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer runtime.Close()
 	service := &Service{Store: store, Providers: providers, Runtime: runtime}
 	session, err := service.CreateSession(context.Background(), "admin", provider.ID, model.ID, "queue")
 	if err != nil {
@@ -494,6 +505,7 @@ func TestNativeRuntimeLimitsGlobalConcurrencyToTwo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer runtime.Close()
 	runs := make([]Run, 0, 3)
 	for index := 0; index < 3; index++ {
 		session, createErr := store.CreateSession(context.Background(), Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
@@ -626,6 +638,7 @@ func TestNativeRuntimeSilentlyLearnsReusableProcedureAcrossSessions(t *testing.T
 	output := `{"decision":"procedure","confidence":0.96,"title":"应用状态恢复","content":"检查并恢复应用状态","condition":"应用异常且需要恢复时","steps":[{"tool":"host_action","arguments":{"resourceVersion":"sha256:test"}}]}`
 	requiresApproval := false
 	runtime, _ := NewNativeRuntime(store, providers, &learningClient{output: output}, &fakeTools{approval: &requiresApproval}, NewEventHub())
+	defer runtime.Close()
 	history, _, _ := store.ContextMessages(ctx, session.ID, model.ContextWindow)
 	if err := runtime.generateProposal(ctx, run, provider, "test-key", model, history, false); err != nil {
 		t.Fatal(err)
@@ -658,6 +671,7 @@ func TestNativeRuntimeSkipsLowConfidenceLearning(t *testing.T) {
 	_, _ = store.AddMessage(ctx, Message{SessionID: session.ID, Role: RoleUser, Content: "记住当前 CPU 数值"})
 	run, _ := store.CreateRun(ctx, Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
 	runtime, _ := NewNativeRuntime(store, providers, &learningClient{output: `{"decision":"memory","confidence":0.4,"title":"CPU","content":"当前 CPU 为 10%"}`}, &fakeTools{}, NewEventHub())
+	defer runtime.Close()
 	history, _, _ := store.ContextMessages(ctx, session.ID, model.ContextWindow)
 	if err := runtime.generateProposal(ctx, run, provider, "test-key", model, history, false); err != nil {
 		t.Fatal(err)
@@ -680,6 +694,7 @@ func TestNativeRuntimeDoesNotSilentlyLearnProtectedProcedure(t *testing.T) {
 	}
 	output := `{"decision":"procedure","confidence":0.99,"title":"核心维护","content":"执行维护","condition":"需要维护时","steps":[{"tool":"host_action","arguments":{}}]}`
 	runtime, _ := NewNativeRuntime(store, providers, &learningClient{output: output}, &fakeTools{}, NewEventHub())
+	defer runtime.Close()
 	history, _, _ := store.ContextMessages(ctx, session.ID, model.ContextWindow)
 	if err := runtime.generateProposal(ctx, run, provider, "test-key", model, history, false); err != nil {
 		t.Fatal(err)
