@@ -34,10 +34,12 @@ KPanel 的研发执行者可以是 Codex、Claude 或其他经授权智能体。
 ## 协作入口
 
 - `KPanel · 协调中心` 是用户的唯一沟通入口，负责拆解、分派、跟踪、验收和汇总。
-- GitHub 的 AI Task Issue 是 Codex、Claude 和其他智能体共享的全局任务真源；Codex 任务列表只用于
-  Codex 内部复用和等待。
-- 用户已授权协调中心在 KPanel 范围内登记跨智能体任务，并按需复用或创建 Codex 任务；启动 Claude
-  等外部智能体时仍使用对应工具的会话或编排入口。
+- 远端任务分支、聚焦提交、CI 和发布记录是 Codex、Claude 和其他智能体共享的全局任务真源；Codex
+  任务列表只用于 Codex 内部复用、等待和回传上下文。
+- KPanel 的 Git fetch/push 统一使用 SSH 远端 `git@github.com:kejilion/KPanel.git`。GitHub 插件、Issue、
+  PR、API 或 `gh` 登录不是开发前置条件，也不得因其不可用而阻塞已明确授权的写任务。
+- 用户已授权协调中心在 KPanel 范围内按需复用或创建 Codex 任务；启动 Claude 等外部智能体时仍使用
+  对应工具的会话或编排入口，交接以已推送提交为准。
 - 子任务不要求用户逐个跟进；协调中心必须等待结果，并把最终结论统一反馈给用户。
 - 不把会话 ID 写入仓库。每次通过项目路径、标题、状态和任务摘要动态查找，避免 ID 失效。
 
@@ -54,8 +56,8 @@ KPanel 的研发执行者可以是 Codex、Claude 或其他经授权智能体。
 ## 路由规则
 
 1. 先明确目标、范围、限制、交付物和验收方式。
-2. 先列出开放的 GitHub AI Task Issue，再列出 Codex 任务，优先匹配：
-   - Issue 中的领域、允许路径、负责人和状态与当前任务一致；
+2. 先执行 `git fetch origin --prune`，列出 worktree、远端任务分支和 Codex 任务，优先匹配：
+   - 分支中的领域、基线、最新提交和当前任务一致；
    - 工作目录为 KPanel 主仓或其专用 worktree，且摘要明确指向 KPanel；
    - 标题使用 `KPanel · Codex · <角色> · <领域>`；
    - 领域一致且没有冲突中的未完成任务。
@@ -67,8 +69,8 @@ KPanel 的研发执行者可以是 Codex、Claude 或其他经授权智能体。
 5. 同一工作目录内禁止两个写任务并发。只读分析可以并发；所有代码或文档写入都应使用独立 Git
    worktree，或由协调中心串行执行。
 6. 子任务必须回传：完成内容、修改文件、验证结果、风险、提交哈希（如有）。
-7. 结果先更新到对应 AI Task Issue，再由协调中心复核差异和测试；未经用户明确授权，不发布、部署
-   或推送远端。
+7. 结果先形成聚焦提交；已获推送授权时通过 SSH 推送任务分支，再由协调中心从提交复核差异和测试。
+   未经用户明确授权，不发布、部署、推送任务分支或更新 `main`。
 
 ## 新建任务的环境选择
 
@@ -81,7 +83,7 @@ KPanel 的研发执行者可以是 Codex、Claude 或其他经授权智能体。
 ## 子任务提示模板
 
 ```text
-你是 KPanel 的 Codex <角色>会话。AI Task Issue 为 #<编号>，项目路径为<当前 KPanel worktree 绝对路径>。
+你是 KPanel 的 Codex <角色>会话。任务标识为<稳定 scope slug>，项目路径为<当前 KPanel worktree 绝对路径>。
 先阅读 AGENTS.md、PROJECT_RULES.md、docs/project-management.md、
 docs/multi-agent-collaboration.md 和与任务相关的现有文件。
 任务：<目标>
@@ -89,7 +91,8 @@ docs/multi-agent-collaboration.md 和与任务相关的现有文件。
 基线/分支：<base commit> / <branch>
 限制：保留用户已有改动；不发布、不部署、不推送；不要扩大任务范围。
 验收：<测试或检查>
-完成后先更新 Issue，再回传：完成内容、修改文件、验证结果、风险、提交哈希和交接状态。
+完成后形成聚焦提交；获授权时通过 SSH 推送任务分支，再回传：完成内容、修改文件、验证结果、风险、
+提交哈希、远端分支和交接状态。
 ```
 
 ## 协调中心验收

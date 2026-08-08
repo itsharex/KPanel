@@ -1,5 +1,5 @@
 name: AI 协作任务
-description: 为 Codex、Claude 或其他智能体登记可并行、可交接的 KPanel 工作项
+description: 可选的人工作项记录；不作为 AI 开发、提交或 SSH 推送的流程门禁
 title: "[AI] "
 body:
   - type: dropdown
@@ -82,7 +82,7 @@ body:
     attributes:
       label: 依赖、冲突与目标版本
       placeholder: |
-        依赖 Issue：
+        依赖分支/提交：
         冲突任务：
         目标版本：
   - type: checkboxes

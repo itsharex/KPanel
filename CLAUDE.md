@@ -9,11 +9,13 @@
 
 ## 强制规则
 
-- GitHub AI Task Issue 是跨 Codex、Claude 和其他智能体的任务真源。写入前必须有任务编号、负责人、
-  允许路径、基线、分支、worktree、验收等级和权限记录。
+- 远端任务分支、聚焦提交、CI 和发布记录是跨 Codex、Claude 和其他智能体的任务真源。GitHub Issue、
+  PR、API 和 `gh` 登录不是写任务前置条件。
+- Git fetch/push 统一使用 SSH 远端 `git@github.com:kejilion/KPanel.git`；私钥和本机 SSH 配置不得写入
+  仓库。任务开始前必须明确负责人、允许路径、基线、分支、worktree、验收等级和权限。
 - 一个写任务只拥有一个独立 Git worktree 和一个短期分支；不得在
   `C:\GitHub\kejilion-panel` 管理工作树中开发。
-- 开始和恢复任务时重新读取 Issue、`origin/main`、目标分支、`git worktree list` 和工作树状态；
+- 开始和恢复任务时重新读取 `origin/main`、目标远端分支、最新提交、`git worktree list` 和工作树状态；
   不根据旧会话记忆继续写入。
 - 不修改其他智能体声明的路径，不切换、重置、清理或删除其他任务的工作树、分支和未提交内容。
 - 使用 `PROJECT_RULES.md` 的 L0-L3 核验等级以及项目的 `make verify-change`、
@@ -24,7 +26,7 @@
 
 ## 任务交付
 
-结束前把以下内容更新到对应 AI Task Issue，并在回复中同步：
+结束前形成聚焦提交；已获推送授权时通过 SSH 推送任务分支，并在回复中同步：
 
 ```text
 AI / 会话角色：
@@ -40,5 +42,5 @@ worktree / branch / base：
 推送/合并/发布状态：
 ```
 
-跨智能体移交必须先释放原负责人写入权，再由接手者重新核对 Git 和 Issue 状态；禁止两个智能体
+跨智能体移交必须先释放原负责人写入权，再由接手者重新核对远端分支、提交和工作树状态；禁止两个智能体
 在同一分支或 worktree 中同时写入。

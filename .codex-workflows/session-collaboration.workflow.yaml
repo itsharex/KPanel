@@ -1,46 +1,48 @@
 ---
 name: session-collaboration
-description: "Route a KPanel request across Codex, Claude, or other agents through a shared AI Task Issue."
-version: "3.0"
+description: "Route KPanel work through isolated worktrees and SSH-backed remote branches."
+version: "4.0"
 author: "Codex"
 tags: [kpanel, collaboration, multi-agent, worktree, review]
-params: [role, scope, agent_provider, task_issue, base_ref, verification_level]
+params: [role, scope, agent_provider, base_ref, verification_level]
 created: "2026-07-27T08:45:12Z"
-updated: "2026-08-05T00:00:00+08:00"
+updated: "2026-08-08T04:03:10Z"
 ---
 
 # KPanel Session Collaboration
 
 ## Purpose
 
-Safely route KPanel work across Codex, Claude, or another agent, isolate every writer in its own worktree, and keep cross-tool state in one GitHub AI Task Issue.
+Safely route KPanel work across Codex, Claude, or another agent, isolate every writer in its own worktree, and keep cross-tool state in SSH remote branches, focused commits, and CI evidence.
 
 ## Prerequisites
 
 - Read `AGENTS.md`, `PROJECT_RULES.md`, `docs/project-management.md`, and `docs/multi-agent-collaboration.md`.
-- `${{task_issue}}` identifies the GitHub AI Task Issue that owns the work.
 - The user request defines a concrete goal and does not implicitly authorize push, release, or deployment.
 - `${{base_ref}}` resolves to an approved KPanel baseline; default to `origin/main`.
+- `origin` is `git@github.com:kejilion/KPanel.git`; fetch and push use the repository's local SSH configuration.
+- GitHub Issue, PR, API, plugin, and `gh` authentication are optional and must not block Git work.
 
 ## Steps
 
 ### 1. Discover current work
 
-Read the AI Task Issue, then list KPanel Codex tasks when `${{agent_provider}}` is Codex. Inspect the repository without changing branches:
+Fetch over SSH, list remote task branches, then list KPanel Codex tasks when `${{agent_provider}}` is Codex. Inspect the repository without changing branches:
 
 ```powershell
 git fetch origin --prune
 git status --short --branch
 git worktree list
 git branch -vv
+git remote get-url origin
 ```
 
-Expected: cross-agent claims, active tasks, owned worktrees, branches, dirty state, and the current release lane are known.
+Expected: active tasks, owned worktrees, remote branches, dirty state, current release lane, and the SSH remote are known.
 
 ### 2. Route or create the task
 
-- Reuse an unfinished task only when its Issue, role, provider, and domain match and its worktree is not owned by another writer.
-- For Codex create `KPanel · Codex · ${{role}} · ${{scope}}`; for another provider use its own orchestrator and record the session-neutral state in `${{task_issue}}`.
+- Reuse an unfinished task only when its scope, role, provider, branch, and domain match and its worktree is not owned by another writer.
+- For Codex create `KPanel · Codex · ${{role}} · ${{scope}}`; for another provider use its own orchestrator. The remote branch and focused commits are the session-neutral state.
 - Read-only analysis may share the project directory.
 - Before any write, create a dedicated worktree and pass its absolute path to the task.
 
@@ -48,13 +50,13 @@ Expected: one task owns one worktree and one branch; no writer uses the manageme
 
 ### 3. Send the task contract
 
-The prompt must include `${{task_issue}}`, provider, goal, allowed scope, forbidden scope, worktree path, branch, base commit, rollback point, verification level, permission to commit/push/release, and the required delivery-package fields from `docs/project-management.md`.
+The prompt must include `${{scope}}`, provider, goal, allowed scope, forbidden scope, worktree path, branch, base commit, rollback point, verification level, permission to commit/push/update main/release, and the required delivery-package fields from `docs/project-management.md`.
 
 Expected: the task can act without guessing ownership or release authority.
 
 ### 4. Wait and inspect the result
 
-Use provider-specific waiting only as a local optimization. The agent must update `${{task_issue}}` before handoff or completion. Then inspect:
+Use provider-specific waiting only as a local optimization. The agent must form a focused commit before handoff or completion and, when authorized, push the task branch over SSH. Then inspect:
 
 ```powershell
 git status --short --branch
@@ -76,7 +78,6 @@ Set the outcome to one of: development, verification, ready-for-integration, blo
 - `${{role}}`: analysis, development, verification, integration, or release.
 - `${{scope}}`: stable short domain name.
 - `${{agent_provider}}`: Codex, Claude, or another authorized provider.
-- `${{task_issue}}`: GitHub AI Task Issue number or URL.
 - `${{base_ref}}`: approved baseline; default `origin/main`.
 - `${{verification_level}}`: L0, L1, L2, or L3 under `PROJECT_RULES.md`.
 
@@ -89,5 +90,5 @@ Set the outcome to one of: development, verification, ready-for-integration, blo
 
 ## Notes
 
-- Do not store provider-specific session IDs in the repository. The AI Task Issue and Git state are the cross-provider truth.
+- Do not store provider-specific session IDs in the repository. SSH remote branches, focused commits, CI, and release records are the cross-provider truth.
 - If branch or worktree ownership changes unexpectedly, follow the conflict recovery procedure in `docs/project-management.md`.

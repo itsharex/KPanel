@@ -10,7 +10,7 @@ KPanel 允许不同 AI 工具中的分析、开发、验证和发布任务并行
 状态跨工具可发现、交付可复核。并行的单位不是“会话”，而是下面这条可追踪链：
 
 ```text
-需求 -> AI Task Issue -> 智能体任务 -> 独立 worktree/分支 -> 聚焦提交 -> 验证证据 -> 发布候选 -> 版本/回滚点
+需求 -> 智能体任务 -> 独立 worktree/分支 -> 聚焦提交 -> SSH 远端检查点 -> 验证证据 -> 发布候选 -> 版本/回滚点
 ```
 
 禁止依赖 Codex/Claude 会话记忆、未提交共享工作区或临时口头约定作为项目状态真源。
@@ -21,30 +21,24 @@ Codex 无法天然读取 Claude 会话，Claude 也无法天然读取 Codex 任�
 
 | 优先级 | 真源 | 管理内容 |
 | --- | --- | --- |
-| 1 | GitHub AI Task Issue | 目标、状态、负责人、路径声明、依赖、权限、交接和目标版本 |
-| 2 | 远端分支与提交 | 实际代码、基线、差异和可回滚点 |
-| 3 | CI/自动门禁 | 可复现验证事实 |
-| 4 | tag、Release、镜像和验收记录 | 已发布事实和回滚点 |
-| 5 | Codex/Claude 本地会话 | 临时上下文，不是全局台账 |
+| 1 | SSH 远端分支与聚焦提交 | 实际代码、任务 scope、基线、差异、交接状态和可回滚点 |
+| 2 | CI/自动门禁 | 可复现验证事实 |
+| 3 | tag、Release、镜像和验收记录 | 已发布事实和回滚点 |
+| 4 | Codex/Claude 本地任务 | 负责人、允许路径、权限和临时上下文，不是长期全局台账 |
 
-每个写任务必须对应一个 AI Task Issue。Issue 至少登记：任务编号、首选/当前智能体、角色、状态、
-允许与禁止路径、基线提交、分支、worktree、验证等级、依赖、目标版本和提交/推送/发布权限。
+每个写任务必须有稳定 scope、唯一负责人、专用分支和 worktree。开始写入前在任务上下文中明确允许与
+禁止路径、基线提交、验证等级、依赖和提交/推送/发布权限；首个可复核检查点形成聚焦提交，并在获得
+推送授权后通过 SSH 推送到同名远端分支。跨智能体交接不得只依赖未提交文件或聊天记忆。
 
-推荐标签：
-
-- 智能体：`ai:codex`、`ai:claude`、`ai:other`
-- 角色：`role:analysis`、`role:development`、`role:verification`、`role:integration`、`role:release`
-- 状态：`state:ready`、`state:in-progress`、`state:review`、`state:blocked`、`state:frozen`、`state:done`
-- 版本：`release:vX.Y.Z`
-
-GitHub 暂时不可用时，不启动新的并行写任务；已有任务只能在协调中心确认所有权后继续。不得为绕过
-控制面而维护 Codex 台账、Claude 台账和本地文本台账三套真源。
+源码远端统一为 `git@github.com:kejilion/KPanel.git`，Git 数据传输统一使用 SSH。GitHub App、Issue、
+PR、REST/GraphQL API 和 `gh` 登录均为可选辅助能力，不是任务登记、worktree 创建、提交、验证、推送
+或交接的前置条件。GitHub Actions/Release 使用仓库内置临时 Token，不能替代本机 SSH 凭据。
 
 ## 3. 角色与唯一职责
 
 | 角色 | 允许动作 | 禁止动作 |
 | --- | --- | --- |
-| 协调中心 | 接收需求、维护 AI Task Issue、跨工具路由、控制 WIP、验收、决定进入哪个版本 | 在功能任务工作树里直接开发；代替发布任务推主线 |
+| 协调中心 | 接收需求、盘点远端分支/提交、跨工具路由、控制 WIP、验收、决定进入哪个版本 | 在功能任务工作树里直接开发；代替发布任务推主线 |
 | 分析任务 | 只读调查、方案、风险和验收设计 | 修改文件、切换他人分支、发布 |
 | 开发任务 | 在专用 worktree 内实现、测试并形成聚焦提交 | 修改 `main`、推标签、部署、操作其他任务工作树 |
 | 验证任务 | 在干净基线上复核差异、测试和风险 | 未经授权修复代码；把局部测试写成发布通过 |
@@ -64,18 +58,18 @@ GitHub 暂时不可用时，不启动新的并行写任务；已有任务只能�
 5. 跨仓库功能分别使用各仓库的专用分支，并在交付包中以同一变更集编号关联；不得在共享工作树里混改。
 
 Codex 应将 `C:\GitHub\kejilion-panel` 注册为独立 Git 项目；Claude 等工具也应把仓库根目录作为项目
-根。无论工具是否自动创建隔离环境，协调中心都必须把专用 worktree 的绝对路径写入 AI Task Issue。
+根。无论工具是否自动创建隔离环境，协调中心都必须把专用 worktree 的绝对路径和任务分支写入任务契约。
 
 ### 4.2 命名
 
 | 对象 | 格式 | 示例 |
 | --- | --- | --- |
 | 任务标题 | `KPanel · <AI> · <角色> · <领域>` | `KPanel · Claude · 开发 · 历史监控框选` |
-| 功能分支 | `feature/<issue>-<scope>` | `feature/123-monitoring-range-zoom` |
-| 修复分支 | `fix/<issue>-<scope>` | `fix/124-container-cpu-sampling` |
+| 功能分支 | `feature/<scope>` | `feature/monitoring-range-zoom` |
+| 修复分支 | `fix/<scope>` | `fix/container-cpu-sampling` |
 | 规范分支 | `docs/<scope>` | `docs/project-management-standard` |
 | 发布分支 | `release/v<version>-candidate` | `release/v0.46.0-candidate` |
-| worktree | `kejilion-panel-<issue>-<ai>-<scope>` | `kejilion-panel-123-claude-monitoring-range-zoom` |
+| worktree | `kejilion-panel-<ai>-<scope>` | `kejilion-panel-claude-monitoring-range-zoom` |
 
 历史分支无需为改名而改名；新任务和重新建立的候选按本表执行。
 
@@ -93,14 +87,14 @@ Codex 应将 `C:\GitHub\kejilion-panel` 注册为独立 Git 项目；Claude 等�
 - “待集成”表示提交已验收，但尚未进入当前发布候选。
 - “候选冻结”后只允许修复候选本身；任何代码变化都生成新候选提交并重跑受影响门禁，L3 结果不得沿用。
 - 同时进行的写任务上限为 3，其中发布通道最多 1 个、同一业务领域最多 1 个。只读分析不计入上限。
-- 协调中心通过 GitHub AI Task Issue、`git worktree list`、远端分支和提交差集重建全局状态；Codex 或
-  Claude 会话列表只用于各自工具内的等待和恢复，不维护会话 ID 台账。
+- 协调中心通过 `git worktree list`、SSH 远端分支和提交差集重建全局状态；Codex 或 Claude 会话列表
+  只用于各自工具内的等待、权限记录和恢复，不维护会话 ID 台账。
 
 ## 6. 任务启动契约
 
 写任务开始前必须记录：
 
-1. AI Task Issue 编号、目标、允许范围、禁止范围、交付物和验收等级；
+1. 稳定任务 scope、目标、允许范围、禁止范围、交付物和验收等级；
 2. 专用 worktree、分支、基线提交和回滚点；
 3. 计划修改的文件/模块，以及是否跨 `KPanel`、`sh`、`apps`；
 4. 是否允许提交、推送、合并、打标签或部署；未明确授权一律视为不允许；
@@ -109,14 +103,18 @@ Codex 应将 `C:\GitHub\kejilion-panel` 注册为独立 Git 项目；Claude 等�
 启动检查至少包含：
 
 ```powershell
+git remote get-url origin
+git fetch origin --prune
 git status --short --branch
 git rev-parse --show-toplevel
 git rev-parse --short HEAD
 git worktree list
 ```
 
-若 Issue 未登记、worktree 不干净、分支与任务不符、基线不明或与其他任务文件范围重叠，先回到
-协调中心处理，不得直接开工。启动写入前必须重新读取 Issue，确认负责人仍是自己。
+`git remote get-url origin` 必须返回 SSH 地址；不得为绕过认证故障临时改成带 Token 的 HTTPS URL。
+
+若任务契约不完整、worktree 不干净、分支与任务不符、基线不明或与其他任务文件范围重叠，先回到
+协调中心处理，不得直接开工。恢复写入前必须重新 fetch 并确认负责人、远端分支和最新提交未变化。
 
 ## 7. 开发、验证与交付包
 
@@ -124,7 +122,7 @@ git worktree list
 每项任务向协调中心回传同一结构的交付包：
 
 ```text
-AI Task Issue：
+任务 scope：
 AI / 会话角色：
 目标：
 范围：
@@ -140,18 +138,27 @@ worktree / branch / base：
 推送/合并/发布状态：
 ```
 
-交付包先写回 AI Task Issue。协调中心必须读取提交差异并复核关键测试；不得仅根据任一智能体的
-最终回复宣布完成。提交信息建议追加 `AI-Task: #<issue>` 和 `AI-Agent: <provider>` trailer，便于追踪，
-但作者身份不替代代码评审和验证证据。
+交付包必须包含本地及远端分支、精确提交哈希和推送状态。协调中心必须读取提交差异并复核关键测试；
+不得仅根据任一智能体的最终回复宣布完成。提交信息可追加 `AI-Scope: <scope>` 和
+`AI-Agent: <provider>` trailer，便于追踪，但作者身份不替代代码评审和验证证据。
+
+获得任务分支推送授权后，使用 SSH 保存可复核检查点：
+
+```bash
+git push origin HEAD:refs/heads/<task-branch>
+```
+
+只有协调中心已确认精确提交、对应等级验证通过且用户明确授权更新主线时，唯一集成任务才可执行
+`git push origin <verified-commit>:main`。不创建 PR，也不通过插件或 API 代替 Git 推送。
 
 ## 8. 跨智能体交接与评审
 
 跨 Codex/Claude 交接遵循单写者移交：
 
 1. 原智能体停止写入，形成提交或明确记录未提交文件，不得把模糊工作区直接交给下一方；
-2. 在 AI Task Issue 更新当前提交、工作树状态、已完成项、失败命令、风险和建议下一步；
-3. 原负责人将状态改为 `state:review` 或 `state:blocked` 并释放写入声明；
-4. 接手智能体重新获取远端、读取 Issue、核对分支/提交/差异后再声明接手；
+2. 原智能体回传当前提交、远端分支、工作树状态、已完成项、失败命令、风险和建议下一步；
+3. 原负责人明确状态为待复核或阻塞并释放写入声明；
+4. 接手智能体重新 fetch，核对远端分支、提交和差异后再声明接手；
 5. 接手者默认使用新 worktree；除非原工作树已干净且协调中心明确转移所有权，不复用原工作树。
 
 涉及 L2 高风险变更时，优先由不同智能体独立复核；L3 发布必须由与主要实现任务不同的验证/发布任务
@@ -191,7 +198,7 @@ worktree / branch / base：
 3. 不执行 `reset --hard`、`clean`、强制切分支、删除 worktree 或覆盖文件；
 4. 识别改动所有者，将自己的已提交工作从已知提交迁移到新专用 worktree；未提交工作由原任务确认后处理；
 5. 重新核对候选差集并重跑被中断或可能受污染的验证；
-6. 把事件、影响范围和恢复结果写回 AI Task Issue 并回传协调中心。发布候选发生此类事件时，原 L3
+6. 把事件、影响范围和恢复结果连同精确提交回传协调中心。发布候选发生此类事件时，原 L3
    结果作废。
 
 ## 12. 决策和权限
@@ -207,7 +214,7 @@ worktree / branch / base：
 
 ## 13. 最小管理节奏
 
-- 每次新需求：协调中心先盘点 AI Task Issue、活跃任务和 worktree，再复用或创建任务。
+- 每次新需求：协调中心先 fetch，并盘点远端任务分支、活跃任务和 worktree，再复用或创建任务。
 - 每个开发任务：启动检查一次，完成后交付包一次；中间只报告关键风险或阻塞。
 - 每次版本：先形成精确发布范围，再冻结、L3、候选 CI、主线、标签、生产验收。
 - 每次发布后：整理未上线提交、废弃候选、风险和下一版本队列；不把旧分支存在等同于未上线功能。
