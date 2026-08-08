@@ -47,6 +47,8 @@ export const zhCNMessages = {
   'terminal.taskInputFailed': '输入发送失败，请确认任务仍在等待输入。',
   'terminal.outputTruncated': '较早的终端输出已按容量上限截断。',
   'terminal.refreshConnections': '刷新连接',
+  'terminal.collapseConnections': '收起主机选择',
+  'terminal.expandConnections': '展开主机选择',
   'terminal.loadingHosts': '正在读取主机…',
   'terminal.currentPanel': '当前 KPanel',
   'terminal.contextMenu': '终端右键菜单',

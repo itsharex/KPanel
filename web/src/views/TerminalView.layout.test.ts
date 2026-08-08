@@ -15,6 +15,16 @@ describe('multi-host terminal workspace layout', () => {
     )
   })
 
+  it('collapses the host selector into a persistent narrow rail', () => {
+    expect(terminalSource).toContain("'is-connections-collapsed': connectionsCollapsed")
+    expect(terminalSource).toContain('aria-controls="terminal-connection-selector"')
+    expect(terminalSource).toContain("'terminal.expandConnections'")
+    expect(terminalSource).toContain("'terminal.collapseConnections'")
+    expect(terminalSource).toMatch(
+      /\.terminal-workspace\.is-connections-collapsed\s*\{[^}]*grid-template-columns:52px minmax\(0,1fr\);/,
+    )
+  })
+
   it('reserves the remaining stage height for the terminal and composer', () => {
     expect(terminalSource).toMatch(
       /\.terminal-stage\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\);[^}]*min-height:0;/,

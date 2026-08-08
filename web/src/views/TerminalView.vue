@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance } from 'vue'
-import { Circle, Laptop, LoaderCircle, Plus, RefreshCw, Server, ShieldCheck, SquareTerminal, X } from '@lucide/vue'
+import { Circle, Laptop, LoaderCircle, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Server, ShieldCheck, SquareTerminal, X } from '@lucide/vue'
 import HostTerminal from '@/components/terminal/HostTerminal.vue'
 import TerminalToolbar from '@/components/terminal/TerminalToolbar.vue'
 import { useTerminalFullscreen } from '@/composables/useTerminalFullscreen'
@@ -35,8 +35,10 @@ const loading = ref(true)
 const openingHostId = ref('')
 const errorMessage = ref('')
 const search = ref('')
+const connectionsCollapsed = ref(false)
 const terminalRefs = new Map<string, HostTerminalHandle>()
 let controller: AbortController | undefined
+const connectionsCollapsedStorageKey = 'kpanel:terminal:connections-collapsed'
 
 function refreshActiveTerminal(): void {
   terminalRefs.get(activeSessionId.value)?.scheduleResize()
@@ -122,6 +124,19 @@ function scrollActiveTerminalToTop(): void {
   terminalRefs.get(activeSessionId.value)?.scrollToTop()
 }
 
+function toggleConnections(): void {
+  connectionsCollapsed.value = !connectionsCollapsed.value
+  try {
+    window.localStorage.setItem(
+      connectionsCollapsedStorageKey,
+      connectionsCollapsed.value ? '1' : '0',
+    )
+  } catch {
+    // Storage can be unavailable in privacy modes; collapsing still works for this visit.
+  }
+  void nextTick(refreshActiveTerminal)
+}
+
 function hostStateLabel(host: ClusterHost): string {
   if (!host.terminalAvailable) return host.kind === 'light_node' ? '轻量监控节点' : '需要重新配对'
   if (host.isLocal) return '本机终端'
@@ -136,6 +151,11 @@ function sessionStateLabel(state: OpenTerminal['state']): string {
 }
 
 onMounted(() => {
+  try {
+    connectionsCollapsed.value = window.localStorage.getItem(connectionsCollapsedStorageKey) === '1'
+  } catch {
+    connectionsCollapsed.value = false
+  }
   const guard = () => {
     const activeCount = sessions.value.filter((session) => session.state !== 'finished').length
     return !activeCount || window.confirm(`关闭窗口将断开 ${activeCount} 个终端会话，是否继续？`)
@@ -164,14 +184,31 @@ onBeforeUnmount(() => {
 
     <div v-if="errorMessage" class="terminal-alert" role="alert">{{ errorMessage }}</div>
 
-    <section class="terminal-workspace">
+    <section
+      class="terminal-workspace"
+      :class="{ 'is-connections-collapsed': connectionsCollapsed }"
+    >
       <aside class="terminal-connections">
         <header>
-          <div><strong>连接列表</strong><small>{{ hosts.length }} 台主机</small></div>
-          <ShieldCheck :size="18" />
+          <div class="terminal-connections__heading"><strong>连接列表</strong><small>{{ hosts.length }} 台主机</small></div>
+          <div class="terminal-connections__actions">
+            <ShieldCheck class="terminal-connections__shield" :size="18" />
+            <button
+              class="terminal-connections__toggle"
+              type="button"
+              aria-controls="terminal-connection-selector"
+              :aria-expanded="!connectionsCollapsed"
+              :title="t(connectionsCollapsed ? 'terminal.expandConnections' : 'terminal.collapseConnections')"
+              :aria-label="t(connectionsCollapsed ? 'terminal.expandConnections' : 'terminal.collapseConnections')"
+              @click="toggleConnections"
+            >
+              <PanelLeftOpen v-if="connectionsCollapsed" :size="18" />
+              <PanelLeftClose v-else :size="18" />
+            </button>
+          </div>
         </header>
-        <label class="terminal-search"><input v-model="search" type="search" placeholder="搜索主机" /></label>
-        <div class="terminal-connections__list">
+        <label v-show="!connectionsCollapsed" class="terminal-search"><input v-model="search" type="search" placeholder="搜索主机" /></label>
+        <div id="terminal-connection-selector" v-show="!connectionsCollapsed" class="terminal-connections__list">
           <div v-if="loading" class="terminal-connections__empty"><LoaderCircle class="spin" :size="22" /> {{ t('terminal.loadingHosts') }}</div>
           <div v-else-if="!hosts.length" class="terminal-connections__empty">暂无可显示主机</div>
           <button v-for="host in hosts" :key="host.id" class="terminal-host" :class="{ 'is-active': activeSession?.hostId === host.id }" type="button" :disabled="openingHostId === host.id" @click="openHost(host)">
@@ -213,11 +250,17 @@ onBeforeUnmount(() => {
 .terminal-heading h1 { margin:7px 0 4px; }
 .terminal-heading p { max-width:850px; margin:0; color:var(--text-muted); }
 .terminal-alert { border:1px solid color-mix(in srgb,var(--danger) 34%,var(--border)); border-radius:10px; padding:11px 13px; color:var(--danger); background:color-mix(in srgb,var(--danger) 8%,var(--surface)); }
-.terminal-workspace { display:grid; height:clamp(560px,calc(100vh - 220px),760px); min-height:560px; grid-template-columns:280px minmax(0,1fr); overflow:hidden; border:1px solid var(--border); border-radius:16px; background:var(--surface); box-shadow:var(--shadow-sm); }
+.terminal-workspace { display:grid; height:clamp(560px,calc(100vh - 220px),760px); min-height:560px; grid-template-columns:280px minmax(0,1fr); overflow:hidden; border:1px solid var(--border); border-radius:16px; background:var(--surface); box-shadow:var(--shadow-sm); transition:grid-template-columns 180ms ease; }
+.terminal-workspace.is-connections-collapsed { grid-template-columns:52px minmax(0,1fr); }
 .terminal-connections { display:grid; min-width:0; min-height:0; grid-template-rows:auto auto minmax(0,1fr); overflow:hidden; border-right:1px solid var(--border); background:color-mix(in srgb,var(--surface) 92%,var(--brand) 8%); }
 .terminal-connections>header { display:flex; align-items:center; justify-content:space-between; padding:17px 16px 12px; color:var(--brand); }
-.terminal-connections>header div { display:grid; gap:2px; color:var(--text); }
+.terminal-connections__heading { display:grid; min-width:0; gap:2px; color:var(--text); }
 .terminal-connections>header small { color:var(--text-muted); font-weight:500; }
+.terminal-connections__actions { display:flex; flex:0 0 auto; align-items:center; gap:8px; }
+.terminal-connections__toggle { display:grid; width:32px; height:32px; flex:0 0 auto; place-items:center; border:1px solid var(--border); border-radius:8px; color:var(--text-muted); background:var(--surface); cursor:pointer; }
+.terminal-connections__toggle:hover,.terminal-connections__toggle:focus-visible { border-color:color-mix(in srgb,var(--brand) 55%,var(--border)); color:var(--brand); outline:none; }
+.terminal-workspace.is-connections-collapsed .terminal-connections>header { justify-content:center; padding:12px 9px; }
+.terminal-workspace.is-connections-collapsed .terminal-connections__heading,.terminal-workspace.is-connections-collapsed .terminal-connections__shield { display:none; }
 .terminal-search { display:block; padding:0 12px 10px; }
 .terminal-search input { width:100%; border:1px solid var(--border); border-radius:9px; padding:9px 11px; color:var(--text); background:var(--surface); }
 .terminal-connections__list { min-height:0; overflow-y:auto; overscroll-behavior:contain; padding-bottom:8px; scrollbar-gutter:stable; }
@@ -252,5 +295,6 @@ onBeforeUnmount(() => {
 .spin { animation:spin .8s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 @keyframes terminal-pulse { 50% { opacity:.38; } }
-@media (max-width: 900px) { .terminal-workspace { height:min(760px,calc(100dvh - 110px)); min-height:560px; grid-template-columns:1fr; grid-template-rows:minmax(140px,220px) minmax(0,1fr); } .terminal-connections { border-right:0; border-bottom:1px solid var(--border); } .terminal-stage { min-height:0; } }
+@media (prefers-reduced-motion: reduce) { .terminal-workspace { transition:none; } }
+@media (max-width: 900px) { .terminal-workspace,.terminal-workspace.is-connections-collapsed { height:min(760px,calc(100dvh - 110px)); min-height:560px; grid-template-columns:1fr; grid-template-rows:minmax(140px,220px) minmax(0,1fr); } .terminal-workspace.is-connections-collapsed { grid-template-rows:56px minmax(0,1fr); } .terminal-connections { border-right:0; border-bottom:1px solid var(--border); } .terminal-stage { min-height:0; } }
 </style>

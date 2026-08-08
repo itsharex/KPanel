@@ -49,6 +49,8 @@ export const enUSMessages = {
   'terminal.taskInputFailed': 'Input failed to send. Confirm that the task is still waiting for input.',
   'terminal.outputTruncated': 'Earlier terminal output was truncated at the capacity limit.',
   'terminal.refreshConnections': 'Refresh connections',
+  'terminal.collapseConnections': 'Collapse host selector',
+  'terminal.expandConnections': 'Expand host selector',
   'terminal.loadingHosts': 'Loading hosts…',
   'terminal.currentPanel': 'Current KPanel',
   'terminal.contextMenu': 'Terminal context menu',
