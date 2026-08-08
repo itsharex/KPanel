@@ -37,6 +37,8 @@ import type {
   MonitoringHistoryQuery,
   MonitoringRange,
   PanelSettings,
+  ProcessQuery,
+  ProcessSnapshot,
   SecurityEntranceSettings,
   SetupRequest,
   Site,
@@ -1301,6 +1303,16 @@ export const api = {
   system: {
     resources: async (signal?: AbortSignal): Promise<SystemResourceSnapshot> =>
       normalizeSystemResources(await request<RawSystemSummary>('/system/summary', { signal })),
+    processes: (query: ProcessQuery = {}, signal?: AbortSignal): Promise<ProcessSnapshot> =>
+      request<ProcessSnapshot>('/system/processes', {
+        query: {
+          q: query.search,
+          sort: query.sort,
+          order: query.order,
+          limit: query.limit,
+        },
+        signal,
+      }),
     action: (body: SystemActionInput): Promise<SystemActionResult> =>
       request<SystemActionResult>('/system/actions', { method: 'POST', body }),
     maintenance: async (

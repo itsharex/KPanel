@@ -20,6 +20,7 @@ export const zhCNMessages = {
   'route.overview': '概览',
   'route.ai': 'AI 助手',
   'route.monitoring': '历史监控',
+  'route.processes': '进程管理器',
   'route.cluster': '集群',
   'route.sites': '网站',
   'route.environment': '网站 · 环境管理',

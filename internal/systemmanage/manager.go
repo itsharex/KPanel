@@ -47,6 +47,7 @@ type Runner interface {
 
 type CountryResolver func(context.Context) (string, error)
 type KejilionScriptFinder func() (string, error)
+type ProcessSignaler func(int, string) error
 
 type commandRunner struct{}
 
@@ -79,21 +80,22 @@ func (commandRunner) LookPath(name string) (string, error) {
 }
 
 type Config struct {
-	Enabled      bool
-	EtcRoot      string
-	ProcRoot     string
-	SysRoot      string
-	RunRoot      string
-	StateDir     string
-	SwapPath     string
-	Executable   string
-	Now          func() time.Time
-	Runner       Runner
-	Country      CountryResolver
-	EffectiveUID func() int
-	DNSScript    KejilionScriptFinder
-	F2BScript    KejilionScriptFinder
-	BBRv3Script  KejilionScriptFinder
+	Enabled         bool
+	EtcRoot         string
+	ProcRoot        string
+	SysRoot         string
+	RunRoot         string
+	StateDir        string
+	SwapPath        string
+	Executable      string
+	Now             func() time.Time
+	Runner          Runner
+	Country         CountryResolver
+	EffectiveUID    func() int
+	DNSScript       KejilionScriptFinder
+	F2BScript       KejilionScriptFinder
+	BBRv3Script     KejilionScriptFinder
+	ProcessSignaler ProcessSignaler
 }
 
 type Manager struct {
@@ -112,6 +114,7 @@ type Manager struct {
 	dnsScript       KejilionScriptFinder
 	f2bScript       KejilionScriptFinder
 	bbrv3Script     KejilionScriptFinder
+	processSignaler ProcessSignaler
 	rebootScheduled bool
 	mu              sync.Mutex
 }
@@ -159,6 +162,9 @@ func NewManager(config Config) *Manager {
 	if config.BBRv3Script == nil {
 		config.BBRv3Script = findKejilionBBRv3Script
 	}
+	if config.ProcessSignaler == nil {
+		config.ProcessSignaler = platformProcessSignaler
+	}
 	return &Manager{
 		enabled: config.Enabled, etcRoot: filepath.Clean(config.EtcRoot),
 		procRoot: filepath.Clean(config.ProcRoot), sysRoot: filepath.Clean(config.SysRoot),
@@ -168,6 +174,7 @@ func NewManager(config Config) *Manager {
 		now:        config.Now, runner: config.Runner, country: config.Country,
 		effectiveUID: config.EffectiveUID, dnsScript: config.DNSScript,
 		f2bScript: config.F2BScript, bbrv3Script: config.BBRv3Script,
+		processSignaler: config.ProcessSignaler,
 	}
 }
 
@@ -300,6 +307,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 		),
 		capability("system.dns.write", dnsSupported, dnsReason),
 		capability("system.timezone.write", timedatectlErr == nil, "timedatectl 不可用"),
+		capability("system.processes.signal", processSignalSupported, "进程信号仅支持 Linux"),
 		capability("system.swap.write", mkswapErr == nil && swaponErr == nil && swapoffErr == nil && fallocateErr == nil && systemdRunErr == nil && helperErr == nil, "Swap 工具、Agent 后台执行程序或 systemd 事务执行器不完整"),
 		capability("system.mirror.write", aptMirrorSupported, mirrorReason),
 		capability("system.ip-preference.write", true, ""),
@@ -353,6 +361,8 @@ func (m *Manager) Execute(ctx context.Context, input contract.SystemActionReques
 		result.Changed, result.BackupPath, result.Message, err = m.setDNS(ctx, input.Servers)
 	case "timezone":
 		result.Changed, result.Message, err = m.setTimezone(ctx, input.Timezone)
+	case "process-signal":
+		result.Changed, result.Message, err = m.signalProcess(ctx, input)
 	case "swap":
 		result.Changed, result.BackupPath, result.Message, err = m.runSwapViaSystemd(ctx, input.SwapSizeMiB)
 	case "mirror":

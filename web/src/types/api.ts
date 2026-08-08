@@ -382,6 +382,51 @@ export interface SystemOverview {
   }
 }
 
+export type ProcessSort = 'cpu' | 'memory' | 'pid' | 'name' | 'user' | 'state' | 'threads'
+export type ProcessOrder = 'asc' | 'desc'
+
+export interface ProcessQuery {
+  search?: string
+  sort?: ProcessSort
+  order?: ProcessOrder
+  limit?: number
+}
+
+export interface ProcessMetric {
+  pid: number
+  parentPid: number
+  name: string
+  state: string
+  userId: number
+  user?: string
+  cpuPercent: number
+  memoryBytes: number
+  threads: number
+  nice: number
+  startTimeTicks: number
+}
+
+export interface ProcessSummary {
+  cpuPercent: number
+  memoryUsedBytes: number
+  memoryTotalBytes: number
+  total: number
+  running: number
+  sleeping: number
+  stopped: number
+  zombie: number
+}
+
+export interface ProcessSnapshot {
+  items: ProcessMetric[]
+  total: number
+  summary: ProcessSummary
+  scanned: number
+  truncated: boolean
+  sampleDuration: number
+  collectedAt: string
+}
+
 export interface SystemActionInput {
   action:
     | 'hostname'
@@ -389,6 +434,7 @@ export interface SystemActionInput {
     | 'ssh-defense'
     | 'dns'
     | 'timezone'
+    | 'process-signal'
     | 'swap'
     | 'mirror'
     | 'ip-preference'
@@ -408,6 +454,9 @@ export interface SystemActionInput {
   profile?: 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
   maintenancePolicy?: 'full' | 'cache' | 'standard' | 'install' | 'update' | 'uninstall'
   enabled?: boolean
+  pid?: number
+  startTimeTicks?: number
+  signal?: 'term' | 'kill'
 }
 
 export interface SystemActionResult {

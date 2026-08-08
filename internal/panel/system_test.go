@@ -90,6 +90,9 @@ func TestValidateSystemAction(t *testing.T) {
 		{"reboot", contract.SystemActionRequest{Action: "reboot"}, true},
 		{"reboot with legacy confirmation", contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT"}, true},
 		{"reboot with unrelated field", contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT", Hostname: "ignored"}, false},
+		{"process signal missing identity", contract.SystemActionRequest{Action: "process-signal", PID: 42, Signal: "term"}, false},
+		{"process signal unknown signal", contract.SystemActionRequest{Action: "process-signal", PID: 42, StartTimeTicks: 99, Signal: "stop"}, false},
+		{"process signal unrelated field", contract.SystemActionRequest{Action: "process-signal", PID: 42, StartTimeTicks: 99, Signal: "term", Hostname: "ignored"}, false},
 		{"arbitrary command", contract.SystemActionRequest{Action: "shell"}, false},
 	}
 	for _, test := range tests {
@@ -132,5 +135,17 @@ func TestSystemActionAuditChangeRecordsSSHDefenseState(t *testing.T) {
 	})
 	if len(change) != 2 || change["action"] != "ssh-defense" || change["enabled"] != true {
 		t.Fatalf("unexpected SSH defense audit change: %#v", change)
+	}
+}
+
+func TestSystemActionAuditChangeRecordsOnlyProcessIdentityAndSignal(t *testing.T) {
+	change := systemActionAuditChange(contract.SystemActionRequest{
+		Action: "process-signal", PID: 42, StartTimeTicks: 99, Signal: "term", Hostname: "ignored",
+	})
+	if len(change) != 4 || change["pid"] != 42 || change["startTimeTicks"] != uint64(99) || change["signal"] != "term" {
+		t.Fatalf("unexpected process audit change: %#v", change)
+	}
+	if _, leaked := change["hostname"]; leaked {
+		t.Fatal("process audit change leaked an unrelated field")
 	}
 }

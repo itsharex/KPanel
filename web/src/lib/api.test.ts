@@ -1236,6 +1236,32 @@ describe('API client', () => {
     )
   })
 
+  it('requests the bounded process list and sends only a fixed process signal action', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [], total: 0, summary: { total: 0 } }))
+      .mockResolvedValueOnce(jsonResponse({ action: 'process-signal', changed: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.system.processes({ search: 'nginx', sort: 'memory', order: 'desc', limit: 200 })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/v1/system/processes?q=nginx&sort=memory&order=desc&limit=200',
+    )
+    await api.system.action({
+      action: 'process-signal',
+      pid: 4321,
+      startTimeTicks: 987654,
+      signal: 'term',
+    })
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/system/actions')
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({
+      action: 'process-signal',
+      pid: 4321,
+      startTimeTicks: 987654,
+      signal: 'term',
+    })
+  })
+
   it('normalizes null and legacy null-item list responses', () => {
     expect(normalizeList<string>(null)).toEqual({ items: [], total: 0 })
     expect(normalizeList({ items: null } as unknown as { items: string[]; total: number })).toEqual({

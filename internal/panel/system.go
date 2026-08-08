@@ -95,6 +95,18 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 			strings.Contains(input.Timezone, "..") || strings.ContainsAny(input.Timezone, "\x00\r\n") {
 			return "timezone", "timezone is invalid"
 		}
+	case "process-signal":
+		if input.PID <= 0 || input.StartTimeTicks == 0 ||
+			(input.Signal != "term" && input.Signal != "kill") {
+			return "process", "pid, startTimeTicks and a valid signal are required"
+		}
+		allowed := contract.SystemActionRequest{
+			Action: input.Action, PID: input.PID,
+			StartTimeTicks: input.StartTimeTicks, Signal: input.Signal,
+		}
+		if !reflect.DeepEqual(*input, allowed) {
+			return "request", "only process identity and signal are allowed"
+		}
 	case "swap":
 		if input.SwapSizeMiB < 0 {
 			return "swapSizeMiB", "swapSizeMiB must be zero or a positive integer"
@@ -165,6 +177,10 @@ func systemActionAuditChange(input contract.SystemActionRequest) map[string]any 
 		change["servers"] = input.Servers
 	case "timezone":
 		change["timezone"] = input.Timezone
+	case "process-signal":
+		change["pid"] = input.PID
+		change["startTimeTicks"] = input.StartTimeTicks
+		change["signal"] = input.Signal
 	case "swap":
 		change["swapSizeMiB"] = input.SwapSizeMiB
 	case "mirror":

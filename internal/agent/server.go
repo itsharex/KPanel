@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -83,6 +84,7 @@ type Server struct {
 	terminals        *terminal.Manager
 	thumbnailGate    chan struct{}
 	storageUsageGate chan struct{}
+	processesGate    chan struct{}
 	now              func() time.Time
 }
 
@@ -184,6 +186,7 @@ func NewServer(config Config) (*Server, error) {
 		terminals:        config.Terminals,
 		thumbnailGate:    make(chan struct{}, 2),
 		storageUsageGate: make(chan struct{}, 1),
+		processesGate:    make(chan struct{}, 1),
 		now:              config.Now,
 	}, nil
 }
@@ -535,13 +538,51 @@ func (s *Server) publicNetwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) systemProcesses(w http.ResponseWriter, r *http.Request) {
-	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+	if r.URL.RawPath != "" {
 		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_query", "Process query is invalid", "")
+		return
+	}
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || len(values) > 4 {
+		writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_query", "Process query is invalid", "")
+		return
+	}
+	for key, entries := range values {
+		if len(entries) != 1 || (key != "q" && key != "sort" && key != "order" && key != "limit") {
+			writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_query", "Process query is invalid", "")
+			return
+		}
+	}
+	select {
+	case s.processesGate <- struct{}{}:
+		defer func() { <-s.processesGate }()
+	default:
+		writeProblem(w, requestIDFrom(w), http.StatusTooManyRequests, "process_metrics_busy", "Another process sample is already running", "")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	result, err := s.system.Processes(ctx)
+	var result systeminfo.ProcessSnapshot
+	if r.URL.RawQuery == "" {
+		result, err = s.system.Processes(ctx)
+	} else {
+		limit := 0
+		if value := values.Get("limit"); value != "" {
+			limit, err = strconv.Atoi(value)
+			if err != nil {
+				writeProblem(w, requestIDFrom(w), http.StatusBadRequest, "invalid_query", "Process query is invalid", "")
+				return
+			}
+		}
+		query, queryErr := systeminfo.NormalizeProcessQuery(systeminfo.ProcessQuery{
+			Search: values.Get("q"), Sort: values.Get("sort"), Order: values.Get("order"), Limit: limit,
+		})
+		if queryErr != nil {
+			writeProblem(w, requestIDFrom(w), http.StatusUnprocessableEntity, "invalid_process_query", "Process query is invalid", "")
+			return
+		}
+		result, err = s.system.QueryProcesses(ctx, query)
+	}
 	if err != nil {
 		writeProblem(w, requestIDFrom(w), http.StatusServiceUnavailable, "process_metrics_unavailable", "Process metrics are unavailable", "")
 		return

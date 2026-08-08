@@ -7,6 +7,6 @@ import (
 	"errors"
 )
 
-func (c *Collector) collectProcesses(context.Context) (ProcessSnapshot, error) {
+func (c *Collector) collectProcesses(context.Context, ProcessQuery) (ProcessSnapshot, error) {
 	return ProcessSnapshot{}, errors.New("process metrics require Linux")
 }

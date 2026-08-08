@@ -83,6 +83,7 @@ function componentPath(path: string): string {
 function titleKeyForPath(path: string): string {
   path = desktopRoutePath(path)
   if (path === '/monitoring') return 'route.monitoring'
+  if (path === '/processes') return 'route.processes'
   if (path === '/sites/environment') return 'route.environment'
   return findDesktopApp(path)?.labelKey ?? props.windowState.titleKey
 }

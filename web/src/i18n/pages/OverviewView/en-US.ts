@@ -250,6 +250,7 @@ export default [
   ["IPv4 优先", "IPv4 Priority"],
   ["Kejilion 内核调优模式", "Kejilion kernel correction mode"],
   ["OpenSSH 默认端口", "OpenSSH Defaultend mouth"],
+  ["进程管理器", "Process manager"],
   ["SSH 端口", "SSH Port"],
   ["SSH 防御", "SSH Defence"],
   ["TCP / UDP 连接数", "TCP / UDP connections"],

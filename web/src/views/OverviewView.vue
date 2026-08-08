@@ -23,6 +23,7 @@ import {
   KeyRound,
   MemoryStick,
   Network,
+  ListTree,
   Pencil,
   Power,
   RefreshCw,
@@ -74,6 +75,7 @@ const error = ref('')
 const waitingForNextSample = '等待下一次采样'
 const panel = usePanelState()
 const toast = useToast()
+const processManagerLabel = '进程管理器'
 const windowActive = inject(desktopWindowActiveKey, computed(() => true))
 let controller: AbortController | undefined
 let refreshTimer: number | undefined
@@ -780,10 +782,16 @@ onBeforeUnmount(() => {
               <p>点击指标查看历史趋势</p>
             </div>
           </div>
-          <RouterLink class="button button--secondary button--small" to="/monitoring">
-            查看历史
-            <ChevronRight :size="16" />
-          </RouterLink>
+          <div class="realtime-monitoring__actions">
+            <RouterLink class="button button--secondary button--small" to="/monitoring">
+              查看历史
+              <ChevronRight :size="16" />
+            </RouterLink>
+            <RouterLink class="button button--secondary button--small" to="/processes">
+              <ListTree :size="16" />
+              {{ processManagerLabel }}
+            </RouterLink>
+          </div>
         </header>
 
         <div class="metric-grid" aria-label="主机实时资源">

@@ -258,6 +258,7 @@ func TestSystemWriteCapabilitiesRemainExplicitlyDisabled(t *testing.T) {
 		"system.ssh-defense.write",
 		"system.dns.write",
 		"system.timezone.write",
+		"system.processes.signal",
 		"system.swap.write",
 		"system.mirror.write",
 		"system.ip-preference.write",
@@ -281,6 +282,37 @@ func TestSystemWriteCapabilitiesRemainExplicitlyDisabled(t *testing.T) {
 		if !found {
 			t.Fatalf("capability %q not reported", required)
 		}
+	}
+}
+
+func TestSystemProcessesRejectsUnboundedQueriesBeforeCollection(t *testing.T) {
+	server := testServer(t)
+	for _, target := range []string{
+		"/v1/system/processes?unknown=value",
+		"/v1/system/processes?sort=command",
+		"/v1/system/processes?limit=257",
+		"/v1/system/processes?q=" + strings.Repeat("x", systeminfo.MaxProcessSearchBytes+1),
+		"/v1/system/processes?sort=cpu&sort=memory",
+	} {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest && response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("query %q returned %d: %s", target, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestSystemProcessesBoundsConcurrentSampling(t *testing.T) {
+	server := testServer(t)
+	server.processesGate <- struct{}{}
+	request := httptest.NewRequest(http.MethodGet, "/v1/system/processes?sort=cpu&limit=200", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests || !strings.Contains(response.Body.String(), "process_metrics_busy") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

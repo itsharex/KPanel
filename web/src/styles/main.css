@@ -2673,6 +2673,13 @@ textarea:focus-visible,
   gap: 16px;
 }
 
+.realtime-monitoring__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .realtime-monitoring__header > div {
   gap: 10px;
 }

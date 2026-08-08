@@ -439,7 +439,18 @@ function send(response, status, body) {
   response.end(data)
 }
 
-createServer((request, response) => {
+async function readJSON(request) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of request) {
+    size += chunk.length
+    if (size > 65_536) throw new Error('request body exceeds visual mock limit')
+    chunks.push(chunk)
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+}
+
+createServer(async (request, response) => {
   const url = new URL(request.url, 'http://127.0.0.1:8080')
   if (request.method === 'GET' && url.pathname === '/api/v1/auth/bootstrap') {
     send(response, 200, { required: false })
@@ -638,12 +649,58 @@ createServer((request, response) => {
     send(response, 200, { items: [] })
     return
   }
-  if (request.method === 'POST' && url.pathname === '/api/v1/system/actions') {
+  if (request.method === 'GET' && url.pathname === '/api/v1/system/processes') {
+    const processes = [
+      ['paneld', 1824, 'kpanel', 13.8, 96_468_992, 18, 'R'],
+      ['postgres', 948, 'postgres', 8.6, 334_102_528, 24, 'S'],
+      ['nginx', 1271, 'www-data', 4.2, 28_921_856, 6, 'S'],
+      ['dockerd', 721, 'root', 2.9, 151_519_232, 31, 'S'],
+      ['redis-server', 1106, 'redis', 1.7, 41_943_040, 5, 'S'],
+      ['node', 2038, 'deploy', 1.1, 187_695_104, 12, 'S'],
+      ['systemd-journal', 312, 'root', 0.4, 50_331_648, 1, 'S'],
+      ['sshd', 867, 'root', 0.2, 12_582_912, 1, 'S'],
+      ['containerd', 655, 'root', 0.1, 73_400_320, 14, 'S'],
+      ['bash', 2270, 'admin', 0, 5_242_880, 1, 'S'],
+    ].map(([name, pid, user, cpuPercent, memoryBytes, threads, state]) => ({
+      name, pid, user, cpuPercent, memoryBytes, threads, state,
+      parentPid: pid === 1824 ? 1 : 1824,
+      userId: user === 'root' ? 0 : 1000,
+      nice: 0,
+      startTimeTicks: Number(pid) * 1000 + 42,
+    }))
+    const query = (url.searchParams.get('q') || '').toLowerCase()
+    const items = processes.filter((item) =>
+      !query || item.name.toLowerCase().includes(query) || item.user.toLowerCase().includes(query) || String(item.pid).includes(query))
     send(response, 200, {
-      action: 'reboot',
-      status: 'accepted',
+      items,
+      total: items.length,
+      summary: {
+        cpuPercent: 33.6,
+        memoryUsedBytes: 2_630_615_040,
+        memoryTotalBytes: 8_589_934_592,
+        total: processes.length,
+        running: 1,
+        sleeping: 9,
+        stopped: 0,
+        zombie: 0,
+      },
+      scanned: processes.length,
+      truncated: false,
+      sampleDuration: 302_000_000,
+      collectedAt: new Date().toISOString(),
+    })
+    return
+  }
+  if (request.method === 'POST' && url.pathname === '/api/v1/system/actions') {
+    const input = await readJSON(request)
+    const isProcessSignal = input.action === 'process-signal'
+    send(response, 200, {
+      action: input.action || 'reboot',
+      status: isProcessSignal ? 'completed' : 'accepted',
       changed: true,
-      message: '视觉测试：重启任务已模拟排队',
+      message: isProcessSignal
+        ? `视觉测试：已向 PID ${input.pid} 发送 SIG${String(input.signal || '').toUpperCase()}`
+        : '视觉测试：重启任务已模拟排队',
       appliedAt: new Date().toISOString(),
     })
     return

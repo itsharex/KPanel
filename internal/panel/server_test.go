@@ -836,6 +836,22 @@ func TestAllowedMonitoringHistoryPathIsExact(t *testing.T) {
 	}
 }
 
+func TestAllowedSystemProcessesPathIsExact(t *testing.T) {
+	path, ok := allowedAgentPath("/api/v1/system/processes")
+	if !ok || path != "/v1/system/processes" {
+		t.Fatalf("process mapping = %q, %v", path, ok)
+	}
+	for _, invalid := range []string{
+		"/api/v1/system/processes/",
+		"/api/v1/system/processes/42",
+		"/api/v1/system/processes/../../files",
+	} {
+		if path, ok := allowedAgentPath(invalid); ok {
+			t.Fatalf("allowed unsafe process path %q as %q", invalid, path)
+		}
+	}
+}
+
 func TestAllowedWordPressInstallationPath(t *testing.T) {
 	id := strings.Repeat("a", 32)
 	for publicPath, expected := range map[string]string{

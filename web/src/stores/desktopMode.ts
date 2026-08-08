@@ -68,6 +68,7 @@ function isWindowRecord(value: unknown): value is Record<string, unknown> {
 function titleKeyForWindowPath(path: string): string | undefined {
   path = desktopRoutePath(path)
   if (path === '/monitoring') return 'route.monitoring'
+  if (path === '/processes') return 'route.processes'
   if (path === '/sites/environment') return 'route.environment'
   if (path.startsWith('/ai/s/') && !/^\/ai\/s\/[A-Za-z0-9_-]{1,128}$/.test(path)) return undefined
   return findDesktopApp(path)?.labelKey

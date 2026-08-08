@@ -52,6 +52,12 @@ export const router = createRouter({
           meta: { titleKey: 'route.monitoring' },
         },
         {
+          path: 'processes',
+          name: 'processes',
+          component: () => loadNavigationRoute('/processes'),
+          meta: { titleKey: 'route.processes' },
+        },
+        {
           path: 'cluster',
           name: 'cluster',
           component: () => loadNavigationRoute('/cluster'),

@@ -22,6 +22,7 @@ export const enUSMessages = {
   'route.overview': 'Overview',
   'route.ai': 'AI assistant',
   'route.monitoring': 'Monitoring history',
+  'route.processes': 'Process manager',
   'route.cluster': 'Cluster',
   'route.sites': 'Sites',
   'route.environment': 'Sites · Environment',

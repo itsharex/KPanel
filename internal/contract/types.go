@@ -178,6 +178,9 @@ type SystemActionRequest struct {
 	MaintenancePolicy string   `json:"maintenancePolicy,omitempty"`
 	Confirmation      string   `json:"confirmation,omitempty"`
 	Enabled           *bool    `json:"enabled,omitempty"`
+	PID               int      `json:"pid,omitempty"`
+	StartTimeTicks    uint64   `json:"startTimeTicks,omitempty"`
+	Signal            string   `json:"signal,omitempty"`
 }
 
 type SystemActionResult struct {
