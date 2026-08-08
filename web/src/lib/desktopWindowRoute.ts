@@ -58,6 +58,10 @@ function aiComponentLoader() {
   return () => import('@/views/AiView.vue').then((module) => module.default)
 }
 
+function appScriptComponentLoader() {
+  return () => import('@/views/AppScriptView.vue').then((module) => module.default)
+}
+
 // DesktopWindow renders the resolved view directly and never mounts a nested
 // RouterView. Route records therefore use a synchronous placeholder: this
 // keeps navigation deterministic and leaves lazy loading, error UI and retry
@@ -67,6 +71,7 @@ const WINDOW_ROUTE_PLACEHOLDER: Component = {}
 /** Resolve the page component for a window route path. */
 export function resolveWindowComponent(path: string): Promise<Component> {
   if (path === '/ai' || path.startsWith('/ai/s/')) return aiComponentLoader()()
+  if (/^\/app-script\/[A-Za-z0-9_-]{1,128}$/.test(path)) return appScriptComponentLoader()()
   return loadNavigationRoute(path as NavigationPath).then((module) => module.default)
 }
 
@@ -122,6 +127,11 @@ export function windowRouteRecords(): RouteRecordRaw[] {
     {
       path: '/apps',
       name: 'apps',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/app-script/:appId',
+      name: 'app-script',
       component: WINDOW_ROUTE_PLACEHOLDER,
     },
     {

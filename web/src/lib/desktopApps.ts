@@ -109,6 +109,15 @@ export const desktopApps: DesktopApp[] = [
   },
 ]
 
+/** Taskbar metadata for dynamic per-application script terminal windows. */
+export const desktopScriptApp: DesktopApp = {
+  path: '/app-script',
+  labelKey: 'desktop.scriptWindowTitle',
+  icon: SquareTerminal,
+  allowMultiple: false,
+  gradient: ['#64748b', '#0f172a'],
+}
+
 /** Neutral gradient for windows whose app is not in the catalogue. */
 export const DEFAULT_WINDOW_GRADIENT: [string, string] = ['#a78bfa', '#6d28d9']
 
@@ -132,5 +141,6 @@ export function canonicalDesktopAppPath(path: string): string {
 
 export function findDesktopApp(path: string): DesktopApp | undefined {
   const appPath = canonicalDesktopAppPath(path)
+  if (/^\/app-script\/[A-Za-z0-9_-]{1,128}$/.test(appPath)) return desktopScriptApp
   return desktopApps.find((app) => app.path === appPath)
 }

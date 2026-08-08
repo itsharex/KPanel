@@ -124,7 +124,8 @@ describe('DesktopView dynamic entries', () => {
     await nextTick()
 
     expect(desktop.windows.value).toHaveLength(1)
-    expect(desktop.windows.value[0]?.path).toBe('/apps?app=openclaw&action=manage')
+    expect(desktop.windows.value[0]?.path).toBe('/app-script/openclaw')
+    expect(desktop.windows.value[0]?.titleKey).toBe('desktop.scriptWindowTitle')
     wrapper.unmount()
   })
 })

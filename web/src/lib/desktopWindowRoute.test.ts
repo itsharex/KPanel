@@ -2,6 +2,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWindowRouter, resolveWindowComponent, windowRouteRecords } from './desktopWindowRoute'
 
+vi.mock('@/views/AppScriptView.vue', () => ({
+  default: { name: 'AppScriptView' },
+}))
+
 describe('desktop window route', () => {
   beforeEach(() => {
     document.head.innerHTML = ''
@@ -22,6 +26,7 @@ describe('desktop window route', () => {
       '/sites',
       '/sites/environment',
       '/apps',
+      '/app-script/:appId',
       '/files',
       '/terminal',
       '/diagnostics',
@@ -38,6 +43,7 @@ describe('desktop window route', () => {
       'ai-session',
       'sites-environment',
       'files',
+      'app-script',
       'activity',
       'settings',
     ]))
@@ -45,6 +51,11 @@ describe('desktop window route', () => {
 
   it('resolves dynamic ai session paths to the ai workspace component', async () => {
     expect(await resolveWindowComponent('/ai/s/42')).toBe(await resolveWindowComponent('/ai'))
+  })
+
+  it('resolves dynamic app script paths to the dedicated terminal workspace', async () => {
+    const component = await resolveWindowComponent('/app-script/openclaw')
+    expect((component as { name?: string }).name).toBe('AppScriptView')
   })
 
   it('uses synchronous route placeholders so router navigation never owns page chunk loading', () => {

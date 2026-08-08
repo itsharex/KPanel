@@ -158,6 +158,20 @@ describe('desktop mode', () => {
     resetDesktopModeForTest()
   })
 
+  it('restores a safe dynamic app script terminal route', () => {
+    const storage = makeStorage()
+    storage.store.set('kejilion-panel-desktop-windows', JSON.stringify([
+      { id: 9, path: '/app-script/openclaw', titleKey: 'route.apps', geometry: {}, minimized: false },
+      { id: 10, path: '/app-script/bad/path', titleKey: 'desktop.scriptWindowTitle', geometry: {}, minimized: false },
+    ]))
+
+    initializeDesktopMode(storage, { width: 1280, height: 800 })
+    const windows = useDesktopMode().windows.value
+    expect(windows).toHaveLength(1)
+    expect(windows[0]?.path).toBe('/app-script/openclaw')
+    expect(windows[0]?.titleKey).toBe('desktop.scriptWindowTitle')
+  })
+
   it('ignores malformed persisted windows', () => {
     const storage = makeStorage()
     storage.store.set('kejilion-panel-desktop-windows', '{not json')

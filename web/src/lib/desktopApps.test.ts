@@ -33,6 +33,13 @@ describe('desktop app catalogue', () => {
     expect(findDesktopApp('/overview')?.allowMultiple).toBe(false)
   })
 
+  it('maps safe dynamic script routes to a terminal window without adding a desktop launcher', () => {
+    expect(findDesktopApp('/app-script/openclaw')?.labelKey).toBe('desktop.scriptWindowTitle')
+    expect(findDesktopApp('/app-script/openclaw')?.allowMultiple).toBe(false)
+    expect(findDesktopApp('/app-script/bad/path')).toBeUndefined()
+    expect(desktopApps.map((app) => app.path)).not.toContain('/app-script')
+  })
+
   it('returns undefined for unknown paths', () => {
     expect(findDesktopApp('/nope')).toBeUndefined()
   })

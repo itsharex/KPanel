@@ -186,6 +186,7 @@ export const enUSMessages = {
   'desktop.aboutMessage': 'KPanel desktop mode: click an icon to open a window, then drag, resize, minimize, or restore it from the Dock; use the top-right control to return to classic mode.',
   'desktop.entryOpen': 'Open',
   'desktop.entryScriptManage': 'Script management',
+  'desktop.scriptWindowTitle': 'Script terminal',
   'desktop.entryDetails': 'Details',
   'desktop.entryRename': 'Rename',
   'desktop.renameTitle': 'Rename website icon',

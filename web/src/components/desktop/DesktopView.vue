@@ -192,7 +192,7 @@ function openKPanelUpdate(): void {
 
 function openEntry(entry: DesktopEntry): void {
   if (entry.kind === 'app' && entry.launch === 'script') {
-    openAppMarketEntry(entry, 'manage')
+    openAppScriptEntry(entry)
     return
   }
   if (!entry.url) return
@@ -200,11 +200,22 @@ function openEntry(entry: DesktopEntry): void {
   window.open(entry.url, '_blank', 'noopener,noreferrer')
 }
 
-function openAppMarketEntry(entry: DesktopEntry, action?: 'manage'): void {
+function openAppScriptEntry(entry: DesktopEntry): void {
+  const path = `/app-script/${encodeURIComponent(entry.id)}`
+  const app = findDesktopApp(path)
+  if (!app) return
+  const windowId = desktop.openWindow(path, app.labelKey, app.allowMultiple, true)
+  if (windowId === 0) {
+    toast.show(i18n.t('desktop.windowLimitTitle'), {
+      message: i18n.t('desktop.windowLimitMessage'),
+    })
+  }
+}
+
+function openAppMarketEntry(entry: DesktopEntry): void {
   const app = findDesktopApp('/apps')
   if (!app) return
   const query = new URLSearchParams({ app: entry.id })
-  if (action) query.set('action', action)
   const windowId = desktop.openWindow(
     `/apps?${query.toString()}`,
     app.labelKey,
