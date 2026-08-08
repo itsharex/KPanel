@@ -75,4 +75,35 @@ describe('DesktopView dynamic entries', () => {
     expect(wrapper.find('.desktop__detail').exists()).toBe(false)
     wrapper.unmount()
   })
+
+  it('offers persistent rename only for website icons', async () => {
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await nextTick()
+    await nextTick()
+
+    await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
+    await nextTick()
+    expect(wrapper.findAll('.desktop__context-menu [role="menuitem"]')).toHaveLength(2)
+
+    await wrapper.find('button[title="blog.example.com"]').trigger('contextmenu', { clientX: 120, clientY: 80 })
+    await nextTick()
+    const siteItems = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+    expect(siteItems).toHaveLength(3)
+    await siteItems[2]?.trigger('click')
+    await nextTick()
+
+    const input = document.body.querySelector<HTMLInputElement>('.desktop__rename-form input')
+    expect(input).not.toBeNull()
+    if (!input) throw new Error('rename input was not rendered')
+    input.value = '我的博客'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    document.body.querySelector<HTMLButtonElement>('.modal-panel__footer .button--primary')?.click()
+    await nextTick()
+    await nextTick()
+
+    expect(window.localStorage.getItem('kpanel:desktop-site-names:v1')).toContain('我的博客')
+    expect(wrapper.findAll('.desktop__icon-label').map((label) => label.text())).toContain('我的博客')
+    wrapper.unmount()
+  })
 })

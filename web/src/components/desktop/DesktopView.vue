@@ -8,6 +8,7 @@ import {
   Sun,
   Moon,
   Info,
+  Pencil,
   AppWindow,
   ExternalLink,
 } from '@lucide/vue'
@@ -18,7 +19,12 @@ import DesktopMonitor from '@/components/desktop/DesktopMonitor.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import LogoMark from '@/components/common/LogoMark.vue'
 import { DEFAULT_WINDOW_GRADIENT, desktopApps, findDesktopApp } from '@/lib/desktopApps'
-import { loadDesktopEntries, type DesktopEntries, type DesktopEntry } from '@/lib/desktopEntries'
+import {
+  getCachedDesktopEntries,
+  loadDesktopEntries,
+  type DesktopEntries,
+  type DesktopEntry,
+} from '@/lib/desktopEntries'
 import type { SystemResourceSnapshot } from '@/lib/api'
 import { prefetchNavigationRoute } from '@/lib/navigation'
 import {
@@ -62,9 +68,53 @@ const agentStatus = computed(() => {
 
 // Dynamic entries: installed apps and configured sites surfaced as desktop
 // icons that open their external URL.
-const entries = ref<DesktopEntries>()
+const SITE_RENAMES_KEY = 'kpanel:desktop-site-names:v1'
+const MAX_SITE_NAME_LENGTH = 48
+
+function readSiteNames(): Record<string, string> {
+  try {
+    const raw = window.localStorage.getItem(SITE_RENAMES_KEY)
+    if (!raw || raw.length > 16_000) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(([id, name]) => id.length <= 128 && typeof name === 'string')
+        .map(([id, name]) => [id, String(name).trim().slice(0, MAX_SITE_NAME_LENGTH)])
+        .filter(([, name]) => Boolean(name)),
+    )
+  } catch {
+    return {}
+  }
+}
+
+const siteNames = ref<Record<string, string>>(readSiteNames())
+
+function applySiteNames(value?: DesktopEntries): DesktopEntries | undefined {
+  if (!value) return undefined
+  const apply = (entry: DesktopEntry): DesktopEntry => {
+    if (entry.kind !== 'site') return entry
+    const defaultName = entry.site?.primaryDomain || entry.name
+    return { ...entry, name: siteNames.value[entry.id] || defaultName }
+  }
+  return {
+    ...value,
+    sites: value.sites.map(apply),
+    visible: value.visible.map(apply),
+  }
+}
+
+function persistSiteNames(): void {
+  try {
+    window.localStorage.setItem(SITE_RENAMES_KEY, JSON.stringify(siteNames.value))
+  } catch {
+    // Browser storage is optional; the in-memory rename still works.
+  }
+}
+
+const entries = ref<DesktopEntries | undefined>(applySiteNames(getCachedDesktopEntries()))
 const systemResources = ref<SystemResourceSnapshot>()
-const entriesLoading = ref(true)
+const entriesLoading = ref(!entries.value)
 let entriesAbort: AbortController | undefined
 let entriesSequence = 0
 
@@ -74,6 +124,8 @@ const contextMenu = ref<{ x: number; y: number; open: boolean }>({ x: 0, y: 0, o
 const contextMenuElement = ref<HTMLElement>()
 const menuEntry = ref<DesktopEntry>()
 const detailEntry = ref<DesktopEntry>()
+const renameEntry = ref<DesktopEntry>()
+const renameValue = ref('')
 let contextMenuOpener: HTMLElement | undefined
 
 /** Icons currently playing their open-bounce animation. */
@@ -262,7 +314,7 @@ function onContextMenuAction(action: 'refresh' | 'theme' | 'classic' | 'about'):
   closeContextMenu()
   switch (action) {
     case 'refresh':
-      void loadEntries()
+      void loadEntries(true)
       break
     case 'theme':
       theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')
@@ -309,6 +361,44 @@ function onEntryMenuDetails(): void {
   detailEntry.value = entry
 }
 
+function onEntryMenuRename(): void {
+  const entry = menuEntry.value
+  closeContextMenu()
+  if (entry?.kind !== 'site') return
+  renameEntry.value = entry
+  renameValue.value = entry.name
+}
+
+function closeRename(): void {
+  renameEntry.value = undefined
+  renameValue.value = ''
+}
+
+function saveRename(): void {
+  const entry = renameEntry.value
+  const name = renameValue.value.trim().slice(0, MAX_SITE_NAME_LENGTH)
+  if (entry?.kind !== 'site' || !name) return
+  const defaultName = entry.site?.primaryDomain || entry.name
+  const next = { ...siteNames.value }
+  if (name === defaultName) delete next[entry.id]
+  else next[entry.id] = name
+  siteNames.value = next
+  persistSiteNames()
+  entries.value = applySiteNames(entries.value)
+  closeRename()
+}
+
+function resetRename(): void {
+  const entry = renameEntry.value
+  if (entry?.kind !== 'site') return
+  const next = { ...siteNames.value }
+  delete next[entry.id]
+  siteNames.value = next
+  persistSiteNames()
+  entries.value = applySiteNames(entries.value)
+  closeRename()
+}
+
 function onTaskbarClick(windowId: number): void {
   const target = desktop.windows.value.find((windowState) => windowState.id === windowId)
   if (!target) return
@@ -319,14 +409,14 @@ function onTaskbarClick(windowId: number): void {
   }
 }
 
-async function loadEntries(): Promise<void> {
+async function loadEntries(force = false): Promise<void> {
   entriesAbort?.abort()
   entriesAbort = new AbortController()
   const sequence = ++entriesSequence
   entriesLoading.value = true
   try {
-    const nextEntries = await loadDesktopEntries(entriesAbort.signal)
-    if (sequence === entriesSequence) entries.value = nextEntries
+    const nextEntries = await loadDesktopEntries(entriesAbort.signal, undefined, force)
+    if (sequence === entriesSequence) entries.value = applySiteNames(nextEntries)
   } catch {
     if (sequence === entriesSequence) entries.value = undefined
   } finally {
@@ -457,6 +547,15 @@ function onViewportResize(): void {
           <button type="button" role="menuitem" @click="onEntryMenuDetails">
             <Info :size="15" aria-hidden="true" />
             {{ i18n.t('desktop.entryDetails') }}
+          </button>
+          <button
+            v-if="menuEntry.kind === 'site'"
+            type="button"
+            role="menuitem"
+            @click="onEntryMenuRename"
+          >
+            <Pencil :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.entryRename') }}
           </button>
         </template>
         <template v-else>
@@ -605,6 +704,42 @@ function onViewportResize(): void {
         </button>
         <button class="button button--ghost" type="button" @click="detailEntry = undefined">
           {{ i18n.t('common.closeDialog') }}
+        </button>
+      </template>
+    </ModalDialog>
+
+    <ModalDialog
+      :open="Boolean(renameEntry)"
+      :title="i18n.t('desktop.renameTitle')"
+      size="small"
+      @close="closeRename"
+    >
+      <form class="desktop__rename-form" @submit.prevent="saveRename">
+        <label>
+          <span>{{ i18n.t('desktop.renameLabel') }}</span>
+          <input
+            v-model="renameValue"
+            :maxlength="MAX_SITE_NAME_LENGTH"
+            :placeholder="renameEntry?.site?.primaryDomain"
+            autocomplete="off"
+          />
+        </label>
+        <small>{{ renameEntry?.site?.primaryDomain }}</small>
+      </form>
+      <template #footer>
+        <button
+          v-if="renameEntry && siteNames[renameEntry.id]"
+          class="button button--ghost"
+          type="button"
+          @click="resetRename"
+        >
+          {{ i18n.t('desktop.renameReset') }}
+        </button>
+        <button class="button button--ghost" type="button" @click="closeRename">
+          {{ i18n.t('common.cancel') }}
+        </button>
+        <button class="button button--primary" type="button" :disabled="!renameValue.trim()" @click="saveRename">
+          {{ i18n.t('desktop.renameSave') }}
         </button>
       </template>
     </ModalDialog>

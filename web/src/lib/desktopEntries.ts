@@ -35,19 +35,33 @@ export interface DesktopEntries {
   loadedAt: number
 }
 
+const DESKTOP_ENTRIES_CACHE_TTL = 5 * 60_000
+const desktopEntriesCache = new Map<string, DesktopEntries>()
+
+function cacheKey(directHost?: string): string {
+  return directHost?.trim() || 'auto'
+}
+
+export function getCachedDesktopEntries(directHost?: string): DesktopEntries | undefined {
+  const cached = desktopEntriesCache.get(cacheKey(directHost))
+  if (!cached || Date.now() - cached.loadedAt > DESKTOP_ENTRIES_CACHE_TTL) return undefined
+  return cached
+}
+
+export function clearDesktopEntriesCacheForTest(): void {
+  desktopEntriesCache.clear()
+}
+
 function normalizeSiteURL(site: Site): string {
   const secure = site.certificate?.status === 'valid' || site.certificate?.status === 'expiring'
   return `${secure ? 'https' : 'http'}://${site.primaryDomain}`
 }
 
 function isConfiguredSite(site: Site): boolean {
-  // Only healthy, enabled sites surface as desktop entries. Static and redirect
-  // sites are reachable without an upstream; proxy-like types need one.
-  if (!site.enabled || site.health !== 'healthy') return false
-  if (!site.primaryDomain) return false
-  if (site.type === 'static') return true
-  if (site.type === 'redirect') return true
-  return Boolean(site.upstream)
+  // Desktop entries represent configured websites, not only sites whose
+  // certificate and runtime checks are fully healthy. Warning/unknown sites
+  // must remain reachable from the desktop so users can inspect or repair them.
+  return site.enabled && Boolean(site.primaryDomain.trim())
 }
 
 function appEntryName(item: AppMarketItem): string {
@@ -117,10 +131,17 @@ function dedupeByURL(apps: DesktopEntry[], sites: DesktopEntry[]): DesktopEntry[
 export async function loadDesktopEntries(
   signal?: AbortSignal,
   directHost?: string,
+  force = false,
 ): Promise<DesktopEntries> {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  const key = cacheKey(directHost)
+  const cached = getCachedDesktopEntries(directHost)
+  if (!force && cached) return cached
+  const previous = desktopEntriesCache.get(key)
+
   const publicNetwork = directHost
     ? undefined
-    : await api.system.publicNetwork(signal).catch(() => undefined)
+    : await api.system.publicNetwork(signal).catch(() => previous?.publicNetwork)
   const host =
     directHost ||
     publicNetwork?.ipv4 ||
@@ -132,9 +153,14 @@ export async function loadDesktopEntries(
     api.sites.list(undefined, signal).catch(() => undefined),
   ])
 
-  const apps = buildAppEntries(inventory?.items || [], sites?.items || [], host)
-  const siteEntries = buildSiteEntries(sites?.items || [])
+  if (!inventory && !sites && previous) return previous
+  const siteItems = sites?.items || previous?.sites.flatMap((entry) => entry.site ? [entry.site] : []) || []
+  const apps = inventory
+    ? buildAppEntries(inventory.items, siteItems, host)
+    : previous?.apps || []
+  const siteEntries = sites ? buildSiteEntries(sites.items) : previous?.sites || []
   const visible = dedupeByURL(apps, siteEntries)
-
-  return { apps, sites: siteEntries, visible, publicNetwork, loadedAt: Date.now() }
+  const result = { apps, sites: siteEntries, visible, publicNetwork, loadedAt: Date.now() }
+  if (inventory || sites) desktopEntriesCache.set(key, result)
+  return result
 }

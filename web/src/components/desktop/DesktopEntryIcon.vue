@@ -39,6 +39,10 @@ watch(
 )
 
 const monogram = computed(() => props.label.trim().slice(0, 1).toLocaleUpperCase() || 'K')
+const accessibleLabel = computed(() => {
+  const domain = props.entry?.kind === 'site' ? props.entry.site?.primaryDomain : undefined
+  return domain && domain !== props.label ? `${props.label} · ${domain}` : props.label
+})
 
 function onSelect(event: MouseEvent): void {
   emit('select', event)
@@ -69,8 +73,8 @@ function onImageError(): void {
     }"
     :style="{ '--desktop-entry-order': String(order ?? 0) }"
     type="button"
-    :aria-label="label"
-    :title="label"
+    :aria-label="accessibleLabel"
+    :title="accessibleLabel"
     @click="onSelect"
     @dblclick="onOpen"
     @keydown.enter="onOpen"

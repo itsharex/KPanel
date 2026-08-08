@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppMarketItem, Site } from '@/types/api'
-import { loadDesktopEntries } from './desktopEntries'
+import { clearDesktopEntriesCacheForTest, loadDesktopEntries } from './desktopEntries'
 import { api } from '@/lib/api'
 
 vi.mock('@/lib/api', () => ({
@@ -81,6 +81,7 @@ function makeApp(overrides: Partial<AppMarketItem> & { id: string }): AppMarketI
 describe('desktop entries', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    clearDesktopEntriesCacheForTest()
   })
 
   it('loads installed apps as entries with entry URLs', async () => {
@@ -113,11 +114,12 @@ describe('desktop entries', () => {
     const entries = await loadDesktopEntries(undefined, '192.168.1.5')
     expect(entries.sites).toHaveLength(1)
     expect(entries.sites[0]!.kind).toBe('site')
+    expect(entries.sites[0]!.name).toBe('example.com')
     expect(entries.sites[0]!.url).toBe('http://example.com')
     expect(entries.sites[0]!.iconURL).toContain('s1/icon')
   })
 
-  it('excludes disabled, unhealthy, or proxy sites without upstream', async () => {
+  it('keeps enabled warning and unknown sites visible while excluding disabled sites', async () => {
     const disabled = makeSite({ id: 'd', primaryDomain: 'disabled.com', enabled: false, health: 'healthy', upstream: 'http://127.0.0.1:1' })
     const unhealthy = makeSite({ id: 'u', primaryDomain: 'unhealthy.com', enabled: true, health: 'warning', upstream: 'http://127.0.0.1:2' })
     const noUpstreamProxy = makeSite({ id: 'n', primaryDomain: 'noup.com', enabled: true, health: 'healthy', upstream: undefined })
@@ -127,8 +129,8 @@ describe('desktop entries', () => {
     vi.mocked(api.sites.list).mockResolvedValue({ items: [disabled, unhealthy, noUpstreamProxy, staticSite], total: 4 })
 
     const entries = await loadDesktopEntries(undefined, '192.168.1.5')
-    expect(entries.sites).toHaveLength(1)
-    expect(entries.sites[0]!.name).toBe('static.com')
+    expect(entries.sites).toHaveLength(3)
+    expect(entries.sites.map((entry) => entry.id)).toEqual(['u', 'n', 'st'])
   })
 
   it('dedupes an app and a site pointing at the same URL, keeping the app', async () => {
@@ -181,5 +183,47 @@ describe('desktop entries', () => {
     expect(entries.apps).toHaveLength(0)
     expect(entries.sites).toHaveLength(0)
     expect(entries.visible).toHaveLength(0)
+  })
+
+  it('keeps unrelated sites when one site shares an app URL', async () => {
+    const app = makeApp({
+      id: 'panel',
+      runtime: { installed: true, state: 'running', ports: [{ privatePort: 80, publicPort: 8080, type: 'tcp' }], accessMode: 'direct', updateStatus: 'current', detectedBy: [] },
+    })
+    const appSite = makeSite({ id: 'app-site', primaryDomain: 'app.example.com', upstream: 'http://127.0.0.1:8080', certificate: { status: 'valid' } })
+    const blog = makeSite({ id: 'blog', primaryDomain: 'blog.example.com', upstream: undefined, health: 'warning' })
+    const docs = makeSite({ id: 'docs', primaryDomain: 'docs.example.com', type: 'unknown', upstream: undefined, health: 'unknown' })
+    vi.mocked(api.apps.inventory).mockResolvedValue(inventory([app]))
+    vi.mocked(api.sites.list).mockResolvedValue({ items: [appSite, blog, docs], total: 3 })
+
+    const entries = await loadDesktopEntries(undefined, '192.168.1.5')
+    expect(entries.visible.map((entry) => entry.id)).toEqual(['panel', 'blog', 'docs'])
+  })
+
+  it('reuses a fresh cache and lets an explicit refresh bypass it', async () => {
+    const site = makeSite({ id: 's1', primaryDomain: 'blog.example.com', health: 'warning' })
+    vi.mocked(api.apps.inventory).mockResolvedValue(inventory([]))
+    vi.mocked(api.sites.list).mockResolvedValue({ items: [site], total: 1 })
+
+    const first = await loadDesktopEntries(undefined, '192.168.1.5')
+    const cached = await loadDesktopEntries(undefined, '192.168.1.5')
+    expect(cached).toBe(first)
+    expect(api.apps.inventory).toHaveBeenCalledTimes(1)
+    expect(api.sites.list).toHaveBeenCalledTimes(1)
+
+    await loadDesktopEntries(undefined, '192.168.1.5', true)
+    expect(api.apps.inventory).toHaveBeenCalledTimes(2)
+    expect(api.sites.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the last successful desktop entries when a refresh temporarily fails', async () => {
+    const site = makeSite({ id: 's1', primaryDomain: 'blog.example.com', health: 'warning' })
+    vi.mocked(api.apps.inventory).mockResolvedValueOnce(inventory([])).mockRejectedValueOnce(new Error('offline'))
+    vi.mocked(api.sites.list).mockResolvedValueOnce({ items: [site], total: 1 }).mockRejectedValueOnce(new Error('offline'))
+
+    const first = await loadDesktopEntries(undefined, '192.168.1.5')
+    const fallback = await loadDesktopEntries(undefined, '192.168.1.5', true)
+    expect(fallback).toBe(first)
+    expect(fallback.visible.map((entry) => entry.id)).toEqual(['s1'])
   })
 })
