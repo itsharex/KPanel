@@ -137,6 +137,115 @@ func TestOpenAIResponsesStreamAndToolRoundTrip(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponsesAdaptsToRequiredMessageIDs(t *testing.T) {
+	requestNumber := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestNumber++
+		var payload struct {
+			Instructions string           `json:"instructions"`
+			Input        []map[string]any `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if requestNumber == 1 {
+			if payload.Instructions != "system" || len(payload.Input) != 4 {
+				t.Fatalf("standard Responses payload changed: %#v", payload)
+			}
+			for _, item := range payload.Input {
+				if _, exists := item["id"]; exists {
+					t.Fatalf("standard first request must not guess provider extensions: %#v", payload.Input)
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":{"message":"Upstream request failed: [invalid_request_error] Failed to deserialize the JSON body into the target type: messages[1]: missing field id at line 1 column 352"}}`)
+			return
+		}
+		if payload.Instructions != "" || len(payload.Input) != 5 {
+			t.Fatalf("compatibility retry must move system instructions into an identified message: %#v", payload)
+		}
+		wantIDs := []string{"", "msg_user", "msg_assistant", "", "msg_tool_result"}
+		for index, item := range payload.Input {
+			id, _ := item["id"].(string)
+			if id == "" {
+				t.Fatalf("compatibility item %d is missing id: %#v", index, payload.Input)
+			}
+			if wantIDs[index] != "" && id != wantIDs[index] {
+				t.Fatalf("compatibility item %d id=%q want=%q", index, id, wantIDs[index])
+			}
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{}}\n\n")
+	}))
+	defer server.Close()
+
+	client := NewHTTPModelClient()
+	provider := Provider{ID: "provider-message-ids", Protocol: ProtocolOpenAICompatible, APIMode: OpenAIResponses, BaseURL: server.URL, EndpointScope: EndpointPrivate}
+	request := CompletionRequest{Model: "model", System: "system", Messages: []ChatMessage{
+		{ID: "msg_user", Role: "user", Content: "inspect"},
+		{ID: "msg_assistant", Role: "assistant", Content: "checking"},
+		{ID: "msg_tool_call", Role: "assistant", ToolCalls: []ToolCall{{ID: "call_1", Name: "host_read", Arguments: json.RawMessage(`{}`)}}},
+		{ID: "msg_tool_result", Role: "tool", ToolCallID: "call_1", Content: `{"ok":true}`},
+	}}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := client.Stream(context.Background(), provider, "key", request, func(CompletionEvent) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if requestNumber != 3 {
+		t.Fatalf("message ID capability was not cached, requests=%d", requestNumber)
+	}
+}
+
+func TestOpenAIResponsesMessageIDFallbackDoesNotReplayOutput(t *testing.T) {
+	requestNumber := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestNumber++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request_error\",\"message\":\"messages[1]: missing field id\"}}\n\n")
+	}))
+	defer server.Close()
+
+	var output strings.Builder
+	err := NewHTTPModelClient().Stream(context.Background(), Provider{ID: "provider-no-replay", Protocol: ProtocolOpenAICompatible, APIMode: OpenAIResponses, BaseURL: server.URL, EndpointScope: EndpointPrivate}, "key", CompletionRequest{Model: "model", Messages: []ChatMessage{{Role: "user", Content: "inspect"}}}, func(event CompletionEvent) error {
+		output.WriteString(event.Delta)
+		return nil
+	})
+	if err == nil || output.String() != "partial" || requestNumber != 1 {
+		t.Fatalf("output must not be replayed, output=%q requests=%d err=%v", output.String(), requestNumber, err)
+	}
+}
+
+func TestOpenAIResponsesAdaptsToMessageIDStreamError(t *testing.T) {
+	requestNumber := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestNumber++
+		var payload struct {
+			Input []map[string]any `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		if requestNumber == 1 {
+			fmt.Fprint(w, "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request_error\",\"message\":\"messages[1]: missing field `id`\"}}\n\n")
+			return
+		}
+		if len(payload.Input) != 1 || payload.Input[0]["id"] == "" {
+			t.Fatalf("stream compatibility retry is missing generated ID: %#v", payload.Input)
+		}
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{}}\n\n")
+	}))
+	defer server.Close()
+
+	err := NewHTTPModelClient().Stream(context.Background(), Provider{ID: "provider-stream-message-ids", Protocol: ProtocolOpenAICompatible, APIMode: OpenAIResponses, BaseURL: server.URL, EndpointScope: EndpointPrivate}, "key", CompletionRequest{Model: "model", Messages: []ChatMessage{{Role: "user", Content: "inspect"}}}, func(CompletionEvent) error { return nil })
+	if err != nil || requestNumber != 2 {
+		t.Fatalf("stream message ID fallback failed, requests=%d err=%v", requestNumber, err)
+	}
+}
+
 func TestOpenAIResponsesTerminalErrors(t *testing.T) {
 	t.Run("failed event", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

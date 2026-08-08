@@ -175,6 +175,46 @@ func TestNativeRuntimeReplansAfterInvalidToolArguments(t *testing.T) {
 	}
 }
 
+func TestCompletionMessagesPreserveStableIDs(t *testing.T) {
+	store, _, _, _ := runtimeFixture(t)
+	defer store.Close()
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, Session{UserID: "admin", ProviderID: "provider", ModelID: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	userMessage, err := store.AddMessage(ctx, Message{SessionID: session.ID, Role: RoleUser, Content: "inspect"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.CreateRun(ctx, Run{SessionID: session.ID, UserID: "admin", ProviderID: "provider", ModelID: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := store.SaveToolCall(ctx, ToolCall{ID: "call_1", RunID: run.ID, SessionID: session.ID, Name: "host_read", Arguments: json.RawMessage(`{}`), Status: ToolCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolMessage, err := store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleTool, ToolCallID: call.ID, Content: `{"ok":true}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	messages := (&NativeRuntime{store: store}).completionMessages(ctx, []Message{userMessage, toolMessage})
+	if len(messages) != 3 {
+		t.Fatalf("messages=%#v", messages)
+	}
+	if messages[0].ID != userMessage.ID || messages[0].Role != "user" {
+		t.Fatalf("user message identity was not preserved: %#v", messages[0])
+	}
+	if messages[1].ID == "" || messages[1].ID == toolMessage.ID || len(messages[1].ToolCalls) != 1 {
+		t.Fatalf("synthetic tool call message needs a distinct stable identity: %#v", messages[1])
+	}
+	if messages[2].ID != toolMessage.ID || messages[2].ToolCallID != call.ID {
+		t.Fatalf("tool result identity was not preserved: %#v", messages[2])
+	}
+}
+
 func TestNativeRuntimeReplansAfterAgentBusinessRejection(t *testing.T) {
 	store, providerService, provider, model := runtimeFixture(t)
 	defer store.Close()

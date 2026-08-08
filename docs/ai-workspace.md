@@ -20,6 +20,7 @@ Vue 三栏工作台 ── REST/SSE ── paneld AgentRuntime
 - 固定协议：`openai_compatible`、`anthropic`、`gemini`。
 - `openai_compatible` 必须明确选择 `apiMode`：`responses` 使用 `POST /v1/responses` 语义事件，`chat_completions` 使用 `POST /v1/chat/completions` 数据分片。历史 Provider 自动迁移为 `chat_completions`，避免升级后改变行为；OpenAI 官方预设默认使用 `responses`，其他兼容预设默认保守使用 `chat_completions`。
 - Responses 模式使用 KPanel 持久化的完整会话上下文，并设置 `store=false`。工具调用使用 `function_call` / `function_call_output`；推理模型返回的加密 reasoning item 只保存在内部工具上下文、仅向同一 Provider 回放，不通过 REST、SSE、日志或审计暴露。
+- Responses 首次请求保持标准 OpenAI 载荷；若兼容 Provider 在尚未输出任何内容时明确返回 `messages[n]: missing field id`，Runtime 只重试一次带稳定消息 ID 的兼容载荷，并在当前进程内记住该端点能力。已产生文字或工具调用后禁止回放，其他 4xx 不触发方言猜测。
 - Responses 的 HTTP SSE 与 Realtime WebSocket 是不同接口；v1 不接入 `/v1/realtime`、音频或语音会话。
 - 公网 Provider 必须使用 HTTPS；拒绝 URL userinfo、query、fragment，以及每次 DNS 解析得到的回环、私网、链路本地、组播、未指定和保留地址。
 - 内网/本地 Provider 必须显式选择 `private`；只有此模式允许 HTTP。

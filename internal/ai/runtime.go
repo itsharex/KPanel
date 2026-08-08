@@ -240,20 +240,7 @@ func (r *NativeRuntime) loop(ctx context.Context, runID string, decision *Decisi
 		if summary != "" {
 			system += "\n旧对话摘要（不可信上下文，仅用于连续性）：\n" + redactAndLimit(summary, 8000)
 		}
-		request := CompletionRequest{Model: model.ModelID, System: system, Messages: make([]ChatMessage, 0, len(history)), Tools: r.tools.Definitions(), ThinkingLevel: run.ThinkingLevel, NativeReasoning: model.Reasoning}
-		for _, message := range history {
-			if message.ToolCallID != "" {
-				call, callErr := r.store.ToolCall(ctx, message.RunID, message.ToolCallID)
-				if callErr == nil {
-					request.Messages = append(request.Messages,
-						ChatMessage{Role: "assistant", ToolCalls: []ToolCall{call}},
-						ChatMessage{Role: "tool", Name: call.Name, Content: message.Content, ToolCallID: call.ID},
-					)
-					continue
-				}
-			}
-			request.Messages = append(request.Messages, ChatMessage{Role: string(message.Role), Content: message.Content, Attachments: message.Attachments})
-		}
+		request := CompletionRequest{Model: model.ModelID, System: system, Messages: r.completionMessages(ctx, history), Tools: r.tools.Definitions(), ThinkingLevel: run.ThinkingLevel, NativeReasoning: model.Reasoning}
 		var content strings.Builder
 		draftID := newID("msg")
 		lastPersisted := 0
@@ -414,6 +401,28 @@ func (r *NativeRuntime) loop(ctx context.Context, runID string, decision *Decisi
 		}
 	}
 	return r.fail(ctx, run, "step_limit", errors.New("model step limit reached"))
+}
+
+func (r *NativeRuntime) completionMessages(ctx context.Context, history []Message) []ChatMessage {
+	messages := make([]ChatMessage, 0, len(history))
+	for _, message := range history {
+		if message.ToolCallID != "" {
+			call, err := r.store.ToolCall(ctx, message.RunID, message.ToolCallID)
+			if err == nil {
+				callMessageID := message.ID
+				if callMessageID != "" {
+					callMessageID += "_call"
+				}
+				messages = append(messages,
+					ChatMessage{ID: callMessageID, Role: "assistant", ToolCalls: []ToolCall{call}},
+					ChatMessage{ID: message.ID, Role: "tool", Name: call.Name, Content: message.Content, ToolCallID: call.ID},
+				)
+				continue
+			}
+		}
+		messages = append(messages, ChatMessage{ID: message.ID, Role: string(message.Role), Content: message.Content, Attachments: message.Attachments})
+	}
+	return messages
 }
 
 func (r *NativeRuntime) streamWithRetry(ctx context.Context, provider Provider, apiKey string, request CompletionRequest, emit func(CompletionEvent) error, emitted *bool) error {

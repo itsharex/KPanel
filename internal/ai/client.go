@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,10 +15,12 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 type ChatMessage struct {
+	ID          string       `json:"id,omitempty"`
 	Role        string       `json:"role"`
 	Name        string       `json:"name,omitempty"`
 	Content     string       `json:"content,omitempty"`
@@ -64,8 +67,9 @@ type ModelClient interface {
 }
 
 type HTTPModelClient struct {
-	resolver *net.Resolver
-	timeout  time.Duration
+	resolver            *net.Resolver
+	timeout             time.Duration
+	responsesMessageIDs sync.Map
 }
 
 func NewHTTPModelClient() *HTTPModelClient {
@@ -140,26 +144,68 @@ func (c *HTTPModelClient) Stream(ctx context.Context, provider Provider, apiKey 
 }
 
 func (c *HTTPModelClient) streamOpenAIResponses(ctx context.Context, provider Provider, apiKey string, request CompletionRequest, emit func(CompletionEvent) error) error {
-	input := make([]any, 0, len(request.Messages))
-	for _, message := range request.Messages {
-		if (message.Content != "" || len(message.Attachments) > 0) && message.ToolCallID == "" {
-			input = append(input, map[string]any{"role": message.Role, "content": openAIContent(message, true)})
+	capabilityKey := provider.ID + "\x00" + strings.TrimRight(provider.BaseURL, "/")
+	_, includeMessageIDs := c.responsesMessageIDs.Load(capabilityKey)
+	emitted := false
+	trackedEmit := func(event CompletionEvent) error {
+		if event.Delta != "" || len(event.ToolCalls) > 0 || event.Done {
+			emitted = true
 		}
-		for _, call := range message.ToolCalls {
+		return emit(event)
+	}
+	err := c.streamOpenAIResponsesAttempt(ctx, provider, apiKey, request, includeMessageIDs, trackedEmit)
+	if err == nil || includeMessageIDs || emitted || !responsesMessageIDsRequired(err) {
+		return err
+	}
+	err = c.streamOpenAIResponsesAttempt(ctx, provider, apiKey, request, true, trackedEmit)
+	if err == nil {
+		c.responsesMessageIDs.Store(capabilityKey, struct{}{})
+	}
+	return err
+}
+
+func (c *HTTPModelClient) streamOpenAIResponsesAttempt(ctx context.Context, provider Provider, apiKey string, request CompletionRequest, includeMessageIDs bool, emit func(CompletionEvent) error) error {
+	input := make([]any, 0, len(request.Messages))
+	if includeMessageIDs && request.System != "" {
+		input = append(input, map[string]any{
+			"id":   responsesInputItemID(ChatMessage{Role: "system", Content: request.System}, -1, "message", 0),
+			"role": "system", "content": openAIContent(ChatMessage{Content: request.System}, true),
+		})
+	}
+	for messageIndex, message := range request.Messages {
+		if (message.Content != "" || len(message.Attachments) > 0) && message.ToolCallID == "" {
+			item := map[string]any{"role": message.Role, "content": openAIContent(message, true)}
+			if includeMessageIDs {
+				item["id"] = responsesInputItemID(message, messageIndex, "message", 0)
+			}
+			input = append(input, item)
+		}
+		for callIndex, call := range message.ToolCalls {
 			input = append(input, responsesProviderItems(provider.ID, call.ProviderData)...)
-			input = append(input, map[string]any{
+			item := map[string]any{
 				"type": "function_call", "call_id": call.ID, "name": call.Name, "arguments": string(call.Arguments),
-			})
+			}
+			if includeMessageIDs {
+				item["id"] = responsesInputItemID(message, messageIndex, "function_call", callIndex)
+			}
+			input = append(input, item)
 		}
 		if message.ToolCallID != "" {
-			input = append(input, map[string]any{
+			item := map[string]any{
 				"type": "function_call_output", "call_id": message.ToolCallID, "output": message.Content,
-			})
+			}
+			if includeMessageIDs {
+				item["id"] = responsesInputItemID(message, messageIndex, "function_call_output", 0)
+			}
+			input = append(input, item)
 		}
 	}
 	payload := map[string]any{
-		"model": request.Model, "instructions": request.System, "input": input, "stream": true, "store": false,
+		"model": request.Model, "input": input, "stream": true, "store": false,
 		"include": []string{"reasoning.encrypted_content"},
+	}
+	if !includeMessageIDs {
+		payload["instructions"] = request.System
 	}
 	if request.NativeReasoning && request.ThinkingLevel.Valid() {
 		payload["reasoning"] = map[string]any{"effort": request.ThinkingLevel}
@@ -346,6 +392,28 @@ func (c *HTTPModelClient) streamOpenAIResponses(ctx context.Context, provider Pr
 		return io.ErrUnexpectedEOF
 	}
 	return err
+}
+
+func responsesInputItemID(message ChatMessage, messageIndex int, kind string, itemIndex int) string {
+	if message.ID != "" {
+		if kind == "message" || kind == "function_call_output" {
+			return message.ID
+		}
+		digest := sha256.Sum256([]byte(message.ID + "\x00" + kind + "\x00" + fmt.Sprint(itemIndex)))
+		return "msg_" + fmt.Sprintf("%x", digest[:12])
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprint(messageIndex) + "\x00" + kind + "\x00" + fmt.Sprint(itemIndex) + "\x00" + message.Role + "\x00" + message.Content + "\x00" + message.ToolCallID))
+	return "msg_" + fmt.Sprintf("%x", digest[:12])
+}
+
+func responsesMessageIDsRequired(err error) bool {
+	var providerErr *ProviderError
+	if !errors.As(err, &providerErr) {
+		return false
+	}
+	message := strings.ToLower(providerErr.Message)
+	message = strings.NewReplacer("`", "", "'", "", "\"", "").Replace(message)
+	return strings.Contains(message, "missing field id") && strings.Contains(message, "messages[")
 }
 
 type responsesNativeContext struct {
