@@ -78,7 +78,11 @@ function onImageError(): void {
     @pointerenter="emit('warm')"
     @contextmenu="onContext"
   >
-    <span class="desktop__icon-glyph" :style="{ background: gradient }">
+    <span
+      class="desktop__icon-glyph"
+      :class="{ 'desktop__icon-glyph--dynamic': Boolean(entry) }"
+      :style="{ background: gradient }"
+    >
       <img
         v-if="entry?.iconURL && !imageFailed"
         class="desktop__icon-img"

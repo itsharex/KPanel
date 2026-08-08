@@ -56,6 +56,7 @@ describe('DesktopView dynamic entries', () => {
     const srcs = imgs.map((img) => img.attributes('src'))
     expect(srcs).toContain('/api/v1/apps/nginx/icon')
     expect(srcs).toContain('/api/v1/sites/blog/icon')
+    expect(wrapper.findAll('.desktop__icon-glyph--dynamic')).toHaveLength(2)
     wrapper.unmount()
   })
 })
