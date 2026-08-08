@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest'
 const source = readFileSync(new URL('./ProcessManagerView.vue', import.meta.url), 'utf8')
 
 describe('ProcessManagerView performance contract', () => {
+  it('uses the standard page container for consistent desktop window spacing', () => {
+    expect(source).toContain('<div class="page process-page">')
+  })
+
   it('keeps collection bounded and uses completion-based polling', () => {
     expect(source).toContain('const processLimit = 200')
     expect(source).toContain('const refreshIntervalMilliseconds = 2_000')

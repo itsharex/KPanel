@@ -252,7 +252,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="process-page">
+  <div class="page process-page">
     <PageHeader
       :title="labels.title"
       description="直接读取宿主机 /proc，轻量查看实时占用并管理进程。"
