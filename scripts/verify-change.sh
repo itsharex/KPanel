@@ -62,7 +62,7 @@ go_domains=()
 
 for path in "${changed_files[@]}"; do
   case "$path" in
-    *.md|docs/*|LICENSE)
+    *.md|docs/*|LICENSE|.codex-workflows/*|.github/ISSUE_TEMPLATE/*)
       ;;
     web/*)
       docs_only=false
