@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  computed,
+  defineAsyncComponent,
+  defineComponent,
+  h,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Boxes,
@@ -76,8 +85,24 @@ const i18n = useI18n()
 // Desktop mode is an opt-in overlay; load it lazily so the main bundle stays
 // lean for the default classic experience. If the split chunk cannot load,
 // atomically restore the classic shell instead of leaving an inert blank app.
+const DesktopLoadingView = defineComponent({
+  name: 'DesktopLoadingView',
+  setup() {
+    return () => h(
+      'div',
+      {
+        class: 'desktop',
+        role: 'status',
+        'aria-label': i18n.t('common.loading'),
+      },
+      [h('div', { class: 'desktop__wallpaper', 'aria-hidden': 'true' })],
+    )
+  },
+})
 const DesktopView = defineAsyncComponent({
   loader: () => import('@/components/desktop/DesktopView.vue'),
+  loadingComponent: DesktopLoadingView,
+  delay: 0,
   onError(_error, retry, fail, attempts) {
     if (attempts < 2) {
       retry()
@@ -263,6 +288,7 @@ watch(
       <button v-if="menuOpen && !desktopActive" class="mobile-overlay" type="button" :aria-label="i18n.t('nav.close')" @click="closeMenu" />
     </Transition>
     <aside
+      v-show="!desktopActive"
       class="sidebar"
       :class="{
         'sidebar--open': menuOpen,
@@ -348,6 +374,7 @@ watch(
     </aside>
 
     <div
+      v-show="!desktopActive"
       class="app-shell__main"
       :class="{ 'app-shell__main--sidebar-collapsed': sidebarCollapsed }"
       :inert="desktopActive ? true : undefined"

@@ -55,6 +55,7 @@ describe('responsive application shell comfort', () => {
 
   it('unmounts and deactivates the classic shell while desktop mode is open', () => {
     expect(appShellSource).toContain("const desktopActive = computed(() => desktop.mode.value === 'desktop')")
+    expect(appShellSource.match(/v-show="!desktopActive"/g)).toHaveLength(2)
     expect(appShellSource).toContain(':inert="desktopActive ? true : undefined"')
     expect(appShellSource).toContain(':aria-hidden="desktopActive ? \'true\' : undefined"')
     expect(appShellSource).toContain('<RouterView v-if="!desktopActive" />')
@@ -63,6 +64,10 @@ describe('responsive application shell comfort', () => {
   })
 
   it('falls back to the classic shell when the lazy desktop chunk cannot load', () => {
+    expect(appShellSource).toContain('loadingComponent: DesktopLoadingView')
+    expect(appShellSource).toContain('delay: 0')
+    expect(appShellSource).toContain("class: 'desktop'")
+    expect(appShellSource).toContain("class: 'desktop__wallpaper'")
     expect(appShellSource).toContain('onError(_error, retry, fail, attempts)')
     expect(appShellSource).toContain('desktop.enterClassic()')
     expect(appShellSource).toContain("toast.danger(i18n.t('nav.loadFailedTitle'), i18n.t('nav.loadFailedMessage'))")
