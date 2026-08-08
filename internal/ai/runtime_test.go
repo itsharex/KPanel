@@ -33,6 +33,35 @@ func (c *scriptedClient) Stream(_ context.Context, _ Provider, _ string, _ Compl
 }
 func (*scriptedClient) Models(context.Context, Provider, string) ([]Model, error) { return nil, nil }
 
+type repeatedFailureClient struct {
+	mu       sync.Mutex
+	calls    int
+	failures int
+	vary     bool
+}
+
+func (c *repeatedFailureClient) Stream(_ context.Context, _ Provider, _ string, _ CompletionRequest, emit func(CompletionEvent) error) error {
+	c.mu.Lock()
+	c.calls++
+	call := c.calls
+	c.mu.Unlock()
+	if call <= c.failures {
+		arguments := json.RawMessage(`{"resourceVersion":"sha256:test"}`)
+		if c.vary {
+			arguments = json.RawMessage(fmt.Sprintf(`{"attempt":%d}`, call))
+		}
+		return emit(CompletionEvent{Done: true, ToolCalls: []ToolCall{{ID: fmt.Sprintf("call_%d", call), Name: "host_action", Arguments: arguments}}})
+	}
+	if err := emit(CompletionEvent{Delta: "完成"}); err != nil {
+		return err
+	}
+	return emit(CompletionEvent{Done: true})
+}
+
+func (*repeatedFailureClient) Models(context.Context, Provider, string) ([]Model, error) {
+	return nil, nil
+}
+
 type fakeTools struct {
 	mu         sync.Mutex
 	executed   int
@@ -143,6 +172,75 @@ func TestNativeRuntimeReplansAfterInvalidToolArguments(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("argument validation failure was not added to model context")
+	}
+}
+
+func TestNativeRuntimeReplansAfterAgentBusinessRejection(t *testing.T) {
+	store, providerService, provider, model := runtimeFixture(t)
+	defer store.Close()
+	session, _ := store.CreateSession(context.Background(), Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "inspect"})
+	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	tools := &fakeTools{readOnly: true, executeErr: &ToolRejectedError{StatusCode: 422, Code: "file_symlink_rejected", RequestID: "req-safe"}}
+	runtime, _ := NewNativeRuntime(store, providerService, &scriptedClient{tool: "host_action"}, tools, NewEventHub())
+	if err := runtime.Run(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := store.Run(context.Background(), "admin", run.ID)
+	if loaded.Status != RunCompleted || tools.executed != 1 {
+		t.Fatalf("business rejection should be returned to the model for replanning, status=%s executed=%d", loaded.Status, tools.executed)
+	}
+	messages, _ := store.Messages(context.Background(), session.ID, 50)
+	found := false
+	for _, message := range messages {
+		found = found || strings.Contains(message.Content, "file_symlink_rejected")
+	}
+	if !found {
+		t.Fatal("safe Agent rejection was not added to model context")
+	}
+}
+
+func TestNativeRuntimeStopsRepeatedIdenticalFailedToolCall(t *testing.T) {
+	store, providerService, provider, model := runtimeFixture(t)
+	defer store.Close()
+	session, _ := store.CreateSession(context.Background(), Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "inspect"})
+	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	tools := &fakeTools{readOnly: true, executeErr: fmt.Errorf("%w: invalid", ErrToolArguments)}
+	runtime, _ := NewNativeRuntime(store, providerService, &repeatedFailureClient{failures: 3}, tools, NewEventHub())
+	if err := runtime.Run(context.Background(), run.ID); err == nil {
+		t.Fatal("repeated identical failures did not stop the run")
+	}
+	loaded, _ := store.Run(context.Background(), "admin", run.ID)
+	if loaded.Status != RunFailed || loaded.ErrorCode != "tool_retry_limit" || tools.executed != MaxSameToolFailures {
+		t.Fatalf("status=%s code=%s executed=%d", loaded.Status, loaded.ErrorCode, tools.executed)
+	}
+	calls, _ := store.ToolCalls(context.Background(), run.ID)
+	failed := 0
+	for _, call := range calls {
+		if call.Status == ToolFailed {
+			failed++
+		}
+	}
+	if len(calls) != MaxSameToolFailures+1 || failed != len(calls) {
+		t.Fatalf("repeated calls=%#v", calls)
+	}
+}
+
+func TestNativeRuntimeBoundsDistinctRecoverableToolFailures(t *testing.T) {
+	store, providerService, provider, model := runtimeFixture(t)
+	defer store.Close()
+	session, _ := store.CreateSession(context.Background(), Session{UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	_, _ = store.AddMessage(context.Background(), Message{SessionID: session.ID, Role: RoleUser, Content: "inspect"})
+	run, _ := store.CreateRun(context.Background(), Run{SessionID: session.ID, UserID: "admin", ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.DisplayName})
+	tools := &fakeTools{readOnly: true, executeErr: &ToolRejectedError{StatusCode: 422, Code: "request_rejected"}}
+	runtime, _ := NewNativeRuntime(store, providerService, &repeatedFailureClient{failures: MaxRecoverableToolFailures, vary: true}, tools, NewEventHub())
+	if err := runtime.Run(context.Background(), run.ID); err == nil {
+		t.Fatal("recoverable failure budget did not stop the run")
+	}
+	loaded, _ := store.Run(context.Background(), "admin", run.ID)
+	if loaded.Status != RunFailed || loaded.ErrorCode != "tool_replan_limit" || tools.executed != MaxRecoverableToolFailures {
+		t.Fatalf("status=%s code=%s executed=%d", loaded.Status, loaded.ErrorCode, tools.executed)
 	}
 }
 
@@ -500,7 +598,7 @@ func TestNativeRuntimeSilentlyLearnsReusableProcedureAcrossSessions(t *testing.T
 	if prompt := runtime.systemPrompt(ctx, "admin"); !strings.Contains(prompt, "应用状态恢复") {
 		t.Fatalf("learned procedure was not available to another session: %s", prompt)
 	}
-	if prompt := runtime.systemPrompt(ctx, "admin"); !strings.Contains(prompt, "host_docker_resource_usage") || !strings.Contains(prompt, "Never use host_docker_task for a status or resource query") {
+	if prompt := runtime.systemPrompt(ctx, "admin"); !strings.Contains(prompt, "host_docker_resource_usage") || !strings.Contains(prompt, "Never use host_docker_task for a status or resource query") || !strings.Contains(prompt, "Never invent placeholder fields") {
 		t.Fatalf("Docker resource routing rule is missing: %s", prompt)
 	}
 	if err := runtime.generateProposal(ctx, run, provider, "test-key", model, history, false); err != nil {

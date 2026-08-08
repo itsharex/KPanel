@@ -63,7 +63,7 @@ var toolReasonSchema = map[string]any{
 }
 
 func (t *panelAITools) RequiresApproval(name string, arguments json.RawMessage) bool {
-	arguments, err := normalizeToolArguments(arguments)
+	arguments, err := normalizeToolArgumentsForTool(name, arguments)
 	if err != nil {
 		return true
 	}
@@ -127,7 +127,7 @@ func (t *panelAITools) RequiresApproval(name string, arguments json.RawMessage) 
 }
 
 func (t *panelAITools) DryRun(name string, arguments json.RawMessage) error {
-	arguments, err := normalizeToolArguments(arguments)
+	arguments, err := normalizeToolArgumentsForTool(name, arguments)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (t *panelAITools) DryRun(name string, arguments json.RawMessage) error {
 }
 
 func (t *panelAITools) Definitions() []ai.ToolDefinition {
-	readSchema := json.RawMessage(`{"type":"object","additionalProperties":false}`)
+	readSchema := json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)
 	definitions := []ai.ToolDefinition{
 		{Name: "host_system_summary", Description: "读取宿主机系统概览与 resourceVersion", Schema: readSchema, ReadOnly: true},
 		{Name: "host_system_processes", Description: "采样宿主机进程 CPU 与内存排行，只返回 PID、父 PID、名称、状态、UID、CPU、内存和启动标识，不返回命令行敏感参数", Schema: readSchema, ReadOnly: true},
@@ -187,7 +187,7 @@ func (t *panelAITools) Execute(ctx context.Context, execution ai.ToolExecutionCo
 		return "", errors.New("panel tool service is unavailable")
 	}
 	var err error
-	arguments, err = normalizeToolArguments(arguments)
+	arguments, err = normalizeToolArgumentsForTool(name, arguments)
 	if err != nil {
 		return "", toolArgumentError(err)
 	}
@@ -492,7 +492,11 @@ func (t *panelAITools) finish(execution ai.ToolExecutionContext, name, target, r
 			return "", fmt.Errorf("%w: Agent returned HTTP %d", ai.ErrToolConflict, response.StatusCode)
 		}
 		var problem contract.Problem
-		if json.Unmarshal(response.Body, &problem) == nil && problem.Code != "" {
+		hasProblem := json.Unmarshal(response.Body, &problem) == nil && problem.Code != ""
+		if hasProblem && recoverableAgentToolStatus(response.StatusCode) {
+			return "", &ai.ToolRejectedError{StatusCode: response.StatusCode, Code: problem.Code, RequestID: problem.RequestID}
+		}
+		if hasProblem {
 			if problem.RequestID != "" {
 				return "", fmt.Errorf("Agent request failed (HTTP %d, %s, requestId: %s)", response.StatusCode, problem.Code, problem.RequestID)
 			}
@@ -501,6 +505,18 @@ func (t *panelAITools) finish(execution ai.ToolExecutionContext, name, target, r
 		return "", fmt.Errorf("Agent request failed (HTTP %d)", response.StatusCode)
 	}
 	return string(response.Body), nil
+}
+
+func recoverableAgentToolStatus(status int) bool {
+	if status < 400 || status >= 500 {
+		return false
+	}
+	switch status {
+	case http.StatusUnauthorized, http.StatusRequestTimeout, http.StatusConflict, http.StatusPreconditionFailed, http.StatusTooManyRequests:
+		return false
+	default:
+		return true
+	}
 }
 
 func withToolReasonMetadata(schema json.RawMessage) json.RawMessage {
@@ -546,6 +562,39 @@ func normalizeToolArguments(raw json.RawMessage) (json.RawMessage, error) {
 		return nil, errors.New("invalid tool arguments")
 	}
 	return normalized, nil
+}
+
+func normalizeToolArgumentsForTool(name string, raw json.RawMessage) (json.RawMessage, error) {
+	normalized, err := normalizeToolArguments(raw)
+	if err != nil || !zeroArgumentReadTool(name) {
+		return normalized, err
+	}
+	var arguments map[string]json.RawMessage
+	if json.Unmarshal(normalized, &arguments) != nil {
+		return normalized, nil
+	}
+	placeholder, ok := arguments["_"]
+	if !ok {
+		return normalized, nil
+	}
+	var ignored bool
+	if json.Unmarshal(placeholder, &ignored) != nil {
+		return normalized, nil
+	}
+	delete(arguments, "_")
+	return json.Marshal(arguments)
+}
+
+func zeroArgumentReadTool(name string) bool {
+	switch name {
+	case "host_system_summary", "host_system_processes", "host_public_network", "host_sites_list",
+		"host_apps_list", "host_diagnostics_list", "host_docker_summary", "host_docker_containers",
+		"host_docker_resource_usage", "host_docker_images", "host_docker_networks", "host_docker_volumes",
+		"host_docker_jobs", "host_nginx_test":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateReadToolArguments(name string, raw json.RawMessage) error {

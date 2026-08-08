@@ -132,6 +132,30 @@ func TestAIToolMapsAgentVersionConflictForReplanning(t *testing.T) {
 	}
 }
 
+func TestAIToolMapsSafeAgentBusinessRejectionForReplanning(t *testing.T) {
+	server, _ := newTestServer(t)
+	server.agent = &stubAgent{response: AgentResponse{StatusCode: http.StatusUnprocessableEntity, ContentType: "application/json", Body: []byte(`{"code":"file_symlink_rejected","detail":"sensitive server detail","requestId":"req-safe"}`)}}
+	tools := &panelAITools{server: server}
+	execution := ai.ToolExecutionContext{UserID: "admin", SessionID: "ses", RunID: "run", ToolCallID: "call"}
+	_, err := tools.Execute(context.Background(), execution, "host_system_summary", json.RawMessage(`{}`))
+	if !errors.Is(err, ai.ErrToolRejected) {
+		t.Fatalf("Agent business rejection was not typed for replanning: %v", err)
+	}
+	var rejection *ai.ToolRejectedError
+	if !errors.As(err, &rejection) || rejection.StatusCode != http.StatusUnprocessableEntity || rejection.Code != "file_symlink_rejected" || rejection.RequestID != "req-safe" {
+		t.Fatalf("typed rejection=%#v err=%v", rejection, err)
+	}
+	if strings.Contains(err.Error(), "sensitive server detail") {
+		t.Fatalf("Agent detail leaked through rejection: %v", err)
+	}
+
+	server.agent = &stubAgent{response: AgentResponse{StatusCode: http.StatusUnauthorized, ContentType: "application/json", Body: []byte(`{"code":"unauthorized"}`)}}
+	_, err = tools.Execute(context.Background(), execution, "host_system_summary", json.RawMessage(`{}`))
+	if errors.Is(err, ai.ErrToolRejected) {
+		t.Fatalf("Agent authentication failure was treated as model-recoverable: %v", err)
+	}
+}
+
 func TestAIToolUsesFixedAgentPathAndAudits(t *testing.T) {
 	server, _ := newTestServer(t)
 	agent := &stubAgent{response: AgentResponse{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}

@@ -25,7 +25,32 @@ var (
 	ErrBusy          = errors.New("AI run is already active")
 	ErrToolConflict  = errors.New("host resource version changed")
 	ErrToolArguments = errors.New("tool arguments are invalid")
+	ErrToolRejected  = errors.New("host operation was rejected")
 )
+
+// ToolRejectedError carries only the Agent problem fields that are safe to
+// return to the model. Agent detail text is intentionally never included.
+type ToolRejectedError struct {
+	StatusCode int
+	Code       string
+	RequestID  string
+}
+
+func (e *ToolRejectedError) Error() string {
+	if e == nil {
+		return ErrToolRejected.Error()
+	}
+	message := fmt.Sprintf("Agent request rejected (HTTP %d", e.StatusCode)
+	if e.Code != "" {
+		message += ", " + e.Code
+	}
+	if e.RequestID != "" {
+		message += ", requestId: " + e.RequestID
+	}
+	return message + ")"
+}
+
+func (*ToolRejectedError) Unwrap() error { return ErrToolRejected }
 
 type Store struct {
 	db  *sql.DB

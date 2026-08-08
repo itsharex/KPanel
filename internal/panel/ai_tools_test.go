@@ -151,6 +151,42 @@ func TestUniversalReasonMetadataDoesNotRelaxBusinessArguments(t *testing.T) {
 	}
 }
 
+func TestZeroArgumentReadToolsTolerateOnlyBooleanPlaceholder(t *testing.T) {
+	tools := &panelAITools{}
+	for _, definition := range tools.Definitions() {
+		if !zeroArgumentReadTool(definition.Name) {
+			continue
+		}
+		t.Run(definition.Name, func(t *testing.T) {
+			if err := tools.DryRun(definition.Name, json.RawMessage(`{"_":true}`)); err != nil {
+				t.Fatalf("boolean placeholder was rejected: %v", err)
+			}
+		})
+	}
+	if err := tools.DryRun("host_system_summary", json.RawMessage(`{"_":"true"}`)); err == nil {
+		t.Fatal("non-boolean placeholder was accepted")
+	}
+	if err := tools.DryRun("host_file_read", json.RawMessage(`{"path":"/tmp/test","_":true}`)); err == nil {
+		t.Fatal("placeholder relaxed a read tool with business arguments")
+	}
+	if err := tools.DryRun("host_nginx_reload", json.RawMessage(`{"_":true}`)); err == nil {
+		t.Fatal("placeholder relaxed a write tool")
+	}
+}
+
+func TestRecoverableAgentToolStatusBoundary(t *testing.T) {
+	for _, status := range []int{400, 403, 404, 413, 422} {
+		if !recoverableAgentToolStatus(status) {
+			t.Errorf("business status %d was not recoverable", status)
+		}
+	}
+	for _, status := range []int{401, 408, 409, 412, 429, 500, 503} {
+		if recoverableAgentToolStatus(status) {
+			t.Errorf("infrastructure/control status %d was recoverable", status)
+		}
+	}
+}
+
 func TestAIFileBoundarySeparatesOperationsFromSecretsAndCore(t *testing.T) {
 	for _, path := range []string{"/home/web/log/nginx/error.log", "/home/web/conf.d/example.conf", "/tmp/cleanup.log"} {
 		if !aiFileReadable(path) || !aiFileMutable(path) {
