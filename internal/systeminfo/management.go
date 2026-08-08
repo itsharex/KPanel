@@ -111,16 +111,15 @@ func (c *Collector) readDNSConfiguration() contract.DNSConfiguration {
 }
 
 func (c *Collector) readTimezone() string {
+	target, err := os.Readlink(filepath.Join(c.EtcRoot, "localtime"))
+	if err == nil {
+		target = filepath.ToSlash(target)
+		if _, zone, ok := strings.Cut(target, "/zoneinfo/"); ok {
+			return zone
+		}
+	}
 	if value := strings.TrimSpace(readFileLimited(filepath.Join(c.EtcRoot, "timezone"))); value != "" {
 		return strings.Split(value, "\n")[0]
-	}
-	target, err := os.Readlink(filepath.Join(c.EtcRoot, "localtime"))
-	if err != nil {
-		return ""
-	}
-	target = filepath.ToSlash(target)
-	if _, zone, ok := strings.Cut(target, "/zoneinfo/"); ok {
-		return zone
 	}
 	return ""
 }

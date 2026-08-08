@@ -26,6 +26,8 @@ vi.mock('@/stores/toast', () => ({
 
 interface OverviewBindings {
   data: Ref<SystemOverview | undefined>
+  actionForm: { timezone: string; timezonePreset: string }
+  openTool: (tool: { id: string }) => void
   load: (silent?: boolean) => Promise<void>
 }
 
@@ -48,6 +50,13 @@ function overview(id: string): SystemOverview {
     agent: { version: id },
     publicNetwork: {},
     management: {
+      ssh: { ports: [], defense: { enabled: false } },
+      dns: { servers: [] },
+      swap: {},
+      packageSources: [],
+      kernelOptimization: { enabled: false },
+      bbr: { enabled: false },
+      bbrv3: { installed: false },
       maintenance: { state: 'idle', progress: 0 },
     },
   } as unknown as SystemOverview
@@ -86,5 +95,15 @@ describe('OverviewView refresh stability', () => {
     await refresh
     expect(view.data.value).toStrictEqual(refreshedComplete)
     expect(mocks.overviewGet).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not present Shanghai when the Agent cannot identify the host timezone', () => {
+    const view = setupView()
+    view.data.value = overview('unknown-timezone')
+
+    view.openTool({ id: 'timezone' })
+
+    expect(view.actionForm.timezone).toBe('')
+    expect(view.actionForm.timezonePreset).toBe('__custom__')
   })
 })

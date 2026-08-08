@@ -516,7 +516,7 @@ function openTool(tool: ManagementTool): void {
   actionForm.dns = (management?.dns.servers || []).filter((server) => server !== '127.0.0.53').join('\n')
   actionForm.dnsPreset = detectDNSPreset(actionForm.dns)
   if (tool.id === 'dns' && actionForm.dnsPreset !== customPreset && hasPublicIPv6.value) applyDNSPreset()
-  actionForm.timezone = management?.timezone || 'Asia/Shanghai'
+  actionForm.timezone = management?.timezone || ''
   actionForm.timezonePreset = timezonePresets.some((preset) => preset.value === actionForm.timezone)
     ? actionForm.timezone
     : customPreset
