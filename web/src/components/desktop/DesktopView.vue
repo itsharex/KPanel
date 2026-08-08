@@ -27,7 +27,7 @@ import {
   type DesktopEntries,
   type DesktopEntry,
 } from '@/lib/desktopEntries'
-import type { SystemResourceSnapshot } from '@/lib/api'
+import { api, type SystemResourceSnapshot } from '@/lib/api'
 import { prefetchNavigationRoute } from '@/lib/navigation'
 import {
   desktopCloseGuardCoordinator,
@@ -91,13 +91,21 @@ function readSiteNames(): Record<string, string> {
 }
 
 const siteNames = ref<Record<string, string>>(readSiteNames())
+const siteAppearanceNames = ref<Record<string, string>>({})
+
+function siteDomainName(entry: DesktopEntry): string {
+  return entry.site?.primaryDomain || entry.name
+}
+
+function defaultSiteName(entry: DesktopEntry): string {
+  return siteAppearanceNames.value[entry.id] || siteDomainName(entry)
+}
 
 function applySiteNames(value?: DesktopEntries): DesktopEntries | undefined {
   if (!value) return undefined
   const apply = (entry: DesktopEntry): DesktopEntry => {
     if (entry.kind !== 'site') return entry
-    const defaultName = entry.site?.primaryDomain || entry.name
-    return { ...entry, name: siteNames.value[entry.id] || defaultName }
+    return { ...entry, name: siteNames.value[entry.id] || defaultSiteName(entry) }
   }
   return {
     ...value,
@@ -147,11 +155,31 @@ function gradientFor(path: string): string {
   return `linear-gradient(145deg, ${gradient[0]} 0%, ${gradient[1]} 100%)`
 }
 
-const SITE_GRADIENT: [string, string] = ['#22d3ee', '#0e7490']
+const SITE_GRADIENTS: Array<[string, string]> = [
+  ['#22d3ee', '#0e7490'],
+  ['#34d399', '#047857'],
+  ['#60a5fa', '#1d4ed8'],
+  ['#a78bfa', '#6d28d9'],
+  ['#f472b6', '#be185d'],
+  ['#fb923c', '#c2410c'],
+  ['#facc15', '#a16207'],
+  ['#2dd4bf', '#0f766e'],
+]
+
+function stableSiteColorIndex(entry: DesktopEntry): number {
+  const key = entry.site?.primaryDomain || entry.url || entry.id
+  let hash = 2_166_136_261
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index)
+    hash = Math.imul(hash, 16_777_619)
+  }
+  return (hash >>> 0) % SITE_GRADIENTS.length
+}
 
 function entryGradient(entry: DesktopEntry): string {
   if (entry.kind === 'site') {
-    return `linear-gradient(145deg, ${SITE_GRADIENT[0]} 0%, ${SITE_GRADIENT[1]} 100%)`
+    const [start, end] = SITE_GRADIENTS[stableSiteColorIndex(entry)] ?? ['#22d3ee', '#0e7490']
+    return `linear-gradient(145deg, ${start} 0%, ${end} 100%)`
   }
   // App-market apps keep a neutral brand tile; the market icon image sits on it.
   return `linear-gradient(145deg, #5b7a72 0%, #243b36 100%)`
@@ -421,7 +449,7 @@ function saveRename(): void {
   const entry = renameEntry.value
   const name = renameValue.value.trim().slice(0, MAX_SITE_NAME_LENGTH)
   if (entry?.kind !== 'site' || !name) return
-  const defaultName = entry.site?.primaryDomain || entry.name
+  const defaultName = defaultSiteName(entry)
   const next = { ...siteNames.value }
   if (name === defaultName) delete next[entry.id]
   else next[entry.id] = name
@@ -459,12 +487,53 @@ async function loadEntries(force = false): Promise<void> {
   entriesLoading.value = true
   try {
     const nextEntries = await loadDesktopEntries(entriesAbort.signal, undefined, force)
-    if (sequence === entriesSequence) entries.value = applySiteNames(nextEntries)
+    if (sequence === entriesSequence) {
+      entries.value = applySiteNames(nextEntries)
+      void loadSiteAppearanceNames(nextEntries, entriesAbort.signal, sequence)
+    }
   } catch {
     if (sequence === entriesSequence) entries.value = undefined
   } finally {
     if (sequence === entriesSequence) entriesLoading.value = false
   }
+}
+
+function appearanceEntries(value: DesktopEntries): DesktopEntry[] {
+  const unique = new Map<string, DesktopEntry>()
+  for (const entry of [...value.sites, ...value.visible]) {
+    if (entry.kind === 'site') unique.set(entry.id, entry)
+  }
+  return [...unique.values()]
+}
+
+async function loadSiteAppearanceNames(
+  value: DesktopEntries,
+  signal: AbortSignal,
+  sequence: number,
+): Promise<void> {
+  const queue = appearanceEntries(value)
+  const names: Record<string, string> = {}
+  let cursor = 0
+
+  async function worker(): Promise<void> {
+    while (!signal.aborted && cursor < queue.length) {
+      const entry = queue[cursor]
+      cursor += 1
+      if (!entry) return
+      try {
+        const appearance = await api.sites.appearance(entry.id, signal)
+        const name = appearance.name?.trim().slice(0, MAX_SITE_NAME_LENGTH)
+        if (name) names[entry.id] = name
+      } catch {
+        // Appearance is optional. The primary domain remains the safe fallback.
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, () => worker()))
+  if (signal.aborted || sequence !== entriesSequence) return
+  siteAppearanceNames.value = names
+  entries.value = applySiteNames(entries.value)
 }
 
 onMounted(() => {
@@ -775,7 +844,7 @@ function onViewportResize(): void {
           <input
             v-model="renameValue"
             :maxlength="MAX_SITE_NAME_LENGTH"
-            :placeholder="renameEntry?.site?.primaryDomain"
+            :placeholder="renameEntry ? defaultSiteName(renameEntry) : ''"
             autocomplete="off"
           />
         </label>

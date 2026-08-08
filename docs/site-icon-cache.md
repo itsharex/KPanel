@@ -1,20 +1,23 @@
-# 网站图标派生缓存
+# 网站外观派生缓存
 
 ## 目标与事实来源
 
-网站列表可以显示实际站点 favicon，但图标不是网站配置事实，也不参与
+网站列表可以显示实际站点 favicon 和首页标题，但这些外观信息不是网站配置事实，也不参与
 `resourceVersion`。站点身份仍来自 `/home/web/conf.d` 等真实产物；缓存只保存展示用的
-派生位图，不写回 `/home/web`，不修改 `kejilion.sh` 或 Nginx 配置。
+派生位图与经过清理的短标题，不写回 `/home/web`，不修改 `kejilion.sh` 或 Nginx 配置。
 
 请求链路：
 
 ```text
 Browser <img loading=lazy fetchpriority=low>
   -> authenticated Panel GET /api/v1/sites/{id}/icon
+Browser website-name note
+  -> authenticated Panel GET /api/v1/sites/{id}/appearance
   -> Agent GET /v1/sites/{id}/icon
+     or Agent GET /v1/sites/{id}/appearance
   -> discovered site identity
   -> 127.0.0.1:80/443 local Nginx with original Host/SNI
-  -> Agent private disk cache
+  -> shared Agent private disk cache
 ```
 
 ## 安全边界
@@ -28,6 +31,8 @@ Browser <img loading=lazy fetchpriority=low>
 - 禁止重定向；首页与图标响应分别限制为 `256 KiB`，响应头限制为 `32 KiB`。可能阻塞的
   站点发现等待、全局排队与网络抓取共用 `4 秒` 请求预算。
 - 全局最多同时获取 4 个站点；同一站点的并发首次请求合并。
+- 网站名称仅取首页 `<title>`，进行 HTML 实体解码、空白归一化、控制字符过滤，并限制为
+  160 个 Unicode 字符；浏览器只渲染为普通文本。
 - 只接受经过魔数、结构和尺寸校验的 PNG、JPEG、GIF、ICO、WebP；拒绝 SVG、HTML 和
   超过 `2048×2048` / 约 400 万像素的位图。
 - Panel 对 MIME、魔数和 `256 KiB` 上限再次校验；图标接口必须登录，不构成公开代理。
@@ -46,9 +51,10 @@ Browser <img loading=lazy fetchpriority=low>
   临时文件或无 metadata 图标老于一分钟后，会在后续缓存写入触发 `prune` 时清理，避免
   与正在完成的原子写入竞争；当前没有后台定时清理任务。
 
-图标请求独立于 `/api/v1/sites` 列表，不阻塞页面数据加载。前端仅懒加载视口附近的图片，
-失败后直接显示原有 `Globe2`，不进入重试循环；只有下一次网站列表成功刷新时才允许重新
-尝试一次。
+图标和名称请求独立于 `/api/v1/sites` 列表，不阻塞页面数据加载。两者共用首页抓取与缓存；
+即使网站没有可用 favicon，已读取的标题仍可显示。前端仅懒加载视口附近的图片，失败后
+网站列表显示原有 `Globe2`，桌面显示按站点稳定配色的名称首字母与网站角标；两者都不进入
+重试循环，只有下一次网站列表或桌面条目成功刷新时才允许重新尝试一次。
 
 ## 回归检查
 
@@ -58,4 +64,6 @@ Browser <img loading=lazy fetchpriority=low>
 - `internal/agent/site_icons_test.go`：鉴权、精确路由、错误映射和媒体限制。
 - `internal/panel/site_icons_test.go`：Session、Agent 转发、二次校验、`ETag`、304 和缓存头。
 - `web/src/components/sites/SiteFavicon.test.ts`：同源 URL、低优先级懒加载和 Globe 降级。
+- `web/src/components/sites/SiteAppearanceName.test.ts`：名称备注展示、刷新和失败隐藏。
+- `web/src/components/desktop/DesktopView.entries.test.ts`：桌面名称优先级与无 favicon 回退图标。
 - `.codex-workflows/kpanel-site-icon-cache-validation.workflow.yaml`：隔离候选和真实浏览器复验。

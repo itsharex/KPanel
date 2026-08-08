@@ -26,12 +26,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
 
 const (
-	siteIconCacheVersion        = 1
+	siteIconCacheVersion        = 2
 	siteIconHTMLBytes           = 256 << 10
 	siteIconBytes               = 256 << 10
 	siteIconMetadataBytes       = 4 << 10
@@ -46,6 +48,7 @@ const (
 	siteIconMaxCacheBytes       = 32 << 20
 	siteIconMaxDimension        = 2048
 	siteIconMaxPixels           = 4 << 20
+	siteAppearanceNameRunes     = 160
 	siteIconOrphanGrace         = time.Minute
 )
 
@@ -61,6 +64,13 @@ var (
 type SiteIcon struct {
 	ContentType string
 	Data        []byte
+	Name        string
+}
+
+// SiteAppearance contains presentation metadata fetched from the same trusted
+// homepage request as the site's icon.
+type SiteAppearance struct {
+	Name string `json:"name,omitempty"`
 }
 
 type siteIconMetadata struct {
@@ -70,6 +80,7 @@ type siteIconMetadata struct {
 	FetchedAt     time.Time `json:"fetchedAt,omitempty"`
 	RetryAt       time.Time `json:"retryAt,omitempty"`
 	Failure       string    `json:"failure,omitempty"`
+	Name          string    `json:"name,omitempty"`
 }
 
 type siteIconCacheValue struct {
@@ -228,7 +239,7 @@ func (c *IconCache) Get(ctx context.Context, id string) (SiteIcon, error) {
 		if hasIcon {
 			return cached.icon, nil
 		}
-		return SiteIcon{}, cachedFailure(cached.meta.Failure)
+		return cached.icon, cachedFailure(cached.meta.Failure)
 	}
 	if !discoveryConfirmed {
 		if hasIcon {
@@ -249,7 +260,7 @@ func (c *IconCache) Get(ctx context.Context, id string) (SiteIcon, error) {
 			if currentHasIcon {
 				return current.icon, nil
 			}
-			return SiteIcon{}, cachedFailure(current.meta.Failure)
+			return current.icon, cachedFailure(current.meta.Failure)
 		}
 
 		select {
@@ -269,6 +280,7 @@ func (c *IconCache) Get(ctx context.Context, id string) (SiteIcon, error) {
 				SourceKey:     sourceKey,
 				ContentSHA256: hashSiteIcon(icon.Data),
 				FetchedAt:     refreshNow,
+				Name:          icon.Name,
 			}
 			if writeErr := c.writeSuccess(id, icon, metadata); writeErr != nil {
 				slog.Warn("site icon cache write failed", "siteID", id, "error", writeErr)
@@ -292,14 +304,42 @@ func (c *IconCache) Get(ctx context.Context, id string) (SiteIcon, error) {
 		metadata.SourceKey = sourceKey
 		metadata.RetryAt = retryAt
 		metadata.Failure = failure
+		if errors.Is(fetchErr, errSiteIconAbsent) {
+			metadata.Name = icon.Name
+		}
 		if writeErr := c.writeMetadata(id, metadata); writeErr != nil {
 			slog.Warn("site icon negative cache write failed", "siteID", id, "error", writeErr)
 		}
 		if currentHasIcon {
 			return current.icon, nil
 		}
-		return SiteIcon{}, publicErr
+		return icon, publicErr
 	})
+}
+
+// Appearance returns the cached homepage title even when the site does not
+// expose a supported favicon. Unknown or ineligible sites remain hidden.
+func (c *IconCache) Appearance(ctx context.Context, id string) (SiteAppearance, error) {
+	if !validIconSiteID(id) {
+		return SiteAppearance{}, ErrSiteIconNotFound
+	}
+	operationContext, cancel := context.WithTimeout(ctx, siteIconFetchTimeout)
+	defer cancel()
+	site, _, err := c.lookupSite(operationContext, id)
+	if err != nil {
+		if errors.Is(err, ErrSiteIconNotFound) {
+			return SiteAppearance{}, ErrSiteIconNotFound
+		}
+		return SiteAppearance{}, fmt.Errorf("%w: discover sites", ErrSiteIconUnavailable)
+	}
+	if !eligibleIconSite(site) {
+		return SiteAppearance{}, ErrSiteIconNotFound
+	}
+	icon, err := c.Get(operationContext, id)
+	if err == nil || errors.Is(err, ErrSiteIconNotFound) {
+		return SiteAppearance{Name: icon.Name}, nil
+	}
+	return SiteAppearance{}, err
 }
 
 func cacheIsFresh(start, end time.Time, ttl time.Duration) bool {
@@ -521,7 +561,9 @@ func (c *IconCache) fetch(ctx context.Context, site contract.SiteSummary) (SiteI
 		transient = true
 	}
 	candidates := make([]*url.URL, 0, siteIconMaxLinkedCandidates+1)
+	name := ""
 	if err == nil && status == http.StatusOK {
+		name = parseSiteAppearanceName(page)
 		candidates = append(candidates, parseSiteIconLinks(page, base, allowedHosts)...)
 	}
 	fallback := *base
@@ -555,12 +597,54 @@ func (c *IconCache) fetch(ctx context.Context, site contract.SiteSummary) (SiteI
 		if validationErr != nil {
 			continue
 		}
-		return SiteIcon{ContentType: contentType, Data: body}, nil
+		return SiteIcon{ContentType: contentType, Data: body, Name: name}, nil
 	}
 	if transient {
 		return SiteIcon{}, errSiteIconTransient
 	}
-	return SiteIcon{}, errSiteIconAbsent
+	return SiteIcon{Name: name}, errSiteIconAbsent
+}
+
+func parseSiteAppearanceName(document []byte) string {
+	lower := bytes.ToLower(document)
+	for offset := 0; offset < len(lower); {
+		index := bytes.Index(lower[offset:], []byte("<title"))
+		if index < 0 {
+			return ""
+		}
+		start := offset + index
+		afterName := start + len("<title")
+		if afterName >= len(lower) || !isHTMLSpaceOrTagEnd(lower[afterName]) {
+			offset = afterName
+			continue
+		}
+		openingEnd := htmlTagEnd(document, afterName, 2048)
+		if openingEnd < 0 {
+			return ""
+		}
+		closingOffset := bytes.Index(lower[openingEnd+1:], []byte("</title"))
+		if closingOffset < 0 {
+			return ""
+		}
+		name := string(document[openingEnd+1 : openingEnd+1+closingOffset])
+		if !utf8.ValidString(name) {
+			return ""
+		}
+		name = html.UnescapeString(name)
+		name = strings.Map(func(character rune) rune {
+			if unicode.IsControl(character) && !unicode.IsSpace(character) {
+				return -1
+			}
+			return character
+		}, name)
+		name = strings.Join(strings.Fields(name), " ")
+		runes := []rune(name)
+		if len(runes) > siteAppearanceNameRunes {
+			name = string(runes[:siteAppearanceNameRunes])
+		}
+		return name
+	}
+	return ""
 }
 
 func (c *IconCache) fetchBytes(
@@ -960,7 +1044,7 @@ func (c *IconCache) readCache(
 		(!metadata.FetchedAt.IsZero() && metadata.FetchedAt.After(c.now().UTC().Add(5*time.Minute))) {
 		return siteIconCacheValue{}, false, false
 	}
-	value := siteIconCacheValue{meta: metadata}
+	value := siteIconCacheValue{meta: metadata, icon: SiteIcon{Name: metadata.Name}}
 	iconData, err := readRegularFile(c.iconPath(id), siteIconBytes)
 	if err != nil || metadata.ContentSHA256 == "" ||
 		!strings.EqualFold(metadata.ContentSHA256, hashSiteIcon(iconData)) {
@@ -970,7 +1054,7 @@ func (c *IconCache) readCache(
 	if err != nil {
 		return value, false, true
 	}
-	value.icon = SiteIcon{ContentType: contentType, Data: iconData}
+	value.icon = SiteIcon{ContentType: contentType, Data: iconData, Name: metadata.Name}
 	return value, true, true
 }
 

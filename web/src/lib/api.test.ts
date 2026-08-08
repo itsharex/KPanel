@@ -24,6 +24,19 @@ describe('API client', () => {
     )
   })
 
+  it('loads a site appearance only through the authenticated same-origin API', async () => {
+    const id = 'a'.repeat(32)
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ name: '科技狮网站' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.sites.appearance(id)).resolves.toEqual({ name: '科技狮网站' })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/sites/${id}/appearance`)
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      credentials: 'same-origin',
+      cache: 'no-store',
+    }))
+  })
+
   it('detects a server that still requires bootstrap', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ required: true }))
     vi.stubGlobal('fetch', fetchMock)

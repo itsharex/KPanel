@@ -190,7 +190,7 @@ export const zhCNMessages = {
   'desktop.entryRename': '重命名',
   'desktop.renameTitle': '重命名网站图标',
   'desktop.renameLabel': '显示名称',
-  'desktop.renameReset': '恢复域名',
+  'desktop.renameReset': '恢复默认名称',
   'desktop.renameSave': '保存',
   'desktop.detailType': '类型',
   'desktop.detailApp': '应用',

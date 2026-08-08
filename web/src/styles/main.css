@@ -4056,6 +4056,11 @@ div.resource-name {
   white-space: nowrap;
 }
 
+.resource-name .site-appearance-name {
+  color: var(--text-subtle, var(--muted));
+  font-size: 10px;
+}
+
 .table-stack {
   display: grid;
   gap: 5px;

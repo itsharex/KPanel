@@ -192,7 +192,7 @@ export const enUSMessages = {
   'desktop.entryRename': 'Rename',
   'desktop.renameTitle': 'Rename website icon',
   'desktop.renameLabel': 'Display name',
-  'desktop.renameReset': 'Restore domain',
+  'desktop.renameReset': 'Restore default name',
   'desktop.renameSave': 'Save',
   'desktop.detailType': 'Type',
   'desktop.detailApp': 'Application',

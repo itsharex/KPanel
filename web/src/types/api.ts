@@ -660,6 +660,10 @@ export interface Site {
   }>
 }
 
+export interface SiteAppearance {
+  name?: string
+}
+
 export interface SiteInput {
   primaryDomain: string
   aliases?: string[]

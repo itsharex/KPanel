@@ -13,14 +13,41 @@ import (
 )
 
 type stubSiteIconProvider struct {
-	icon  sites.SiteIcon
-	err   error
-	calls []string
+	icon            sites.SiteIcon
+	err             error
+	appearance      sites.SiteAppearance
+	appearanceErr   error
+	calls           []string
+	appearanceCalls []string
 }
 
 func (provider *stubSiteIconProvider) Get(_ context.Context, id string) (sites.SiteIcon, error) {
 	provider.calls = append(provider.calls, id)
 	return provider.icon, provider.err
+}
+
+func (provider *stubSiteIconProvider) Appearance(_ context.Context, id string) (sites.SiteAppearance, error) {
+	provider.appearanceCalls = append(provider.appearanceCalls, id)
+	return provider.appearance, provider.appearanceErr
+}
+
+func TestSiteAppearanceEndpointReturnsHomepageName(t *testing.T) {
+	server := testServer(t)
+	id := strings.Repeat("d", 32)
+	provider := &stubSiteIconProvider{appearance: sites.SiteAppearance{Name: "科技狮网站"}}
+	server.siteIcons = provider
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/sites/"+id+"/appearance", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":"科技狮网站"`) {
+		t.Fatalf("site appearance response = %d %s", response.Code, response.Body.String())
+	}
+	if len(provider.appearanceCalls) != 1 || provider.appearanceCalls[0] != id {
+		t.Fatalf("site appearance provider calls = %#v", provider.appearanceCalls)
+	}
 }
 
 func TestSiteIconEndpointReturnsValidatedBitmap(t *testing.T) {
@@ -81,6 +108,14 @@ func TestSiteIconEndpointRejectsMalformedRequestsBeforeProvider(t *testing.T) {
 			method: http.MethodGet, target: "/v1/sites/" + id + "/icon/extra",
 			status: http.StatusNotFound,
 		},
+		"appearance query": {
+			method: http.MethodGet, target: "/v1/sites/" + id + "/appearance?refresh=true",
+			status: http.StatusBadRequest,
+		},
+		"appearance wrong method": {
+			method: http.MethodPost, target: "/v1/sites/" + id + "/appearance",
+			status: http.StatusMethodNotAllowed,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := testServer(t)
@@ -97,6 +132,9 @@ func TestSiteIconEndpointRejectsMalformedRequestsBeforeProvider(t *testing.T) {
 			}
 			if len(provider.calls) != 0 {
 				t.Fatalf("provider called for malformed request: %#v", provider.calls)
+			}
+			if len(provider.appearanceCalls) != 0 {
+				t.Fatalf("appearance provider called for malformed request: %#v", provider.appearanceCalls)
 			}
 		})
 	}

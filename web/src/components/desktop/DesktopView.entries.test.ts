@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import DesktopView from '@/components/desktop/DesktopView.vue'
 import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
 import type { DesktopEntries } from '@/lib/desktopEntries'
+import { api } from '@/lib/api'
 
 vi.mock('@/lib/desktopEntries', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/desktopEntries')>()
@@ -14,7 +15,22 @@ vi.mock('@/lib/desktopEntries', async (importOriginal) => {
   }
 })
 
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>()
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      sites: {
+        ...actual.api.sites,
+        appearance: vi.fn(),
+      },
+    },
+  }
+})
+
 const mockedLoad = vi.mocked((await import('@/lib/desktopEntries')).loadDesktopEntries)
+const mockedAppearance = vi.mocked(api.sites.appearance)
 
 function makeEntries(): DesktopEntries {
   return {
@@ -35,6 +51,8 @@ describe('DesktopView dynamic entries', () => {
     window.localStorage.clear()
     window.scrollTo = vi.fn()
     mockedLoad.mockResolvedValue(makeEntries())
+    mockedAppearance.mockReset()
+    mockedAppearance.mockResolvedValue({})
   })
 
   it('renders dynamic app and site icons alongside static nav icons', async () => {
@@ -60,6 +78,19 @@ describe('DesktopView dynamic entries', () => {
     expect(srcs).toContain('/api/v1/apps/openclaw/icon')
     expect(srcs).toContain('/api/v1/sites/blog/icon')
     expect(wrapper.findAll('.desktop__icon-glyph--dynamic')).toHaveLength(3)
+    wrapper.unmount()
+  })
+
+  it('renders a branded website fallback when its favicon is unavailable', async () => {
+    const wrapper = mount(DesktopView)
+    await nextTick()
+    await nextTick()
+
+    const siteIcon = wrapper.find('button[title="blog.example.com"]')
+    await siteIcon.find('.desktop__icon-img').trigger('error')
+
+    expect(siteIcon.find('.desktop__site-fallback-letter').text()).toBe('B')
+    expect(siteIcon.find('.desktop__site-fallback-badge').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -107,6 +138,35 @@ describe('DesktopView dynamic entries', () => {
 
     expect(window.localStorage.getItem('kpanel:desktop-site-names:v1')).toContain('我的博客')
     expect(wrapper.findAll('.desktop__icon-label').map((label) => label.text())).toContain('我的博客')
+    wrapper.unmount()
+  })
+
+  it('prioritizes a local rename, then the website name, then the domain', async () => {
+    mockedAppearance.mockResolvedValue({ name: 'Example Blog' })
+    let wrapper = mount(DesktopView)
+    await flushPromises()
+    expect(wrapper.findAll('.desktop__icon-label').map((label) => label.text())).toContain('Example Blog')
+    wrapper.unmount()
+
+    window.localStorage.setItem(
+      'kpanel:desktop-site-names:v1',
+      JSON.stringify({ blog: 'My renamed blog' }),
+    )
+    wrapper = mount(DesktopView)
+    await flushPromises()
+    expect(wrapper.findAll('.desktop__icon-label').map((label) => label.text())).toContain(
+      'My renamed blog',
+    )
+    wrapper.unmount()
+
+    window.localStorage.clear()
+    mockedAppearance.mockReset()
+    mockedAppearance.mockRejectedValue(new Error('appearance unavailable'))
+    wrapper = mount(DesktopView)
+    await flushPromises()
+    expect(wrapper.findAll('.desktop__icon-label').map((label) => label.text())).toContain(
+      'blog.example.com',
+    )
     wrapper.unmount()
   })
 

@@ -916,6 +916,14 @@ func allowedAgentPath(publicPath string) (string, bool) {
 	if path, ok := exact[publicPath]; ok {
 		return path, true
 	}
+	const sitePrefix = "/api/v1/sites/"
+	if strings.HasPrefix(publicPath, sitePrefix) {
+		rest := strings.TrimPrefix(publicPath, sitePrefix)
+		parts := strings.Split(rest, "/")
+		if len(parts) == 2 && siteIDPattern.MatchString(parts[0]) && parts[1] == "appearance" {
+			return "/v1/sites/" + parts[0] + "/appearance", true
+		}
+	}
 	const appJobPrefix = "/api/v1/app-jobs/"
 	if strings.HasPrefix(publicPath, appJobPrefix) {
 		rest := strings.TrimPrefix(publicPath, appJobPrefix)

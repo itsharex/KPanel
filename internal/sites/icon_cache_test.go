@@ -42,7 +42,7 @@ func TestIconCacheLoadsLinkedIconAndPersistsAcrossRestart(t *testing.T) {
 			return iconResponse(
 				http.StatusOK,
 				"text/html",
-				[]byte(`<html><head><link rel="icon" type="application/octet-stream" href="/assets/favicon.png?v=3"></head></html>`),
+				[]byte(`<html><head><title> 科技狮 &amp; KPanel </title><link rel="icon" type="application/octet-stream" href="/assets/favicon.png?v=3"></head></html>`),
 			), nil
 		case "/assets/favicon.png":
 			if request.URL.RawQuery != "v=3" {
@@ -61,6 +61,10 @@ func TestIconCacheLoadsLinkedIconAndPersistsAcrossRestart(t *testing.T) {
 	}
 	if first.ContentType != "image/png" || !bytes.Equal(first.Data, icon) {
 		t.Fatalf("unexpected first icon: type=%q bytes=%d", first.ContentType, len(first.Data))
+	}
+	appearance, err := cache.Appearance(context.Background(), id)
+	if err != nil || appearance.Name != "科技狮 & KPanel" {
+		t.Fatalf("site appearance = %#v, %v", appearance, err)
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("network calls = %d, want 2", calls.Load())
@@ -82,6 +86,10 @@ func TestIconCacheLoadsLinkedIconAndPersistsAcrossRestart(t *testing.T) {
 	}
 	if persisted.ContentType != "image/png" || !bytes.Equal(persisted.Data, icon) {
 		t.Fatal("persistent cache changed the validated icon")
+	}
+	persistedAppearance, err := restarted.Appearance(context.Background(), id)
+	if err != nil || persistedAppearance.Name != "科技狮 & KPanel" {
+		t.Fatalf("persistent appearance = %#v, %v", persistedAppearance, err)
 	}
 	for _, path := range []string{cache.iconPath(id), cache.metadataPath(id)} {
 		info, statErr := os.Lstat(path)
@@ -146,7 +154,7 @@ func TestIconCacheNegativeCachesMissingIcon(t *testing.T) {
 	cache := newTestIconCache(t, t.TempDir(), &now, testIconSite(id), func(request *http.Request) (*http.Response, error) {
 		calls.Add(1)
 		if request.URL.Path == "/" {
-			return iconResponse(http.StatusOK, "text/html", []byte("<html><head></head></html>")), nil
+			return iconResponse(http.StatusOK, "text/html", []byte("<html><head><title>只有名称</title></head></html>")), nil
 		}
 		return iconResponse(http.StatusNotFound, "text/plain", nil), nil
 	})
@@ -158,12 +166,33 @@ func TestIconCacheNegativeCachesMissingIcon(t *testing.T) {
 	if calls.Load() != 2 {
 		t.Fatalf("negative cache calls = %d, want homepage and fallback only", calls.Load())
 	}
+	appearance, err := cache.Appearance(context.Background(), id)
+	if err != nil || appearance.Name != "只有名称" {
+		t.Fatalf("appearance without icon = %#v, %v", appearance, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("appearance bypassed negative cache: %d", calls.Load())
+	}
 	now = now.Add(25 * time.Hour)
 	if _, err := cache.Get(context.Background(), id); !errors.Is(err, ErrSiteIconNotFound) {
 		t.Fatalf("expired negative cache error = %v", err)
 	}
 	if calls.Load() != 4 {
 		t.Fatalf("expired negative cache calls = %d, want 4", calls.Load())
+	}
+}
+
+func TestParseSiteAppearanceNameNormalizesAndBoundsTitle(t *testing.T) {
+	name := parseSiteAppearanceName([]byte("<TITLE data-x='1'>\n  示例&#32;网站\t\x00中心  </TITLE>"))
+	if name != "示例 网站 中心" {
+		t.Fatalf("appearance name = %q", name)
+	}
+	long := strings.Repeat("站", siteAppearanceNameRunes+20)
+	if runes := []rune(parseSiteAppearanceName([]byte("<title>" + long + "</title>"))); len(runes) != siteAppearanceNameRunes {
+		t.Fatalf("bounded appearance runes = %d", len(runes))
+	}
+	if name := parseSiteAppearanceName([]byte("<title>broken")); name != "" {
+		t.Fatalf("malformed title = %q", name)
 	}
 }
 

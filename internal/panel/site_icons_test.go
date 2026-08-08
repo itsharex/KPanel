@@ -216,3 +216,20 @@ func TestAllowedSiteIconPathIsExact(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowedSiteAppearancePathIsExact(t *testing.T) {
+	id := strings.Repeat("e", 32)
+	publicPath := "/api/v1/sites/" + id + "/appearance"
+	if path, ok := allowedAgentPath(publicPath); !ok || path != "/v1/sites/"+id+"/appearance" {
+		t.Fatalf("allowedAgentPath(%q) = %q, %v", publicPath, path, ok)
+	}
+	for _, invalid := range []string{
+		"/api/v1/sites/" + strings.Repeat("E", 32) + "/appearance",
+		"/api/v1/sites/" + id + "/appearance/",
+		"/api/v1/sites/" + id + "/icon/appearance",
+	} {
+		if path, ok := allowedAgentPath(invalid); ok {
+			t.Fatalf("allowedAgentPath(%q) unexpectedly allowed %q", invalid, path)
+		}
+	}
+}

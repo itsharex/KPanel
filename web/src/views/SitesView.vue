@@ -35,6 +35,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import SitesSectionTabs from '@/components/sites/SitesSectionTabs.vue'
 import SiteFavicon from '@/components/sites/SiteFavicon.vue'
+import SiteAppearanceName from '@/components/sites/SiteAppearanceName.vue'
 import { ApiError, api, isTransientAgentError } from '@/lib/api'
 import { formatDateTime, relativeTime, shortId } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
@@ -971,6 +972,10 @@ onBeforeUnmount(() => {
                       {{ site.primaryDomain }} <ExternalLink :size="11" />
                       <em v-if="site.primaryDomain === recentCreatedDomain" class="site-recent-badge">刚刚创建</em>
                     </strong>
+                    <SiteAppearanceName
+                      :site-id="site.id"
+                      :refresh-key="siteIconRefreshKey"
+                    />
                     <small>{{ site.enabled ? '已启用' : '已停用' }} · {{ site.domains.length }} 个域名</small>
                   </span>
                 </a>

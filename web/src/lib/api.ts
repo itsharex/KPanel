@@ -42,6 +42,7 @@ import type {
   SecurityEntranceSettings,
   SetupRequest,
   Site,
+  SiteAppearance,
   SiteDeleteResult,
   SiteInput,
   SiteInstallationProgress,
@@ -1327,6 +1328,8 @@ export const api = {
   sites: {
     iconURL: (id: string): string =>
       buildUrl(`/sites/${encodeURIComponent(id)}/icon`),
+    appearance: (id: string, signal?: AbortSignal): Promise<SiteAppearance> =>
+      request<SiteAppearance>(`/sites/${encodeURIComponent(id)}/appearance`, { signal }),
     list: async (query?: { search?: string; cursor?: string }, signal?: AbortSignal): Promise<ApiList<Site>> => {
       const result = normalizeList(await request<ApiList<RawSite> | RawSite[]>('/sites', { query, signal }))
       return { ...result, items: result.items.map(normalizeSite) }

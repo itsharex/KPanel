@@ -58,6 +58,7 @@ type Config struct {
 
 type siteIconProvider interface {
 	Get(context.Context, string) (sites.SiteIcon, error)
+	Appearance(context.Context, string) (sites.SiteAppearance, error)
 }
 
 type monitoringHistoryProvider interface {
@@ -873,6 +874,23 @@ func (s *Server) siteInstallation(w http.ResponseWriter, r *http.Request, reques
 func (s *Server) siteOperation(w http.ResponseWriter, r *http.Request, requestID string) {
 	rest := strings.TrimPrefix(r.URL.Path, "/v1/sites/")
 	parts := strings.Split(rest, "/")
+	if len(parts) == 2 && parts[1] == "appearance" {
+		if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_site_appearance_request", "网站外观信息 URL 无效", "")
+			return
+		}
+		if !validSiteID(parts[0]) {
+			writeProblem(w, requestID, http.StatusNotFound, "not_found", "网站外观信息不存在", "")
+			return
+		}
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+			return
+		}
+		s.siteAppearance(w, r, requestID, parts[0])
+		return
+	}
 	if len(parts) == 2 && parts[1] == "icon" {
 		if r.URL.RawPath != "" || r.URL.RawQuery != "" {
 			writeProblem(w, requestID, http.StatusBadRequest, "invalid_site_icon_request", "网站图标 URL 无效", "")
@@ -930,6 +948,26 @@ func (s *Server) siteOperation(w http.ResponseWriter, r *http.Request, requestID
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) siteAppearance(w http.ResponseWriter, r *http.Request, requestID, id string) {
+	if s.siteIcons == nil {
+		writeProblem(w, requestID, http.StatusServiceUnavailable, "site_appearance_unavailable", "网站名称暂不可用", "")
+		return
+	}
+	appearance, err := s.siteIcons.Appearance(r.Context(), id)
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	if err != nil {
+		if errors.Is(err, sites.ErrSiteIconNotFound) {
+			writeProblem(w, requestID, http.StatusNotFound, "site_appearance_not_found", "网站外观信息不存在", "")
+			return
+		}
+		writeProblem(w, requestID, http.StatusServiceUnavailable, "site_appearance_unavailable", "网站名称暂不可用", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, appearance)
 }
 
 func (s *Server) siteIcon(w http.ResponseWriter, r *http.Request, requestID, id string) {
