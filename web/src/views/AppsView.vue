@@ -360,7 +360,7 @@ async function consumeRouteIntent(): Promise<void> {
     return
   }
 
-  if (!actionIntent) {
+  if (!actionIntent || actionIntent === 'manage') {
     await clearAppIntent()
     const item = inventory.value.items.find(
       (candidate) => candidate.id === appIntent || candidate.token === appIntent,
@@ -370,6 +370,18 @@ async function consumeRouteIntent(): Promise<void> {
       return
     }
     openDetails(item)
+    if (actionIntent === 'manage') {
+      if (applicationTaskActive.value) {
+        jobDetailsOpen.value = true
+        toast.danger('已有应用任务运行中', '请先完成或结束当前应用任务。')
+        return
+      }
+      if (!item.runtime.installed || !capability(item, 'manage') || !item.runtime.resourceVersion) {
+        toast.danger('无法打开脚本管理', item.capabilities.manage?.reason || '此应用没有可用的脚本管理入口。')
+        return
+      }
+      await openScriptManage()
+    }
     return
   }
 

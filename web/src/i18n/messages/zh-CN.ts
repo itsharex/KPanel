@@ -183,6 +183,7 @@ export const zhCNMessages = {
   'desktop.aboutTitle': '桌面模式',
   'desktop.aboutMessage': 'KPanel 桌面模式：单击图标打开窗口，可拖动、缩放、最小化并从底部程序坞恢复；右上角可切换回经典模式。',
   'desktop.entryOpen': '打开',
+  'desktop.entryScriptManage': '脚本管理',
   'desktop.entryDetails': '详情',
   'desktop.entryRename': '重命名',
   'desktop.renameTitle': '重命名网站图标',

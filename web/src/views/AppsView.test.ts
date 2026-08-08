@@ -679,6 +679,38 @@ describe('AppsView stopped applications', () => {
 })
 
 describe('AppsView script management', () => {
+  it('consumes a desktop manage intent and opens the interactive shell job', async () => {
+    const job: AppInstallJob = {
+      id: '0123456789abcdef0123456789abcdef',
+      appId: 'builtin-114',
+      appName: 'OpenClaw',
+      action: 'manage',
+      interactive: true,
+      inputOpen: true,
+      status: 'running',
+      stage: 'interactive',
+      progress: 5,
+      logs: [],
+      createdAt: '2026-07-28T00:00:00Z',
+    }
+    mocks.action.mockResolvedValueOnce(job)
+    mocks.job.mockResolvedValue(job)
+    const view = setupView()
+    view.inventory.value = markerOnlyInventory('marker:sha256:fresh-version')
+    mocks.route.query = { app: 'builtin-114', action: 'manage' }
+    mocks.route.fullPath = '/apps?app=builtin-114&action=manage'
+
+    await view.consumeRouteIntent()
+
+    expect(view.selected.value?.id).toBe('builtin-114')
+    expect(mocks.action).toHaveBeenCalledWith('builtin-114', 'manage', {
+      resourceVersion: 'marker:sha256:fresh-version',
+    })
+    expect(view.activeJob.value).toEqual(job)
+    expect(view.jobDetailsOpen.value).toBe(true)
+    expect(mocks.routerReplace).toHaveBeenCalledWith({ query: {} })
+  })
+
   it('opens the fixed-selector interactive management job with the current resource version', async () => {
     const job: AppInstallJob = {
       id: '0123456789abcdef0123456789abcdef',

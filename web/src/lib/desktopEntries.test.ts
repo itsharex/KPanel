@@ -106,6 +106,29 @@ describe('desktop entries', () => {
     expect(entries.visible).toHaveLength(0)
   })
 
+  it('loads an installed script-managed app even when it has no web URL', async () => {
+    const app = makeApp({
+      id: 'openclaw',
+      runtime: {
+        installed: true,
+        state: 'unknown',
+        ports: [],
+        accessMode: 'not_applicable',
+        updateStatus: 'unknown',
+        resourceVersion: 'marker:sha256:version',
+        detectedBy: ['appno'],
+      },
+      capabilities: { manage: { enabled: true } },
+    })
+    vi.mocked(api.apps.inventory).mockResolvedValue(inventory([app]))
+    vi.mocked(api.sites.list).mockResolvedValue({ items: [], total: 0 })
+
+    const entries = await loadDesktopEntries(undefined, '192.168.1.5')
+    expect(entries.apps).toHaveLength(1)
+    expect(entries.apps[0]).toMatchObject({ id: 'openclaw', launch: 'script', url: undefined })
+    expect(entries.visible.map((entry) => entry.id)).toEqual(['openclaw'])
+  })
+
   it('loads configured sites as site entries', async () => {
     const site = makeSite({ id: 's1', primaryDomain: 'example.com', type: 'proxy', upstream: 'http://127.0.0.1:8081', enabled: true, health: 'healthy' })
     vi.mocked(api.apps.inventory).mockResolvedValue(inventory([]))

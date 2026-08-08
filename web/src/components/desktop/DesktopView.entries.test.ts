@@ -21,8 +21,9 @@ function makeEntries(): DesktopEntries {
     apps: [],
     sites: [],
     visible: [
-      { key: 'app:nginx', kind: 'app', id: 'nginx', name: 'Nginx', url: 'http://192.168.1.5:8080', iconURL: '/api/v1/apps/nginx/icon', app: undefined },
-      { key: 'site:blog', kind: 'site', id: 'blog', name: 'blog.example.com', url: 'https://blog.example.com', iconURL: '/api/v1/sites/blog/icon', site: undefined },
+      { key: 'app:nginx', kind: 'app', id: 'nginx', name: 'Nginx', launch: 'external', url: 'http://192.168.1.5:8080', iconURL: '/api/v1/apps/nginx/icon', app: undefined },
+      { key: 'app:openclaw', kind: 'app', id: 'openclaw', name: 'OpenClaw', launch: 'script', iconURL: '/api/v1/apps/openclaw/icon', app: undefined },
+      { key: 'site:blog', kind: 'site', id: 'blog', name: 'blog.example.com', launch: 'external', url: 'https://blog.example.com', iconURL: '/api/v1/sites/blog/icon', site: undefined },
     ],
     loadedAt: Date.now(),
   }
@@ -42,6 +43,7 @@ describe('DesktopView dynamic entries', () => {
     await nextTick()
     const labels = wrapper.findAll('.desktop__icon-label').map((el) => el.text())
     expect(labels).toContain('Nginx')
+    expect(labels).toContain('OpenClaw')
     expect(labels).toContain('blog.example.com')
     // Static nav icons still present.
     expect(labels).toContain('概览')
@@ -55,8 +57,9 @@ describe('DesktopView dynamic entries', () => {
     const imgs = wrapper.findAll('.desktop__icon-img')
     const srcs = imgs.map((img) => img.attributes('src'))
     expect(srcs).toContain('/api/v1/apps/nginx/icon')
+    expect(srcs).toContain('/api/v1/apps/openclaw/icon')
     expect(srcs).toContain('/api/v1/sites/blog/icon')
-    expect(wrapper.findAll('.desktop__icon-glyph--dynamic')).toHaveLength(2)
+    expect(wrapper.findAll('.desktop__icon-glyph--dynamic')).toHaveLength(3)
     wrapper.unmount()
   })
 
@@ -104,6 +107,24 @@ describe('DesktopView dynamic entries', () => {
 
     expect(window.localStorage.getItem('kpanel:desktop-site-names:v1')).toContain('我的博客')
     expect(wrapper.findAll('.desktop__icon-label').map((label) => label.text())).toContain('我的博客')
+    wrapper.unmount()
+  })
+
+  it('launches a script-managed app directly into its management intent', async () => {
+    const desktop = useDesktopMode()
+    const wrapper = mount(DesktopView)
+    await nextTick()
+    await nextTick()
+
+    const icon = wrapper.find('button[title="OpenClaw"]')
+    await icon.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    await nextTick()
+    expect(wrapper.find('.desktop__context-menu [role="menuitem"]').text()).toContain('脚本管理')
+    await icon.trigger('dblclick')
+    await nextTick()
+
+    expect(desktop.windows.value).toHaveLength(1)
+    expect(desktop.windows.value[0]?.path).toBe('/apps?app=openclaw&action=manage')
     wrapper.unmount()
   })
 })

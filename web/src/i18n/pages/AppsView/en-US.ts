@@ -145,4 +145,7 @@ export default [
   ["KPanel 更新能力尚未就绪。", "KPanel update capability is not ready."],
   ['无法打开应用详情', 'Unable to open app details'],
   ['应用目录中没有找到对应应用。', 'The matching app was not found in the catalog.'],
+  ['请先完成或结束当前应用任务。', 'Complete or end the current app task first.'],
+  ['无法打开脚本管理', 'Unable to open script management'],
+  ['此应用没有可用的脚本管理入口。', 'This app does not have an available script management entry.'],
 ] as const satisfies PhraseCatalog

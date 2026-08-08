@@ -9,6 +9,7 @@ import type { AppMarketItem, PublicNetworkSummary, Site } from '@/types/api'
  */
 
 export type DesktopEntryKind = 'app' | 'site'
+export type DesktopEntryLaunch = 'external' | 'script'
 
 export interface DesktopEntry {
   /** Stable key: `${kind}:${id}` so Vue can key icons reliably. */
@@ -16,8 +17,9 @@ export interface DesktopEntry {
   kind: DesktopEntryKind
   id: string
   name: string
+  launch: DesktopEntryLaunch
   /** External entry URL opened when the icon is activated. */
-  url: string
+  url?: string
   /** App market icon URL (apps) or site favicon endpoint (sites). */
   iconURL?: string
   /** Source item for the detail dialog. */
@@ -73,13 +75,19 @@ function buildAppEntries(items: AppMarketItem[], sites: Site[], directHost: stri
   for (const item of items) {
     if (!item.runtime.installed) continue
     const url = appAccessURL(item, sites, directHost)
-    if (!url) continue
+    const scriptManage = Boolean(
+      !url &&
+      item.runtime.resourceVersion &&
+      item.capabilities.manage?.enabled,
+    )
+    if (!url && !scriptManage) continue
     entries.push({
       key: `app:${item.id}`,
       kind: 'app',
       id: item.id,
       name: appEntryName(item),
-      url,
+      launch: scriptManage ? 'script' : 'external',
+      url: url || undefined,
       iconURL: item.icon,
       app: item,
     })
@@ -95,6 +103,7 @@ function buildSiteEntries(sites: Site[]): DesktopEntry[] {
       kind: 'site' as const,
       id: site.id,
       name: site.primaryDomain,
+      launch: 'external' as const,
       url: normalizeSiteURL(site),
       iconURL: api.sites.iconURL(site.id),
       site,
@@ -110,6 +119,10 @@ function dedupeByURL(apps: DesktopEntry[], sites: DesktopEntry[]): DesktopEntry[
   const seen = new Set<string>()
   const visible: DesktopEntry[] = []
   for (const entry of [...apps, ...sites]) {
+    if (!entry.url) {
+      visible.push(entry)
+      continue
+    }
     const normalized = entry.url.replace(/\/+$/, '').toLowerCase()
     if (seen.has(normalized)) continue
     seen.add(normalized)

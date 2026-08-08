@@ -9,6 +9,7 @@ import {
   Moon,
   Info,
   Pencil,
+  SquareTerminal,
   AppWindow,
   ExternalLink,
 } from '@lucide/vue'
@@ -190,8 +191,31 @@ function openKPanelUpdate(): void {
 }
 
 function openEntry(entry: DesktopEntry): void {
+  if (entry.kind === 'app' && entry.launch === 'script') {
+    openAppMarketEntry(entry, 'manage')
+    return
+  }
+  if (!entry.url) return
   // Open the external URL in a new tab, never inside the desktop shell.
   window.open(entry.url, '_blank', 'noopener,noreferrer')
+}
+
+function openAppMarketEntry(entry: DesktopEntry, action?: 'manage'): void {
+  const app = findDesktopApp('/apps')
+  if (!app) return
+  const query = new URLSearchParams({ app: entry.id })
+  if (action) query.set('action', action)
+  const windowId = desktop.openWindow(
+    `/apps?${query.toString()}`,
+    app.labelKey,
+    app.allowMultiple,
+    true,
+  )
+  if (windowId === 0) {
+    toast.show(i18n.t('desktop.windowLimitTitle'), {
+      message: i18n.t('desktop.windowLimitMessage'),
+    })
+  }
 }
 
 function openNavIcon(path: string): void {
@@ -343,19 +367,7 @@ function onEntryMenuDetails(): void {
   closeContextMenu()
   if (!entry) return
   if (entry.kind === 'app') {
-    const app = findDesktopApp('/apps')
-    if (!app) return
-    const windowId = desktop.openWindow(
-      `/apps?app=${encodeURIComponent(entry.id)}`,
-      app.labelKey,
-      app.allowMultiple,
-      true,
-    )
-    if (windowId === 0) {
-      toast.show(i18n.t('desktop.windowLimitTitle'), {
-        message: i18n.t('desktop.windowLimitMessage'),
-      })
-    }
+    openAppMarketEntry(entry)
     return
   }
   detailEntry.value = entry
@@ -541,8 +553,9 @@ function onViewportResize(): void {
       >
         <template v-if="menuEntry">
           <button type="button" role="menuitem" @click="onEntryMenuOpen">
-            <ExternalLink :size="15" aria-hidden="true" />
-            {{ i18n.t('desktop.entryOpen') }}
+            <SquareTerminal v-if="menuEntry.launch === 'script'" :size="15" aria-hidden="true" />
+            <ExternalLink v-else :size="15" aria-hidden="true" />
+            {{ menuEntry.launch === 'script' ? i18n.t('desktop.entryScriptManage') : i18n.t('desktop.entryOpen') }}
           </button>
           <button type="button" role="menuitem" @click="onEntryMenuDetails">
             <Info :size="15" aria-hidden="true" />
