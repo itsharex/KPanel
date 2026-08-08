@@ -169,6 +169,29 @@ describe('DesktopView', () => {
     wrapper.unmount()
   })
 
+  it('opens the process manager from the taskbar context menu', async () => {
+    const desktop = useDesktopMode()
+    desktop.enterDesktop()
+    desktop.openWindow('/overview', 'route.overview', false)
+    const wrapper = mount(DesktopView)
+
+    await wrapper.find('.desktop__taskbar').trigger('contextmenu', { clientX: 500, clientY: 760 })
+    await nextTick()
+    const action = wrapper.find('[data-context-action="processes"]')
+    expect(action.exists()).toBe(true)
+    expect(action.text()).toContain('进程管理器')
+
+    await action.trigger('click')
+    await nextTick()
+    expect(desktop.windows.value).toHaveLength(2)
+    expect(desktop.windows.value.find((windowState) => windowState.path === '/processes')).toMatchObject({
+      path: '/processes',
+      titleKey: 'route.processes',
+    })
+    expect(wrapper.find('.desktop__context-menu').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('keeps the context menu stable while the right mouse button is held', async () => {
     const wrapper = mount(DesktopView)
     await wrapper.trigger('contextmenu', { clientX: 240, clientY: 180 })

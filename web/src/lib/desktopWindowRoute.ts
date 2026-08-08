@@ -100,6 +100,11 @@ export function windowRouteRecords(): RouteRecordRaw[] {
       component: WINDOW_ROUTE_PLACEHOLDER,
     },
     {
+      path: '/processes',
+      name: 'processes',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
       path: '/cluster',
       name: 'cluster',
       component: WINDOW_ROUTE_PLACEHOLDER,

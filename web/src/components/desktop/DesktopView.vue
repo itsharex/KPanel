@@ -12,6 +12,7 @@ import {
   SquareTerminal,
   AppWindow,
   ExternalLink,
+  ListTree,
 } from '@lucide/vue'
 import DesktopWindow from '@/components/desktop/DesktopWindow.vue'
 import DesktopEntryIcon from '@/components/desktop/DesktopEntryIcon.vue'
@@ -122,6 +123,7 @@ let entriesSequence = 0
 // Context menu: `targetEntry` set when the menu is for an entry icon; cleared
 // for the empty-desktop menu.
 const contextMenu = ref<{ x: number; y: number; open: boolean }>({ x: 0, y: 0, open: false })
+const contextMenuTarget = ref<'desktop' | 'taskbar'>('desktop')
 const contextMenuElement = ref<HTMLElement>()
 const menuEntry = ref<DesktopEntry>()
 const detailEntry = ref<DesktopEntry>()
@@ -253,7 +255,11 @@ function windowTitle(titleKey: string): string {
   return i18n.t(titleKey as Parameters<typeof i18n.t>[0])
 }
 
-async function showContextMenu(event: MouseEvent, entry?: DesktopEntry): Promise<void> {
+async function showContextMenu(
+  event: MouseEvent,
+  entry?: DesktopEntry,
+  target: 'desktop' | 'taskbar' = 'desktop',
+): Promise<void> {
   event.preventDefault()
   contextMenuOpener = event.currentTarget instanceof HTMLElement
     ? event.currentTarget
@@ -261,6 +267,7 @@ async function showContextMenu(event: MouseEvent, entry?: DesktopEntry): Promise
       ? document.activeElement
       : undefined
   contextMenu.value = { x: event.clientX, y: event.clientY, open: true }
+  contextMenuTarget.value = target
   menuEntry.value = entry
   await nextTick()
 
@@ -288,6 +295,10 @@ function onEntryContext(event: MouseEvent, entry: DesktopEntry): void {
 function onNavContext(event: MouseEvent, path: string): void {
   selectNavIcon(path)
   void showContextMenu(event)
+}
+
+function onTaskbarContext(event: MouseEvent): void {
+  void showContextMenu(event, undefined, 'taskbar')
 }
 
 function onEntryOpen(_event: MouseEvent | KeyboardEvent, entry: DesktopEntry): void {
@@ -345,7 +356,7 @@ function onDesktopPointerDown(event: PointerEvent): void {
   ;(event.currentTarget as HTMLElement).focus({ preventScroll: true })
 }
 
-function onContextMenuAction(action: 'refresh' | 'theme' | 'classic' | 'about'): void {
+function onContextMenuAction(action: 'refresh' | 'theme' | 'classic' | 'about' | 'processes'): void {
   closeContextMenu()
   switch (action) {
     case 'refresh':
@@ -360,6 +371,15 @@ function onContextMenuAction(action: 'refresh' | 'theme' | 'classic' | 'about'):
     case 'about':
       toast.success(i18n.t('desktop.aboutTitle'), i18n.t('desktop.aboutMessage'))
       break
+    case 'processes': {
+      const windowId = desktop.openWindow('/processes', 'route.processes', false)
+      if (windowId === 0) {
+        toast.show(i18n.t('desktop.windowLimitTitle'), {
+          message: i18n.t('desktop.windowLimitMessage'),
+        })
+      }
+      break
+    }
   }
 }
 
@@ -582,6 +602,17 @@ function onViewportResize(): void {
             {{ i18n.t('desktop.entryRename') }}
           </button>
         </template>
+        <template v-else-if="contextMenuTarget === 'taskbar'">
+          <button
+            type="button"
+            role="menuitem"
+            data-context-action="processes"
+            @click="onContextMenuAction('processes')"
+          >
+            <ListTree :size="15" aria-hidden="true" />
+            {{ i18n.t('route.processes') }}
+          </button>
+        </template>
         <template v-else>
           <button type="button" role="menuitem" @click="onContextMenuAction('refresh')">
             <RefreshCw :size="15" aria-hidden="true" />
@@ -609,7 +640,7 @@ function onViewportResize(): void {
       class="desktop__taskbar"
       role="toolbar"
       :aria-label="i18n.t('desktop.taskbarLabel')"
-      @contextmenu.prevent.stop
+      @contextmenu.prevent.stop="onTaskbarContext"
     >
       <div class="desktop__taskbar-brand" aria-label="KPanel">
         <LogoMark compact />

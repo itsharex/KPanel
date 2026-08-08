@@ -20,6 +20,7 @@ describe('desktop window route', () => {
     expect(paths).toEqual(expect.arrayContaining([
       '/overview',
       '/monitoring',
+      '/processes',
       '/cluster',
       '/ai',
       '/ai/s/:sessionId',
@@ -39,6 +40,7 @@ describe('desktop window route', () => {
     expect(names).toEqual(expect.arrayContaining([
       'overview',
       'monitoring',
+      'processes',
       'ai',
       'ai-session',
       'sites-environment',
@@ -78,6 +80,13 @@ describe('desktop window route', () => {
     await router.replace('/ai')
     expect(router.currentRoute.value.path).toBe('/ai')
     expect(router.currentRoute.value.params.sessionId).toBeUndefined()
+  })
+
+  it('keeps the process manager route inside its desktop window', async () => {
+    const router = createWindowRouter('/processes')
+    await router.push('/processes')
+
+    expect(router.currentRoute.value.path).toBe('/processes')
   })
 
   it('keeps independent navigation state across window routers', async () => {
