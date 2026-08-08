@@ -3020,7 +3020,7 @@ textarea:focus-visible,
   border-radius: 8px;
 }
 
-.service-item > span:not(.service-item__icon) {
+.service-item__details {
   display: grid;
   gap: 3px;
 }

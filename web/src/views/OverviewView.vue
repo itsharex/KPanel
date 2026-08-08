@@ -1194,7 +1194,7 @@ onBeforeUnmount(() => {
         <div class="service-grid">
           <div v-for="service in data.services" :key="service.id" class="service-item">
             <span class="service-item__icon"><Boxes :size="17" /></span>
-            <span>
+            <span class="service-item__details">
               <strong>{{ service.name }}</strong>
               <small>{{ service.version || service.detail || '未报告版本' }}</small>
             </span>
