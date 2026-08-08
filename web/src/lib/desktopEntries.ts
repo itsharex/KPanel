@@ -1,11 +1,12 @@
 import { api } from '@/lib/api'
-import { appAccessURL } from '@/lib/appAccess'
+import { appAccessURL, matchingAppProxySites } from '@/lib/appAccess'
 import type { AppMarketItem, PublicNetworkSummary, Site } from '@/types/api'
 
 /**
  * Desktop dynamic entries: installed apps and configured sites surfaced as
- * desktop icons. Apps and sites that resolve to the same entry URL collapse to
- * a single app icon (the app entry wins), keeping the desktop uncluttered.
+ * desktop icons. Sites backed by an installed app, or entries that resolve to
+ * the same URL, collapse to a single app icon (the app entry wins), keeping the
+ * desktop uncluttered.
  */
 
 export type DesktopEntryKind = 'app' | 'site'
@@ -30,7 +31,7 @@ export interface DesktopEntry {
 export interface DesktopEntries {
   apps: DesktopEntry[]
   sites: DesktopEntry[]
-  /** All entries with the URL-deduplicated set applied (app wins). */
+  /** All entries with app-backed sites and duplicate URLs removed (app wins). */
   visible: DesktopEntry[]
   /** Reused by the desktop clock to avoid a duplicate public-network call. */
   publicNetwork?: PublicNetworkSummary
@@ -111,14 +112,28 @@ function buildSiteEntries(sites: Site[]): DesktopEntry[] {
 }
 
 /**
- * Collapse entries that point at the same URL. Apps win: if an app and a site
- * resolve to the same URL, only the app entry is kept. Duplicate app entries
- * (same URL, different ids) also collapse to the first.
+ * Collapse sites that are known proxy entry points for an installed app, then
+ * collapse entries that point at the same URL. Apps win in both cases.
+ *
+ * URL-only deduplication is insufficient when one app has several proxy
+ * domains: `appAccessURL` picks one preferred domain, but every proxy targeting
+ * that app's local public port represents the same app and should not produce
+ * an additional desktop icon.
  */
-function dedupeByURL(apps: DesktopEntry[], sites: DesktopEntry[]): DesktopEntry[] {
+function dedupeDesktopEntries(apps: DesktopEntry[], sites: DesktopEntry[]): DesktopEntry[] {
+  const appBackedSiteIDs = new Set<string>()
+  const sourceSites = sites.flatMap((entry) => entry.site ? [entry.site] : [])
+  for (const entry of apps) {
+    if (!entry.app) continue
+    for (const site of matchingAppProxySites(entry.app, sourceSites)) {
+      appBackedSiteIDs.add(site.id)
+    }
+  }
+
   const seen = new Set<string>()
   const visible: DesktopEntry[] = []
   for (const entry of [...apps, ...sites]) {
+    if (entry.kind === 'site' && appBackedSiteIDs.has(entry.id)) continue
     if (!entry.url) {
       visible.push(entry)
       continue
@@ -172,7 +187,7 @@ export async function loadDesktopEntries(
     ? buildAppEntries(inventory.items, siteItems, host)
     : previous?.apps || []
   const siteEntries = sites ? buildSiteEntries(sites.items) : previous?.sites || []
-  const visible = dedupeByURL(apps, siteEntries)
+  const visible = dedupeDesktopEntries(apps, siteEntries)
   const result = { apps, sites: siteEntries, visible, publicNetwork, loadedAt: Date.now() }
   if (inventory || sites) desktopEntriesCache.set(key, result)
   return result

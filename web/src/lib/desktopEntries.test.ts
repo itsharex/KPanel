@@ -223,6 +223,36 @@ describe('desktop entries', () => {
     expect(entries.visible.map((entry) => entry.id)).toEqual(['panel', 'blog', 'docs'])
   })
 
+  it('hides every proxy site backed by an installed app when domains differ', async () => {
+    const app = makeApp({
+      id: 'panel',
+      runtime: { installed: true, state: 'running', ports: [{ privatePort: 80, publicPort: 8080, type: 'tcp' }], accessMode: 'direct', updateStatus: 'current', detectedBy: [] },
+    })
+    const primary = makeSite({
+      id: 'primary',
+      primaryDomain: 'panel.example.com',
+      upstream: 'http://127.0.0.1:8080',
+      certificate: { status: 'valid' },
+    })
+    const alias = makeSite({
+      id: 'alias',
+      primaryDomain: 'panel-alias.example.com',
+      upstream: 'http://localhost:8080',
+    })
+    const unrelated = makeSite({
+      id: 'blog',
+      primaryDomain: 'blog.example.com',
+      upstream: 'http://127.0.0.1:9090',
+    })
+    vi.mocked(api.apps.inventory).mockResolvedValue(inventory([app]))
+    vi.mocked(api.sites.list).mockResolvedValue({ items: [primary, alias, unrelated], total: 3 })
+
+    const entries = await loadDesktopEntries(undefined, '192.168.1.5')
+    expect(entries.apps[0]!.url).toBe('https://panel.example.com')
+    expect(entries.sites).toHaveLength(3)
+    expect(entries.visible.map((entry) => entry.id)).toEqual(['panel', 'blog'])
+  })
+
   it('reuses a fresh cache and lets an explicit refresh bypass it', async () => {
     const site = makeSite({ id: 's1', primaryDomain: 'blog.example.com', health: 'warning' })
     vi.mocked(api.apps.inventory).mockResolvedValue(inventory([]))
