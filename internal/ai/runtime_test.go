@@ -651,7 +651,12 @@ func TestNativeRuntimeSilentlyLearnsReusableProcedureAcrossSessions(t *testing.T
 	if prompt := runtime.systemPrompt(ctx, "admin"); !strings.Contains(prompt, "应用状态恢复") {
 		t.Fatalf("learned procedure was not available to another session: %s", prompt)
 	}
-	if prompt := runtime.systemPrompt(ctx, "admin"); !strings.Contains(prompt, "host_docker_resource_usage") || !strings.Contains(prompt, "Never use host_docker_task for a status or resource query") || !strings.Contains(prompt, "Never invent placeholder fields") {
+	if prompt := runtime.systemPrompt(ctx, "admin"); !strings.Contains(prompt, "host_docker_resource_usage") ||
+		!strings.Contains(prompt, "Never use host_docker_task for a status or resource query") ||
+		!strings.Contains(prompt, "Never invent placeholder fields") ||
+		!strings.Contains(prompt, "host_docker_backups") ||
+		!strings.Contains(prompt, "host_docker_environment") ||
+		!strings.Contains(prompt, "image_prune removes only dangling images") {
 		t.Fatalf("Docker resource routing rule is missing: %s", prompt)
 	}
 	if err := runtime.generateProposal(ctx, run, provider, "test-key", model, history, false); err != nil {

@@ -22,11 +22,11 @@ import (
 
 type panelAITools struct{ server *Server }
 
-var dockerMaintenanceToolSchema = json.RawMessage(`{
+var dockerMaintenanceToolBaseSchema = json.RawMessage(`{
   "type":"object",
   "required":["action"],
   "properties":{
-    "action":{"enum":["container_create","container_access","image_pull","image_remove","network_create","network_remove","network_connect","network_disconnect","volume_create","volume_remove","prune","container_prune","image_prune","network_prune","volume_prune","backup_create","backup_restore","backup_migrate","daemon_mirror","daemon_ipv6"]},
+    "action":{"type":"string"},
     "image":{"type":"string"},"target":{"type":"string"},"name":{"type":"string"},"driver":{"type":"string"},
     "containerId":{"type":"string"},"containerResourceVersion":{"type":"string"},"expectedResourceVersion":{"type":"string"},
     "confirmation":{"type":"string"},"preset":{"type":"string"},"enabled":{"type":"boolean"},"ipv6Cidr":{"type":"string"},
@@ -156,15 +156,17 @@ func (t *panelAITools) Definitions() []ai.ToolDefinition {
 		{Name: "host_docker_summary", Description: "读取 Docker 概览", Schema: readSchema, ReadOnly: true},
 		{Name: "host_docker_containers", Description: "读取 Docker 容器与 resourceVersion", Schema: readSchema, ReadOnly: true},
 		{Name: "host_docker_resource_usage", Description: "读取所有运行中 Docker 容器的 CPU、内存、网络、磁盘 IO 与 PID，用于资源比较和排序；这是只读查询，绝不能改用 Docker 维护任务", Schema: readSchema, ReadOnly: true},
-		{Name: "host_docker_images", Description: "读取 Docker 镜像", Schema: readSchema, ReadOnly: true},
-		{Name: "host_docker_networks", Description: "读取 Docker 网络", Schema: readSchema, ReadOnly: true},
-		{Name: "host_docker_volumes", Description: "读取 Docker 卷", Schema: readSchema, ReadOnly: true},
+		{Name: "host_docker_images", Description: "读取 Docker 镜像 id、标签与 resourceVersion；image_remove 前必须先调用并使用同一项的 id 和 resourceVersion", Schema: readSchema, ReadOnly: true},
+		{Name: "host_docker_networks", Description: "读取 Docker 网络 id、名称与 resourceVersion；网络删除或成员变更前必须先调用", Schema: readSchema, ReadOnly: true},
+		{Name: "host_docker_volumes", Description: "读取 Docker 卷名称与 resourceVersion；volume_remove 前必须先调用", Schema: readSchema, ReadOnly: true},
+		{Name: "host_docker_backups", Description: "读取可恢复或迁移的 Docker 备份及 backupId；backup_restore/backup_migrate 前必须先调用", Schema: readSchema, ReadOnly: true},
+		{Name: "host_docker_environment", Description: "读取当前 Docker daemon 镜像源和 IPv6 配置；daemon_mirror/daemon_ipv6 前必须先调用", Schema: readSchema, ReadOnly: true},
 		{Name: "host_docker_jobs", Description: "读取 Docker 后台任务", Schema: readSchema, ReadOnly: true},
 		{Name: "host_system_action", Description: "执行 KPanel 已注册的结构化系统操作；磁盘清理使用 action=cleanup，maintenancePolicy=cache 或 standard，先读取磁盘占用再执行", Schema: systemActionToolSchema},
 		{Name: "host_app_action", Description: "安装、启停、更新或卸载已注册应用", Schema: json.RawMessage(`{"type":"object","required":["appId","action"],"properties":{"appId":{"type":"string"},"action":{"enum":["install","start","stop","restart","check_update","update","uninstall","direct_access"]},"hostPort":{"type":"integer"},"accessMode":{"type":"string"},"resourceVersion":{"type":"string"}},"additionalProperties":false}`)},
 		{Name: "host_docker_container_action", Description: "启停、重启或删除容器", Schema: json.RawMessage(`{"type":"object","required":["containerId","action","resourceVersion"],"properties":{"containerId":{"type":"string"},"action":{"enum":["start","stop","restart","remove"]},"resourceVersion":{"type":"string"}},"additionalProperties":false}`)},
 		{Name: "host_diagnostic_start", Description: "启动固定诊断检查并返回任务 ID", Schema: json.RawMessage(`{"type":"object","required":["checkId"],"properties":{"checkId":{"type":"string"}},"additionalProperties":false}`)},
-		{Name: "host_docker_task", Description: "仅在用户明确要求修改 Docker 配置、创建/删除资源、清理或备份时启动结构化维护任务；状态和资源占用查询禁止使用此工具", Schema: dockerMaintenanceToolSchema},
+		{Name: "host_docker_task", Description: "仅在用户明确要求修改 Docker 配置、创建/删除资源、清理或备份时启动结构化维护任务；严格按 action 对应的 anyOf 分支传参，涉及现有资源或 daemon 配置时先调用分支指定的只读工具；状态和资源占用查询禁止使用此工具", Schema: dockerMaintenanceToolSchema},
 		{Name: "host_file_list", Description: "列出受 KPanel File Manager 保护规则约束的目录，返回文件 resourceVersion", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","maxLength":4096},"limit":{"type":"integer","minimum":1,"maximum":200},"search":{"type":"string","maxLength":128}},"additionalProperties":false}`), ReadOnly: true},
 		{Name: "host_file_read", Description: "读取受 KPanel File Manager 保护规则约束的 UTF-8 文本文件，最大 64 KiB", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","maxLength":4096}},"additionalProperties":false}`), ReadOnly: true},
 		{Name: "host_file_tail", Description: "读取受保护规则约束的大型 UTF-8 日志文件尾部，适合查看 Nginx 与服务错误日志", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","maxLength":4096},"maxBytes":{"type":"integer","minimum":1024,"maximum":65536}},"additionalProperties":false}`), ReadOnly: true},
@@ -211,7 +213,8 @@ func (t *panelAITools) Execute(ctx context.Context, execution ai.ToolExecutionCo
 		"host_system_processes": "/v1/system/processes", "host_nginx_test": "/v1/nginx/test",
 		"host_apps_list": "/v1/apps", "host_diagnostics_list": "/v1/diagnostics", "host_docker_summary": "/v1/docker/summary",
 		"host_docker_containers": "/v1/docker/containers", "host_docker_images": "/v1/docker/images", "host_docker_networks": "/v1/docker/networks",
-		"host_docker_volumes": "/v1/docker/volumes", "host_docker_jobs": "/v1/docker/jobs", "host_docker_resource_usage": "/v1/docker/container-stats",
+		"host_docker_volumes": "/v1/docker/volumes", "host_docker_backups": "/v1/docker/backups", "host_docker_environment": "/v1/docker/environment",
+		"host_docker_jobs": "/v1/docker/jobs", "host_docker_resource_usage": "/v1/docker/container-stats",
 	}
 	requestID := newRequestID()
 	if name == "host_system_storage_usage" {
@@ -363,8 +366,12 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 		if err = decodeStrictToolArguments(raw, &input); err != nil {
 			return
 		}
-		if !dockerx.IsMaintenanceAction(strings.TrimSpace(input.Action)) {
+		input.Action = strings.TrimSpace(input.Action)
+		if !dockerx.IsMaintenanceAction(input.Action) {
 			err = errors.New("unsupported Docker maintenance action")
+			return
+		}
+		if err = validateDockerMaintenanceRequirements(raw, input.Action); err != nil {
 			return
 		}
 		method, path, target = http.MethodPost, "/v1/docker/tasks", input.Action
@@ -493,6 +500,11 @@ func (t *panelAITools) finish(execution ai.ToolExecutionContext, name, target, r
 		}
 		var problem contract.Problem
 		hasProblem := json.Unmarshal(response.Body, &problem) == nil && problem.Code != ""
+		if hasProblem {
+			if classified := classifyAgentToolProblem(name, problem); classified != nil {
+				return "", classified
+			}
+		}
 		if hasProblem && recoverableAgentToolStatus(response.StatusCode) {
 			return "", &ai.ToolRejectedError{StatusCode: response.StatusCode, Code: problem.Code, RequestID: problem.RequestID}
 		}
@@ -505,6 +517,20 @@ func (t *panelAITools) finish(execution ai.ToolExecutionContext, name, target, r
 		return "", fmt.Errorf("Agent request failed (HTTP %d)", response.StatusCode)
 	}
 	return string(response.Body), nil
+}
+
+func classifyAgentToolProblem(name string, problem contract.Problem) error {
+	if name != "host_docker_task" {
+		return nil
+	}
+	switch problem.Code {
+	case "docker_task_invalid", "invalid_request":
+		return toolArgumentError(errors.New("Agent rejected Docker action arguments; follow the matching action Schema and re-read current resource values before retrying"))
+	case "docker_resource_not_found":
+		return fmt.Errorf("%w: Docker resource no longer exists; re-read current Docker state", ai.ErrToolConflict)
+	default:
+		return nil
+	}
 }
 
 func recoverableAgentToolStatus(status int) bool {
@@ -590,7 +616,7 @@ func zeroArgumentReadTool(name string) bool {
 	case "host_system_summary", "host_system_processes", "host_public_network", "host_sites_list",
 		"host_apps_list", "host_diagnostics_list", "host_docker_summary", "host_docker_containers",
 		"host_docker_resource_usage", "host_docker_images", "host_docker_networks", "host_docker_volumes",
-		"host_docker_jobs", "host_nginx_test":
+		"host_docker_backups", "host_docker_environment", "host_docker_jobs", "host_nginx_test":
 		return true
 	default:
 		return false
