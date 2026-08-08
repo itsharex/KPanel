@@ -1,23 +1,28 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Activity, Clock, Cpu, Database, HardDrive, Network } from '@lucide/vue'
-import { api } from '@/lib/api'
+import OperatingSystemIcon from '@/components/overview/OperatingSystemIcon.vue'
+import { api, type SystemResourceSnapshot } from '@/lib/api'
 import { clampPercent, formatBytes, formatDuration, formatPercent, formatRate } from '@/lib/format'
+import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import { useI18n } from '@/i18n'
-import type { SystemOverview } from '@/types/api'
 
 /**
- * Desktop monitor panel: a compact read-only readout pinned to the right side
- * of the desktop. Reuses the same overview endpoint as the Overview page so the
- * numbers always match the classic view. Refreshes on a bounded interval.
+ * Lightweight server monitor rendered as a desktop-side widget. It polls only
+ * the lightweight system summary;
+ * the full overview endpoint fans out to several unrelated APIs.
  */
 
 const i18n = useI18n()
-const overview = ref<SystemOverview>()
+const emit = defineEmits<{
+  snapshot: [value: SystemResourceSnapshot]
+}>()
+const overview = ref<SystemResourceSnapshot>()
 const loading = ref(true)
 let refreshTimer: number | undefined
 let controller: AbortController | undefined
 let refreshActive = false
+let compactMedia: MediaQueryList | undefined
 
 const cpuPercent = computed(() => overview.value?.cpu.percent)
 const cpuCores = computed(() => overview.value?.cpu.cores)
@@ -33,6 +38,13 @@ const diskPercent = computed(() => overview.value?.disk.percent)
 const load = computed(() => overview.value?.load)
 const net = computed(() => overview.value?.network)
 const uptime = computed(() => overview.value?.uptimeSeconds)
+const osIdentity = computed(() => detectOperatingSystemIdentity(overview.value))
+
+const hostSystemLabel = computed(() => overview.value?.os || osIdentity.value.label)
+const hostSystemMeta = computed(() => {
+  const details = [overview.value?.hostname, overview.value?.architecture].filter(Boolean)
+  return details.join(' · ') || '—'
+})
 
 function cpuLabel(): string {
   const cores = cpuCores.value
@@ -60,7 +72,9 @@ async function refresh(silent = false): Promise<void> {
   controller?.abort()
   controller = new AbortController()
   try {
-    overview.value = await api.overview.get(controller.signal)
+    const snapshot = await api.system.resources(controller.signal)
+    overview.value = snapshot
+    emit('snapshot', snapshot)
   } catch {
     // Transient failures keep the last known values; the next tick retries.
   } finally {
@@ -69,74 +83,132 @@ async function refresh(silent = false): Promise<void> {
   }
 }
 
-onMounted(() => {
-  void refresh()
+function stopPolling(): void {
+  if (refreshTimer !== undefined) {
+    window.clearInterval(refreshTimer)
+    refreshTimer = undefined
+  }
+}
+
+function startPolling(): void {
+  stopPolling()
   refreshTimer = window.setInterval(() => void refresh(true), 20_000)
+}
+
+function onVisibilityChange(): void {
+  if (document.hidden || compactMedia?.matches) {
+    stopPolling()
+    controller?.abort()
+    return
+  }
+  void refresh(Boolean(overview.value))
+  startPolling()
+}
+
+function onCompactChange(): void {
+  onVisibilityChange()
+}
+
+onMounted(() => {
+  compactMedia = window.matchMedia?.('(max-width: 900px)')
+  compactMedia?.addEventListener('change', onCompactChange)
+  if (!document.hidden && !compactMedia?.matches) {
+    void refresh()
+    startPolling()
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
 onBeforeUnmount(() => {
-  if (refreshTimer) window.clearInterval(refreshTimer)
+  stopPolling()
   controller?.abort()
+  compactMedia?.removeEventListener('change', onCompactChange)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 </script>
 
 <template>
-  <aside class="desktop-monitor" :aria-label="i18n.t('desktop.monitorLabel')">
+  <section class="desktop-monitor" :aria-label="i18n.t('desktop.monitorLabel')">
     <header class="desktop-monitor__header">
       <Activity :size="15" aria-hidden="true" />
       <span>{{ i18n.t('desktop.monitorTitle') }}</span>
+      <i aria-hidden="true" />
     </header>
 
-    <div v-if="loading && !overview" class="desktop-monitor__loading">
+    <div v-if="loading && !overview" class="desktop-monitor__loading" role="status">
       {{ i18n.t('desktop.entriesLoading') }}
     </div>
 
-    <dl v-else class="desktop-monitor__list">
-      <div class="desktop-monitor__row">
-        <dt><Cpu :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorCPU') }}</span></dt>
-        <dd>{{ cpuLabel() }}</dd>
-      </div>
-      <div class="desktop-monitor__track" :aria-label="`${i18n.t('desktop.monitorCPU')} ${cpuLabel()}`">
-        <span :style="{ width: `${clampPercent(cpuPercent)}%` }" />
+    <template v-else>
+      <section v-if="overview" class="desktop-monitor__host" :aria-label="i18n.t('desktop.hostIdentity')">
+        <div class="desktop-monitor__host-block" :title="i18n.t('desktop.hostSystem')">
+          <OperatingSystemIcon :distro="osIdentity.key" :label="osIdentity.label" />
+          <span>
+            <strong>{{ hostSystemLabel }}</strong>
+            <small>{{ hostSystemMeta }}</small>
+          </span>
+        </div>
+      </section>
+
+      <dl class="desktop-monitor__list">
+      <div class="desktop-monitor__metric">
+        <div class="desktop-monitor__row">
+          <dt><Cpu :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorCPU') }}</span></dt>
+          <dd>{{ cpuLabel() }}</dd>
+        </div>
+        <div class="desktop-monitor__track" :aria-label="`${i18n.t('desktop.monitorCPU')} ${cpuLabel()}`">
+          <span :style="{ width: `${clampPercent(cpuPercent)}%` }" />
+        </div>
       </div>
 
-      <div class="desktop-monitor__row">
-        <dt><Database :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorMemory') }}</span></dt>
-        <dd>{{ memoryLabel() }}</dd>
-      </div>
-      <div class="desktop-monitor__track" :aria-label="`${i18n.t('desktop.monitorMemory')} ${memoryLabel()}`">
-        <span :style="{ width: `${clampPercent(memoryPercent)}%` }" />
-      </div>
-
-      <div class="desktop-monitor__row">
-        <dt><HardDrive :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorDisk') }}</span></dt>
-        <dd>{{ diskLabel() }}</dd>
-      </div>
-      <div class="desktop-monitor__track" :aria-label="`${i18n.t('desktop.monitorDisk')} ${diskLabel()}`">
-        <span :style="{ width: `${clampPercent(diskPercent)}%` }" />
+      <div class="desktop-monitor__metric">
+        <div class="desktop-monitor__row">
+          <dt><Database :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorMemory') }}</span></dt>
+          <dd>{{ memoryLabel() }}</dd>
+        </div>
+        <div class="desktop-monitor__track" :aria-label="`${i18n.t('desktop.monitorMemory')} ${memoryLabel()}`">
+          <span :style="{ width: `${clampPercent(memoryPercent)}%` }" />
+        </div>
       </div>
 
-      <div class="desktop-monitor__row">
-        <dt><Network :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorNetwork') }}</span></dt>
-        <dd class="desktop-monitor__network">
-          <span>↓ {{ formatRate(net?.receiveBytesPerSecond) }}</span>
-          <span>↑ {{ formatRate(net?.transmitBytesPerSecond) }}</span>
-        </dd>
+      <div class="desktop-monitor__metric">
+        <div class="desktop-monitor__row">
+          <dt><HardDrive :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorDisk') }}</span></dt>
+          <dd>{{ diskLabel() }}</dd>
+        </div>
+        <div class="desktop-monitor__track" :aria-label="`${i18n.t('desktop.monitorDisk')} ${diskLabel()}`">
+          <span :style="{ width: `${clampPercent(diskPercent)}%` }" />
+        </div>
       </div>
 
-      <div class="desktop-monitor__row">
-        <dt><Activity :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorLoad') }}</span></dt>
-        <dd>
-          {{ load?.one?.toFixed(2) ?? '—' }}
-          {{ load?.five?.toFixed(2) ?? '' }}
-          {{ load?.fifteen?.toFixed(2) ?? '' }}
-        </dd>
+      <div class="desktop-monitor__metric desktop-monitor__metric--network">
+        <div class="desktop-monitor__row">
+          <dt><Network :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorNetwork') }}</span></dt>
+          <dd class="desktop-monitor__network">
+            <span>↓ {{ formatRate(net?.receiveBytesPerSecond) }}</span>
+            <span>↑ {{ formatRate(net?.transmitBytesPerSecond) }}</span>
+          </dd>
+        </div>
       </div>
 
-      <div class="desktop-monitor__row">
-        <dt><Clock :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorUptime') }}</span></dt>
-        <dd>{{ formatDuration(uptime) }}</dd>
+      <div class="desktop-monitor__metric desktop-monitor__metric--secondary">
+        <div class="desktop-monitor__row">
+          <dt><Activity :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorLoad') }}</span></dt>
+          <dd>
+            {{ load?.one?.toFixed(2) ?? '—' }}
+            {{ load?.five?.toFixed(2) ?? '' }}
+            {{ load?.fifteen?.toFixed(2) ?? '' }}
+          </dd>
+        </div>
       </div>
-    </dl>
-  </aside>
+
+      <div class="desktop-monitor__metric desktop-monitor__metric--secondary">
+        <div class="desktop-monitor__row">
+          <dt><Clock :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorUptime') }}</span></dt>
+          <dd>{{ formatDuration(uptime) }}</dd>
+        </div>
+      </div>
+      </dl>
+    </template>
+  </section>
 </template>

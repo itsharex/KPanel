@@ -1,6 +1,6 @@
 import { api } from '@/lib/api'
 import { appAccessURL } from '@/lib/appAccess'
-import type { AppMarketItem, Site } from '@/types/api'
+import type { AppMarketItem, PublicNetworkSummary, Site } from '@/types/api'
 
 /**
  * Desktop dynamic entries: installed apps and configured sites surfaced as
@@ -30,6 +30,8 @@ export interface DesktopEntries {
   sites: DesktopEntry[]
   /** All entries with the URL-deduplicated set applied (app wins). */
   visible: DesktopEntry[]
+  /** Reused by the desktop clock to avoid a duplicate public-network call. */
+  publicNetwork?: PublicNetworkSummary
   loadedAt: number
 }
 
@@ -116,9 +118,13 @@ export async function loadDesktopEntries(
   signal?: AbortSignal,
   directHost?: string,
 ): Promise<DesktopEntries> {
+  const publicNetwork = directHost
+    ? undefined
+    : await api.system.publicNetwork(signal).catch(() => undefined)
   const host =
     directHost ||
-    (await api.system.publicNetwork(signal).then((network) => network?.ipv4 || network?.ipv6).catch(() => undefined)) ||
+    publicNetwork?.ipv4 ||
+    publicNetwork?.ipv6 ||
     window.location.hostname
 
   const [inventory, sites] = await Promise.all([
@@ -130,5 +136,5 @@ export async function loadDesktopEntries(
   const siteEntries = buildSiteEntries(sites?.items || [])
   const visible = dedupeByURL(apps, siteEntries)
 
-  return { apps, sites: siteEntries, visible, loadedAt: Date.now() }
+  return { apps, sites: siteEntries, visible, publicNetwork, loadedAt: Date.now() }
 }

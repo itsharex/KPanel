@@ -34,7 +34,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/overview',
     labelKey: 'route.overview',
     icon: LayoutDashboard,
-    allowMultiple: true,
+    allowMultiple: false,
     gradient: ['#2dd4bf', '#0f766e'],
   },
   {
@@ -48,28 +48,28 @@ export const desktopApps: DesktopApp[] = [
     path: '/sites',
     labelKey: 'route.sites',
     icon: Boxes,
-    allowMultiple: true,
+    allowMultiple: false,
     gradient: ['#60a5fa', '#1d4ed8'],
   },
   {
     path: '/apps',
     labelKey: 'route.apps',
     icon: Store,
-    allowMultiple: true,
+    allowMultiple: false,
     gradient: ['#fbbf24', '#d97706'],
   },
   {
     path: '/docker',
     labelKey: 'route.docker',
     icon: Container,
-    allowMultiple: true,
+    allowMultiple: false,
     gradient: ['#22d3ee', '#0369a1'],
   },
   {
     path: '/files',
     labelKey: 'route.files',
     icon: Folder,
-    allowMultiple: true,
+    allowMultiple: false,
     gradient: ['#facc15', '#ca8a04'],
   },
   {
@@ -83,28 +83,28 @@ export const desktopApps: DesktopApp[] = [
     path: '/diagnostics',
     labelKey: 'route.diagnostics',
     icon: HeartPulse,
-    allowMultiple: true,
+    allowMultiple: false,
     gradient: ['#fb7185', '#be123c'],
   },
   {
     path: '/cluster',
     labelKey: 'route.cluster',
     icon: Network,
-    allowMultiple: true,
+    allowMultiple: false,
     gradient: ['#818cf8', '#4338ca'],
   },
   {
     path: '/activity',
     labelKey: 'route.activity',
     icon: ClipboardList,
-    allowMultiple: true,
+    allowMultiple: false,
     gradient: ['#34d399', '#047857'],
   },
   {
     path: '/settings',
     labelKey: 'route.settings',
     icon: Settings,
-    allowMultiple: true,
+    allowMultiple: false,
     gradient: ['#cbd5e1', '#64748b'],
   },
 ]
@@ -112,6 +112,25 @@ export const desktopApps: DesktopApp[] = [
 /** Neutral gradient for windows whose app is not in the catalogue. */
 export const DEFAULT_WINDOW_GRADIENT: [string, string] = ['#a78bfa', '#6d28d9']
 
+export function desktopRoutePath(fullPath: string): string {
+  const queryIndex = fullPath.indexOf('?')
+  const hashIndex = fullPath.indexOf('#')
+  const end = [queryIndex, hashIndex]
+    .filter((index) => index >= 0)
+    .reduce((minimum, index) => Math.min(minimum, index), fullPath.length)
+  return fullPath.slice(0, end)
+}
+
+export function canonicalDesktopAppPath(path: string): string {
+  path = desktopRoutePath(path)
+  if (path === '/monitoring') return '/overview'
+  if (path === '/sites/environment') return '/sites'
+  if (path.startsWith('/ai/s/')) return '/ai'
+  if (path === '/jobs' || path === '/audit') return '/activity'
+  return path
+}
+
 export function findDesktopApp(path: string): DesktopApp | undefined {
-  return desktopApps.find((app) => app.path === path)
+  const appPath = canonicalDesktopAppPath(path)
+  return desktopApps.find((app) => app.path === appPath)
 }

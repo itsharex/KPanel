@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps<{
   countryCode: string
@@ -7,19 +7,40 @@ const props = defineProps<{
 }>()
 
 const flagModules = import.meta.glob('../../../node_modules/circle-flags/flags/*.svg', {
-  eager: true,
   import: 'default',
   query: '?url',
-}) as Record<string, string>
+}) as Record<string, () => Promise<string>>
 
-const flagSources = Object.fromEntries(
-  Object.entries(flagModules).map(([path, source]) => [
+const flagLoaders = Object.fromEntries(
+  Object.entries(flagModules).map(([path, loader]) => [
     path.match(/\/([^/]+)\.svg$/)?.[1] || '',
-    source,
+    loader,
   ]),
 )
 
-const source = computed(() => flagSources[props.countryCode.trim().toLowerCase()] || '')
+const source = ref('')
+let loadSequence = 0
+
+watch(
+  () => props.countryCode.trim().toLowerCase(),
+  async (code) => {
+    const sequence = ++loadSequence
+    source.value = ''
+    const loader = flagLoaders[code]
+    if (!loader) return
+    try {
+      const nextSource = await loader()
+      if (sequence === loadSequence) source.value = nextSource
+    } catch {
+      // Unknown/missing flag assets render the caller's location fallback.
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  loadSequence += 1
+})
 </script>
 
 <template>

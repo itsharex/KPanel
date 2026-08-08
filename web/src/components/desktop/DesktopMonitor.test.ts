@@ -4,23 +4,25 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import DesktopMonitor from '@/components/desktop/DesktopMonitor.vue'
 import { api } from '@/lib/api'
-import type { SystemOverview } from '@/types/api'
+import type { SystemResourceSnapshot } from '@/lib/api'
 
 vi.mock('@/lib/api', () => ({
   api: {
-    overview: {
-      get: vi.fn(),
+    system: {
+      resources: vi.fn(),
     },
   },
 }))
 
-function makeOverview(): SystemOverview {
+function makeOverview(): SystemResourceSnapshot {
   return {
     hostname: 'mock',
-    os: 'Linux',
+    os: 'Ubuntu 24.04 LTS',
+    osId: 'ubuntu',
     osLike: ['debian'],
     kernel: '6.8',
     architecture: 'x86_64',
+    timezone: 'Asia/Seoul',
     uptimeSeconds: 90061,
     observedAt: new Date().toISOString(),
     cpu: { value: 0.42, percent: 42, cores: 4, model: 'Intel' },
@@ -28,17 +30,13 @@ function makeOverview(): SystemOverview {
     disk: { value: 21474836480, total: 107374182400, percent: 20, unit: 'bytes' },
     load: { value: 1.5, one: 0.4, five: 0.7, fifteen: 0.9 },
     network: { receiveBytesPerSecond: 102400, transmitBytesPerSecond: 51200, rateAvailable: true, tcpConnections: 10, udpConnections: 2 },
-    publicNetwork: {},
-    management: {} as SystemOverview['management'],
-    services: [],
-    agent: { connected: true, compatible: true, readOnly: false, version: '1', protocolVersion: '1' },
   }
 }
 
 describe('DesktopMonitor', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(api.overview.get).mockResolvedValue(makeOverview())
+    vi.mocked(api.system.resources).mockResolvedValue(makeOverview())
   })
 
   it('renders the monitor title', async () => {
@@ -46,6 +44,19 @@ describe('DesktopMonitor', () => {
     await new Promise((r) => setTimeout(r, 50))
     await nextTick()
     expect(wrapper.find('.desktop-monitor__header span').text()).toBe('服务器监控')
+    wrapper.unmount()
+  })
+
+  it('shows the operating system and host identity without duplicating location', async () => {
+    const wrapper = mount(DesktopMonitor)
+    await new Promise((r) => setTimeout(r, 50))
+    await nextTick()
+
+    const host = wrapper.find('.desktop-monitor__host')
+    expect(host.text()).toContain('Ubuntu 24.04 LTS')
+    expect(host.text()).toContain('mock · x86_64')
+    expect(host.find('.country-flag').exists()).toBe(false)
+    expect(wrapper.emitted('snapshot')?.[0]?.[0]).toMatchObject({ timezone: 'Asia/Seoul' })
     wrapper.unmount()
   })
 

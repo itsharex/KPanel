@@ -43,6 +43,7 @@ import { readSidebarCollapsed, writeSidebarCollapsed } from '@/lib/sidebarPrefer
 import { detectKPanelUpdate, kpanelUpdateHint } from '@/lib/kpanelUpdate'
 import { useI18n } from '@/i18n'
 import type { MessageKey } from '@/i18n/messages/zh-CN'
+import { desktopCloseGuardCoordinator } from '@/lib/desktopRouteKeys'
 
 interface NavigationItem {
   labelKey: MessageKey
@@ -64,10 +65,6 @@ const navigation: NavigationItem[] = [
   { labelKey: 'route.settings', to: '/settings', icon: Settings },
 ]
 
-// Desktop mode is an opt-in overlay; load it lazily so the main bundle stays
-// lean for the default classic experience.
-const DesktopView = defineAsyncComponent(() => import('@/components/desktop/DesktopView.vue'))
-
 const route = useRoute()
 const router = useRouter()
 const session = useSession()
@@ -76,6 +73,42 @@ const theme = useTheme()
 const toast = useToast()
 const desktop = useDesktopMode()
 const i18n = useI18n()
+// Desktop mode is an opt-in overlay; load it lazily so the main bundle stays
+// lean for the default classic experience. If the split chunk cannot load,
+// atomically restore the classic shell instead of leaving an inert blank app.
+const DesktopView = defineAsyncComponent({
+  loader: () => import('@/components/desktop/DesktopView.vue'),
+  onError(_error, retry, fail, attempts) {
+    if (attempts < 2) {
+      retry()
+      return
+    }
+    desktop.enterClassic()
+    toast.danger(i18n.t('nav.loadFailedTitle'), i18n.t('nav.loadFailedMessage'))
+    fail()
+  },
+})
+const desktopActive = computed(() => desktop.mode.value === 'desktop')
+const DESKTOP_ENTRY_NOTICE_KEY = 'kpanel:desktop-entry-notice:v2'
+
+function readDesktopEntrySeen(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.localStorage.getItem(DESKTOP_ENTRY_NOTICE_KEY) === 'seen'
+  } catch {
+    return false
+  }
+}
+
+function markDesktopEntrySeen(): void {
+  desktopEntrySeen.value = true
+  try {
+    window.localStorage.setItem(DESKTOP_ENTRY_NOTICE_KEY, 'seen')
+  } catch {
+    // Storage can be unavailable without blocking mode switching.
+  }
+}
+
+const desktopEntrySeen = ref(readDesktopEntrySeen())
 const menuOpen = ref(false)
 const signingOut = ref(false)
 const sidebarCollapsed = ref(readSidebarCollapsed())
@@ -130,6 +163,12 @@ async function warmNavigation(): Promise<void> {
 
 function toggleTheme(): void {
   theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')
+}
+
+async function enterDesktopSafely(): Promise<void> {
+  if (!(await desktopCloseGuardCoordinator.checkAll())) return
+  markDesktopEntrySeen()
+  desktop.enterDesktop()
 }
 
 function openKPanelUpdate(): void {
@@ -221,7 +260,7 @@ watch(
 <template>
   <div class="app-shell">
     <Transition name="fade">
-      <button v-if="menuOpen" class="mobile-overlay" type="button" :aria-label="i18n.t('nav.close')" @click="closeMenu" />
+      <button v-if="menuOpen && !desktopActive" class="mobile-overlay" type="button" :aria-label="i18n.t('nav.close')" @click="closeMenu" />
     </Transition>
     <aside
       class="sidebar"
@@ -229,6 +268,8 @@ watch(
         'sidebar--open': menuOpen,
         'sidebar--collapsed': sidebarCollapsed,
       }"
+      :inert="desktopActive ? true : undefined"
+      :aria-hidden="desktopActive ? 'true' : undefined"
     >
       <div class="sidebar__brand">
         <LogoMark />
@@ -309,6 +350,8 @@ watch(
     <div
       class="app-shell__main"
       :class="{ 'app-shell__main--sidebar-collapsed': sidebarCollapsed }"
+      :inert="desktopActive ? true : undefined"
+      :aria-hidden="desktopActive ? 'true' : undefined"
     >
       <Transition name="fade">
         <div
@@ -331,8 +374,19 @@ watch(
         <div class="topbar__actions">
           <StatusBadge :status="agentStatus.status" :label="agentStatus.label" subtle />
           <LanguageSelector compact />
-          <button class="icon-button" type="button" :aria-label="i18n.t('desktop.enterDesktop')" :title="i18n.t('desktop.enterDesktop')" @click="desktop.enterDesktop()">
-            <Monitor :size="18" />
+          <button
+            class="icon-button desktop-entry-button"
+            :class="{ 'desktop-entry-button--unseen': !desktopEntrySeen }"
+            type="button"
+            :aria-label="i18n.t('desktop.enterDesktop')"
+            :title="i18n.t('desktop.enterDesktop')"
+            @click="enterDesktopSafely"
+          >
+            <span class="desktop-entry-button__icon">
+              <Monitor :size="18" />
+              <i v-if="!desktopEntrySeen" class="desktop-entry-button__notice" aria-hidden="true" />
+            </span>
+            <span class="desktop-entry-button__label">{{ i18n.t('desktop.enterDesktop') }}</span>
           </button>
           <button class="icon-button" type="button" :aria-label="i18n.t('nav.themeToggle')" @click="toggleTheme">
             <Sun v-if="theme.resolved.value === 'dark'" :size="18" />
@@ -344,10 +398,15 @@ watch(
       <AgentBanner v-if="!isAIWorkspace" />
 
       <main class="page-content" :class="{ 'page-content--ai': isAIWorkspace }">
-        <RouterView />
+        <RouterView v-if="!desktopActive" />
       </main>
     </div>
 
-    <DesktopView v-if="desktop.mode.value === 'desktop'" />
+    <DesktopView
+      v-if="desktop.mode.value === 'desktop'"
+      :agent="panel.state.agent"
+      :kpanel-update-available="kpanelUpdateAvailable"
+      :kpanel-update-description="kpanelUpdateDescription"
+    />
   </div>
 </template>

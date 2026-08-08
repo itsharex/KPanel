@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from 'vue'
 import type { Component } from 'vue'
 import {
   ArrowLeft,
+  CircleArrowUp,
   RefreshCw,
   Sun,
   Moon,
@@ -12,47 +13,79 @@ import {
 } from '@lucide/vue'
 import DesktopWindow from '@/components/desktop/DesktopWindow.vue'
 import DesktopEntryIcon from '@/components/desktop/DesktopEntryIcon.vue'
+import DesktopClock from '@/components/desktop/DesktopClock.vue'
 import DesktopMonitor from '@/components/desktop/DesktopMonitor.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import LogoMark from '@/components/common/LogoMark.vue'
 import { DEFAULT_WINDOW_GRADIENT, desktopApps, findDesktopApp } from '@/lib/desktopApps'
 import { loadDesktopEntries, type DesktopEntries, type DesktopEntry } from '@/lib/desktopEntries'
+import type { SystemResourceSnapshot } from '@/lib/api'
+import { prefetchNavigationRoute } from '@/lib/navigation'
+import {
+  desktopCloseGuardCoordinator,
+  desktopCloseGuardCoordinatorKey,
+} from '@/lib/desktopRouteKeys'
 import { useDesktopMode } from '@/stores/desktopMode'
 import { useTheme } from '@/stores/theme'
 import { useToast } from '@/stores/toast'
 import { useI18n } from '@/i18n'
+import type { AgentStatus } from '@/types/api'
 
 /**
- * Desktop overlay. Renders when desktop mode is active: a wallpaper layer, an
- * icon grid (static nav apps + installed app-market apps + configured sites),
- * a taskbar with open windows, and context menus. Switching back to classic
- * mode lives in the top-right corner.
+ * Desktop overlay with Windows-style selection/open behavior, desktop-side
+ * clock and resource widgets, and a persistent bottom taskbar.
  */
+
+const props = defineProps<{
+  agent?: AgentStatus
+  kpanelUpdateAvailable?: boolean
+  kpanelUpdateDescription?: string
+}>()
 
 const desktop = useDesktopMode()
 const theme = useTheme()
 const toast = useToast()
 const i18n = useI18n()
+provide(desktopCloseGuardCoordinatorKey, desktopCloseGuardCoordinator)
 
 const openWindows = computed(() => desktop.windows.value)
 const focusedWindow = computed(() =>
   desktop.windows.value.find((windowState) => windowState.id === desktop.focusedId.value),
 )
+const agentStatus = computed(() => {
+  const agent = props.agent
+  if (!agent?.connected) return { state: 'offline', label: i18n.t('agent.offline') }
+  if (!agent.compatible) return { state: 'incompatible', label: i18n.t('agent.incompatible') }
+  if (agent.readOnly) return { state: 'read-only', label: i18n.t('agent.readOnly') }
+  return { state: 'online', label: i18n.t('agent.online') }
+})
 
 // Dynamic entries: installed apps and configured sites surfaced as desktop
 // icons that open their external URL.
 const entries = ref<DesktopEntries>()
+const systemResources = ref<SystemResourceSnapshot>()
 const entriesLoading = ref(true)
 let entriesAbort: AbortController | undefined
+let entriesSequence = 0
 
 // Context menu: `targetEntry` set when the menu is for an entry icon; cleared
 // for the empty-desktop menu.
 const contextMenu = ref<{ x: number; y: number; open: boolean }>({ x: 0, y: 0, open: false })
+const contextMenuElement = ref<HTMLElement>()
 const menuEntry = ref<DesktopEntry>()
 const detailEntry = ref<DesktopEntry>()
+let contextMenuOpener: HTMLElement | undefined
 
 /** Icons currently playing their open-bounce animation. */
 const bouncingIcon = ref<string>('')
+const selectedIcon = ref<string>('')
 let bounceTimer: number | undefined
+let resizeFrame: number | undefined
+let resizePersistTimer: number | undefined
+
+function motionDuration(duration: number): number {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : duration
+}
 
 function gradientFor(path: string): string {
   const gradient = findDesktopApp(path)?.gradient ?? DEFAULT_WINDOW_GRADIENT
@@ -72,13 +105,36 @@ function entryGradient(entry: DesktopEntry): string {
 function openApp(path: string): void {
   const app = findDesktopApp(path)
   if (!app) return
-  // Play a quick bounce on the icon before opening the window.
-  if (bouncingIcon.value === path) return
+  // Open immediately so the interface feels responsive, while the icon keeps
+  // a short launch animation as visual acknowledgement.
+  if (bounceTimer !== undefined) window.clearTimeout(bounceTimer)
   bouncingIcon.value = path
-  window.setTimeout(() => {
+  const windowId = desktop.openWindow(app.path, app.labelKey, app.allowMultiple)
+  if (windowId === 0) {
+    toast.show(i18n.t('desktop.windowLimitTitle'), {
+      message: i18n.t('desktop.windowLimitMessage'),
+    })
+  }
+  bounceTimer = window.setTimeout(() => {
     bouncingIcon.value = ''
-    desktop.openWindow(app.path, app.labelKey, app.allowMultiple)
-  }, 180)
+    bounceTimer = undefined
+  }, motionDuration(460))
+}
+
+function openKPanelUpdate(): void {
+  const app = findDesktopApp('/apps')
+  if (!app) return
+  const windowId = desktop.openWindow(
+    '/apps?app=kpanel&action=update',
+    app.labelKey,
+    app.allowMultiple,
+    true,
+  )
+  if (windowId === 0) {
+    toast.show(i18n.t('desktop.windowLimitTitle'), {
+      message: i18n.t('desktop.windowLimitMessage'),
+    })
+  }
 }
 
 function openEntry(entry: DesktopEntry): void {
@@ -90,6 +146,18 @@ function openNavIcon(path: string): void {
   openApp(path)
 }
 
+function selectNavIcon(path: string): void {
+  selectedIcon.value = `app:${path}`
+}
+
+function selectEntry(entry: DesktopEntry): void {
+  selectedIcon.value = entry.key
+}
+
+function warmNavIcon(path: string): void {
+  void prefetchNavigationRoute(path)
+}
+
 function windowIcon(path: string): Component {
   return findDesktopApp(path)?.icon ?? AppWindow
 }
@@ -98,47 +166,118 @@ function windowTitle(titleKey: string): string {
   return i18n.t(titleKey as Parameters<typeof i18n.t>[0])
 }
 
-function onContextMenu(event: MouseEvent): void {
+async function showContextMenu(event: MouseEvent, entry?: DesktopEntry): Promise<void> {
   event.preventDefault()
+  contextMenuOpener = event.currentTarget instanceof HTMLElement
+    ? event.currentTarget
+    : document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : undefined
   contextMenu.value = { x: event.clientX, y: event.clientY, open: true }
-  menuEntry.value = undefined
+  menuEntry.value = entry
+  await nextTick()
+
+  const menu = contextMenuElement.value
+  if (!menu) return
+  const rect = menu.getBoundingClientRect()
+  const margin = 10
+  contextMenu.value = {
+    open: true,
+    x: Math.min(Math.max(margin, event.clientX), Math.max(margin, window.innerWidth - rect.width - margin)),
+    y: Math.min(Math.max(margin, event.clientY), Math.max(margin, window.innerHeight - rect.height - margin)),
+  }
+  menu.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
+}
+
+function onContextMenu(event: MouseEvent): void {
+  void showContextMenu(event)
 }
 
 function onEntryContext(event: MouseEvent, entry: DesktopEntry): void {
-  event.preventDefault()
-  contextMenu.value = { x: event.clientX, y: event.clientY, open: true }
-  menuEntry.value = entry
+  selectEntry(entry)
+  void showContextMenu(event, entry)
 }
 
-function onEntryDoubleClick(_event: MouseEvent, entry: DesktopEntry): void {
+function onNavContext(event: MouseEvent, path: string): void {
+  selectNavIcon(path)
+  void showContextMenu(event)
+}
+
+function onEntryOpen(_event: MouseEvent | KeyboardEvent, entry: DesktopEntry): void {
   openEntry(entry)
 }
 
-function closeContextMenu(): void {
+function closeContextMenu(restoreFocus = true): void {
   contextMenu.value.open = false
   menuEntry.value = undefined
+  const opener = contextMenuOpener
+  contextMenuOpener = undefined
+  if (restoreFocus && opener?.isConnected) {
+    void nextTick(() => opener.focus({ preventScroll: true }))
+  }
 }
 
-function onGlobalPointerDown(): void {
-  closeContextMenu()
+function onGlobalPointerDown(event: PointerEvent): void {
+  if (!contextMenu.value.open) return
+  // A right-button press may be followed by one or more contextmenu events
+  // while the button is held. Keep the existing menu mounted and let the
+  // contextmenu handler reposition it, instead of starting close/open
+  // transitions in the same pointer cycle.
+  if (event.button === 2) return
+  const target = event.target
+  if (target instanceof Node && contextMenuElement.value?.contains(target)) return
+  closeContextMenu(false)
+}
+
+function onGlobalKeyDown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return
+  if (contextMenu.value.open) closeContextMenu()
+  else selectedIcon.value = ''
+}
+
+function onContextMenuKeyDown(event: KeyboardEvent): void {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+  const items = Array.from(contextMenuElement.value?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || [])
+  if (!items.length) return
+  event.preventDefault()
+  const current = items.indexOf(document.activeElement as HTMLButtonElement)
+  const index = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? items.length - 1
+      : event.key === 'ArrowDown'
+        ? (current + 1 + items.length) % items.length
+        : (current - 1 + items.length) % items.length
+  items[index]?.focus({ preventScroll: true })
+}
+
+function onDesktopPointerDown(event: PointerEvent): void {
+  const target = event.target as HTMLElement
+  if (target.closest('.desktop-window, .desktop__widgets, .desktop__taskbar, .desktop__icon')) return
+  selectedIcon.value = ''
+  ;(event.currentTarget as HTMLElement).focus({ preventScroll: true })
 }
 
 function onContextMenuAction(action: 'refresh' | 'theme' | 'classic' | 'about'): void {
   closeContextMenu()
   switch (action) {
     case 'refresh':
-      window.location.reload()
+      void loadEntries()
       break
     case 'theme':
       theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')
       break
     case 'classic':
-      desktop.enterClassic()
+      void enterClassicSafely()
       break
     case 'about':
       toast.success(i18n.t('desktop.aboutTitle'), i18n.t('desktop.aboutMessage'))
       break
   }
+}
+
+async function enterClassicSafely(): Promise<void> {
+  if (await desktopCloseGuardCoordinator.checkAll()) desktop.enterClassic()
 }
 
 function onEntryMenuOpen(): void {
@@ -166,84 +305,113 @@ function onTaskbarClick(windowId: number): void {
 async function loadEntries(): Promise<void> {
   entriesAbort?.abort()
   entriesAbort = new AbortController()
+  const sequence = ++entriesSequence
   entriesLoading.value = true
   try {
-    entries.value = await loadDesktopEntries(entriesAbort.signal)
+    const nextEntries = await loadDesktopEntries(entriesAbort.signal)
+    if (sequence === entriesSequence) entries.value = nextEntries
   } catch {
-    entries.value = undefined
+    if (sequence === entriesSequence) entries.value = undefined
   } finally {
-    entriesLoading.value = false
+    if (sequence === entriesSequence) entriesLoading.value = false
   }
 }
 
 onMounted(() => {
+  document.documentElement.classList.add('desktop-mode-open')
+  document.body.classList.add('desktop-mode-open')
   window.addEventListener('pointerdown', onGlobalPointerDown)
+  window.addEventListener('keydown', onGlobalKeyDown)
   window.addEventListener('resize', onViewportResize)
   void loadEntries()
 })
 
 onBeforeUnmount(() => {
+  entriesSequence += 1
+  document.documentElement.classList.remove('desktop-mode-open')
+  document.body.classList.remove('desktop-mode-open')
   window.removeEventListener('pointerdown', onGlobalPointerDown)
+  window.removeEventListener('keydown', onGlobalKeyDown)
   window.removeEventListener('resize', onViewportResize)
   entriesAbort?.abort()
-  if (bounceTimer) window.clearTimeout(bounceTimer)
+  if (bounceTimer !== undefined) window.clearTimeout(bounceTimer)
+  if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
+  if (resizePersistTimer !== undefined) {
+    window.clearTimeout(resizePersistTimer)
+    desktop.resizeForViewport({ width: window.innerWidth, height: window.innerHeight })
+  }
 })
 
 function onViewportResize(): void {
-  desktop.resizeForViewport({ width: window.innerWidth, height: window.innerHeight })
+  if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
+  resizeFrame = window.requestAnimationFrame(() => {
+    resizeFrame = undefined
+    desktop.resizeForViewport({ width: window.innerWidth, height: window.innerHeight }, false)
+  })
+  if (resizePersistTimer !== undefined) window.clearTimeout(resizePersistTimer)
+  resizePersistTimer = window.setTimeout(() => {
+    resizePersistTimer = undefined
+    desktop.resizeForViewport({ width: window.innerWidth, height: window.innerHeight })
+  }, 180)
 }
 </script>
 
 <template>
-  <div class="desktop" @contextmenu="onContextMenu">
+  <div class="desktop" tabindex="-1" @pointerdown="onDesktopPointerDown" @contextmenu="onContextMenu">
     <div class="desktop__wallpaper" aria-hidden="true">
       <div class="desktop__aurora desktop__aurora--one" />
       <div class="desktop__aurora desktop__aurora--two" />
       <div class="desktop__aurora desktop__aurora--three" />
     </div>
 
-    <div class="desktop__topbar">
-      <div class="desktop__mode-switch">
-        <button
-          class="desktop__classic-button"
-          type="button"
-          :title="i18n.t('desktop.switchClassic')"
-          :aria-label="i18n.t('desktop.switchClassic')"
-          @click="desktop.enterClassic()"
-        >
-          <ArrowLeft :size="16" />
-          <span>{{ i18n.t('desktop.switchClassic') }}</span>
-        </button>
-      </div>
-    </div>
+    <aside class="desktop__widgets" :aria-label="i18n.t('desktop.toolbarLabel')" @contextmenu.stop>
+      <DesktopClock
+        :network="entries?.publicNetwork"
+        :system-timezone="systemResources?.timezone"
+      />
+      <DesktopMonitor @snapshot="systemResources = $event" />
+    </aside>
 
-    <div class="desktop__icons" role="grid" :aria-label="i18n.t('desktop.gridLabel')">
+    <nav
+      class="desktop__icons"
+      :aria-label="i18n.t('desktop.gridLabel')"
+      :aria-busy="entriesLoading"
+    >
       <!-- Static navigation apps -->
       <DesktopEntryIcon
-        v-for="app in desktopApps"
+        v-for="(app, index) in desktopApps"
         :key="app.path"
         :label="i18n.t(app.labelKey)"
         :nav-icon="app.icon"
         :gradient="gradientFor(app.path)"
         :active="bouncingIcon === app.path"
-        @dblclick="openNavIcon(app.path)"
+        :selected="selectedIcon === `app:${app.path}`"
+        :order="index"
+        @select="selectNavIcon(app.path)"
+        @open="openNavIcon(app.path)"
+        @context="(event) => onNavContext(event, app.path)"
+        @warm="warmNavIcon(app.path)"
       />
 
       <!-- Dynamic entries: installed apps and sites -->
       <template v-if="entries">
         <DesktopEntryIcon
-          v-for="entry in entries.visible"
+          v-for="(entry, index) in entries.visible"
           :key="entry.key"
           :label="entry.name"
           :entry="entry"
           :gradient="entryGradient(entry)"
-          @dblclick="(event) => onEntryDoubleClick(event, entry)"
+          :selected="selectedIcon === entry.key"
+          :order="desktopApps.length + index"
+          @select="selectEntry(entry)"
+          @open="(event) => onEntryOpen(event, entry)"
           @context="(event) => onEntryContext(event, entry)"
         />
       </template>
-    </div>
-
-    <DesktopMonitor />
+      <span v-if="entriesLoading" class="desktop__sr-only" aria-live="polite">
+        {{ i18n.t('desktop.entriesLoading') }}
+      </span>
+    </nav>
 
     <DesktopWindow
       v-for="windowState in openWindows"
@@ -255,12 +423,14 @@ function onViewportResize(): void {
     <Transition name="desktop-menu">
       <div
         v-if="contextMenu.open"
+        ref="contextMenuElement"
         class="desktop__context-menu"
         :class="{ 'desktop__context-menu--entry': menuEntry }"
         :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         role="menu"
-        @contextmenu.prevent
+        @contextmenu.prevent.stop
         @pointerdown.stop
+        @keydown="onContextMenuKeyDown"
       >
         <template v-if="menuEntry">
           <button type="button" role="menuitem" @click="onEntryMenuOpen">
@@ -295,33 +465,86 @@ function onViewportResize(): void {
       </div>
     </Transition>
 
-    <footer class="desktop__taskbar" role="toolbar" :aria-label="i18n.t('desktop.taskbarLabel')">
-      <button
-        v-for="windowState in openWindows"
-        :key="windowState.id"
-        class="desktop__taskbar-item"
-        :class="{
-          'desktop__taskbar-item--active': windowState.id === focusedWindow?.id,
-          'desktop__taskbar-item--minimized': windowState.minimized,
-        }"
-        type="button"
-        :aria-label="windowTitle(windowState.titleKey)"
-        :aria-pressed="windowState.id === focusedWindow?.id"
-        @click="onTaskbarClick(windowState.id)"
-      >
-        <span
-          class="desktop__taskbar-glyph"
-          :style="{ background: gradientFor(windowState.path) }"
+    <footer
+      class="desktop__taskbar"
+      role="toolbar"
+      :aria-label="i18n.t('desktop.taskbarLabel')"
+      @contextmenu.prevent.stop
+    >
+      <div class="desktop__taskbar-brand" aria-label="KPanel">
+        <LogoMark compact />
+        <span>KPanel</span>
+        <div v-if="props.agent" class="desktop__taskbar-agent">
+          <span class="desktop__taskbar-agent-status" :class="`desktop__taskbar-agent-status--${agentStatus.state}`">
+            <i aria-hidden="true" />
+            <span>{{ agentStatus.label }}</span>
+          </span>
+          <button
+            v-if="props.kpanelUpdateAvailable"
+            class="desktop__taskbar-agent-update"
+            type="button"
+            :aria-label="props.kpanelUpdateDescription"
+            :title="props.kpanelUpdateDescription"
+            @click="openKPanelUpdate"
+          >
+            <CircleArrowUp :size="13" aria-hidden="true" />
+            <span>{{ i18n.t('nav.updateAvailable') }}</span>
+          </button>
+          <small v-else-if="props.agent.version">v{{ props.agent.version }}</small>
+        </div>
+      </div>
+      <div class="desktop__taskbar-apps">
+        <button
+          v-for="windowState in openWindows"
+          :key="windowState.id"
+          class="desktop__taskbar-item"
+          :class="{
+            'desktop__taskbar-item--active': windowState.id === focusedWindow?.id,
+            'desktop__taskbar-item--minimized': windowState.minimized,
+          }"
+          type="button"
+          :data-window-id="windowState.id"
+          :aria-label="windowTitle(windowState.titleKey)"
+          :aria-pressed="windowState.id === focusedWindow?.id"
+          @click="onTaskbarClick(windowState.id)"
         >
-          <component
-            :is="findDesktopApp(windowState.path)?.icon"
-            :size="15"
-            :stroke-width="2"
-            aria-hidden="true"
-          />
-        </span>
-        <span>{{ windowTitle(windowState.titleKey) }}</span>
-      </button>
+          <span
+            class="desktop__taskbar-glyph"
+            :style="{ background: gradientFor(windowState.path) }"
+          >
+            <component
+              :is="findDesktopApp(windowState.path)?.icon || AppWindow"
+              :size="19"
+              :stroke-width="1.9"
+              aria-hidden="true"
+            />
+          </span>
+          <span class="desktop__taskbar-label">{{ windowTitle(windowState.titleKey) }}</span>
+          <i aria-hidden="true" />
+        </button>
+      </div>
+      <div class="desktop__system-tray">
+        <button
+          class="desktop__tray-button"
+          type="button"
+          :title="theme.resolved.value === 'dark' ? i18n.t('desktop.menuLight') : i18n.t('desktop.menuDark')"
+          :aria-label="theme.resolved.value === 'dark' ? i18n.t('desktop.menuLight') : i18n.t('desktop.menuDark')"
+          @click="theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')"
+        >
+          <Sun v-if="theme.resolved.value === 'dark'" :size="16" aria-hidden="true" />
+          <Moon v-else :size="16" aria-hidden="true" />
+        </button>
+        <button
+          class="desktop__classic-button"
+          type="button"
+          :title="i18n.t('desktop.switchClassic')"
+          :aria-label="i18n.t('desktop.switchClassic')"
+          @click="enterClassicSafely"
+        >
+          <ArrowLeft :size="15" aria-hidden="true" />
+          <span>{{ i18n.t('desktop.switchClassic') }}</span>
+        </button>
+      </div>
     </footer>
 
     <ModalDialog

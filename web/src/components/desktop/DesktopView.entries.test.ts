@@ -32,6 +32,7 @@ describe('DesktopView dynamic entries', () => {
   beforeEach(() => {
     resetDesktopModeForTest()
     window.localStorage.clear()
+    window.scrollTo = vi.fn()
     mockedLoad.mockResolvedValue(makeEntries())
   })
 

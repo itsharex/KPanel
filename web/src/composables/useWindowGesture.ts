@@ -1,4 +1,4 @@
-import { onBeforeUnmount } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import type { WindowGeometry } from '@/lib/desktopWindowGeometry'
 import { MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT } from '@/lib/desktopWindowGeometry'
 
@@ -38,14 +38,39 @@ export function useWindowGesture(
   onMoveStart?: () => void,
   onMoveEnd?: () => void,
 ) {
+  const active = ref(false)
   let gesture: Gesture | null = null
   let pointerId: number | undefined
+  let pendingGeometry: WindowGeometry | undefined
+  let updateFrame: number | undefined
+
+  function flushGeometry(): void {
+    if (updateFrame !== undefined) {
+      window.cancelAnimationFrame(updateFrame)
+      updateFrame = undefined
+    }
+    if (!pendingGeometry) return
+    const next = pendingGeometry
+    pendingGeometry = undefined
+    updateGeometry(next)
+  }
+
+  function scheduleGeometry(geometry: WindowGeometry): void {
+    pendingGeometry = geometry
+    if (updateFrame !== undefined) return
+    updateFrame = window.requestAnimationFrame(() => {
+      updateFrame = undefined
+      flushGeometry()
+    })
+  }
 
   function onPointerDown(event: PointerEvent, edge: ResizeEdge | null): void {
     if (event.button !== 0) return
+    if (gesture) finishGesture()
     const target = event.currentTarget as HTMLElement | null
     if (target?.hasAttribute('data-no-drag')) return
     gesture = beginGesture(event, getGeometry(), edge)
+    active.value = true
     pointerId = event.pointerId
     onMoveStart?.()
     window.addEventListener('pointermove', onPointerMove)
@@ -75,7 +100,8 @@ export function useWindowGesture(
         next.top = gesture.startGeometry.top + (gesture.startGeometry.height - next.height)
       }
     }
-    updateGeometry(next)
+    scheduleGeometry(next)
+    event.preventDefault()
   }
 
   function onPointerUp(event: PointerEvent): void {
@@ -89,9 +115,12 @@ export function useWindowGesture(
   }
 
   function finishGesture(): void {
+    const hadGesture = gesture !== null
+    flushGeometry()
     gesture = null
+    active.value = false
     pointerId = undefined
-    onMoveEnd?.()
+    if (hadGesture) onMoveEnd?.()
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
     window.removeEventListener('pointercancel', onPointerCancel)
@@ -102,6 +131,7 @@ export function useWindowGesture(
   return {
     onPointerDown,
     edgeForTarget,
+    active,
     RESIZE_MARGIN,
   }
 }

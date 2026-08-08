@@ -20,14 +20,14 @@ describe('desktop window geometry', () => {
       { width: 1280, height: 800 },
     )
     expect(result.width).toBeLessThanOrEqual(1280 - 24 * 2)
-    expect(result.height).toBeLessThanOrEqual(800 - 48 - 64)
+    expect(result.height).toBeLessThanOrEqual(800 - 16 - 72)
     expect(result.left).toBeGreaterThanOrEqual(0)
-    expect(result.top).toBeGreaterThanOrEqual(0)
+    expect(result.top).toBeGreaterThanOrEqual(16)
   })
 
   it('keeps the title bar reachable when a window is far off the top edge', () => {
     const result = clampToViewport({ left: 40, top: -2000, width: 900, height: 600 }, { width: 1280, height: 800 })
-    expect(result.top).toBeGreaterThanOrEqual(0)
+    expect(result.top).toBeGreaterThanOrEqual(16)
   })
 
   it('clamps left so a visible slice remains on screen', () => {
@@ -51,9 +51,9 @@ describe('desktop window geometry', () => {
     for (let index = 0; index < 12; index += 1) {
       const position = cascadePosition(index, viewport)
       expect(position.left).toBeGreaterThanOrEqual(0)
-      expect(position.top).toBeGreaterThanOrEqual(0)
+      expect(position.top).toBeGreaterThanOrEqual(16)
       expect(position.left + position.width).toBeLessThanOrEqual(viewport.width)
-      expect(position.top + position.height).toBeLessThanOrEqual(viewport.height)
+      expect(position.top + position.height).toBeLessThanOrEqual(viewport.height - 72)
     }
   })
 
@@ -77,6 +77,6 @@ describe('desktop window geometry', () => {
     expect(geometry.width).toBeLessThanOrEqual(1280 - 24 * 2)
     expect(geometry.height).toBeGreaterThanOrEqual(MIN_WINDOW_HEIGHT)
     expect(geometry.left).toBeGreaterThanOrEqual(0)
-    expect(geometry.top).toBeGreaterThanOrEqual(0)
+    expect(geometry.top).toBeGreaterThanOrEqual(16)
   })
 })

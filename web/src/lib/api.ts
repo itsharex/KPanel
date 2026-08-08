@@ -377,6 +377,7 @@ let csrfToken = ''
 let previousNetworkSample:
   | { receivedBytes: number; sentBytes: number; collectedAtMs: number }
   | undefined
+let previousNetworkRate = { receive: 0, transmit: 0, available: false }
 
 function networkRates(system: RawSystemSummary): { receive: number; transmit: number; available: boolean } {
   const current = {
@@ -385,7 +386,14 @@ function networkRates(system: RawSystemSummary): { receive: number; transmit: nu
     collectedAtMs: Date.parse(system.collectedAt),
   }
   const previous = previousNetworkSample
-  previousNetworkSample = current
+  if (
+    previous &&
+    current.collectedAtMs === previous.collectedAtMs &&
+    current.receivedBytes === previous.receivedBytes &&
+    current.sentBytes === previous.sentBytes
+  ) {
+    return previousNetworkRate
+  }
   if (
     !previous ||
     !Number.isFinite(current.collectedAtMs) ||
@@ -393,13 +401,91 @@ function networkRates(system: RawSystemSummary): { receive: number; transmit: nu
     current.receivedBytes < previous.receivedBytes ||
     current.sentBytes < previous.sentBytes
   ) {
-    return { receive: 0, transmit: 0, available: false }
+    if (!previous || current.collectedAtMs > previous.collectedAtMs) {
+      previousNetworkSample = current
+      previousNetworkRate = { receive: 0, transmit: 0, available: false }
+    }
+    return previousNetworkRate
   }
   const elapsedSeconds = (current.collectedAtMs - previous.collectedAtMs) / 1_000
-  return {
+  previousNetworkSample = current
+  previousNetworkRate = {
     receive: (current.receivedBytes - previous.receivedBytes) / elapsedSeconds,
     transmit: (current.sentBytes - previous.sentBytes) / elapsedSeconds,
     available: true,
+  }
+  return previousNetworkRate
+}
+
+export type SystemResourceSnapshot = Pick<
+  SystemOverview,
+  | 'hostname'
+  | 'os'
+  | 'osId'
+  | 'osLike'
+  | 'kernel'
+  | 'architecture'
+  | 'uptimeSeconds'
+  | 'observedAt'
+  | 'cpu'
+  | 'memory'
+  | 'disk'
+  | 'load'
+  | 'network'
+> & {
+  /** Host-configured IANA timezone, independent from public-IP geolocation. */
+  timezone?: string
+}
+
+function normalizeSystemResources(system: RawSystemSummary): SystemResourceSnapshot {
+  const rootDisk = system.disks.find((disk) => disk.mountPoint === '/') || system.disks[0]
+  const rates = networkRates(system)
+  return {
+    hostname: system.hostname,
+    os: system.os,
+    osId: system.osId,
+    osLike: system.osLike || [],
+    kernel: system.kernel,
+    architecture: system.architecture,
+    timezone: system.management?.timezone,
+    uptimeSeconds: system.uptimeSeconds,
+    observedAt: system.collectedAt,
+    cpu: {
+      value: system.cpu.usagePercent,
+      percent: system.cpu.usagePercent,
+      unit: '%',
+      model: system.cpu.model,
+      cores: system.cpu.cores,
+      frequencyMHz: system.cpu.frequencyMHz,
+    },
+    memory: {
+      value: system.memory.usedBytes,
+      total: system.memory.totalBytes,
+      percent: system.memory.usagePercent,
+      unit: 'bytes',
+    },
+    disk: {
+      value: rootDisk?.usedBytes || 0,
+      total: rootDisk?.totalBytes,
+      percent: rootDisk?.usagePercent,
+      unit: 'bytes',
+    },
+    load: {
+      value: system.load.one,
+      unit: String(system.cpu.cores),
+      one: system.load.one,
+      five: system.load.five,
+      fifteen: system.load.fifteen,
+    },
+    network: {
+      receiveBytesPerSecond: rates.receive,
+      transmitBytesPerSecond: rates.transmit,
+      rateAvailable: rates.available,
+      totalReceivedBytes: system.network.receivedBytes,
+      totalTransmittedBytes: system.network.sentBytes,
+      tcpConnections: system.network.tcpConnections || 0,
+      udpConnections: system.network.udpConnections || 0,
+    },
   }
 }
 
@@ -913,8 +999,6 @@ export const api = {
       let previousOverview: SystemOverview | undefined
       let revision = 0
       let builtRevision = -1
-      const rootDisk = system.disks.find((disk) => disk.mountPoint === '/') || system.disks[0]
-      const rates = networkRates(system)
       const knownServices = [
         { id: 'nginx', name: 'Nginx' },
         { id: 'mysql', name: 'MySQL' },
@@ -981,52 +1065,9 @@ export const api = {
           return previousOverview
         }
         const overview: SystemOverview = {
-        hostname: system.hostname,
-        os: system.os,
-        osId: system.osId,
-        osLike: system.osLike || [],
-        kernel: system.kernel,
-        architecture: system.architecture,
-        uptimeSeconds: system.uptimeSeconds,
-        observedAt: system.collectedAt,
-        cpu: {
-          value: system.cpu.usagePercent,
-          percent: system.cpu.usagePercent,
-          unit: '%',
-          model: system.cpu.model,
-          cores: system.cpu.cores,
-          frequencyMHz: system.cpu.frequencyMHz,
-        },
-        memory: {
-          value: system.memory.usedBytes,
-          total: system.memory.totalBytes,
-          percent: system.memory.usagePercent,
-          unit: 'bytes',
-        },
-        disk: {
-          value: rootDisk?.usedBytes || 0,
-          total: rootDisk?.totalBytes,
-          percent: rootDisk?.usagePercent,
-          unit: 'bytes',
-        },
-        load: {
-          value: system.load.one,
-          unit: String(system.cpu.cores),
-          one: system.load.one,
-          five: system.load.five,
-          fifteen: system.load.fifteen,
-        },
-        network: {
-          receiveBytesPerSecond: rates.receive,
-          transmitBytesPerSecond: rates.transmit,
-          rateAvailable: rates.available,
-          totalReceivedBytes: system.network.receivedBytes,
-          totalTransmittedBytes: system.network.sentBytes,
-          tcpConnections: system.network.tcpConnections || 0,
-          udpConnections: system.network.udpConnections || 0,
-        },
-        publicNetwork: publicNetworkSummary(),
-        management: {
+          ...normalizeSystemResources(system),
+          publicNetwork: publicNetworkSummary(),
+          management: {
           ssh: {
             ports: system.management?.ssh?.ports || [],
             source:
@@ -1258,6 +1299,8 @@ export const api = {
       }),
   },
   system: {
+    resources: async (signal?: AbortSignal): Promise<SystemResourceSnapshot> =>
+      normalizeSystemResources(await request<RawSystemSummary>('/system/summary', { signal })),
     action: (body: SystemActionInput): Promise<SystemActionResult> =>
       request<SystemActionResult>('/system/actions', { method: 'POST', body }),
     maintenance: async (

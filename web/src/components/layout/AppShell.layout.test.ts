@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync(new URL('../../styles/main.css', import.meta.url), 'utf8')
+const appShellSource = readFileSync(new URL('./AppShell.vue', import.meta.url), 'utf8')
 const sitesSource = readFileSync(new URL('../../views/SitesView.vue', import.meta.url), 'utf8')
 const jobsSource = readFileSync(new URL('../../views/JobsView.vue', import.meta.url), 'utf8')
 
@@ -50,5 +51,29 @@ describe('responsive application shell comfort', () => {
     expect(styles).not.toMatch(/\.topbar\s*\{[^}]*backdrop-filter:/)
     expect(styles).not.toContain('transition: all')
     expect(styles).toContain('touch-action: manipulation')
+  })
+
+  it('unmounts and deactivates the classic shell while desktop mode is open', () => {
+    expect(appShellSource).toContain("const desktopActive = computed(() => desktop.mode.value === 'desktop')")
+    expect(appShellSource).toContain(':inert="desktopActive ? true : undefined"')
+    expect(appShellSource).toContain(':aria-hidden="desktopActive ? \'true\' : undefined"')
+    expect(appShellSource).toContain('<RouterView v-if="!desktopActive" />')
+    expect(appShellSource).toContain('@click="enterDesktopSafely"')
+    expect(appShellSource).toContain('desktopCloseGuardCoordinator.checkAll()')
+  })
+
+  it('falls back to the classic shell when the lazy desktop chunk cannot load', () => {
+    expect(appShellSource).toContain('onError(_error, retry, fail, attempts)')
+    expect(appShellSource).toContain('desktop.enterClassic()')
+    expect(appShellSource).toContain("toast.danger(i18n.t('nav.loadFailedTitle'), i18n.t('nav.loadFailedMessage'))")
+  })
+
+  it('makes the desktop entry prominent and clears its one-time notice after use', () => {
+    expect(appShellSource).toContain('class="icon-button desktop-entry-button"')
+    expect(appShellSource).toContain("'desktop-entry-button--unseen': !desktopEntrySeen")
+    expect(appShellSource).toContain('markDesktopEntrySeen()')
+    expect(appShellSource).toContain("'kpanel:desktop-entry-notice:v2'")
+    expect(styles).toContain('.desktop-entry-button__notice')
+    expect(styles).toContain('@keyframes desktop-entry-attention')
   })
 })

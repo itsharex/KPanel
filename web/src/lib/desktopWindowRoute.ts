@@ -7,6 +7,7 @@ import {
 } from 'vue-router'
 import type { Component } from 'vue'
 import { loadNavigationRoute } from '@/lib/navigation'
+import { canonicalDesktopAppPath } from '@/lib/desktopApps'
 
 /**
  * Window-scoped router.
@@ -47,53 +48,160 @@ export function reactiveRouteFor(router: Router): RouteLocationNormalizedLoaded 
 
 type NavigationPath = Parameters<typeof loadNavigationRoute>[0]
 
+export type WindowGlobalNavigation = (fullPath: string) => void
+export type WindowDesktopNavigation = (fullPath: string) => boolean
+
+const GLOBAL_HANDOFF_ROUTE_NAMES = new Set(['setup', 'login'])
+
 /** AiView is not part of the shared lazy route registry; load it directly. */
 function aiComponentLoader() {
   return () => import('@/views/AiView.vue').then((module) => module.default)
 }
 
+// DesktopWindow renders the resolved view directly and never mounts a nested
+// RouterView. Route records therefore use a synchronous placeholder: this
+// keeps navigation deterministic and leaves lazy loading, error UI and retry
+// ownership exclusively with DesktopWindow.loadComponent().
+const WINDOW_ROUTE_PLACEHOLDER: Component = {}
+
 /** Resolve the page component for a window route path. */
 export function resolveWindowComponent(path: string): Promise<Component> {
-  if (path === '/ai') return aiComponentLoader()()
+  if (path === '/ai' || path.startsWith('/ai/s/')) return aiComponentLoader()()
   return loadNavigationRoute(path as NavigationPath).then((module) => module.default)
 }
 
-function routeComponentLoader(path: string) {
-  return () => resolveWindowComponent(path)
+/** Build the complete route table used by every desktop window. */
+export function windowRouteRecords(): RouteRecordRaw[] {
+  return [
+    { path: '/', redirect: '/overview' },
+    {
+      path: '/setup',
+      name: 'setup',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/login',
+      name: 'login',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/overview',
+      name: 'overview',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/monitoring',
+      name: 'monitoring',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/cluster',
+      name: 'cluster',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/ai',
+      name: 'ai',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/ai/s/:sessionId',
+      name: 'ai-session',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/sites',
+      name: 'sites',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/sites/environment',
+      name: 'sites-environment',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/apps',
+      name: 'apps',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/files',
+      name: 'files',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/terminal',
+      name: 'terminal',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/diagnostics',
+      name: 'diagnostics',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/docker',
+      name: 'docker',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/activity',
+      name: 'activity',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
+      path: '/jobs',
+      redirect: { path: '/activity', query: { tab: 'jobs' } },
+    },
+    {
+      path: '/audit',
+      redirect: { path: '/activity', query: { tab: 'audit' } },
+    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    { path: '/:pathMatch(.*)*', redirect: '/overview' },
+  ]
 }
 
-/**
- * Build the minimal route table for a window whose initial page is `path`.
- * The Ai workspace additionally registers its `/ai/s/:sessionId` child route so
- * session navigation stays inside the window.
- */
-export function windowRouteRecords(initialPath: string): RouteRecordRaw[] {
-  const records: RouteRecordRaw[] = [
-    {
-      path: initialPath,
-      name: `desktop-window-${initialPath}`,
-      component: routeComponentLoader(initialPath),
-    },
-  ]
-  if (initialPath === '/ai') {
-    records.push({
-      path: '/ai/s/:sessionId',
-      name: 'desktop-window-ai-session',
-      component: aiComponentLoader(),
-    })
-  }
-  return records
+function navigateGlobal(fullPath: string): void {
+  window.location.assign(fullPath)
 }
 
 /** Create an independent router instance for a desktop window. */
-export function createWindowRouter(initialPath: string): Router {
+export function createWindowRouter(
+  initialPath: string,
+  globalNavigation: WindowGlobalNavigation = navigateGlobal,
+  desktopNavigation?: WindowDesktopNavigation,
+): Router {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: windowRouteRecords(initialPath),
+    routes: windowRouteRecords(),
     scrollBehavior: () => ({ top: 0 }),
   })
+
+  // Authentication pages belong to the application router. In particular,
+  // Settings signs out through its injected router; hand that navigation back
+  // to the top-level document instead of rendering a login page in a window.
+  router.beforeEach((to, from) => {
+    if (typeof to.name === 'string' && GLOBAL_HANDOFF_ROUTE_NAMES.has(to.name)) {
+      globalNavigation(to.fullPath)
+      return false
+    }
+    if (
+      from.path !== '/'
+      && canonicalDesktopAppPath(to.path) !== canonicalDesktopAppPath(from.path)
+      && desktopNavigation?.(to.fullPath)
+    ) {
+      return false
+    }
+    return true
+  })
+
   // Memory history starts at "/"; navigate to the window's page so the window
   // RouterView renders its component immediately.
-  void router.push(initialPath)
+  void router.push(initialPath).catch(() => router.replace('/overview'))
   return router
 }

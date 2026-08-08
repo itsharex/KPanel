@@ -30,7 +30,7 @@ describe('desktop app catalogue', () => {
 
   it('marks the terminal as single-instance', () => {
     expect(findDesktopApp('/terminal')?.allowMultiple).toBe(false)
-    expect(findDesktopApp('/overview')?.allowMultiple).toBe(true)
+    expect(findDesktopApp('/overview')?.allowMultiple).toBe(false)
   })
 
   it('returns undefined for unknown paths', () => {

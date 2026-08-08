@@ -113,11 +113,22 @@ describe('desktop mode', () => {
   it('caps the number of open windows to the fixed limit', () => {
     setupViewport(1280, 800)
     const desktop = useDesktopMode()
-    const ids = new Set<number>()
-    for (let index = 0; index < 20; index += 1) {
-      ids.add(desktop.openWindow(`/files/${index}`, 'route.files', true))
+    for (let index = 0; index < 8; index += 1) {
+      expect(desktop.openWindow('/ai', 'route.ai', true)).toBeGreaterThan(0)
     }
-    expect(desktop.windows.value.length).toBeLessThanOrEqual(8)
+    expect(desktop.openWindow('/ai', 'route.ai', true)).toBe(0)
+    expect(desktop.windows.value).toHaveLength(8)
+  })
+
+  it('navigates an existing single-instance window when a cross-app handoff supplies a full path', () => {
+    setupViewport(1280, 800)
+    const desktop = useDesktopMode()
+    const first = desktop.openWindow('/files?path=/home', 'route.files', false)
+    const second = desktop.openWindow('/files?path=/home/web/site', 'route.files', false, true)
+
+    expect(second).toBe(first)
+    expect(desktop.windows.value).toHaveLength(1)
+    expect(desktop.windows.value[0]?.path).toBe('/files?path=/home/web/site')
   })
 
   it('restores persisted mode on initialize', () => {
@@ -153,6 +164,57 @@ describe('desktop mode', () => {
     initializeDesktopMode(storage, { width: 1280, height: 800 })
     expect(useDesktopMode().windows.value).toHaveLength(0)
     resetDesktopModeForTest()
+  })
+
+  it('rejects unknown persisted routes and derives trusted titles from the app catalogue', () => {
+    const storage = makeStorage()
+    storage.store.set('kejilion-panel-desktop-windows', JSON.stringify([
+      { id: 1, path: '/not-an-app', titleKey: 'route.settings', geometry: {}, minimized: false },
+      { id: 2, path: '/files?path=/home', titleKey: '<script>', geometry: {}, minimized: false },
+    ]))
+
+    initializeDesktopMode(storage, { width: 1280, height: 800 })
+    const windows = useDesktopMode().windows.value
+    expect(windows).toHaveLength(1)
+    expect(windows[0]?.path).toBe('/files?path=/home')
+    expect(windows[0]?.titleKey).toBe('route.files')
+  })
+
+  it('rejects oversized persisted window payloads before parsing', () => {
+    const storage = makeStorage()
+    storage.store.set('kejilion-panel-desktop-windows', `[${' '.repeat(64_001)}]`)
+
+    initializeDesktopMode(storage, { width: 1280, height: 800 })
+    expect(useDesktopMode().windows.value).toHaveLength(0)
+  })
+
+  it('persists and restores a bounded full path including its query', () => {
+    window.localStorage.clear()
+    setupViewport(1280, 800)
+    initializeDesktopMode(window.localStorage, { width: 1280, height: 800 })
+    const desktop = useDesktopMode()
+    const id = desktop.openWindow('/files', 'route.files', false)
+    desktop.updateWindowRoute(id, '/files?path=/home/web/site', 'route.files')
+    expect(window.localStorage.getItem('kejilion-panel-desktop-windows')).toContain('/files?path=/home/web/site')
+
+    resetDesktopModeForTest()
+    initializeDesktopMode(window.localStorage, { width: 1280, height: 800 })
+    expect(useDesktopMode().windows.value[0]?.path).toBe('/files?path=/home/web/site')
+    window.localStorage.clear()
+  })
+
+  it('allocates unique ids when persisted ids are invalid or duplicated', () => {
+    const storage = makeStorage()
+    storage.store.set('kejilion-panel-desktop-windows', JSON.stringify([
+      { id: 2, path: '/overview', geometry: {}, minimized: false },
+      { id: 1, path: '/files', geometry: {}, minimized: false },
+      { id: 1, path: '/terminal', geometry: {}, minimized: false },
+    ]))
+
+    initializeDesktopMode(storage, { width: 1280, height: 800 })
+    const ids = useDesktopMode().windows.value.map((item) => item.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids.every((id) => id > 0)).toBe(true)
   })
 
   it('tolerates unavailable storage without throwing', () => {

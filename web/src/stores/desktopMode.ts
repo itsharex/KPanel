@@ -6,6 +6,7 @@ import {
   type ViewportSize,
   type WindowGeometry,
 } from '@/lib/desktopWindowGeometry'
+import { canonicalDesktopAppPath, desktopRoutePath, findDesktopApp } from '@/lib/desktopApps'
 
 /**
  * Desktop (Windows-style) mode state.
@@ -43,9 +44,9 @@ export interface StorageLike {
 
 const MODE_KEY = 'kejilion-panel-desktop-mode'
 const WINDOWS_KEY = 'kejilion-panel-desktop-windows'
-/** Bounded persistence: never grow browser storage without limit. */
-const MAX_PERSISTED_WINDOWS = 12
 const MAX_WINDOWS = 8
+const BASE_WINDOW_Z = 100
+const MAX_WINDOW_Z = 900
 
 const state = reactive<DesktopState>({
   mode: 'classic',
@@ -54,7 +55,7 @@ const state = reactive<DesktopState>({
 })
 
 let nextWindowId = 1
-let nextZ = 1
+let nextZ = BASE_WINDOW_Z
 
 function isDesktopMode(value: unknown): value is DesktopMode {
   return value === 'classic' || value === 'desktop'
@@ -62,6 +63,24 @@ function isDesktopMode(value: unknown): value is DesktopMode {
 
 function isWindowRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function titleKeyForWindowPath(path: string): string | undefined {
+  path = desktopRoutePath(path)
+  if (path === '/monitoring') return 'route.monitoring'
+  if (path === '/sites/environment') return 'route.environment'
+  if (path.startsWith('/ai/s/') && !/^\/ai\/s\/[A-Za-z0-9_-]{1,128}$/.test(path)) return undefined
+  return findDesktopApp(path)?.labelKey
+}
+
+function isSafeWindowFullPath(fullPath: string): boolean {
+  return (
+    fullPath.startsWith('/')
+    && !fullPath.startsWith('//')
+    && fullPath.length <= 768
+    && !/[\u0000-\u001f\\]/.test(fullPath)
+    && Boolean(titleKeyForWindowPath(fullPath))
+  )
 }
 
 function readPersistedMode(storage: StorageLike | undefined): DesktopMode {
@@ -80,32 +99,41 @@ function readPersistedWindows(
   try {
     const raw = storage?.getItem(WINDOWS_KEY) ?? null
     if (!raw) return []
+    if (raw.length > 64_000) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed
-      .filter(isWindowRecord)
-      .slice(0, MAX_PERSISTED_WINDOWS)
-      .map((record) => {
-        const id = typeof record.id === 'number' ? record.id : nextWindowId++
-        const path = typeof record.path === 'string' ? record.path : ''
-        const titleKey = typeof record.titleKey === 'string' ? record.titleKey : ''
-        if (!path || !titleKey) return null
-        const geometry = normalizeGeometry(
-          isWindowRecord(record.geometry) ? (record.geometry as Partial<WindowGeometry>) : undefined,
+    const restored: DesktopWindowState[] = []
+    const usedIds = new Set<number>()
+    const allocateId = (): number => {
+      while (usedIds.has(nextWindowId)) nextWindowId += 1
+      const id = nextWindowId
+      nextWindowId += 1
+      return id
+    }
+    for (const value of parsed.filter(isWindowRecord).slice(0, MAX_WINDOWS)) {
+      const path = typeof value.path === 'string' ? value.path : ''
+      const titleKey = titleKeyForWindowPath(path)
+      if (!titleKey || !isSafeWindowFullPath(path)) continue
+
+      const persistedId = value.id
+      const canReuseId = Number.isSafeInteger(persistedId) && Number(persistedId) > 0 && !usedIds.has(Number(persistedId))
+      const id = canReuseId ? Number(persistedId) : allocateId()
+      usedIds.add(id)
+      restored.push({
+        id,
+        path,
+        titleKey,
+        geometry: normalizeGeometry(
+          isWindowRecord(value.geometry) ? (value.geometry as Partial<WindowGeometry>) : undefined,
           viewport,
-        )
-        return {
-          id,
-          path,
-          titleKey,
-          geometry,
-          minimized: Boolean(record.minimized),
-          maximized: Boolean(record.maximized),
-          z: 0,
-          focusedId: id,
-        }
+        ),
+        minimized: Boolean(value.minimized),
+        maximized: Boolean(value.maximized),
+        z: BASE_WINDOW_Z,
+        focusedId: id,
       })
-      .filter((entry): entry is DesktopWindowState => entry !== null)
+    }
+    return restored
   } catch {
     return []
   }
@@ -114,7 +142,7 @@ function readPersistedWindows(
 function persistWindows(storage: StorageLike | undefined): void {
   try {
     const snapshot = state.windows
-      .slice(0, MAX_PERSISTED_WINDOWS)
+      .slice(0, MAX_WINDOWS)
       .map((windowState) => ({
         id: windowState.id,
         path: windowState.path,
@@ -140,15 +168,27 @@ function persistMode(storage: StorageLike | undefined): void {
 function bringToFront(id: number): void {
   const target = state.windows.find((windowState) => windowState.id === id)
   if (!target) return
+  if (nextZ >= MAX_WINDOW_Z) normalizeWindowStack()
   nextZ += 1
   target.z = nextZ
   state.focusedId = id
 }
 
-function resizeForViewport(viewport: ViewportSize): void {
+function normalizeWindowStack(): void {
+  const ordered = [...state.windows].sort((a, b) => a.z - b.z)
+  let z = BASE_WINDOW_Z
+  for (const windowState of ordered) {
+    windowState.z = z
+    z += 1
+  }
+  nextZ = z
+}
+
+function resizeForViewport(viewport: ViewportSize, persist = true): void {
   for (const windowState of state.windows) {
     windowState.geometry = clampToViewport(windowState.geometry, viewport)
   }
+  if (persist) persistWindows(defaultStorage())
 }
 
 function defaultViewport(): ViewportSize {
@@ -173,7 +213,7 @@ export function initializeDesktopMode(
   if (restored.length) {
     state.windows.splice(0, state.windows.length, ...restored)
     // Reassign z values in insertion order so the last restored window is on top.
-    let z = 1
+    let z = BASE_WINDOW_Z
     for (const windowState of state.windows) {
       windowState.z = z
       windowState.focusedId = windowState.id
@@ -181,7 +221,9 @@ export function initializeDesktopMode(
     }
     nextZ = z
     nextWindowId = Math.max(nextWindowId, restored.reduce((max, w) => Math.max(max, w.id), 0) + 1)
-    state.focusedId = state.windows[state.windows.length - 1]?.id ?? 0
+    state.focusedId = [...state.windows]
+      .filter((windowState) => !windowState.minimized)
+      .sort((a, b) => b.z - a.z)[0]?.id ?? 0
     persistWindows(storage)
   }
 }
@@ -210,18 +252,28 @@ export function useDesktopMode() {
   /**
    * Open a window for a route path. `allowMultiple` governs whether the same
    * path may spawn more than one window; single-instance paths (terminal) focus
-   * the existing window instead.
+   * the existing window instead. Returns 0 when the bounded window limit is
+   * reached; callers surface that state rather than silently closing user work.
    */
-  function openWindow(path: string, titleKey: string, allowMultiple: boolean): number {
+  function openWindow(path: string, titleKey: string, allowMultiple: boolean, navigateExisting = false): number {
     if (!allowMultiple) {
-      const existing = state.windows.find((windowState) => windowState.path === path)
+      const appPath = canonicalDesktopAppPath(path)
+      const existing = state.windows.find(
+        (windowState) => canonicalDesktopAppPath(windowState.path) === appPath,
+      )
       if (existing) {
+        const safeTitleKey = titleKeyForWindowPath(path)
+        if (navigateExisting && safeTitleKey && isSafeWindowFullPath(path)) {
+          existing.path = path
+          existing.titleKey = safeTitleKey
+        }
         existing.minimized = false
         bringToFront(existing.id)
         persistWindows(defaultStorage())
         return existing.id
       }
     }
+    if (state.windows.length >= MAX_WINDOWS) return 0
     const id = nextWindowId++
     nextZ += 1
     const geometry = cascadeGeometry(id)
@@ -236,7 +288,6 @@ export function useDesktopMode() {
       focusedId: id,
     })
     state.focusedId = id
-    trimToWindowLimit()
     persistWindows(defaultStorage())
     return id
   }
@@ -251,7 +302,9 @@ export function useDesktopMode() {
     if (index === -1) return
     state.windows.splice(index, 1)
     if (state.focusedId === id) {
-      const top = [...state.windows].sort((a, b) => b.z - a.z)[0]
+      const top = [...state.windows]
+        .filter((windowState) => !windowState.minimized)
+        .sort((a, b) => b.z - a.z)[0]
       state.focusedId = top?.id ?? 0
     }
     persistWindows(defaultStorage())
@@ -296,24 +349,30 @@ export function useDesktopMode() {
   function focusWindow(id: number): void {
     const target = state.windows.find((windowState) => windowState.id === id)
     if (!target || target.minimized) return
+    if (state.focusedId === id) return
     bringToFront(id)
-    persistWindows(defaultStorage())
   }
 
-  function updateGeometry(id: number, geometry: WindowGeometry): void {
+  function updateGeometry(id: number, geometry: WindowGeometry, persist = true): void {
     const target = state.windows.find((windowState) => windowState.id === id)
     if (!target) return
     target.geometry = clampToViewport(geometry, defaultViewport())
+    if (persist) persistWindows(defaultStorage())
+  }
+
+  function commitGeometry(id: number): void {
+    if (!state.windows.some((windowState) => windowState.id === id)) return
     persistWindows(defaultStorage())
   }
 
-  function trimToWindowLimit(): void {
-    if (state.windows.length <= MAX_WINDOWS) return
-    const ordered = [...state.windows].sort((a, b) => b.z - a.z)
-    const keep = ordered.slice(0, MAX_WINDOWS).map((windowState) => windowState.id)
-    for (const windowState of [...state.windows]) {
-      if (!keep.includes(windowState.id)) closeWindow(windowState.id)
-    }
+  function updateWindowRoute(id: number, path: string, titleKey: string): void {
+    const target = state.windows.find((windowState) => windowState.id === id)
+    const safeTitleKey = titleKeyForWindowPath(path)
+    if (!target || !isSafeWindowFullPath(path) || !safeTitleKey || safeTitleKey !== titleKey) return
+    if (target.path === path && target.titleKey === safeTitleKey) return
+    target.path = path
+    target.titleKey = safeTitleKey
+    persistWindows(defaultStorage())
   }
 
   return {
@@ -332,6 +391,8 @@ export function useDesktopMode() {
     toggleMaximize,
     focusWindow,
     updateGeometry,
+    commitGeometry,
+    updateWindowRoute,
     resizeForViewport,
   }
 }
@@ -341,5 +402,5 @@ export function resetDesktopModeForTest(): void {
   state.windows.splice(0, state.windows.length)
   state.focusedId = 0
   nextWindowId = 1
-  nextZ = 1
+  nextZ = BASE_WINDOW_Z
 }

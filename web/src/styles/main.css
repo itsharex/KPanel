@@ -2170,6 +2170,60 @@ textarea:focus-visible,
   gap: 10px;
 }
 
+.desktop-entry-button {
+  position: relative;
+  display: inline-flex;
+  width: auto;
+  min-width: 112px;
+  gap: 8px;
+  padding: 0 13px 0 10px;
+  color: color-mix(in srgb, var(--brand) 86%, var(--text));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--brand) 15%, var(--surface)), var(--surface));
+  border-color: color-mix(in srgb, var(--brand) 42%, var(--border));
+  border-radius: 12px;
+  box-shadow: 0 7px 20px color-mix(in srgb, var(--brand) 10%, transparent);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.desktop-entry-button:hover:not(:disabled) {
+  color: color-mix(in srgb, var(--brand) 72%, var(--text));
+  background: color-mix(in srgb, var(--brand) 13%, var(--surface-raised));
+  border-color: color-mix(in srgb, var(--brand) 65%, var(--border-strong));
+  box-shadow: 0 9px 24px color-mix(in srgb, var(--brand) 17%, transparent);
+  transform: translateY(-1px);
+}
+
+.desktop-entry-button--unseen {
+  animation: desktop-entry-attention 2.8s ease-in-out 2;
+}
+
+.desktop-entry-button__icon {
+  position: relative;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+}
+
+.desktop-entry-button__notice {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 8px;
+  background: #ef4444;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgb(239 68 68 / 12%), 0 2px 6px rgb(127 29 29 / 30%);
+}
+
+@keyframes desktop-entry-attention {
+  0%, 100% { box-shadow: 0 7px 20px color-mix(in srgb, var(--brand) 10%, transparent); }
+  50% { box-shadow: 0 8px 26px color-mix(in srgb, var(--brand) 28%, transparent); }
+}
+
 .page-content {
   width: 100%;
   max-width: 1640px;
@@ -2968,6 +3022,10 @@ textarea:focus-visible,
   width: 18px;
   height: 18px;
   fill: var(--os-foreground);
+}
+
+.os-identity__svg {
+  display: contents;
 }
 
 .os-identity__mark img {
@@ -5031,6 +5089,15 @@ body.terminal-fullscreen-open .modal-panel {
   .sidebar__close {
     width: 44px;
     height: 44px;
+  }
+
+  .topbar .desktop-entry-button {
+    min-width: 44px;
+    padding: 0;
+  }
+
+  .desktop-entry-button__label {
+    display: none;
   }
 
   .topbar__actions .status-badge {
