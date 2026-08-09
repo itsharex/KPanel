@@ -47,6 +47,7 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/\.desktop__icon-glyph--dynamic::before\s*\{[^}]*display:\s*none;/)
     expect(styles).toMatch(/\.desktop__icon-label\s*\{[^}]*height:\s*18px;[^}]*padding:\s*0 6px;[^}]*font-size:\s*11px;[^}]*line-height:\s*16px;/)
     expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon-label\s*\{[^}]*text-shadow:\s*none;/)
+    expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon--selected \.desktop__icon-label\s*\{[^}]*color:\s*#17312c;[^}]*background:\s*color-mix\(in srgb, var\(--brand\) 38%, #fff\);/)
   })
 
   it('preserves wallpaper depth in light mode without changing the dark treatment', () => {

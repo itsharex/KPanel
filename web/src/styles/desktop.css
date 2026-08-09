@@ -976,6 +976,13 @@ body.desktop-mode-open::-webkit-scrollbar {
   text-shadow: none;
 }
 
+:root:not([data-theme='dark']) .desktop__icon--selected .desktop__icon-label {
+  color: #17312c;
+  background: color-mix(in srgb, var(--brand) 38%, #fff);
+  border-color: color-mix(in srgb, var(--brand) 56%, #fff);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
 .desktop__icon--launching .desktop__icon-glyph {
   will-change: transform;
   animation: desktop-icon-launch .46s cubic-bezier(.18, .88, .25, 1.3);
