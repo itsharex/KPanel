@@ -73,6 +73,35 @@ describe('DesktopView', () => {
     wrapper.unmount()
   })
 
+  it('shows the window name on taskbar hover and closes it from the item context menu', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })))
+    const desktop = useDesktopMode()
+    desktop.enterDesktop()
+    desktop.openWindow('/overview', 'route.overview', false)
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await nextTick()
+
+    const taskbarItem = wrapper.find('.desktop__taskbar-item')
+    expect(taskbarItem.attributes('title')).toBe(taskbarItem.find('.desktop__taskbar-label').text())
+
+    await taskbarItem.trigger('contextmenu', { clientX: 620, clientY: 740 })
+    await nextTick()
+    const closeAction = wrapper.find('[data-context-action="close-window"]')
+    expect(closeAction.exists()).toBe(true)
+    expect(wrapper.find('[data-context-action="processes"]').exists()).toBe(false)
+
+    await closeAction.trigger('click')
+    vi.advanceTimersByTime(1)
+    await nextTick()
+    expect(desktop.windows.value).toHaveLength(0)
+    wrapper.unmount()
+  })
+
   it('shows the classic-mode switch button', () => {
     const wrapper = mount(DesktopView)
     expect(wrapper.find('.desktop__classic-button').exists()).toBe(true)

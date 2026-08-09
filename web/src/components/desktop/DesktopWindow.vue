@@ -201,6 +201,10 @@ async function onClose(): Promise<void> {
   }
 }
 
+defineExpose({
+  requestClose: onClose,
+})
+
 function onPointerDownWindow(): void {
   desktop.focusWindow(props.windowState.id)
 }

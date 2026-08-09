@@ -179,6 +179,7 @@ export const zhCNMessages = {
   'desktop.hostLocationUnknown': '位置未识别',
   'desktop.gridLabel': '桌面应用',
   'desktop.taskbarLabel': '任务栏',
+  'desktop.closeWindow': '关闭窗口',
   'desktop.minimize': '最小化',
   'desktop.maximize': '最大化',
   'desktop.restore': '还原',

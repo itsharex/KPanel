@@ -13,6 +13,7 @@ import {
   AppWindow,
   ExternalLink,
   ListTree,
+  X,
 } from '@lucide/vue'
 import DesktopWindow from '@/components/desktop/DesktopWindow.vue'
 import DesktopEntryIcon from '@/components/desktop/DesktopEntryIcon.vue'
@@ -138,13 +139,31 @@ let entriesSequence = 0
 // Context menu: `targetEntry` set when the menu is for an entry icon; cleared
 // for the empty-desktop menu.
 const contextMenu = ref<{ x: number; y: number; open: boolean }>({ x: 0, y: 0, open: false })
-const contextMenuTarget = ref<'desktop' | 'taskbar'>('desktop')
+const contextMenuTarget = ref<'desktop' | 'taskbar' | 'taskbar-window'>('desktop')
 const contextMenuElement = ref<HTMLElement>()
 const menuEntry = ref<DesktopEntry>()
+const menuWindowId = ref<number>()
 const detailEntry = ref<DesktopEntry>()
 const renameEntry = ref<DesktopEntry>()
 const renameValue = ref('')
 let contextMenuOpener: HTMLElement | undefined
+
+interface DesktopWindowHandle {
+  requestClose: () => Promise<void>
+}
+
+const desktopWindowRefs = new Map<number, DesktopWindowHandle>()
+
+function setDesktopWindowRef(windowId: number, instance: unknown): void {
+  if (!instance) {
+    desktopWindowRefs.delete(windowId)
+    return
+  }
+  const handle = instance as Partial<DesktopWindowHandle>
+  if (typeof handle.requestClose === 'function') {
+    desktopWindowRefs.set(windowId, handle as DesktopWindowHandle)
+  }
+}
 
 /** Icons currently playing their open-bounce animation. */
 const bouncingIcon = ref<string>('')
@@ -337,7 +356,8 @@ function windowTitle(titleKey: string, path?: string): string {
 async function showContextMenu(
   event: MouseEvent,
   entry?: DesktopEntry,
-  target: 'desktop' | 'taskbar' = 'desktop',
+  target: 'desktop' | 'taskbar' | 'taskbar-window' = 'desktop',
+  windowId?: number,
 ): Promise<void> {
   event.preventDefault()
   contextMenuOpener = event.currentTarget instanceof HTMLElement
@@ -348,6 +368,7 @@ async function showContextMenu(
   contextMenu.value = { x: event.clientX, y: event.clientY, open: true }
   contextMenuTarget.value = target
   menuEntry.value = entry
+  menuWindowId.value = windowId
   await nextTick()
 
   const menu = contextMenuElement.value
@@ -380,6 +401,10 @@ function onTaskbarContext(event: MouseEvent): void {
   void showContextMenu(event, undefined, 'taskbar')
 }
 
+function onTaskbarItemContext(event: MouseEvent, windowId: number): void {
+  void showContextMenu(event, undefined, 'taskbar-window', windowId)
+}
+
 function onEntryOpen(_event: MouseEvent | KeyboardEvent, entry: DesktopEntry): void {
   openEntry(entry)
 }
@@ -387,6 +412,7 @@ function onEntryOpen(_event: MouseEvent | KeyboardEvent, entry: DesktopEntry): v
 function closeContextMenu(restoreFocus = true): void {
   contextMenu.value.open = false
   menuEntry.value = undefined
+  menuWindowId.value = undefined
   const opener = contextMenuOpener
   contextMenuOpener = undefined
   if (restoreFocus && opener?.isConnected) {
@@ -535,6 +561,14 @@ function onTaskbarClick(windowId: number): void {
   } else {
     desktop.minimizeWindow(windowId)
   }
+}
+
+async function closeTaskbarWindow(): Promise<void> {
+  const windowId = menuWindowId.value
+  if (windowId === undefined) return
+  const windowHandle = desktopWindowRefs.get(windowId)
+  closeContextMenu()
+  await windowHandle?.requestClose()
 }
 
 async function loadEntries(force = false): Promise<void> {
@@ -692,6 +726,7 @@ function onViewportResize(): void {
     <DesktopWindow
       v-for="windowState in openWindows"
       :key="windowState.id"
+      :ref="(instance) => setDesktopWindowRef(windowState.id, instance)"
       :window-state="windowState"
       :icon="windowIcon(windowState.path)"
       :icon-url="windowIconURL(windowState.path)"
@@ -753,6 +788,17 @@ function onViewportResize(): void {
           >
             <ListTree :size="15" aria-hidden="true" />
             {{ i18n.t('route.processes') }}
+          </button>
+        </template>
+        <template v-else-if="contextMenuTarget === 'taskbar-window'">
+          <button
+            type="button"
+            role="menuitem"
+            data-context-action="close-window"
+            @click="closeTaskbarWindow"
+          >
+            <X :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.closeWindow') }}
           </button>
         </template>
         <template v-else>
@@ -818,8 +864,10 @@ function onViewportResize(): void {
           type="button"
           :data-window-id="windowState.id"
           :aria-label="windowTitle(windowState.titleKey, windowState.path)"
+          :title="windowTitle(windowState.titleKey, windowState.path)"
           :aria-pressed="windowState.id === focusedWindow?.id"
           @click="onTaskbarClick(windowState.id)"
+          @contextmenu.stop="onTaskbarItemContext($event, windowState.id)"
         >
           <span
             class="desktop__taskbar-glyph"

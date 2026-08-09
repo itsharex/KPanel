@@ -181,6 +181,7 @@ export const enUSMessages = {
   'desktop.hostLocationUnknown': 'Location unavailable',
   'desktop.gridLabel': 'Desktop apps',
   'desktop.taskbarLabel': 'Taskbar',
+  'desktop.closeWindow': 'Close window',
   'desktop.minimize': 'Minimize',
   'desktop.maximize': 'Maximize',
   'desktop.restore': 'Restore',
