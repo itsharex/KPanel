@@ -566,7 +566,10 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <main class="embedded-browser__content">
+    <main
+      class="embedded-browser__content"
+      :class="{ 'embedded-browser__content--start': !activeTab?.target }"
+    >
       <div v-if="!activeTab?.target" class="embedded-browser__start">
         <div class="embedded-browser__start-mark" aria-hidden="true"><Globe2 :size="30" /></div>
         <h1>{{ i18n.t('desktop.browserStartTitle') }}</h1>
@@ -838,6 +841,28 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.embedded-browser__content--start {
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: color-mix(in srgb, var(--text) 24%, transparent) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.embedded-browser__content--start::-webkit-scrollbar { width: 9px; }
+.embedded-browser__content--start::-webkit-scrollbar-track { background: transparent; }
+.embedded-browser__content--start::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 22%, transparent);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+.embedded-browser__content--start::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 34%, transparent);
+  background-clip: padding-box;
+}
+
 .embedded-browser__frame {
   width: 100%;
   height: 100%;
@@ -854,7 +879,6 @@ onBeforeUnmount(() => {
   justify-self: center;
   flex-direction: column;
   padding: clamp(34px, 9vh, 82px) 0 36px;
-  overflow-y: auto;
   text-align: center;
 }
 

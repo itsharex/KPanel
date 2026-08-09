@@ -82,6 +82,8 @@ describe('WebBrowserView', () => {
 
     expect(wrapper.get('.embedded-browser > .embedded-browser__tabs').classes())
       .not.toContain('embedded-browser__tabs--titlebar')
+    expect(wrapper.get('.embedded-browser__content').classes())
+      .toContain('embedded-browser__content--start')
     expect(wrapper.find('.embedded-browser__start').exists()).toBe(true)
     expect(wrapper.find('iframe').exists()).toBe(false)
     expect(wrapper.text()).toContain('Nginx')
@@ -92,6 +94,8 @@ describe('WebBrowserView', () => {
     expect(wrapper.get('iframe.embedded-browser__frame').attributes('src')).toBe(
       'https://example.com/path',
     )
+    expect(wrapper.get('.embedded-browser__content').classes())
+      .not.toContain('embedded-browser__content--start')
     expect(wrapper.get('.embedded-browser__tab-count').text()).toBe('1/8')
     wrapper.unmount()
   })
