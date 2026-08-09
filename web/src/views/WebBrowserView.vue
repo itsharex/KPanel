@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ExternalLink,
   Globe2,
@@ -58,7 +58,9 @@ const liveTabIDs = ref<Set<string>>(new Set())
 const pendingRequest = ref<PendingBrowserRequest>()
 const addressValue = ref('')
 const addressInvalid = ref(false)
+const frameColorScheme = ref<'light' | 'dark'>('light')
 const sleepTimers = new Map<string, number>()
+let themeObserver: MutationObserver | undefined
 let tabSequence = 0
 
 const activeTab = computed(() => tabs.value.find((tab) => tab.id === activeTabID.value))
@@ -327,6 +329,21 @@ function hideBrokenIcon(event: Event): void {
   if (event.currentTarget instanceof HTMLImageElement) event.currentTarget.hidden = true
 }
 
+function syncFrameColorScheme(): void {
+  if (typeof document === 'undefined') return
+  frameColorScheme.value = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
+}
+
+syncFrameColorScheme()
+
+onMounted(() => {
+  themeObserver = new MutationObserver(syncFrameColorScheme)
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme'],
+  })
+})
+
 watch(
   () => {
     const value = route.query.url
@@ -374,6 +391,7 @@ watch(windowActive, (active) => {
 })
 
 onBeforeUnmount(() => {
+  themeObserver?.disconnect()
   for (const timer of sleepTimers.values()) window.clearTimeout(timer)
   sleepTimers.clear()
 })
@@ -570,6 +588,7 @@ onBeforeUnmount(() => {
         v-show="tab.id === activeTabID"
         :key="`${tab.id}:${tab.frameVersion}`"
         class="embedded-browser__frame"
+        :style="{ colorScheme: frameColorScheme }"
         :src="tab.target?.href"
         :title="tab.title"
         sandbox="allow-downloads allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
@@ -743,7 +762,13 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.embedded-browser__frame { width: 100%; height: 100%; min-height: 0; background: #fff; border: 0; }
+.embedded-browser__frame {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: Canvas;
+  border: 0;
+}
 
 .embedded-browser__start {
   display: flex;

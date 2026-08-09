@@ -71,6 +71,7 @@ describe('WebBrowserView', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    delete document.documentElement.dataset.theme
   })
 
   it('opens on a lightweight start page and accepts a bare domain', async () => {
@@ -122,6 +123,18 @@ describe('WebBrowserView', () => {
       '_blank',
       'noopener,noreferrer',
     )
+    wrapper.unmount()
+  })
+
+  it('propagates the dark panel color scheme to embedded browser UI', async () => {
+    document.documentElement.dataset.theme = 'dark'
+    const { wrapper } = await mountBrowser(
+      '/browser?url=https%3A%2F%2Fblog.example.com%2Fpath',
+    )
+
+    const frame = wrapper.get('iframe.embedded-browser__frame')
+    expect(window.getComputedStyle(frame.element).colorScheme).toBe('dark')
+
     wrapper.unmount()
   })
 
