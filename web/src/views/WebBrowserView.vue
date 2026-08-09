@@ -16,10 +16,10 @@ import {
   EMBEDDED_BROWSER_SLEEP_MS,
   MAX_EMBEDDED_BROWSER_TABS,
   MAX_LIVE_EMBEDDED_BROWSER_TABS,
-  embeddedBrowserSitesKey,
+  embeddedBrowserShortcutsKey,
   resolveEmbeddedBrowserInput,
   resolveEmbeddedBrowserTarget,
-  type EmbeddedBrowserSite,
+  type EmbeddedBrowserShortcut,
   type EmbeddedBrowserTarget,
 } from '@/lib/embeddedBrowser'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
@@ -30,7 +30,7 @@ interface BrowserTab {
   id: string
   title: string
   target?: EmbeddedBrowserTarget
-  siteID?: string
+  shortcutID?: string
   iconURL?: string
   frameVersion: number
   lastActiveAt: number
@@ -38,19 +38,19 @@ interface BrowserTab {
 
 interface PendingBrowserRequest {
   target?: EmbeddedBrowserTarget
-  site?: EmbeddedBrowserSite
+  shortcut?: EmbeddedBrowserShortcut
 }
 
-const START_PAGE_SITE_LIMIT = 12
+const START_PAGE_SHORTCUT_LIMIT = 12
 const route = useRoute()
 const i18n = useI18n()
 usePhraseCatalog(() => import('@/i18n/pages/WebBrowserView/en-US').then((module) => module.default))
 
-const fallbackSites = ref<EmbeddedBrowserSite[]>([])
-const browserSites = inject(embeddedBrowserSitesKey, fallbackSites)
+const fallbackShortcuts = ref<EmbeddedBrowserShortcut[]>([])
+const browserShortcuts = inject(embeddedBrowserShortcutsKey, fallbackShortcuts)
 const fallbackWindowActive = ref(true)
 const windowActive = inject(desktopWindowActiveKey, fallbackWindowActive)
-const startPageSites = computed(() => browserSites.value.slice(0, START_PAGE_SITE_LIMIT))
+const startPageShortcuts = computed(() => browserShortcuts.value.slice(0, START_PAGE_SHORTCUT_LIMIT))
 
 const tabs = ref<BrowserTab[]>([])
 const activeTabID = ref('')
@@ -146,32 +146,40 @@ function createStartTab(): BrowserTab {
   return tab
 }
 
-function siteForRequest(siteID: unknown): EmbeddedBrowserSite | undefined {
-  if (typeof siteID !== 'string') return undefined
-  return browserSites.value.find((site) => site.id === siteID)
+function shortcutForRequest(
+  shortcutID: unknown,
+  legacySiteID: unknown,
+): EmbeddedBrowserShortcut | undefined {
+  if (typeof shortcutID === 'string') {
+    return browserShortcuts.value.find((shortcut) => shortcut.id === shortcutID)
+  }
+  if (typeof legacySiteID !== 'string') return undefined
+  return browserShortcuts.value.find((shortcut) => (
+    shortcut.id === legacySiteID || shortcut.id === `site:${legacySiteID}`
+  ))
 }
 
 function applyTargetToTab(
   tab: BrowserTab,
   target: EmbeddedBrowserTarget,
-  site?: EmbeddedBrowserSite,
+  shortcut?: EmbeddedBrowserShortcut,
 ): void {
   sleepTab(tab.id)
   tab.target = target
-  tab.title = site?.name || target.hostname
-  tab.siteID = site?.id
-  tab.iconURL = site?.iconURL
+  tab.title = shortcut?.name || target.hostname
+  tab.shortcutID = shortcut?.id
+  tab.iconURL = shortcut?.iconURL
   tab.frameVersion += 1
   activateTab(tab.id)
 }
 
-function openTarget(target: EmbeddedBrowserTarget, site?: EmbeddedBrowserSite): boolean {
+function openTarget(target: EmbeddedBrowserTarget, shortcut?: EmbeddedBrowserShortcut): boolean {
   const existing = tabs.value.find((tab) => tab.target?.href === target.href)
   if (existing) {
-    if (site) {
-      existing.title = site.name
-      existing.siteID = site.id
-      existing.iconURL = site.iconURL
+    if (shortcut) {
+      existing.title = shortcut.name
+      existing.shortcutID = shortcut.id
+      existing.iconURL = shortcut.iconURL
     }
     pendingRequest.value = undefined
     activateTab(existing.id)
@@ -181,21 +189,21 @@ function openTarget(target: EmbeddedBrowserTarget, site?: EmbeddedBrowserSite): 
   const startTab = tabs.value.find((tab) => !tab.target)
   if (startTab) {
     pendingRequest.value = undefined
-    applyTargetToTab(startTab, target, site)
+    applyTargetToTab(startTab, target, shortcut)
     return true
   }
 
   if (tabs.value.length >= MAX_EMBEDDED_BROWSER_TABS) {
-    pendingRequest.value = { target, site }
+    pendingRequest.value = { target, shortcut }
     return false
   }
 
   const tab: BrowserTab = {
     id: nextTabID(),
-    title: site?.name || target.hostname,
+    title: shortcut?.name || target.hostname,
     target,
-    siteID: site?.id,
-    iconURL: site?.iconURL,
+    shortcutID: shortcut?.id,
+    iconURL: shortcut?.iconURL,
     frameVersion: 0,
     lastActiveAt: Date.now(),
   }
@@ -222,7 +230,7 @@ function consumePendingRequest(): void {
   const request = pendingRequest.value
   pendingRequest.value = undefined
   if (!request) return
-  if (request.target) openTarget(request.target, request.site)
+  if (request.target) openTarget(request.target, request.shortcut)
   else createStartTab()
 }
 
@@ -275,10 +283,10 @@ function submitAddress(): void {
   applyTargetToTab(tab, target)
 }
 
-function openSite(site: EmbeddedBrowserSite): void {
-  const target = resolveEmbeddedBrowserTarget(site.url)
+function openShortcut(shortcut: EmbeddedBrowserShortcut): void {
+  const target = resolveEmbeddedBrowserTarget(shortcut.url)
   if (!target) return
-  openTarget(target, site)
+  openTarget(target, shortcut)
 }
 
 function goHome(): void {
@@ -295,7 +303,7 @@ function goHome(): void {
   }
   sleepTab(tab.id)
   tab.target = undefined
-  tab.siteID = undefined
+  tab.shortcutID = undefined
   tab.iconURL = undefined
   tab.title = startPageTitle()
   tab.frameVersion += 1
@@ -324,10 +332,11 @@ watch(
     const value = route.query.url
     const url = Array.isArray(value) ? value[0] : value
     const request = Array.isArray(route.query.request) ? route.query.request[0] : route.query.request
-    const site = Array.isArray(route.query.site) ? route.query.site[0] : route.query.site
-    return { url, request, site }
+    const shortcut = Array.isArray(route.query.shortcut) ? route.query.shortcut[0] : route.query.shortcut
+    const legacySite = Array.isArray(route.query.site) ? route.query.site[0] : route.query.site
+    return { url, request, shortcut, legacySite }
   },
-  ({ url, site }) => {
+  ({ url, shortcut, legacySite }) => {
     if (!url) {
       if (!tabs.value.length) createStartTab()
       return
@@ -339,19 +348,19 @@ watch(
       if (!tabs.value.length) createStartTab()
       return
     }
-    openTarget(target, siteForRequest(site))
+    openTarget(target, shortcutForRequest(shortcut, legacySite))
   },
   { immediate: true },
 )
 
 watch(
-  browserSites,
-  (sites) => {
+  browserShortcuts,
+  (shortcuts) => {
     for (const tab of tabs.value) {
-      const site = sites.find((candidate) => candidate.id === tab.siteID)
-      if (!site) continue
-      tab.title = site.name
-      tab.iconURL = site.iconURL
+      const shortcut = shortcuts.find((candidate) => candidate.id === tab.shortcutID)
+      if (!shortcut) continue
+      tab.title = shortcut.name
+      tab.iconURL = shortcut.iconURL
     }
   },
   { deep: false },
@@ -477,7 +486,7 @@ onBeforeUnmount(() => {
       <div>
         <strong>{{ i18n.t('desktop.browserTabLimitTitle', { count: MAX_EMBEDDED_BROWSER_TABS }) }}</strong>
         <span>{{ i18n.t('desktop.browserTabLimitMessage', {
-          name: pendingRequest.site?.name || pendingRequest.target?.hostname || i18n.t('desktop.browserNewTab'),
+          name: pendingRequest.shortcut?.name || pendingRequest.target?.hostname || i18n.t('desktop.browserNewTab'),
         }) }}</span>
       </div>
       <button
@@ -527,15 +536,20 @@ onBeforeUnmount(() => {
         <span v-if="addressInvalid" class="embedded-browser__input-error" role="alert">
           {{ i18n.t('desktop.browserInvalidURL') }}
         </span>
-        <section v-if="startPageSites.length" class="embedded-browser__shortcuts">
-          <h2>{{ i18n.t('desktop.browserConfiguredSites') }}</h2>
+        <section v-if="startPageShortcuts.length" class="embedded-browser__shortcuts">
+          <h2>{{ i18n.t('desktop.browserConfiguredShortcuts') }}</h2>
           <div>
-            <button v-for="site in startPageSites" :key="site.id" type="button" @click="openSite(site)">
+            <button
+              v-for="shortcut in startPageShortcuts"
+              :key="shortcut.id"
+              type="button"
+              @click="openShortcut(shortcut)"
+            >
               <span>
-                <img v-if="site.iconURL" :src="site.iconURL" alt="" @error="hideBrokenIcon">
+                <img v-if="shortcut.iconURL" :src="shortcut.iconURL" alt="" @error="hideBrokenIcon">
                 <Globe2 :size="18" aria-hidden="true" />
               </span>
-              <strong>{{ site.name }}</strong>
+              <strong>{{ shortcut.name }}</strong>
             </button>
           </div>
         </section>

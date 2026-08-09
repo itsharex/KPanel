@@ -87,7 +87,7 @@ Cookie 并解析真实客户端地址。公网客户端伪造转发头不会改�
 
 ## 7. 桌面内嵌浏览器
 
-- 内嵌浏览器消费桌面已配置网站或已认证管理员在地址栏输入的 URL；全部解析仅发生在浏览器前端，只接受不含用户名、密码的 `http:` / `https:` URL，不会让 Panel 或 Agent 发起服务端请求。
+  - 内嵌浏览器消费桌面已识别的应用/网站访问地址，或已认证管理员在地址栏输入的 URL；全部解析仅发生在浏览器前端，只接受不含用户名、密码的 `http:` / `https:` URL，不会让 Panel 或 Agent 发起服务端请求。
 - Panel 的 CSP 仅为 iframe 增加 `frame-src 'self' http: https:`，不放宽脚本、连接、对象、表单或顶层嵌入策略。
 - iframe 使用 sandbox 允许普通脚本、表单、下载和弹窗，但不授予顶层导航权限；摄像头、麦克风、地理位置等能力继续由 Panel 的 Permissions Policy 禁止。
 - KPanel 不提供网页反向代理，不绕过目标网站的 `X-Frame-Options` 或 CSP `frame-ancestors`。HTTPS Panel 也不会内嵌 HTTP 网站；这些情况统一提示改用系统浏览器。

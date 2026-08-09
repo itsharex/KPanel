@@ -29,7 +29,7 @@ import {
 } from '@/lib/desktopEntries'
 import { api, type SystemResourceSnapshot } from '@/lib/api'
 import { prefetchNavigationRoute } from '@/lib/navigation'
-import { embeddedBrowserSitesKey } from '@/lib/embeddedBrowser'
+import { embeddedBrowserShortcutsKey } from '@/lib/embeddedBrowser'
 import {
   desktopCloseGuardCoordinator,
   desktopCloseGuardCoordinatorKey,
@@ -124,12 +124,12 @@ function persistSiteNames(): void {
 }
 
 const entries = ref<DesktopEntries | undefined>(applySiteNames(getCachedDesktopEntries()))
-const browserSites = computed(() => (entries.value?.sites || []).flatMap((entry) => (
+const browserShortcuts = computed(() => (entries.value?.visible || []).flatMap((entry) => (
   entry.url
-    ? [{ id: entry.id, name: entry.name, url: entry.url, iconURL: entry.iconURL }]
+    ? [{ id: entry.key, kind: entry.kind, name: entry.name, url: entry.url, iconURL: entry.iconURL }]
     : []
 )))
-provide(embeddedBrowserSitesKey, browserSites)
+provide(embeddedBrowserShortcutsKey, browserShortcuts)
 const systemResources = ref<SystemResourceSnapshot>()
 const entriesLoading = ref(!entries.value)
 let entriesAbort: AbortController | undefined
@@ -233,11 +233,10 @@ function openEntry(entry: DesktopEntry): void {
     openAppScriptEntry(entry)
     return
   }
-  if (entry.kind === 'site') {
-    openWebsiteEntry(entry)
+  if (entry.url) {
+    openBrowserEntry(entry)
     return
   }
-  openEntryExternally(entry)
 }
 
 function openEntryExternally(entry: DesktopEntry): void {
@@ -245,13 +244,13 @@ function openEntryExternally(entry: DesktopEntry): void {
   window.open(entry.url, '_blank', 'noopener,noreferrer')
 }
 
-function openWebsiteEntry(entry: DesktopEntry): void {
+function openBrowserEntry(entry: DesktopEntry): void {
   if (!entry.url) return
   const app = findDesktopApp('/browser')
   if (!app) return
   browserRequestSequence += 1
   const query = new URLSearchParams({
-    site: entry.id,
+    shortcut: entry.key,
     url: entry.url,
     request: String(browserRequestSequence),
   })
@@ -476,7 +475,7 @@ function onEntryMenuOpen(): void {
 function onEntryMenuExternal(): void {
   const entry = menuEntry.value
   closeContextMenu()
-  if (entry?.kind === 'site') openEntryExternally(entry)
+  if (entry?.url) openEntryExternally(entry)
 }
 
 function onEntryMenuDetails(): void {
@@ -714,16 +713,16 @@ function onViewportResize(): void {
         <template v-if="menuEntry">
           <button type="button" role="menuitem" @click="onEntryMenuOpen">
             <SquareTerminal v-if="menuEntry.launch === 'script'" :size="15" aria-hidden="true" />
-            <AppWindow v-else-if="menuEntry.kind === 'site'" :size="15" aria-hidden="true" />
+            <AppWindow v-else-if="menuEntry.url" :size="15" aria-hidden="true" />
             <ExternalLink v-else :size="15" aria-hidden="true" />
             {{ menuEntry.launch === 'script'
               ? i18n.t('desktop.entryScriptManage')
-              : menuEntry.kind === 'site'
+              : menuEntry.url
                 ? i18n.t('desktop.browserOpenEmbedded')
                 : i18n.t('desktop.entryOpen') }}
           </button>
           <button
-            v-if="menuEntry.kind === 'site'"
+            v-if="menuEntry.url"
             type="button"
             role="menuitem"
             @click="onEntryMenuExternal"

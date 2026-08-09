@@ -190,7 +190,7 @@ export const zhCNMessages = {
   'desktop.browserVisit': '访问',
   'desktop.browserStartTitle': '想访问哪个网站？',
   'desktop.browserStartDescription': '输入网址或域名，按 Enter 即可访问。',
-  'desktop.browserConfiguredSites': '我的网站',
+  'desktop.browserConfiguredShortcuts': '应用与网站',
   'desktop.browserReload': '重新加载网页',
   'desktop.browserInvalidURL': '网站地址无效',
   'desktop.browserTabLimitTitle': '标签页已满（{count}/{count}）',

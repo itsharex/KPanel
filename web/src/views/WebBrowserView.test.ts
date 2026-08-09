@@ -8,14 +8,22 @@ import WebBrowserView from './WebBrowserView.vue'
 import {
   EMBEDDED_BROWSER_SLEEP_MS,
   MAX_EMBEDDED_BROWSER_TABS,
-  embeddedBrowserSitesKey,
-  type EmbeddedBrowserSite,
+  embeddedBrowserShortcutsKey,
+  type EmbeddedBrowserShortcut,
 } from '@/lib/embeddedBrowser'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 
-const configuredSites: EmbeddedBrowserSite[] = [
+const configuredShortcuts: EmbeddedBrowserShortcut[] = [
   {
-    id: 'blog',
+    id: 'app:nginx',
+    kind: 'app',
+    name: 'Nginx',
+    url: 'https://nginx.example.com',
+    iconURL: '/api/v1/apps/nginx/icon',
+  },
+  {
+    id: 'site:blog',
+    kind: 'site',
     name: '我的博客',
     url: 'https://blog.example.com',
     iconURL: '/api/v1/sites/blog/icon',
@@ -36,7 +44,7 @@ async function mountBrowser(
     global: {
       plugins: [router],
       provide: {
-        [embeddedBrowserSitesKey as symbol]: ref(configuredSites),
+        [embeddedBrowserShortcutsKey as symbol]: ref(configuredShortcuts),
         [desktopWindowActiveKey as symbol]: active,
       },
     },
@@ -70,6 +78,7 @@ describe('WebBrowserView', () => {
 
     expect(wrapper.find('.embedded-browser__start').exists()).toBe(true)
     expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Nginx')
     expect(wrapper.text()).toContain('我的博客')
 
     await visitFromStart(wrapper, 'example.com/path')
@@ -78,6 +87,21 @@ describe('WebBrowserView', () => {
       'https://example.com/path',
     )
     expect(wrapper.get('.embedded-browser__tab-count').text()).toBe('1/8')
+    wrapper.unmount()
+  })
+
+  it('opens an application shortcut through the same embedded browser channel', async () => {
+    const { wrapper } = await mountBrowser(
+      '/browser?shortcut=app%3Anginx&url=https%3A%2F%2Fnginx.example.com%2Fadmin&request=1',
+    )
+
+    expect(wrapper.get('iframe.embedded-browser__frame').attributes('src')).toBe(
+      'https://nginx.example.com/admin',
+    )
+    expect(wrapper.get('[role="tab"]').text()).toContain('Nginx')
+    expect(wrapper.get('.embedded-browser__tab-icon').attributes('src')).toBe(
+      '/api/v1/apps/nginx/icon',
+    )
     wrapper.unmount()
   })
 

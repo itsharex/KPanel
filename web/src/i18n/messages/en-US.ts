@@ -192,7 +192,7 @@ export const enUSMessages = {
   'desktop.browserVisit': 'Visit',
   'desktop.browserStartTitle': 'Where would you like to go?',
   'desktop.browserStartDescription': 'Enter a URL or domain, then press Enter to visit it.',
-  'desktop.browserConfiguredSites': 'My websites',
+  'desktop.browserConfiguredShortcuts': 'Apps and websites',
   'desktop.browserReload': 'Reload website',
   'desktop.browserInvalidURL': 'Invalid website address',
   'desktop.browserTabLimitTitle': 'Tab limit reached ({count}/{count})',

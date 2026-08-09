@@ -137,6 +137,25 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
+  it('opens URL-capable applications in the reusable desktop browser by default', async () => {
+    const desktop = useDesktopMode()
+    const wrapper = mount(DesktopView)
+    await nextTick()
+    await nextTick()
+
+    await wrapper.find('button[title="Nginx"]').trigger('dblclick')
+    await nextTick()
+
+    expect(desktop.windows.value).toHaveLength(1)
+    const path = desktop.windows.value[0]?.path || ''
+    expect(path).toContain('/browser?')
+    const query = new URLSearchParams(path.split('?')[1])
+    expect(query.get('shortcut')).toBe('app:nginx')
+    expect(query.get('url')).toBe('http://192.168.1.5:8080')
+    expect(window.open).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('keeps an explicit system-browser action in the website context menu', async () => {
     const wrapper = mount(DesktopView)
     await nextTick()
@@ -156,6 +175,30 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
+  it('keeps explicit external-open and application-detail actions for URL applications', async () => {
+    const desktop = useDesktopMode()
+    const wrapper = mount(DesktopView)
+    await nextTick()
+    await nextTick()
+
+    await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
+    await nextTick()
+    const appItems = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+    expect(appItems).toHaveLength(3)
+    await appItems[1]?.trigger('click')
+    expect(window.open).toHaveBeenCalledWith(
+      'http://192.168.1.5:8080',
+      '_blank',
+      'noopener,noreferrer',
+    )
+
+    await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
+    await nextTick()
+    await wrapper.findAll('.desktop__context-menu [role="menuitem"]')[2]?.trigger('click')
+    expect(desktop.windows.value[0]?.path).toBe('/apps?app=nginx')
+    wrapper.unmount()
+  })
+
   it('opens the matching application-market detail from an app context menu', async () => {
     const desktop = useDesktopMode()
     const wrapper = mount(DesktopView)
@@ -164,7 +207,7 @@ describe('DesktopView dynamic entries', () => {
 
     await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
     await nextTick()
-    await wrapper.findAll('.desktop__context-menu [role="menuitem"]')[1]?.trigger('click')
+    await wrapper.findAll('.desktop__context-menu [role="menuitem"]')[2]?.trigger('click')
 
     expect(desktop.windows.value).toHaveLength(1)
     expect(desktop.windows.value[0]?.path).toBe('/apps?app=nginx')
@@ -179,7 +222,7 @@ describe('DesktopView dynamic entries', () => {
 
     await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
     await nextTick()
-    expect(wrapper.findAll('.desktop__context-menu [role="menuitem"]')).toHaveLength(2)
+    expect(wrapper.findAll('.desktop__context-menu [role="menuitem"]')).toHaveLength(3)
 
     await wrapper.find('button[title="blog.example.com"]').trigger('contextmenu', { clientX: 120, clientY: 80 })
     await nextTick()
