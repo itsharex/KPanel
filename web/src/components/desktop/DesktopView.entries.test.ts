@@ -66,6 +66,22 @@ describe('DesktopView dynamic entries', () => {
     expect(labels).toContain('blog.example.com')
     // Static nav icons still present.
     expect(labels).toContain('概览')
+    expect(labels).toContain('浏览器')
+    wrapper.unmount()
+  })
+
+  it('opens the shared browser launcher on its lightweight start page', async () => {
+    const desktop = useDesktopMode()
+    const wrapper = mount(DesktopView)
+    await nextTick()
+    await nextTick()
+
+    await wrapper.find('button[title="浏览器"]').trigger('dblclick')
+    await nextTick()
+
+    expect(desktop.windows.value).toHaveLength(1)
+    expect(desktop.windows.value[0]?.path).toBe('/browser')
+    expect(wrapper.find('.desktop-window__title').text()).toContain('浏览器')
     wrapper.unmount()
   })
 
@@ -107,12 +123,17 @@ describe('DesktopView dynamic entries', () => {
     expect(desktop.windows.value).toHaveLength(1)
     const path = desktop.windows.value[0]?.path || ''
     expect(path).toContain('/browser?')
-    expect(new URLSearchParams(path.split('?')[1]).get('url')).toBe('https://blog.example.com')
+    const firstQuery = new URLSearchParams(path.split('?')[1])
+    expect(firstQuery.get('url')).toBe('https://blog.example.com')
     expect(window.open).not.toHaveBeenCalled()
 
     await wrapper.find('button[title="blog.example.com"]').trigger('dblclick')
     await nextTick()
     expect(desktop.windows.value).toHaveLength(1)
+    expect(desktop.windows.value[0]?.path).not.toBe(path)
+    expect(new URLSearchParams(desktop.windows.value[0]?.path.split('?')[1]).get('request')).not.toBe(
+      firstQuery.get('request'),
+    )
     wrapper.unmount()
   })
 

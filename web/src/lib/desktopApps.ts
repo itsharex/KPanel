@@ -30,6 +30,15 @@ export interface DesktopApp {
   gradient: [string, string]
 }
 
+/** Single lightweight browser shared by its desktop launcher and website entries. */
+export const desktopBrowserApp: DesktopApp = {
+  path: '/browser',
+  labelKey: 'desktop.browserWindowTitle',
+  icon: Globe2,
+  allowMultiple: false,
+  gradient: ['#38bdf8', '#0369a1'],
+}
+
 export const desktopApps: DesktopApp[] = [
   {
     path: '/overview',
@@ -52,6 +61,7 @@ export const desktopApps: DesktopApp[] = [
     allowMultiple: false,
     gradient: ['#60a5fa', '#1d4ed8'],
   },
+  desktopBrowserApp,
   {
     path: '/apps',
     labelKey: 'route.apps',
@@ -119,15 +129,6 @@ export const desktopScriptApp: DesktopApp = {
   gradient: ['#64748b', '#0f172a'],
 }
 
-/** Single lightweight browser reused by configured website desktop entries. */
-export const desktopBrowserApp: DesktopApp = {
-  path: '/browser',
-  labelKey: 'desktop.browserWindowTitle',
-  icon: Globe2,
-  allowMultiple: false,
-  gradient: ['#38bdf8', '#0369a1'],
-}
-
 /** Neutral gradient for windows whose app is not in the catalogue. */
 export const DEFAULT_WINDOW_GRADIENT: [string, string] = ['#a78bfa', '#6d28d9']
 
@@ -152,6 +153,5 @@ export function canonicalDesktopAppPath(path: string): string {
 export function findDesktopApp(path: string): DesktopApp | undefined {
   const appPath = canonicalDesktopAppPath(path)
   if (/^\/app-script\/[A-Za-z0-9_-]{1,128}$/.test(appPath)) return desktopScriptApp
-  if (appPath === desktopBrowserApp.path) return desktopBrowserApp
   return desktopApps.find((app) => app.path === appPath)
 }

@@ -29,6 +29,7 @@ import {
 } from '@/lib/desktopEntries'
 import { api, type SystemResourceSnapshot } from '@/lib/api'
 import { prefetchNavigationRoute } from '@/lib/navigation'
+import { embeddedBrowserSitesKey } from '@/lib/embeddedBrowser'
 import {
   desktopCloseGuardCoordinator,
   desktopCloseGuardCoordinatorKey,
@@ -123,6 +124,12 @@ function persistSiteNames(): void {
 }
 
 const entries = ref<DesktopEntries | undefined>(applySiteNames(getCachedDesktopEntries()))
+const browserSites = computed(() => (entries.value?.sites || []).flatMap((entry) => (
+  entry.url
+    ? [{ id: entry.id, name: entry.name, url: entry.url, iconURL: entry.iconURL }]
+    : []
+)))
+provide(embeddedBrowserSitesKey, browserSites)
 const systemResources = ref<SystemResourceSnapshot>()
 const entriesLoading = ref(!entries.value)
 let entriesAbort: AbortController | undefined
@@ -145,6 +152,7 @@ const selectedIcon = ref<string>('')
 let bounceTimer: number | undefined
 let resizeFrame: number | undefined
 let resizePersistTimer: number | undefined
+let browserRequestSequence = 0
 
 function motionDuration(duration: number): number {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : duration
@@ -241,7 +249,12 @@ function openWebsiteEntry(entry: DesktopEntry): void {
   if (!entry.url) return
   const app = findDesktopApp('/browser')
   if (!app) return
-  const query = new URLSearchParams({ site: entry.id, url: entry.url })
+  browserRequestSequence += 1
+  const query = new URLSearchParams({
+    site: entry.id,
+    url: entry.url,
+    request: String(browserRequestSequence),
+  })
   const windowId = desktop.openWindow(
     `/browser?${query.toString()}`,
     app.labelKey,
@@ -312,23 +325,13 @@ function scriptWindowEntry(path: string): DesktopEntry | undefined {
     ?? entries.value?.visible.find((entry) => entry.kind === 'app' && entry.id === appID)
 }
 
-function browserWindowEntry(path: string): DesktopEntry | undefined {
-  if (!path.startsWith('/browser?')) return undefined
-  const id = new URLSearchParams(path.slice(path.indexOf('?') + 1)).get('site')
-  if (!id) return undefined
-  return entries.value?.sites.find((entry) => entry.id === id)
-    ?? entries.value?.visible.find((entry) => entry.kind === 'site' && entry.id === id)
-}
-
 function windowIconURL(path: string): string | undefined {
-  return scriptWindowEntry(path)?.iconURL ?? browserWindowEntry(path)?.iconURL
+  return scriptWindowEntry(path)?.iconURL
 }
 
 function windowTitle(titleKey: string, path?: string): string {
   const scriptEntry = path ? scriptWindowEntry(path) : undefined
   if (scriptEntry) return i18n.t('desktop.namedScriptWindowTitle', { name: scriptEntry.name })
-  const browserEntry = path ? browserWindowEntry(path) : undefined
-  if (browserEntry) return i18n.t('desktop.namedBrowserWindowTitle', { name: browserEntry.name })
   return i18n.t(titleKey as Parameters<typeof i18n.t>[0])
 }
 

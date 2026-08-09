@@ -9,6 +9,7 @@ describe('desktop app catalogue', () => {
         '/overview',
         '/ai',
         '/sites',
+        '/browser',
         '/apps',
         '/docker',
         '/files',
@@ -19,7 +20,7 @@ describe('desktop app catalogue', () => {
         '/settings',
       ]),
     )
-    expect(desktopApps).toHaveLength(11)
+    expect(desktopApps).toHaveLength(12)
   })
 
   it('gives every app a distinct gradient', () => {
@@ -40,10 +41,10 @@ describe('desktop app catalogue', () => {
     expect(desktopApps.map((app) => app.path)).not.toContain('/app-script')
   })
 
-  it('maps the single embedded browser without adding a desktop launcher', () => {
+  it('exposes the single embedded browser as a desktop launcher', () => {
     expect(findDesktopApp('/browser?site=site-1')?.labelKey).toBe('desktop.browserWindowTitle')
     expect(findDesktopApp('/browser?site=site-1')?.allowMultiple).toBe(false)
-    expect(desktopApps.map((app) => app.path)).not.toContain('/browser')
+    expect(desktopApps.map((app) => app.path)).toContain('/browser')
   })
 
   it('returns undefined for unknown paths', () => {
