@@ -818,7 +818,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop__icon--selected .desktop__icon-label {
   background: color-mix(in srgb, var(--brand) 72%, rgb(6 22 24 / 78%));
   color: #fff;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 38%);
+  text-shadow: none;
 }
 
 :root:not([data-theme='dark']) .desktop__icon:hover {
@@ -856,7 +856,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop__icon-glyph::before {
   position: absolute;
   inset: 0;
-  background: linear-gradient(155deg, rgb(255 255 255 / 32%), transparent 36%, rgb(0 0 0 / 10%));
+  background: linear-gradient(155deg, rgb(255 255 255 / 14%), transparent 34%, rgb(0 0 0 / 7%));
   content: '';
   pointer-events: none;
 }
@@ -886,8 +886,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop__icon-glyph--dynamic::before {
-  z-index: 2;
-  background: linear-gradient(155deg, rgb(255 255 255 / 20%), transparent 34%, rgb(0 0 0 / 8%));
+  display: none;
 }
 
 .desktop__icon-monogram {
@@ -940,24 +939,30 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop__icon-label {
   display: block;
-  max-width: 84px;
-  padding: 2px 5px 3px;
+  max-width: 86px;
+  padding: 2px 6px 3px;
   overflow: hidden;
   color: var(--desktop-label);
-  background: rgb(3 13 16 / 28%);
+  background: rgb(3 13 16 / 68%);
+  border: 1px solid rgb(255 255 255 / 10%);
   border-radius: 6px;
-  font-size: 10px;
-  font-weight: 620;
-  line-height: 1.2;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 14%);
+  font-size: 11px;
+  font-weight: 680;
+  letter-spacing: -.005em;
+  line-height: 1.25;
   text-align: center;
   text-overflow: ellipsis;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 45%);
+  text-shadow: none;
   white-space: nowrap;
 }
 
 :root:not([data-theme='dark']) .desktop__icon-label {
-  background: rgb(255 255 255 / 48%);
-  text-shadow: 0 1px 1px rgb(255 255 255 / 70%);
+  color: #17312c;
+  background: rgb(255 255 255 / 82%);
+  border: 1px solid rgb(255 255 255 / 68%);
+  box-shadow: 0 1px 4px rgb(16 44 39 / 16%);
+  text-shadow: none;
 }
 
 .desktop__icon--launching .desktop__icon-glyph {

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync(new URL('../../styles/desktop.css', import.meta.url), 'utf8')
 const windowSource = readFileSync(new URL('./DesktopWindow.vue', import.meta.url), 'utf8')
+const browserSource = readFileSync(new URL('../../views/WebBrowserView.vue', import.meta.url), 'utf8')
 
 describe('desktop visual and interaction contract', () => {
   it('keeps desktop chrome, windows, fullscreen views and teleports in a stable layer order', () => {
@@ -40,6 +41,18 @@ describe('desktop visual and interaction contract', () => {
     expect(windowSource.indexOf('desktop-window__action--minimize')).toBeLessThan(
       windowSource.indexOf('desktop-window__action--close'),
     )
+  })
+
+  it('keeps desktop icons and labels crisp in both color themes', () => {
+    expect(styles).toMatch(/\.desktop__icon-glyph--dynamic::before\s*\{[^}]*display:\s*none;/)
+    expect(styles).toMatch(/\.desktop__icon-label\s*\{[^}]*font-size:\s*11px;/)
+    expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon-label\s*\{[^}]*text-shadow:\s*none;/)
+  })
+
+  it('uses the shared window surface, border and shadow tokens in the browser', () => {
+    expect(browserSource).toMatch(/\.embedded-browser\s*\{[^}]*background:\s*var\(--bg\);/)
+    expect(browserSource).toMatch(/\.embedded-browser__shortcuts button\s*\{[^}]*border:\s*1px solid var\(--border\);[^}]*box-shadow:\s*var\(--shadow-sm\);/)
+    expect(browserSource).toMatch(/\.embedded-browser__start-form\s*\{[^}]*box-shadow:\s*var\(--shadow-sm\);/)
   })
 
   it('keeps focused, minimized and closing window states keyboard-safe', () => {
