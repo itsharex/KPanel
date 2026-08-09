@@ -783,13 +783,13 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="realtime-monitoring__actions">
-            <RouterLink class="button button--secondary button--small" to="/monitoring">
-              查看历史
-              <ChevronRight :size="16" />
-            </RouterLink>
             <RouterLink class="button button--secondary button--small" to="/processes">
               <ListTree :size="16" />
               {{ processManagerLabel }}
+            </RouterLink>
+            <RouterLink class="button button--secondary button--small" to="/monitoring">
+              查看历史
+              <ChevronRight :size="16" />
             </RouterLink>
           </div>
         </header>

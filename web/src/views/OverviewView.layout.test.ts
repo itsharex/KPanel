@@ -14,6 +14,7 @@ describe('OverviewView service status layout', () => {
   it('places the process manager beside monitoring history without adding sidebar navigation', () => {
     expect(source).toContain('class="realtime-monitoring__actions"')
     expect(source).toContain('to="/processes"')
+    expect(source.indexOf('to="/processes"')).toBeLessThan(source.indexOf('to="/monitoring"'))
     expect(styles).toMatch(/\.realtime-monitoring__actions\s*\{[^}]*display:\s*flex;/)
   })
 })
