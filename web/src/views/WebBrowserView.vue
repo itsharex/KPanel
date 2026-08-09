@@ -22,7 +22,7 @@ import {
   type EmbeddedBrowserShortcut,
   type EmbeddedBrowserTarget,
 } from '@/lib/embeddedBrowser'
-import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
+import { desktopWindowActiveKey, desktopWindowTitlebarTargetKey } from '@/lib/desktopRouteKeys'
 import { useI18n } from '@/i18n'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
@@ -50,6 +50,7 @@ const fallbackShortcuts = ref<EmbeddedBrowserShortcut[]>([])
 const browserShortcuts = inject(embeddedBrowserShortcutsKey, fallbackShortcuts)
 const fallbackWindowActive = ref(true)
 const windowActive = inject(desktopWindowActiveKey, fallbackWindowActive)
+const titlebarTarget = inject(desktopWindowTitlebarTargetKey, ref<HTMLElement>())
 const startPageShortcuts = computed(() => browserShortcuts.value.slice(0, START_PAGE_SHORTCUT_LIMIT))
 
 const tabs = ref<BrowserTab[]>([])
@@ -399,58 +400,70 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="embedded-browser">
-    <nav class="embedded-browser__tabs" role="tablist" :aria-label="i18n.t('desktop.browserTabsLabel')">
-      <div
-        v-for="tab in tabs"
-        :key="tab.id"
-        class="embedded-browser__tab"
-        :class="{ 'embedded-browser__tab--active': tab.id === activeTabID }"
+    <Teleport :to="titlebarTarget || 'body'" :disabled="!titlebarTarget">
+      <nav
+        class="embedded-browser__tabs"
+        :class="{ 'embedded-browser__tabs--titlebar': titlebarTarget }"
+        role="tablist"
+        :aria-label="i18n.t('desktop.browserTabsLabel')"
       >
-        <button
-          class="embedded-browser__tab-main"
-          type="button"
-          role="tab"
-          :aria-selected="tab.id === activeTabID"
-          :title="tab.title"
-          @click="activateTab(tab.id)"
-        >
-          <img
-            v-if="tab.iconURL"
-            class="embedded-browser__tab-icon"
-            :src="tab.iconURL"
-            alt=""
-            @error="hideBrokenIcon"
+        <div class="embedded-browser__tab-track">
+          <div
+            v-for="tab in tabs"
+            :key="tab.id"
+            class="embedded-browser__tab"
+            :class="{ 'embedded-browser__tab--active': tab.id === activeTabID }"
           >
-          <Globe2 v-else :size="14" aria-hidden="true" />
-          <span>{{ tab.title }}</span>
-          <MoonStar
-            v-if="tab.target && !tab.target.mixedContent && !liveTabIDs.has(tab.id)"
-            class="embedded-browser__tab-sleep"
-            :size="12"
-            :aria-label="i18n.t('desktop.browserTabSleeping')"
-          />
-        </button>
+            <button
+              class="embedded-browser__tab-main"
+              type="button"
+              role="tab"
+              :aria-selected="tab.id === activeTabID"
+              :title="tab.title"
+              @click="activateTab(tab.id)"
+              @dblclick.stop
+            >
+              <img
+                v-if="tab.iconURL"
+                class="embedded-browser__tab-icon"
+                :src="tab.iconURL"
+                alt=""
+                @error="hideBrokenIcon"
+              >
+              <Globe2 v-else :size="14" aria-hidden="true" />
+              <span>{{ tab.title }}</span>
+              <MoonStar
+                v-if="tab.target && !tab.target.mixedContent && !liveTabIDs.has(tab.id)"
+                class="embedded-browser__tab-sleep"
+                :size="12"
+                :aria-label="i18n.t('desktop.browserTabSleeping')"
+              />
+            </button>
+            <button
+              class="embedded-browser__tab-close"
+              type="button"
+              :title="i18n.t('desktop.browserCloseTab')"
+              :aria-label="i18n.t('desktop.browserCloseNamedTab', { name: tab.title })"
+              @click="closeTab(tab.id)"
+              @dblclick.stop
+            >
+              <X :size="13" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
         <button
-          class="embedded-browser__tab-close"
+          class="embedded-browser__new-tab"
           type="button"
-          :title="i18n.t('desktop.browserCloseTab')"
-          :aria-label="i18n.t('desktop.browserCloseNamedTab', { name: tab.title })"
-          @click="closeTab(tab.id)"
+          :title="i18n.t('desktop.browserNewTab')"
+          :aria-label="i18n.t('desktop.browserNewTab')"
+          @click="requestNewTab"
+          @dblclick.stop
         >
-          <X :size="13" aria-hidden="true" />
+          <Plus :size="16" aria-hidden="true" />
         </button>
-      </div>
-      <button
-        class="embedded-browser__new-tab"
-        type="button"
-        :title="i18n.t('desktop.browserNewTab')"
-        :aria-label="i18n.t('desktop.browserNewTab')"
-        @click="requestNewTab"
-      >
-        <Plus :size="16" aria-hidden="true" />
-      </button>
-      <span class="embedded-browser__tab-count">{{ tabs.length }}/{{ MAX_EMBEDDED_BROWSER_TABS }}</span>
-    </nav>
+        <span class="embedded-browser__tab-count">{{ tabs.length }}/{{ MAX_EMBEDDED_BROWSER_TABS }}</span>
+      </nav>
+    </Teleport>
 
     <form class="embedded-browser__toolbar" @submit.prevent="submitAddress">
       <button
@@ -622,13 +635,37 @@ onBeforeUnmount(() => {
   align-items: flex-end;
   gap: 3px;
   padding: 5px 8px 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow: hidden;
   background: color-mix(in srgb, var(--surface-raised) 92%, var(--bg));
   border-bottom: 1px solid var(--border);
 }
 
-.embedded-browser__tabs::-webkit-scrollbar { display: none; }
+.embedded-browser__tab-track {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  gap: 3px;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.embedded-browser__tab-track::-webkit-scrollbar { display: none; }
+
+.embedded-browser__tabs--titlebar {
+  width: 100%;
+  height: 42px;
+  min-height: 42px;
+  align-items: center;
+  padding: 0 3px 0 5px;
+  background: transparent;
+  border: 0;
+}
+
+.embedded-browser__tabs--titlebar .embedded-browser__tab-track {
+  height: 100%;
+  align-items: center;
+}
 
 .embedded-browser__tab {
   display: flex;
@@ -648,6 +685,19 @@ onBeforeUnmount(() => {
   color: var(--text);
   background: var(--surface);
   border-color: var(--border);
+}
+
+.embedded-browser__tabs--titlebar .embedded-browser__tab {
+  height: 30px;
+  background: color-mix(in srgb, var(--surface) 58%, transparent);
+  border-bottom: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.embedded-browser__tabs--titlebar .embedded-browser__tab--active {
+  background: color-mix(in srgb, var(--surface) 92%, var(--surface-raised));
+  border-color: color-mix(in srgb, var(--border) 84%, transparent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
 }
 
 .embedded-browser__tab-main {
@@ -842,7 +892,7 @@ onBeforeUnmount(() => {
 }
 
 @container desktop-window (max-width: 580px) {
-  .embedded-browser__tabs { padding-inline: 5px; }
+  .embedded-browser__tabs:not(.embedded-browser__tabs--titlebar) { padding-inline: 5px; }
   .embedded-browser__tab { width: 118px; }
   .embedded-browser__external span { display: none; }
   .embedded-browser__external { width: 34px; padding: 0; }

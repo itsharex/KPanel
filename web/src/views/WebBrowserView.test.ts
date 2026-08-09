@@ -77,6 +77,8 @@ describe('WebBrowserView', () => {
   it('opens on a lightweight start page and accepts a bare domain', async () => {
     const { wrapper } = await mountBrowser()
 
+    expect(wrapper.get('.embedded-browser > .embedded-browser__tabs').classes())
+      .not.toContain('embedded-browser__tabs--titlebar')
     expect(wrapper.find('.embedded-browser__start').exists()).toBe(true)
     expect(wrapper.find('iframe').exists()).toBe(false)
     expect(wrapper.text()).toContain('Nginx')
