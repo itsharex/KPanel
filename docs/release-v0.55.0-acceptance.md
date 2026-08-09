@@ -1,7 +1,8 @@
 # KPanel v0.55.0 发布验收记录
 
-日期：2026-08-09  
-发布级别：L3  
+日期：2026-08-09
+
+发布级别：L3
 生产目标：`arena-154`（`154.36.153.9:8080`）
 
 ## 发布范围
@@ -107,7 +108,8 @@ KJ_APP_NONINTERACTIVE=1 KJ_APP_ACTION=update /home/docker/kpanel/bin/kejilion.sh
 
 ## 回滚点
 
-源码回滚：`v0.54.0`。  
+源码回滚：`v0.54.0`。
+
 镜像回滚：
 
 ```text
