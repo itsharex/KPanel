@@ -67,7 +67,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   inset: 0;
   overflow: hidden;
   background:
-    linear-gradient(145deg, rgb(236 247 245 / 46%), rgb(214 231 232 / 22%)),
+    linear-gradient(145deg, rgb(226 242 239 / 18%), rgb(190 218 224 / 7%)),
     url('/wallpapers/kpanel-desktop.webp') center / cover no-repeat,
     linear-gradient(145deg, #b9d4d4, #edf5f3);
   transform: scale(1.01);
@@ -84,17 +84,27 @@ body.desktop-mode-open::-webkit-scrollbar {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(90deg, rgb(3 14 17 / 12%), transparent 28%, transparent 78%, rgb(3 14 17 / 8%)),
-    radial-gradient(circle at 50% 40%, transparent 36%, rgb(2 9 12 / 12%) 100%);
+    linear-gradient(90deg, rgb(3 14 17 / 6%), transparent 30%, transparent 80%, rgb(3 14 17 / 5%)),
+    radial-gradient(circle at 50% 40%, transparent 42%, rgb(2 9 12 / 8%) 100%);
   content: '';
   pointer-events: none;
+}
+
+:root[data-theme='dark'] .desktop__wallpaper::after {
+  background:
+    linear-gradient(90deg, rgb(3 14 17 / 12%), transparent 28%, transparent 78%, rgb(3 14 17 / 8%)),
+    radial-gradient(circle at 50% 40%, transparent 36%, rgb(2 9 12 / 12%) 100%);
 }
 
 .desktop__aurora {
   position: absolute;
   border-radius: 50%;
-  opacity: .2;
+  opacity: .12;
   pointer-events: none;
+}
+
+:root[data-theme='dark'] .desktop__aurora {
+  opacity: .2;
 }
 
 .desktop__aurora--one {

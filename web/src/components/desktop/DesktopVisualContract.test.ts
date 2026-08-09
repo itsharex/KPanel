@@ -49,6 +49,12 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon-label\s*\{[^}]*text-shadow:\s*none;/)
   })
 
+  it('preserves wallpaper depth in light mode without changing the dark treatment', () => {
+    expect(styles).toContain('linear-gradient(145deg, rgb(226 242 239 / 18%), rgb(190 218 224 / 7%))')
+    expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__wallpaper::after\s*\{/)
+    expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__aurora\s*\{[^}]*opacity:\s*\.2;/)
+  })
+
   it('uses the shared window surface, border and shadow tokens in the browser', () => {
     expect(browserSource).toMatch(/\.embedded-browser\s*\{[^}]*background:\s*var\(--bg\);/)
     expect(browserSource).toMatch(/\.embedded-browser__shortcuts button\s*\{[^}]*border:\s*1px solid var\(--border\);[^}]*box-shadow:\s*var\(--shadow-sm\);/)
