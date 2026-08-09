@@ -355,6 +355,62 @@ func TestChangePasswordRevokesSessionsAndReplacesCredentials(t *testing.T) {
 	}
 }
 
+func TestRecoverPasswordReplacesCredentialsWithoutCurrentPassword(t *testing.T) {
+	directory := t.TempDir()
+	storage, err := store.Open(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	service, err := NewService(storage, testHasher(t), Config{
+		BootstrapTokenPath: filepath.Join(directory, "bootstrap.token"),
+		SessionTTL:         time.Hour,
+		LoginWindow:        time.Minute,
+		MaxLoginFailures:   5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.EnsureBootstrapToken(); err != nil {
+		t.Fatal(err)
+	}
+	token, err := os.ReadFile(filepath.Join(directory, "bootstrap.token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := service.Bootstrap(string(token), "admin", "a-strong-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RecoverPassword(credentials.User.ID, "short", false); !errors.Is(err, ErrWeakPassword) {
+		t.Fatalf("expected weak password rejection, got %v", err)
+	}
+	if _, err := service.Authenticate(credentials.Token); err != nil {
+		t.Fatalf("rejected recovery revoked the session: %v", err)
+	}
+
+	recovered, err := service.RecoverPassword(credentials.User.ID, "a-recovered-password", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Username != "admin" || recovered.TOTPEnabled {
+		t.Fatalf("unexpected recovered user: %#v", recovered)
+	}
+	if _, err := service.Authenticate(credentials.Token); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("old session survived recovery: %v", err)
+	}
+	if _, err := service.Login("192.0.2.1", "admin", "a-strong-password", ""); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("old password remained valid: %v", err)
+	}
+	if _, err := service.Login("192.0.2.1", "admin", "a-recovered-password", ""); err != nil {
+		t.Fatalf("recovered password was rejected: %v", err)
+	}
+	events, _ := storage.ListAudit(10, "")
+	if len(events) != 1 || events[0].ActorType != "cli" || events[0].Action != "auth.password.recover" {
+		t.Fatalf("unexpected recovery audit: %#v", events)
+	}
+}
+
 func TestChangeUsernameRevokesSessionsAndKeepsPassword(t *testing.T) {
 	directory := t.TempDir()
 	storage, err := store.Open(filepath.Join(directory, "state.json"))

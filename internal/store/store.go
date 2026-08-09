@@ -76,6 +76,16 @@ type SecurityEntrance struct {
 	UpdatedAt time.Time `json:"updatedAt,omitempty"`
 }
 
+type PasswordRecovery struct {
+	UserID          string
+	ExpectedHash    string
+	NewHash         string
+	DisableTOTP     bool
+	UpdatedAt       time.Time
+	AuditEvent      AuditEvent
+	MaxAuditEntries int
+}
+
 type diskState struct {
 	SchemaVersion    int              `json:"schemaVersion"`
 	Users            []User           `json:"users"`
@@ -240,6 +250,61 @@ func (s *Store) ReplaceUserPassword(userID, expectedHash, newHash string, update
 		return err
 	}
 	return nil
+}
+
+// RecoverUserPassword applies a local administrator recovery as one persisted
+// transition. It keeps account identity and panel settings, revokes the user's
+// sessions, clears authentication failures, and records the
+// recovery before any success is reported to the caller.
+func (s *Store) RecoverUserPassword(input PasswordRecovery) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	userIndex := s.userIndexLocked(input.UserID)
+	if userIndex < 0 {
+		return ErrNotFound
+	}
+	user := s.data.Users[userIndex]
+	if user.PasswordHash != input.ExpectedHash {
+		return ErrConflict
+	}
+
+	previous := cloneDiskState(s.data)
+	s.data.Users[userIndex].PasswordHash = input.NewHash
+	s.data.Users[userIndex].UpdatedAt = input.UpdatedAt
+	if input.DisableTOTP {
+		s.data.Users[userIndex].TOTPSecret = ""
+		s.data.Users[userIndex].TOTPEnabledAt = nil
+		s.data.Users[userIndex].TOTPLastUsedStep = 0
+		s.data.Users[userIndex].TOTPRecoveryCodeHashes = nil
+	}
+	s.revokeUserSessionsLocked(user.ID)
+
+	// A local recovery establishes a new credential boundary. Clear persisted
+	// rate-limit history so the operator can immediately use the new password;
+	// subsequent network failures are recorded and limited normally.
+	s.data.LoginAttempts = nil
+
+	s.data.Audit = append(s.data.Audit, input.AuditEvent)
+	if input.MaxAuditEntries > 0 && len(s.data.Audit) > input.MaxAuditEntries {
+		s.data.Audit = append([]AuditEvent(nil), s.data.Audit[len(s.data.Audit)-input.MaxAuditEntries:]...)
+	}
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
+}
+
+func (s *Store) Usernames() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	usernames := make([]string, 0, len(s.data.Users))
+	for _, user := range s.data.Users {
+		usernames = append(usernames, user.Username)
+	}
+	sort.Strings(usernames)
+	return usernames
 }
 
 // ReplaceUserUsername atomically changes a user's sign-in name and revokes all

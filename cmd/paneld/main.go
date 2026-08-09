@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,6 +22,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/panel"
 	"github.com/kejilion/kejilion-panel/internal/store"
 	"github.com/kejilion/kejilion-panel/internal/version"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -35,6 +38,9 @@ func run(arguments []string) error {
 	}
 	if len(arguments) > 0 && arguments[0] == "agent-healthcheck" {
 		return runAgentHealthcheck(arguments[1:])
+	}
+	if len(arguments) > 0 && arguments[0] == "reset-password" {
+		return runPasswordReset(arguments[1:], os.Stdin, os.Stdout)
 	}
 
 	flags := flag.NewFlagSet("paneld", flag.ContinueOnError)
@@ -113,6 +119,141 @@ func run(arguments []string) error {
 		return nil
 	}
 	return err
+}
+
+type passwordReader func(prompt string) ([]byte, error)
+
+func runPasswordReset(arguments []string, input *os.File, output io.Writer) error {
+	if !term.IsTerminal(int(input.Fd())) && !passwordResetHelpRequested(arguments) {
+		return errors.New("password reset requires an interactive terminal; do not pass passwords through arguments or environment variables")
+	}
+	return runPasswordResetWithReader(arguments, output, func(prompt string) ([]byte, error) {
+		if _, err := fmt.Fprint(output, prompt); err != nil {
+			return nil, err
+		}
+		password, err := term.ReadPassword(int(input.Fd()))
+		_, newlineErr := fmt.Fprintln(output)
+		if err != nil {
+			return nil, err
+		}
+		if newlineErr != nil {
+			clearPassword(password)
+			return nil, newlineErr
+		}
+		return password, nil
+	})
+}
+
+func passwordResetHelpRequested(arguments []string) bool {
+	for _, argument := range arguments {
+		if argument == "-h" || argument == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+func runPasswordResetWithReader(arguments []string, output io.Writer, readPassword passwordReader) error {
+	flags := flag.NewFlagSet("paneld reset-password", flag.ContinueOnError)
+	flags.SetOutput(output)
+	configPath := flags.String("config", "", "path to the JSON configuration file")
+	username := flags.String("username", "", "administrator username; optional for a single-user panel")
+	disableTOTP := flags.Bool("disable-2fa", false, "also disable TOTP and invalidate recovery codes")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected reset-password argument: %s", flags.Arg(0))
+	}
+
+	config, err := panel.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	storage, err := store.Open(config.StorePath)
+	if err != nil {
+		if errors.Is(err, store.ErrStoreLocked) {
+			return errors.New("panel state is in use; stop the panel service before resetting the password")
+		}
+		return err
+	}
+	defer storage.Close()
+
+	user, err := passwordRecoveryUser(storage, *username)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(output, "Administrator: %s\n", user.Username); err != nil {
+		return err
+	}
+	password, err := readPassword("New password (12-256 bytes): ")
+	if err != nil {
+		return fmt.Errorf("read new password: %w", err)
+	}
+	defer clearPassword(password)
+	confirmation, err := readPassword("Confirm new password: ")
+	if err != nil {
+		return fmt.Errorf("read password confirmation: %w", err)
+	}
+	defer clearPassword(confirmation)
+	if !bytes.Equal(password, confirmation) {
+		return errors.New("password confirmation does not match")
+	}
+
+	hasher, err := auth.NewArgon2idHasher(auth.DefaultArgon2idParams())
+	if err != nil {
+		return err
+	}
+	authService, err := auth.NewService(storage, hasher, auth.Config{
+		BootstrapTokenPath: config.BootstrapTokenPath,
+		TOTPKeyPath:        config.TOTPKeyPath,
+		SessionTTL:         config.SessionTTL,
+		LoginWindow:        config.LoginWindow,
+		MaxLoginFailures:   config.MaxLoginFailures,
+	})
+	if err != nil {
+		return err
+	}
+	recovered, err := authService.RecoverPassword(user.ID, string(password), *disableTOTP)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(output, "Password reset completed. All existing sessions were revoked.")
+	switch {
+	case *disableTOTP:
+		_, _ = fmt.Fprintln(output, "Two-factor authentication and recovery codes were disabled as requested.")
+	case recovered.TOTPEnabled:
+		_, _ = fmt.Fprintln(output, "Two-factor authentication remains enabled.")
+	default:
+		_, _ = fmt.Fprintln(output, "Two-factor authentication remains disabled.")
+	}
+	return nil
+}
+
+func passwordRecoveryUser(storage *store.Store, username string) (store.User, error) {
+	username = strings.TrimSpace(username)
+	if username != "" {
+		user, err := storage.UserByUsername(username)
+		if errors.Is(err, store.ErrNotFound) {
+			return store.User{}, fmt.Errorf("administrator %q was not found", username)
+		}
+		return user, err
+	}
+	usernames := storage.Usernames()
+	switch len(usernames) {
+	case 0:
+		return store.User{}, errors.New("panel administrator is not initialized")
+	case 1:
+		return storage.UserByUsername(usernames[0])
+	default:
+		return store.User{}, errors.New("multiple administrators exist; select one with --username")
+	}
+}
+
+func clearPassword(password []byte) {
+	for index := range password {
+		password[index] = 0
+	}
 }
 
 func runHealthcheck(arguments []string) error {

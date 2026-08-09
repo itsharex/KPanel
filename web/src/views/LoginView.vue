@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Eye, EyeOff, LoaderCircle, LockKeyhole } from '@lucide/vue'
+import { Check, Copy, Eye, EyeOff, LoaderCircle, LockKeyhole } from '@lucide/vue'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import { ApiError } from '@/lib/api'
 import { useI18n } from '@/i18n'
@@ -21,6 +21,9 @@ const form = reactive({
 const showPassword = ref(false)
 const totpRequired = ref(false)
 const useRecoveryCode = ref(false)
+const recoveryHelpVisible = ref(false)
+const recoveryCommandCopied = ref(false)
+const recoveryCommandCopyFailed = ref(false)
 const error = ref('')
 const loginPhase = ref<'idle' | 'authenticating' | 'entering'>('idle')
 
@@ -36,6 +39,7 @@ const submitLabel = computed(() => {
   if (loginPhase.value === 'authenticating' || session.state.loading) return i18n.t('auth.verifying')
   return i18n.t('auth.secureLogin')
 })
+const recoveryCommand = `cd /home/docker/kpanel && sh -c 'set -e; cleanup() { status=$?; trap - EXIT; docker compose --env-file .env up -d panel; exit "$status"; }; trap cleanup EXIT; docker compose --env-file .env stop panel; docker compose --env-file .env run --rm --no-deps panel reset-password'`
 
 const canSubmit = computed(() =>
   form.username.trim().length > 0 && form.password.length > 0 && (
@@ -85,6 +89,37 @@ async function retryConnection(): Promise<void> {
     return
   }
   if (session.state.authenticated) await router.replace(destination.value)
+}
+
+function toggleRecoveryHelp(): void {
+  recoveryHelpVisible.value = !recoveryHelpVisible.value
+  recoveryCommandCopied.value = false
+  recoveryCommandCopyFailed.value = false
+}
+
+async function copyRecoveryCommand(): Promise<void> {
+  let copied = false
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(recoveryCommand)
+      copied = true
+    } catch {
+      // HTTP IP access and embedded browsers may deny the modern clipboard API.
+    }
+  }
+  if (!copied && typeof document !== 'undefined' && typeof document.execCommand === 'function') {
+    const textarea = document.createElement('textarea')
+    textarea.value = recoveryCommand
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    copied = document.execCommand('copy')
+    textarea.remove()
+  }
+  recoveryCommandCopied.value = copied
+  recoveryCommandCopyFailed.value = !copied
 }
 
 onMounted(() => {
@@ -162,7 +197,35 @@ onMounted(() => {
         <LoaderCircle v-if="busy" class="spin" :size="17" />
         {{ submitLabel }}
       </button>
+
+      <button
+        class="button-link auth-forgot-password"
+        type="button"
+        :aria-expanded="recoveryHelpVisible"
+        @click="toggleRecoveryHelp"
+      >
+        {{ i18n.t('auth.forgotPassword') }}
+      </button>
     </form>
+
+    <div v-if="recoveryHelpVisible" class="inline-alert inline-alert--info recovery-help" role="note">
+      <strong>{{ i18n.t('auth.recoveryHelpTitle') }}</strong>
+      <p>{{ i18n.t('auth.recoveryHelpIntro') }}</p>
+      <span>{{ i18n.t('auth.recoveryCommandIntro') }}</span>
+      <pre><code>{{ recoveryCommand }}</code></pre>
+      <small>{{ i18n.t('auth.recoveryDataSafe') }}</small>
+      <div class="recovery-help__actions">
+        <button class="button button--ghost button--small" type="button" @click="copyRecoveryCommand">
+          <Check v-if="recoveryCommandCopied" :size="14" />
+          <Copy v-else :size="14" />
+          {{ i18n.t(recoveryCommandCopied ? 'auth.recoveryCommandCopied' : 'auth.copyRecoveryCommand') }}
+        </button>
+        <button class="button-link" type="button" @click="toggleRecoveryHelp">
+          {{ i18n.t('auth.hideRecoveryHelp') }}
+        </button>
+      </div>
+      <small v-if="recoveryCommandCopyFailed" role="status">{{ i18n.t('auth.recoveryCommandCopyFailed') }}</small>
+    </div>
 
     <p class="auth-card__security">{{ i18n.t('auth.sessionSecurity') }}</p>
 
@@ -175,3 +238,46 @@ onMounted(() => {
     </Transition>
   </AuthLayout>
 </template>
+
+<style scoped>
+.auth-forgot-password {
+  justify-self: end;
+  margin-top: -8px;
+  font-size: 12px;
+}
+
+.recovery-help {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.recovery-help p,
+.recovery-help small {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.recovery-help pre {
+  max-width: 100%;
+  margin: 0;
+  padding: 11px 12px;
+  overflow-x: auto;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.recovery-help__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+</style>

@@ -344,6 +344,190 @@ func TestReplaceUserPasswordPersistsHashAndRevokesOnlyUserSessions(t *testing.T)
 	}
 }
 
+func TestRecoverUserPasswordPreservesPanelStateAndRecordsAudit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	enabledAt := now.Add(-time.Hour)
+	user := User{
+		ID: "user-1", Username: "Admin", PasswordHash: "old-hash", Role: "admin",
+		TOTPSecret: "encrypted-secret", TOTPEnabledAt: &enabledAt, TOTPLastUsedStep: 42,
+		TOTPRecoveryCodeHashes: []string{"recovery-hash"}, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := storage.CreateInitialAdmin(user); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.PutSession(Session{
+		TokenHash: "token-hash", CSRFHash: "csrf-hash", UserID: user.ID,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.RecordLoginAttempts([]LoginAttempt{
+		{Key: "account:admin", OccurredAt: now, Success: false},
+		{Key: "reauth:user-1", OccurredAt: now, Success: false},
+		{Key: "ip:192.0.2.1", OccurredAt: now, Success: false},
+	}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	entrance := SecurityEntrance{Enabled: true, Path: "private-entry", UpdatedAt: now}
+	_, resourceVersion := storage.SecurityEntrance()
+	if err := storage.ReplaceSecurityEntrance(resourceVersion, entrance); err != nil {
+		t.Fatal(err)
+	}
+
+	updatedAt := now.Add(time.Minute)
+	event := AuditEvent{
+		ID: "recovery-event", OccurredAt: updatedAt, ActorType: "cli",
+		Action: "auth.password.recover", TargetKind: "user", TargetID: user.ID, Result: "success",
+	}
+	if err := storage.RecoverUserPassword(PasswordRecovery{
+		UserID: user.ID, ExpectedHash: user.PasswordHash, NewHash: "new-hash",
+		UpdatedAt: updatedAt, AuditEvent: event, MaxAuditEntries: 10_000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := storage.UserByID(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.PasswordHash != "new-hash" || !recovered.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("password recovery was not applied: %#v", recovered)
+	}
+	if recovered.TOTPSecret != user.TOTPSecret || recovered.TOTPLastUsedStep != user.TOTPLastUsedStep ||
+		len(recovered.TOTPRecoveryCodeHashes) != 1 {
+		t.Fatalf("password-only recovery changed TOTP state: %#v", recovered)
+	}
+	if _, err := storage.SessionByTokenHash("token-hash", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("existing session survived recovery: %v", err)
+	}
+	if count := storage.FailedLoginCount("account:admin", now.Add(-time.Hour)); count != 0 {
+		t.Fatalf("account failures were not cleared: %d", count)
+	}
+	if count := storage.FailedLoginCount("reauth:user-1", now.Add(-time.Hour)); count != 0 {
+		t.Fatalf("reauth failures were not cleared: %d", count)
+	}
+	if count := storage.FailedLoginCount("ip:192.0.2.1", now.Add(-time.Hour)); count != 0 {
+		t.Fatalf("IP failures were not cleared: %d", count)
+	}
+	gotEntrance, _ := storage.SecurityEntrance()
+	if gotEntrance != entrance {
+		t.Fatalf("security entrance changed: %#v", gotEntrance)
+	}
+	events, _ := storage.ListAudit(10, "")
+	if len(events) != 1 || events[0].ID != event.ID {
+		t.Fatalf("recovery audit was not committed: %#v", events)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	recovered, err = reopened.UserByID(user.ID)
+	if err != nil || recovered.PasswordHash != "new-hash" {
+		t.Fatalf("recovery did not persist: %#v, %v", recovered, err)
+	}
+}
+
+func TestRecoverUserPasswordCanExplicitlyDisableTOTP(t *testing.T) {
+	storage, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	now := time.Now().UTC()
+	enabledAt := now
+	user := User{
+		ID: "user-1", Username: "admin", PasswordHash: "old-hash", Role: "admin",
+		TOTPSecret: "encrypted-secret", TOTPEnabledAt: &enabledAt, TOTPLastUsedStep: 42,
+		TOTPRecoveryCodeHashes: []string{"recovery-hash"}, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := storage.CreateInitialAdmin(user); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.RecoverUserPassword(PasswordRecovery{
+		UserID: user.ID, ExpectedHash: user.PasswordHash, NewHash: "new-hash", DisableTOTP: true,
+		UpdatedAt: now.Add(time.Minute), AuditEvent: AuditEvent{ID: "event", Action: "auth.password.recover"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := storage.UserByID(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.TOTPSecret != "" || recovered.TOTPEnabledAt != nil || recovered.TOTPLastUsedStep != 0 ||
+		len(recovered.TOTPRecoveryCodeHashes) != 0 {
+		t.Fatalf("TOTP state was not fully disabled: %#v", recovered)
+	}
+}
+
+func TestRecoverUserPasswordPersistenceFailureRollsBackEntireTransition(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	storage, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	now := time.Now().UTC()
+	user := User{
+		ID: "user-1", Username: "admin", PasswordHash: "old-hash", Role: "admin",
+		TOTPSecret: "encrypted-secret", TOTPRecoveryCodeHashes: []string{"recovery-hash"},
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := storage.CreateInitialAdmin(user); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.PutSession(Session{
+		TokenHash: "token-hash", CSRFHash: "csrf-hash", UserID: user.ID,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.RecordLoginAttempt(LoginAttempt{
+		Key: "account:admin", OccurredAt: now, Success: false,
+	}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	originalPath := storage.path
+	storage.path = filepath.Join(t.TempDir(), "missing", "state.json")
+	err = storage.RecoverUserPassword(PasswordRecovery{
+		UserID: user.ID, ExpectedHash: user.PasswordHash, NewHash: "new-hash", DisableTOTP: true,
+		UpdatedAt: now.Add(time.Minute), AuditEvent: AuditEvent{ID: "event", Action: "auth.password.recover"},
+	})
+	storage.path = originalPath
+	if err == nil {
+		t.Fatal("expected persistence failure")
+	}
+
+	unchanged, err := storage.UserByID(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.PasswordHash != user.PasswordHash || unchanged.TOTPSecret != user.TOTPSecret ||
+		len(unchanged.TOTPRecoveryCodeHashes) != 1 {
+		t.Fatalf("failed recovery changed the user: %#v", unchanged)
+	}
+	if _, err := storage.SessionByTokenHash("token-hash", now); err != nil {
+		t.Fatalf("failed recovery revoked the session: %v", err)
+	}
+	if count := storage.FailedLoginCount("account:admin", now.Add(-time.Hour)); count != 1 {
+		t.Fatalf("failed recovery cleared login attempts: %d", count)
+	}
+	events, _ := storage.ListAudit(10, "")
+	if len(events) != 0 {
+		t.Fatalf("failed recovery recorded an audit event: %#v", events)
+	}
+}
+
 func TestReplaceUserUsernamePersistsIdentityAndRevokesSessions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	storage, err := Open(path)

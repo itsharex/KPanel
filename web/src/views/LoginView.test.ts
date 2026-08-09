@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
     refresh: vi.fn(),
     replace: vi.fn(),
     prefetch: vi.fn(),
+    clipboardWriteText: vi.fn(),
     route: { query: {} as Record<string, unknown> },
     sessionState: {
       loading: false,
@@ -51,10 +52,16 @@ interface LoginBindings {
   totpRequired: Ref<boolean>
   useRecoveryCode: Ref<boolean>
   loginPhase: Ref<'idle' | 'authenticating' | 'entering'>
+  recoveryHelpVisible: Ref<boolean>
+  recoveryCommandCopied: Ref<boolean>
+  recoveryCommandCopyFailed: Ref<boolean>
+  recoveryCommand: string
   busy: ComputedRef<boolean>
   submitLabel: ComputedRef<string>
   submit: () => Promise<void>
   retryConnection: () => Promise<void>
+  toggleRecoveryHelp: () => void
+  copyRecoveryCommand: () => Promise<void>
 }
 
 function setupView(): LoginBindings {
@@ -79,6 +86,11 @@ beforeEach(() => {
   mocks.sessionState.authenticated = false
   mocks.sessionState.error = ''
   mocks.refresh.mockResolvedValue(undefined)
+  mocks.clipboardWriteText.mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText: mocks.clipboardWriteText },
+    configurable: true,
+  })
   mocks.login.mockImplementation(async () => {
     mocks.sessionState.authenticated = true
   })
@@ -152,5 +164,30 @@ describe('LoginView console transition', () => {
 
     expect(mocks.refresh).toHaveBeenCalledWith(true)
     expect(mocks.replace).toHaveBeenCalledWith('/setup')
+  })
+
+  it('shows local-only recovery guidance and copies the restart-safe command', async () => {
+    const view = setupView()
+
+    view.toggleRecoveryHelp()
+    expect(view.recoveryHelpVisible.value).toBe(true)
+    expect(view.recoveryCommand).toContain('panel reset-password')
+    expect(view.recoveryCommand).toContain('trap cleanup EXIT')
+    expect(view.recoveryCommand).not.toContain('--disable-2fa')
+
+    await view.copyRecoveryCommand()
+
+    expect(mocks.clipboardWriteText).toHaveBeenCalledWith(view.recoveryCommand)
+    expect(view.recoveryCommandCopied.value).toBe(true)
+  })
+
+  it('keeps the command selectable when clipboard permission is denied', async () => {
+    mocks.clipboardWriteText.mockRejectedValue(new Error('clipboard denied'))
+    const view = setupView()
+
+    await view.copyRecoveryCommand()
+
+    expect(view.recoveryCommandCopied.value).toBe(false)
+    expect(view.recoveryCommandCopyFailed.value).toBe(true)
   })
 })

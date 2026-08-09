@@ -635,6 +635,65 @@ func (s *Service) ChangePassword(userID, currentPassword, newPassword string) er
 	return nil
 }
 
+// RecoverPassword replaces an administrator password after local host access
+// has already established authority. The store commits the credential change,
+// session revocation, account lockout cleanup, optional TOTP removal, and audit
+// event atomically. This method is intentionally not exposed through HTTP.
+func (s *Service) RecoverPassword(userID, newPassword string, disableTOTP bool) (PublicUser, error) {
+	if err := validatePassword(newPassword); err != nil {
+		return PublicUser{}, err
+	}
+
+	select {
+	case s.hashSlots <- struct{}{}:
+		defer func() { <-s.hashSlots }()
+	default:
+		return PublicUser{}, &RateLimitError{RetryAfter: time.Second}
+	}
+
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+
+	user, err := s.store.UserByID(userID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return PublicUser{}, ErrInvalidCredentials
+		}
+		return PublicUser{}, fmt.Errorf("read user for password recovery: %w", err)
+	}
+	newHash, err := s.hasher.Hash(newPassword)
+	if err != nil {
+		return PublicUser{}, fmt.Errorf("hash recovered password: %w", err)
+	}
+	eventID, err := randomToken(18)
+	if err != nil {
+		return PublicUser{}, fmt.Errorf("create password recovery audit ID: %w", err)
+	}
+	now := s.now()
+	change := map[string]any{"twoFactorDisabled": disableTOTP}
+	if err := s.store.RecoverUserPassword(store.PasswordRecovery{
+		UserID: user.ID, ExpectedHash: user.PasswordHash, NewHash: newHash,
+		DisableTOTP: disableTOTP, UpdatedAt: now,
+		AuditEvent: store.AuditEvent{
+			ID: eventID, OccurredAt: now, ActorType: "cli", Action: "auth.password.recover",
+			TargetKind: "user", TargetID: user.ID, Result: "success", Change: change,
+		},
+		MaxAuditEntries: 10_000,
+	}); err != nil {
+		if errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrNotFound) {
+			return PublicUser{}, ErrInvalidCredentials
+		}
+		return PublicUser{}, fmt.Errorf("recover password: %w", err)
+	}
+	if disableTOTP {
+		user.TOTPSecret = ""
+		user.TOTPEnabledAt = nil
+		user.TOTPLastUsedStep = 0
+		user.TOTPRecoveryCodeHashes = nil
+	}
+	return publicUser(user), nil
+}
+
 // ChangeUsername verifies the current password before changing the login name.
 // The store updates the identity and revokes all sessions atomically so no
 // session continues to expose stale account data.
