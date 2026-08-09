@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   MAX_EMBEDDED_BROWSER_TABS,
   MAX_LIVE_EMBEDDED_BROWSER_TABS,
-  preferredEmbeddedBrowserSearchEngine,
   resolveEmbeddedBrowserInput,
   resolveEmbeddedBrowserStartInput,
   resolveEmbeddedBrowserTarget,
@@ -38,29 +37,25 @@ describe('embedded browser target', () => {
     expect(resolveEmbeddedBrowserInput('javascript:alert(1)')).toBeUndefined()
   })
 
-  it('keeps addresses direct while resolving start-page keywords as regional searches', () => {
-    expect(resolveEmbeddedBrowserStartInput('example.com/docs', 'CN', 'https:')).toMatchObject({
+  it('keeps addresses direct while resolving every start-page search through Bing', () => {
+    expect(resolveEmbeddedBrowserStartInput('example.com/docs', 'https:')).toMatchObject({
       kind: 'url',
       target: { href: 'https://example.com/docs' },
     })
 
-    const domestic = resolveEmbeddedBrowserStartInput('KPanel 部署教程', 'CN', 'https:')
-    expect(domestic).toMatchObject({ kind: 'search', query: 'KPanel 部署教程', searchEngine: 'bing' })
-    expect(new URL(domestic!.target.href).hostname).toBe('cn.bing.com')
+    const domestic = resolveEmbeddedBrowserStartInput('KPanel 部署教程', 'https:')
+    expect(domestic).toMatchObject({ kind: 'search', query: 'KPanel 部署教程' })
+    expect(new URL(domestic!.target.href).hostname).toBe('www.bing.com')
     expect(new URL(domestic!.target.href).searchParams.get('q')).toBe('KPanel 部署教程')
 
-    const international = resolveEmbeddedBrowserStartInput('KPanel docs', 'US', 'https:')
-    expect(international).toMatchObject({ kind: 'search', query: 'KPanel docs', searchEngine: 'google' })
-    expect(new URL(international!.target.href).hostname).toBe('www.google.com')
-    expect(new URL(international!.target.href).searchParams.get('igu')).toBe('1')
+    const international = resolveEmbeddedBrowserStartInput('KPanel docs', 'https:')
+    expect(international).toMatchObject({ kind: 'search', query: 'KPanel docs' })
+    expect(new URL(international!.target.href).hostname).toBe('www.bing.com')
     expect(new URL(international!.target.href).searchParams.get('q')).toBe('KPanel docs')
   })
 
-  it('falls back to Bing for unknown location and never searches active-scheme input', () => {
-    expect(preferredEmbeddedBrowserSearchEngine('')).toBe('bing')
-    expect(preferredEmbeddedBrowserSearchEngine('cn')).toBe('bing')
-    expect(preferredEmbeddedBrowserSearchEngine('DE')).toBe('google')
-    expect(resolveEmbeddedBrowserStartInput('javascript:alert(1)', 'CN')).toBeUndefined()
+  it('never searches active-scheme input', () => {
+    expect(resolveEmbeddedBrowserStartInput('javascript:alert(1)')).toBeUndefined()
   })
 
   it('keeps tab and live-frame resource limits small and explicit', () => {

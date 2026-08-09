@@ -8,7 +8,6 @@ import WebBrowserView from './WebBrowserView.vue'
 import {
   EMBEDDED_BROWSER_SLEEP_MS,
   MAX_EMBEDDED_BROWSER_TABS,
-  embeddedBrowserCountryCodeKey,
   embeddedBrowserShortcutsKey,
   type EmbeddedBrowserShortcut,
 } from '@/lib/embeddedBrowser'
@@ -34,7 +33,6 @@ const configuredShortcuts: EmbeddedBrowserShortcut[] = [
 async function mountBrowser(
   initialPath = '/browser',
   active = ref(true),
-  countryCode = ref(''),
 ): Promise<{ wrapper: VueWrapper; router: Router }> {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -47,7 +45,6 @@ async function mountBrowser(
       plugins: [router],
       provide: {
         [embeddedBrowserShortcutsKey as symbol]: ref(configuredShortcuts),
-        [embeddedBrowserCountryCodeKey as symbol]: countryCode,
         [desktopWindowActiveKey as symbol]: active,
       },
     },
@@ -100,26 +97,25 @@ describe('WebBrowserView', () => {
     wrapper.unmount()
   })
 
-  it('searches with Bing in China and Google in other identified regions', async () => {
-    const domestic = await mountBrowser('/browser', ref(true), ref('CN'))
+  it('uses Bing global search and leaves regional routing to Bing', async () => {
+    const domestic = await mountBrowser('/browser')
     expect(domestic.wrapper.text()).toContain('Bing')
     const domesticInput = domestic.wrapper.get('.embedded-browser__start-form input')
     await domesticInput.setValue('KPanel 部署教程')
     await domesticInput.trigger('keydown', { key: 'Enter' })
     await nextTick()
     const bingURL = new URL(domestic.wrapper.get('iframe').attributes('src')!)
-    expect(bingURL.hostname).toBe('cn.bing.com')
+    expect(bingURL.hostname).toBe('www.bing.com')
     expect(bingURL.searchParams.get('q')).toBe('KPanel 部署教程')
     expect(domestic.wrapper.get('[role="tab"]').text()).toContain('搜索：KPanel 部署教程')
     domestic.wrapper.unmount()
 
-    const international = await mountBrowser('/browser', ref(true), ref('US'))
-    expect(international.wrapper.text()).toContain('Google')
+    const international = await mountBrowser('/browser')
+    expect(international.wrapper.text()).toContain('Bing')
     await visitFromStart(international.wrapper, 'KPanel documentation')
-    const googleURL = new URL(international.wrapper.get('iframe').attributes('src')!)
-    expect(googleURL.hostname).toBe('www.google.com')
-    expect(googleURL.searchParams.get('igu')).toBe('1')
-    expect(googleURL.searchParams.get('q')).toBe('KPanel documentation')
+    const bingURLInternational = new URL(international.wrapper.get('iframe').attributes('src')!)
+    expect(bingURLInternational.hostname).toBe('www.bing.com')
+    expect(bingURLInternational.searchParams.get('q')).toBe('KPanel documentation')
     international.wrapper.unmount()
   })
 

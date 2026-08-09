@@ -17,9 +17,7 @@ import {
   EMBEDDED_BROWSER_SLEEP_MS,
   MAX_EMBEDDED_BROWSER_TABS,
   MAX_LIVE_EMBEDDED_BROWSER_TABS,
-  embeddedBrowserCountryCodeKey,
   embeddedBrowserShortcutsKey,
-  preferredEmbeddedBrowserSearchEngine,
   resolveEmbeddedBrowserInput,
   resolveEmbeddedBrowserStartInput,
   resolveEmbeddedBrowserTarget,
@@ -53,14 +51,11 @@ usePhraseCatalog(() => import('@/i18n/pages/WebBrowserView/en-US').then((module)
 
 const fallbackShortcuts = ref<EmbeddedBrowserShortcut[]>([])
 const browserShortcuts = inject(embeddedBrowserShortcutsKey, fallbackShortcuts)
-const fallbackCountryCode = ref('')
-const browserCountryCode = inject(embeddedBrowserCountryCodeKey, fallbackCountryCode)
 const fallbackWindowActive = ref(true)
 const windowActive = inject(desktopWindowActiveKey, fallbackWindowActive)
 const titlebarTarget = inject(desktopWindowTitlebarTargetKey, ref<HTMLElement>())
 const startPageShortcuts = computed(() => browserShortcuts.value.slice(0, START_PAGE_SHORTCUT_LIMIT))
-const searchEngine = computed(() => preferredEmbeddedBrowserSearchEngine(browserCountryCode.value))
-const searchEngineName = computed(() => searchEngine.value === 'bing' ? 'Bing' : 'Google')
+const searchEngineName = 'Bing'
 
 const tabs = ref<BrowserTab[]>([])
 const activeTabID = ref('')
@@ -296,7 +291,7 @@ function submitAddress(): void {
 }
 
 function submitStartInput(): void {
-  const resolution = resolveEmbeddedBrowserStartInput(addressValue.value, browserCountryCode.value)
+  const resolution = resolveEmbeddedBrowserStartInput(addressValue.value)
   if (!resolution) {
     addressInvalid.value = true
     return
