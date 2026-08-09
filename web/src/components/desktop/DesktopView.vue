@@ -29,7 +29,7 @@ import {
 } from '@/lib/desktopEntries'
 import { api, type SystemResourceSnapshot } from '@/lib/api'
 import { prefetchNavigationRoute } from '@/lib/navigation'
-import { embeddedBrowserShortcutsKey } from '@/lib/embeddedBrowser'
+import { embeddedBrowserCountryCodeKey, embeddedBrowserShortcutsKey } from '@/lib/embeddedBrowser'
 import {
   desktopCloseGuardCoordinator,
   desktopCloseGuardCoordinatorKey,
@@ -130,6 +130,10 @@ const browserShortcuts = computed(() => (entries.value?.visible || []).flatMap((
     : []
 )))
 provide(embeddedBrowserShortcutsKey, browserShortcuts)
+const browserCountryCode = computed(() => (
+  entries.value?.publicNetwork?.countryCode?.trim().toUpperCase() || ''
+))
+provide(embeddedBrowserCountryCodeKey, browserCountryCode)
 const systemResources = ref<SystemResourceSnapshot>()
 const entriesLoading = ref(!entries.value)
 let entriesAbort: AbortController | undefined

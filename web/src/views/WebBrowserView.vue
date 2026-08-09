@@ -7,6 +7,7 @@ import {
   MoonStar,
   Plus,
   RefreshCw,
+  Search,
   ShieldCheck,
   TriangleAlert,
   X,
@@ -16,8 +17,11 @@ import {
   EMBEDDED_BROWSER_SLEEP_MS,
   MAX_EMBEDDED_BROWSER_TABS,
   MAX_LIVE_EMBEDDED_BROWSER_TABS,
+  embeddedBrowserCountryCodeKey,
   embeddedBrowserShortcutsKey,
+  preferredEmbeddedBrowserSearchEngine,
   resolveEmbeddedBrowserInput,
+  resolveEmbeddedBrowserStartInput,
   resolveEmbeddedBrowserTarget,
   type EmbeddedBrowserShortcut,
   type EmbeddedBrowserTarget,
@@ -42,16 +46,21 @@ interface PendingBrowserRequest {
 }
 
 const START_PAGE_SHORTCUT_LIMIT = 12
+const SEARCH_TAB_TITLE_LIMIT = 64
 const route = useRoute()
 const i18n = useI18n()
 usePhraseCatalog(() => import('@/i18n/pages/WebBrowserView/en-US').then((module) => module.default))
 
 const fallbackShortcuts = ref<EmbeddedBrowserShortcut[]>([])
 const browserShortcuts = inject(embeddedBrowserShortcutsKey, fallbackShortcuts)
+const fallbackCountryCode = ref('')
+const browserCountryCode = inject(embeddedBrowserCountryCodeKey, fallbackCountryCode)
 const fallbackWindowActive = ref(true)
 const windowActive = inject(desktopWindowActiveKey, fallbackWindowActive)
 const titlebarTarget = inject(desktopWindowTitlebarTargetKey, ref<HTMLElement>())
 const startPageShortcuts = computed(() => browserShortcuts.value.slice(0, START_PAGE_SHORTCUT_LIMIT))
+const searchEngine = computed(() => preferredEmbeddedBrowserSearchEngine(browserCountryCode.value))
+const searchEngineName = computed(() => searchEngine.value === 'bing' ? 'Bing' : 'Google')
 
 const tabs = ref<BrowserTab[]>([])
 const activeTabID = ref('')
@@ -284,6 +293,22 @@ function submitAddress(): void {
   addressInvalid.value = false
   const tab = activeTab.value || createStartTab()
   applyTargetToTab(tab, target)
+}
+
+function submitStartInput(): void {
+  const resolution = resolveEmbeddedBrowserStartInput(addressValue.value, browserCountryCode.value)
+  if (!resolution) {
+    addressInvalid.value = true
+    return
+  }
+  addressInvalid.value = false
+  const tab = activeTab.value || createStartTab()
+  applyTargetToTab(tab, resolution.target)
+  if (resolution.kind === 'search' && resolution.query) {
+    tab.title = i18n.t('desktop.browserSearchTabTitle', {
+      query: resolution.query.slice(0, SEARCH_TAB_TITLE_LIMIT),
+    })
+  }
 }
 
 function openShortcut(shortcut: EmbeddedBrowserShortcut): void {
@@ -545,9 +570,9 @@ onBeforeUnmount(() => {
       <div v-if="!activeTab?.target" class="embedded-browser__start">
         <div class="embedded-browser__start-mark" aria-hidden="true"><Globe2 :size="30" /></div>
         <h1>{{ i18n.t('desktop.browserStartTitle') }}</h1>
-        <p>{{ i18n.t('desktop.browserStartDescription') }}</p>
-        <form class="embedded-browser__start-form" @submit.prevent="submitAddress">
-          <Globe2 :size="19" aria-hidden="true" />
+        <p>{{ i18n.t('desktop.browserStartDescription', { engine: searchEngineName }) }}</p>
+        <form class="embedded-browser__start-form" @submit.prevent="submitStartInput">
+          <Search :size="19" aria-hidden="true" />
           <input
             v-model="addressValue"
             type="text"
@@ -556,13 +581,14 @@ onBeforeUnmount(() => {
             autocomplete="off"
             autocapitalize="off"
             spellcheck="false"
-            :placeholder="i18n.t('desktop.browserAddressPlaceholder')"
-            :aria-label="i18n.t('desktop.browserAddressLabel')"
+            :placeholder="i18n.t('desktop.browserStartPlaceholder')"
+            :aria-label="i18n.t('desktop.browserStartInputLabel')"
             :aria-invalid="addressInvalid"
             autofocus
             @input="addressInvalid = false"
+            @keydown.enter.prevent="submitStartInput"
           >
-          <button type="submit">{{ i18n.t('desktop.browserVisit') }}</button>
+          <button type="submit">{{ i18n.t('desktop.browserGo') }}</button>
         </form>
         <span v-if="addressInvalid" class="embedded-browser__input-error" role="alert">
           {{ i18n.t('desktop.browserInvalidURL') }}
