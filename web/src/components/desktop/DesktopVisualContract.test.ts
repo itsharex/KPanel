@@ -45,7 +45,7 @@ describe('desktop visual and interaction contract', () => {
 
   it('keeps desktop icons and labels crisp in both color themes', () => {
     expect(styles).toMatch(/\.desktop__icon-glyph--dynamic::before\s*\{[^}]*display:\s*none;/)
-    expect(styles).toMatch(/\.desktop__icon-label\s*\{[^}]*font-size:\s*11px;/)
+    expect(styles).toMatch(/\.desktop__icon-label\s*\{[^}]*height:\s*18px;[^}]*padding:\s*0 6px;[^}]*font-size:\s*11px;[^}]*line-height:\s*16px;/)
     expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon-label\s*\{[^}]*text-shadow:\s*none;/)
   })
 
