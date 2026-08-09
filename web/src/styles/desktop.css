@@ -1207,6 +1207,12 @@ body.desktop-mode-open::-webkit-scrollbar {
   place-items: center;
 }
 
+.desktop-window__body:has(> .app-script-page) {
+  overflow: hidden;
+  background: var(--terminal-shell-background);
+  scrollbar-gutter: auto;
+}
+
 .desktop-window__loading,
 .desktop-window__load-error {
   display: grid;

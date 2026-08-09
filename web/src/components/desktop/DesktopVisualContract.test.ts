@@ -61,6 +61,10 @@ describe('desktop visual and interaction contract', () => {
     expect(browserSource).toMatch(/\.embedded-browser__start-form\s*\{[^}]*box-shadow:\s*var\(--shadow-sm\);/)
   })
 
+  it('does not reserve a light outer scrollbar gutter around script terminals', () => {
+    expect(styles).toMatch(/\.desktop-window__body:has\(> \.app-script-page\)\s*\{[^}]*overflow:\s*hidden;[^}]*background:\s*var\(--terminal-shell-background\);[^}]*scrollbar-gutter:\s*auto;/)
+  })
+
   it('keeps focused, minimized and closing window states keyboard-safe', () => {
     expect(windowSource).toContain('tabindex="-1"')
     expect(windowSource).toContain(':inert="windowState.minimized || closing || undefined"')
