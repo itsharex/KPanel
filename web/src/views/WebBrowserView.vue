@@ -455,7 +455,7 @@ onBeforeUnmount(() => {
                 alt=""
                 @error="hideBrokenIcon"
               >
-              <Globe2 v-else :size="14" aria-hidden="true" />
+              <Globe2 v-else :size="15" aria-hidden="true" />
               <span>{{ tab.title }}</span>
               <MoonStar
                 v-if="tab.target && !tab.target.mixedContent && !liveTabIDs.has(tab.id)"
@@ -655,6 +655,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   color: var(--text);
   background: var(--surface-subtle);
+  font-size: 13px;
 }
 
 .embedded-browser__tabs {
@@ -708,6 +709,8 @@ onBeforeUnmount(() => {
   border: 1px solid transparent;
   border-bottom: 0;
   border-radius: 9px 9px 0 0;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .embedded-browser__tab--active {
@@ -718,15 +721,15 @@ onBeforeUnmount(() => {
 
 .embedded-browser__tabs--titlebar .embedded-browser__tab {
   height: 30px;
-  background: color-mix(in srgb, var(--surface) 58%, transparent);
+  background: color-mix(in srgb, var(--surface) 84%, var(--surface-raised));
   border-bottom: 1px solid transparent;
   border-radius: 8px;
 }
 
 .embedded-browser__tabs--titlebar .embedded-browser__tab--active {
-  background: color-mix(in srgb, var(--surface) 92%, var(--surface-raised));
-  border-color: color-mix(in srgb, var(--border) 84%, transparent);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 14%);
 }
 
 .embedded-browser__tab-main {
@@ -744,6 +747,9 @@ onBeforeUnmount(() => {
 }
 
 .embedded-browser__tab-main > svg:first-child { flex: 0 0 auto; color: var(--brand); }
+.embedded-browser__tab-main > svg:first-child,
+.embedded-browser__tool > svg,
+.embedded-browser__address > svg { stroke-width: 2.15; }
 .embedded-browser__tab-main > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .embedded-browser__tab-icon { width: 15px; height: 15px; flex: 0 0 auto; object-fit: cover; border-radius: 4px; }
 .embedded-browser__tab-sleep { flex: 0 0 auto; margin-left: auto; color: var(--muted); }
@@ -812,7 +818,8 @@ onBeforeUnmount(() => {
 
 .embedded-browser__address--invalid { border-color: var(--danger); }
 .embedded-browser__address svg { flex: 0 0 auto; color: var(--success); }
-.embedded-browser__address input { width: 100%; min-width: 0; color: var(--text); background: transparent; border: 0; outline: none; font-size: 11px; }
+.embedded-browser__address input { width: 100%; min-width: 0; color: var(--text); background: transparent; border: 0; outline: none; font-size: 12px; font-weight: 500; }
+.embedded-browser__address input::placeholder { color: var(--muted); opacity: 1; }
 .embedded-browser__external { flex: 0 0 auto; white-space: nowrap; }
 
 .embedded-browser__limit {
@@ -894,8 +901,9 @@ onBeforeUnmount(() => {
   box-shadow: 0 14px 32px rgb(3 105 161 / 22%);
 }
 
-.embedded-browser__start h1 { margin: 16px 0 4px; color: var(--text); font-size: clamp(20px, 3vw, 28px); }
-.embedded-browser__start > p { margin: 0 0 20px; color: var(--muted); font-size: 12px; }
+.embedded-browser__start-mark > svg { stroke-width: 2.2; }
+.embedded-browser__start h1 { margin: 16px 0 5px; color: var(--text); font-size: clamp(22px, 3vw, 29px); font-weight: 700; letter-spacing: -.025em; line-height: 1.2; }
+.embedded-browser__start > p { margin: 0 0 20px; color: var(--text-soft); font-size: 13px; font-weight: 500; line-height: 1.5; }
 
 .embedded-browser__start-form {
   display: flex;
@@ -910,20 +918,22 @@ onBeforeUnmount(() => {
   box-shadow: 0 14px 38px rgb(15 23 42 / 10%);
 }
 
-.embedded-browser__start-form > svg { flex: 0 0 auto; color: var(--brand); }
-.embedded-browser__start-form input { min-width: 0; flex: 1 1 auto; color: var(--text); background: transparent; border: 0; outline: none; font-size: 14px; }
-.embedded-browser__start-form button { height: 38px; padding: 0 17px; color: #fff; background: var(--brand); border: 0; border-radius: 11px; cursor: pointer; white-space: nowrap; }
+.embedded-browser__start-form > svg { flex: 0 0 auto; color: var(--brand); stroke-width: 2.2; }
+.embedded-browser__start-form input { min-width: 0; flex: 1 1 auto; color: var(--text); background: transparent; border: 0; outline: none; font-size: 14px; font-weight: 500; }
+.embedded-browser__start-form input::placeholder { color: var(--muted); opacity: 1; }
+.embedded-browser__start-form button { height: 38px; padding: 0 17px; color: #fff; background: var(--brand); border: 0; border-radius: 11px; cursor: pointer; font-size: 13px; font-weight: 700; white-space: nowrap; }
 .embedded-browser__start-form:focus-within { border-color: var(--brand); box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 11%, transparent), 0 14px 38px rgb(15 23 42 / 10%); }
 .embedded-browser__input-error { margin-top: 8px; color: var(--danger); font-size: 11px; }
 
 .embedded-browser__shortcuts { width: 100%; margin-top: 28px; text-align: left; }
-.embedded-browser__shortcuts h2 { margin: 0 0 10px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.embedded-browser__shortcuts h2 { margin: 0 0 10px; color: var(--text-soft); font-size: 12px; font-weight: 700; }
 .embedded-browser__shortcuts > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.embedded-browser__shortcuts button { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 8px; color: var(--text); background: color-mix(in srgb, var(--surface) 82%, transparent); border: 1px solid var(--border); border-radius: 11px; cursor: pointer; }
-.embedded-browser__shortcuts button:hover { border-color: color-mix(in srgb, var(--brand) 34%, var(--border)); background: var(--surface); }
-.embedded-browser__shortcuts button > span { position: relative; display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; color: var(--brand); background: var(--brand-soft); border-radius: 8px; overflow: hidden; }
+.embedded-browser__shortcuts button { display: flex; min-width: 0; min-height: 50px; align-items: center; gap: 9px; padding: 8px 9px; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 11px; box-shadow: 0 1px 2px rgb(0 0 0 / 8%); cursor: pointer; }
+.embedded-browser__shortcuts button:hover { border-color: color-mix(in srgb, var(--brand) 48%, var(--border)); background: var(--surface-raised); }
+.embedded-browser__shortcuts button > span { position: relative; display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; color: var(--brand); background: var(--brand-soft); border: 1px solid color-mix(in srgb, var(--brand) 18%, transparent); border-radius: 9px; overflow: hidden; }
+.embedded-browser__shortcuts button > span > svg { stroke-width: 2.2; }
 .embedded-browser__shortcuts img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.embedded-browser__shortcuts strong { overflow: hidden; font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.embedded-browser__shortcuts strong { overflow: hidden; font-size: 12px; font-weight: 600; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 
 .embedded-browser__hint { display: flex; min-width: 0; align-items: center; gap: 6px; padding: 5px 11px; overflow: hidden; color: var(--muted); background: var(--surface); border-top: 1px solid var(--border); font-size: 10px; white-space: nowrap; }
 .embedded-browser__hint svg { flex: 0 0 auto; color: var(--success); }
