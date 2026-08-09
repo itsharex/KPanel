@@ -1123,35 +1123,6 @@ body.desktop-mode-open::-webkit-scrollbar {
   letter-spacing: -.005em;
 }
 
-.desktop-window__back {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  place-items: center;
-  padding: 0;
-  color: var(--text-soft);
-  background: transparent;
-  border: 0;
-  border-radius: 7px;
-  cursor: default;
-  transition: color 120ms ease, background-color 120ms ease;
-}
-
-.desktop-window__back:not(:disabled):hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--text) 9%, transparent);
-}
-
-.desktop-window__back:disabled {
-  opacity: .28;
-}
-
-.desktop-window__back:focus-visible {
-  outline: 2px solid var(--brand);
-  outline-offset: 1px;
-}
-
 .desktop-window__title-label {
   overflow: hidden;
   text-overflow: ellipsis;

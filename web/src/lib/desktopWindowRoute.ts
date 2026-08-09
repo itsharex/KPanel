@@ -52,9 +52,11 @@ type NavigationPath = Parameters<typeof loadNavigationRoute>[0]
 
 export type WindowGlobalNavigation = (fullPath: string) => void
 export type WindowDesktopNavigation = (fullPath: string) => boolean
+export type WindowHistoryNavigation = (delta: number) => void
 
 const GLOBAL_HANDOFF_ROUTE_NAMES = new Set(['setup', 'login'])
 const WINDOW_HISTORY_INDEX_KEY = '__kpanelWindowHistoryIndex'
+const externallySynchronizedRouters = new WeakSet<Router>()
 
 function windowHistoryIndex(state: HistoryState): number {
   const value = state[WINDOW_HISTORY_INDEX_KEY]
@@ -77,6 +79,30 @@ function createWindowMemoryHistory(): RouterHistory {
 /** Whether this independent desktop-window router has a real previous entry. */
 export function windowRouterCanGoBack(router: Router): boolean {
   return windowHistoryIndex(router.options.history.state) > 0
+}
+
+/** Replace a window route during native Back / Forward without cross-app handoff. */
+export async function synchronizeWindowRoute(
+  router: Router,
+  fullPath: string,
+  state: HistoryState = {},
+): Promise<void> {
+  externallySynchronizedRouters.add(router)
+  try {
+    const resolved = router.resolve(fullPath)
+    if (router.currentRoute.value.fullPath === resolved.fullPath) {
+      router.options.history.replace(resolved.fullPath, state)
+      return
+    }
+    await router.replace({
+      path: resolved.path,
+      query: resolved.query,
+      hash: resolved.hash,
+      state,
+    })
+  } finally {
+    externallySynchronizedRouters.delete(router)
+  }
 }
 
 /** AiView is not part of the shared lazy route registry; load it directly. */
@@ -221,6 +247,7 @@ export function createWindowRouter(
   initialPath: string,
   globalNavigation: WindowGlobalNavigation = navigateGlobal,
   desktopNavigation?: WindowDesktopNavigation,
+  historyNavigation?: WindowHistoryNavigation,
 ): Router {
   const router = createRouter({
     history: createWindowMemoryHistory(),
@@ -238,6 +265,12 @@ export function createWindowRouter(
     traversingWindowHistory = false
   })
 
+  if (historyNavigation) {
+    router.go = (delta) => historyNavigation(delta)
+    router.back = () => historyNavigation(-1)
+    router.forward = () => historyNavigation(1)
+  }
+
   // Authentication pages belong to the application router. In particular,
   // Settings signs out through its injected router; hand that navigation back
   // to the top-level document instead of rendering a login page in a window.
@@ -248,6 +281,7 @@ export function createWindowRouter(
     }
     if (
       !traversingWindowHistory
+      && !externallySynchronizedRouters.has(router)
       && from.path !== '/'
       && canonicalDesktopAppPath(to.path) !== canonicalDesktopAppPath(from.path)
       && desktopNavigation?.(to.fullPath)

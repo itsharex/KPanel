@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, provide, ref, shallowRef, watch } from 'vue'
 import type { Component } from 'vue'
-import { ChevronLeft, Copy, LoaderCircle, Maximize2, Minus, RotateCw, TriangleAlert, X } from '@lucide/vue'
+import { Copy, LoaderCircle, Maximize2, Minus, RotateCw, TriangleAlert, X } from '@lucide/vue'
 import {
   createWindowRouter,
   reactiveRouteFor,
   resolveWindowComponent,
-  windowRouterCanGoBack,
+  synchronizeWindowRoute,
 } from '@/lib/desktopWindowRoute'
 import {
+  desktopBrowserHistoryKey,
   desktopWindowActiveKey,
   desktopCloseGuardCoordinatorKey,
   desktopWindowCloseGuardKey,
@@ -22,6 +23,7 @@ import { useToast } from '@/stores/toast'
 import { useI18n } from '@/i18n'
 import { useWindowGesture } from '@/composables/useWindowGesture'
 import type { DesktopWindowState } from '@/stores/desktopMode'
+import type { DesktopBrowserHistoryPoint } from '@/lib/desktopBrowserHistory'
 
 /**
  * One desktop window. The window renders the page component for its route
@@ -41,7 +43,13 @@ const props = defineProps<{
 const desktop = useDesktopMode()
 const i18n = useI18n()
 const toast = useToast()
-const router = createWindowRouter(props.windowState.path, undefined, handoffDesktopRoute)
+const browserHistory = inject(desktopBrowserHistoryKey, undefined)
+const router = createWindowRouter(
+  props.windowState.path,
+  undefined,
+  handoffDesktopRoute,
+  browserHistory?.go,
+)
 // Vue component definitions must stay raw. A deep ref proxies object-based
 // SFCs and triggers a runtime warning every time a desktop window opens.
 const component = shallowRef<Component>()
@@ -86,12 +94,6 @@ provide(desktopWindowCloseGuardKey, {
 })
 
 const title = computed(() => props.title || i18n.t(props.windowState.titleKey as Parameters<typeof i18n.t>[0]))
-const canNavigateBack = computed(() => {
-  // Keep this computed tied to route changes; memory-history state is not a Vue ref.
-  void router.currentRoute.value.fullPath
-  return windowRouterCanGoBack(router)
-})
-
 watch(
   () => props.iconUrl,
   () => { iconFailed.value = false },
@@ -109,14 +111,31 @@ function titleKeyForPath(path: string): string {
   return findDesktopApp(path)?.labelKey ?? props.windowState.titleKey
 }
 
+function browserHistoryPoint(fullPath = router.currentRoute.value.fullPath): DesktopBrowserHistoryPoint {
+  const depth = router.options.history.state.monitoringZoomDepth
+  return {
+    windowId: props.windowState.id,
+    fullPath,
+    ...(typeof depth === 'number' && Number.isSafeInteger(depth) && depth >= 0 && depth <= 32
+      ? { monitoringZoomDepth: depth }
+      : {}),
+  }
+}
+
+let lastBrowserHistoryPoint = browserHistoryPoint(props.windowState.path)
+
 function handoffDesktopRoute(fullPath: string): boolean {
   const app = findDesktopApp(fullPath)
   if (!app) return false
+  const from = browserHistoryPoint()
   const windowId = desktop.openWindow(fullPath, titleKeyForPath(fullPath), app.allowMultiple, true)
   if (windowId === 0) {
     toast.show(i18n.t('desktop.windowLimitTitle'), {
       message: i18n.t('desktop.windowLimitMessage'),
     })
+  }
+  if (windowId !== 0) {
+    void browserHistory?.navigate(from, { windowId, fullPath })
   }
   return true
 }
@@ -186,16 +205,7 @@ function onPointerDownWindow(): void {
   desktop.focusWindow(props.windowState.id)
 }
 
-function navigateBack(): void {
-  if (canNavigateBack.value) router.back()
-}
-
 function onWindowKeyDown(event: KeyboardEvent): void {
-  if (event.altKey && event.key === 'ArrowLeft') {
-    event.preventDefault()
-    navigateBack()
-    return
-  }
   if (event.altKey && event.key === 'F4') {
     event.preventDefault()
     void onClose()
@@ -229,17 +239,54 @@ const stopRouteWatch = watch(
   (fullPath, previous) => {
     const path = router.currentRoute.value.path
     if (path === '/' || fullPath === previous) return
+    const nextPoint = browserHistoryPoint(fullPath)
     desktop.updateWindowRoute(props.windowState.id, fullPath, titleKeyForPath(path))
     void loadComponent(path)
+    if (previous && previous !== '/' && !synchronizingFromBrowserHistory) {
+      void browserHistory?.navigate(
+        { ...lastBrowserHistoryPoint, fullPath: previous },
+        nextPoint,
+      )
+    }
+    lastBrowserHistoryPoint = nextPoint
   },
 )
 
+let synchronizingFromBrowserHistory = false
+let browserHistorySyncSequence = 0
 const stopWindowPathWatch = watch(
   () => props.windowState.path,
-  (fullPath) => {
-    if (fullPath !== router.currentRoute.value.fullPath) void router.replace(fullPath)
+  async (fullPath) => {
+    if (fullPath === router.currentRoute.value.fullPath) return
+    synchronizingFromBrowserHistory = true
+    try {
+      await synchronizeWindowRoute(router, fullPath)
+      lastBrowserHistoryPoint = browserHistoryPoint(fullPath)
+    } finally {
+      synchronizingFromBrowserHistory = false
+    }
   },
 )
+
+const stopBrowserHistory = browserHistory?.subscribe((point) => {
+  if (closing.value || point.windowId !== props.windowState.id) return
+  desktop.restoreWindow(props.windowState.id)
+  const sequence = ++browserHistorySyncSequence
+  synchronizingFromBrowserHistory = true
+  void synchronizeWindowRoute(
+    router,
+    point.fullPath,
+    typeof point.monitoringZoomDepth === 'number'
+      ? { monitoringZoomDepth: point.monitoringZoomDepth }
+      : {},
+  )
+    .catch(() => undefined)
+    .finally(() => {
+      if (sequence !== browserHistorySyncSequence) return
+      lastBrowserHistoryPoint = point
+      synchronizingFromBrowserHistory = false
+    })
+})
 
 const stopActiveWatch = watch(
   isActive,
@@ -274,8 +321,10 @@ function retryLoad(): void {
 
 onBeforeUnmount(() => {
   loadSequence += 1
+  browserHistorySyncSequence += 1
   stopRouteWatch()
   stopWindowPathWatch()
+  stopBrowserHistory?.()
   stopActiveWatch()
   if (closeTimer !== undefined) window.clearTimeout(closeTimer)
   if (openFrame !== undefined) window.cancelAnimationFrame(openFrame)
@@ -347,17 +396,6 @@ const handleEdges = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const
         </button>
       </div>
       <div class="desktop-window__title">
-        <button
-          class="desktop-window__back"
-          type="button"
-          :disabled="!canNavigateBack"
-          :aria-label="i18n.t('desktop.back')"
-          :title="i18n.t('desktop.back')"
-          @click="navigateBack"
-          @dblclick.stop
-        >
-          <ChevronLeft :size="16" :stroke-width="2" aria-hidden="true" />
-        </button>
         <span
           class="desktop-window__app-glyph"
           :class="{ 'desktop-window__app-glyph--image': iconUrl && !iconFailed }"

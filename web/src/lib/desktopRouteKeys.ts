@@ -1,5 +1,6 @@
 import type { InjectionKey, Ref } from 'vue'
 import type { Router, RouteLocationNormalizedLoaded } from 'vue-router'
+import type { DesktopBrowserHistory } from '@/lib/desktopBrowserHistory'
 import { routeLocationKey, routerKey, routerViewLocationKey } from 'vue-router'
 
 /**
@@ -23,6 +24,11 @@ export const desktopWindowActiveKey = Symbol('desktop-window-active') as Injecti
 export const desktopWindowTitlebarTargetKey = Symbol(
   'desktop-window-titlebar-target',
 ) as InjectionKey<Readonly<Ref<HTMLElement | undefined>>>
+
+/** Native document-history bridge shared by all independent desktop windows. */
+export const desktopBrowserHistoryKey = Symbol(
+  'desktop-browser-history',
+) as InjectionKey<DesktopBrowserHistory>
 
 export interface DesktopWindowCloseGuardRegistry {
   register: (guard: () => boolean | Promise<boolean>) => () => void

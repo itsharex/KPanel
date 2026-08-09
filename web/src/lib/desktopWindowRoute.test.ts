@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createWindowRouter,
   resolveWindowComponent,
+  synchronizeWindowRoute,
   windowRouteRecords,
   windowRouterCanGoBack,
 } from './desktopWindowRoute'
@@ -196,5 +197,30 @@ describe('desktop window route', () => {
     await router.push({ name: 'files', query: { path: '/home/web/site' } })
     expect(desktopNavigation).toHaveBeenCalledWith('/files?path=/home/web/site')
     expect(router.currentRoute.value.path).toBe('/sites/environment')
+  })
+
+  it('restores a native-history target in the same window without app handoff', async () => {
+    const desktopNavigation = vi.fn(() => true)
+    const router = createWindowRouter('/processes', vi.fn(), desktopNavigation)
+    await router.isReady()
+
+    await synchronizeWindowRoute(router, '/overview', { monitoringZoomDepth: 2 })
+
+    expect(router.currentRoute.value.path).toBe('/overview')
+    expect(router.options.history.state.monitoringZoomDepth).toBe(2)
+    expect(desktopNavigation).not.toHaveBeenCalled()
+  })
+
+  it('delegates view-level back and go actions to native document history', async () => {
+    const historyNavigation = vi.fn()
+    const router = createWindowRouter('/monitoring', vi.fn(), undefined, historyNavigation)
+    await router.isReady()
+
+    router.back()
+    router.go(-3)
+    router.forward()
+
+    expect(historyNavigation.mock.calls).toEqual([[-1], [-3], [1]])
+    expect(router.currentRoute.value.path).toBe('/monitoring')
   })
 })

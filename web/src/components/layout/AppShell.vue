@@ -7,6 +7,7 @@ import {
   h,
   onBeforeUnmount,
   onMounted,
+  provide,
   ref,
   watch,
 } from 'vue'
@@ -52,7 +53,11 @@ import { readSidebarCollapsed, writeSidebarCollapsed } from '@/lib/sidebarPrefer
 import { detectKPanelUpdate, kpanelUpdateHint } from '@/lib/kpanelUpdate'
 import { useI18n } from '@/i18n'
 import type { MessageKey } from '@/i18n/messages/zh-CN'
-import { desktopCloseGuardCoordinator } from '@/lib/desktopRouteKeys'
+import {
+  desktopBrowserHistoryKey,
+  desktopCloseGuardCoordinator,
+} from '@/lib/desktopRouteKeys'
+import { createDesktopBrowserHistory } from '@/lib/desktopBrowserHistory'
 
 interface NavigationItem {
   labelKey: MessageKey
@@ -76,6 +81,8 @@ const navigation: NavigationItem[] = [
 
 const route = useRoute()
 const router = useRouter()
+const desktopBrowserHistory = createDesktopBrowserHistory(router)
+provide(desktopBrowserHistoryKey, desktopBrowserHistory)
 const session = useSession()
 const panel = usePanelState()
 const theme = useTheme()
@@ -268,6 +275,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  desktopBrowserHistory.dispose()
   if (agentTimer) window.clearInterval(agentTimer)
   navigationWarmupCancelled = true
   if (navigationWarmupTimer) window.clearTimeout(navigationWarmupTimer)

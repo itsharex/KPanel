@@ -5,6 +5,11 @@ import { useRouter } from 'vue-router'
 import DesktopWindow from './DesktopWindow.vue'
 import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
 import WebBrowserView from '@/views/WebBrowserView.vue'
+import { desktopBrowserHistoryKey } from '@/lib/desktopRouteKeys'
+import type {
+  DesktopBrowserHistory,
+  DesktopBrowserHistoryPoint,
+} from '@/lib/desktopBrowserHistory'
 
 const routeMocks = vi.hoisted(() => ({
   resolveWindowComponent: vi.fn(),
@@ -18,6 +23,25 @@ vi.mock('@/lib/desktopWindowRoute', async (importOriginal) => ({
 function setupViewport(): void {
   Object.defineProperty(window, 'innerWidth', { value: 1280, configurable: true })
   Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true })
+}
+
+function createBrowserHistoryFixture() {
+  const listeners = new Set<(point: DesktopBrowserHistoryPoint) => void>()
+  const history: DesktopBrowserHistory = {
+    navigate: vi.fn().mockResolvedValue(undefined),
+    go: vi.fn(),
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    dispose: vi.fn(),
+  }
+  return {
+    history,
+    emit(point: DesktopBrowserHistoryPoint) {
+      for (const listener of [...listeners]) listener(point)
+    },
+  }
 }
 
 describe('DesktopWindow lazy view loading', () => {
@@ -103,7 +127,7 @@ describe('DesktopWindow lazy view loading', () => {
     wrapper.unmount()
   })
 
-  it('navigates back through files, monitoring, and process pages inside one window', async () => {
+  it('records page navigation for native Back and restores the matching window', async () => {
     routeMocks.resolveWindowComponent.mockResolvedValue({
       name: 'NavigableDesktopPageFixture',
       setup() {
@@ -111,16 +135,19 @@ describe('DesktopWindow lazy view loading', () => {
         return {
           openMonitoring: () => router.push('/monitoring'),
           openProcesses: () => router.push('/processes'),
+          goBack: () => router.back(),
         }
       },
       template: `
         <main>
           <button data-testid="open-monitoring" @click="openMonitoring">Monitoring</button>
           <button data-testid="open-processes" @click="openProcesses">Processes</button>
+          <button data-testid="go-back" @click="goBack">Back</button>
         </main>
       `,
     })
     const desktop = useDesktopMode()
+    const nativeHistory = createBrowserHistoryFixture()
     const id = desktop.openWindow('/overview', 'route.overview', false)
     const windowState = desktop.windows.value.find((item) => item.id === id)!
     const wrapper = mount(DesktopWindow, {
@@ -128,29 +155,49 @@ describe('DesktopWindow lazy view loading', () => {
         windowState,
         icon: () => null,
       },
+      global: {
+        provide: {
+          [desktopBrowserHistoryKey as symbol]: nativeHistory.history,
+        },
+      },
     })
 
     await flushPromises()
-    const back = wrapper.get('.desktop-window__back')
-    expect(back.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.desktop-window__back').exists()).toBe(false)
 
     await wrapper.get('[data-testid="open-monitoring"]').trigger('click')
     await flushPromises()
     expect(windowState.path).toBe('/monitoring')
-    expect(back.attributes('disabled')).toBeUndefined()
+    expect(nativeHistory.history.navigate).toHaveBeenLastCalledWith(
+      { windowId: id, fullPath: '/overview' },
+      { windowId: id, fullPath: '/monitoring' },
+    )
 
     await wrapper.get('[data-testid="open-processes"]').trigger('click')
     await flushPromises()
     expect(windowState.path).toBe('/processes')
-    expect(back.attributes('disabled')).toBeUndefined()
+    expect(nativeHistory.history.navigate).toHaveBeenLastCalledWith(
+      { windowId: id, fullPath: '/monitoring' },
+      { windowId: id, fullPath: '/processes' },
+    )
 
-    await back.trigger('click')
+    await wrapper.get('[data-testid="go-back"]').trigger('click')
+    expect(nativeHistory.history.go).toHaveBeenCalledWith(-1)
+    expect(windowState.path).toBe('/processes')
+
+    desktop.minimizeWindow(id)
+    nativeHistory.emit({ windowId: id + 1, fullPath: '/overview' })
+    expect(windowState.path).toBe('/processes')
+    expect(windowState.minimized).toBe(true)
+
+    nativeHistory.emit({ windowId: id, fullPath: '/monitoring' })
     await vi.waitFor(() => expect(windowState.path).toBe('/monitoring'))
     expect(desktop.windows.value).toHaveLength(1)
+    expect(windowState.minimized).toBe(false)
 
-    await wrapper.trigger('keydown', { altKey: true, key: 'ArrowLeft' })
+    nativeHistory.emit({ windowId: id, fullPath: '/overview' })
     await vi.waitFor(() => expect(windowState.path).toBe('/overview'))
-    expect(back.attributes('disabled')).toBeDefined()
+    expect(desktop.focusedId.value).toBe(id)
     wrapper.unmount()
   })
 
