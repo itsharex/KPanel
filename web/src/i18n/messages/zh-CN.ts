@@ -174,6 +174,7 @@ export const zhCNMessages = {
   'desktop.maximize': '最大化',
   'desktop.restore': '还原',
   'desktop.close': '关闭',
+  'desktop.back': '返回上一页',
   'desktop.windowLoadFailed': '窗口内容加载失败',
   'desktop.windowLimitTitle': '窗口数量已达上限',
   'desktop.windowLimitMessage': '最多同时打开 8 个窗口，请先关闭一个窗口后再试。',

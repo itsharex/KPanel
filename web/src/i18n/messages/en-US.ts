@@ -176,6 +176,7 @@ export const enUSMessages = {
   'desktop.maximize': 'Maximize',
   'desktop.restore': 'Restore',
   'desktop.close': 'Close',
+  'desktop.back': 'Go back',
   'desktop.windowLoadFailed': 'Window content failed to load',
   'desktop.windowLimitTitle': 'Window limit reached',
   'desktop.windowLimitMessage': 'Up to 8 windows can be open at once. Close a window and try again.',

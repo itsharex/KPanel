@@ -1,8 +1,10 @@
 import {
   createMemoryHistory,
   createRouter,
+  type HistoryState,
   type RouteLocationNormalizedLoaded,
   type Router,
+  type RouterHistory,
   type RouteRecordRaw,
 } from 'vue-router'
 import type { Component } from 'vue'
@@ -52,6 +54,30 @@ export type WindowGlobalNavigation = (fullPath: string) => void
 export type WindowDesktopNavigation = (fullPath: string) => boolean
 
 const GLOBAL_HANDOFF_ROUTE_NAMES = new Set(['setup', 'login'])
+const WINDOW_HISTORY_INDEX_KEY = '__kpanelWindowHistoryIndex'
+
+function windowHistoryIndex(state: HistoryState): number {
+  const value = state[WINDOW_HISTORY_INDEX_KEY]
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
+function createWindowMemoryHistory(): RouterHistory {
+  const history = createMemoryHistory()
+  const push = history.push.bind(history)
+  const replace = history.replace.bind(history)
+  history.push = (to, data = {}) => {
+    push(to, { ...data, [WINDOW_HISTORY_INDEX_KEY]: windowHistoryIndex(history.state) + 1 })
+  }
+  history.replace = (to, data = {}) => {
+    replace(to, { ...data, [WINDOW_HISTORY_INDEX_KEY]: windowHistoryIndex(history.state) })
+  }
+  return history
+}
+
+/** Whether this independent desktop-window router has a real previous entry. */
+export function windowRouterCanGoBack(router: Router): boolean {
+  return windowHistoryIndex(router.options.history.state) > 0
+}
 
 /** AiView is not part of the shared lazy route registry; load it directly. */
 function aiComponentLoader() {
@@ -192,9 +218,19 @@ export function createWindowRouter(
   desktopNavigation?: WindowDesktopNavigation,
 ): Router {
   const router = createRouter({
-    history: createMemoryHistory(),
+    history: createWindowMemoryHistory(),
     routes: windowRouteRecords(),
     scrollBehavior: () => ({ top: 0 }),
+  })
+  let traversingWindowHistory = false
+  router.options.history.listen(() => {
+    traversingWindowHistory = true
+  })
+  router.afterEach(() => {
+    traversingWindowHistory = false
+  })
+  router.onError(() => {
+    traversingWindowHistory = false
   })
 
   // Authentication pages belong to the application router. In particular,
@@ -206,7 +242,8 @@ export function createWindowRouter(
       return false
     }
     if (
-      from.path !== '/'
+      !traversingWindowHistory
+      && from.path !== '/'
       && canonicalDesktopAppPath(to.path) !== canonicalDesktopAppPath(from.path)
       && desktopNavigation?.(to.fullPath)
     ) {
@@ -215,8 +252,9 @@ export function createWindowRouter(
     return true
   })
 
-  // Memory history starts at "/"; navigate to the window's page so the window
-  // RouterView renders its component immediately.
-  void router.push(initialPath).catch(() => router.replace('/overview'))
+  // Replace the memory-history seed instead of pushing over it. Otherwise a
+  // newly opened window incorrectly appears to have a usable Back destination
+  // and returns to the synthetic "/" entry.
+  void router.replace(initialPath).catch(() => router.replace('/overview'))
   return router
 }

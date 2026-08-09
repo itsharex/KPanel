@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createWindowRouter, resolveWindowComponent, windowRouteRecords } from './desktopWindowRoute'
+import {
+  createWindowRouter,
+  resolveWindowComponent,
+  windowRouteRecords,
+  windowRouterCanGoBack,
+} from './desktopWindowRoute'
 
 vi.mock('@/views/AppScriptView.vue', () => ({
   default: { name: 'AppScriptView' },
@@ -80,6 +85,49 @@ describe('desktop window route', () => {
     await router.replace('/ai')
     expect(router.currentRoute.value.path).toBe('/ai')
     expect(router.currentRoute.value.params.sessionId).toBeUndefined()
+  })
+
+  it('starts without a synthetic back entry and records only real page navigation', async () => {
+    const router = createWindowRouter('/overview')
+    await router.isReady()
+
+    expect(windowRouterCanGoBack(router)).toBe(false)
+    await router.push('/monitoring')
+    expect(windowRouterCanGoBack(router)).toBe(true)
+
+    router.back()
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/overview'))
+    expect(windowRouterCanGoBack(router)).toBe(false)
+  })
+
+  it('returns through file directory query history one level at a time', async () => {
+    const router = createWindowRouter('/files?path=/')
+    await router.isReady()
+    await router.push({ name: 'files', query: { path: '/home' } })
+    await router.push({ name: 'files', query: { path: '/home/web' } })
+
+    router.back()
+    await vi.waitFor(() => expect(router.currentRoute.value.query.path).toBe('/home'))
+    expect(windowRouterCanGoBack(router)).toBe(true)
+
+    router.back()
+    await vi.waitFor(() => expect(router.currentRoute.value.query.path).toBe('/'))
+    expect(windowRouterCanGoBack(router)).toBe(false)
+  })
+
+  it('preserves monitoring zoom state inside window history entries', async () => {
+    const router = createWindowRouter('/monitoring?range=6h')
+    await router.isReady()
+    await router.push({
+      path: '/monitoring',
+      query: { range: '6h', start: '2026-08-08T00:00:00Z', end: '2026-08-08T01:00:00Z' },
+      state: { monitoringZoomDepth: 1 },
+    })
+
+    expect(router.options.history.state.monitoringZoomDepth).toBe(1)
+    router.back()
+    await vi.waitFor(() => expect(router.currentRoute.value.query.start).toBeUndefined())
+    expect(router.options.history.state.monitoringZoomDepth).toBeUndefined()
   })
 
   it('keeps the process manager route inside its desktop window', async () => {

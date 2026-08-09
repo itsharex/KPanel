@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, provide, ref, shallowRef, watch } from 'vue'
 import type { Component } from 'vue'
-import { Copy, LoaderCircle, Maximize2, Minus, RotateCw, TriangleAlert, X } from '@lucide/vue'
-import { createWindowRouter, reactiveRouteFor, resolveWindowComponent } from '@/lib/desktopWindowRoute'
+import { ChevronLeft, Copy, LoaderCircle, Maximize2, Minus, RotateCw, TriangleAlert, X } from '@lucide/vue'
+import {
+  createWindowRouter,
+  reactiveRouteFor,
+  resolveWindowComponent,
+  windowRouterCanGoBack,
+} from '@/lib/desktopWindowRoute'
 import {
   desktopWindowActiveKey,
   desktopCloseGuardCoordinatorKey,
@@ -78,6 +83,11 @@ provide(desktopWindowCloseGuardKey, {
 })
 
 const title = computed(() => props.title || i18n.t(props.windowState.titleKey as Parameters<typeof i18n.t>[0]))
+const canNavigateBack = computed(() => {
+  // Keep this computed tied to route changes; memory-history state is not a Vue ref.
+  void router.currentRoute.value.fullPath
+  return windowRouterCanGoBack(router)
+})
 
 watch(
   () => props.iconUrl,
@@ -173,10 +183,20 @@ function onPointerDownWindow(): void {
   desktop.focusWindow(props.windowState.id)
 }
 
+function navigateBack(): void {
+  if (canNavigateBack.value) router.back()
+}
+
 function onWindowKeyDown(event: KeyboardEvent): void {
-  if (!event.altKey || event.key !== 'F4') return
-  event.preventDefault()
-  void onClose()
+  if (event.altKey && event.key === 'ArrowLeft') {
+    event.preventDefault()
+    navigateBack()
+    return
+  }
+  if (event.altKey && event.key === 'F4') {
+    event.preventDefault()
+    void onClose()
+  }
 }
 
 // Load the active in-window route lazily. A sequence guard prevents a slower
@@ -324,6 +344,17 @@ const handleEdges = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const
         </button>
       </div>
       <div class="desktop-window__title">
+        <button
+          class="desktop-window__back"
+          type="button"
+          :disabled="!canNavigateBack"
+          :aria-label="i18n.t('desktop.back')"
+          :title="i18n.t('desktop.back')"
+          @click="navigateBack"
+          @dblclick.stop
+        >
+          <ChevronLeft :size="16" :stroke-width="2" aria-hidden="true" />
+        </button>
         <span
           class="desktop-window__app-glyph"
           :class="{ 'desktop-window__app-glyph--image': iconUrl && !iconFailed }"

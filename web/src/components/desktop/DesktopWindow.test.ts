@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { useRouter } from 'vue-router'
 import DesktopWindow from './DesktopWindow.vue'
 import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
 
@@ -98,6 +99,57 @@ describe('DesktopWindow lazy view loading', () => {
 
     await image.trigger('error')
     expect(wrapper.find('[data-testid="fallback-script-icon"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('navigates back through files, monitoring, and process pages inside one window', async () => {
+    routeMocks.resolveWindowComponent.mockResolvedValue({
+      name: 'NavigableDesktopPageFixture',
+      setup() {
+        const router = useRouter()
+        return {
+          openMonitoring: () => router.push('/monitoring'),
+          openProcesses: () => router.push('/processes'),
+        }
+      },
+      template: `
+        <main>
+          <button data-testid="open-monitoring" @click="openMonitoring">Monitoring</button>
+          <button data-testid="open-processes" @click="openProcesses">Processes</button>
+        </main>
+      `,
+    })
+    const desktop = useDesktopMode()
+    const id = desktop.openWindow('/overview', 'route.overview', false)
+    const windowState = desktop.windows.value.find((item) => item.id === id)!
+    const wrapper = mount(DesktopWindow, {
+      props: {
+        windowState,
+        icon: () => null,
+      },
+    })
+
+    await flushPromises()
+    const back = wrapper.get('.desktop-window__back')
+    expect(back.attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-testid="open-monitoring"]').trigger('click')
+    await flushPromises()
+    expect(windowState.path).toBe('/monitoring')
+    expect(back.attributes('disabled')).toBeUndefined()
+
+    await wrapper.get('[data-testid="open-processes"]').trigger('click')
+    await flushPromises()
+    expect(windowState.path).toBe('/processes')
+    expect(back.attributes('disabled')).toBeUndefined()
+
+    await back.trigger('click')
+    await vi.waitFor(() => expect(windowState.path).toBe('/monitoring'))
+    expect(desktop.windows.value).toHaveLength(1)
+
+    await wrapper.trigger('keydown', { altKey: true, key: 'ArrowLeft' })
+    await vi.waitFor(() => expect(windowState.path).toBe('/overview'))
+    expect(back.attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
 })

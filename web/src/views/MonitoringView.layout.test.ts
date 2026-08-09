@@ -4,6 +4,12 @@ import { describe, expect, it } from 'vitest'
 const monitoringSource = readFileSync(new URL('./MonitoringView.vue', import.meta.url), 'utf8')
 
 describe('monitoring container comparison layout', () => {
+  it('uses the injected router history for zoom navigation in every shell', () => {
+    expect(monitoringSource).toContain('router.options.history.state.monitoringZoomDepth')
+    expect(monitoringSource).toContain('router.go(-depth)')
+    expect(monitoringSource).not.toContain('window.history')
+  })
+
   it('links selected container rows to chart highlighting for pointer and keyboard users', () => {
     expect(monitoringSource).toContain(
       '@mouseenter="containerSelected(container.containerId) && (highlightedContainerId = container.containerId)"',

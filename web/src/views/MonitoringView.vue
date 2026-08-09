@@ -516,7 +516,7 @@ function resetZoom(): void {
   refreshing.value = false
   const depth = currentZoomDepth()
   if (depth > 0) {
-    window.history.go(-depth)
+    router.go(-depth)
     return
   }
   void router.replace({
@@ -537,20 +537,11 @@ function monitoringRouteQuery(range: MonitoringRange, query?: MonitoringHistoryQ
 }
 
 function currentZoomDepth(): number {
-  if (typeof window === 'undefined') return 0
-  const value = window.history.state?.monitoringZoomDepth
-  return Number.isInteger(value) && value >= 0 && value <= 32 ? value : 0
-}
-
-function ensureZoomHistoryState(): void {
-  if (typeof window === 'undefined') return
-  const value = window.history.state?.monitoringZoomDepth
-  if (Number.isInteger(value) && value >= 0 && value <= 32) return
-  window.history.replaceState({ ...window.history.state, monitoringZoomDepth: 0 }, '')
+  const value = router.options.history.state.monitoringZoomDepth
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 32 ? value : 0
 }
 
 function applyRouteState(): void {
-  ensureZoomHistoryState()
   const nextRange = monitoringRangeFromQuery(route.query.range)
   const nextWindow = monitoringWindowFromQuery(route.query.start, route.query.end)
   const rangeChanged = nextRange !== selectedRange.value
