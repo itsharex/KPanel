@@ -96,6 +96,62 @@ describe('desktop entries', () => {
     expect(entries.visible).toHaveLength(1)
   })
 
+  it('keeps KPanel manageable but hides its redundant desktop self-entry', async () => {
+    const kpanel = makeApp({
+      id: 'thirdparty-kpanel',
+      token: 'kpanel',
+      name_zh: 'KPanel',
+      runtime: {
+        installed: true,
+        state: 'running',
+        ports: [{ privatePort: 8080, publicPort: 8080, type: 'tcp' }],
+        accessMode: 'direct',
+        updateStatus: 'current',
+        detectedBy: [],
+      },
+    })
+    vi.mocked(api.apps.inventory).mockResolvedValue(inventory([kpanel]))
+    vi.mocked(api.sites.list).mockResolvedValue({ items: [], total: 0 })
+
+    const entries = await loadDesktopEntries(undefined, '192.168.1.5')
+
+    expect(entries.apps).toHaveLength(1)
+    expect(entries.apps[0]?.id).toBe('thirdparty-kpanel')
+    expect(entries.visible).toHaveLength(0)
+  })
+
+  it('does not replace hidden KPanel with its matching proxy site', async () => {
+    const kpanel = makeApp({
+      id: 'thirdparty-kpanel',
+      token: 'kpanel',
+      runtime: {
+        installed: true,
+        state: 'running',
+        ports: [{ privatePort: 8080, publicPort: 8080, type: 'tcp' }],
+        accessMode: 'direct',
+        updateStatus: 'current',
+        detectedBy: [],
+      },
+    })
+    const panelSite = makeSite({
+      id: 'panel-site',
+      primaryDomain: 'panel.example.com',
+      upstream: 'http://127.0.0.1:8080',
+      certificate: { status: 'valid' },
+    })
+    const blog = makeSite({
+      id: 'blog',
+      primaryDomain: 'blog.example.com',
+      type: 'static',
+    })
+    vi.mocked(api.apps.inventory).mockResolvedValue(inventory([kpanel]))
+    vi.mocked(api.sites.list).mockResolvedValue({ items: [panelSite, blog], total: 2 })
+
+    const entries = await loadDesktopEntries(undefined, '192.168.1.5')
+
+    expect(entries.visible.map((entry) => entry.id)).toEqual(['blog'])
+  })
+
   it('skips installed apps without a reachable URL', async () => {
     const app = makeApp({ id: 'noaccess', runtime: { installed: true, state: 'stopped', ports: [], accessMode: 'domain_only', updateStatus: 'current', detectedBy: [] } })
     vi.mocked(api.apps.inventory).mockResolvedValue(inventory([app]))

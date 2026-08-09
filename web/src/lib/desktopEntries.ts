@@ -1,5 +1,6 @@
 import { api } from '@/lib/api'
 import { appAccessURL, matchingAppProxySites } from '@/lib/appAccess'
+import { kpanelAppID, kpanelAppToken } from '@/lib/kpanelUpdate'
 import type { AppMarketItem, PublicNetworkSummary, Site } from '@/types/api'
 
 /**
@@ -134,6 +135,15 @@ function dedupeDesktopEntries(apps: DesktopEntry[], sites: DesktopEntry[]): Desk
   const visible: DesktopEntry[] = []
   for (const entry of [...apps, ...sites]) {
     if (entry.kind === 'site' && appBackedSiteIDs.has(entry.id)) continue
+    const isKPanelSelf = entry.kind === 'app'
+      && (entry.app?.id === kpanelAppID || entry.app?.token === kpanelAppToken)
+    if (isKPanelSelf) {
+      // KPanel is already represented by the desktop shell and taskbar. Keep
+      // its URL reserved for deduplication so a matching site does not replace
+      // the intentionally hidden self-entry.
+      if (entry.url) seen.add(entry.url.replace(/\/+$/, '').toLowerCase())
+      continue
+    }
     if (!entry.url) {
       visible.push(entry)
       continue
