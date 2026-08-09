@@ -131,6 +131,11 @@ export function windowRouteRecords(): RouteRecordRaw[] {
       component: WINDOW_ROUTE_PLACEHOLDER,
     },
     {
+      path: '/browser',
+      name: 'browser',
+      component: WINDOW_ROUTE_PLACEHOLDER,
+    },
+    {
       path: '/cluster',
       name: 'cluster',
       component: WINDOW_ROUTE_PLACEHOLDER,

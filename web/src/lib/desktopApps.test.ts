@@ -40,6 +40,12 @@ describe('desktop app catalogue', () => {
     expect(desktopApps.map((app) => app.path)).not.toContain('/app-script')
   })
 
+  it('maps the single embedded browser without adding a desktop launcher', () => {
+    expect(findDesktopApp('/browser?site=site-1')?.labelKey).toBe('desktop.browserWindowTitle')
+    expect(findDesktopApp('/browser?site=site-1')?.allowMultiple).toBe(false)
+    expect(desktopApps.map((app) => app.path)).not.toContain('/browser')
+  })
+
   it('returns undefined for unknown paths', () => {
     expect(findDesktopApp('/nope')).toBeUndefined()
   })

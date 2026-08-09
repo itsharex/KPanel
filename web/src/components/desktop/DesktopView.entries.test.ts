@@ -50,6 +50,7 @@ describe('DesktopView dynamic entries', () => {
     resetDesktopModeForTest()
     window.localStorage.clear()
     window.scrollTo = vi.fn()
+    window.open = vi.fn()
     mockedLoad.mockResolvedValue(makeEntries())
     mockedAppearance.mockReset()
     mockedAppearance.mockResolvedValue({})
@@ -94,6 +95,46 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
+  it('opens websites in the reusable desktop browser by default', async () => {
+    const desktop = useDesktopMode()
+    const wrapper = mount(DesktopView)
+    await nextTick()
+    await nextTick()
+
+    await wrapper.find('button[title="blog.example.com"]').trigger('dblclick')
+    await nextTick()
+
+    expect(desktop.windows.value).toHaveLength(1)
+    const path = desktop.windows.value[0]?.path || ''
+    expect(path).toContain('/browser?')
+    expect(new URLSearchParams(path.split('?')[1]).get('url')).toBe('https://blog.example.com')
+    expect(window.open).not.toHaveBeenCalled()
+
+    await wrapper.find('button[title="blog.example.com"]').trigger('dblclick')
+    await nextTick()
+    expect(desktop.windows.value).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('keeps an explicit system-browser action in the website context menu', async () => {
+    const wrapper = mount(DesktopView)
+    await nextTick()
+    await nextTick()
+
+    await wrapper.find('button[title="blog.example.com"]').trigger('contextmenu', { clientX: 120, clientY: 80 })
+    await nextTick()
+    const siteItems = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+    expect(siteItems[1]?.text()).toContain('用系统浏览器打开')
+    await siteItems[1]?.trigger('click')
+
+    expect(window.open).toHaveBeenCalledWith(
+      'https://blog.example.com',
+      '_blank',
+      'noopener,noreferrer',
+    )
+    wrapper.unmount()
+  })
+
   it('opens the matching application-market detail from an app context menu', async () => {
     const desktop = useDesktopMode()
     const wrapper = mount(DesktopView)
@@ -122,8 +163,8 @@ describe('DesktopView dynamic entries', () => {
     await wrapper.find('button[title="blog.example.com"]').trigger('contextmenu', { clientX: 120, clientY: 80 })
     await nextTick()
     const siteItems = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-    expect(siteItems).toHaveLength(3)
-    await siteItems[2]?.trigger('click')
+    expect(siteItems).toHaveLength(4)
+    await siteItems[3]?.trigger('click')
     await nextTick()
 
     const input = document.body.querySelector<HTMLInputElement>('.desktop__rename-form input')

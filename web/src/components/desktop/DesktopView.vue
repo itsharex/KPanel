@@ -225,9 +225,34 @@ function openEntry(entry: DesktopEntry): void {
     openAppScriptEntry(entry)
     return
   }
+  if (entry.kind === 'site') {
+    openWebsiteEntry(entry)
+    return
+  }
+  openEntryExternally(entry)
+}
+
+function openEntryExternally(entry: DesktopEntry): void {
   if (!entry.url) return
-  // Open the external URL in a new tab, never inside the desktop shell.
   window.open(entry.url, '_blank', 'noopener,noreferrer')
+}
+
+function openWebsiteEntry(entry: DesktopEntry): void {
+  if (!entry.url) return
+  const app = findDesktopApp('/browser')
+  if (!app) return
+  const query = new URLSearchParams({ site: entry.id, url: entry.url })
+  const windowId = desktop.openWindow(
+    `/browser?${query.toString()}`,
+    app.labelKey,
+    app.allowMultiple,
+    true,
+  )
+  if (windowId === 0) {
+    toast.show(i18n.t('desktop.windowLimitTitle'), {
+      message: i18n.t('desktop.windowLimitMessage'),
+    })
+  }
 }
 
 function openAppScriptEntry(entry: DesktopEntry): void {
@@ -287,13 +312,23 @@ function scriptWindowEntry(path: string): DesktopEntry | undefined {
     ?? entries.value?.visible.find((entry) => entry.kind === 'app' && entry.id === appID)
 }
 
+function browserWindowEntry(path: string): DesktopEntry | undefined {
+  if (!path.startsWith('/browser?')) return undefined
+  const id = new URLSearchParams(path.slice(path.indexOf('?') + 1)).get('site')
+  if (!id) return undefined
+  return entries.value?.sites.find((entry) => entry.id === id)
+    ?? entries.value?.visible.find((entry) => entry.kind === 'site' && entry.id === id)
+}
+
 function windowIconURL(path: string): string | undefined {
-  return scriptWindowEntry(path)?.iconURL
+  return scriptWindowEntry(path)?.iconURL ?? browserWindowEntry(path)?.iconURL
 }
 
 function windowTitle(titleKey: string, path?: string): string {
-  const entry = path ? scriptWindowEntry(path) : undefined
-  if (entry) return i18n.t('desktop.namedScriptWindowTitle', { name: entry.name })
+  const scriptEntry = path ? scriptWindowEntry(path) : undefined
+  if (scriptEntry) return i18n.t('desktop.namedScriptWindowTitle', { name: scriptEntry.name })
+  const browserEntry = path ? browserWindowEntry(path) : undefined
+  if (browserEntry) return i18n.t('desktop.namedBrowserWindowTitle', { name: browserEntry.name })
   return i18n.t(titleKey as Parameters<typeof i18n.t>[0])
 }
 
@@ -433,6 +468,12 @@ function onEntryMenuOpen(): void {
   const entry = menuEntry.value
   closeContextMenu()
   if (entry) openEntry(entry)
+}
+
+function onEntryMenuExternal(): void {
+  const entry = menuEntry.value
+  closeContextMenu()
+  if (entry?.kind === 'site') openEntryExternally(entry)
 }
 
 function onEntryMenuDetails(): void {
@@ -670,8 +711,22 @@ function onViewportResize(): void {
         <template v-if="menuEntry">
           <button type="button" role="menuitem" @click="onEntryMenuOpen">
             <SquareTerminal v-if="menuEntry.launch === 'script'" :size="15" aria-hidden="true" />
+            <AppWindow v-else-if="menuEntry.kind === 'site'" :size="15" aria-hidden="true" />
             <ExternalLink v-else :size="15" aria-hidden="true" />
-            {{ menuEntry.launch === 'script' ? i18n.t('desktop.entryScriptManage') : i18n.t('desktop.entryOpen') }}
+            {{ menuEntry.launch === 'script'
+              ? i18n.t('desktop.entryScriptManage')
+              : menuEntry.kind === 'site'
+                ? i18n.t('desktop.browserOpenEmbedded')
+                : i18n.t('desktop.entryOpen') }}
+          </button>
+          <button
+            v-if="menuEntry.kind === 'site'"
+            type="button"
+            role="menuitem"
+            @click="onEntryMenuExternal"
+          >
+            <ExternalLink :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.browserOpenExternal') }}
           </button>
           <button type="button" role="menuitem" @click="onEntryMenuDetails">
             <Info :size="15" aria-hidden="true" />
