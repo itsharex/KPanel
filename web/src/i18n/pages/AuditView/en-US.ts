@@ -1,6 +1,7 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["刷新审计记录", "Refresh audit records"],
   ["按结果筛选", "Filter by Results"],
   ["按来源筛选", "Filter by Source"],
   ["操作者", "Operator"],

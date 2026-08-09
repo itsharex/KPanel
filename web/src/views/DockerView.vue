@@ -998,14 +998,7 @@ onBeforeUnmount(() => {
     <PageHeader
       title="Docker 管理"
       description="与 kejilion.sh 共用真实 Docker、Compose、/home/docker 和 DOCKER-USER 规则，不维护影子资源。"
-    >
-      <template #actions>
-        <span v-if="data" class="observed-at">{{ data.version ? `Docker ${data.version}` : 'Docker Engine' }}</span>
-        <button class="button button--secondary" type="button" :disabled="refreshing" @click="load(true)">
-          <RefreshCw :size="16" :class="{ spin: refreshing }" /> 刷新
-        </button>
-      </template>
-    </PageHeader>
+    />
 
     <div
       v-if="activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')"
@@ -1034,7 +1027,12 @@ onBeforeUnmount(() => {
             <span class="workspace-card__icon"><Boxes :size="20" /></span>
             <span><strong>Docker Engine</strong><small>{{ data.version || '版本待检测' }} · 观测于 {{ formatDateTime(data.observedAt) }}</small></span>
           </div>
-          <StatusBadge :status="data.available ? 'running' : 'critical'" :label="data.available ? '运行正常' : '连接异常'" />
+          <div class="docker-command-center__actions">
+            <StatusBadge :status="data.available ? 'running' : 'critical'" :label="data.available ? '运行正常' : '连接异常'" />
+            <button class="icon-button" type="button" :disabled="refreshing" title="刷新 Docker 状态" aria-label="刷新 Docker 状态" @click="load(true)">
+              <RefreshCw :size="16" :class="{ spin: refreshing }" />
+            </button>
+          </div>
         </header>
 
         <section class="docker-summary" aria-label="Docker 摘要">
@@ -1572,6 +1570,7 @@ onBeforeUnmount(() => {
 .docker-command-center__header > div { display: flex; align-items: center; gap: 11px; }
 .docker-command-center__header > div > span:last-child { display: grid; gap: 3px; }
 .docker-command-center__header small { color: var(--muted); }
+.docker-command-center__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .docker-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--border); }
 .docker-summary > div { display: flex; align-items: center; gap: 11px; min-width: 0; padding: 13px 16px; border-right: 1px solid var(--border); }
 .docker-summary > div:last-child { border-right: 0; }
@@ -1721,13 +1720,21 @@ onBeforeUnmount(() => {
   .docker-job { grid-template-columns: auto 1fr; }
   .docker-job progress { grid-column: 1 / -1; }
   .docker-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .docker-command-center__header { align-items: flex-start; }
+  .docker-nav button:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .docker-command-center__header { align-items: stretch; flex-direction: column; padding: 12px; }
+  .docker-command-center__actions { width: 100%; justify-content: space-between; }
+  .docker-summary > div { gap: 8px; padding: 10px; }
   .docker-toolbar { grid-template-columns: 1fr; }
   .docker-toolbar__count { display: none; }
   .workspace-grid, .workspace-grid--environment, .form-grid--two { grid-template-columns: 1fr; }
   .docker-toolbar, .resource-section__header, .backup-list article { align-items: stretch; flex-direction: column; }
   .workspace-card > header > .card-actions,
   .resource-section__header > .card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .workspace-card { gap: 13px; padding: 14px; border-radius: 14px; }
+  .workspace-card > header:not(.resource-section__header) { display: grid; align-items: stretch; grid-template-columns: 1fr; }
+  .workspace-card > header:not(.resource-section__header) > .card-actions { grid-column: 1; }
+  .resource-section__header { min-height: 0; padding: 14px; }
+  .backup-list article { gap: 9px; padding: 11px; }
   .compact-input { width: 100%; }
   .network-membership { grid-template-columns: 1fr; }
   .repeat-row--ports, .repeat-row--mounts, .repeat-row--environment { grid-template-columns: 1fr; }

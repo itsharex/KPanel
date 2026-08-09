@@ -1,6 +1,7 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["刷新集群状态", "Refresh cluster status"],
   ["· 最近访问", "• Recent visits"],
   ["{0} 当前保留上次成功数据。", "{0} currently maintains last successful data."],
   ["{0} 的安全配对正在后台继续。", "Secure pairing with {0} is continuing in the background."],
@@ -13,7 +14,7 @@ export default [
   ["本机接入授权", "Local access authorization"],
   ["本机可以同时被其他 KPanel 只读监控；授权可随时撤销。", "This machine can be monitored by other KPanel read-only; authorization can be revoked at any time."],
   ["本机通过 Unix Socket 读取 Agent 摘要", "This machine reads Agent Summary by Unix Socket"],
-  ["本机与远程主机使用一致的操作布局；监控链路不共享登录态，打开目标面板后独立登录管理。", "The machine uses the same operating layout as the remote host; the monitoring link does not share the login and independently login management after opening the target panel."],
+  ["集群概况与操作", "Cluster overview and actions"],
   ["采集于", "Collect from"],
   ["撤销 {0} 的只读访问授权？", "Cancel {0} read-only access authorization?"],
   ["撤销失败", "Undo failed"],
@@ -80,7 +81,6 @@ export default [
   ["添加 KPanel 主机", "Add KPanel host"],
   ["添加主机失败", "Failed to add host"],
   ["同时包含当前主机 URL 与一次性授权码；5 分钟内只能使用一次，权限固定为只读主机摘要。", "It also contains the current host URL and the one-time authorization code; it can only be used once in 5 minutes with fixed permission to read-only host summaries."],
-  ["统一观察，各自管理", "Monitor centrally, manage independently"],
   ["网络", "Network"],
   ["无法读取集群主机，请稍后重试。", "Unable to load cluster hosts. Please try again."],
   ["无法读取授权列表", "Unable to read the authorization list"],
@@ -121,4 +121,6 @@ export default [
   ["HTTP 加密直连仅支持明确的 IP 和非 80 端口，例如 http://203.0.113.10:8080。", "HTTP Encryption Directs only support clear IP and non-80 ports, e.g. http://203.03.113.10:8080."],
   ["HTTPS：验证目标证书并使用 TLS 加密。", "HTTPS: Verify the target certificate and use TLS encryption."],
   ["IP 加密直连：集群数据端到端加密；浏览器打开管理页面仍是普通 HTTP。", "IP encryption straight-to-end encryption of cluster data; browser open management page remains normal HTTP."],
+  ['接入授权', 'Access authorization'],
+  ['添加主机', 'Add host'],
 ] as const satisfies PhraseCatalog

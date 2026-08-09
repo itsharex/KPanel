@@ -14,7 +14,6 @@ import {
   LayoutList,
   LoaderCircle,
   MemoryStick,
-  Network,
   Pencil,
   Plus,
   RefreshCw,
@@ -775,31 +774,32 @@ onBeforeUnmount(() => {
     <PageHeader
       title="集群监控"
       description="集中查看本机与已接入主机概况；“管理”维护接入关系，“打开面板”进入对应 KPanel。"
-    >
-      <template #actions>
-        <button class="button button--secondary" type="button" @click="openAccess">
-          <KeyRound :size="16" /> 接入授权
-        </button>
-        <button class="button button--secondary" type="button" :disabled="refreshing" @click="load(true)">
-          <RefreshCw :size="16" :class="{ spin: refreshing }" /> 刷新
-        </button>
-        <button class="button button--primary" type="button" @click="openAdd">
-          <Plus :size="16" /> 添加主机
-        </button>
-      </template>
-    </PageHeader>
+    />
 
-    <section class="cluster-hero">
-      <div>
-        <span class="cluster-hero__eyebrow"><Network :size="15" /> KPanel Federation</span>
-        <h2>统一观察，各自管理</h2>
-        <p>本机与远程主机使用一致的操作布局；监控链路不共享登录态，打开目标面板后独立登录管理。</p>
-      </div>
+    <section class="cluster-hero" aria-label="集群概况与操作">
       <div class="cluster-stats">
         <div><strong>{{ inventory?.total || 0 }}</strong><span>全部节点</span></div>
         <div><strong>{{ onlineCount }}</strong><span>在线</span></div>
         <div><strong>{{ attentionCount }}</strong><span>需关注</span></div>
         <div><strong>{{ inventory?.maxHosts || 100 }}</strong><span>远程上限</span></div>
+      </div>
+      <div class="cluster-hero__actions">
+        <button
+          class="icon-button icon-button--small"
+          type="button"
+          :disabled="refreshing"
+          title="刷新集群状态"
+          aria-label="刷新集群状态"
+          @click="load(true)"
+        >
+          <RefreshCw :size="15" :class="{ spin: refreshing }" />
+        </button>
+        <button class="button button--secondary button--small" type="button" @click="openAccess">
+          <KeyRound :size="15" /> 接入授权
+        </button>
+        <button class="button button--primary button--small" type="button" @click="openAdd">
+          <Plus :size="15" /> 添加主机
+        </button>
       </div>
     </section>
 
@@ -1332,62 +1332,67 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .cluster-page {
+  --cluster-accent: #6d5dfc;
+  align-content: start;
   gap: 18px;
 }
 
 .cluster-hero {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(420px, 0.72fr);
-  align-items: center;
-  gap: 28px;
-  padding: 28px 30px;
   overflow: hidden;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  isolation: isolate;
+  gap: 20px;
+  padding: 12px 14px;
   background:
-    radial-gradient(circle at 95% 10%, color-mix(in srgb, var(--brand) 13%, transparent), transparent 33%),
-    linear-gradient(135deg, color-mix(in srgb, var(--brand-soft) 58%, var(--surface)), var(--surface));
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+    radial-gradient(circle at 86% 0%, color-mix(in srgb, var(--cluster-accent) 10%, transparent), transparent 34%),
+    linear-gradient(110deg, color-mix(in srgb, var(--cluster-accent) 6%, var(--surface)) 0%, var(--surface) 58%);
+  border: 1px solid color-mix(in srgb, var(--cluster-accent) 22%, var(--border));
+  border-radius: 15px;
   box-shadow: var(--shadow-sm);
 }
 
-.cluster-hero__eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--brand);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+.cluster-hero::before {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  right: 42px;
+  width: 190px;
+  height: 190px;
+  border: 30px solid color-mix(in srgb, var(--cluster-accent) 7%, transparent);
+  border-radius: 50%;
+  content: '';
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
-.cluster-hero h2 {
-  margin: 8px 0 6px;
-  font-size: clamp(24px, 2.6vw, 34px);
-  letter-spacing: -0.045em;
+.cluster-hero > * {
+  position: relative;
+  z-index: 1;
 }
 
-.cluster-hero p {
-  max-width: 650px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.7;
+.cluster-hero__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  justify-self: end;
+  justify-content: flex-end;
+  gap: 8px;
+  white-space: nowrap;
 }
 
 .cluster-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  overflow: hidden;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(116px, 132px));
 }
 
 .cluster-stats div {
   display: grid;
-  min-height: 74px;
+  min-height: 48px;
+  padding: 5px 14px;
   place-content: center;
   text-align: center;
   border-left: 1px solid var(--border);
@@ -1398,7 +1403,7 @@ onBeforeUnmount(() => {
 }
 
 .cluster-stats strong {
-  font-size: 22px;
+  font-size: 19px;
 }
 
 .cluster-stats span {
@@ -2046,19 +2051,27 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 900px) {
-  .cluster-hero {
-    grid-template-columns: 1fr;
-  }
-}
-
 @media (max-width: 680px) {
   .cluster-grid {
     grid-template-columns: 1fr;
   }
 
   .cluster-hero {
-    padding: 21px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .cluster-hero__actions {
+    display: grid;
+    grid-template-columns: 42px repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: 6px;
+  }
+
+  .cluster-hero__actions > * {
+    width: 100%;
   }
 
   .cluster-toolbar {
@@ -2067,10 +2080,16 @@ onBeforeUnmount(() => {
   }
 
   .cluster-view-switch {
-    align-self: flex-end;
+    align-self: stretch;
+  }
+
+  .cluster-view-switch button {
+    flex: 1;
+    justify-content: center;
   }
 
   .cluster-stats {
+    width: 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2093,8 +2112,20 @@ onBeforeUnmount(() => {
     width: 100%;
   }
 
-  .cluster-card__footer .button {
-    flex: 1 1 0;
+  .cluster-card__footer > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cluster-card__header {
+    grid-template-columns: 24px auto minmax(0, 1fr) 40px;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .cluster-card__metrics > div,
+  .cluster-card__details {
+    padding: 11px;
   }
 
   .cluster-grid.is-list .cluster-card {

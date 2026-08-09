@@ -73,6 +73,12 @@ const securityEntryUrl = computed(() => {
   return `${window.location.origin}/${securityEntry.value.path}`
 })
 
+function relativeTimeLabel(value?: string): string {
+  const label = relativeTime(value)
+  if (label === '现在') return label
+  return label
+}
+
 const passwordChecks = computed(() => [
   { label: '至少 12 个字符', valid: passwordForm.newPassword.length >= 12 },
   {
@@ -358,18 +364,15 @@ onMounted(async () => {
 
 <template>
   <div class="page page--narrow">
-    <PageHeader title="设置" description="账户与设备偏好。宿主机安全策略由 Agent 配置控制，不能在浏览器中放宽。">
-      <template #actions>
-        <button class="button button--secondary" type="button" :disabled="refreshing" @click="refreshAgent">
-          <RefreshCw :size="16" :class="{ spin: refreshing }" /> 检查连接
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader title="设置" description="账户与设备偏好。宿主机安全策略由 Agent 配置控制，不能在浏览器中放宽。" />
 
     <section class="settings-section panel-card">
       <header class="settings-section__header">
         <span><ShieldCheck :size="19" /></span>
         <div><h2>管理账户</h2><p>当前登录身份与会话信息</p></div>
+        <button class="icon-button" type="button" :disabled="refreshing" title="检查 Agent 连接" aria-label="检查 Agent 连接" @click="refreshAgent">
+          <RefreshCw :size="16" :class="{ spin: refreshing }" />
+        </button>
       </header>
       <div class="account-card">
         <span class="avatar avatar--large">{{ session.state.user?.username?.slice(0, 1).toUpperCase() || 'A' }}</span>
@@ -699,7 +702,7 @@ onMounted(async () => {
         </div>
         <div>
           <dt>最后检查</dt>
-          <dd>{{ relativeTime(panel.state.agent?.lastSeenAt) }}</dd>
+          <dd>{{ relativeTimeLabel(panel.state.agent?.lastSeenAt) }}</dd>
         </div>
         <div>
           <dt>已开放能力</dt>
@@ -791,6 +794,7 @@ onMounted(async () => {
 @media (max-width: 640px) {
   .password-form {
     max-width: none;
+    padding: 14px;
   }
 
   .password-form > .button {
@@ -799,6 +803,19 @@ onMounted(async () => {
 
   .license-actions .button {
     width: 100%;
+  }
+
+  .security-entry-form {
+    padding: 14px;
+  }
+
+  .security-entry-input {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .security-entry-actions .button {
+    flex: 1 1 140px;
   }
 }
 </style>

@@ -1,6 +1,7 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["刷新系统状态", "Refresh system status"],
   ["{0} · 已用 {1}", "{0} Used {1}"],
   ["{0} 软件源", "{0} Software Source"],
   ["{0} 完整更新", "{0} Full Update"],
@@ -256,4 +257,22 @@ export default [
   ["TCP / UDP 连接数", "TCP / UDP connections"],
   ["V4 / V6 优先", "V4 / V6 Priority"],
   ["xTom 香港", "XTom Hong Kong"],
+  ['查看历史', 'View history'],
+  ['{0} 个 CPU 核心', '{0} CPU cores'],
+  ['{0} 核 · {1}', '{0} cores · {1}'],
+  ['{0} 天 {1} 小时', '{0}d {1}h'],
+  ['累计接收', 'Total received'],
+  ['累计发送', 'Total sent'],
+  ['外网查询不可用', 'External lookup unavailable'],
+  ['其他主机信息不依赖外网查询；可在 Agent 环境变量中关闭该项。', 'Other host information does not depend on external lookups. This check can be disabled through an Agent environment variable.'],
+  ['{0} 个待核对', '{0} pending review'],
+  ['{0} 个运行中', '{0} running'],
+  ['{0} 个运行中 · 共 {1} 个', '{0} running · {1} total'],
+  ['建议重启', 'Restart recommended'],
+  ['可执行', 'Available'],
+  ['状态实时同步', 'Live status sync'],
+  ['可配置', 'Configurable'],
+  ['均衡优化模式', 'Balanced optimization'],
+  ['拥塞算法 {0} · 队列 {1}', 'Congestion algorithm {0} · queue {1}'],
+  ['适配器未实现', 'Adapter unavailable'],
 ] as const satisfies PhraseCatalog

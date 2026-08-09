@@ -1,6 +1,7 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ['收起的主机列表', 'Collapsed host list'],
   ['多主机终端', 'Multi-host terminal'],
   ['本机与已配对 KPanel 使用同一登录态进入；远程流量沿集群加密通道传输，不开放新的 SSH 或公网端口。', 'Use the current session for this host and paired KPanel hosts. Remote traffic stays inside the encrypted federation channel with no new SSH or public ports.'],
   ['连接列表加载失败，请检查 Agent 与集群状态。', 'Failed to load connections. Check the Agent and cluster status.'],

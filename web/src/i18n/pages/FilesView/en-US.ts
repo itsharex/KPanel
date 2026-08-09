@@ -1,6 +1,8 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["刷新目录", "Refresh directory"],
+  ["打开回收站", "Open trash"],
   ["（显示最近 500 项）", "(Recent 500 shown)"],
   ["{0} 覆盖失败", "{0} Overwrite Failed"],
   ["{0} 上传失败", "{0} upload failed"],
@@ -25,7 +27,6 @@ export default [
   ["大图标排序方式", "Sort by Big Icons"],
   ["大小", "Size"],
   ["单次最多 100 项、10,000 个条目或解压后 10 GiB；不支持符号链接、硬链接和设备文件。", "Single maximum 100 items, 10,000 entries or 10 GiB after depression; symbol links, hard links and device files are not supported."],
-  ["单文件上传 512 MiB · 文本编辑 2 MiB · 批量最多 100 项", "Upload single file 512 MiB . Text Editor 2 MiB . Batch maximum 100"],
   ["复制完成", "Copy finished"],
   ["根目录", "Root Directory"],
   ["恢复完成", "Restore completed"],
@@ -106,4 +107,10 @@ export default [
   ["TAR（不压缩）", "TAR (no compression)"],
   ["ZIP（跨平台）", "ZIP (cross platform)"],
   ["文件尚未保存，确认关闭窗口吗？", "The file has unsaved changes. Close this window anyway?"],
+  ['根目录 /', 'Root /'],
+  ['刷新', 'Refresh'],
+  ['上传文件', 'Upload files'],
+  ['这个文件夹是空的', 'This folder is empty'],
+  ['可直接拖入文件，或在右上角新建文件夹。', 'Drop files here, or create a folder from the upper-right controls.'],
+  ['名称{0}↑', 'Name{0}↑'],
 ] as const satisfies PhraseCatalog

@@ -1,6 +1,7 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["刷新监控数据", "Refresh monitoring data"],
   ["，跳过", "Skip"],
   ["1 分钟负载占核", "1 minute load core"],
   ["CPU 峰值", "CPU peak"],

@@ -118,6 +118,11 @@ function jobStatusLabel(job: WebEnvironmentJob): string {
   return labels[job.status] || job.status
 }
 
+function jobMessageLabel(message: string): string {
+  if (message === '冷备已完成并通过 SHA-256 校验') return message
+  return message
+}
+
 function componentLabel(name: string): string {
   return { nginx: 'Nginx', mysql: 'MySQL', php: 'PHP', php74: 'PHP 7.4', redis: 'Redis' }[name] || name
 }
@@ -377,15 +382,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page environment-page">
-    <PageHeader title="LDNMP 环境管理" description="直接读取并调用 kejilion.sh，共用 /home/web、Docker 与原脚本业务产物。">
-      <template #actions>
-        <button class="button button--secondary" type="button" :disabled="refreshing" @click="load(true)">
-          <RefreshCw :class="{ spin: refreshing }" :size="16" /> 刷新状态
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader title="LDNMP 环境管理" description="直接读取并调用 kejilion.sh，共用 /home/web、Docker 与原脚本业务产物。" />
 
-    <SitesSectionTabs />
+    <div class="page-command-bar">
+      <SitesSectionTabs />
+      <button class="button button--secondary" type="button" :disabled="refreshing" @click="load(true)">
+        <RefreshCw :class="{ spin: refreshing }" :size="16" /> 刷新状态
+      </button>
+    </div>
 
     <LoadingState v-if="loading" />
     <ErrorState v-else-if="error" title="环境状态读取失败" :message="error" @retry="load()" />
@@ -404,7 +408,7 @@ onBeforeUnmount(() => {
         <TriangleAlert v-else :size="20" />
         <div>
           <strong>{{ visibleJob.target || 'LDNMP 环境任务' }}</strong>
-          <small>{{ visibleJob.message }}</small>
+          <small>{{ jobMessageLabel(visibleJob.message) }}</small>
           <i><b :style="{ width: `${visibleJob.progress}%` }" /></i>
         </div>
         <StatusBadge
@@ -711,11 +715,18 @@ onBeforeUnmount(() => {
   .environment-job-banner { grid-template-columns: auto minmax(0, 1fr) auto; }
   .environment-job-banner > strong, .environment-job-banner .button { grid-column: 2 / -1; }
   .environment-hero, .environment-checks, .environment-components, .environment-action-grid, .environment-mode-actions, .environment-switches { grid-template-columns: 1fr; }
+  .environment-hero { gap: 14px; padding: 16px; border-radius: 14px; }
+  .environment-hero h2 { font-size: 23px; }
+  .environment-hero dl div { padding: 8px 10px; }
+  .environment-checks, .environment-components, .environment-action-grid, .environment-switches { gap: 9px; }
+  .environment-checks > div, .environment-components article, .environment-action-grid article { padding: 13px; }
   .environment-action-grid article:last-child { grid-template-columns: 1fr; }
   .environment-action-grid article:last-child > * { grid-column: 1; }
   .environment-hero dl { grid-template-columns: repeat(2, 1fr); }
   .environment-install-card, .environment-install-card > div { align-items: stretch; flex-direction: column; }
   .environment-update-list article { grid-template-columns: 1fr; }
-  .environment-backups article { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .environment-backups article { grid-template-columns: auto minmax(0, 1fr) repeat(3, 40px); gap: 7px; }
+  .environment-backups article > .status-badge { grid-column: 1 / 3; grid-row: 2; }
+  .environment-backups article > .icon-button { width: 40px; height: 40px; }
 }
 </style>

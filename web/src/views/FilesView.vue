@@ -1007,23 +1007,26 @@ onBeforeUnmount(() => {
 
 <template>
   <section ref="filesPage" class="files-page" tabindex="-1" @pointerdown="focusFilesPage">
-    <PageHeader title="文件管理" description="轻量管理宿主机文件；KPanel 凭据与状态目录已隔离保护。">
-      <template #actions>
-        <button class="button button--secondary" type="button" :disabled="loading" @click="loadDirectory()">
-          <RefreshCw :size="16" :class="{ spinning: loading }" />
-          刷新
+    <PageHeader title="文件管理" description="轻量管理宿主机文件；KPanel 凭据与状态目录已隔离保护。" />
+
+    <div class="file-command-bar">
+      <nav class="file-shortcuts" aria-label="常用目录">
+        <button v-for="item in ['/', '/home', '/root', '/etc', '/var']" :key="item" type="button" @click="navigateDirectory(item)">
+          {{ item === '/' ? '根目录 /' : item }}
         </button>
-        <button class="button button--secondary" type="button" @click="openTrash">
-          <Trash2 :size="16" />
-          回收站
+      </nav>
+      <div class="file-command-bar__actions">
+        <button class="button button--secondary button--small" type="button" :disabled="loading" title="刷新目录" aria-label="刷新目录" @click="loadDirectory()">
+          <RefreshCw :size="15" :class="{ spinning: loading }" /> 刷新
         </button>
-        <button class="button button--secondary" type="button" @click="openDialog('mkdir')">
-          <Plus :size="16" />
-          新建文件夹
+        <button class="button button--secondary button--small" type="button" title="打开回收站" aria-label="打开回收站" @click="openTrash">
+          <Trash2 :size="15" /> 回收站
         </button>
-        <button class="button button--primary" type="button" @click="uploadInput?.click()">
-          <Upload :size="16" />
-          上传文件
+        <button class="button button--secondary button--small" type="button" title="新建文件夹" aria-label="新建文件夹" @click="openDialog('mkdir')">
+          <Plus :size="15" /> 新建文件夹
+        </button>
+        <button class="button button--primary button--small" type="button" @click="uploadInput?.click()">
+          <Upload :size="15" /> 上传文件
         </button>
         <input
           ref="uploadInput"
@@ -1033,20 +1036,8 @@ onBeforeUnmount(() => {
           multiple
           @change="($event.target as HTMLInputElement).files && uploadFiles(($event.target as HTMLInputElement).files!)"
         />
-      </template>
-    </PageHeader>
-
-    <div class="file-guard">
-      <ShieldCheck :size="18" />
-      <span>可管理范围 <strong>/</strong>，符号链接、内核写入口与 KPanel 数据目录不会开放。</span>
-      <small>单文件上传 512 MiB · 文本编辑 2 MiB · 批量最多 100 项</small>
+      </div>
     </div>
-
-    <nav class="file-shortcuts" aria-label="常用目录">
-      <button v-for="item in ['/', '/home', '/root', '/etc', '/var']" :key="item" type="button" @click="navigateDirectory(item)">
-        {{ item === '/' ? '根目录 /' : item }}
-      </button>
-    </nav>
 
     <section
       class="file-browser"
@@ -1618,37 +1609,19 @@ onBeforeUnmount(() => {
   gap: 18px;
 }
 
-.file-guard {
+.file-command-bar {
   display: flex;
+  min-width: 0;
   align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 10px 15px;
-  border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border));
-  border-radius: 13px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--brand) 7%, var(--surface));
-}
-
-.file-guard svg {
-  flex: 0 0 auto;
-  color: var(--brand);
-}
-
-.file-guard strong {
-  color: var(--text);
-}
-
-.file-guard small {
-  margin-left: auto;
-  white-space: nowrap;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .file-shortcuts {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: -8px;
 }
 
 .file-shortcuts button {
@@ -1663,6 +1636,13 @@ onBeforeUnmount(() => {
 .file-shortcuts button:hover {
   border-color: color-mix(in srgb, var(--brand) 45%, var(--border));
   color: var(--brand);
+}
+
+.file-command-bar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
 }
 
 .file-browser {
@@ -2638,46 +2618,14 @@ onBeforeUnmount(() => {
     gap: 12px;
   }
 
-  .files-page :deep(.page-header) {
-    gap: 10px;
-  }
-
-  .files-page :deep(.page-header__actions) {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 6px;
-  }
-
-  .files-page :deep(.page-header__actions .button) {
-    min-width: 0;
-    min-height: 48px;
+  .file-command-bar {
+    align-items: stretch;
     flex-direction: column;
-    gap: 3px;
-    padding: 6px 3px;
-    font-size: 11px;
-    line-height: 1.15;
-    white-space: nowrap;
-  }
-
-  .file-guard {
-    align-items: flex-start;
-    min-height: 42px;
-    padding: 9px 11px;
-  }
-
-  .file-guard small {
-    display: none;
-  }
-
-  .file-guard span {
-    font-size: 12px;
-    line-height: 1.45;
   }
 
   .file-shortcuts {
     flex-wrap: nowrap;
     gap: 6px;
-    margin-top: -4px;
     overflow-x: auto;
     padding-bottom: 2px;
     scrollbar-width: none;
@@ -2690,6 +2638,11 @@ onBeforeUnmount(() => {
   .file-shortcuts button {
     min-height: 38px;
     flex: 0 0 auto;
+  }
+
+  .file-command-bar__actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .file-toolbar {
@@ -2884,6 +2837,40 @@ onBeforeUnmount(() => {
 
   .trash-item > span:nth-last-child(-n + 2) {
     display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .file-command-bar__actions,
+  .batch-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .file-toolbar {
+    padding: 9px;
+    border-radius: 13px;
+  }
+
+  .file-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .file-grid-card {
+    min-height: 112px;
+  }
+
+  .clipboard-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .clipboard-bar > span:first-child {
+    display: none;
+  }
+
+  .file-context-menu {
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    left: 8px !important;
   }
 }
 </style>

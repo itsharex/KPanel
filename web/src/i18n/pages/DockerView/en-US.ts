@@ -1,6 +1,7 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["刷新 Docker 状态", "Refresh Docker status"],
   ["· 观测于", "• Observations"],
   ["{0} 将移除与 kejilion.sh 相同的 DOCKER-USER 限制规则", "{0} will remove the DOCKER-USER restriction rules that are the same as kejilion.sh"],
   ["{0} 仅保留已建立连接、本机和指定来源 IP", "{0} only keep the established connection, the machine and the specified source IP"],
@@ -217,4 +218,10 @@ export default [
   ["继续运行", "Resume"],
   ["暂停", "Pause"],
   ["更多操作", "More actions"],
+  ['观测于 {0}', 'Observed {0}'],
+  ['运行正常', 'Healthy'],
+  ['显示 {0} 项', 'Showing {0} items'],
+  ['清理停止容器', 'Prune stopped containers'],
+  ['新建容器', 'Create container'],
+  ['{0} · 观测于 {1}', '{0} · observed {1}'],
 ] as const satisfies PhraseCatalog

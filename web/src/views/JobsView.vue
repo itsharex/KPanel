@@ -114,13 +114,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
-    <PageHeader title="变更记录" description="集中查看网站与容器管理操作的执行结果；未完成的审计意图会标记为进行中。">
-      <template #actions>
-        <button class="button button--secondary" type="button" :disabled="refreshing" @click="load({ silent: true })">
-          <RefreshCw :size="16" :class="{ spin: refreshing }" /> 刷新
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader title="变更记录" description="集中查看网站与容器管理操作的执行结果；未完成的审计意图会标记为进行中。" />
 
     <section class="toolbar-card toolbar-card--search-tabs">
       <div class="search-field">
@@ -145,6 +139,9 @@ onBeforeUnmount(() => {
           {{ item.label }} <span>{{ counts[item.key as JobFilter] }}</span>
         </button>
       </div>
+      <button class="icon-button" type="button" :disabled="refreshing" title="刷新变更记录" aria-label="刷新变更记录" @click="load({ silent: true })">
+        <RefreshCw :size="17" :class="{ spin: refreshing }" />
+      </button>
     </section>
 
     <LoadingState v-if="loading" :rows="5" />

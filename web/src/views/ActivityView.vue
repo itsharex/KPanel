@@ -46,6 +46,7 @@ function selectTab(tab: ActivityTab): void {
 
 <style scoped>
 .activity-page {
+  align-content: start;
   gap: 18px;
 }
 

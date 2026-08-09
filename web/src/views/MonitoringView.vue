@@ -606,14 +606,7 @@ onBeforeUnmount(() => controller?.abort())
 
 <template>
   <section class="monitoring-page" :class="{ 'is-updating': updating }">
-    <PageHeader title="历史监控" description="轻量沉淀主机与容器资源趋势，数据仅保存在当前服务器。">
-      <template #actions>
-        <button class="button button--secondary" type="button" :disabled="refreshing || updating" @click="load('refresh')">
-          <RefreshCw :size="16" :class="{ 'is-spinning': refreshing }" />
-          刷新
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader title="历史监控" description="轻量沉淀主机与容器资源趋势，数据仅保存在当前服务器。" />
 
     <div class="monitoring-toolbar" aria-label="监控时间范围">
       <button
@@ -629,6 +622,9 @@ onBeforeUnmount(() => controller?.abort())
       <span v-if="history?.storage.lastSampleAt" class="monitoring-toolbar__meta">
         最近采样 {{ formatDateTime(history.storage.lastSampleAt) }}
       </span>
+      <button class="icon-button" type="button" :disabled="refreshing || updating" title="刷新监控数据" aria-label="刷新监控数据" @click="load('refresh')">
+        <RefreshCw :size="16" :class="{ 'is-spinning': refreshing }" />
+      </button>
     </div>
 
     <div class="monitoring-zoom-strip" :class="{ 'is-loading': updating }">
@@ -1068,11 +1064,13 @@ onBeforeUnmount(() => controller?.abort())
 }
 @media (max-width: 780px) {
   .monitoring-toolbar { flex-wrap: wrap; }
+  .range-button { flex: 1 1 calc(33.333% - 6px); justify-content: center; padding: 0 8px; }
   .monitoring-toolbar__meta { width: 100%; margin-left: 0; padding: 4px 8px; }
   .monitoring-zoom-strip { flex-wrap: wrap; }
   .monitoring-zoom-strip__actions { width: 100%; margin-left: 0; }
   .monitoring-zoom-strip__actions button { flex: 1; justify-content: center; }
-  .summary-grid, .chart-grid, .container-layout { grid-template-columns: 1fr; }
+  .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .chart-grid, .container-layout { grid-template-columns: 1fr; }
   .container-list { min-height: 0; max-height: 360px; }
   .chart-card--wide { grid-column: auto; }
   .container-list-shell { min-height: 0; }
@@ -1082,5 +1080,21 @@ onBeforeUnmount(() => controller?.abort())
   .operator-latency-actions { align-self: stretch; }
   .operator-latency-actions button { flex: 1; }
   .operator-route { flex: 1 1 calc(50% - 4px); justify-content: flex-start; }
+}
+
+@media (max-width: 480px) {
+  .monitoring-page { gap: 12px; }
+  .monitoring-toolbar { gap: 5px; padding: 5px; }
+  .monitoring-toolbar__meta { padding: 4px 6px; font-size: .7rem; }
+  .monitoring-zoom-strip { gap: 8px; padding: 8px; }
+  .summary-grid { gap: 8px; }
+  .summary-card { gap: 7px; padding: 12px; }
+  .summary-card__icon { width: 32px; height: 32px; }
+  .summary-card strong { font-size: 1.05rem; }
+  .summary-card small { font-size: .7rem; }
+  .chart-card, .container-section { padding: 12px; border-radius: 12px; }
+  .chart-card > header, .section-heading, .container-detail > header { align-items: flex-start; flex-direction: column; }
+  .container-compare { padding: 10px; }
+  .operator-route { flex-basis: 100%; }
 }
 </style>

@@ -6,13 +6,5 @@ defineProps<{
 </script>
 
 <template>
-  <header class="page-header">
-    <div>
-      <h1>{{ title }}</h1>
-      <p v-if="description">{{ description }}</p>
-    </div>
-    <div v-if="$slots.actions" class="page-header__actions">
-      <slot name="actions" />
-    </div>
-  </header>
+  <!-- The classic shell or desktop window title owns the page heading. -->
 </template>

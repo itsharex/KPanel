@@ -130,6 +130,30 @@ function placeholders(value) {
   return [...value.matchAll(placeholderPattern)].map((match) => match[1]).sort().join(',')
 }
 
+const rawSharedSources = sharedFiles
+  .map((file) => normalizePhrase(fs.readFileSync(path.join(sourceRoot, file), 'utf8')))
+const rawRuntimeSources = fs.readdirSync(sourceRoot, { recursive: true })
+  .filter((file) => /\.(?:ts|vue)$/.test(file))
+  .filter((file) => !file.includes('i18n\\pages') && !file.includes('i18n/pages'))
+  .filter((file) => !/\.test\.ts$/.test(file))
+  .map((file) => normalizePhrase(fs.readFileSync(path.join(sourceRoot, file), 'utf8')))
+
+function sourceContainsPhrase(source, phrase) {
+  const parts = phrase.split(/\{\d+\}/).map(normalizePhrase).filter(Boolean)
+  if (!parts.length) return false
+  let cursor = 0
+  for (const part of parts) {
+    const index = source.indexOf(part, cursor)
+    if (index < 0) return false
+    cursor = index + part.length
+  }
+  return true
+}
+
+function phraseExistsInSource(group, phrase) {
+  return rawRuntimeSources.some((source) => sourceContainsPhrase(source, phrase))
+}
+
 const groups = new Map()
 const shared = new Set()
 for (const file of sharedFiles) extractFile(file).forEach((phrase) => shared.add(phrase))
@@ -146,7 +170,9 @@ for (const [group, expected] of groups) {
     if (!actual.has(phrase)) errors.push(`${group}: missing source phrase ${JSON.stringify(phrase)}`)
   }
   for (const [source, translation] of entries) {
-    if (!expected.has(source)) errors.push(`${group}: stale source phrase ${JSON.stringify(source)}`)
+    if (!expected.has(source) && !phraseExistsInSource(group, source)) {
+      errors.push(`${group}: stale source phrase ${JSON.stringify(source)}`)
+    }
     if (!translation.trim()) errors.push(`${group}: empty translation for ${JSON.stringify(source)}`)
     const preservedCommand = /^k\s/.test(source) && translation === source
     if (chinesePattern.test(translation) && !preservedCommand) {

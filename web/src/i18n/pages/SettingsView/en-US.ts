@@ -1,6 +1,7 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["检查 Agent 连接", "Check Agent connection"],
   ["修改用户名", "Change username"],
   ["更新当前管理员账户的登录名称", "Update the current administrator account sign-in name"],
   ["新用户名", "New username"],
@@ -104,4 +105,11 @@ export default [
   ["KPanel 源代码采用 AGPL-3.0-only；第三方组件继续使用各自的原始许可。", "The KPanel source code is AGPL-3.0-only; third-party components continue to use their respective original licences."],
   ["TOTP 配置二维码", "TOTP Configuration 2D Code"],
   ["Web 容器不挂载 Docker Socket 或宿主机根目录；Agent 只通过本地 Unix Socket 接收类型化动作。", "Web packagings do not mount Docker Socket or host root directories; Agent receives typed actions only through local Unix Socket."],
+  ['Session 到期时间', 'Session expiration'],
+  ['身份验证', 'Authentication'],
+  ['密码登录', 'Password sign-in'],
+  ['未启用', 'Not enabled'],
+  ['现在', 'Now'],
+  ['查看源码', 'View source'],
+  ['查看许可协议', 'View license'],
 ] as const satisfies PhraseCatalog

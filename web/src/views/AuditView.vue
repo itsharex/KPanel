@@ -83,13 +83,7 @@ onBeforeUnmount(() => controller?.abort())
 
 <template>
   <div class="page">
-    <PageHeader title="审计记录" description="记录 Web、CLI、对账与外部变更；敏感字段在写入前完成脱敏。">
-      <template #actions>
-        <button class="button button--secondary" type="button" :disabled="refreshing" @click="load({ silent: true })">
-          <RefreshCw :size="16" :class="{ spin: refreshing }" /> 刷新
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader title="审计记录" description="记录 Web、CLI、对账与外部变更；敏感字段在写入前完成脱敏。" />
 
     <div class="audit-assurance">
       <span><ShieldCheck :size="20" /></span>
@@ -124,6 +118,9 @@ onBeforeUnmount(() => controller?.abort())
           <option value="observed">观测</option>
         </select>
       </label>
+      <button class="icon-button" type="button" :disabled="refreshing" title="刷新审计记录" aria-label="刷新审计记录" @click="load({ silent: true })">
+        <RefreshCw :size="17" :class="{ spin: refreshing }" />
+      </button>
     </section>
 
     <LoadingState v-if="loading" :rows="6" />

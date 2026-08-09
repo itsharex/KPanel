@@ -3,6 +3,7 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, type Compo
 import { Circle, Laptop, LoaderCircle, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Server, ShieldCheck, SquareTerminal, X } from '@lucide/vue'
 import HostTerminal from '@/components/terminal/HostTerminal.vue'
 import TerminalToolbar from '@/components/terminal/TerminalToolbar.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import { useTerminalFullscreen } from '@/composables/useTerminalFullscreen'
 import { api, ApiError } from '@/lib/api'
 import type { ClusterHost, ClusterHostList } from '@/types/api'
@@ -173,14 +174,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page terminal-page">
-    <header class="page-heading terminal-heading">
-      <div>
-        <span class="eyebrow"><SquareTerminal :size="16" /> KPanel Terminal</span>
-        <h1>多主机终端</h1>
-        <p>本机与已配对 KPanel 使用同一登录态进入；远程流量沿集群加密通道传输，不开放新的 SSH 或公网端口。</p>
-      </div>
-      <button class="button button--secondary" type="button" :disabled="loading" @click="loadHosts"><RefreshCw :size="17" :class="{ spin: loading }" /> {{ t('terminal.refreshConnections') }}</button>
-    </header>
+    <PageHeader title="多主机终端" description="本机与已配对 KPanel 使用同一登录态进入；远程流量沿集群加密通道传输，不开放新的 SSH 或公网端口。" />
 
     <div v-if="errorMessage" class="terminal-alert" role="alert">{{ errorMessage }}</div>
 
@@ -193,6 +187,16 @@ onBeforeUnmount(() => {
           <div class="terminal-connections__heading"><strong>连接列表</strong><small>{{ hosts.length }} 台主机</small></div>
           <div class="terminal-connections__actions">
             <ShieldCheck class="terminal-connections__shield" :size="18" />
+            <button
+              class="terminal-connections__toggle terminal-connections__refresh"
+              type="button"
+              :disabled="loading"
+              :title="t('terminal.refreshConnections')"
+              :aria-label="t('terminal.refreshConnections')"
+              @click="loadHosts"
+            >
+              <RefreshCw :size="17" :class="{ spin: loading }" />
+            </button>
             <button
               class="terminal-connections__toggle"
               type="button"
@@ -216,6 +220,23 @@ onBeforeUnmount(() => {
             <span><strong>{{ host.name }}</strong><small>{{ host.origin || t('terminal.currentPanel') }}</small><em :class="{ 'is-ready': host.terminalAvailable }"><Circle :size="8" fill="currentColor" /> {{ hostStateLabel(host) }}</em></span>
             <LoaderCircle v-if="openingHostId === host.id" class="spin" :size="17" />
             <Plus v-else-if="host.terminalAvailable && !sessions.some((item) => item.hostId === host.id)" :size="17" />
+          </button>
+        </div>
+        <div v-show="connectionsCollapsed" class="terminal-connections__rail" aria-label="收起的主机列表">
+          <button
+            v-for="host in hosts"
+            :key="host.id"
+            class="terminal-host-rail"
+            :class="{ 'is-active': activeSession?.hostId === host.id }"
+            type="button"
+            :disabled="openingHostId === host.id"
+            :title="`${host.name} · ${hostStateLabel(host)}`"
+            :aria-label="`${host.name} · ${hostStateLabel(host)}`"
+            @click="openHost(host)"
+          >
+            <Laptop v-if="host.isLocal" :size="18" />
+            <Server v-else :size="18" />
+            <i :class="{ 'is-ready': host.terminalAvailable }" aria-hidden="true" />
           </button>
         </div>
       </aside>
@@ -245,12 +266,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .terminal-page { min-height:calc(100vh - 100px); gap:18px; }
-.terminal-heading { align-items:flex-end; }
-.terminal-heading .eyebrow { display:flex; align-items:center; gap:7px; color:var(--brand); font-size:12px; font-weight:850; letter-spacing:.08em; text-transform:uppercase; }
-.terminal-heading h1 { margin:7px 0 4px; }
-.terminal-heading p { max-width:850px; margin:0; color:var(--text-muted); }
 .terminal-alert { border:1px solid color-mix(in srgb,var(--danger) 34%,var(--border)); border-radius:10px; padding:11px 13px; color:var(--danger); background:color-mix(in srgb,var(--danger) 8%,var(--surface)); }
-.terminal-workspace { display:grid; height:clamp(560px,calc(100vh - 220px),760px); min-height:560px; grid-template-columns:280px minmax(0,1fr); overflow:hidden; border:1px solid var(--border); border-radius:16px; background:var(--surface); box-shadow:var(--shadow-sm); transition:grid-template-columns 180ms ease; }
+.terminal-workspace { display:grid; height:clamp(480px,calc(100dvh - 160px),760px); min-height:480px; grid-template-columns:280px minmax(0,1fr); overflow:hidden; border:1px solid var(--border); border-radius:16px; background:var(--surface); box-shadow:var(--shadow-sm); transition:grid-template-columns 180ms ease; }
 .terminal-workspace.is-connections-collapsed { grid-template-columns:52px minmax(0,1fr); }
 .terminal-connections { display:grid; min-width:0; min-height:0; grid-template-rows:auto auto minmax(0,1fr); overflow:hidden; border-right:1px solid var(--border); background:color-mix(in srgb,var(--surface) 92%,var(--brand) 8%); }
 .terminal-connections>header { display:flex; align-items:center; justify-content:space-between; padding:17px 16px 12px; color:var(--brand); }
@@ -260,10 +277,17 @@ onBeforeUnmount(() => {
 .terminal-connections__toggle { display:grid; width:32px; height:32px; flex:0 0 auto; place-items:center; border:1px solid var(--border); border-radius:8px; color:var(--text-muted); background:var(--surface); cursor:pointer; }
 .terminal-connections__toggle:hover,.terminal-connections__toggle:focus-visible { border-color:color-mix(in srgb,var(--brand) 55%,var(--border)); color:var(--brand); outline:none; }
 .terminal-workspace.is-connections-collapsed .terminal-connections>header { justify-content:center; padding:12px 9px; }
-.terminal-workspace.is-connections-collapsed .terminal-connections__heading,.terminal-workspace.is-connections-collapsed .terminal-connections__shield { display:none; }
+.terminal-workspace.is-connections-collapsed .terminal-connections__heading,.terminal-workspace.is-connections-collapsed .terminal-connections__shield,.terminal-workspace.is-connections-collapsed .terminal-connections__refresh { display:none; }
 .terminal-search { display:block; padding:0 12px 10px; }
 .terminal-search input { width:100%; border:1px solid var(--border); border-radius:9px; padding:9px 11px; color:var(--text); background:var(--surface); }
 .terminal-connections__list { min-height:0; overflow-y:auto; overscroll-behavior:contain; padding-bottom:8px; scrollbar-gutter:stable; }
+.terminal-connections__rail { display:grid; grid-row:2 / -1; min-height:0; align-content:start; justify-items:center; gap:6px; overflow-y:auto; overscroll-behavior:contain; padding:7px 6px 10px; scrollbar-width:none; }
+.terminal-connections__rail::-webkit-scrollbar { display:none; }
+.terminal-host-rail { position:relative; display:grid; width:36px; height:36px; flex:0 0 auto; place-items:center; border:1px solid transparent; border-radius:9px; color:var(--text-muted); background:transparent; cursor:pointer; }
+.terminal-host-rail:hover,.terminal-host-rail:focus-visible,.terminal-host-rail.is-active { border-color:color-mix(in srgb,var(--brand) 48%,var(--border)); color:var(--brand); background:color-mix(in srgb,var(--brand) 11%,var(--surface)); outline:none; }
+.terminal-host-rail:disabled { cursor:wait; opacity:.55; }
+.terminal-host-rail i { position:absolute; right:3px; bottom:3px; width:7px; height:7px; border:1px solid var(--surface); border-radius:50%; background:var(--text-muted); }
+.terminal-host-rail i.is-ready { background:var(--success); }
 .terminal-host { display:grid; width:calc(100% - 16px); grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px; margin:4px 8px; border:1px solid transparent; border-radius:11px; padding:11px; text-align:left; color:var(--text); background:transparent; }
 .terminal-host:hover,.terminal-host.is-active { border-color:color-mix(in srgb,var(--brand) 45%,var(--border)); background:color-mix(in srgb,var(--brand) 10%,var(--surface)); }
 .terminal-host__icon { display:grid; width:36px; height:36px; place-items:center; border-radius:10px; color:var(--brand); background:color-mix(in srgb,var(--brand) 12%,var(--surface)); }
@@ -297,4 +321,5 @@ onBeforeUnmount(() => {
 @keyframes terminal-pulse { 50% { opacity:.38; } }
 @media (prefers-reduced-motion: reduce) { .terminal-workspace { transition:none; } }
 @media (max-width: 900px) { .terminal-workspace,.terminal-workspace.is-connections-collapsed { height:min(760px,calc(100dvh - 110px)); min-height:560px; grid-template-columns:1fr; grid-template-rows:minmax(140px,220px) minmax(0,1fr); } .terminal-workspace.is-connections-collapsed { grid-template-rows:56px minmax(0,1fr); } .terminal-connections { border-right:0; border-bottom:1px solid var(--border); } .terminal-stage { min-height:0; } }
+@media (max-width: 480px) { .terminal-workspace,.terminal-workspace.is-connections-collapsed { height:calc(100dvh - 94px); min-height:520px; grid-template-rows:minmax(120px,180px) minmax(0,1fr); border-radius:14px; } .terminal-workspace.is-connections-collapsed { grid-template-rows:52px minmax(0,1fr); } .terminal-empty { padding:20px 14px; } .terminal-empty span { width:58px; height:58px; border-radius:16px; } .terminal-empty h2 { margin-top:14px; font-size:19px; } }
 </style>

@@ -1355,21 +1355,18 @@ body.desktop-mode-open::-webkit-scrollbar {
 /* In-window fullscreen must rise above desktop chrome and escape body clips. */
 .desktop-window:has(.terminal-stage.is-fullscreen),
 .desktop-window:has(.interactive-terminal.is-fullscreen),
-.desktop-window:has(.diagnostic-workbench.is-fullscreen),
 .desktop-window:has(.ai-settings-backdrop) {
   z-index: 2800 !important;
 }
 
 .desktop-window__body:has(.terminal-stage.is-fullscreen),
 .desktop-window__body:has(.interactive-terminal.is-fullscreen),
-.desktop-window__body:has(.diagnostic-workbench.is-fullscreen),
 .desktop-window__body:has(.ai-settings-backdrop) {
   overflow: visible;
 }
 
 .desktop:has(.terminal-stage.is-fullscreen) :is(.desktop__widgets, .desktop__taskbar),
-.desktop:has(.interactive-terminal.is-fullscreen) :is(.desktop__widgets, .desktop__taskbar),
-.desktop:has(.diagnostic-workbench.is-fullscreen) :is(.desktop__widgets, .desktop__taskbar) {
+.desktop:has(.interactive-terminal.is-fullscreen) :is(.desktop__widgets, .desktop__taskbar) {
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
@@ -1446,12 +1443,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   max-width: min(58vw, 680px);
   justify-self: center;
   gap: 3px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.desktop__taskbar-apps::-webkit-scrollbar {
-  display: none;
+  overflow: visible;
 }
 
 .desktop__system-tray {
@@ -1667,6 +1659,12 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 /* Container-responsive application layouts ----------------------------- */
 
+@container desktop-window (max-width: 980px) {
+  .desktop-window__body .app-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
 @container desktop-window (max-width: 820px) {
   .desktop-window__body :is(
     .overview-grid,
@@ -1677,8 +1675,6 @@ body.desktop-mode-open::-webkit-scrollbar {
     .workspace-grid,
     .workspace-grid--environment,
     .form-grid--two,
-    .cluster-hero,
-    .cluster-stats,
     .environment-hero,
     .environment-checks,
     .environment-components,
@@ -1786,8 +1782,12 @@ body.desktop-mode-open::-webkit-scrollbar {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 
-  .desktop-window__body .diagnostic-workbench {
+  .desktop-window__body .diagnostic-workbench:not(.is-command-panel-collapsed) {
     grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .desktop-window__body .diagnostic-workbench.is-command-panel-collapsed {
+    grid-template-columns: 52px minmax(0, 1fr) !important;
   }
 
   .desktop-window__body :is(.monitoring-toolbar, .monitoring-zoom-strip) {
@@ -1840,6 +1840,12 @@ body.desktop-mode-open::-webkit-scrollbar {
   }
 }
 
+@container desktop-window (max-width: 680px) {
+  .desktop-window__body .app-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
 @container desktop-window (max-width: 580px) {
   .desktop-window__body > :is(.page, .page-content, .files-page, .diagnostics-page, .monitoring-page) {
     padding: 12px;
@@ -1850,6 +1856,63 @@ body.desktop-mode-open::-webkit-scrollbar {
   .desktop-window__body .card-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .desktop-window__body .toolbar-card--search-tabs {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 40px;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .desktop-window__body .toolbar-card--search-tabs .search-field {
+    min-width: 0;
+    grid-column: 1 / -1;
+  }
+
+  .desktop-window__body .toolbar-card--search-tabs .filter-tabs {
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .desktop-window__body .toolbar-card--search-tabs .filter-tabs button {
+    gap: 4px;
+    padding-right: 7px;
+    padding-left: 7px;
+    font-size: 10px;
+  }
+
+  .desktop-window__body .toolbar-card--search-tabs .filter-tabs button span {
+    min-width: 16px;
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .desktop-window__body .toolbar-card--search-tabs .filter-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .desktop-window__body .toolbar-card--search-tabs > .icon-button {
+    grid-column: 2;
+  }
+
+  .desktop-window__body .error-state {
+    min-width: 0;
+    align-items: center;
+    flex-direction: column;
+    gap: 10px;
+    padding: 22px 14px;
+    text-align: center;
+  }
+
+  .desktop-window__body .error-state > div {
+    min-width: 0;
+  }
+
+  .desktop-window__body .error-state p {
+    overflow-wrap: anywhere;
   }
 
   .desktop-window__body :is(.app-grid, .market-stats, .docker-summary, .stats-grid) {
@@ -2007,9 +2070,70 @@ body.desktop-mode-open::-webkit-scrollbar {
   .desktop__classic-button span {
     display: none;
   }
+
+  .desktop__taskbar-apps {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .desktop__taskbar-apps::-webkit-scrollbar {
+    display: none;
+  }
+
+  .desktop__taskbar-label {
+    display: none;
+  }
 }
 
 @media (max-width: 420px) {
+  .desktop-window,
+  .desktop-window.desktop-window--maximized {
+    top: 6px !important;
+    left: 6px !important;
+    width: calc(100vw - 12px) !important;
+    height: calc(100dvh - 76px) !important;
+    min-width: 0;
+    min-height: 0;
+    border-radius: 14px;
+  }
+
+  .desktop-window__titlebar {
+    min-height: 42px;
+    padding: 0 7px 0 10px;
+  }
+
+  .desktop__taskbar {
+    right: 6px;
+    bottom: 6px;
+    left: 6px;
+    height: 54px;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 13px;
+  }
+
+  .desktop__taskbar-brand {
+    padding: 0 2px;
+  }
+
+  .desktop__taskbar-brand > :first-child,
+  .desktop__taskbar-brand .brand__mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .desktop__taskbar-item {
+    width: 42px;
+    height: 42px;
+  }
+
+  .desktop__taskbar-glyph {
+    width: 34px;
+    height: 34px;
+  }
+
   .desktop:has(.desktop-window:not(.desktop-window--minimized)) .desktop__icons {
     opacity: 0;
     pointer-events: none;

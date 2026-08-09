@@ -278,6 +278,16 @@ const basicSettings = computed<ManagementTool[]>(() => {
   ]
 })
 
+function kernelProfileLabel(profile?: string): string {
+  if (profile === '均衡优化模式') return profile
+  return profile || '自定义'
+}
+
+function managementDetailLabel(detail: string): string {
+  if (/^拥塞算法 .* · 队列 /.test(detail)) return detail
+  return detail
+}
+
 const systemTools = computed<ManagementTool[]>(() => {
   if (!data.value) return []
   const management = data.value.management
@@ -378,7 +388,7 @@ const systemTools = computed<ManagementTool[]>(() => {
       title: '内核优化',
       description: '对应 kejilion.sh 的“Linux 内核调优管理”。',
       value: management.kernelOptimization.enabled
-        ? management.kernelOptimization.profile || '自定义'
+        ? kernelProfileLabel(management.kernelOptimization.profile)
         : '未启用',
       detail: management.kernelOptimization.source === 'kejilion' ? '已识别 Kejilion 产物' : '系统默认参数',
       capability: 'system.kernel-tuning.write',
@@ -753,17 +763,7 @@ onBeforeUnmount(() => {
     <PageHeader
       title="系统监控与管理"
       description="实时资源状态与 kejilion.sh 系统工具统一入口；所有配置均以宿主机实际状态为准。"
-    >
-      <template #actions>
-        <span v-if="data" class="observed-at">
-          <Clock3 :size="15" /> {{ formatDateTime(data.observedAt) }}
-        </span>
-        <button class="button button--secondary" type="button" :disabled="refreshing" @click="load(true)">
-          <RefreshCw :size="16" :class="{ spin: refreshing }" />
-          刷新
-        </button>
-      </template>
-    </PageHeader>
+    />
 
     <LoadingState v-if="loading" :rows="4" cards />
     <ErrorState v-else-if="error && !data" :message="error" @retry="load()" />
@@ -783,6 +783,12 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="realtime-monitoring__actions">
+            <span v-if="data" class="observed-at">
+              <Clock3 :size="15" /> {{ formatDateTime(data.observedAt) }}
+            </span>
+            <button class="icon-button" type="button" :disabled="refreshing" title="刷新系统状态" aria-label="刷新系统状态" @click="load(true)">
+              <RefreshCw :size="16" :class="{ spin: refreshing }" />
+            </button>
             <RouterLink class="button button--secondary button--small" to="/processes">
               <ListTree :size="16" />
               {{ processManagerLabel }}
@@ -1094,7 +1100,7 @@ onBeforeUnmount(() => {
               </span>
               <strong>{{ tool.title }}</strong>
               <span>{{ tool.value }}</span>
-              <small>{{ tool.detail }}</small>
+              <small>{{ managementDetailLabel(tool.detail) }}</small>
               <span
                 v-if="
                   maintenanceRunning &&
@@ -1139,7 +1145,7 @@ onBeforeUnmount(() => {
               <span class="configuration-row__body">
                 <span>{{ tool.title }}</span>
                 <strong>{{ tool.value }}</strong>
-                <small>{{ tool.detail }}</small>
+                <small>{{ managementDetailLabel(tool.detail) }}</small>
               </span>
               <span class="configuration-row__action">
                 <template v-if="tool.id === 'ssh-defense'">
@@ -1188,7 +1194,7 @@ onBeforeUnmount(() => {
               </span>
               <strong>{{ tool.title }}</strong>
               <span>{{ tool.value }}</span>
-              <small>{{ tool.detail }}</small>
+              <small>{{ managementDetailLabel(tool.detail) }}</small>
             </button>
           </div>
         </section>

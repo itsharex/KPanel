@@ -85,4 +85,12 @@ export default [
   ["可以恢复、查看或删除归档会话。", "You can restore, review, or delete archived conversations."],
   ["自动使用默认模型创建会话，随后可在输入框中随时切换。", "Create with the default model automatically, then switch models from the composer at any time."],
   ["新建会话", "New conversation"],
+  ['{0} 个会话', '{0} sessions'],
+  ['还没有会话', 'No sessions yet'],
+  ['新建会话后可独立选择模型', 'Create a session and choose its model independently'],
+  ['连接你的第一个模型', 'Connect your first model'],
+  ['选择常用服务商，只需填写密钥；连接测试和模型同步会自动完成。', 'Choose a provider and enter its key. Connection testing and model sync run automatically.'],
+  ['密钥加密保存在本机，模型只能调用 KPanel 注册工具。', 'Keys are encrypted locally, and models can call only KPanel-registered tools.'],
+  ['选择 API', 'Choose API'],
+  ['选择常用服务商，只需填写密钥；连接测试和模型同步会自动完成。{0}密钥加密保存在本机，模型只能调用 KPanel 注册工具。', 'Choose a provider and enter its key. Connection testing and model sync run automatically.{0}Keys are encrypted locally, and models can call only KPanel-registered tools.'],
 ] as const satisfies PhraseCatalog

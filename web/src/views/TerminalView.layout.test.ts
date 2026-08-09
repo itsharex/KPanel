@@ -20,8 +20,15 @@ describe('multi-host terminal workspace layout', () => {
     expect(terminalSource).toContain('aria-controls="terminal-connection-selector"')
     expect(terminalSource).toContain("'terminal.expandConnections'")
     expect(terminalSource).toContain("'terminal.collapseConnections'")
+    expect(terminalSource).toContain('terminal-connections__toggle terminal-connections__refresh')
+    expect(terminalSource).toContain('class="terminal-connections__rail"')
+    expect(terminalSource).toContain('class="terminal-host-rail"')
+    expect(terminalSource).toContain(':title="`${host.name} · ${hostStateLabel(host)}`"')
     expect(terminalSource).toMatch(
       /\.terminal-workspace\.is-connections-collapsed\s*\{[^}]*grid-template-columns:52px minmax\(0,1fr\);/,
+    )
+    expect(terminalSource).toMatch(
+      /\.terminal-workspace\.is-connections-collapsed \.terminal-connections__heading,[^}]*\.terminal-connections__refresh\s*\{\s*display:none;/,
     )
   })
 

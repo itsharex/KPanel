@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from '@/i18n'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/AppsView/en-US').then((module) => module.default))
@@ -76,6 +77,7 @@ const recentInstalledID = ref('')
 const cancelJobPending = ref(false)
 const cancellingJob = ref(false)
 const toast = useToast()
+const i18n = useI18n()
 const route = useRoute()
 const router = useRouter()
 const windowActive = inject(desktopWindowActiveKey, computed(() => true))
@@ -160,7 +162,40 @@ function capability(item: AppMarketItem, action: string): boolean {
 }
 
 function categoryName(key: string): string {
-  return inventory.value?.categories.find((item) => item.key === key)?.zh || key
+  const item = inventory.value?.categories.find((candidate) => candidate.key === key)
+  return (i18n.locale.value === 'en-US' ? item?.en : item?.zh) || key
+}
+
+function appName(item: AppMarketItem): string {
+  return (i18n.locale.value === 'en-US' ? item.name_en : item.name_zh) || item.name_zh || item.name_en
+}
+
+function appDescription(item: AppMarketItem): string {
+  return (i18n.locale.value === 'en-US' ? item.desc_en : item.desc_zh) || item.desc_zh || item.desc_en
+}
+
+function appIconAlt(item: AppMarketItem): string {
+  return i18n.locale.value === 'en-US' ? `${appName(item)} icon` : `${appName(item)} 图标`
+}
+
+function sourceMeta(item: AppMarketItem): string {
+  if (i18n.locale.value === 'en-US') return item.source === 'builtin' ? `Built-in #${item.num}` : 'Third-party'
+  return item.source === 'builtin' ? `内置 #${item.num}` : '第三方'
+}
+
+function marketResultLabel(): string {
+  if (!inventory.value) return ''
+  return i18n.locale.value === 'en-US'
+    ? `Showing ${filteredApps.value.length} of ${inventory.value.items.length} apps`
+    : `已显示 ${filteredApps.value.length} / ${inventory.value.items.length} 个应用`
+}
+
+function catalogModeLabel(): string {
+  if (!inventory.value) return ''
+  const labels = i18n.locale.value === 'en-US'
+    ? { live: 'Live sync', cached: 'Safe cache', embedded: 'Built-in snapshot' }
+    : { live: '动态同步', cached: '安全缓存', embedded: '内置快照' }
+  return labels[inventory.value.catalogMode] || inventory.value.catalogMode
 }
 
 function stateLabel(item: AppMarketItem): string {
@@ -628,7 +663,7 @@ async function install(): Promise<void> {
     selectedID.value = ''
     startJobPolling(job)
     jobDetailsOpen.value = true
-    toast.success('已转入后台安装', `${item.name_zh} 安装期间可以继续使用面板。`)
+    toast.success('已转入后台安装', `${appName(item)} 安装期间可以继续使用面板。`)
   } catch (reason) {
     toast.danger('安装失败', reason instanceof ApiError ? reason.message : 'Agent 未能完成安装。')
   } finally {
@@ -676,7 +711,7 @@ async function confirmMutation(): Promise<void> {
       confirmAction.value = undefined
       startJobPolling(result)
       jobDetailsOpen.value = true
-      toast.success(`已转入后台${jobActionLabel(result.action)}`, `${item.name_zh} 处理期间可以继续使用面板。`)
+      toast.success(`已转入后台${jobActionLabel(result.action)}`, `${appName(item)} 处理期间可以继续使用面板。`)
       return
     }
     confirmAction.value = undefined
@@ -710,7 +745,7 @@ async function openScriptManage(): Promise<void> {
     }
     startJobPolling(result)
     jobDetailsOpen.value = true
-    toast.success('脚本管理终端已打开', `${item.name_zh} 正在使用固定应用编号进入 kejilion.sh 原生菜单。`)
+    toast.success('脚本管理终端已打开', `${appName(item)} 正在使用固定应用编号进入 kejilion.sh 原生菜单。`)
   } catch (reason) {
     toast.danger(
       '脚本管理启动失败',
@@ -757,7 +792,7 @@ async function toggleAccess(): Promise<void> {
     if (isBackgroundJob(result)) {
       startJobPolling(result)
       jobDetailsOpen.value = true
-      toast.success('访问策略已转入后台', `${item.name_zh} 正在调用 kejilion.sh 原生防火墙规则。`)
+      toast.success('访问策略已转入后台', `${appName(item)} 正在调用 kejilion.sh 原生防火墙规则。`)
       return
     }
     toast.success(next === 'domain_only' ? '已阻止 IP + 端口访问' : '已放行 IP + 端口访问')
@@ -816,7 +851,7 @@ async function addDomain(): Promise<void> {
       await load(true)
       return
     }
-    toast.success('域名已绑定', `${hostname} 已反向代理到 ${refreshedItem.name_zh}。`)
+    toast.success('域名已绑定', `${hostname} 已反向代理到 ${appName(refreshedItem)}。`)
   } catch (reason) {
     const detail = reason instanceof ApiError ? reason.message : '应用状态暂时无法刷新'
     domainWarning.value = `域名已绑定，但 IP + 端口访问策略未调整：${detail}`
@@ -903,30 +938,22 @@ watch(windowActive, syncJobPollingForWindow)
     <PageHeader
       title="应用市场"
       description="已安装应用优先呈现；脚本内置与第三方应用使用 kejilion.sh 原生交互流程在后台安装。"
-    >
-      <template #actions>
-        <a class="button button--secondary" href="https://app.kejilion.sh" target="_blank" rel="noopener noreferrer">
-          <ArrowUpRight :size="16" />
-          官方目录
-        </a>
-        <button class="button button--secondary" type="button" :disabled="refreshing" @click="load(true)">
-          <RefreshCw :size="16" :class="{ spin: refreshing }" />
-          刷新状态
-        </button>
-      </template>
-    </PageHeader>
+    />
 
-    <section v-if="inventory" class="market-hero">
-      <div class="market-hero__copy">
-        <span class="market-hero__eyebrow"><Store :size="15" /> KPanel App Center</span>
-        <h2>从发现到运行，一站式管理</h2>
-        <p>应用、容器、域名和访问策略保持在同一个工作流中，且兼容脚本的应用编号与端口产物。</p>
-      </div>
+    <section v-if="inventory" class="market-hero" aria-label="应用概况与操作">
       <div class="market-stats">
         <div><strong>{{ inventory.items.length }}</strong><span>全部应用</span></div>
         <div><strong>{{ inventory.installed }}</strong><span>已安装</span></div>
         <div><strong>{{ inventory.running }}</strong><span>运行中</span></div>
         <div><strong>{{ inventory.items.filter((item) => capability(item, 'install') || capability(item, 'update')).length }}</strong><span>可直接安装</span></div>
+      </div>
+      <div class="market-hero__actions">
+        <a class="button button--secondary button--small" href="https://app.kejilion.sh" target="_blank" rel="noopener noreferrer">
+          <ArrowUpRight :size="15" /> 官方目录
+        </a>
+        <button class="button button--secondary button--small" type="button" :disabled="refreshing" @click="load(true)">
+          <RefreshCw :size="15" :class="{ spin: refreshing }" /> 刷新状态
+        </button>
       </div>
     </section>
 
@@ -1031,7 +1058,7 @@ watch(windowActive, syncJobPollingForWindow)
         type="button"
         @click="category = item.key"
       >
-        {{ item.zh }} <span>{{ categoryCounts[item.key] || 0 }}</span>
+        {{ categoryName(item.key) }} <span>{{ categoryCounts[item.key] || 0 }}</span>
       </button>
     </nav>
 
@@ -1057,7 +1084,7 @@ watch(windowActive, syncJobPollingForWindow)
           <span class="app-card__icon">
             <img
               :src="item.icon"
-              :alt="`${item.name_zh} 图标`"
+              :alt="appIconAlt(item)"
               width="128"
               height="128"
               loading="lazy"
@@ -1066,7 +1093,7 @@ watch(windowActive, syncJobPollingForWindow)
           </span>
           <span class="app-card__body">
             <span class="app-card__title">
-              <strong>{{ item.name_zh }}</strong>
+              <strong>{{ appName(item) }}</strong>
               <em v-if="recentInstalledID === item.id" class="app-card__recent">刚刚安装</em>
               <StatusBadge
                 v-if="item.runtime.installed"
@@ -1077,12 +1104,12 @@ watch(windowActive, syncJobPollingForWindow)
             </span>
             <span class="app-card__meta">
               <em>{{ categoryName(item.cat) }}</em>
-              <em>{{ item.source === 'builtin' ? `内置 #${item.num}` : '第三方' }}</em>
+              <em>{{ sourceMeta(item) }}</em>
               <em v-if="capability(item, 'install') || capability(item, 'update')" class="is-adapted">
                 <ShieldCheck :size="12" /> 可直接安装
               </em>
             </span>
-            <span class="app-card__description">{{ item.desc_zh }}</span>
+            <span class="app-card__description">{{ appDescription(item) }}</span>
           </span>
         </button>
         <footer class="app-card__footer">
@@ -1118,18 +1145,18 @@ watch(windowActive, syncJobPollingForWindow)
     </section>
 
     <footer v-if="inventory && filteredApps.length" class="market-result">
-      已显示 {{ filteredApps.length }} / {{ inventory.items.length }} 个应用
+      {{ marketResultLabel() }}
       <span>
-        目录来源 app.kejilion.sh ·
-        {{ inventory.catalogMode === 'live' ? '动态同步' : inventory.catalogMode === 'cached' ? '安全缓存' : '内置快照' }}
-        · 状态来源宿主机
+        {{ i18n.locale.value === 'en-US' ? 'Directory source: app.kejilion.sh' : '目录来源 app.kejilion.sh' }} ·
+        {{ catalogModeLabel() }} ·
+        {{ i18n.locale.value === 'en-US' ? 'State source: host' : '状态来源宿主机' }}
       </span>
     </footer>
 
     <ModalDialog
       :open="Boolean(selected) && !installOpen && !confirmAction"
-      :title="selected?.name_zh || '应用详情'"
-      :description="selected?.desc_zh"
+      :title="selected ? appName(selected) : '应用详情'"
+      :description="selected ? appDescription(selected) : ''"
       size="wide"
       @close="selectedID = ''"
     >
@@ -1144,7 +1171,7 @@ watch(windowActive, syncJobPollingForWindow)
                 :status="selected.runtime.installed ? selected.runtime.state : 'unknown'"
                 :label="stateLabel(selected)"
               />
-              <span class="source-pill">{{ selected.source === 'builtin' ? `脚本内置 #${selected.num}` : '第三方应用' }}</span>
+              <span class="source-pill">{{ sourceMeta(selected) }}</span>
               <span class="source-pill">{{ categoryName(selected.cat) }}</span>
             </span>
             <strong>{{ selected.name_en }}</strong>
@@ -1371,7 +1398,7 @@ watch(windowActive, syncJobPollingForWindow)
 
     <ModalDialog
       :open="installOpen && Boolean(selected)"
-      :title="`安装 ${selected?.name_zh || ''}`"
+      :title="`${i18n.locale.value === 'en-US' ? 'Install' : '安装'} ${selected ? appName(selected) : ''}`"
       description="任务提交后会在宿主机后台运行；关闭窗口或切换页面不会中断安装。"
       size="small"
       @close="installOpen = false"
@@ -1557,7 +1584,7 @@ watch(windowActive, syncJobPollingForWindow)
     >
       <div class="confirm-app">
         <img v-if="selected" :src="selected.icon" alt="" />
-        <div><strong>{{ selected?.name_zh }}</strong><small>{{ selected?.runtime.containerName }}</small></div>
+        <div><strong>{{ selected ? appName(selected) : '' }}</strong><small>{{ selected?.runtime.containerName }}</small></div>
       </div>
       <template #footer>
         <button class="button button--secondary" type="button" @click="confirmAction = undefined">取消</button>
@@ -1585,75 +1612,59 @@ watch(windowActive, syncJobPollingForWindow)
 .market-hero {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(420px, 0.9fr);
-  gap: 28px;
   overflow: hidden;
-  padding: 28px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  isolation: isolate;
+  gap: 20px;
+  padding: 12px 14px;
   border: 1px solid color-mix(in srgb, var(--market-accent) 22%, var(--border));
-  border-radius: 22px;
+  border-radius: 15px;
   background:
-    radial-gradient(circle at 6% 0%, color-mix(in srgb, var(--market-accent) 22%, transparent), transparent 36%),
-    linear-gradient(135deg, color-mix(in srgb, var(--surface) 92%, var(--market-accent)), var(--surface));
+    radial-gradient(circle at 86% 0%, color-mix(in srgb, var(--market-accent) 10%, transparent), transparent 34%),
+    linear-gradient(110deg, color-mix(in srgb, var(--market-accent) 6%, var(--surface)) 0%, var(--surface) 58%);
   box-shadow: var(--shadow-sm);
 }
 
-.market-hero::after {
+.market-hero::before {
   position: absolute;
-  right: -90px;
-  bottom: -130px;
-  width: 290px;
-  height: 290px;
-  border: 52px solid color-mix(in srgb, var(--market-accent) 7%, transparent);
+  z-index: 0;
+  top: 50%;
+  right: 34px;
+  width: 190px;
+  height: 190px;
+  border: 30px solid color-mix(in srgb, var(--market-accent) 7%, transparent);
   border-radius: 50%;
   content: '';
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
-.market-hero__copy,
-.market-stats {
+.market-hero > * {
   position: relative;
   z-index: 1;
 }
 
-.market-hero__eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 12px;
-  color: var(--market-accent);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.market-hero h2 {
-  margin: 0 0 9px;
-  font-size: clamp(24px, 3vw, 34px);
-  letter-spacing: -0.04em;
-}
-
-.market-hero p {
-  max-width: 660px;
-  margin: 0;
-  color: var(--text-secondary);
-  line-height: 1.75;
+.market-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-self: end;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .market-stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  align-self: center;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--surface) 80%, transparent);
-  backdrop-filter: blur(12px);
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(116px, 132px));
 }
 
 .market-stats div {
   display: grid;
-  gap: 4px;
-  padding: 18px 14px;
+  gap: 2px;
+  min-height: 48px;
+  padding: 5px 14px;
+  place-content: center;
   text-align: center;
 }
 
@@ -1662,7 +1673,7 @@ watch(windowActive, syncJobPollingForWindow)
 }
 
 .market-stats strong {
-  font-size: 23px;
+  font-size: 19px;
   letter-spacing: -0.04em;
 }
 
@@ -2504,11 +2515,7 @@ watch(windowActive, syncJobPollingForWindow)
   background: var(--terminal-shell-background, #0b1214);
 }
 
-@media (max-width: 1280px) {
-  .market-hero {
-    grid-template-columns: 1fr;
-  }
-
+@media (max-width: 1080px) {
   .app-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -2562,11 +2569,53 @@ watch(windowActive, syncJobPollingForWindow)
 
 @media (max-width: 640px) {
   .market-hero {
-    padding: 21px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+    border-radius: 14px;
   }
 
   .market-stats {
+    width: 100%;
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .market-hero__actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .market-hero__actions > * {
+    width: 100%;
+  }
+
+  .market-toolbar {
+    gap: 9px;
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .market-segment,
+  .market-categories {
+    width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .market-segment::-webkit-scrollbar,
+  .market-categories::-webkit-scrollbar {
+    display: none;
+  }
+
+  .market-categories {
+    gap: 6px;
+  }
+
+  .market-categories button {
+    min-height: 40px;
+    padding: 8px 11px;
   }
 
   .market-stats div:nth-child(3) {
@@ -2580,6 +2629,30 @@ watch(windowActive, syncJobPollingForWindow)
 
   .app-grid {
     grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .app-card {
+    border-radius: 14px;
+  }
+
+  .app-card__main {
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .app-card__icon {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+  }
+
+  .app-card__description {
+    -webkit-line-clamp: 2;
+  }
+
+  .app-card__footer {
+    padding: 10px 12px;
   }
 
   .market-result,
@@ -2610,6 +2683,21 @@ watch(windowActive, syncJobPollingForWindow)
   .install-more-card,
   .job-detail-summary {
     grid-template-columns: 1fr;
+  }
+
+  .install-more-card {
+    gap: 11px;
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .install-more-card > .button {
+    width: 100%;
+  }
+
+  .market-result {
+    gap: 5px;
+    font-size: 11px;
   }
 
   .app-job-banner__percent {

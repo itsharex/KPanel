@@ -256,22 +256,7 @@ onBeforeUnmount(() => {
     <PageHeader
       :title="labels.title"
       description="直接读取宿主机 /proc，轻量查看实时占用并管理进程。"
-    >
-      <template #actions>
-        <span v-if="snapshot" class="process-observed-at">
-          {{ paused ? labels.paused : formatDateTime(snapshot.collectedAt) }}
-        </span>
-        <button class="button button--secondary" type="button" @click="togglePause">
-          <Play v-if="paused" :size="16" />
-          <Pause v-else :size="16" />
-          {{ paused ? labels.resume : labels.pause }}
-        </button>
-        <button class="button button--secondary" type="button" :disabled="refreshing" @click="load(true)">
-          <RefreshCw :size="16" :class="{ spin: refreshing }" />
-          {{ labels.refresh }}
-        </button>
-      </template>
-    </PageHeader>
+    />
 
     <LoadingState v-if="loading && !snapshot" :rows="5" cards />
     <ErrorState v-else-if="error && !snapshot" :message="error" @retry="load()" />
@@ -311,10 +296,20 @@ onBeforeUnmount(() => {
             <Search :size="17" />
             <input v-model="search" type="search" maxlength="128" placeholder="搜索名称、用户或 PID" aria-label="搜索进程" />
           </label>
-          <div class="process-toolbar__status">
-            <span v-if="refreshing" class="process-live"><i /> {{ labels.sampling }}</span>
-            <span v-else-if="!paused" class="process-live"><i /> {{ labels.live }}</span>
-            <span>{{ resultDescription }}</span>
+          <div class="process-toolbar__controls">
+            <div class="process-toolbar__status">
+              <span v-if="refreshing" class="process-live"><i /> {{ labels.sampling }}</span>
+              <span v-else-if="!paused" class="process-live"><i /> {{ labels.live }}</span>
+              <span>{{ resultDescription }}</span>
+              <span v-if="snapshot" class="process-observed-at">{{ paused ? labels.paused : formatDateTime(snapshot.collectedAt) }}</span>
+            </div>
+            <button class="icon-button" type="button" :title="paused ? labels.resume : labels.pause" :aria-label="paused ? labels.resume : labels.pause" @click="togglePause">
+              <Play v-if="paused" :size="16" />
+              <Pause v-else :size="16" />
+            </button>
+            <button class="icon-button" type="button" :disabled="refreshing" :title="labels.refresh" :aria-label="labels.refresh" @click="load(true)">
+              <RefreshCw :size="16" :class="{ spin: refreshing }" />
+            </button>
           </div>
         </header>
 
@@ -425,6 +420,7 @@ onBeforeUnmount(() => {
 .process-search:focus-within { border-color: color-mix(in srgb, var(--brand) 55%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 10%, transparent); }
 .process-search input { width: 100%; height: 38px; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; font-size: 13px; }
 .process-toolbar__status { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.process-toolbar__controls { display: flex; min-width: 0; align-items: center; gap: 7px; }
 .process-live { display: inline-flex; align-items: center; gap: 6px; color: var(--success); font-weight: 750; }
 .process-live i, .process-state i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent); }
 .process-layout { display: grid; min-height: 420px; grid-template-columns: minmax(0, 1fr); }
@@ -471,7 +467,8 @@ onBeforeUnmount(() => {
 @media (max-width: 760px) {
   .process-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .process-toolbar { align-items: stretch; flex-direction: column; }
-  .process-toolbar__status { justify-content: space-between; }
+  .process-toolbar__controls { justify-content: space-between; }
+  .process-toolbar__status { min-width: 0; flex: 1; justify-content: space-between; overflow-x: auto; }
   .process-table th:nth-child(3), .process-table td:nth-child(3),
   .process-table th:nth-child(6), .process-table td:nth-child(6),
   .process-table th:nth-child(7), .process-table td:nth-child(7) { display: none; }
@@ -481,6 +478,20 @@ onBeforeUnmount(() => {
   .process-table__metric { min-width: 70px; }
   .process-table__metric > i { width: 48px; }
 }
-@media (max-width: 480px) { .process-observed-at { display: none; } .process-summary__card { padding: 14px; } }
+@media (max-width: 480px) {
+  .process-page { gap: 12px; }
+  .process-observed-at { display: none; }
+  .process-summary { gap: 8px; }
+  .process-summary__card { min-height: 112px; padding: 12px; border-radius: 14px; }
+  .process-summary__card > strong { margin-top: 7px; font-size: 22px; }
+  .process-summary__card > small { margin-top: 5px; }
+  .process-meter { margin-top: 9px; }
+  .process-workspace { border-radius: 14px; }
+  .process-toolbar { gap: 9px; padding: 11px; }
+  .process-toolbar__controls { flex-wrap: wrap; gap: 6px; }
+  .process-toolbar__status { width: 100%; order: 2; }
+  .process-layout { min-height: 360px; }
+  .process-table th button, .process-table th > span { min-height: 40px; }
+}
 @media (prefers-reduced-motion: reduce) { .process-meter i { transition: none; } }
 </style>

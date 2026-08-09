@@ -1,6 +1,7 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["刷新变更记录", "Refresh change records"],
   ["安装应用", "Install Application"],
   ["变更记录", "Change records"],
   ["变更记录筛选", "Change record filter"],
@@ -23,4 +24,6 @@ export default [
   ["系统", "System"],
   ["重启容器", "Restart Container"],
   ["自动对账", "Automatic reconciliation"],
+  ['进行中', 'Active'],
+  ['异常', 'Issues'],
 ] as const satisfies PhraseCatalog

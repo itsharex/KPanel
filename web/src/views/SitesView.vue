@@ -836,21 +836,20 @@ onBeforeUnmount(() => {
     <PageHeader
       title="网站管理"
       description="从实际产物发现并管理网站；新建站点沿用 kejilion.sh 的 /home/web 架构，并通过原子事务提交。"
-    >
-      <template #actions>
-        <button
-          class="button button--primary"
-          type="button"
-          :disabled="!canCreateAny || panel.isReadOnly.value"
-          :title="!canCreateAny ? siteWriteReason : ''"
-          @click="openCreate"
-        >
-          <Plus :size="17" /> 新建网站
-        </button>
-      </template>
-    </PageHeader>
+    />
 
-    <SitesSectionTabs />
+    <div class="page-command-bar">
+      <SitesSectionTabs />
+      <button
+        class="button button--primary"
+        type="button"
+        :disabled="!canCreateAny || panel.isReadOnly.value"
+        :title="!canCreateAny ? siteWriteReason : ''"
+        @click="openCreate"
+      >
+        <Plus :size="17" /> 新建网站
+      </button>
+    </div>
 
     <div v-if="!canCreateAny && !loading" class="inline-alert inline-alert--info" role="status">
       <ShieldCheck :size="17" />

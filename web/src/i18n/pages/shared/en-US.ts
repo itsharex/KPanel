@@ -158,4 +158,5 @@ export default [
   ["拒绝", "Reject"],
   ["批准生效", "Approve and activate"],
   ["暂无待审核提案", "No pending proposals"],
+  ['{0} 天 {1} 小时', '{0}d {1}h'],
 ] as const satisfies PhraseCatalog

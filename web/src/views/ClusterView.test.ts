@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ClusterView from './ClusterView.vue'
@@ -218,6 +219,20 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('ClusterView compact summary layout', () => {
+  it('keeps summary metrics and actions on one decorated row', () => {
+    const source = readFileSync(new URL('./ClusterView.vue', import.meta.url), 'utf8')
+
+    expect(source).toMatch(/\.cluster-hero\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*max-content minmax\(0, 1fr\);/)
+    expect(source).toMatch(/\.cluster-stats\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(116px, 132px\)\);/)
+    expect(source).toMatch(/\.cluster-hero\s*\{[^}]*radial-gradient\([^}]*var\(--cluster-accent\)/)
+    expect(source).toMatch(/\.cluster-hero__actions\s*\{[^}]*flex-wrap:\s*nowrap;/)
+    expect(source).toContain('class="icon-button icon-button--small"')
+    expect(source).toContain('aria-label="刷新集群状态"')
+    expect(source.indexOf('aria-label="刷新集群状态"')).toBeLessThan(source.indexOf('@click="openAccess"'))
+  })
 })
 
 describe('ClusterView inventory and navigation', () => {

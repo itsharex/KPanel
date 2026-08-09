@@ -142,6 +142,15 @@ describe('AppsView catalog filtering performance', () => {
     expect(source).toMatch(/\.app-card\s*\{[^}]*content-visibility:\s*auto;/)
   })
 
+  it('keeps the compact inventory summary visually distinct', () => {
+    const source = readFileSync(new URL('./AppsView.vue', import.meta.url), 'utf8')
+
+    expect(source).toMatch(/\.market-hero\s*\{[^}]*overflow:\s*hidden;[^}]*radial-gradient\([^}]*var\(--market-accent\)/)
+    expect(source).toMatch(/\.market-hero\s*\{[^}]*grid-template-columns:\s*max-content minmax\(0, 1fr\);/)
+    expect(source).toMatch(/\.market-stats\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(116px, 132px\)\);/)
+    expect(source).toMatch(/\.market-hero::before\s*\{[^}]*border:\s*30px solid color-mix\(in srgb, var\(--market-accent\) 7%, transparent\);/)
+  })
+
   it('pauses the interactive terminal stream while its desktop window is inactive', () => {
     const source = readFileSync(new URL('./AppsView.vue', import.meta.url), 'utf8')
     expect(source).toContain('v-if="activeJob.interactive && windowActive"')
