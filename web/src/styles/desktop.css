@@ -1273,6 +1273,12 @@ body.desktop-mode-open::-webkit-scrollbar {
   scrollbar-gutter: auto;
 }
 
+.desktop-window__body:has(> .terminal-page),
+.desktop-window__body:has(> .diagnostics-page) {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+
 .desktop-window__loading,
 .desktop-window__load-error {
   display: grid;
@@ -1327,7 +1333,11 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-window__body > .diagnostics-page {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
   align-content: start;
+  scrollbar-gutter: stable;
 }
 
 .desktop-window__body .page-header {
@@ -1383,19 +1393,20 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-window__body .terminal-page {
   display: flex;
   height: 100%;
-  min-height: 100%;
+  min-height: 0;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .desktop-window__body .terminal-workspace {
-  height: max(420px, calc(100% - 92px)) !important;
-  min-height: 420px !important;
-  flex: 1 1 auto;
+  height: auto !important;
+  min-height: 0 !important;
+  flex: 1 1 0;
 }
 
 .desktop-window__body .diagnostic-workbench {
-  height: max(450px, calc(100% - 86px)) !important;
-  min-height: 450px !important;
+  height: calc(100% - 86px) !important;
+  min-height: 0 !important;
 }
 
 .desktop-window__body .batch-bar {
@@ -1877,7 +1888,11 @@ body.desktop-mode-open::-webkit-scrollbar {
 
   .desktop-window__body .terminal-workspace {
     grid-template-columns: minmax(0, 1fr) !important;
-    grid-template-rows: minmax(130px, 190px) minmax(300px, 1fr) !important;
+    grid-template-rows: minmax(88px, 28%) minmax(0, 1fr) !important;
+  }
+
+  .desktop-window__body .terminal-workspace.is-connections-collapsed {
+    grid-template-rows: 56px minmax(0, 1fr) !important;
   }
 
   .desktop-window__body .terminal-connections {

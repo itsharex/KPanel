@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const terminalSource = readFileSync(new URL('./TerminalView.vue', import.meta.url), 'utf8')
 const hostTerminalSource = readFileSync(new URL('../components/terminal/HostTerminal.vue', import.meta.url), 'utf8')
+const desktopStyles = readFileSync(new URL('../styles/desktop.css', import.meta.url), 'utf8')
 
 describe('multi-host terminal workspace layout', () => {
   it('keeps a large connection inventory in its own scroll region', () => {
@@ -44,6 +45,18 @@ describe('multi-host terminal workspace layout', () => {
     )
     expect(hostTerminalSource).not.toMatch(
       /@media \(max-width: 760px\)[\s\S]*?\.host-terminal\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\) auto;/,
+    )
+  })
+
+  it('fits the terminal workspace to the desktop window instead of scrolling the outer page', () => {
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body:has\(> \.terminal-page\),[\s\S]*?overflow:\s*hidden;[\s\S]*?scrollbar-gutter:\s*auto;/,
+    )
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body \.terminal-page\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/,
+    )
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body \.terminal-workspace\s*\{[^}]*height:\s*auto !important;[^}]*min-height:\s*0 !important;[^}]*flex:\s*1 1 0;/,
     )
   })
 

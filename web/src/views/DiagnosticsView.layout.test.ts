@@ -56,7 +56,16 @@ describe('diagnostics workspace layout', () => {
 
   it('does not stretch the history row away from the workbench inside a desktop window', () => {
     expect(desktopStyles).toMatch(
-      /\.desktop-window__body > \.diagnostics-page\s*\{[^}]*align-content:\s*start;/,
+      /\.desktop-window__body > \.diagnostics-page\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;[^}]*align-content:\s*start;/,
+    )
+  })
+
+  it('keeps the whole diagnostic terminal visible before the history scroll region', () => {
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body:has\(> \.terminal-page\),[\s\S]*?\.desktop-window__body:has\(> \.diagnostics-page\)\s*\{[^}]*overflow:\s*hidden;/,
+    )
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body \.diagnostic-workbench\s*\{[^}]*height:\s*calc\(100% - 86px\) !important;[^}]*min-height:\s*0 !important;/,
     )
   })
 })

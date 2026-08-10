@@ -34,6 +34,10 @@ describe('interactive task terminal layout', () => {
     )
   })
 
+  it('focuses interactive input without scrolling the desktop window', () => {
+    expect(terminalSource).toContain("composerInput.value?.focus({ preventScroll: true })")
+  })
+
   it('shares the terminal clipboard behavior with host terminals', () => {
     expect(terminalSource).toContain('@contextmenu="clipboardMenu?.open($event)"')
     expect(terminalSource).toContain('@paste.capture="clipboardMenu?.handlePaste($event)"')

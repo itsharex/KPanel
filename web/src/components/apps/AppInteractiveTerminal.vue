@@ -206,7 +206,7 @@ watch(
   },
 )
 watch(terminalInputOpen, (open) => {
-  if (open) void nextTick(() => composerInput.value?.focus())
+  if (open) void nextTick(() => composerInput.value?.focus({ preventScroll: true }))
 })
 
 onMounted(() => {
@@ -255,7 +255,7 @@ onMounted(() => {
     resizeObserver = new ResizeObserver(() => fitAddon?.fit())
     resizeObserver.observe(host.value)
     if (terminalInputOpen.value) {
-      window.requestAnimationFrame(() => composerInput.value?.focus())
+      window.requestAnimationFrame(() => composerInput.value?.focus({ preventScroll: true }))
     } else {
       terminal.focus()
     }
