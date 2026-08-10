@@ -735,6 +735,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-monitor__metric--secondary {
   display: grid;
   min-width: 0;
+  align-content: start;
   gap: 5px;
 }
 
