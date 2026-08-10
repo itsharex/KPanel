@@ -80,5 +80,6 @@ describe('responsive application shell comfort', () => {
     expect(appShellSource).toContain("'kpanel:desktop-entry-notice:v2'")
     expect(styles).toContain('.desktop-entry-button__notice')
     expect(styles).toContain('@keyframes desktop-entry-attention')
+    expect(styles).toMatch(/\.topbar \.desktop-entry-button\s*\{[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/)
   })
 })

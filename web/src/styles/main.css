@@ -5156,7 +5156,9 @@ body.terminal-fullscreen-open .modal-panel {
   }
 
   .topbar .desktop-entry-button {
+    align-items: center;
     min-width: 44px;
+    justify-content: center;
     padding: 0;
   }
 
