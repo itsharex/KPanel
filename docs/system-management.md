@@ -7,8 +7,9 @@ KPanel 的系统管理业务以 `kejilion.sh` 为功能基准，但不把整个 
 ## 状态一致性
 
 - 首页状态直接读取宿主机当前配置，不以 KPanel 数据库代替系统事实。
-- `kejilion.sh` 或人工修改产生的 SSH、DNS、时区、Swap、镜像源、
-  `gai.conf`、内核优化和 BBR 状态，刷新后应被 Agent 重新识别。
+- `kejilion.sh` 或人工修改产生的 SSH、DNS、时区、Swap、更新源、Hosts、
+  root Crontab、网卡、iptables、`gai.conf`、内核优化和 BBR 状态，刷新后应被
+  Agent 重新识别。
 - Web 后续执行变更后必须回读同一状态接口；回读不一致时任务不得标记成功。
 - 新字段保持向后兼容。旧 Agent 未返回时，前端显示“待 Agent 升级”，
   不构造虚假的默认状态。
@@ -45,7 +46,11 @@ IPinfo IPv4/IPv6 HTTPS 端点，成功结果缓存 30 分钟；外部查询超�
 | DNS | `resolv.conf`、systemd-resolved 与脚本 DNS 协议 | 调用本机可信 `kejilion.sh` 固定非交互入口；systemd-resolved 使用原生配置，其他管理器沿用脚本的 `resolv.conf` 写入与锁定语义 |
 | 时区 | `/etc/timezone` 或 `localtime` | 有效 IANA 时区名称、回读 |
 | 虚拟内存 | `/proc/meminfo`、`/proc/swaps`、`/swapfile` | 与 `kejilion.sh` 共用 `/swapfile`；合并旧版 KPanel Swap，不清除现有分区或第三方 swapfile |
-| 系统镜像源 | APT/RPM/APK/Pacman/Zypper 源地址 | Debian/Ubuntu 对齐脚本四种区域模式；第三方源不修改，隔离 `apt-get update` 失败回滚 |
+| 系统更新源 | APT/RPM/APK/Pacman/Zypper 源地址 | Debian/Ubuntu 对齐脚本四种区域模式；第三方源不修改，隔离 `apt-get update` 失败回滚 |
+| 本地 Hosts | `/etc/hosts` 原始内容 | 按精确行管理；写入前后校验整文件资源版本，保留注释、权限和属主，失败回滚 |
+| 定时任务 | root 用户实际 Crontab | 命令只作为 Crontab 数据写入；按精确行新增、修改或删除，保留注释、环境变量和未知行 |
+| 网卡 | `/sys/class/net`、`ip addr` | 展示全部接口；只执行即时启停，不宣称持久化，失败恢复原管理状态 |
+| 防火墙 | `iptables-save`、`INPUT`/`DOCKER-USER` 与脚本持久化产物 | 固定动作、整表资源版本、互斥锁、写后回读和失败回滚；不接受任意规则或 Shell |
 | V4/V6 优先 | `gai.conf` | 维护 `kejilion.sh` 同一 precedence 规则并保留其他用户配置 |
 | 内核优化 | Kejilion sysctl 产物 | 五种固定预设、内存自适应、逐项应用和版本化回滚；合法脚本产物可接管 |
 | BBR | 当前/可用拥塞算法与 qdisc | 内核能力检查、独立 sysctl 文件、回读 |
@@ -63,8 +68,26 @@ Agent 根据宿主机命令、配置管理器和 root/sandbox 条件动态返回
 
 已开放：主机名、`kejilion.sh` 同源 SSH 单端口切换、同源 SSH 防御、DNS、时区、脚本兼容
 `/swapfile`、Debian/Ubuntu APT 四种区域镜像预设、地址优先级、KPanel 内核调优预设和
-BBR、BBRv3，以及普通确认的服务器重启。重装系统、其他发行版换源和通用
+BBR、BBRv3、本地 Hosts、root 定时任务、网卡即时启停、固定防火墙动作，以及普通确认的服务器重启。
+重装系统、其他发行版换源和通用
 sysctl 编辑目前缺少适配器；这不是永久产品限制。
+
+## 概览页基础系统设置与网络工具
+
+概览页不再使用旧“系统中心”承载新能力。入口按用途分成两个区块：
+
+- 基础系统设置：主机名、SSH 端口、SSH 防御、时区、虚拟内存、系统更新源和定时任务；
+- 网络工具：DNS、本地 Hosts、网卡、防火墙、V4/V6 优先级、内核优化、BBR 与 BBRv3。
+
+Hosts、定时任务、网卡和防火墙使用独立类型化资源接口。概览首屏只读取已有系统摘要，
+用户打开相应管理器时才读取有界列表；旧 Agent 没有对应 capability 时显示升级或适配器原因，
+不会构造空数据冒充真实状态。每次写入携带当前 `resourceVersion`，脚本在互斥锁内再次比对，
+成功后 Web 重新读取同一资源。
+
+四类写操作统一调用可信 `kejilion.sh` 的
+`KJ_SYSTEM_RESOURCE_NONINTERACTIVE=1 kpanel system-resource` 固定协议，参数以独立 argv 传递，
+不执行 Web 提交的 Shell。防火墙端口动作与脚本一致，同时处理 TCP 和 UDP。脚本现有国家规则依赖
+未固定摘要的远程地址列表，且默认策略与解除规则尚未满足事务要求，因此本轮不向 Web 暴露。
 
 ## v0.29 BBRv3 管理
 

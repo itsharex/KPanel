@@ -71,7 +71,9 @@ TOTP 的注册、密钥保护、恢复和防绕过要求见
 
 - 系统重装的非交互任务协议及重装后结果回传；
 - 尚未升级到固定 DNS 非交互协议的旧版 `kejilion.sh`；
-- 非 Debian/Ubuntu 的系统镜像源切换适配器；
+- 尚未包含 `system-resource` 固定协议的旧版 `kejilion.sh`；此时 Hosts、定时任务、网卡和防火墙
+  保持真实状态只读并明确显示脚本适配器缺失；
+- 非 Debian/Ubuntu 的系统更新源切换适配器；
 - 交互式容器 TTY、Compose 与 `daemon.json` 通用结构化编辑器；宿主机多主机终端已按
   [`multi-host-terminal.md`](multi-host-terminal.md) 实现；
 - 部分应用的专属交互安装参数，以及没有主容器时的应用级生命周期动作；
