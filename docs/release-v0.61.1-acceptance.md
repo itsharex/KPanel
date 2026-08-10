@@ -39,7 +39,7 @@ SHA-256 40a9d77aa89d53a4e360026a6d0698622a248d01f059a1c92299dc56068d14f2
 
 - `kejilion.sh` 19 项 Shell 测试全部通过，根/CN 同步通过；真实 root Linux 状态协议在含历史服务用户名时返回 24 条总数和 24 条记录；
 - 隔离 Ubuntu 24.04 root Linux 的 Shell → Agent → Panel L2 通过：生产同类账户快照边界、真实 `ss`、限流启用/更新/停用、crontab 保留、关机替身、账户密码/密钥/角色/SSH 策略、Root 安全迁移、版本冲突、锁冲突、回滚、`rollback-failed`、`needs-attention` 和完整原状恢复均通过；
-- L2 证据目录为 `/root/kpanel-v0611-l2-20260811/evidence-final`；`summary.log` SHA-256 为 `c45f937523160f7a7984754f02dce6b60f1284b35581a6ad2dc5c13cd330dc5b`，`audit.json` SHA-256 为 `4a4d8777ff3cbf1adafb5b16e4995f7704ea584413bf8da117de2c403e80c607`；
+- L2 证据目录为 `/root/kpanel-release-evidence/v0.61.1/l2-evidence`；`summary.log` SHA-256 为 `c45f937523160f7a7984754f02dce6b60f1284b35581a6ad2dc5c13cd330dc5b`，`audit.json` SHA-256 为 `4a4d8777ff3cbf1adafb5b16e4995f7704ea584413bf8da117de2c403e80c607`；
 - Linux L3 `make verify-release` 通过，覆盖版本一致性、生态策略、Go 测试、race、vet、依赖审计、漏洞/密钥/配置扫描、Linux 双架构构建、最终镜像扫描和应用生命周期；
 - 前端 83 个测试文件、596 项测试通过；i18n 检查通过，共 2011 条文案和 19 个按页加载语言包；TypeScript 与生产构建通过；
 - 公开 `v0.61.1` 镜像端到端检查输出 `image_e2e=pass`；
