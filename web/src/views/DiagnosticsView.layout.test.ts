@@ -24,6 +24,8 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toContain('class="diagnostic-command-row"')
     expect(diagnosticsSource).toContain('class="diagnostic-command-run"')
     expect(diagnosticsSource).toContain('@click="requestCheck(check)"')
+    expect(diagnosticsSource).toContain('class="diagnostic-command-tested">已测</small>')
+    expect(diagnosticsSource).toContain("job.status === 'succeeded' || job.status === 'failed'")
     expect(diagnosticsSource).not.toContain('{{ categoryName(check.category) }} · 约')
     expect(diagnosticsSource).toMatch(/\.diagnostic-command-row\.is-category-access,[^}]*--diagnostic-category:/)
     expect(diagnosticsSource).toMatch(/\.diagnostic-command-row\.is-category-network,[^}]*--diagnostic-category:/)
@@ -54,18 +56,17 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toContain('--diagnostic-category: #4ecdc4;')
   })
 
-  it('does not stretch the history row away from the workbench inside a desktop window', () => {
+  it('removes the history block and fills the desktop window with the workbench', () => {
+    expect(diagnosticsSource).not.toContain('class="diagnostic-history"')
+    expect(diagnosticsSource).not.toContain('class="diagnostic-history__list"')
     expect(desktopStyles).toMatch(
-      /\.desktop-window__body > \.diagnostics-page\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;[^}]*align-content:\s*start;/,
+      /\.desktop-window__body > \.diagnostics-page\s*\{[^}]*grid-template-rows:\s*minmax\(0, 1fr\);[^}]*overflow:\s*hidden;[^}]*align-content:\s*stretch;/,
     )
-  })
-
-  it('keeps the whole diagnostic terminal visible before the history scroll region', () => {
     expect(desktopStyles).toMatch(
       /\.desktop-window__body:has\(> \.terminal-page\),[\s\S]*?\.desktop-window__body:has\(> \.diagnostics-page\)\s*\{[^}]*overflow:\s*hidden;/,
     )
     expect(desktopStyles).toMatch(
-      /\.desktop-window__body \.diagnostic-workbench\s*\{[^}]*height:\s*calc\(100% - 86px\) !important;[^}]*min-height:\s*0 !important;/,
+      /\.desktop-window__body \.diagnostic-workbench\s*\{[^}]*height:\s*auto !important;[^}]*min-height:\s*0 !important;/,
     )
   })
 })

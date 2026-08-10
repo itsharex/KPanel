@@ -10,7 +10,6 @@ import {
   ExternalLink,
   Gauge,
   Globe2,
-  History,
   LoaderCircle,
   Network,
   PanelLeftClose,
@@ -64,7 +63,11 @@ const groupedChecks = computed(() =>
     }))
     .filter((category) => category.items.length),
 )
-const recentJobs = computed(() => jobs.value.slice(0, 10))
+const testedCheckIDs = computed(() => new Set(
+  jobs.value
+    .filter((job) => job.status === 'succeeded' || job.status === 'failed')
+    .map((job) => job.checkId),
+))
 const hasActiveJob = computed(
   () => activeJob.value?.status === 'queued' || activeJob.value?.status === 'running',
 )
@@ -352,6 +355,7 @@ onBeforeUnmount(() => {
                 <button class="diagnostic-command-select" type="button" @click="selectCheck(check)">
                   <span class="diagnostic-card__icon"><component :is="categoryIcon(check.category)" :size="17" /></span>
                   <strong>{{ checkNameLabel(check.name) }}</strong>
+                  <small v-if="testedCheckIDs.has(check.id)" class="diagnostic-command-tested">已测</small>
                 </button>
                 <button
                   class="diagnostic-command-run"
@@ -418,24 +422,6 @@ onBeforeUnmount(() => {
         </section>
       </section>
 
-      <section class="diagnostic-history">
-        <header>
-          <div>
-            <span class="eyebrow">历史记录</span>
-            <h2><History :size="19" /> 最近体检</h2>
-          </div>
-        </header>
-        <div v-if="recentJobs.length" class="diagnostic-history__list">
-          <button v-for="job in recentJobs" :key="job.id" type="button" @click="openJob(job)">
-            <span>
-              <strong>{{ checkNameLabel(job.checkName) }}</strong>
-              <small>{{ formatDateTime(job.createdAt) }} · {{ categoryName(job.category) }}</small>
-            </span>
-            <StatusBadge :status="job.status" subtle />
-          </button>
-        </div>
-        <EmptyState v-else title="还没有体检记录" description="选择上方项目开始第一次服务器体检。" />
-      </section>
     </template>
 
     <ModalDialog
@@ -474,13 +460,6 @@ onBeforeUnmount(() => {
 .diagnostics-page {
   display: grid;
   gap: 16px;
-}
-
-.diagnostic-history {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
 }
 
 .diagnostic-card p,
@@ -664,7 +643,7 @@ onBeforeUnmount(() => {
 
 .diagnostic-command-select {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   gap: 9px;
   align-items: center;
   min-width: 0;
@@ -689,6 +668,16 @@ onBeforeUnmount(() => {
   overflow: hidden;
   font-size: 13px;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-command-tested {
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: var(--diagnostic-category);
+  background: color-mix(in srgb, var(--diagnostic-category) 12%, var(--surface));
+  font-size: 10px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -725,13 +714,7 @@ onBeforeUnmount(() => {
   opacity: .42;
 }
 
-.eyebrow {
-  color: var(--text-tertiary);
-  font-size: 12px;
-}
-
-.diagnostic-result h2,
-.diagnostic-history h2 {
+.diagnostic-result h2 {
   margin: 2px 0 0;
   font-size: 17px;
 }
@@ -758,8 +741,7 @@ onBeforeUnmount(() => {
   color: var(--danger);
 }
 
-.diagnostic-result,
-.diagnostic-history {
+.diagnostic-result {
   overflow: hidden;
 }
 
@@ -769,15 +751,6 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   background: var(--surface);
-}
-
-.diagnostic-history > header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  padding: 18px 20px;
-  border-bottom: 1px solid var(--border);
 }
 
 .diagnostic-progress {
@@ -866,49 +839,6 @@ onBeforeUnmount(() => {
   color: var(--primary);
 }
 
-.diagnostic-history h2 {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.diagnostic-history__list {
-  display: grid;
-}
-
-.diagnostic-history__list button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  width: 100%;
-  padding: 14px 20px;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.diagnostic-history__list button:last-child {
-  border-bottom: 0;
-}
-
-.diagnostic-history__list button:hover {
-  background: var(--surface-muted);
-}
-
-.diagnostic-history__list strong,
-.diagnostic-history__list small {
-  display: block;
-}
-
-.diagnostic-history__list small {
-  margin-top: 4px;
-  color: var(--text-tertiary);
-}
-
 .diagnostic-confirm {
   display: flex;
   gap: 14px;
@@ -967,9 +897,7 @@ onBeforeUnmount(() => {
   }
 
   .diagnostic-terminal-bar,
-  .diagnostic-result footer,
-  .diagnostic-history > header,
-  .diagnostic-history__list button {
+  .diagnostic-result footer {
     padding-right: 14px;
     padding-left: 14px;
   }

@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { createSSRApp, nextTick, ref, ssrContextKey, type Ref } from 'vue'
+import { createSSRApp, nextTick, ref, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import DiagnosticsView from './DiagnosticsView.vue'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
@@ -30,6 +30,8 @@ vi.mock('@/stores/toast', () => ({
 }))
 
 interface DiagnosticBindings {
+  jobs: Ref<DiagnosticJob[]>
+  testedCheckIDs: ComputedRef<Set<string>>
   refreshJob: (id: string) => Promise<void>
   startPolling: (job: DiagnosticJob) => void
 }
@@ -79,6 +81,19 @@ afterEach(() => {
 })
 
 describe('DiagnosticsView polling', () => {
+  it('marks only checks with finished jobs as tested', () => {
+    const view = setupView()
+    const job = runningJob()
+    view.jobs.value = [
+      { ...job, id: 'b'.repeat(32), checkId: 'completed', status: 'succeeded' },
+      { ...job, id: 'c'.repeat(32), checkId: 'failed', status: 'failed' },
+      { ...job, id: 'd'.repeat(32), checkId: 'queued', status: 'queued' },
+      job,
+    ]
+
+    expect([...view.testedCheckIDs.value]).toEqual(['completed', 'failed'])
+  })
+
   it('pauses the interactive terminal stream while its desktop window is inactive', () => {
     const source = readFileSync(new URL('./DiagnosticsView.vue', import.meta.url), 'utf8')
     expect(source).toContain('v-if="activeJob?.interactive && windowActive"')
