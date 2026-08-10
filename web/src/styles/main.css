@@ -2298,6 +2298,28 @@ textarea:focus-visible,
   min-width: 0;
 }
 
+.page-command-bar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.site-management-terminal {
+  height: min(62vh, 620px);
+  min-height: 360px;
+}
+
+.site-management-terminal__state {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .observed-at {
   display: inline-flex;
   align-items: center;
@@ -4925,6 +4947,10 @@ body.terminal-fullscreen-open .modal-panel {
   flex: 1;
 }
 
+.modal-panel--fullscreen .site-management-terminal {
+  height: 100%;
+}
+
 .modal-panel--fullscreen .interactive-terminal {
   display: flex;
   height: 100%;
@@ -5172,6 +5198,20 @@ body.terminal-fullscreen-open .modal-panel {
 
   .page-command-bar > .button {
     width: 100%;
+  }
+
+  .page-command-bar__actions {
+    width: 100%;
+  }
+
+  .page-command-bar__actions .button {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  .site-management-terminal {
+    height: min(64dvh, 620px);
+    min-height: 300px;
   }
 
   .button--small,

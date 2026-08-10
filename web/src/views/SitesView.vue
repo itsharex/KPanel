@@ -21,6 +21,7 @@ import {
   Search,
   Server,
   ShieldCheck,
+  SquareTerminal,
   Trash2,
   TriangleAlert,
   Waypoints,
@@ -31,6 +32,7 @@ import LoadingState from '@/components/feedback/LoadingState.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import DnsResolutionGuide from '@/components/common/DnsResolutionGuide.vue'
 import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
+import HostTerminal from '@/components/terminal/HostTerminal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import SitesSectionTabs from '@/components/sites/SitesSectionTabs.vue'
@@ -40,7 +42,7 @@ import { ApiError, api, isTransientAgentError } from '@/lib/api'
 import { formatDateTime, relativeTime, shortId } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
 import { useToast } from '@/stores/toast'
-import type { PublicNetworkSummary, Site, SiteInput, SiteInstallationProgress } from '@/types/api'
+import type { PublicNetworkSummary, Site, SiteInput, SiteInstallationProgress, TerminalSession } from '@/types/api'
 
 type Filter = 'all' | 'healthy' | 'drifted' | 'config-only'
 type SiteServiceType = SiteInput['type']
@@ -71,6 +73,10 @@ const deletingSite = ref<Site>()
 const deleteMode = ref<'configuration' | 'full'>('configuration')
 const deleteError = ref('')
 const deleting = ref(false)
+const webTerminalOpen = ref(false)
+const webTerminalOpening = ref(false)
+const webTerminalSession = ref<TerminalSession>()
+const webTerminalError = ref('')
 const panel = usePanelState()
 const toast = useToast()
 let controller: AbortController | undefined
@@ -80,6 +86,54 @@ let installationPollGeneration = 0
 let recentCreatedTimer: ReturnType<typeof setTimeout> | undefined
 let focusedInstallationID = ''
 let disposed = false
+let webTerminalGeneration = 0
+
+function encodeTerminalInput(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return globalThis.btoa(binary).replace(/=+$/, '')
+}
+
+async function openWebTerminal(): Promise<void> {
+  webTerminalOpen.value = true
+  if (webTerminalOpening.value || webTerminalSession.value) return
+
+  const generation = ++webTerminalGeneration
+  webTerminalOpening.value = true
+  webTerminalError.value = ''
+  let opened: TerminalSession | undefined
+  try {
+    opened = await api.terminals.open('local', 30, 120)
+    if (generation !== webTerminalGeneration || !webTerminalOpen.value) {
+      await api.terminals.close(opened.sessionId).catch(() => undefined)
+      return
+    }
+    await api.terminals.input(opened.sessionId, encodeTerminalInput('k web\r'))
+    if (generation !== webTerminalGeneration || !webTerminalOpen.value) {
+      await api.terminals.close(opened.sessionId).catch(() => undefined)
+      return
+    }
+    webTerminalSession.value = opened
+  } catch (reason) {
+    if (opened) await api.terminals.close(opened.sessionId).catch(() => undefined)
+    if (generation === webTerminalGeneration && webTerminalOpen.value) {
+      webTerminalError.value = reason instanceof ApiError && reason.code === 'terminal_limit'
+        ? '已达到终端会话上限，请先关闭不用的终端。'
+        : '网站管理终端启动失败，请检查 Agent 与终端服务状态。'
+    }
+  } finally {
+    if (generation === webTerminalGeneration) webTerminalOpening.value = false
+  }
+}
+
+function closeWebTerminal(): void {
+  webTerminalGeneration += 1
+  webTerminalOpen.value = false
+  webTerminalOpening.value = false
+  webTerminalSession.value = undefined
+  webTerminalError.value = ''
+}
 
 const installStageLabels: Record<string, string> = {
   submitting: '提交配置',
@@ -825,6 +879,7 @@ function sitePublicURL(site: Site): string {
 onMounted(() => void load())
 onBeforeUnmount(() => {
   disposed = true
+  closeWebTerminal()
   controller?.abort()
   stopInstallationMonitor()
   if (recentCreatedTimer) clearTimeout(recentCreatedTimer)
@@ -840,15 +895,20 @@ onBeforeUnmount(() => {
 
     <div class="page-command-bar">
       <SitesSectionTabs />
-      <button
-        class="button button--primary"
-        type="button"
-        :disabled="!canCreateAny || panel.isReadOnly.value"
-        :title="!canCreateAny ? siteWriteReason : ''"
-        @click="openCreate"
-      >
-        <Plus :size="17" /> 新建网站
-      </button>
+      <div class="page-command-bar__actions">
+        <button class="button button--secondary" type="button" @click="openWebTerminal">
+          <SquareTerminal :size="17" /> 终端管理
+        </button>
+        <button
+          class="button button--primary"
+          type="button"
+          :disabled="!canCreateAny || panel.isReadOnly.value"
+          :title="!canCreateAny ? siteWriteReason : ''"
+          @click="openCreate"
+        >
+          <Plus :size="17" /> 新建网站
+        </button>
+      </div>
     </div>
 
     <div v-if="!canCreateAny && !loading" class="inline-alert inline-alert--info" role="status">
@@ -1045,6 +1105,30 @@ onBeforeUnmount(() => {
       </div>
       <footer class="table-card__footer">已显示 {{ filteredSites.length }} / {{ sites.length }} 个网站</footer>
     </section>
+
+    <ModalDialog
+      :open="webTerminalOpen"
+      title="网站终端管理"
+      description="正在运行 kejilion.sh 的 k web 原生菜单；请按终端提示输入。"
+      size="wide"
+      allow-fullscreen
+      @close="closeWebTerminal"
+    >
+      <div class="site-management-terminal">
+        <div v-if="webTerminalOpening" class="site-management-terminal__state" role="status">
+          <LoaderCircle class="spin" :size="22" /> 正在启动 k web…
+        </div>
+        <div v-else-if="webTerminalError" class="inline-alert inline-alert--danger" role="alert">
+          {{ webTerminalError }}
+        </div>
+        <HostTerminal
+          v-else-if="webTerminalSession"
+          :session-id="webTerminalSession.sessionId"
+          host-name="本机网站管理"
+          :initial-offset="webTerminalSession.offset"
+        />
+      </div>
+    </ModalDialog>
 
     <ModalDialog
       :open="Boolean(selectedSite)"

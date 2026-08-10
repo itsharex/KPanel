@@ -18,6 +18,11 @@ vi.mock('@/lib/api', () => ({
       remove: vi.fn(),
     },
     system: { publicNetwork: vi.fn() },
+    terminals: {
+      open: vi.fn(),
+      input: vi.fn(),
+      close: vi.fn(),
+    },
   },
 }))
 
@@ -48,6 +53,8 @@ interface SitesBindings {
   installProgress: Ref<SiteInstallationProgress | undefined>
   editorOpen: Ref<boolean>
   recentCreatedDomain: Ref<string>
+  webTerminalOpen: Ref<boolean>
+  webTerminalSession: Ref<{ sessionId: string } | undefined>
   featuredServiceOptions: ComputedRef<Array<{ type: string }>>
   standardServiceOptions: ComputedRef<Array<{ type: string }>>
   recipeOptions: Array<{ recipe: string }>
@@ -56,6 +63,8 @@ interface SitesBindings {
   monitorInstallation: (id?: string) => void
   revealCreatedSite: (domain: string) => Promise<void>
   stopInstallationMonitor: () => void
+  openWebTerminal: () => Promise<void>
+  closeWebTerminal: () => void
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -105,6 +114,48 @@ afterEach(() => {
 })
 
 describe('SitesView creation experience', () => {
+  it('opens the local interactive terminal with the fixed k web command', async () => {
+    vi.mocked(api.terminals.open).mockResolvedValue({
+      sessionId: 'web-terminal-1',
+      hostId: 'local',
+      offset: 0,
+      createdAt: '2026-08-10T00:00:00Z',
+    })
+    vi.mocked(api.terminals.input).mockResolvedValue({ accepted: true })
+    const view = setupView()
+
+    await view.openWebTerminal()
+
+    expect(api.terminals.open).toHaveBeenCalledWith('local', 30, 120)
+    expect(api.terminals.input).toHaveBeenCalledTimes(1)
+    const encoded = vi.mocked(api.terminals.input).mock.calls[0]?.[1] || ''
+    expect(Buffer.from(encoded, 'base64').toString('utf8')).toBe('k web\r')
+    expect(view.webTerminalOpen.value).toBe(true)
+    expect(view.webTerminalSession.value?.sessionId).toBe('web-terminal-1')
+  })
+
+  it('closes a terminal that finishes opening after its dialog was dismissed', async () => {
+    const pending = deferred<Awaited<ReturnType<typeof api.terminals.open>>>()
+    vi.mocked(api.terminals.open).mockReturnValue(pending.promise)
+    vi.mocked(api.terminals.close).mockResolvedValue({ closed: true })
+    const view = setupView()
+
+    const opening = view.openWebTerminal()
+    view.closeWebTerminal()
+    pending.resolve({
+      sessionId: 'web-terminal-late',
+      hostId: 'local',
+      offset: 0,
+      createdAt: '2026-08-10T00:00:00Z',
+    })
+    await opening
+
+    expect(api.terminals.input).not.toHaveBeenCalled()
+    expect(api.terminals.close).toHaveBeenCalledWith('web-terminal-late')
+    expect(view.webTerminalOpen.value).toBe(false)
+    expect(view.webTerminalSession.value).toBeUndefined()
+  })
+
   it('links only safe local site directories into File Manager', () => {
     const view = setupView()
     const local = { ...site('local.example.com'), rootPath: '/home/web/html/local.example.com' }
