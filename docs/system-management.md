@@ -120,9 +120,12 @@ SSH 策略由脚本维护独立配置片段，并确保主配置包含该目录�
 迁移到 `/var/lib/kejilion-panel/system/recovery/system-resource/`。删除账户可按明确确认删除其主目录；由于
 底层 `userdel -r` 的文件删除不可逆，界面必须直接说明这一影响，不能宣称能够恢复已删除的主目录。
 
-该功能使用 `KPANEL_ACCOUNT_MANAGEMENT_PROTOCOL_VERSION="1"`。代码完成不等于可以发布；必须先固定包含
-协议的 `kejilion.sh` 提交和 SHA-256，再完成密码账户、密钥账户、Root 安全迁移、SSH reload、失败回滚及
-Shell→Agent→Panel 的隔离 root Linux L2 闭环。
+该功能使用 `KPANEL_ACCOUNT_MANAGEMENT_PROTOCOL_VERSION="1"`，固定到
+`kejilion/sh@a01067d63676b36c6067275d03a4827a7cb142bd` 与原始 SHA-256
+`d9d9aa70de2c440f557c4db433bf0435ced813e46cb1acbb5c96f8ff601d8181`。2026-08-11 已在隔离的
+Ubuntu 24.04 root Linux 环境完成密码/密钥账户、Root 密码与安全迁移、三种角色、公钥增删、SSH
+策略 reload、删除、版本/锁冲突、失败回滚、`rollback-failed`、`needs-attention` 及原状恢复的
+Shell→Agent→Panel L2 闭环。
 
 ## v0.29 BBRv3 管理
 
@@ -246,6 +249,8 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
   写后回读，失败时恢复，回滚失败时把 root-only 快照保存在宿主可见恢复目录。
 - 页面在启用前明确提示“达到任一阈值会关机”和“重置日会重启”，停用前说明不会删除其他
   `reboot` 项。不设置自定义确认词，也不增加默认路由、面板连接或阈值大小的业务阻止条件。
+- 2026-08-11 已在隔离的 Ubuntu 24.04 root Linux 环境完成真实 `ss`、启用/更新/停用、保留无关
+  crontab、可审计关机/重启替身、版本/锁冲突、失败回滚及原状恢复的 Shell→Agent→Panel L2 闭环。
 
 ## 多发行版维护
 
