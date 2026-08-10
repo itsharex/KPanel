@@ -25,6 +25,16 @@ function setupViewport(): void {
   Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true })
 }
 
+function pointer(type: string, x: number, y: number, id = 1): PointerEvent {
+  return new PointerEvent(type, {
+    bubbles: true,
+    clientX: x,
+    clientY: y,
+    pointerId: id,
+    button: 0,
+  })
+}
+
 function createBrowserHistoryFixture() {
   const listeners = new Set<(point: DesktopBrowserHistoryPoint) => void>()
   const history: DesktopBrowserHistory = {
@@ -229,5 +239,102 @@ describe('DesktopWindow lazy view loading', () => {
     await titlebarTabs.get('.embedded-browser__new-tab').trigger('click')
     expect(titlebarTabs.get('.embedded-browser__tab-count').text()).toBe('2/8')
     wrapper.unmount()
+  })
+
+  it('previews a side snap, commits it on release, and restores it when dragged away', async () => {
+    routeMocks.resolveWindowComponent.mockResolvedValue({ template: '<main />' })
+    const desktopRoot = document.createElement('div')
+    desktopRoot.className = 'desktop'
+    document.body.appendChild(desktopRoot)
+    const desktop = useDesktopMode()
+    const id = desktop.openWindow('/overview', 'route.overview', false)
+    const windowState = desktop.windows.value.find((item) => item.id === id)!
+    const wrapper = mount(DesktopWindow, {
+      attachTo: desktopRoot,
+      props: { windowState, icon: () => null },
+    })
+    await flushPromises()
+
+    const titlebar = wrapper.get('.desktop-window__titlebar').element
+    titlebar.dispatchEvent(pointer('pointerdown', 500, 80))
+    window.dispatchEvent(pointer('pointermove', 8, 300))
+    await flushPromises()
+    expect(desktopRoot.querySelector('.desktop-window-snap-preview')).not.toBeNull()
+    window.dispatchEvent(pointer('pointerup', 8, 300))
+    await flushPromises()
+
+    expect(windowState.snap).toBe('left')
+    expect(wrapper.classes()).toContain('desktop-window--snapped')
+    expect(desktopRoot.querySelector('.desktop-window-snap-preview')).toBeNull()
+    expect(wrapper.findAll('.desktop-window__resize')).toHaveLength(0)
+
+    vi.spyOn(wrapper.element, 'getBoundingClientRect').mockReturnValue({
+      left: 10,
+      top: 10,
+      width: 625,
+      height: 718,
+      right: 635,
+      bottom: 728,
+      x: 10,
+      y: 10,
+      toJSON: () => ({}),
+    })
+    titlebar.dispatchEvent(pointer('pointerdown', 300, 28, 2))
+    window.dispatchEvent(pointer('pointermove', 310, 38, 2))
+    window.dispatchEvent(pointer('pointermove', 520, 120, 2))
+    window.dispatchEvent(pointer('pointerup', 520, 120, 2))
+    await flushPromises()
+
+    expect(windowState.snap).toBeNull()
+    expect(windowState.maximized).toBe(false)
+    expect(windowState.geometry.width).toBe(880)
+    wrapper.unmount()
+    desktopRoot.remove()
+  })
+
+  it('persists the visible floating layout when a restored snap drag is cancelled', async () => {
+    routeMocks.resolveWindowComponent.mockResolvedValue({ template: '<main />' })
+    const desktopRoot = document.createElement('div')
+    desktopRoot.className = 'desktop'
+    document.body.appendChild(desktopRoot)
+    const desktop = useDesktopMode()
+    const id = desktop.openWindow('/overview', 'route.overview', false)
+    const windowState = desktop.windows.value.find((item) => item.id === id)!
+    const wrapper = mount(DesktopWindow, {
+      attachTo: desktopRoot,
+      props: { windowState, icon: () => null },
+    })
+    await flushPromises()
+
+    desktop.snapWindow(id, 'left')
+    vi.spyOn(wrapper.element, 'getBoundingClientRect').mockReturnValue({
+      left: 10,
+      top: 10,
+      width: 625,
+      height: 718,
+      right: 635,
+      bottom: 728,
+      x: 10,
+      y: 10,
+      toJSON: () => ({}),
+    })
+    const titlebar = wrapper.get('.desktop-window__titlebar').element
+    titlebar.dispatchEvent(pointer('pointerdown', 300, 28, 4))
+    window.dispatchEvent(pointer('pointermove', 310, 38, 4))
+    window.dispatchEvent(pointer('pointermove', 520, 120, 4))
+    window.dispatchEvent(pointer('pointercancel', 520, 120, 4))
+    await flushPromises()
+
+    expect(windowState.snap).toBeNull()
+    const persisted = JSON.parse(window.localStorage.getItem('kejilion-panel-desktop-windows') ?? '[]') as Array<{
+      id: number
+      snap?: string | null
+      geometry: { left: number }
+    }>
+    const record = persisted.find((item) => item.id === id)
+    expect(record?.snap).toBeNull()
+    expect(record?.geometry.left).toBe(windowState.geometry.left)
+    wrapper.unmount()
+    desktopRoot.remove()
   })
 })

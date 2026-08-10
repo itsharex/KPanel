@@ -22,6 +22,13 @@ import { useDesktopMode } from '@/stores/desktopMode'
 import { useToast } from '@/stores/toast'
 import { useI18n } from '@/i18n'
 import { useWindowGesture } from '@/composables/useWindowGesture'
+import {
+  detectWindowSnapTarget,
+  geometryForWindowSnap,
+  type WindowGeometry,
+  type WindowSnapTarget,
+} from '@/lib/desktopWindowGeometry'
+import type { WindowGestureEnd, WindowGestureKind } from '@/composables/useWindowGesture'
 import type { DesktopWindowState } from '@/stores/desktopMode'
 import type { DesktopBrowserHistoryPoint } from '@/lib/desktopBrowserHistory'
 
@@ -59,6 +66,7 @@ const loading = ref(true)
 const loadError = ref(false)
 const checkingClose = ref(false)
 const iconFailed = ref(false)
+const snapTarget = ref<WindowSnapTarget | null>(null)
 let closeTimer: number | undefined
 let openFrame: number | undefined
 let loadSequence = 0
@@ -155,12 +163,35 @@ const windowStyle = computed(() => {
       zIndex: props.windowState.z,
     }
   }
+  if (props.windowState.snap) {
+    return {
+      left: props.windowState.snap === 'left' ? '10px' : 'calc(50vw + 5px)',
+      top: '10px',
+      width: 'calc(50vw - 15px)',
+      height: 'calc(100vh - 82px)',
+      zIndex: props.windowState.z,
+    }
+  }
   return {
     left: `${props.windowState.geometry.left}px`,
     top: `${props.windowState.geometry.top}px`,
     width: `${props.windowState.geometry.width}px`,
     height: `${props.windowState.geometry.height}px`,
     zIndex: props.windowState.z,
+  }
+})
+
+const snapPreviewStyle = computed(() => {
+  if (!snapTarget.value) return undefined
+  const geometry = geometryForWindowSnap(snapTarget.value, {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  })
+  return {
+    left: `${geometry.left}px`,
+    top: `${geometry.top}px`,
+    width: `${geometry.width}px`,
+    height: `${geometry.height}px`,
   }
 })
 
@@ -308,14 +339,65 @@ const stopActiveWatch = watch(
 const gesture = useWindowGesture(
   () => props.windowState.geometry,
   (geometry) => desktop.updateGeometry(props.windowState.id, geometry, false),
-  () => desktop.focusWindow(props.windowState.id),
-  () => desktop.commitGeometry(props.windowState.id),
+  {
+    onStart: () => {
+      snapTarget.value = null
+      desktop.focusWindow(props.windowState.id)
+    },
+    onMoveActivate: restoreLayoutForDrag,
+    onMove: updateSnapPreview,
+    onEnd: finishWindowGesture,
+  },
 )
 
+function restoreLayoutForDrag(event: PointerEvent): WindowGeometry | undefined {
+  if (!props.windowState.maximized && !props.windowState.snap) return undefined
+  const rect = windowElement.value?.getBoundingClientRect()
+  const geometry = props.windowState.geometry
+  const anchorX = rect?.width
+    ? Math.min(Math.max((event.clientX - rect.left) / rect.width, .14), .86)
+    : .5
+  const titlebarOffset = rect
+    ? Math.min(Math.max(event.clientY - rect.top, 8), 34)
+    : 21
+  return desktop.restoreWindowForDrag(props.windowState.id, {
+    ...geometry,
+    left: event.clientX - geometry.width * anchorX,
+    top: event.clientY - titlebarOffset,
+  })
+}
+
+function updateSnapPreview(kind: WindowGestureKind, event: PointerEvent): void {
+  snapTarget.value = kind === 'move'
+    ? detectWindowSnapTarget(
+        { x: event.clientX, y: event.clientY },
+        { width: window.innerWidth, height: window.innerHeight },
+      )
+    : null
+}
+
+function finishWindowGesture(result: WindowGestureEnd): void {
+  const target = result.kind === 'move' && result.event
+    ? detectWindowSnapTarget(
+        { x: result.event.clientX, y: result.event.clientY },
+        { width: window.innerWidth, height: window.innerHeight },
+      )
+    : snapTarget.value
+  snapTarget.value = null
+  if (result.cancelled) {
+    if (result.moved) desktop.commitGeometry(props.windowState.id)
+    return
+  }
+  if (result.kind === 'move' && result.moved && target) {
+    desktop.snapWindow(props.windowState.id, target)
+    return
+  }
+  if (result.moved) desktop.commitGeometry(props.windowState.id)
+}
+
 function onTitlebarPointerDown(event: PointerEvent): void {
-  if (props.windowState.maximized) return
   const target = event.target as HTMLElement | null
-  if (target?.closest('button')) return
+  if (target?.closest('button,[data-no-drag]')) return
   gesture.onPointerDown(event, null)
 }
 
@@ -350,6 +432,7 @@ const handleEdges = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const
     :class="{
       'desktop-window--focused': isFocused,
       'desktop-window--maximized': isMaximized(),
+      'desktop-window--snapped': Boolean(windowState.snap),
       'desktop-window--minimized': windowState.minimized,
       'desktop-window--open': open,
       'desktop-window--closing': closing,
@@ -436,7 +519,7 @@ const handleEdges = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const
     </div>
 
     <div
-      v-for="edge in windowState.maximized ? [] : handleEdges"
+      v-for="edge in windowState.maximized || windowState.snap ? [] : handleEdges"
       :key="edge"
       class="desktop-window__resize"
       :class="`desktop-window__resize--${edge}`"
@@ -444,5 +527,9 @@ const handleEdges = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const
       :aria-hidden="true"
       @pointerdown="(event) => gesture.onPointerDown(event, gesture.edgeForTarget(event.target as HTMLElement))"
     />
+
+    <Teleport v-if="snapTarget" to=".desktop">
+      <div class="desktop-window-snap-preview" :style="snapPreviewStyle" aria-hidden="true" />
+    </Teleport>
   </section>
 </template>

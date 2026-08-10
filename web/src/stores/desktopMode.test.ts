@@ -21,6 +21,7 @@ function setupViewport(width: number, height: number): void {
 describe('desktop mode', () => {
   beforeEach(() => {
     resetDesktopModeForTest()
+    window.localStorage.clear()
   })
 
   it('starts in classic mode', () => {
@@ -46,6 +47,7 @@ describe('desktop mode', () => {
     expect(windowState?.path).toBe('/overview')
     expect(windowState?.titleKey).toBe('route.overview')
     expect(windowState?.minimized).toBe(false)
+    expect(windowState?.snap).toBeNull()
     expect(desktop.focusedId.value).toBe(id)
   })
 
@@ -108,6 +110,146 @@ describe('desktop mode', () => {
     const id = desktop.openWindow('/overview', 'route.overview', true)
     desktop.updateGeometry(id, { left: 40, top: 40, width: 900, height: 600 })
     expect(desktop.windows.value.find((item) => item.id === id)?.geometry).toMatchObject({ left: 40, top: 40, width: 900, height: 600 })
+  })
+
+  it('keeps the floating restore geometry while switching between snap targets', () => {
+    setupViewport(1280, 800)
+    const desktop = useDesktopMode()
+    const id = desktop.openWindow('/overview', 'route.overview', false)
+    const target = desktop.windows.value.find((item) => item.id === id)!
+    const restoreGeometry = { ...target.geometry }
+
+    desktop.snapWindow(id, 'left')
+    expect(target.snap).toBe('left')
+    expect(target.maximized).toBe(false)
+    expect(target.geometry).toEqual(restoreGeometry)
+
+    desktop.snapWindow(id, 'maximize')
+    expect(target.snap).toBeNull()
+    expect(target.maximized).toBe(true)
+    expect(target.geometry).toEqual(restoreGeometry)
+
+    const restored = desktop.restoreWindowForDrag(id, { ...restoreGeometry, left: 120, top: 80 })
+    expect(target.maximized).toBe(false)
+    expect(target.snap).toBeNull()
+    expect(restored).toMatchObject({ left: 120, top: 80 })
+  })
+
+  it('restores valid side snap state and safely drops it on narrow viewports', () => {
+    const storage = makeStorage()
+    storage.store.set('kejilion-panel-desktop-windows', JSON.stringify([{
+      id: 2,
+      path: '/overview',
+      geometry: { left: 100, top: 80, width: 880, height: 600 },
+      minimized: false,
+      maximized: false,
+      snap: 'right',
+    }]))
+
+    initializeDesktopMode(storage, { width: 1280, height: 800 })
+    expect(useDesktopMode().windows.value[0]?.snap).toBe('right')
+    resetDesktopModeForTest()
+    initializeDesktopMode(storage, { width: 700, height: 800 })
+    expect(useDesktopMode().windows.value[0]?.snap).toBeNull()
+  })
+
+  it('does not write window storage during geometry frames and commits once at gesture end', () => {
+    setupViewport(1280, 800)
+    initializeDesktopMode(window.localStorage, { width: 1280, height: 800 })
+    const desktop = useDesktopMode()
+    const id = desktop.openWindow('/overview', 'route.overview', false)
+    const before = window.localStorage.getItem('kejilion-panel-desktop-windows')
+
+    desktop.updateGeometry(id, { left: 40, top: 50, width: 1040, height: 650 }, false)
+    desktop.updateGeometry(id, { left: 60, top: 70, width: 1040, height: 650 }, false)
+    expect(window.localStorage.getItem('kejilion-panel-desktop-windows')).toBe(before)
+
+    desktop.commitGeometry(id)
+    expect(window.localStorage.getItem('kejilion-panel-desktop-windows')).not.toBe(before)
+    expect(window.localStorage.getItem('kpanel:desktop-window-sizes:v1')).toContain('1040')
+  })
+
+  it('remembers only the last user-resized size for a canonical application', () => {
+    setupViewport(1440, 900)
+    initializeDesktopMode(window.localStorage, { width: 1440, height: 900 })
+    const desktop = useDesktopMode()
+    const first = desktop.openWindow('/overview', 'route.overview', false)
+    desktop.updateGeometry(first, { left: 40, top: 50, width: 1040, height: 650 }, false)
+    desktop.commitGeometry(first)
+    desktop.closeWindow(first)
+
+    const reopened = desktop.openWindow('/monitoring', 'route.monitoring', true)
+    expect(desktop.windows.value.find((item) => item.id === reopened)?.geometry).toMatchObject({
+      width: 1040,
+      height: 650,
+    })
+    const raw = window.localStorage.getItem('kpanel:desktop-window-sizes:v1') ?? ''
+    expect(raw).toContain('/overview')
+    expect(raw).not.toContain('/monitoring')
+  })
+
+  it('never stores browser URLs, queries, file paths or script identifiers in size preferences', () => {
+    setupViewport(1440, 900)
+    initializeDesktopMode(window.localStorage, { width: 1440, height: 900 })
+    const desktop = useDesktopMode()
+    const browser = desktop.openWindow('/browser?url=https%3A%2F%2Fsecret.example%2Fprivate', 'desktop.browser', false)
+    desktop.updateGeometry(browser, { left: 40, top: 40, width: 1000, height: 640 }, false)
+    desktop.commitGeometry(browser)
+    const files = desktop.openWindow('/files?path=/root/private', 'route.files', false)
+    desktop.updateGeometry(files, { left: 60, top: 60, width: 960, height: 620 }, false)
+    desktop.commitGeometry(files)
+    const script = desktop.openWindow('/app-script/private-agent', 'desktop.scriptWindowTitle', false)
+    desktop.updateGeometry(script, { left: 70, top: 70, width: 900, height: 620 }, false)
+    desktop.commitGeometry(script)
+
+    const raw = window.localStorage.getItem('kpanel:desktop-window-sizes:v1') ?? ''
+    expect(raw).toContain('/browser')
+    expect(raw).toContain('/files')
+    expect(raw).toContain('/app-script')
+    expect(raw).not.toContain('secret.example')
+    expect(raw).not.toContain('/root/private')
+    expect(raw).not.toContain('private-agent')
+  })
+
+  it('keeps a large-screen preference when opening on a temporarily smaller viewport', () => {
+    setupViewport(1440, 900)
+    initializeDesktopMode(window.localStorage, { width: 1440, height: 900 })
+    const desktop = useDesktopMode()
+    const first = desktop.openWindow('/overview', 'route.overview', false)
+    desktop.updateGeometry(first, { left: 40, top: 50, width: 1040, height: 650 }, false)
+    desktop.commitGeometry(first)
+    desktop.closeWindow(first)
+
+    setupViewport(600, 500)
+    const small = desktop.openWindow('/overview', 'route.overview', false)
+    expect(desktop.windows.value.find((item) => item.id === small)?.geometry.width).toBeLessThan(1040)
+    desktop.closeWindow(small)
+
+    setupViewport(1440, 900)
+    const largeAgain = desktop.openWindow('/overview', 'route.overview', false)
+    expect(desktop.windows.value.find((item) => item.id === largeAgain)?.geometry.width).toBe(1040)
+  })
+
+  it('ignores oversized and invalid window size preference payloads', () => {
+    const storage = makeStorage()
+    storage.store.set('kpanel:desktop-window-sizes:v1', `[${' '.repeat(8_193)}]`)
+    initializeDesktopMode(storage, { width: 1280, height: 800 })
+    setupViewport(1280, 800)
+    let desktop = useDesktopMode()
+    let id = desktop.openWindow('/overview', 'route.overview', false)
+    expect(desktop.windows.value.find((item) => item.id === id)?.geometry.width).toBe(880)
+
+    resetDesktopModeForTest()
+    storage.store.set('kpanel:desktop-window-sizes:v1', JSON.stringify([
+      { path: '/overview', width: -1, height: 600 },
+      { path: '/files?path=/secret', width: 900, height: 600 },
+      { path: '/unknown', width: 900, height: 600 },
+      { path: '/browser', width: 20_000, height: 600 },
+    ]))
+    initializeDesktopMode(storage, { width: 1280, height: 800 })
+    desktop = useDesktopMode()
+    id = desktop.openWindow('/overview', 'route.overview', false)
+    expect(desktop.windows.value.find((item) => item.id === id)?.geometry.width).toBe(880)
   })
 
   it('caps the number of open windows to the fixed limit', () => {

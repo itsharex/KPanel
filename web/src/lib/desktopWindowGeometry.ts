@@ -18,6 +18,14 @@ export interface ViewportSize {
   height: number
 }
 
+export type WindowSnap = 'left' | 'right'
+export type WindowSnapTarget = WindowSnap | 'maximize'
+
+export interface ViewportPoint {
+  x: number
+  y: number
+}
+
 export const MIN_WINDOW_WIDTH = 420
 export const MIN_WINDOW_HEIGHT = 280
 export const DEFAULT_WINDOW_WIDTH = 880
@@ -26,6 +34,10 @@ export const DEFAULT_WINDOW_HEIGHT = 600
 const TOP_MARGIN = 16
 const SIDE_MARGIN = 24
 const BOTTOM_MARGIN = 72
+const SNAP_INSET = 10
+const SNAP_GAP = 10
+const SNAP_EDGE_THRESHOLD = 18
+const MIN_SIDE_SNAP_VIEWPORT_WIDTH = 760
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
@@ -84,4 +96,39 @@ export function normalizeGeometry(raw: Partial<WindowGeometry> | null | undefine
   const left = Number.isFinite(raw.left) ? raw.left! : (viewport.width - width) / 2
   const top = Number.isFinite(raw.top) ? raw.top! : (viewport.height - height) / 2
   return clampToViewport({ left, top, width, height }, viewport)
+}
+
+/** Whether the viewport can present two useful half-width desktop windows. */
+export function supportsSideWindowSnap(viewport: ViewportSize): boolean {
+  return viewport.width >= MIN_SIDE_SNAP_VIEWPORT_WIDTH
+}
+
+/** Resolve the small set of Windows-style edge targets supported by KPanel. */
+export function detectWindowSnapTarget(point: ViewportPoint, viewport: ViewportSize): WindowSnapTarget | null {
+  if (point.y <= SNAP_EDGE_THRESHOLD) return 'maximize'
+  if (!supportsSideWindowSnap(viewport)) return null
+  if (point.x <= SNAP_EDGE_THRESHOLD) return 'left'
+  if (point.x >= viewport.width - SNAP_EDGE_THRESHOLD) return 'right'
+  return null
+}
+
+/** Geometry shared by the live snap preview and the final snapped window. */
+export function geometryForWindowSnap(target: WindowSnapTarget, viewport: ViewportSize): WindowGeometry {
+  const height = Math.max(viewport.height - SNAP_INSET - BOTTOM_MARGIN, 1)
+  if (target === 'maximize') {
+    return {
+      left: SNAP_INSET,
+      top: SNAP_INSET,
+      width: Math.max(viewport.width - SNAP_INSET * 2, 1),
+      height,
+    }
+  }
+
+  const width = Math.max((viewport.width - SNAP_INSET * 2 - SNAP_GAP) / 2, 1)
+  return {
+    left: target === 'left' ? SNAP_INSET : SNAP_INSET + width + SNAP_GAP,
+    top: SNAP_INSET,
+    width,
+    height,
+  }
 }

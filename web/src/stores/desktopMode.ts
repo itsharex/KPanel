@@ -3,8 +3,11 @@ import {
   cascadePosition,
   clampToViewport,
   normalizeGeometry,
+  supportsSideWindowSnap,
   type ViewportSize,
   type WindowGeometry,
+  type WindowSnap,
+  type WindowSnapTarget,
 } from '@/lib/desktopWindowGeometry'
 import { canonicalDesktopAppPath, desktopRoutePath, findDesktopApp } from '@/lib/desktopApps'
 
@@ -26,6 +29,7 @@ export interface DesktopWindowState {
   geometry: WindowGeometry
   minimized: boolean
   maximized: boolean
+  snap: WindowSnap | null
   z: number
   /** Focused window id (0 = none). */
   focusedId: number
@@ -44,9 +48,19 @@ export interface StorageLike {
 
 const MODE_KEY = 'kejilion-panel-desktop-mode'
 const WINDOWS_KEY = 'kejilion-panel-desktop-windows'
+const WINDOW_PREFERENCES_KEY = 'kpanel:desktop-window-sizes:v1'
 const MAX_WINDOWS = 8
+const MAX_WINDOW_PREFERENCES = 32
+const MAX_WINDOW_PREFERENCES_BYTES = 8_192
+const MAX_WINDOW_PREFERENCE_DIMENSION = 16_384
 const BASE_WINDOW_Z = 100
 const MAX_WINDOW_Z = 900
+
+interface WindowSizePreference {
+  path: string
+  width: number
+  height: number
+}
 
 const state = reactive<DesktopState>({
   mode: 'classic',
@@ -56,6 +70,10 @@ const state = reactive<DesktopState>({
 
 let nextWindowId = 1
 let nextZ = BASE_WINDOW_Z
+let windowPreferencesLoaded = false
+let windowPreferencesStorage: StorageLike | undefined
+const windowPreferences = new Map<string, WindowSizePreference>()
+const sizeDirtyWindowIds = new Set<number>()
 
 function isDesktopMode(value: unknown): value is DesktopMode {
   return value === 'classic' || value === 'desktop'
@@ -63,6 +81,10 @@ function isDesktopMode(value: unknown): value is DesktopMode {
 
 function isWindowRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function isWindowSnap(value: unknown): value is WindowSnap {
+  return value === 'left' || value === 'right'
 }
 
 function titleKeyForWindowPath(path: string): string | undefined {
@@ -82,6 +104,84 @@ function isSafeWindowFullPath(fullPath: string): boolean {
     && !/[\u0000-\u001f\\]/.test(fullPath)
     && Boolean(titleKeyForWindowPath(fullPath))
   )
+}
+
+function windowPreferencePath(path: string): string | undefined {
+  const routePath = desktopRoutePath(path)
+  if (routePath === '/processes' || routePath === '/app-script') return routePath
+  return findDesktopApp(path)?.path
+}
+
+function loadWindowPreferences(storage: StorageLike | undefined): void {
+  windowPreferences.clear()
+  windowPreferencesLoaded = true
+  windowPreferencesStorage = storage
+  try {
+    const raw = storage?.getItem(WINDOW_PREFERENCES_KEY) ?? null
+    if (!raw || raw.length > MAX_WINDOW_PREFERENCES_BYTES) return
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return
+    for (const value of parsed.filter(isWindowRecord).slice(-MAX_WINDOW_PREFERENCES)) {
+      const path = typeof value.path === 'string' ? windowPreferencePath(value.path) : undefined
+      if (
+        !path
+        || path !== value.path
+        || !Number.isFinite(value.width)
+        || !Number.isFinite(value.height)
+        || Number(value.width) <= 0
+        || Number(value.height) <= 0
+        || Number(value.width) > MAX_WINDOW_PREFERENCE_DIMENSION
+        || Number(value.height) > MAX_WINDOW_PREFERENCE_DIMENSION
+      ) continue
+      windowPreferences.delete(path)
+      windowPreferences.set(path, {
+        path,
+        width: Math.round(Number(value.width)),
+        height: Math.round(Number(value.height)),
+      })
+    }
+  } catch {
+    // Corrupt or unavailable browser storage falls back to application defaults.
+  }
+}
+
+function ensureWindowPreferences(): void {
+  if (!windowPreferencesLoaded) loadWindowPreferences(defaultStorage())
+}
+
+function persistWindowPreferences(): void {
+  try {
+    windowPreferencesStorage?.setItem(WINDOW_PREFERENCES_KEY, JSON.stringify([...windowPreferences.values()]))
+  } catch {
+    // Preference persistence is optional; window behaviour remains available.
+  }
+}
+
+function rememberWindowPreference(path: string, geometry: WindowGeometry, viewport = defaultViewport()): void {
+  ensureWindowPreferences()
+  const preferencePath = windowPreferencePath(path)
+  if (!preferencePath) return
+  const normalized = normalizeGeometry(geometry, viewport)
+  const next = {
+    path: preferencePath,
+    width: Math.round(normalized.width),
+    height: Math.round(normalized.height),
+  }
+  const previous = windowPreferences.get(preferencePath)
+  if (previous?.width === next.width && previous.height === next.height) return
+  windowPreferences.delete(preferencePath)
+  windowPreferences.set(preferencePath, next)
+  while (windowPreferences.size > MAX_WINDOW_PREFERENCES) {
+    const oldest = windowPreferences.keys().next().value as string | undefined
+    if (!oldest) break
+    windowPreferences.delete(oldest)
+  }
+  persistWindowPreferences()
+}
+
+function commitWindowPreference(windowState: DesktopWindowState): void {
+  if (windowState.maximized || !sizeDirtyWindowIds.delete(windowState.id)) return
+  rememberWindowPreference(windowState.path, windowState.geometry)
 }
 
 function readPersistedMode(storage: StorageLike | undefined): DesktopMode {
@@ -120,6 +220,7 @@ function readPersistedWindows(
       const canReuseId = Number.isSafeInteger(persistedId) && Number(persistedId) > 0 && !usedIds.has(Number(persistedId))
       const id = canReuseId ? Number(persistedId) : allocateId()
       usedIds.add(id)
+      const maximized = Boolean(value.maximized)
       restored.push({
         id,
         path,
@@ -129,7 +230,8 @@ function readPersistedWindows(
           viewport,
         ),
         minimized: Boolean(value.minimized),
-        maximized: Boolean(value.maximized),
+        maximized,
+        snap: !maximized && isWindowSnap(value.snap) && supportsSideWindowSnap(viewport) ? value.snap : null,
         z: BASE_WINDOW_Z,
         focusedId: id,
       })
@@ -151,6 +253,7 @@ function persistWindows(storage: StorageLike | undefined): void {
         geometry: windowState.geometry,
         minimized: windowState.minimized,
         maximized: windowState.maximized,
+        snap: windowState.snap,
       }))
     storage?.setItem(WINDOWS_KEY, JSON.stringify(snapshot))
   } catch {
@@ -188,6 +291,7 @@ function normalizeWindowStack(): void {
 function resizeForViewport(viewport: ViewportSize, persist = true): void {
   for (const windowState of state.windows) {
     windowState.geometry = clampToViewport(windowState.geometry, viewport)
+    if (windowState.snap && !supportsSideWindowSnap(viewport)) windowState.snap = null
   }
   if (persist) persistWindows(defaultStorage())
 }
@@ -210,6 +314,7 @@ export function initializeDesktopMode(
   viewport: ViewportSize = defaultViewport(),
 ): void {
   state.mode = readPersistedMode(storage)
+  loadWindowPreferences(storage)
   const restored = readPersistedWindows(storage, viewport)
   if (restored.length) {
     state.windows.splice(0, state.windows.length, ...restored)
@@ -277,7 +382,7 @@ export function useDesktopMode() {
     if (state.windows.length >= MAX_WINDOWS) return 0
     const id = nextWindowId++
     nextZ += 1
-    const geometry = cascadeGeometry(id)
+    const geometry = cascadeGeometry(id, path)
     state.windows.push({
       id,
       path,
@@ -285,6 +390,7 @@ export function useDesktopMode() {
       geometry,
       minimized: false,
       maximized: false,
+      snap: null,
       z: nextZ,
       focusedId: id,
     })
@@ -293,14 +399,20 @@ export function useDesktopMode() {
     return id
   }
 
-  function cascadeGeometry(id: number): WindowGeometry {
+  function cascadeGeometry(id: number, path: string): WindowGeometry {
     const index = state.windows.filter((windowState) => windowState.id !== id).length
-    return cascadePosition(index, defaultViewport())
+    const viewport = defaultViewport()
+    ensureWindowPreferences()
+    const preferencePath = windowPreferencePath(path)
+    const preference = preferencePath ? windowPreferences.get(preferencePath) : undefined
+    return cascadePosition(index, viewport, preference?.width, preference?.height)
   }
 
   function closeWindow(id: number): void {
     const index = state.windows.findIndex((windowState) => windowState.id === id)
     if (index === -1) return
+    commitWindowPreference(state.windows[index]!)
+    sizeDirtyWindowIds.delete(id)
     state.windows.splice(index, 1)
     if (state.focusedId === id) {
       const top = [...state.windows]
@@ -343,6 +455,7 @@ export function useDesktopMode() {
     const target = state.windows.find((windowState) => windowState.id === id)
     if (!target) return
     target.maximized = !target.maximized
+    target.snap = null
     bringToFront(id)
     persistWindows(defaultStorage())
   }
@@ -357,13 +470,48 @@ export function useDesktopMode() {
   function updateGeometry(id: number, geometry: WindowGeometry, persist = true): void {
     const target = state.windows.find((windowState) => windowState.id === id)
     if (!target) return
+    const previousWidth = target.geometry.width
+    const previousHeight = target.geometry.height
     target.geometry = clampToViewport(geometry, defaultViewport())
-    if (persist) persistWindows(defaultStorage())
+    if (target.geometry.width !== previousWidth || target.geometry.height !== previousHeight) {
+      sizeDirtyWindowIds.add(id)
+    }
+    if (persist) {
+      commitWindowPreference(target)
+      persistWindows(defaultStorage())
+    }
   }
 
   function commitGeometry(id: number): void {
-    if (!state.windows.some((windowState) => windowState.id === id)) return
+    const target = state.windows.find((windowState) => windowState.id === id)
+    if (!target) return
+    commitWindowPreference(target)
     persistWindows(defaultStorage())
+  }
+
+  function snapWindow(id: number, snap: WindowSnapTarget): void {
+    const target = state.windows.find((windowState) => windowState.id === id)
+    if (!target) return
+    if (snap === 'maximize') {
+      target.maximized = true
+      target.snap = null
+    } else {
+      if (!supportsSideWindowSnap(defaultViewport())) return
+      target.maximized = false
+      target.snap = snap
+    }
+    bringToFront(id)
+    persistWindows(defaultStorage())
+  }
+
+  function restoreWindowForDrag(id: number, geometry: WindowGeometry): WindowGeometry | undefined {
+    const target = state.windows.find((windowState) => windowState.id === id)
+    if (!target) return undefined
+    target.maximized = false
+    target.snap = null
+    target.geometry = clampToViewport(geometry, defaultViewport())
+    bringToFront(id)
+    return target.geometry
   }
 
   function updateWindowRoute(id: number, path: string, titleKey: string): void {
@@ -393,6 +541,8 @@ export function useDesktopMode() {
     focusWindow,
     updateGeometry,
     commitGeometry,
+    snapWindow,
+    restoreWindowForDrag,
     updateWindowRoute,
     resizeForViewport,
   }
@@ -404,4 +554,8 @@ export function resetDesktopModeForTest(): void {
   state.focusedId = 0
   nextWindowId = 1
   nextZ = BASE_WINDOW_Z
+  windowPreferences.clear()
+  sizeDirtyWindowIds.clear()
+  windowPreferencesLoaded = false
+  windowPreferencesStorage = undefined
 }

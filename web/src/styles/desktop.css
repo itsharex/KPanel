@@ -1056,6 +1056,29 @@ body.desktop-mode-open::-webkit-scrollbar {
   border-radius: 14px;
 }
 
+.desktop-window--snapped {
+  border-radius: 14px;
+}
+
+.desktop-window-snap-preview {
+  position: absolute;
+  z-index: 90;
+  background: color-mix(in srgb, var(--brand) 18%, var(--desktop-glass));
+  border: 1px solid color-mix(in srgb, var(--brand) 58%, rgb(255 255 255 / 42%));
+  border-radius: 14px;
+  box-shadow:
+    0 20px 54px rgb(0 0 0 / 18%),
+    inset 0 1px 0 rgb(255 255 255 / 28%);
+  opacity: .92;
+  pointer-events: none;
+  animation: desktop-snap-preview-in .14s cubic-bezier(.22, 1, .36, 1) both;
+}
+
+@keyframes desktop-snap-preview-in {
+  from { opacity: 0; transform: scale(.985); }
+  to { opacity: .92; transform: none; }
+}
+
 .desktop-window--minimized {
   opacity: 0;
   transform: translateY(calc(100vh - 110px)) scale(.18);

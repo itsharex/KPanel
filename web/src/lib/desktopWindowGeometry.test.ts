@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   clampToViewport,
   cascadePosition,
+  detectWindowSnapTarget,
+  geometryForWindowSnap,
   normalizeGeometry,
+  supportsSideWindowSnap,
   MIN_WINDOW_WIDTH,
   MIN_WINDOW_HEIGHT,
 } from './desktopWindowGeometry'
@@ -78,5 +81,30 @@ describe('desktop window geometry', () => {
     expect(geometry.height).toBeGreaterThanOrEqual(MIN_WINDOW_HEIGHT)
     expect(geometry.left).toBeGreaterThanOrEqual(0)
     expect(geometry.top).toBeGreaterThanOrEqual(16)
+  })
+
+  it('detects only the lightweight top and side snap targets', () => {
+    const viewport = { width: 1280, height: 800 }
+    expect(detectWindowSnapTarget({ x: 640, y: 8 }, viewport)).toBe('maximize')
+    expect(detectWindowSnapTarget({ x: 8, y: 300 }, viewport)).toBe('left')
+    expect(detectWindowSnapTarget({ x: 1272, y: 300 }, viewport)).toBe('right')
+    expect(detectWindowSnapTarget({ x: 640, y: 300 }, viewport)).toBeNull()
+  })
+
+  it('prioritizes top maximize at a corner and disables side snap on narrow viewports', () => {
+    expect(detectWindowSnapTarget({ x: 2, y: 2 }, { width: 1280, height: 800 })).toBe('maximize')
+    expect(supportsSideWindowSnap({ width: 759, height: 800 })).toBe(false)
+    expect(detectWindowSnapTarget({ x: 2, y: 300 }, { width: 759, height: 800 })).toBeNull()
+  })
+
+  it('lays out symmetric half windows above the taskbar safety area', () => {
+    const viewport = { width: 1280, height: 800 }
+    const left = geometryForWindowSnap('left', viewport)
+    const right = geometryForWindowSnap('right', viewport)
+    const maximized = geometryForWindowSnap('maximize', viewport)
+    expect(left).toEqual({ left: 10, top: 10, width: 625, height: 718 })
+    expect(right).toEqual({ left: 645, top: 10, width: 625, height: 718 })
+    expect(right.left - (left.left + left.width)).toBe(10)
+    expect(maximized).toEqual({ left: 10, top: 10, width: 1260, height: 718 })
   })
 })

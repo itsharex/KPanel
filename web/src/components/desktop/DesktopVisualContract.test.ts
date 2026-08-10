@@ -42,6 +42,13 @@ describe('desktop visual and interaction contract', () => {
     )
   })
 
+  it('keeps the snap preview lightweight and below interactive desktop chrome', () => {
+    expect(styles).toMatch(/\.desktop-window-snap-preview\s*\{[^}]*z-index:\s*90;[^}]*pointer-events:\s*none;/)
+    const previewRule = styles.match(/\.desktop-window-snap-preview\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(previewRule).not.toContain('backdrop-filter')
+    expect(windowSource).toContain('<Teleport v-if="snapTarget" to=".desktop">')
+  })
+
   it('keeps desktop icons and labels crisp in both color themes', () => {
     expect(styles).toMatch(/\.desktop__icon-glyph--dynamic::before\s*\{[^}]*display:\s*none;/)
     expect(styles).toMatch(/\.desktop__icon-label\s*\{[^}]*height:\s*18px;[^}]*padding:\s*0 6px;[^}]*font-size:\s*11px;[^}]*line-height:\s*16px;/)
