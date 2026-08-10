@@ -256,5 +256,7 @@ export default [
   ['Agent 没有返回可管理的网卡。', 'The Agent returned no manageable network interfaces.'],
   ['网卡管理', 'Network Interface Management'],
   ['查看网卡、硬件地址和本机地址，并通过固定动作启用或停用接口。', 'View interfaces, hardware addresses, and local addresses, and enable or disable interfaces through fixed actions.'],
+  ['确认关闭全部端口吗？此操作会清空现有 iptables filter 规则与自定义链（包括 Docker 链），仅恢复基础规则，并将 INPUT/FORWARD 策略设为 DROP。', 'Close all ports? This clears existing iptables filter rules and custom chains, including Docker chains, restores only the base rules, and sets the INPUT/FORWARD policies to DROP.'],
+  ['确认开放全部端口吗？此操作会清空现有 iptables filter 规则与自定义链（包括 Docker 链），仅恢复基础规则，并将 INPUT/FORWARD 策略设为 ACCEPT。', 'Open all ports? This clears existing iptables filter rules and custom chains, including Docker chains, restores only the base rules, and sets the INPUT/FORWARD policies to ACCEPT.'],
   ['{0} 天 {1} 小时', '{0}d {1}h'],
 ] as const satisfies PhraseCatalog

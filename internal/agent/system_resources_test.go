@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/systemmanage"
 )
 
@@ -94,5 +96,35 @@ func TestSystemResourceActionKeepsStrictBodyAndErrorBoundaries(t *testing.T) {
 	server.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_request") {
 		t.Fatalf("oversized status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestSystemResourceManualAttentionProblemsAreNotRetryable(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		code      string
+		retryable bool
+	}{
+		{name: "rolled back", err: systemmanage.ErrRolledBack, code: "system_resource_rolled_back", retryable: true},
+		{name: "rollback failed", err: systemmanage.ErrRollbackFailed, code: "system_resource_rollback_failed", retryable: false},
+		{name: "needs attention", err: systemmanage.ErrNeedsAttention, code: "system_resource_needs_attention", retryable: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			status, code, _, retryable := systemResourceProblem(test.err)
+			if status != http.StatusServiceUnavailable || code != test.code || retryable != test.retryable {
+				t.Fatalf("status=%d code=%q retryable=%v", status, code, retryable)
+			}
+			response := httptest.NewRecorder()
+			writeProblemWithRetryable(response, "request-id", status, code, "title", "detail", retryable)
+			var problem contract.Problem
+			if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+				t.Fatal(err)
+			}
+			if problem.Retryable != test.retryable || problem.Code != test.code {
+				t.Fatalf("serialized problem=%#v", problem)
+			}
+		})
 	}
 }

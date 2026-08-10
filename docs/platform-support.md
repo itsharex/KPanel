@@ -31,9 +31,9 @@ Rocky 等系统分别制作 Panel 镜像。
 | SSH 端口 | 由可信 `kejilion.sh ssh-port` 协议复用脚本现有 `new_ssh_port` 主业务 | 本机脚本必须包含该非交互协议；云安全组仍需在厂商控制面单独放行 |
 | DNS 写入 | 可信 `kejilion.sh` 非交互协议；systemd-resolved 原生配置或脚本兼容 `resolv.conf` 事务 | 本机脚本版本过旧或底层 `systemctl`/`chattr` 不可用时禁用 |
 | 本地 Hosts | 读取 `/etc/hosts`；可信 `kejilion.sh` 按精确行事务写入 | 文件过大、非普通文件、脚本协议过旧或权限不可信时写入禁用 |
-| 定时任务 | 读取并管理 root 用户 Crontab；命令仅作为 Crontab 数据 | 需要 `crontab` 和可信脚本协议；无 Crontab 视为空表，写入与防火墙持久化共享互斥锁 |
+| 定时任务 | 读取并管理 root 用户 Crontab；命令仅作为 Crontab 数据并通过有界 stdin 传输 | 读取需要 root；写入需要 `crontab` 和可信脚本协议；无 Crontab 视为空表，写入与防火墙持久化共享互斥锁 |
 | 网卡管理 | 读取 `/sys/class/net` 与 `ip addr`；固定协议即时启停 | 需要 `ip` 与 `CAP_NET_ADMIN`；状态变更不宣称跨重启持久化 |
-| 防火墙 | 读取 `iptables-save`；固定端口、地址、PING、DDoS 和全局动作 | 需要 iptables 工具、可信脚本协议和持久化条件；国家规则未通过来源与事务审计前不从 Web 开放 |
+| 防火墙 | 读取 `iptables-save`；固定端口、地址、PING、DDoS 和全局动作 | 读取需要 `CAP_NET_ADMIN`；写入需要 iptables 工具、可信脚本协议和持久化条件；国家规则未通过来源与事务审计前不从 Web 开放 |
 | 软件源读取 | APT、DNF/YUM、APK、Pacman、Zypper | 页面展示实际源主机 |
 | 软件源切换 | Debian/Ubuntu APT | 其他系统的换源适配器尚未实现 |
 | 系统更新/清理 | APT、DNF/DNF5/YUM、APK、Pacman、Zypper | 固定命令；不接受 Web 传入的包名、命令或 Shell |

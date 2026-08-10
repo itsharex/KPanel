@@ -98,6 +98,13 @@ function addressAction(action: 'firewall-allow-ip' | 'firewall-block-ip' | 'fire
   void execute({ action, address: address.value.trim() }, `确认${labels[action]} IP 规则 ${address.value.trim()} 吗？`)
 }
 
+function allPortsConfirmation(): string {
+  if (snapshot.value?.inputPolicy === 'ACCEPT') {
+    return '确认关闭全部端口吗？此操作会清空现有 iptables filter 规则与自定义链（包括 Docker 链），仅恢复基础规则，并将 INPUT/FORWARD 策略设为 DROP。'
+  }
+  return '确认开放全部端口吗？此操作会清空现有 iptables filter 规则与自定义链（包括 Docker 链），仅恢复基础规则，并将 INPUT/FORWARD 策略设为 ACCEPT。'
+}
+
 watch(
   () => [props.open, props.readable] as const,
   ([open, readable]) => {
@@ -147,7 +154,7 @@ onBeforeUnmount(() => controller?.abort())
             <ShieldCheck :size="18" />
             <span><strong>DDoS 防护</strong><small>{{ snapshot.ddosEnabled ? '已启用' : '未启用' }}</small></span>
           </button>
-          <button class="system-resource-toggle" type="button" :disabled="!writable || running" @click="execute({ action: snapshot.inputPolicy === 'ACCEPT' ? 'firewall-close-all' : 'firewall-open-all' }, `确认${snapshot.inputPolicy === 'ACCEPT' ? '关闭' : '开放'}全部端口吗？此操作会立即改变主机入站访问。`)">
+          <button class="system-resource-toggle" type="button" :disabled="!writable || running" @click="execute({ action: snapshot.inputPolicy === 'ACCEPT' ? 'firewall-close-all' : 'firewall-open-all' }, allPortsConfirmation())">
             <ShieldCheck :size="18" />
             <span><strong>全部端口</strong><small>{{ snapshot.inputPolicy === 'ACCEPT' ? '当前开放，点击关闭' : '当前受限，点击开放' }}</small></span>
           </button>

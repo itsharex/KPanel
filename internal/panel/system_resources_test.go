@@ -1,14 +1,43 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
+
+type detachedSystemResourceAgent struct {
+	started chan context.Context
+	release chan struct{}
+}
+
+func (agent *detachedSystemResourceAgent) Get(
+	context.Context, string, string, string,
+) (AgentResponse, error) {
+	return AgentResponse{}, nil
+}
+
+func (agent *detachedSystemResourceAgent) Do(
+	ctx context.Context, _, _, _, _ string, _ []byte,
+) (AgentResponse, error) {
+	agent.started <- ctx
+	select {
+	case <-agent.release:
+		return AgentResponse{
+			StatusCode: http.StatusOK, ContentType: "application/json",
+			Body: []byte(`{"action":"cron-delete","status":"succeeded","changed":true,"message":"ok","resourceVersion":"` +
+				strings.Repeat("b", 64) + `","appliedAt":"2026-08-10T00:00:00Z"}`),
+		}, nil
+	case <-ctx.Done():
+		return AgentResponse{}, ctx.Err()
+	}
+}
 
 func TestSystemResourceGetUsesExactAuthenticatedProxyPath(t *testing.T) {
 	server, tokenPath := newTestServer(t)
@@ -145,6 +174,58 @@ func TestSystemResourceWriteForwardsAgentConflictEnvelope(t *testing.T) {
 	if response.Code != http.StatusConflict || response.Header().Get("Content-Type") != "application/problem+json" ||
 		response.Body.String() != string(agentProblem) {
 		t.Fatalf("status=%d type=%q body=%s", response.Code, response.Header().Get("Content-Type"), response.Body.String())
+	}
+}
+
+func TestSystemResourceWriteWaitsForAgentReceiptAfterBrowserCancellation(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &detachedSystemResourceAgent{
+		started: make(chan context.Context, 1),
+		release: make(chan struct{}),
+	}
+	server.agent = agent
+	version := strings.Repeat("a", 64)
+	body := []byte(`{"action":"cron-delete","line":1,"expectedResourceVersion":"` + version + `"}`)
+	request := newAuthenticatedSiteRequest(
+		sessionCookie, csrfCookie, http.MethodPost, "/api/v1/system/resource-actions", body, true,
+	)
+	browserContext, cancelBrowser := context.WithCancel(request.Context())
+	request = request.WithContext(browserContext)
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		server.ServeHTTP(response, request)
+		close(done)
+	}()
+
+	agentContext := <-agent.started
+	cancelBrowser()
+	select {
+	case <-agentContext.Done():
+		t.Fatalf("Agent context was canceled with browser context: %v", agentContext.Err())
+	case <-done:
+		t.Fatal("handler returned before the Agent receipt")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(agent.release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not finish after the Agent receipt")
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("write status=%d body=%s", response.Code, response.Body.String())
+	}
+	events, _ := server.store.ListAudit(100, "")
+	results := make(map[string]int, 2)
+	for _, event := range events {
+		if event.Action == "system.resource.cron-delete" {
+			results[event.Result]++
+		}
+	}
+	if results["intent"] != 1 || results["success"] != 1 || len(results) != 2 {
+		t.Fatalf("resource audit results=%v want one intent and one success", results)
 	}
 }
 

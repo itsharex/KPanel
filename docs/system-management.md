@@ -48,9 +48,9 @@ IPinfo IPv4/IPv6 HTTPS 端点，成功结果缓存 30 分钟；外部查询超�
 | 虚拟内存 | `/proc/meminfo`、`/proc/swaps`、`/swapfile` | 与 `kejilion.sh` 共用 `/swapfile`；合并旧版 KPanel Swap，不清除现有分区或第三方 swapfile |
 | 系统更新源 | APT/RPM/APK/Pacman/Zypper 源地址 | Debian/Ubuntu 对齐脚本四种区域模式；第三方源不修改，隔离 `apt-get update` 失败回滚 |
 | 本地 Hosts | `/etc/hosts` 原始内容 | 按精确行管理；写入前后校验整文件资源版本，保留注释、权限和属主，失败回滚 |
-| 定时任务 | root 用户实际 Crontab | 命令只作为 Crontab 数据写入；按精确行新增、修改或删除，保留注释、环境变量和未知行 |
+| 定时任务 | root 用户实际 Crontab | 命令只作为 Crontab 数据写入，并通过有界 stdin 帧传给可信脚本，不出现在特权进程 argv；按精确行新增、修改或删除，保留注释、环境变量和未知行 |
 | 网卡 | `/sys/class/net`、`ip addr` | 展示全部接口；只执行即时启停，不宣称持久化，失败恢复原管理状态 |
-| 防火墙 | `iptables-save`、`INPUT`/`DOCKER-USER` 与脚本持久化产物 | 固定动作、整表资源版本、互斥锁、写后回读和失败回滚；不接受任意规则或 Shell |
+| 防火墙 | `iptables-save`、`INPUT`/`DOCKER-USER` 与脚本持久化产物 | 固定动作、整表资源版本、互斥锁、写后回读和失败回滚；资源版本忽略生成时间与实时计数器，仅对策略和规则变化冲突；不接受任意规则或 Shell；“全部开放/关闭”沿用脚本清空 filter 规则和自定义链后重建基础规则的高影响语义，页面必须明确提示 |
 | V4/V6 优先 | `gai.conf` | 维护 `kejilion.sh` 同一 precedence 规则并保留其他用户配置 |
 | 内核优化 | Kejilion sysctl 产物 | 五种固定预设、内存自适应、逐项应用和版本化回滚；合法脚本产物可接管 |
 | BBR | 当前/可用拥塞算法与 qdisc | 内核能力检查、独立 sysctl 文件、回读 |
@@ -85,9 +85,20 @@ Hosts、定时任务、网卡和防火墙使用独立类型化资源接口。概
 成功后 Web 重新读取同一资源。
 
 四类写操作统一调用可信 `kejilion.sh` 的
-`KJ_SYSTEM_RESOURCE_NONINTERACTIVE=1 k kpanel system-resource` 固定协议，参数以独立 argv 传递，
-不执行 Web 提交的 Shell。防火墙端口动作与脚本一致，同时处理 TCP 和 UDP。脚本现有国家规则依赖
+`KJ_SYSTEM_RESOURCE_NONINTERACTIVE=1 k kpanel system-resource` 固定协议。Agent 仅信任包含
+`KPANEL_SYSTEM_RESOURCE_PROTOCOL_VERSION="3"` 的脚本版本；该版本明确包含 Cron stdin 契约、稳定的
+防火墙规则版本及持久恢复备份。动作、资源版本和结构化字段以
+固定 argv 传递；Cron 命令正文通过最大 2048 字节、单行终止的 stdin 帧传递，避免泄露到进程列表。
+脚本适配器在请求期间只把命令保存为 Crontab 数据，不立即执行；之后由系统 Cron 按计划运行。
+防火墙端口动作与脚本一致，同时处理 TCP 和 UDP。脚本现有国家规则依赖
 未固定摘要的远程地址列表，且默认策略与解除规则尚未满足事务要求，因此本轮不向 Web 暴露。
+
+root Crontab 读取要求 Agent 实际以 root 运行；防火墙读取要求 `CAP_NET_ADMIN`。回滚失败或脚本报告需要
+人工检查时，接口保留 `503` 状态表达当前不可用，但明确返回 `retryable: false`，不得自动重复特权写入。
+回滚失败的快照只接受 `/var/lib/kejilion-panel/system/recovery/system-resource/` 下的 root-only 持久路径；
+Agent 的私有 `/tmp` 路径不会作为可恢复备份回传。
+进程内写锁最多等待 2 秒，脚本跨进程锁最多等待 5 秒；取得写锁后的事务使用独立 45 秒期限，浏览器断开
+不会中止正在进行的系统写入和回滚。
 
 ## v0.29 BBRv3 管理
 

@@ -1,14 +1,18 @@
 package panel
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
+
+const systemResourceAgentTimeout = 55 * time.Second
 
 func isSystemResourcePublicPath(path string) bool {
 	switch path {
@@ -51,8 +55,13 @@ func (s *Server) handleSystemResourceAction(w http.ResponseWriter, r *http.Reque
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return
 	}
+	// The Agent finishes a privileged resource transaction after it acquires its
+	// writer lock, even if the browser disconnects. Keep the Panel side alive for
+	// the same bounded operation so the outcome audit reflects the final receipt.
+	agentContext, cancelAgent := context.WithTimeout(context.WithoutCancel(r.Context()), systemResourceAgentTimeout)
+	defer cancelAgent()
 	response, err := s.hostOps.Do(
-		r.Context(), http.MethodPost, "/v1/system/resource-actions", "", requestID(r), body,
+		agentContext, http.MethodPost, "/v1/system/resource-actions", "", requestID(r), body,
 	)
 	if err != nil {
 		_ = s.audit(r, session.User.ID, action, "system-resource", input.Action, "failure", change)

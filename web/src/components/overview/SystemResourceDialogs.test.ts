@@ -205,4 +205,22 @@ describe('overview system resource dialogs', () => {
     })
     expect(mocks.firewall).toHaveBeenCalledTimes(2)
   })
+
+  it('discloses that the script-wide firewall action clears custom and Docker chains', async () => {
+    const wrapper = mount(FirewallManagerDialog, {
+      props: { ...commonProps, open: true },
+      global: { stubs: { teleport: true } },
+    })
+    await flushPromises()
+
+    const allPortsButton = wrapper.findAll('button').find((button) => button.text().includes('全部端口'))
+    await allPortsButton!.trigger('click')
+    await flushPromises()
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('包括 Docker 链'))
+    expect(mocks.resourceAction).toHaveBeenCalledWith({
+      action: 'firewall-open-all',
+      expectedResourceVersion: 'rv-firewall',
+    })
+  })
 })

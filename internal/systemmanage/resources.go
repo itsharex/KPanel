@@ -25,20 +25,31 @@ import (
 
 const (
 	resourceAddressOutputLimit = 256 << 10
+	resourceNetworkScanLimit   = 4096
 	resourceReceiptOutputLimit = 16 << 10
 	resourceScriptMaxBytes     = 4 << 20
+	resourceWriterLockTimeout  = 2 * time.Second
+	resourceActionTimeout      = 45 * time.Second
 )
 
 var (
 	errResourceOutputTooLarge = errors.New("system resource output exceeds its configured limit")
 	resourceVersionPattern    = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	resourceProtocolV3Pattern = regexp.MustCompile(`(?m)^KPANEL_SYSTEM_RESOURCE_PROTOCOL_VERSION="3"\r?$`)
+	resourceRecoveryPattern   = regexp.MustCompile(`^/var/lib/kejilion-panel/system/recovery/system-resource/[0-9]{8}T[0-9]{6}Z-(?:hosts|cron|firewall)\.[A-Za-z0-9]{6}$`)
+	firewallCounterPattern    = regexp.MustCompile(`^(.* )\[[0-9]+:[0-9]+\]$`)
+	firewallDDoSTCPLimit      = regexp.MustCompile(`^-A INPUT -p tcp(?: -m tcp)? (?:--syn|--tcp-flags (?:FIN,SYN,RST,ACK SYN|SYN,RST,ACK,FIN SYN|0x17 0x02|0x17/0x02)) -m limit --limit [0-9]+/(?:s|sec|second) --limit-burst 100 -j ACCEPT$`)
+	firewallDDoSTCPDrop       = regexp.MustCompile(`^-A INPUT -p tcp(?: -m tcp)? (?:--syn|--tcp-flags (?:FIN,SYN,RST,ACK SYN|SYN,RST,ACK,FIN SYN|0x17 0x02|0x17/0x02)) -j DROP$`)
+	firewallDDoSUDPLimit      = regexp.MustCompile(`^-A INPUT -p udp(?: -m udp)? -m limit --limit [0-9]+/(?:s|sec|second)(?: --limit-burst 5)? -j ACCEPT$`)
+	firewallDDoSUDPDrop       = regexp.MustCompile(`^-A INPUT -p udp(?: -m udp)? -j DROP$`)
+	firewallManagedPingRule   = regexp.MustCompile(`^-A INPUT -p icmp(?: -m icmp)? --icmp-type (?:8|echo-request) -j (?:ACCEPT|DROP)$`)
 	cronEnvironmentPattern    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\s*=`)
 	cronStandardLinePattern   = regexp.MustCompile(`^(\S+\s+\S+\s+\S+\s+\S+\s+\S+)\s+(.+)$`)
 	cronMacroLinePattern      = regexp.MustCompile(`^(@\S+)\s+(.+)$`)
 )
 
 type resourceCommandRunner interface {
-	RunResource(context.Context, int, string, ...string) ([]byte, []byte, error)
+	RunResource(context.Context, int, []byte, string, ...string) ([]byte, []byte, error)
 }
 
 type boundedResourceBuffer struct {
@@ -65,6 +76,7 @@ func (buffer *boundedResourceBuffer) Write(value []byte) (int, error) {
 func (runner commandRunner) RunResource(
 	ctx context.Context,
 	limit int,
+	input []byte,
 	name string,
 	arguments ...string,
 ) ([]byte, []byte, error) {
@@ -77,6 +89,9 @@ func (runner commandRunner) RunResource(
 		"NEEDRESTART_MODE=a",
 		"APT_LISTCHANGES_FRONTEND=none",
 	)
+	if input != nil {
+		command.Stdin = bytes.NewReader(input)
+	}
 	stdout := &boundedResourceBuffer{limit: limit}
 	stderr := &boundedResourceBuffer{limit: 4096}
 	command.Stdout = stdout
@@ -100,8 +115,21 @@ func (m *Manager) runResourceCommand(
 	name string,
 	arguments ...string,
 ) ([]byte, []byte, error) {
+	return m.runResourceCommandInput(ctx, limit, nil, name, arguments...)
+}
+
+func (m *Manager) runResourceCommandInput(
+	ctx context.Context,
+	limit int,
+	input []byte,
+	name string,
+	arguments ...string,
+) ([]byte, []byte, error) {
 	if runner, ok := m.runner.(resourceCommandRunner); ok {
-		return runner.RunResource(ctx, limit, name, arguments...)
+		return runner.RunResource(ctx, limit, input, name, arguments...)
+	}
+	if input != nil {
+		return nil, nil, fmt.Errorf("%w: command runner does not support bounded stdin", ErrUnsupported)
 	}
 	output, err := m.runner.Run(ctx, name, arguments...)
 	if len(output) > limit {
@@ -169,6 +197,9 @@ func (m *Manager) resourceReadAvailability(resource string) error {
 			return fmt.Errorf("%w: /etc/hosts is not a readable regular file", ErrUnsupported)
 		}
 	case "cron":
+		if err := m.cronReadPrivilegeAvailability(); err != nil {
+			return err
+		}
 		if _, err := m.runner.LookPath("crontab"); err != nil {
 			return fmt.Errorf("%w: crontab is unavailable", ErrUnsupported)
 		}
@@ -186,11 +217,28 @@ func (m *Manager) resourceReadAvailability(resource string) error {
 		if runtime.GOOS != "linux" {
 			return fmt.Errorf("%w: firewall state is only available on Linux", ErrUnsupported)
 		}
+		if err := m.firewallReadPrivilegeAvailability(); err != nil {
+			return err
+		}
 		if _, err := m.runner.LookPath("iptables-save"); err != nil {
 			return fmt.Errorf("%w: iptables-save is unavailable", ErrUnsupported)
 		}
 	default:
 		return fmt.Errorf("%w: unknown system resource", ErrUnsupported)
+	}
+	return nil
+}
+
+func (m *Manager) cronReadPrivilegeAvailability() error {
+	if m.effectiveUID() != 0 {
+		return fmt.Errorf("%w: root crontab requires root privileges", ErrUnsupported)
+	}
+	return nil
+}
+
+func (m *Manager) firewallReadPrivilegeAvailability() error {
+	if !m.hasEffectiveCapability(12) {
+		return fmt.Errorf("%w: CAP_NET_ADMIN is unavailable", ErrUnsupported)
 	}
 	return nil
 }
@@ -324,6 +372,9 @@ func parseHostLine(line int, raw string) (contract.SystemHostEntry, bool) {
 // Cron reads root's active crontab. crontab's conventional exit status for a
 // missing table is represented as an empty byte stream and empty snapshot.
 func (m *Manager) Cron(ctx context.Context) (contract.SystemCronSnapshot, error) {
+	if err := m.cronReadPrivilegeAvailability(); err != nil {
+		return contract.SystemCronSnapshot{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	raw, stderr, err := m.runResourceCommand(ctx, contract.SystemCronMaxBytes, "crontab", "-l")
@@ -395,9 +446,16 @@ func (m *Manager) NetworkInterfaces(ctx context.Context) (contract.SystemNetwork
 		return contract.SystemNetworkSnapshot{}, fmt.Errorf("%w: read network interfaces: %v", ErrUnsupported, err)
 	}
 	defer directory.Close()
-	directoryEntries, err := directory.ReadDir(contract.SystemNetworkMaxEntries + 1)
+	directoryEntries, err := directory.ReadDir(resourceNetworkScanLimit + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return contract.SystemNetworkSnapshot{}, fmt.Errorf("%w: read network interfaces: %v", ErrUnsupported, err)
+	}
+	if len(directoryEntries) > resourceNetworkScanLimit {
+		return contract.SystemNetworkSnapshot{}, fmt.Errorf(
+			"%w: network interface count exceeds %d",
+			ErrUnsupported,
+			resourceNetworkScanLimit,
+		)
 	}
 	names := make([]string, 0, len(directoryEntries))
 	for _, entry := range directoryEntries {
@@ -463,8 +521,12 @@ func (m *Manager) NetworkInterfaces(ctx context.Context) (contract.SystemNetwork
 	}, nil
 }
 
-// Firewall reads the exact iptables-save stdout used for optimistic versioning.
+// Firewall parses the exact iptables-save stdout but removes generated
+// timestamps and live counters before optimistic-version hashing.
 func (m *Manager) Firewall(ctx context.Context) (contract.SystemFirewallSnapshot, error) {
+	if err := m.firewallReadPrivilegeAvailability(); err != nil {
+		return contract.SystemFirewallSnapshot{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	raw, _, err := m.runResourceCommand(ctx, contract.SystemFirewallMaxBytes, "iptables-save")
@@ -478,14 +540,27 @@ func (m *Manager) Firewall(ctx context.Context) (contract.SystemFirewallSnapshot
 	total := 0
 	pingAllowed := false
 	pingDecision := false
-	ddosLimit := false
-	ddosDrop := false
+	var ddosRules uint8
+	inFilterTable := false
 	for index, rawLine := range lines {
 		lower := strings.ToLower(rawLine)
 		if strings.Contains(lower, "(nf_tables)") {
 			backend = "iptables-nft"
 		} else if strings.Contains(lower, "(legacy)") {
 			backend = "iptables-legacy"
+		}
+		switch {
+		case rawLine == "*filter":
+			inFilterTable = true
+			continue
+		case strings.HasPrefix(rawLine, "*"):
+			inFilterTable = false
+			continue
+		case rawLine == "COMMIT":
+			inFilterTable = false
+			continue
+		case !inFilterTable:
+			continue
 		}
 		if strings.HasPrefix(rawLine, ":INPUT ") {
 			fields := strings.Fields(rawLine)
@@ -502,7 +577,7 @@ func (m *Manager) Firewall(ctx context.Context) (contract.SystemFirewallSnapshot
 			rules = append(rules, rule)
 		}
 		if !pingDecision && rule.Chain == "INPUT" && rule.Protocol == "icmp" &&
-			strings.Contains(rawLine, "--icmp-type echo-request") {
+			firewallManagedPingRule.MatchString(rawLine) {
 			switch rule.Target {
 			case "ACCEPT":
 				pingAllowed, pingDecision = true, true
@@ -510,24 +585,54 @@ func (m *Manager) Firewall(ctx context.Context) (contract.SystemFirewallSnapshot
 				pingAllowed, pingDecision = false, true
 			}
 		}
-		if (rule.Chain == "INPUT" || rule.Chain == "DOCKER-USER") &&
-			strings.Contains(rawLine, "-m limit") &&
-			(strings.Contains(rawLine, "--syn") || rule.Protocol == "udp") {
-			ddosLimit = true
-		}
-		if (rule.Chain == "INPUT" || rule.Chain == "DOCKER-USER") && rule.Target == "DROP" &&
-			(strings.Contains(rawLine, "--syn") || rule.Protocol == "udp") {
-			ddosDrop = true
-		}
+		ddosRules |= firewallDDoSRuleSignature(rawLine)
 	}
 	if !pingDecision {
 		pingAllowed = inputPolicy == "ACCEPT"
 	}
 	return contract.SystemFirewallSnapshot{
-		ResourceVersion: resourceHash(raw), Backend: backend, InputPolicy: inputPolicy,
+		ResourceVersion: firewallResourceVersion(raw), Backend: backend, InputPolicy: inputPolicy,
 		Rules: rules, Total: total, Truncated: total > len(rules),
-		PingAllowed: pingAllowed, DDoSEnabled: ddosLimit && ddosDrop,
+		PingAllowed: pingAllowed, DDoSEnabled: ddosRules == 0b1111,
 	}, nil
+}
+
+func firewallDDoSRuleSignature(raw string) uint8 {
+	switch {
+	case firewallDDoSTCPLimit.MatchString(raw):
+		return 1 << 0
+	case firewallDDoSTCPDrop.MatchString(raw):
+		return 1 << 1
+	case firewallDDoSUDPLimit.MatchString(raw):
+		return 1 << 2
+	case firewallDDoSUDPDrop.MatchString(raw):
+		return 1 << 3
+	default:
+		return 0
+	}
+}
+
+func firewallResourceVersion(raw []byte) string {
+	return resourceHash(canonicalFirewallRules(raw))
+}
+
+func canonicalFirewallRules(raw []byte) []byte {
+	lines := resourceLines(raw)
+	canonical := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, "# Generated by iptables-save ") ||
+			strings.HasPrefix(line, "# Completed on ") {
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			line = firewallCounterPattern.ReplaceAllString(line, `${1}[0:0]`)
+		}
+		canonical = append(canonical, line)
+	}
+	if len(canonical) == 0 {
+		return nil
+	}
+	return []byte(strings.Join(canonical, "\n") + "\n")
 }
 
 func parseFirewallRule(line int, raw string) (contract.SystemFirewallRule, bool) {
@@ -576,16 +681,25 @@ func (m *Manager) ExecuteSystemResourceAction(
 	if field, detail := contract.ValidateSystemResourceAction(&request); field != "" {
 		return contract.SystemResourceActionResult{}, fmt.Errorf("%w: %s: %s", ErrInvalidInput, field, detail)
 	}
-	resource, action, arguments := systemResourceInvocation(request)
+	resource, action, arguments, input := systemResourceInvocation(request)
 	if err := m.resourceWriteAvailability(resource); err != nil {
 		return contract.SystemResourceActionResult{}, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-	if !lockSystemResource(ctx, &m.mu) {
+	lockContext, cancelLock := context.WithTimeout(ctx, resourceWriterLockTimeout)
+	if !lockSystemResource(lockContext, &m.mu) {
+		cancelLock()
 		return contract.SystemResourceActionResult{}, fmt.Errorf("%w: timed out waiting for the system resource writer", ErrConflict)
 	}
+	cancelLock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return contract.SystemResourceActionResult{}, err
+	}
+	// Once a privileged transaction owns the writer lock, let it finish even if
+	// the browser disconnects. The independent deadline still bounds the worker.
+	transactionContext, cancelTransaction := context.WithTimeout(context.WithoutCancel(ctx), resourceActionTimeout)
+	defer cancelTransaction()
+	ctx = transactionContext
 
 	currentVersion, err := m.systemResourceVersion(ctx, resource, request)
 	if err != nil {
@@ -607,8 +721,8 @@ func (m *Manager) ExecuteSystemResourceAction(
 		request.ExpectedResourceVersion,
 	}
 	commandArguments = append(commandArguments, arguments...)
-	output, _, runErr := m.runResourceCommand(
-		ctx, resourceReceiptOutputLimit, "env", commandArguments...,
+	output, _, runErr := m.runResourceCommandInput(
+		ctx, resourceReceiptOutputLimit, input, "env", commandArguments...,
 	)
 	receipt, receiptErr := parseSystemResourceReceipt(output)
 	if receiptErr != nil {
@@ -677,48 +791,48 @@ func lockSystemResource(ctx context.Context, mutex interface {
 	}
 }
 
-func systemResourceInvocation(request contract.SystemResourceActionRequest) (string, string, []string) {
+func systemResourceInvocation(request contract.SystemResourceActionRequest) (string, string, []string, []byte) {
 	switch request.Action {
 	case "hosts-add":
-		return "hosts", "add", []string{request.Address, strings.Join(request.Hostnames, ","), request.Comment}
+		return "hosts", "add", []string{request.Address, strings.Join(request.Hostnames, ","), request.Comment}, nil
 	case "hosts-delete":
-		return "hosts", "delete", []string{strconv.Itoa(request.Line)}
+		return "hosts", "delete", []string{strconv.Itoa(request.Line)}, nil
 	case "cron-add":
-		return "cron", "add", []string{request.Expression, request.Command}
+		return "cron", "add", []string{request.Expression, "--command-stdin"}, []byte(request.Command + "\n")
 	case "cron-update":
-		return "cron", "update", []string{strconv.Itoa(request.Line), request.Expression, request.Command}
+		return "cron", "update", []string{strconv.Itoa(request.Line), request.Expression, "--command-stdin"}, []byte(request.Command + "\n")
 	case "cron-delete":
-		return "cron", "delete", []string{strconv.Itoa(request.Line)}
+		return "cron", "delete", []string{strconv.Itoa(request.Line)}, nil
 	case "network-interface-state":
 		state := "down"
 		if *request.Enabled {
 			state = "up"
 		}
-		return "network-interface", "state", []string{request.InterfaceName, state}
+		return "network-interface", "state", []string{request.InterfaceName, state}, nil
 	case "firewall-open-port":
-		return "firewall", "open-port", []string{strconv.Itoa(request.Port)}
+		return "firewall", "open-port", []string{strconv.Itoa(request.Port)}, nil
 	case "firewall-close-port":
-		return "firewall", "close-port", []string{strconv.Itoa(request.Port)}
+		return "firewall", "close-port", []string{strconv.Itoa(request.Port)}, nil
 	case "firewall-allow-ip":
-		return "firewall", "allow-ip", []string{request.Address}
+		return "firewall", "allow-ip", []string{request.Address}, nil
 	case "firewall-block-ip":
-		return "firewall", "block-ip", []string{request.Address}
+		return "firewall", "block-ip", []string{request.Address}, nil
 	case "firewall-remove-ip":
-		return "firewall", "remove-ip", []string{request.Address}
+		return "firewall", "remove-ip", []string{request.Address}, nil
 	case "firewall-open-all":
-		return "firewall", "open-all", nil
+		return "firewall", "open-all", nil, nil
 	case "firewall-close-all":
-		return "firewall", "close-all", nil
+		return "firewall", "close-all", nil, nil
 	case "firewall-enable-ping":
-		return "firewall", "enable-ping", nil
+		return "firewall", "enable-ping", nil, nil
 	case "firewall-disable-ping":
-		return "firewall", "disable-ping", nil
+		return "firewall", "disable-ping", nil, nil
 	case "firewall-enable-ddos":
-		return "firewall", "enable-ddos", nil
+		return "firewall", "enable-ddos", nil, nil
 	case "firewall-disable-ddos":
-		return "firewall", "disable-ddos", nil
+		return "firewall", "disable-ddos", nil, nil
 	default:
-		return "", "", nil
+		return "", "", nil, nil
 	}
 }
 
@@ -834,7 +948,8 @@ func parseSystemResourceReceipt(output []byte) (systemResourceReceipt, error) {
 	}
 	if receipt.Backup != "" {
 		if len(receipt.Backup) > 4096 || !filepath.IsAbs(receipt.Backup) ||
-			filepath.Clean(receipt.Backup) != receipt.Backup || strings.ContainsAny(receipt.Backup, "\x00\r\n") {
+			filepath.Clean(receipt.Backup) != receipt.Backup || strings.ContainsAny(receipt.Backup, "\x00\r\n") ||
+			receipt.Status != "rollback-failed" || !resourceRecoveryPattern.MatchString(receipt.Backup) {
 			return systemResourceReceipt{}, errors.New("backup path is malformed")
 		}
 	}
@@ -908,6 +1023,7 @@ func findKejilionSystemResourceScript() (string, error) {
 func trustedKejilionSystemResourceContent(content []byte) bool {
 	value := string(content)
 	return dnsScriptLicense.Match(content) &&
+		resourceProtocolV3Pattern.Match(content) &&
 		strings.Contains(value, "KJ_SYSTEM_RESOURCE_NONINTERACTIVE") &&
 		strings.Contains(value, "kpanel_system_resource_dispatch") &&
 		strings.Contains(value, "KPANEL_SYSTEM_RESOURCE_STATUS") &&

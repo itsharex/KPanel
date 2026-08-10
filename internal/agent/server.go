@@ -1734,9 +1734,21 @@ func writeJSON(w http.ResponseWriter, status int, value interface{}) {
 }
 
 func writeProblem(w http.ResponseWriter, requestID string, status int, code, title, detail string) {
+	writeProblemWithRetryable(w, requestID, status, code, title, detail, status >= 500)
+}
+
+func writeProblemWithRetryable(
+	w http.ResponseWriter,
+	requestID string,
+	status int,
+	code string,
+	title string,
+	detail string,
+	retryable bool,
+) {
 	writeJSON(w, status, contract.Problem{
 		Type: "about:blank", Title: title, Status: status, Code: code,
-		Detail: detail, RequestID: requestID, Retryable: status >= 500,
+		Detail: detail, RequestID: requestID, Retryable: retryable,
 	})
 }
 

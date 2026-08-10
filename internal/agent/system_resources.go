@@ -89,25 +89,31 @@ func (s *Server) systemResourceAction(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	result, err := s.systemManager.ExecuteSystemResourceAction(ctx, input)
 	if err != nil {
-		status, code, title := http.StatusServiceUnavailable, "system_resource_action_failed", "系统资源操作失败"
-		switch {
-		case errors.Is(err, systemmanage.ErrInvalidInput):
-			status, code, title = http.StatusUnprocessableEntity, "invalid_system_resource_action", "系统资源操作参数无效"
-		case errors.Is(err, systemmanage.ErrDisabled):
-			status, code, title = http.StatusForbidden, "system_resource_write_disabled", "系统资源写入未启用"
-		case errors.Is(err, systemmanage.ErrConflict):
-			status, code, title = http.StatusConflict, "system_resource_conflict", "系统资源版本发生冲突"
-		case errors.Is(err, systemmanage.ErrRolledBack):
-			code, title = "system_resource_rolled_back", "系统资源操作失败并已回滚"
-		case errors.Is(err, systemmanage.ErrRollbackFailed):
-			code, title = "system_resource_rollback_failed", "系统资源回滚失败，需要人工检查"
-		case errors.Is(err, systemmanage.ErrNeedsAttention):
-			code, title = "system_resource_needs_attention", "系统资源操作需要人工检查"
-		case errors.Is(err, systemmanage.ErrUnsupported):
-			code, title = "system_resource_adapter_unavailable", "系统资源适配器不可用"
-		}
-		writeProblem(w, requestID, status, code, title, safeDetail(err))
+		status, code, title, retryable := systemResourceProblem(err)
+		writeProblemWithRetryable(w, requestID, status, code, title, safeDetail(err), retryable)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func systemResourceProblem(err error) (int, string, string, bool) {
+	status, code, title := http.StatusServiceUnavailable, "system_resource_action_failed", "系统资源操作失败"
+	retryable := true
+	switch {
+	case errors.Is(err, systemmanage.ErrInvalidInput):
+		status, code, title, retryable = http.StatusUnprocessableEntity, "invalid_system_resource_action", "系统资源操作参数无效", false
+	case errors.Is(err, systemmanage.ErrDisabled):
+		status, code, title, retryable = http.StatusForbidden, "system_resource_write_disabled", "系统资源写入未启用", false
+	case errors.Is(err, systemmanage.ErrConflict):
+		status, code, title, retryable = http.StatusConflict, "system_resource_conflict", "系统资源版本发生冲突", false
+	case errors.Is(err, systemmanage.ErrRolledBack):
+		code, title = "system_resource_rolled_back", "系统资源操作失败并已回滚"
+	case errors.Is(err, systemmanage.ErrRollbackFailed):
+		code, title, retryable = "system_resource_rollback_failed", "系统资源回滚失败，需要人工检查", false
+	case errors.Is(err, systemmanage.ErrNeedsAttention):
+		code, title, retryable = "system_resource_needs_attention", "系统资源操作需要人工检查", false
+	case errors.Is(err, systemmanage.ErrUnsupported):
+		code, title = "system_resource_adapter_unavailable", "系统资源适配器不可用"
+	}
+	return status, code, title, retryable
 }

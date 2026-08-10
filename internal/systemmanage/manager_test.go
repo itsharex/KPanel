@@ -16,9 +16,10 @@ import (
 )
 
 type fakeRunner struct {
-	run      func(context.Context, string, ...string) ([]byte, error)
-	missing  map[string]bool
-	commands []string
+	run            func(context.Context, string, ...string) ([]byte, error)
+	missing        map[string]bool
+	commands       []string
+	resourceInputs [][]byte
 }
 
 func (runner *fakeRunner) Run(ctx context.Context, name string, arguments ...string) ([]byte, error) {
@@ -27,6 +28,22 @@ func (runner *fakeRunner) Run(ctx context.Context, name string, arguments ...str
 		return runner.run(ctx, name, arguments...)
 	}
 	return nil, nil
+}
+
+func (runner *fakeRunner) RunResource(
+	ctx context.Context,
+	_ int,
+	input []byte,
+	name string,
+	arguments ...string,
+) ([]byte, []byte, error) {
+	runner.commands = append(runner.commands, strings.Join(append([]string{name}, arguments...), " "))
+	runner.resourceInputs = append(runner.resourceInputs, append([]byte(nil), input...))
+	if runner.run != nil {
+		output, err := runner.run(ctx, name, arguments...)
+		return output, nil, err
+	}
+	return nil, nil, nil
 }
 
 func (runner *fakeRunner) LookPath(name string) (string, error) {
@@ -58,6 +75,7 @@ func testManager(t *testing.T, runner Runner) (*Manager, string, string, string)
 		filepath.Join(etcRoot, "apt", "sources.list"),
 		"deb https://deb.debian.org/debian stable main\n",
 	)
+	mustWrite(t, filepath.Join(procRoot, "self", "status"), "CapEff:\t0000000000001000\n")
 	manager := NewManager(Config{
 		Enabled: true, EtcRoot: etcRoot, ProcRoot: procRoot, SysRoot: sysRoot, RunRoot: runRoot,
 		StateDir: stateDir, SwapPath: filepath.Join(root, "swapfile"),
