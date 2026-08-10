@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const diagnosticsSource = readFileSync(new URL('./DiagnosticsView.vue', import.meta.url), 'utf8')
+const desktopStyles = readFileSync(new URL('../styles/desktop.css', import.meta.url), 'utf8')
 
 describe('diagnostics workspace layout', () => {
   it('keeps duplicate refresh and fullscreen controls out of the terminal bar', () => {
@@ -51,5 +52,11 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toContain('--diagnostic-category: #7546c8;')
     expect(diagnosticsSource).toContain(":global(:root[data-theme='dark'] .diagnostic-command-group.is-category-access)")
     expect(diagnosticsSource).toContain('--diagnostic-category: #4ecdc4;')
+  })
+
+  it('does not stretch the history row away from the workbench inside a desktop window', () => {
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body > \.diagnostics-page\s*\{[^}]*align-content:\s*start;/,
+    )
   })
 })

@@ -1304,6 +1304,10 @@ body.desktop-mode-open::-webkit-scrollbar {
   padding: 0;
 }
 
+.desktop-window__body > .diagnostics-page {
+  align-content: start;
+}
+
 .desktop-window__body .page-header {
   gap: 12px;
 }

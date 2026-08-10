@@ -212,7 +212,7 @@ onMounted(() => {
     observer = new ResizeObserver(scheduleResize)
     observer.observe(host.value)
     scheduleResize()
-    window.requestAnimationFrame(() => composerInput.value?.focus())
+    window.requestAnimationFrame(() => composerInput.value?.focus({ preventScroll: true }))
   }
   if (desktopWindowActive.value) void poll()
 })

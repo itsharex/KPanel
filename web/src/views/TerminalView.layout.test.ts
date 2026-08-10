@@ -54,6 +54,10 @@ describe('multi-host terminal workspace layout', () => {
     )
   })
 
+  it('focuses the terminal composer without scrolling the desktop window', () => {
+    expect(hostTerminalSource).toContain("composerInput.value?.focus({ preventScroll: true })")
+  })
+
   it('uses the terminal clipboard menu instead of the browser context menu', () => {
     expect(hostTerminalSource).toContain('@contextmenu="clipboardMenu?.open($event)"')
     expect(hostTerminalSource).toContain('@paste.capture="clipboardMenu?.handlePaste($event)"')
