@@ -123,12 +123,24 @@ describe('AI workspace reconnect', () => {
 	const wrapper = mount(AiView, { global: { plugins: [router] } })
 	await flushPromises()
 	MockEventSource.instances[0]?.emit('run.snapshot',{run:{id:'run-active',sessionId:'s1',providerId:'p1',providerName:'Primary',modelId:'m1',modelName:'Mock',approvalMode:'manual',status:'running',step:1,usage:{inputTokens:0,outputTokens:0,totalTokens:0},createdAt:'',updatedAt:''},toolCalls:[],messages:[]})
-	await wrapper.get('.ai-choice--access .ai-choice__trigger').trigger('click')
+	await wrapper.get('.ai-choice--access .ai-choice__icon').trigger('click')
 	await wrapper.get('.ai-choice--access [data-value="auto"]').trigger('click')
 	await flushPromises()
 	expect(mocks.update).toHaveBeenCalledWith('s1',{approvalMode:'auto'})
 	expect(wrapper.text()).toContain('下一轮')
 	wrapper.unmount()
+  })
+
+  it('opens the thinking menu when its icon is tapped', async () => {
+    const router = await makeRouter()
+    const wrapper = mount(AiView, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(wrapper.find('select[aria-label="思考强度"]').exists()).toBe(false)
+    await wrapper.get('.ai-choice--thinking .ai-choice__icon').trigger('click')
+    await wrapper.get('.ai-choice--thinking [data-value="high"]').trigger('click')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledWith('s1',{thinkingLevel:'high'})
+    wrapper.unmount()
   })
 
   it('uses the empty composer action to stop an active run', async () => {

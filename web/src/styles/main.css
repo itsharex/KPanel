@@ -352,7 +352,7 @@
 .ai-attach-button { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; color: var(--muted); background: transparent; border: 0; border-radius: 8px; cursor: pointer; }
 .ai-attach-button:hover { color: var(--text); background: var(--surface-subtle); }
 .ai-choice { position: relative; min-width: 0; flex: 0 0 auto; }
-.ai-choice__trigger { display: flex; min-width: 0; height: 32px; align-items: center; gap: 5px; padding: 0 8px; color: var(--text-soft); background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; font-size: 10px; font-weight: 700; white-space: nowrap; transition: color .14s ease,background .14s ease,border-color .14s ease; }
+.ai-choice__trigger { display: flex; min-width: 0; height: 32px; align-items: center; gap: 5px; padding: 0 8px; color: var(--text-soft); background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; font-size: 10px; font-weight: 700; white-space: nowrap; touch-action: manipulation; transition: color .14s ease,background .14s ease,border-color .14s ease; }
 .ai-choice__trigger:hover,.ai-choice.is-open .ai-choice__trigger { color: var(--text); background: var(--surface-raised); border-color: var(--border-strong); }
 .ai-choice__trigger:focus-visible { outline: 2px solid color-mix(in srgb, var(--brand) 35%, transparent); outline-offset: 2px; }
 .ai-choice__trigger > svg:last-child { flex: 0 0 auto; color: var(--muted); transition: transform .14s ease; }
@@ -543,7 +543,7 @@
   .ai-session-actions { display: flex; }
   .ai-session-actions button { width: 23px; height: 23px; }
   .ai-composer-wrap { padding: 14px 12px; }
-  .ai-choice--access .ai-choice__trigger { width: 28px; padding: 0; justify-content: center; }
+  .ai-choice--access .ai-choice__trigger { width: 32px; height: 32px; padding: 0; justify-content: center; }
   .ai-choice--access .ai-choice__label,.ai-choice--access .ai-choice__short-label,.ai-choice--access .ai-choice__trigger > svg:last-child { display: none; }
   .ai-choice--thinking .ai-choice__trigger { min-width: 50px; padding: 0 6px; }
   .ai-choice--thinking .ai-choice__label { display: none; }
