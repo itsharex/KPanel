@@ -85,7 +85,7 @@ Hosts、定时任务、网卡和防火墙使用独立类型化资源接口。概
 成功后 Web 重新读取同一资源。
 
 四类写操作统一调用可信 `kejilion.sh` 的
-`KJ_SYSTEM_RESOURCE_NONINTERACTIVE=1 kpanel system-resource` 固定协议，参数以独立 argv 传递，
+`KJ_SYSTEM_RESOURCE_NONINTERACTIVE=1 k kpanel system-resource` 固定协议，参数以独立 argv 传递，
 不执行 Web 提交的 Shell。防火墙端口动作与脚本一致，同时处理 TCP 和 UDP。脚本现有国家规则依赖
 未固定摘要的远程地址列表，且默认策略与解除规则尚未满足事务要求，因此本轮不向 Web 暴露。
 
