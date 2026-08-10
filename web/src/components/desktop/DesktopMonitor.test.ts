@@ -29,7 +29,15 @@ function makeOverview(): SystemResourceSnapshot {
     memory: { value: 4294967296, total: 8589934592, percent: 50, unit: 'bytes' },
     disk: { value: 21474836480, total: 107374182400, percent: 20, unit: 'bytes' },
     load: { value: 1.5, one: 0.4, five: 0.7, fifteen: 0.9 },
-    network: { receiveBytesPerSecond: 102400, transmitBytesPerSecond: 51200, rateAvailable: true, tcpConnections: 10, udpConnections: 2 },
+    network: {
+      receiveBytesPerSecond: 102400,
+      transmitBytesPerSecond: 51200,
+      rateAvailable: true,
+      totalReceivedBytes: 18790481920,
+      totalTransmittedBytes: 3221225472,
+      tcpConnections: 10,
+      udpConnections: 2,
+    },
   }
 }
 
@@ -98,6 +106,10 @@ describe('DesktopMonitor', () => {
     const netRow = rows.find((row) => row.find('dt span').text() === '网络')
     expect(netRow?.find('dd').text()).toContain('↓')
     expect(netRow?.find('dd').text()).toContain('↑')
+    expect(netRow?.find('.desktop-monitor__network-total small').text()).toBe('累计')
+    expect(netRow?.find('.desktop-monitor__network-total').text()).toContain('17.5 GB')
+    expect(netRow?.find('.desktop-monitor__network-total').text()).toContain('3.0 GB')
+    expect(api.system.resources).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 

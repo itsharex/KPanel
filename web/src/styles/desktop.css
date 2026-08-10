@@ -760,9 +760,30 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-monitor__network {
+  display: grid;
   width: 100%;
+  gap: 3px;
+}
+
+.desktop-monitor__network-line {
+  display: flex;
+  width: 100%;
+  align-items: center;
   justify-content: space-between;
-  gap: 4px;
+  gap: 3px;
+}
+
+.desktop-monitor__network-total {
+  padding-top: 3px;
+  color: color-mix(in srgb, var(--desktop-label) 68%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--desktop-label) 9%, transparent);
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.desktop-monitor__network-total small {
+  color: color-mix(in srgb, var(--desktop-label) 46%, transparent);
+  font: inherit;
 }
 
 .desktop-monitor__track {

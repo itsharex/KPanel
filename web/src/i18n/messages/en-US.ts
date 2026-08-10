@@ -250,6 +250,9 @@ export const enUSMessages = {
   'desktop.monitorMemory': 'Memory',
   'desktop.monitorDisk': 'Disk',
   'desktop.monitorNetwork': 'Network',
+  'desktop.monitorTrafficTotal': 'Total',
+  'desktop.monitorTrafficReceived': 'Received',
+  'desktop.monitorTrafficSent': 'Sent',
   'desktop.monitorLoad': 'Load',
   'desktop.monitorUptime': 'Uptime',
 } satisfies LocaleMessages

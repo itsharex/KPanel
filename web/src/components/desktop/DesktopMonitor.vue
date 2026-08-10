@@ -185,8 +185,15 @@ onBeforeUnmount(() => {
         <div class="desktop-monitor__row">
           <dt><Network :size="14" aria-hidden="true" /><span>{{ i18n.t('desktop.monitorNetwork') }}</span></dt>
           <dd class="desktop-monitor__network">
-            <span>↓ {{ formatRate(net?.receiveBytesPerSecond) }}</span>
-            <span>↑ {{ formatRate(net?.transmitBytesPerSecond) }}</span>
+            <span class="desktop-monitor__network-line">
+              <span>↓ {{ formatRate(net?.receiveBytesPerSecond) }}</span>
+              <span>↑ {{ formatRate(net?.transmitBytesPerSecond) }}</span>
+            </span>
+            <span class="desktop-monitor__network-line desktop-monitor__network-total">
+              <small>{{ i18n.t('desktop.monitorTrafficTotal') }}</small>
+              <span :title="i18n.t('desktop.monitorTrafficReceived')">↓ {{ formatBytes(net?.totalReceivedBytes) }}</span>
+              <span :title="i18n.t('desktop.monitorTrafficSent')">↑ {{ formatBytes(net?.totalTransmittedBytes) }}</span>
+            </span>
           </dd>
         </div>
       </div>

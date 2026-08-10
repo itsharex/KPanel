@@ -248,6 +248,9 @@ export const zhCNMessages = {
   'desktop.monitorMemory': '内存',
   'desktop.monitorDisk': '磁盘',
   'desktop.monitorNetwork': '网络',
+  'desktop.monitorTrafficTotal': '累计',
+  'desktop.monitorTrafficReceived': '接收',
+  'desktop.monitorTrafficSent': '发送',
   'desktop.monitorLoad': '负载',
   'desktop.monitorUptime': '运行时长',
 } as const
