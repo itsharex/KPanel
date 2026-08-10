@@ -815,14 +815,14 @@ onBeforeUnmount(() => {
 .diagnostic-interactive-terminal {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   border: 0;
   border-radius: 0;
 }
 
 .diagnostic-interactive-terminal :deep(.interactive-terminal__screen) {
-  height: 100%;
+  height: auto;
   min-height: 0;
 }
 

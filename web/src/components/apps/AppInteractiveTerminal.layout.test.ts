@@ -36,7 +36,10 @@ describe('interactive task terminal layout', () => {
 
   it('keeps the diagnostics override aligned with the shared three-row layout', () => {
     expect(diagnosticsSource).toMatch(
-      /\.diagnostic-interactive-terminal\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto;/,
+      /\.diagnostic-interactive-terminal\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto;[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0;/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-interactive-terminal :deep\(\.interactive-terminal__screen\)\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*0;/,
     )
   })
 
