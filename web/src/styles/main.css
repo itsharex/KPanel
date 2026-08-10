@@ -3625,6 +3625,230 @@ textarea:focus-visible,
   line-height: 1.65;
 }
 
+.system-resource-dialog {
+  display: grid;
+  gap: 16px;
+}
+
+.system-resource-dialog__summary {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  color: var(--text-soft);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.system-resource-dialog__summary .icon-button {
+  margin-left: auto;
+}
+
+.system-resource-dialog__summary .text-warning {
+  color: var(--amber);
+}
+
+.system-resource-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.system-resource-form--hosts {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+}
+
+.system-resource-form--cron {
+  grid-template-columns: minmax(180px, 0.7fr) minmax(260px, 1.3fr) auto;
+}
+
+.system-resource-form__wide {
+  min-width: 0;
+}
+
+.system-resource-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.system-resource-form__actions--three {
+  grid-column: 1 / -1;
+}
+
+.system-resource-list {
+  display: grid;
+  gap: 8px;
+}
+
+.system-resource-item {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.system-resource-item--interface {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.system-resource-item__icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: var(--blue);
+  background: var(--blue-soft);
+  border-radius: 9px;
+}
+
+.system-resource-item__main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.system-resource-item__main strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-resource-item__main > span,
+.system-resource-item__main small,
+.system-resource-item__main code,
+.system-resource-item__meta {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-resource-item__main code {
+  display: block;
+  color: var(--text-soft);
+}
+
+.system-resource-state {
+  padding: 4px 7px;
+  color: var(--muted);
+  background: var(--neutral-soft);
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.system-resource-state.is-on {
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+}
+
+.firewall-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.system-resource-toggle {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  color: var(--text);
+  text-align: left;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.system-resource-toggle > svg {
+  flex: 0 0 auto;
+  color: var(--brand);
+}
+
+.system-resource-toggle > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.system-resource-toggle strong {
+  font-size: 11px;
+}
+
+.system-resource-toggle small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-resource-toggle:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+
+.firewall-action-form--port {
+  grid-template-columns: minmax(180px, 1fr) auto;
+}
+
+@media (max-width: 680px) {
+  .system-resource-form,
+  .system-resource-form--hosts,
+  .system-resource-form--cron,
+  .firewall-action-form--port,
+  .firewall-status-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .system-resource-form__actions,
+  .system-resource-form__actions--three {
+    grid-column: auto;
+    justify-content: stretch;
+  }
+
+  .system-resource-form__actions .button {
+    flex: 1 1 130px;
+  }
+
+  .system-resource-item,
+  .system-resource-item--interface {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .system-resource-item--interface .system-resource-state,
+  .system-resource-item--interface .button {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+
+  .system-resource-item__meta {
+    display: none;
+  }
+}
+
 /* Toolbars and tables */
 .toolbar-card,
 .resource-browser__toolbar {

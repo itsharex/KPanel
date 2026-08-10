@@ -468,6 +468,126 @@ export interface SystemActionResult {
   appliedAt: string
 }
 
+export interface SystemResourceSnapshot<Entry> {
+  resourceVersion: string
+  entries: Entry[]
+  total: number
+  truncated: boolean
+}
+
+export interface HostsEntry {
+  line: number
+  address: string
+  hostnames: string[]
+  comment?: string
+  raw: string
+}
+
+export type HostsSnapshot = SystemResourceSnapshot<HostsEntry>
+
+export interface CronEntry {
+  line: number
+  kind: string
+  expression: string
+  command: string
+  raw: string
+}
+
+export type CronSnapshot = SystemResourceSnapshot<CronEntry>
+
+export interface NetworkInterfaceEntry {
+  name: string
+  state: string
+  macAddress?: string
+  addresses: string[]
+  loopback: boolean
+  resourceVersion: string
+}
+
+export type NetworkInterfacesSnapshot = SystemResourceSnapshot<NetworkInterfaceEntry>
+
+export interface FirewallRule {
+  line: number
+  chain: string
+  target: string
+  protocol: string
+  source: string
+  destination: string
+  options: string[]
+  raw: string
+}
+
+export interface FirewallSnapshot {
+  resourceVersion: string
+  backend: string
+  inputPolicy: string
+  rules: FirewallRule[]
+  total: number
+  truncated: boolean
+  pingAllowed: boolean
+  ddosEnabled: boolean
+}
+
+export type SystemResourceActionInput =
+  | {
+      action: 'hosts-add'
+      address: string
+      hostnames: string[]
+      comment?: string
+      expectedResourceVersion: string
+    }
+  | { action: 'hosts-delete'; line: number; expectedResourceVersion: string }
+  | {
+      action: 'cron-add'
+      expression: string
+      command: string
+      expectedResourceVersion: string
+    }
+  | {
+      action: 'cron-update'
+      line: number
+      expression: string
+      command: string
+      expectedResourceVersion: string
+    }
+  | { action: 'cron-delete'; line: number; expectedResourceVersion: string }
+  | {
+      action: 'network-interface-state'
+      interfaceName: string
+      enabled: boolean
+      expectedResourceVersion: string
+    }
+  | {
+      action: 'firewall-open-port' | 'firewall-close-port'
+      port: number
+      expectedResourceVersion: string
+    }
+  | {
+      action: 'firewall-allow-ip' | 'firewall-block-ip' | 'firewall-remove-ip'
+      address: string
+      expectedResourceVersion: string
+    }
+  | {
+      action:
+        | 'firewall-open-all'
+        | 'firewall-close-all'
+        | 'firewall-enable-ping'
+        | 'firewall-disable-ping'
+        | 'firewall-enable-ddos'
+        | 'firewall-disable-ddos'
+      expectedResourceVersion: string
+    }
+
+export interface SystemResourceActionResult {
+  action: SystemResourceActionInput['action']
+  status: string
+  changed: boolean
+  message: string
+  backupPath?: string
+  resourceVersion: string
+  appliedAt: string
+}
+
 export interface AppMarketCategory {
   key: string
   zh: string

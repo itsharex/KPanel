@@ -522,6 +522,68 @@ describe('API client', () => {
     })
   })
 
+  it('loads system collection resources only from their dedicated endpoints', async () => {
+    const envelope = { resourceVersion: 'rv-1', entries: [], total: 0, truncated: false }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(envelope))
+      .mockResolvedValueOnce(jsonResponse(envelope))
+      .mockResolvedValueOnce(jsonResponse(envelope))
+      .mockResolvedValueOnce(jsonResponse({
+        resourceVersion: 'rv-firewall',
+        backend: 'iptables-nft',
+        inputPolicy: 'DROP',
+        rules: [],
+        total: 0,
+        truncated: false,
+        pingAllowed: true,
+        ddosEnabled: false,
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.system.hosts()
+    await api.system.cron()
+    await api.system.networkInterfaces()
+    await api.system.firewall()
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      '/api/v1/system/hosts',
+      '/api/v1/system/cron',
+      '/api/v1/system/network-interfaces',
+      '/api/v1/system/firewall',
+    ])
+    expect(fetchMock.mock.calls.every((call) => (call[1] as RequestInit | undefined)?.method === 'GET')).toBe(true)
+  })
+
+  it('submits exact typed system resource actions without protocol or raw shell fields', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        action: 'firewall-open-port',
+        status: 'succeeded',
+        changed: true,
+        message: 'applied',
+        resourceVersion: 'rv-2',
+        appliedAt: '2026-08-10T08:00:00Z',
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.system.resourceAction({
+      action: 'firewall-open-port',
+      port: 443,
+      expectedResourceVersion: 'rv-1',
+    })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/system/resource-actions')
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({
+      action: 'firewall-open-port',
+      port: 443,
+      expectedResourceVersion: 'rv-1',
+    })
+  })
+
   it('submits only the selected system cleanup policy', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       jsonResponse({

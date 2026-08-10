@@ -41,6 +41,10 @@ import LoadingState from '@/components/feedback/LoadingState.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import MetricCard from '@/components/overview/MetricCard.vue'
 import OperatingSystemIcon from '@/components/overview/OperatingSystemIcon.vue'
+import CronManagerDialog from '@/components/overview/CronManagerDialog.vue'
+import FirewallManagerDialog from '@/components/overview/FirewallManagerDialog.vue'
+import HostsManagerDialog from '@/components/overview/HostsManagerDialog.vue'
+import NetworkInterfacesDialog from '@/components/overview/NetworkInterfacesDialog.vue'
 import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import { ApiError, api } from '@/lib/api'
@@ -97,6 +101,7 @@ interface ManagementTool {
 
 type KernelProfile = 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
 type BBRv3Policy = 'install' | 'update' | 'uninstall'
+type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall'
 
 const mirrorPresets: Array<{
   value: MirrorPreset
@@ -131,6 +136,7 @@ const mirrorPresets: Array<{
 ]
 
 const selectedTool = ref<ManagementTool>()
+const selectedResourceDialog = ref<ResourceDialogID>()
 const actionRunning = ref(false)
 const actionForm = reactive({
   hostname: '',
@@ -210,6 +216,22 @@ const hostObservedTime = computed(() =>
 const basicSettings = computed<ManagementTool[]>(() => {
   if (!data.value) return []
   const management = data.value.management
+  const swapPercent = management.swap.totalBytes
+    ? (management.swap.usedBytes / management.swap.totalBytes) * 100
+    : 0
+  const swapDetails = [
+    management.swap.fileActive
+      ? `/swapfile ${formatBytes(management.swap.fileSizeBytes)} 已启用`
+      : management.swap.fileExists
+        ? `/swapfile ${formatBytes(management.swap.fileSizeBytes)} 未启用`
+        : '/swapfile 尚未创建',
+  ]
+  if (management.swap.legacyExists || management.swap.legacyActive) {
+    swapDetails.push(`待合并旧版 KPanel Swap ${formatBytes(management.swap.legacySizeBytes)}`)
+  }
+  if (management.swap.otherActiveDevices) {
+    swapDetails.push(`保留 ${management.swap.otherActiveDevices} 个其他 Swap`)
+  }
   return [
     {
       id: 'hostname',
@@ -254,17 +276,6 @@ const basicSettings = computed<ManagementTool[]>(() => {
       tone: management.ssh.defense.enabled ? undefined : 'amber',
     },
     {
-      id: 'dns',
-      title: 'DNS 地址',
-      description: '对应 kejilion.sh 的“DNS 优化/修改 DNS”。',
-      value: management.dns.servers.length ? management.dns.servers.join(' · ') : '未识别',
-      detail: `解析器：${management.dns.manager || 'unknown'}`,
-      capability: 'system.dns.write',
-      safety: '通过本机可信 kejilion.sh 的固定 DNS 协议执行；systemd-resolved 使用原生配置，其他管理器沿用脚本的 resolv.conf 写入与锁定语义。',
-      icon: Network,
-      tone: 'violet',
-    },
-    {
       id: 'timezone',
       title: '系统时区',
       description: '对应 kejilion.sh 的“设置系统时区”。',
@@ -274,6 +285,41 @@ const basicSettings = computed<ManagementTool[]>(() => {
       safety: '仅接受 IANA 时区数据库中的有效名称，变更后立即回读验证。',
       icon: Timer,
       tone: 'amber',
+    },
+    {
+      id: 'swap',
+      title: '虚拟内存',
+      description: '对应 kejilion.sh 的“设置虚拟内存”。',
+      value: management.swap.totalBytes
+        ? `${formatBytes(management.swap.totalBytes)} · 已用 ${formatPercent(swapPercent)}`
+        : '未启用',
+      detail: swapDetails.join(' · '),
+      capability: 'system.swap.write',
+      safety: '与 kejilion.sh 统一管理 /swapfile；调整时自动合并旧版 KPanel Swap，不清除 Swap 分区或第三方 swapfile。',
+      icon: MemoryStick,
+      tone: management.swap.legacyExists || management.swap.legacyActive ? 'amber' : undefined,
+    },
+    {
+      id: 'mirror',
+      title: '系统更新源',
+      description: '对应 kejilion.sh 的“换系统更新源”。',
+      value: management.packageSources[0] || '未识别',
+      detail: management.packageManager ? `${management.packageManager.toUpperCase()} 软件源` : '等待 Agent 识别',
+      capability: 'system.mirror.write',
+      safety: '修改前备份源文件，执行语法与连通性测试；测试失败自动恢复。',
+      icon: Globe2,
+      tone: 'blue',
+    },
+    {
+      id: 'cron',
+      title: '定时任务管理',
+      description: '读取并管理 kejilion.sh 兼容的系统定时任务。',
+      value: capabilityState('system.cron.read').enabled ? '打开后读取真实任务' : '适配器未就绪',
+      detail: '支持按行添加、修改和删除 Cron 记录',
+      capability: 'system.cron.read',
+      safety: '只通过类型化适配器修改脚本兼容的定时任务，写入使用资源版本校验并在完成后重新读取。',
+      icon: Clock3,
+      tone: 'violet',
     },
   ]
 })
@@ -288,25 +334,9 @@ function managementDetailLabel(detail: string): string {
   return detail
 }
 
-const systemTools = computed<ManagementTool[]>(() => {
+const networkTools = computed<ManagementTool[]>(() => {
   if (!data.value) return []
   const management = data.value.management
-  const swapPercent = management.swap.totalBytes
-    ? (management.swap.usedBytes / management.swap.totalBytes) * 100
-    : 0
-  const swapDetails = [
-    management.swap.fileActive
-      ? `/swapfile ${formatBytes(management.swap.fileSizeBytes)} 已启用`
-      : management.swap.fileExists
-        ? `/swapfile ${formatBytes(management.swap.fileSizeBytes)} 未启用`
-        : '/swapfile 尚未创建',
-  ]
-  if (management.swap.legacyExists || management.swap.legacyActive) {
-    swapDetails.push(`待合并旧版 KPanel Swap ${formatBytes(management.swap.legacySizeBytes)}`)
-  }
-  if (management.swap.otherActiveDevices) {
-    swapDetails.push(`保留 ${management.swap.otherActiveDevices} 个其他 Swap`)
-  }
   const bbrv3 = management.bbrv3
   const bbrv3Reason: Record<string, string> = {
     protocol_unavailable: '请更新本机 kejilion.sh 以启用 BBRv3 管理协议',
@@ -349,28 +379,48 @@ const systemTools = computed<ManagementTool[]>(() => {
   }
   return [
     {
-      id: 'swap',
-      title: '虚拟内存',
-      description: '对应 kejilion.sh 的“设置虚拟内存”。',
-      value: management.swap.totalBytes
-        ? `${formatBytes(management.swap.totalBytes)} · 已用 ${formatPercent(swapPercent)}`
-        : '未启用',
-      detail: swapDetails.join(' · '),
-      capability: 'system.swap.write',
-      safety: '与 kejilion.sh 统一管理 /swapfile；调整时自动合并旧版 KPanel Swap，不清除 Swap 分区或第三方 swapfile。',
-      icon: MemoryStick,
-      tone: management.swap.legacyExists || management.swap.legacyActive ? 'amber' : undefined,
+      id: 'dns',
+      title: 'DNS 地址',
+      description: '对应 kejilion.sh 的“DNS 优化/修改 DNS”。',
+      value: management.dns.servers.length ? management.dns.servers.join(' · ') : '未识别',
+      detail: `解析器：${management.dns.manager || 'unknown'}`,
+      capability: 'system.dns.write',
+      safety: '通过本机可信 kejilion.sh 的固定 DNS 协议执行；systemd-resolved 使用原生配置，其他管理器沿用脚本的 resolv.conf 写入与锁定语义。',
+      icon: Network,
+      tone: 'violet',
     },
     {
-      id: 'mirror',
-      title: '系统镜像源',
-      description: '对应 kejilion.sh 的“换系统更新源”。',
-      value: management.packageSources[0] || '未识别',
-      detail: management.packageManager ? `${management.packageManager.toUpperCase()} 软件源` : '等待 Agent 识别',
-      capability: 'system.mirror.write',
-      safety: '修改前备份源文件，执行语法与连通性测试；测试失败自动恢复。',
-      icon: Globe2,
+      id: 'hosts',
+      title: '本地 Hosts',
+      description: '直接读取并管理 kejilion.sh 使用的本机 Hosts 事实。',
+      value: capabilityState('system.hosts.read').enabled ? '打开后读取真实记录' : '适配器未就绪',
+      detail: '支持类型化添加和按行删除主机映射',
+      capability: 'system.hosts.read',
+      safety: '写入携带资源版本并由 Agent 验证地址、主机名和目标行，完成后重新读取 /etc/hosts。',
+      icon: ListTree,
       tone: 'blue',
+    },
+    {
+      id: 'network-interfaces',
+      title: '网卡管理',
+      description: '读取网卡真实状态并通过固定动作启用或停用接口。',
+      value: capabilityState('system.network-interfaces.read').enabled ? '打开后读取网卡状态' : '适配器未就绪',
+      detail: '显示接口状态、硬件地址和本机地址',
+      capability: 'system.network-interfaces.read',
+      safety: '只接受已发现的接口名称和启用状态，使用资源版本避免旧页面覆盖新网络状态。',
+      icon: Network,
+      tone: 'amber',
+    },
+    {
+      id: 'firewall',
+      title: '防火墙',
+      description: '按 kejilion.sh 固定动作管理端口、IP、Ping 与 DDoS 防护。',
+      value: capabilityState('system.firewall.read').enabled ? '打开后读取真实规则' : '适配器未就绪',
+      detail: '识别实际防火墙后端、INPUT 策略与规则',
+      capability: 'system.firewall.read',
+      safety: '不接受原始规则或 Shell；所有动作使用固定字段和资源版本，完成后重新读取真实规则。',
+      icon: ShieldCheck,
+      tone: 'danger',
     },
     {
       id: 'ip-preference',
@@ -521,7 +571,44 @@ function capabilityState(id: string): { enabled: boolean; reason: string } {
   }
 }
 
+const resourceCapabilityNames: Record<ResourceDialogID, string> = {
+  hosts: 'system.hosts',
+  cron: 'system.cron',
+  'network-interfaces': 'system.network-interfaces',
+  firewall: 'system.firewall',
+}
+
+const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
+  hosts: '当前 Agent 的 Hosts 适配器未就绪。',
+  cron: '当前 Agent 的定时任务适配器未就绪。',
+  'network-interfaces': '当前 Agent 的网卡适配器未就绪。',
+  firewall: '当前 Agent 的防火墙适配器未就绪。',
+}
+
+function isResourceDialogID(id: string): id is ResourceDialogID {
+  return id in resourceCapabilityNames
+}
+
+function resourceCapability(id: ResourceDialogID, mode: 'read' | 'write'): { enabled: boolean; reason: string } {
+  const capabilityID = `${resourceCapabilityNames[id]}.${mode}`
+  const capability = data.value?.management.capabilities[capabilityID]
+  if (!capability) {
+    return { enabled: false, reason: resourceCapabilityUnavailableReasons[id] }
+  }
+  return { enabled: Boolean(capability.enabled), reason: capability.reason || '' }
+}
+
+function toolAvailabilityLabel(tool: ManagementTool): string {
+  if (!isResourceDialogID(tool.id)) return capabilityState(tool.capability).enabled ? '可配置' : '适配器未实现'
+  if (!resourceCapability(tool.id, 'read').enabled) return '适配器未就绪'
+  return resourceCapability(tool.id, 'write').enabled ? '可管理' : '仅查看'
+}
+
 function openTool(tool: ManagementTool): void {
+  if (isResourceDialogID(tool.id)) {
+    selectedResourceDialog.value = tool.id
+    return
+  }
   const management = data.value?.management
   actionForm.hostname = data.value?.hostname || ''
   actionForm.port = nextSSHPort(management?.ssh.ports || [])
@@ -594,6 +681,10 @@ function applySwapPreset(): void {
 function closeTool(): void {
   if (actionRunning.value) return
   selectedTool.value = undefined
+}
+
+function closeResourceDialog(): void {
+  selectedResourceDialog.value = undefined
 }
 
 const actionInput = computed<SystemActionInput | undefined>(() => {
@@ -1157,7 +1248,7 @@ onBeforeUnmount(() => {
                   <span>{{ data.management.ssh.defense.enabled ? '关闭' : '开启' }}</span>
                 </template>
                 <template v-else>
-                  <span>{{ capabilityState(tool.capability).enabled ? '可配置' : '查看' }}</span>
+                  <span>{{ isResourceDialogID(tool.id) ? toolAvailabilityLabel(tool) : capabilityState(tool.capability).enabled ? '可配置' : '查看' }}</span>
                   <ChevronRight :size="16" />
                 </template>
               </span>
@@ -1170,15 +1261,15 @@ onBeforeUnmount(() => {
             <div>
               <span class="panel-card__icon panel-card__icon--blue"><Settings2 :size="18" /></span>
               <div>
-                <h2>性能与网络工具</h2>
-                <p>沿用脚本业务分组，显示真实生效状态</p>
+                <h2>网络工具</h2>
+                <p>集中管理解析、主机映射、网卡、防火墙与网络优化</p>
               </div>
             </div>
           </header>
 
           <div class="system-tool-grid">
             <button
-              v-for="tool in systemTools"
+              v-for="tool in networkTools"
               :key="tool.id"
               class="system-tool"
               type="button"
@@ -1189,7 +1280,7 @@ onBeforeUnmount(() => {
                   <component :is="tool.icon" :size="19" />
                 </span>
                 <span class="system-tool__state">
-                  {{ capabilityState(tool.capability).enabled ? '可配置' : '适配器未实现' }}
+                  {{ toolAvailabilityLabel(tool) }}
                 </span>
               </span>
               <strong>{{ tool.title }}</strong>
@@ -1494,5 +1585,34 @@ onBeforeUnmount(() => {
         </button>
       </template>
     </ModalDialog>
+
+    <HostsManagerDialog
+      :open="selectedResourceDialog === 'hosts'"
+      :readable="resourceCapability('hosts', 'read').enabled"
+      :writable="resourceCapability('hosts', 'write').enabled"
+      :unavailable-reason="resourceCapability('hosts', 'read').reason"
+      @close="closeResourceDialog"
+    />
+    <CronManagerDialog
+      :open="selectedResourceDialog === 'cron'"
+      :readable="resourceCapability('cron', 'read').enabled"
+      :writable="resourceCapability('cron', 'write').enabled"
+      :unavailable-reason="resourceCapability('cron', 'read').reason"
+      @close="closeResourceDialog"
+    />
+    <NetworkInterfacesDialog
+      :open="selectedResourceDialog === 'network-interfaces'"
+      :readable="resourceCapability('network-interfaces', 'read').enabled"
+      :writable="resourceCapability('network-interfaces', 'write').enabled"
+      :unavailable-reason="resourceCapability('network-interfaces', 'read').reason"
+      @close="closeResourceDialog"
+    />
+    <FirewallManagerDialog
+      :open="selectedResourceDialog === 'firewall'"
+      :readable="resourceCapability('firewall', 'read').enabled"
+      :writable="resourceCapability('firewall', 'write').enabled"
+      :unavailable-reason="resourceCapability('firewall', 'read').reason"
+      @close="closeResourceDialog"
+    />
   </div>
 </template>

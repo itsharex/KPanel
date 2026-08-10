@@ -1,4 +1,4 @@
-import { createSSRApp, ssrContextKey, type Ref } from 'vue'
+import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import OverviewView from './OverviewView.vue'
 import type { SystemOverview } from '@/types/api'
@@ -26,6 +26,10 @@ vi.mock('@/stores/toast', () => ({
 
 interface OverviewBindings {
   data: Ref<SystemOverview | undefined>
+  basicSettings: ComputedRef<Array<{ id: string; title: string; capability: string }>>
+  networkTools: ComputedRef<Array<{ id: string; title: string; capability: string }>>
+  selectedResourceDialog: Ref<string | undefined>
+  toolAvailabilityLabel: (tool: { id: string; capability: string }) => string
   actionForm: { timezone: string; timezonePreset: string }
   openTool: (tool: { id: string }) => void
   load: (silent?: boolean) => Promise<void>
@@ -58,6 +62,7 @@ function overview(id: string): SystemOverview {
       bbr: { enabled: false },
       bbrv3: { installed: false },
       maintenance: { state: 'idle', progress: 0 },
+      capabilities: {},
     },
   } as unknown as SystemOverview
 }
@@ -105,5 +110,35 @@ describe('OverviewView refresh stability', () => {
 
     expect(view.actionForm.timezone).toBe('')
     expect(view.actionForm.timezonePreset).toBe('__custom__')
+  })
+
+  it('groups basic settings and network tools without restoring a system center', () => {
+    const view = setupView()
+    view.data.value = overview('grouping')
+
+    expect(view.basicSettings.value.map((tool) => tool.id)).toEqual([
+      'hostname',
+      'ssh-port',
+      'ssh-defense',
+      'timezone',
+      'swap',
+      'mirror',
+      'cron',
+    ])
+    expect(view.basicSettings.value.find((tool) => tool.id === 'mirror')?.title).toBe('系统更新源')
+    expect(view.networkTools.value.map((tool) => tool.id)).toEqual([
+      'dns',
+      'hosts',
+      'network-interfaces',
+      'firewall',
+      'ip-preference',
+      'kernel',
+      'bbr',
+      'bbrv3',
+    ])
+    expect(view.toolAvailabilityLabel(view.networkTools.value[1]!)).toBe('适配器未就绪')
+
+    view.openTool({ id: 'hosts' })
+    expect(view.selectedResourceDialog.value).toBe('hosts')
   })
 })

@@ -17,4 +17,14 @@ describe('OverviewView service status layout', () => {
     expect(source.indexOf('to="/processes"')).toBeLessThan(source.indexOf('to="/monitoring"'))
     expect(styles).toMatch(/\.realtime-monitoring__actions\s*\{[^}]*display:\s*flex;/)
   })
+
+  it('keeps resource dialogs on the overview route and preserves the read-only DNS fact', () => {
+    expect(source).toContain('<h2>网络工具</h2>')
+    expect(source).not.toContain(['性能', '与网络工具'].join(''))
+    expect(source).toContain('<dt>DNS 地址</dt>')
+    expect(source).toContain('<HostsManagerDialog')
+    expect(source).toContain('<CronManagerDialog')
+    expect(source).toContain('<NetworkInterfacesDialog')
+    expect(source).toContain('<FirewallManagerDialog')
+  })
 })

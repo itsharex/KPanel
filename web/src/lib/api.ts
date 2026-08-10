@@ -27,6 +27,8 @@ import type {
   FileDirectory,
   FileEntry,
   FileWriteResult,
+  FirewallSnapshot,
+  HostsSnapshot,
   DiagnosticCatalog,
   DiagnosticJob,
   Job,
@@ -36,6 +38,7 @@ import type {
   MonitoringHistory,
   MonitoringHistoryQuery,
   MonitoringRange,
+  NetworkInterfacesSnapshot,
   PanelSettings,
   ProcessQuery,
   ProcessSnapshot,
@@ -48,7 +51,10 @@ import type {
   SiteInstallationProgress,
   SystemActionInput,
   SystemActionResult,
+  SystemResourceActionInput,
+  SystemResourceActionResult,
   SystemOverview,
+  CronSnapshot,
   TOTPEnrollment,
   TOTPRecoveryCodes,
   TOTPStatus,
@@ -1316,6 +1322,16 @@ export const api = {
       }),
     action: (body: SystemActionInput): Promise<SystemActionResult> =>
       request<SystemActionResult>('/system/actions', { method: 'POST', body }),
+    hosts: (signal?: AbortSignal): Promise<HostsSnapshot> =>
+      request<HostsSnapshot>('/system/hosts', { signal }),
+    cron: (signal?: AbortSignal): Promise<CronSnapshot> =>
+      request<CronSnapshot>('/system/cron', { signal }),
+    networkInterfaces: (signal?: AbortSignal): Promise<NetworkInterfacesSnapshot> =>
+      request<NetworkInterfacesSnapshot>('/system/network-interfaces', { signal }),
+    firewall: (signal?: AbortSignal): Promise<FirewallSnapshot> =>
+      request<FirewallSnapshot>('/system/firewall', { signal }),
+    resourceAction: (body: SystemResourceActionInput): Promise<SystemResourceActionResult> =>
+      request<SystemResourceActionResult>('/system/resource-actions', { method: 'POST', body }),
     maintenance: async (
       signal?: AbortSignal,
     ): Promise<SystemOverview['management']['maintenance']> => {
