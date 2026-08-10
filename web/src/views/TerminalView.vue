@@ -297,7 +297,7 @@ onBeforeUnmount(() => {
 .terminal-host em { display:flex; align-items:center; gap:5px; color:var(--text-muted); font-size:10px; font-style:normal; }
 .terminal-host em.is-ready { color:var(--success); }
 .terminal-connections__empty { display:flex; align-items:center; justify-content:center; gap:8px; min-height:180px; padding:20px; color:var(--text-muted); text-align:center; }
-.terminal-stage { display:grid; grid-template-rows:auto minmax(0,1fr); min-width:0; min-height:0; padding:12px; background:color-mix(in srgb,var(--terminal-shell-background,#0b1214) 96%,var(--surface)); }
+.terminal-stage { display:grid; grid-template-rows:auto minmax(0,1fr); min-width:0; min-height:0; overflow:hidden; padding:12px; background:color-mix(in srgb,var(--terminal-shell-background,#0b1214) 96%,var(--surface)); }
 .terminal-stage.is-fullscreen { position:fixed; z-index:6000; inset:0; width:100vw; height:100dvh; min-height:0; padding:0; border:0; }
 .terminal-tabs-bar { display:flex; min-width:0; align-items:center; gap:12px; padding:8px 10px; border:1px solid var(--terminal-shell-border,#29383a); border-bottom:0; border-radius:var(--terminal-shell-radius,12px) var(--terminal-shell-radius,12px) 0 0; background:var(--terminal-shell-panel,#111a1d); }
 .terminal-tabs { display:flex; min-width:0; flex:1; gap:5px; overflow-x:auto; scrollbar-width:thin; }

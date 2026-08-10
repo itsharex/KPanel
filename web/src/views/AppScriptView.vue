@@ -154,10 +154,16 @@ onBeforeUnmount(() => controller?.abort())
 }
 
 .app-script-page__terminal {
+  height: 100%;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   border: 0;
   border-radius: 0;
+}
+
+.app-script-page__terminal :deep(.interactive-terminal__screen) {
+  height: auto;
+  min-height: 0;
 }
 
 .app-script-page__state {

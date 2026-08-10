@@ -35,7 +35,7 @@ describe('multi-host terminal workspace layout', () => {
 
   it('reserves the remaining stage height for the terminal and composer', () => {
     expect(terminalSource).toMatch(
-      /\.terminal-stage\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\);[^}]*min-height:0;/,
+      /\.terminal-stage\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\);[^}]*min-height:0;[^}]*overflow:hidden;/,
     )
   })
 
@@ -53,7 +53,7 @@ describe('multi-host terminal workspace layout', () => {
       /\.desktop-window__body:has\(> \.terminal-page\),[\s\S]*?overflow:\s*hidden;[\s\S]*?scrollbar-gutter:\s*auto;/,
     )
     expect(desktopStyles).toMatch(
-      /\.desktop-window__body \.terminal-page\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/,
+      /\.desktop-window__body \.terminal-page\s*\{[^}]*height:\s*100% !important;[^}]*min-height:\s*0 !important;[^}]*overflow:\s*hidden;/,
     )
     expect(desktopStyles).toMatch(
       /\.desktop-window__body \.terminal-workspace\s*\{[^}]*height:\s*auto !important;[^}]*min-height:\s*0 !important;[^}]*flex:\s*1 1 0;/,
