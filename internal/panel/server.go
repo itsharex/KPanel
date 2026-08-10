@@ -244,6 +244,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleDockerTask(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/actions":
 		s.handleSystemAction(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/resource-actions":
+		s.handleSystemResourceAction(w, r)
 	case r.Method == http.MethodGet:
 		s.handleAgentProxy(w, r)
 	default:
@@ -832,6 +834,10 @@ func (s *Server) handleAgentProxy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if isSystemResourcePublicPath(r.URL.Path) && (r.URL.RawPath != "" || r.URL.RawQuery != "") {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
 	agentPath, allowed := allowedAgentPath(r.URL.Path)
 	if !allowed {
 		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
@@ -888,30 +894,34 @@ func allowedDockerActionPath(publicPath string) (agentPath, containerID, action 
 
 func allowedAgentPath(publicPath string) (string, bool) {
 	exact := map[string]string{
-		"/api/v1/agent/health":            "/v1/health",
-		"/api/v1/capabilities":            "/v1/capabilities",
-		"/api/v1/system/summary":          "/v1/system/summary",
-		"/api/v1/system/public-network":   "/v1/system/public-network",
-		"/api/v1/system/processes":        "/v1/system/processes",
-		"/api/v1/monitoring/history":      "/v1/monitoring/history",
-		"/api/v1/sites":                   "/v1/sites",
-		"/api/v1/site-installations":      "/v1/site-installations",
-		"/api/v1/web-environment":         "/v1/web-environment",
-		"/api/v1/web-environment/catalog": "/v1/web-environment/catalog",
-		"/api/v1/web-environment/backups": "/v1/web-environment/backups",
-		"/api/v1/web-environment/jobs":    "/v1/web-environment/jobs",
-		"/api/v1/apps":                    "/v1/apps",
-		"/api/v1/app-jobs":                "/v1/app-jobs",
-		"/api/v1/diagnostics":             "/v1/diagnostics",
-		"/api/v1/diagnostic-jobs":         "/v1/diagnostic-jobs",
-		"/api/v1/docker/summary":          "/v1/docker/summary",
-		"/api/v1/docker/environment":      "/v1/docker/environment",
-		"/api/v1/docker/containers":       "/v1/docker/containers",
-		"/api/v1/docker/images":           "/v1/docker/images",
-		"/api/v1/docker/networks":         "/v1/docker/networks",
-		"/api/v1/docker/volumes":          "/v1/docker/volumes",
-		"/api/v1/docker/backups":          "/v1/docker/backups",
-		"/api/v1/docker/jobs":             "/v1/docker/jobs",
+		"/api/v1/agent/health":              "/v1/health",
+		"/api/v1/capabilities":              "/v1/capabilities",
+		"/api/v1/system/summary":            "/v1/system/summary",
+		"/api/v1/system/public-network":     "/v1/system/public-network",
+		"/api/v1/system/processes":          "/v1/system/processes",
+		"/api/v1/system/hosts":              "/v1/system/hosts",
+		"/api/v1/system/cron":               "/v1/system/cron",
+		"/api/v1/system/network-interfaces": "/v1/system/network-interfaces",
+		"/api/v1/system/firewall":           "/v1/system/firewall",
+		"/api/v1/monitoring/history":        "/v1/monitoring/history",
+		"/api/v1/sites":                     "/v1/sites",
+		"/api/v1/site-installations":        "/v1/site-installations",
+		"/api/v1/web-environment":           "/v1/web-environment",
+		"/api/v1/web-environment/catalog":   "/v1/web-environment/catalog",
+		"/api/v1/web-environment/backups":   "/v1/web-environment/backups",
+		"/api/v1/web-environment/jobs":      "/v1/web-environment/jobs",
+		"/api/v1/apps":                      "/v1/apps",
+		"/api/v1/app-jobs":                  "/v1/app-jobs",
+		"/api/v1/diagnostics":               "/v1/diagnostics",
+		"/api/v1/diagnostic-jobs":           "/v1/diagnostic-jobs",
+		"/api/v1/docker/summary":            "/v1/docker/summary",
+		"/api/v1/docker/environment":        "/v1/docker/environment",
+		"/api/v1/docker/containers":         "/v1/docker/containers",
+		"/api/v1/docker/images":             "/v1/docker/images",
+		"/api/v1/docker/networks":           "/v1/docker/networks",
+		"/api/v1/docker/volumes":            "/v1/docker/volumes",
+		"/api/v1/docker/backups":            "/v1/docker/backups",
+		"/api/v1/docker/jobs":               "/v1/docker/jobs",
 	}
 	if path, ok := exact[publicPath]; ok {
 		return path, true

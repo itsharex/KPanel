@@ -267,6 +267,10 @@ func TestSystemWriteCapabilitiesRemainExplicitlyDisabled(t *testing.T) {
 		"system.update.write",
 		"system.cleanup.write",
 		"system.reboot.write",
+		"system.hosts.write",
+		"system.cron.write",
+		"system.network-interfaces.write",
+		"system.firewall.write",
 		"system.reinstall",
 	} {
 		found := false

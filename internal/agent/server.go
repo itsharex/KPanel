@@ -243,10 +243,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemProcesses)
 	case r.URL.Path == "/v1/system/storage-usage":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemStorageUsage)
+	case r.URL.Path == "/v1/system/hosts":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemHosts)
+	case r.URL.Path == "/v1/system/cron":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemCron)
+	case r.URL.Path == "/v1/system/network-interfaces":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemNetworkInterfaces)
+	case r.URL.Path == "/v1/system/firewall":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemFirewall)
 	case r.URL.Path == "/v1/monitoring/history":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.monitoringHistory)
 	case r.URL.Path == "/v1/system/actions":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.systemAction)
+	case r.URL.Path == "/v1/system/resource-actions":
+		s.requireMethod(w, r, requestID, http.MethodPost, s.systemResourceAction)
 	case r.URL.Path == "/v1/terminals":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.terminalOpen)
 	case strings.HasPrefix(r.URL.Path, "/v1/terminals/"):

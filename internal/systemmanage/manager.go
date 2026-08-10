@@ -30,6 +30,7 @@ var (
 	ErrUnsupported    = errors.New("system action is unsupported on this host")
 	ErrConflict       = errors.New("system configuration changed or conflicts")
 	ErrRolledBack     = errors.New("system action failed and was rolled back")
+	ErrRollbackFailed = errors.New("system action rollback failed")
 	ErrNeedsAttention = errors.New("system action needs manual attention")
 	dnsScriptLicense  = regexp.MustCompile(`(?m)^permission_granted="true"\r?$`)
 )
@@ -93,6 +94,7 @@ type Config struct {
 	Country         CountryResolver
 	EffectiveUID    func() int
 	DNSScript       KejilionScriptFinder
+	ResourceScript  KejilionScriptFinder
 	F2BScript       KejilionScriptFinder
 	BBRv3Script     KejilionScriptFinder
 	ProcessSignaler ProcessSignaler
@@ -112,6 +114,7 @@ type Manager struct {
 	country         CountryResolver
 	effectiveUID    func() int
 	dnsScript       KejilionScriptFinder
+	resourceScript  KejilionScriptFinder
 	f2bScript       KejilionScriptFinder
 	bbrv3Script     KejilionScriptFinder
 	processSignaler ProcessSignaler
@@ -156,6 +159,9 @@ func NewManager(config Config) *Manager {
 	if config.DNSScript == nil {
 		config.DNSScript = findKejilionDNSScript
 	}
+	if config.ResourceScript == nil {
+		config.ResourceScript = findKejilionSystemResourceScript
+	}
 	if config.F2BScript == nil {
 		config.F2BScript = findKejilionF2BScript
 	}
@@ -173,7 +179,8 @@ func NewManager(config Config) *Manager {
 		executable: filepath.Clean(config.Executable),
 		now:        config.Now, runner: config.Runner, country: config.Country,
 		effectiveUID: config.EffectiveUID, dnsScript: config.DNSScript,
-		f2bScript: config.F2BScript, bbrv3Script: config.BBRv3Script,
+		resourceScript: config.ResourceScript,
+		f2bScript:      config.F2BScript, bbrv3Script: config.BBRv3Script,
 		processSignaler: config.ProcessSignaler,
 	}
 }
@@ -297,7 +304,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 	} else if dnsScriptErr == nil && dnsBackendErr != nil {
 		dnsReason = dnsBackendReason
 	}
-	return []contract.Capability{
+	capabilities := []contract.Capability{
 		capability("system.hostname.write", hostnamectlErr == nil, "hostnamectl 不可用"),
 		capability("system.ssh-port.write", envErr == nil && bashErr == nil && sshdErr == nil && ssErr == nil && sshScriptErr == nil && sshConfig, "请更新本机 kejilion.sh 并安装 OpenSSH/ss 以启用 KPanel SSH 端口协议"),
 		capability(
@@ -323,6 +330,7 @@ func (m *Manager) Capabilities() []contract.Capability {
 		capability("system.reboot.write", systemctlErr == nil && systemdRunErr == nil, "systemctl 或 systemd-run 不可用"),
 		{ID: "system.reinstall", Enabled: false, Reason: "尚未实现 kejilion.sh 重装流程的非交互参数与任务恢复协议"},
 	}
+	return append(capabilities, m.SystemResourceCapabilities()...)
 }
 
 func (m *Manager) Execute(ctx context.Context, input contract.SystemActionRequest) (contract.SystemActionResult, error) {
