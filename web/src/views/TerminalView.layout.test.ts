@@ -38,6 +38,15 @@ describe('multi-host terminal workspace layout', () => {
     )
   })
 
+  it('keeps the mobile host terminal in two rows so the composer cannot overflow', () => {
+    expect(hostTerminalSource).toMatch(
+      /\.host-terminal\s*\{[^}]*grid-template-rows:minmax\(0,1fr\) auto;[^}]*min-height:0;[^}]*overflow:hidden;/,
+    )
+    expect(hostTerminalSource).not.toMatch(
+      /@media \(max-width: 760px\)[\s\S]*?\.host-terminal\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\) auto;/,
+    )
+  })
+
   it('contains wheel scrolling inside the host terminal viewport', () => {
     expect(hostTerminalSource).toContain('@wheel="containTerminalWheel"')
     expect(hostTerminalSource).toMatch(
