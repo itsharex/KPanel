@@ -811,6 +811,9 @@ body.desktop-mode-open::-webkit-scrollbar {
   animation: desktop-icon-arrive .34s cubic-bezier(.22, 1, .36, 1) forwards;
   animation-delay: min(calc(var(--desktop-entry-order, 0) * 24ms), 280ms);
   transition: background-color .15s ease, border-color .15s ease, transform .15s ease;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
 }
 
 .desktop__icon:hover {
@@ -1006,6 +1009,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   display: flex;
   min-width: min(360px, calc(100vw - 48px));
   min-height: min(240px, calc(100vh - 88px));
+  min-height: min(240px, calc(100dvh - 88px));
   flex-direction: column;
   overflow: hidden;
   color: var(--text);
@@ -1082,6 +1086,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-window--minimized {
   opacity: 0;
   transform: translateY(calc(100vh - 110px)) scale(.18);
+  transform: translateY(calc(100dvh - 110px)) scale(.18);
   transform-origin: center bottom;
   pointer-events: none;
 }
@@ -1229,8 +1234,10 @@ body.desktop-mode-open::-webkit-scrollbar {
   container-name: desktop-window;
   container-type: inline-size;
   scrollbar-gutter: stable;
+  touch-action: pan-x pan-y;
   user-select: text;
   -webkit-user-select: text;
+  -webkit-overflow-scrolling: touch;
 }
 
 .desktop-window__body--loading {
@@ -2082,6 +2089,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   .desktop-window {
     min-width: min(320px, calc(100vw - 48px));
     min-height: min(220px, calc(100vh - 88px));
+    min-height: min(220px, calc(100dvh - 88px));
   }
 
   .desktop__taskbar {
@@ -2107,6 +2115,64 @@ body.desktop-mode-open::-webkit-scrollbar {
 
   .desktop__taskbar-label {
     display: none;
+  }
+}
+
+/* Coarse pointers use one reachable work-area window instead of tiny resize
+   handles. The floating geometry remains untouched and returns on desktop. */
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  .desktop__icons {
+    inset:
+      max(8px, env(safe-area-inset-top))
+      max(8px, env(safe-area-inset-right))
+      calc(64px + max(8px, env(safe-area-inset-bottom)))
+      max(8px, env(safe-area-inset-left));
+  }
+
+  .desktop-window {
+    top: max(8px, env(safe-area-inset-top)) !important;
+    right: max(8px, env(safe-area-inset-right)) !important;
+    bottom: calc(64px + max(8px, env(safe-area-inset-bottom))) !important;
+    left: max(8px, env(safe-area-inset-left)) !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    border-radius: 14px;
+  }
+
+  .desktop-window__titlebar {
+    height: 44px;
+    padding-left: 9px;
+    cursor: default;
+    touch-action: manipulation;
+  }
+
+  .desktop-window__action {
+    width: 44px;
+    height: 44px;
+  }
+
+  .desktop-window__action--maximize,
+  .desktop-window__resize {
+    display: none;
+  }
+
+  .desktop__taskbar {
+    right: max(8px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+    left: max(8px, env(safe-area-inset-left));
+  }
+
+  .desktop__tray-button,
+  .desktop__classic-button {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
+  .desktop__context-menu button {
+    min-height: 44px;
   }
 }
 

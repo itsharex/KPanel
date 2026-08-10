@@ -10,6 +10,18 @@ function setupViewport(width: number, height: number): void {
   Object.defineProperty(window, 'innerHeight', { value: height, configurable: true })
 }
 
+function touchPointer(type: string, x = 40, y = 50, id = 1): PointerEvent {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent
+  Object.defineProperties(event, {
+    button: { value: 0 },
+    clientX: { value: x },
+    clientY: { value: y },
+    pointerId: { value: id },
+    pointerType: { value: 'touch' },
+  })
+  return event
+}
+
 describe('DesktopView', () => {
   beforeEach(() => {
     resetDesktopModeForTest()
@@ -47,6 +59,42 @@ describe('DesktopView', () => {
     await icon.trigger('dblclick')
     await nextTick()
     expect(desktop.windows.value).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('opens a desktop app on one touch tap', async () => {
+    setupViewport(390, 844)
+    const desktop = useDesktopMode()
+    desktop.enterDesktop()
+    const wrapper = mount(DesktopView)
+    const icon = wrapper.find('.desktop__icon')
+
+    icon.element.dispatchEvent(touchPointer('pointerdown'))
+    window.dispatchEvent(touchPointer('pointerup'))
+    await icon.trigger('click')
+    await icon.trigger('dblclick')
+    await nextTick()
+
+    expect(desktop.windows.value).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('opens the desktop context menu on touch long press without launching the app', async () => {
+    vi.useFakeTimers()
+    setupViewport(390, 844)
+    const desktop = useDesktopMode()
+    desktop.enterDesktop()
+    const wrapper = mount(DesktopView)
+    const icon = wrapper.find('.desktop__icon')
+
+    icon.element.dispatchEvent(touchPointer('pointerdown', 60, 70))
+    vi.advanceTimersByTime(520)
+    await nextTick()
+
+    expect(wrapper.find('.desktop__context-menu').exists()).toBe(true)
+    window.dispatchEvent(touchPointer('pointerup', 60, 70))
+    await icon.trigger('click')
+    expect(desktop.windows.value).toHaveLength(0)
     wrapper.unmount()
   })
 

@@ -337,4 +337,30 @@ describe('DesktopWindow lazy view loading', () => {
     wrapper.unmount()
     desktopRoot.remove()
   })
+
+  it('keeps compact touch windows stable instead of starting hidden drag geometry', async () => {
+    setupViewport()
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true })
+    Object.defineProperty(window, 'innerHeight', { value: 844, configurable: true })
+    routeMocks.resolveWindowComponent.mockResolvedValue({ template: '<main />' })
+    const desktop = useDesktopMode()
+    const id = desktop.openWindow('/overview', 'route.overview', false)
+    const windowState = desktop.windows.value.find((item) => item.id === id)!
+    const originalGeometry = { ...windowState.geometry }
+    const wrapper = mount(DesktopWindow, {
+      props: { windowState, icon: () => null },
+    })
+    await flushPromises()
+
+    const titlebar = wrapper.get('.desktop-window__titlebar').element
+    titlebar.dispatchEvent(pointer('pointerdown', 190, 24, 8))
+    window.dispatchEvent(pointer('pointermove', 280, 100, 8))
+    window.dispatchEvent(pointer('pointerup', 280, 100, 8))
+    titlebar.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+
+    expect(windowState.geometry).toEqual(originalGeometry)
+    expect(windowState.maximized).toBe(false)
+    expect(windowState.snap).toBeNull()
+    wrapper.unmount()
+  })
 })

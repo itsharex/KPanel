@@ -159,7 +159,7 @@ const windowStyle = computed(() => {
       left: '10px',
       top: '10px',
       width: 'calc(100vw - 20px)',
-      height: 'calc(100vh - 82px)',
+      height: 'calc(100dvh - 82px)',
       zIndex: props.windowState.z,
     }
   }
@@ -168,7 +168,7 @@ const windowStyle = computed(() => {
       left: props.windowState.snap === 'left' ? '10px' : 'calc(50vw + 5px)',
       top: '10px',
       width: 'calc(50vw - 15px)',
-      height: 'calc(100vh - 82px)',
+      height: 'calc(100dvh - 82px)',
       zIndex: props.windowState.z,
     }
   }
@@ -207,7 +207,13 @@ function onMinimize(): void {
 }
 
 function onToggleMaximize(): void {
+  if (isCompactLayout()) return
   desktop.toggleMaximize(props.windowState.id)
+}
+
+function isCompactLayout(): boolean {
+  return window.innerWidth <= 760
+    || (window.matchMedia?.('(hover: none) and (pointer: coarse)').matches ?? false)
 }
 
 async function onClose(): Promise<void> {
@@ -396,6 +402,7 @@ function finishWindowGesture(result: WindowGestureEnd): void {
 }
 
 function onTitlebarPointerDown(event: PointerEvent): void {
+  if (isCompactLayout()) return
   const target = event.target as HTMLElement | null
   if (target?.closest('button,[data-no-drag]')) return
   gesture.onPointerDown(event, null)

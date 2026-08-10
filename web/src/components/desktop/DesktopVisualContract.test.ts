@@ -29,6 +29,17 @@ describe('desktop visual and interaction contract', () => {
   it('keeps mobile CSS geometry aligned with the TypeScript work area', () => {
     expect(styles).toContain('min-width: min(320px, calc(100vw - 48px));')
     expect(styles).toContain('min-height: min(220px, calc(100vh - 88px));')
+    expect(styles).toContain('min-height: min(220px, calc(100dvh - 88px));')
+    expect(styles).toMatch(/@media \(max-width: 760px\), \(hover: none\) and \(pointer: coarse\)/)
+    expect(styles).toMatch(/\.desktop-window__action--maximize,\s*\.desktop-window__resize\s*\{\s*display:\s*none;/)
+    expect(styles).toContain('env(safe-area-inset-bottom)')
+  })
+
+  it('uses direct touch activation and native content scrolling without changing mouse semantics', () => {
+    expect(styles).toMatch(/\.desktop__icon\s*\{[^}]*touch-action:\s*manipulation;/)
+    expect(styles).toMatch(/\.desktop-window__body\s*\{[^}]*touch-action:\s*pan-x pan-y;/)
+    expect(windowSource).toContain('if (isCompactLayout()) return')
+    expect(windowSource).toContain("height: 'calc(100dvh - 82px)'")
   })
 
   it('uses Windows-style desktop selection, controls and bottom taskbar', () => {
