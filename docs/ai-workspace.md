@@ -57,7 +57,7 @@ Vue 三栏工作台 ── REST/SSE ── paneld AgentRuntime
 - 每个会话可选择 `manual`（手动审批）或 `auto`（安全自动审批），默认 `manual`。Run 启动时固定模式快照，执行中切换只影响下一轮。
 - `manual` 下所有非只读工具逐次确认；`auto` 只放行固定 Schema 分类的常规应用、网站、容器、文件覆盖/回收站、Nginx 安全重载和缓存清理。
 - 删除/卸载、标准级系统清理、系统核心设置、Docker 维护与备份迁移、容器 exec、交互式任务输入以及无法识别或无法解析的动作始终进入 `pending_approval`；分类失败时默认要求确认。
-- 工具名与 Agent 路径是固定映射；输入继续使用现有 KPanel 校验器、`resourceVersion` 和 Agent 二次校验。Docker 维护工具通过 action-specific `anyOf` Schema 声明每个动作的必填字段，Panel 在审批和转发前使用同一动作清单校验缺失字段与资源版本格式；不存在任意路径或任意宿主机命令入口。
+- 工具名与 Agent 路径是固定映射。Provider 侧使用不含组合关键字的扁平对象 Schema，让模型根据动作、真实状态和用户意图自主选择一般参数；Panel 只保留鉴权、审批、固定动作路由、严格结构化输入和审计边界，不重复限制每个动作的业务参数。Agent 根据 Docker 的真实状态校验底层技术前置条件、`resourceVersion` 和命令安全，并把失败作为可纠正结果返回模型。不存在任意路径或任意宿主机命令入口。
 - 删除或修改现有容器、镜像、网络、卷前，必须先调用对应只读工具并使用同一资源最新的 id/name 与 `resourceVersion`。备份恢复/迁移先读 `host_docker_backups`，daemon 镜像源/IPv6 变更先读 `host_docker_environment`；`image_prune` 只处理悬空镜像，不能替代精确 `image_remove`。
 - Agent 返回 `docker_task_invalid` 时按可纠正参数错误反馈给模型；资源不存在按真实状态冲突处理并要求重新读取。只有不属于参数或状态变化的 4xx 业务拒绝才作为操作边界处理。
 - Agent 返回带安全问题码的可预期 4xx 业务拒绝时，Runtime 将“操作未完成”和问题码作为工具结果交给模型重新规划；401、请求超时、限流、无结构问题码的协议错误、5xx 与网络故障仍终止 Run。Agent `detail` 永不进入模型上下文。

@@ -166,7 +166,7 @@ func (t *panelAITools) Definitions() []ai.ToolDefinition {
 		{Name: "host_app_action", Description: "安装、启停、更新或卸载已注册应用", Schema: json.RawMessage(`{"type":"object","required":["appId","action"],"properties":{"appId":{"type":"string"},"action":{"enum":["install","start","stop","restart","check_update","update","uninstall","direct_access"]},"hostPort":{"type":"integer"},"accessMode":{"type":"string"},"resourceVersion":{"type":"string"}},"additionalProperties":false}`)},
 		{Name: "host_docker_container_action", Description: "启停、重启或删除容器", Schema: json.RawMessage(`{"type":"object","required":["containerId","action","resourceVersion"],"properties":{"containerId":{"type":"string"},"action":{"enum":["start","stop","restart","remove"]},"resourceVersion":{"type":"string"}},"additionalProperties":false}`)},
 		{Name: "host_diagnostic_start", Description: "启动固定诊断检查并返回任务 ID", Schema: json.RawMessage(`{"type":"object","required":["checkId"],"properties":{"checkId":{"type":"string"}},"additionalProperties":false}`)},
-		{Name: "host_docker_task", Description: "仅在用户明确要求修改 Docker 配置、创建/删除资源、清理或备份时启动结构化维护任务；严格按 action 对应的 anyOf 分支传参，涉及现有资源或 daemon 配置时先调用分支指定的只读工具；状态和资源占用查询禁止使用此工具", Schema: dockerMaintenanceToolSchema},
+		{Name: "host_docker_task", Description: "仅在用户明确要求修改 Docker 配置、创建/删除资源、清理或备份时启动结构化维护任务；根据 action、真实状态和用户意图自主选择相关字段，KPanel 只保留鉴权、审批、固定动作路由和审计边界；涉及现有资源或 daemon 配置时先调用对应只读工具；状态和资源占用查询禁止使用此工具", Schema: dockerMaintenanceToolSchema},
 		{Name: "host_file_list", Description: "列出受 KPanel File Manager 保护规则约束的目录，返回文件 resourceVersion", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","maxLength":4096},"limit":{"type":"integer","minimum":1,"maximum":200},"search":{"type":"string","maxLength":128}},"additionalProperties":false}`), ReadOnly: true},
 		{Name: "host_file_read", Description: "读取受 KPanel File Manager 保护规则约束的 UTF-8 文本文件，最大 64 KiB", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","maxLength":4096}},"additionalProperties":false}`), ReadOnly: true},
 		{Name: "host_file_tail", Description: "读取受保护规则约束的大型 UTF-8 日志文件尾部，适合查看 Nginx 与服务错误日志", Schema: json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","maxLength":4096},"maxBytes":{"type":"integer","minimum":1024,"maximum":65536}},"additionalProperties":false}`), ReadOnly: true},
@@ -371,9 +371,6 @@ func (t *panelAITools) prepareWrite(name string, raw json.RawMessage) (method, p
 			err = errors.New("unsupported Docker maintenance action")
 			return
 		}
-		if err = validateDockerMaintenanceRequirements(raw, input.Action); err != nil {
-			return
-		}
 		method, path, target = http.MethodPost, "/v1/docker/tasks", input.Action
 		body, err = json.Marshal(input)
 	case "host_file_write":
@@ -525,7 +522,7 @@ func classifyAgentToolProblem(name string, problem contract.Problem) error {
 	}
 	switch problem.Code {
 	case "docker_task_invalid", "invalid_request":
-		return toolArgumentError(errors.New("Agent rejected Docker action arguments; follow the matching action Schema and re-read current resource values before retrying"))
+		return toolArgumentError(errors.New("Agent rejected the Docker action arguments; re-check the requested action, current resource state and user-provided values before retrying"))
 	case "docker_resource_not_found":
 		return fmt.Errorf("%w: Docker resource no longer exists; re-read current Docker state", ai.ErrToolConflict)
 	default:

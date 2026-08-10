@@ -95,6 +95,7 @@ func TestAllAIToolSchemasExposeUniversalReasonMetadata(t *testing.T) {
 			if err := json.Unmarshal(definition.Schema, &schema); err != nil {
 				t.Fatal(err)
 			}
+			assertPortableToolSchema(t, schema, definition.Name)
 			if schema["type"] != "object" || schema["additionalProperties"] != false {
 				t.Fatalf("tool schema boundary changed: %#v", schema)
 			}
@@ -220,7 +221,7 @@ func TestAIStorageAnalysisUsesFixedRoots(t *testing.T) {
 	}
 }
 
-func TestDockerMaintenanceToolSchemaMatchesAgentContract(t *testing.T) {
+func TestDockerMaintenanceToolSchemaIsPortableAndMatchesAgentContract(t *testing.T) {
 	tools := (&panelAITools{}).Definitions()
 	var schema map[string]any
 	for _, definition := range tools {
@@ -235,14 +236,18 @@ func TestDockerMaintenanceToolSchemaMatchesAgentContract(t *testing.T) {
 		t.Fatal("host_docker_task schema missing")
 	}
 	required, _ := schema["required"].([]any)
-	if len(required) != 1 || required[0] != "action" || schema["additionalProperties"] != false {
+	if schema["type"] != "object" || len(required) != 1 || required[0] != "action" || schema["additionalProperties"] != false {
 		t.Fatalf("maintenance schema contract=%#v", schema)
 	}
+	assertPortableToolSchema(t, schema, "host_docker_task")
 	properties, _ := schema["properties"].(map[string]any)
 	if _, ok := properties["type"]; ok {
 		t.Fatal("legacy type discriminator remains in schema")
 	}
 	action, _ := properties["action"].(map[string]any)
+	if action["type"] != "string" || !strings.Contains(action["description"].(string), "KPanel 只固定动作入口、鉴权、审批和审计") {
+		t.Fatalf("maintenance action guidance=%#v", action)
+	}
 	values, _ := action["enum"].([]any)
 	gotActions := make([]string, 0, len(values))
 	for _, value := range values {
@@ -253,29 +258,6 @@ func TestDockerMaintenanceToolSchemaMatchesAgentContract(t *testing.T) {
 	sort.Strings(wantActions)
 	if !reflect.DeepEqual(gotActions, wantActions) {
 		t.Fatalf("maintenance action enum=%#v want=%#v", gotActions, wantActions)
-	}
-	branches, _ := schema["anyOf"].([]any)
-	if len(branches) == 0 {
-		t.Fatal("maintenance schema has no action-specific anyOf branches")
-	}
-	for _, spec := range dockerMaintenanceActionSpecs {
-		for _, expectedAction := range spec.Actions {
-			found := false
-			for _, rawBranch := range branches {
-				branch, _ := rawBranch.(map[string]any)
-				branchProperties, _ := branch["properties"].(map[string]any)
-				actionProperty, _ := branchProperties["action"].(map[string]any)
-				branchActions, _ := actionProperty["enum"].([]any)
-				for _, action := range branchActions {
-					if action == expectedAction {
-						found = true
-					}
-				}
-			}
-			if !found {
-				t.Fatalf("maintenance action %q has no conditional schema branch", expectedAction)
-			}
-		}
 	}
 	validFields := map[string]bool{}
 	inputType := reflect.TypeOf(dockerx.MaintenanceInput{})
@@ -289,6 +271,31 @@ func TestDockerMaintenanceToolSchemaMatchesAgentContract(t *testing.T) {
 		}
 		if !validFields[name] {
 			t.Fatalf("schema property %q is not accepted by MaintenanceInput", name)
+		}
+	}
+}
+
+func assertPortableToolSchema(t *testing.T, value any, path string) {
+	t.Helper()
+	switch node := value.(type) {
+	case map[string]any:
+		for _, keyword := range []string{"allOf", "anyOf", "oneOf", "not", "if", "then", "else", "$ref"} {
+			if _, exists := node[keyword]; exists {
+				t.Fatalf("tool schema %s uses non-portable keyword %q", path, keyword)
+			}
+		}
+		if _, exists := node["properties"]; exists && node["type"] != "object" {
+			t.Fatalf("tool schema %s has properties without type=object: %#v", path, node)
+		}
+		if _, exists := node["required"]; exists && node["type"] != "object" {
+			t.Fatalf("tool schema %s has required without type=object: %#v", path, node)
+		}
+		for key, child := range node {
+			assertPortableToolSchema(t, child, path+"."+key)
+		}
+	case []any:
+		for _, child := range node {
+			assertPortableToolSchema(t, child, path+"[]")
 		}
 	}
 }
@@ -315,7 +322,7 @@ func TestSystemActionToolSchemaMatchesPanelContract(t *testing.T) {
 	}
 }
 
-func TestDockerMaintenanceArgumentsAreStrictAndCanonical(t *testing.T) {
+func TestDockerMaintenanceArgumentsKeepOnlyCorePanelBoundary(t *testing.T) {
 	tools := &panelAITools{}
 	if _, _, _, _, err := tools.prepareWrite("host_docker_task", json.RawMessage(`{"type":"summary"}`)); err == nil {
 		t.Fatal("legacy type argument was accepted")
@@ -324,85 +331,31 @@ func TestDockerMaintenanceArgumentsAreStrictAndCanonical(t *testing.T) {
 	if err != nil || method != "POST" || path != "/v1/docker/tasks" || target != "backup_create" || string(body) != `{"action":"backup_create"}` {
 		t.Fatalf("maintenance request method=%q path=%q target=%q body=%s err=%v", method, path, target, body, err)
 	}
-	if _, _, _, _, err := tools.prepareWrite("host_docker_task", json.RawMessage(`{"action":"image_remove","image":"example/app:old"}`)); err == nil ||
-		!strings.Contains(err.Error(), "target, expectedResourceVersion") ||
-		!strings.Contains(err.Error(), "host_docker_images") {
-		t.Fatalf("image removal contract error = %v", err)
+	method, path, target, body, err = tools.prepareWrite("host_docker_task", json.RawMessage(`{"action":"image_remove","image":"example/app:old"}`))
+	if err != nil || method != "POST" || path != "/v1/docker/tasks" || target != "image_remove" || !strings.Contains(string(body), `"image":"example/app:old"`) {
+		t.Fatalf("Panel must delegate Docker technical validation to Agent: method=%q path=%q target=%q body=%s err=%v", method, path, target, body, err)
+	}
+	if _, _, _, _, err := tools.prepareWrite("host_docker_task", json.RawMessage(`{"action":"unknown"}`)); err == nil {
+		t.Fatal("unsupported Docker maintenance action was accepted")
+	}
+	if _, _, _, _, err := tools.prepareWrite("host_docker_task", json.RawMessage(`{"action":"image_pull","unknown":true}`)); err == nil {
+		t.Fatal("unknown Docker field was accepted")
 	}
 }
 
-func TestDockerMaintenanceRequirementsCoverEveryAction(t *testing.T) {
-	version := "sha256:" + strings.Repeat("0", 64)
-	containerID := strings.Repeat("a", 64)
-	inputs := map[string]map[string]any{
-		"container_create":   {"image": "nginx:alpine", "name": "web"},
-		"container_access":   {"target": containerID, "expectedResourceVersion": version, "enabled": false},
-		"image_pull":         {"image": "nginx:alpine"},
-		"image_remove":       {"target": strings.Repeat("b", 64), "expectedResourceVersion": version},
-		"network_create":     {"name": "frontend"},
-		"network_remove":     {"target": "frontend", "expectedResourceVersion": version},
-		"network_connect":    {"target": "frontend", "expectedResourceVersion": version, "containerId": containerID, "containerResourceVersion": version},
-		"network_disconnect": {"target": "frontend", "expectedResourceVersion": version, "containerId": containerID, "containerResourceVersion": version},
-		"volume_create":      {"name": "data"},
-		"volume_remove":      {"target": "data", "expectedResourceVersion": version},
-		"prune":              {},
-		"container_prune":    {},
-		"image_prune":        {},
-		"network_prune":      {},
-		"volume_prune":       {},
-		"backup_create":      {},
-		"backup_restore":     {"backupId": "docker-20260809T010203Z-abcdef01.tar.gz"},
-		"backup_migrate":     {"backupId": "docker-20260809T010203Z-abcdef01.tar.gz", "migrationHost": "backup.example.com", "migrationUser": "root", "migrationPort": 22},
-		"daemon_mirror":      {"preset": "cn"},
-		"daemon_ipv6":        {"enabled": true, "ipv6Cidr": "fd42:6b50:616e:656c::/64"},
-	}
+func TestDockerMaintenancePanelDelegatesEverySupportedAction(t *testing.T) {
 	tools := &panelAITools{}
 	for _, action := range dockerx.MaintenanceActions() {
-		arguments, ok := inputs[action]
-		if !ok {
-			t.Fatalf("test contract missing action %q", action)
+		raw, _ := json.Marshal(map[string]any{"action": action})
+		method, path, target, _, err := tools.prepareWrite("host_docker_task", raw)
+		if err != nil || method != "POST" || path != "/v1/docker/tasks" || target != action {
+			t.Fatalf("supported action %q was blocked before Agent validation: method=%q path=%q target=%q err=%v", action, method, path, target, err)
 		}
-		arguments["action"] = action
-		raw, err := json.Marshal(arguments)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, _, _, _, err := tools.prepareWrite("host_docker_task", raw); err != nil {
-			t.Fatalf("valid %s arguments were rejected: %v", action, err)
-		}
-		spec, ok := dockerMaintenanceSpec(action)
-		if !ok {
-			t.Fatalf("action %q has no requirements spec", action)
-		}
-		for _, required := range spec.Required {
-			copyArguments := make(map[string]any, len(arguments))
-			for key, value := range arguments {
-				copyArguments[key] = value
-			}
-			delete(copyArguments, required)
-			raw, _ := json.Marshal(copyArguments)
-			if _, _, _, _, err := tools.prepareWrite("host_docker_task", raw); err == nil {
-				t.Fatalf("action %q accepted missing required field %q", action, required)
-			}
-		}
-	}
-	withoutCIDR, _ := json.Marshal(map[string]any{"action": "daemon_ipv6", "enabled": true})
-	if _, _, _, _, err := tools.prepareWrite("host_docker_task", withoutCIDR); err == nil {
-		t.Fatal("daemon_ipv6 enabled without ipv6Cidr was accepted")
-	}
-	disabledIPv6, _ := json.Marshal(map[string]any{"action": "daemon_ipv6", "enabled": false})
-	if _, _, _, _, err := tools.prepareWrite("host_docker_task", disabledIPv6); err != nil {
-		t.Fatalf("daemon_ipv6 disable without ipv6Cidr was rejected: %v", err)
-	}
-	staleShape, _ := json.Marshal(map[string]any{"action": "image_remove", "target": strings.Repeat("b", 64), "expectedResourceVersion": "stale"})
-	if _, _, _, _, err := tools.prepareWrite("host_docker_task", staleShape); err == nil ||
-		!strings.Contains(err.Error(), "current expectedResourceVersion") {
-		t.Fatalf("malformed image resourceVersion error = %v", err)
 	}
 }
 
 func TestDockerAgentProblemsAreReplannedByMeaning(t *testing.T) {
-	if err := classifyAgentToolProblem("host_docker_task", contract.Problem{Code: "docker_task_invalid"}); !errors.Is(err, ai.ErrToolArguments) {
+	if err := classifyAgentToolProblem("host_docker_task", contract.Problem{Code: "docker_task_invalid"}); !errors.Is(err, ai.ErrToolArguments) || !strings.Contains(err.Error(), "current resource state and user-provided values") {
 		t.Fatalf("docker_task_invalid classification = %v", err)
 	}
 	if err := classifyAgentToolProblem("host_docker_task", contract.Problem{Code: "docker_resource_not_found"}); !errors.Is(err, ai.ErrToolConflict) {

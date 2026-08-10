@@ -654,6 +654,7 @@ func TestNativeRuntimeSilentlyLearnsReusableProcedureAcrossSessions(t *testing.T
 	if prompt := runtime.systemPrompt(ctx, "admin"); !strings.Contains(prompt, "host_docker_resource_usage") ||
 		!strings.Contains(prompt, "Never use host_docker_task for a status or resource query") ||
 		!strings.Contains(prompt, "Never invent placeholder fields") ||
+		!strings.Contains(prompt, "KPanel keeps only authentication, approval, typed action routing and audit boundaries") ||
 		!strings.Contains(prompt, "host_docker_backups") ||
 		!strings.Contains(prompt, "host_docker_environment") ||
 		!strings.Contains(prompt, "image_prune removes only dangling images") {

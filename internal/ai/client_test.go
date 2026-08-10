@@ -329,6 +329,69 @@ func TestGeminiStream(t *testing.T) {
 	}
 }
 
+func TestPortableToolSchemaIsPreservedForEveryProviderPayload(t *testing.T) {
+	definition := ToolDefinition{
+		Name:        "host_action",
+		Description: "perform an action",
+		Schema:      json.RawMessage(`{"type":"object","required":["action"],"properties":{"action":{"type":"string","enum":["inspect"]}},"additionalProperties":false}`),
+	}
+	tests := []struct {
+		name     string
+		provider Provider
+		stream   string
+	}{
+		{name: "openai chat", provider: Provider{Protocol: ProtocolOpenAICompatible}, stream: "data: [DONE]\n\n"},
+		{name: "openai responses", provider: Provider{Protocol: ProtocolOpenAICompatible, APIMode: OpenAIResponses}, stream: "data: {\"type\":\"response.completed\",\"response\":{}}\n\n"},
+		{name: "anthropic", provider: Provider{Protocol: ProtocolAnthropic}, stream: "data: {\"type\":\"message_stop\"}\n\n"},
+		{name: "gemini", provider: Provider{Protocol: ProtocolGemini}, stream: "data: {\"candidates\":[]}\n\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatal(err)
+				}
+				tools, _ := payload["tools"].([]any)
+				if len(tools) != 1 {
+					t.Fatalf("tools=%#v", payload["tools"])
+				}
+				tool, _ := tools[0].(map[string]any)
+				var schema map[string]any
+				switch test.name {
+				case "openai chat":
+					function, _ := tool["function"].(map[string]any)
+					schema, _ = function["parameters"].(map[string]any)
+				case "openai responses":
+					schema, _ = tool["parameters"].(map[string]any)
+				case "anthropic":
+					schema, _ = tool["input_schema"].(map[string]any)
+				case "gemini":
+					declarations, _ := tool["functionDeclarations"].([]any)
+					if len(declarations) == 1 {
+						declaration, _ := declarations[0].(map[string]any)
+						schema, _ = declaration["parameters"].(map[string]any)
+					}
+				}
+				properties, _ := schema["properties"].(map[string]any)
+				action, _ := properties["action"].(map[string]any)
+				if schema["type"] != "object" || action["type"] != "string" || schema["anyOf"] != nil {
+					t.Fatalf("portable schema changed in %s payload: %#v", test.name, schema)
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, test.stream)
+			}))
+			defer server.Close()
+			provider := test.provider
+			provider.BaseURL, provider.EndpointScope = server.URL, EndpointPrivate
+			request := CompletionRequest{Model: "model", Messages: []ChatMessage{{Role: "user", Content: "hello"}}, Tools: []ToolDefinition{definition}}
+			if err := NewHTTPModelClient().Stream(context.Background(), provider, "key", request, func(CompletionEvent) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestMultimodalAndThinkingPayloads(t *testing.T) {
 	image := Attachment{Name: "screen.png", MimeType: "image/png", Kind: "image", Size: 3, Data: []byte{1, 2, 3}}
 	tests := []struct {
