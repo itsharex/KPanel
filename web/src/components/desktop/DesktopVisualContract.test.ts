@@ -73,6 +73,14 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__aurora\s*\{[^}]*opacity:\s*\.2;/)
   })
 
+  it('keeps all three monitor rows evenly spaced while compacting cumulative traffic', () => {
+    expect(styles).toContain('grid-template-rows: repeat(3, 37px);')
+    expect(styles).toContain('row-gap: 14px;')
+    expect(styles).toMatch(/\.desktop-monitor__network\s*\{[^}]*gap:\s*0;/)
+    expect(styles).toMatch(/\.desktop-monitor__metric--network \.desktop-monitor__row\s*\{[^}]*gap:\s*1px;/)
+    expect(styles).toMatch(/\.desktop-monitor__network-total\s*\{[^}]*padding-top:\s*1px;/)
+  })
+
   it('uses the shared window surface, border and shadow tokens in the browser', () => {
     expect(browserSource).toMatch(/\.embedded-browser\s*\{[^}]*background:\s*var\(--bg\);/)
     expect(browserSource).toMatch(/\.embedded-browser__shortcuts button\s*\{[^}]*border:\s*1px solid var\(--border\);[^}]*box-shadow:\s*var\(--shadow-sm\);/)

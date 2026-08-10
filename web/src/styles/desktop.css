@@ -727,7 +727,9 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-monitor__list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 13px 15px;
+  grid-template-rows: repeat(3, 37px);
+  column-gap: 15px;
+  row-gap: 14px;
   margin: 0;
 }
 
@@ -763,7 +765,11 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-monitor__network {
   display: grid;
   width: 100%;
-  gap: 3px;
+  gap: 0;
+}
+
+.desktop-monitor__metric--network .desktop-monitor__row {
+  gap: 1px;
 }
 
 .desktop-monitor__network-line {
@@ -772,10 +778,11 @@ body.desktop-mode-open::-webkit-scrollbar {
   align-items: center;
   justify-content: space-between;
   gap: 3px;
+  line-height: 1.15;
 }
 
 .desktop-monitor__network-total {
-  padding-top: 3px;
+  padding-top: 1px;
   color: color-mix(in srgb, var(--desktop-label) 68%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--desktop-label) 9%, transparent);
   font-size: 8px;
