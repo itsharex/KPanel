@@ -1,4 +1,7 @@
 import type {
+	AccountManagementActionInput,
+	AccountManagementActionResult,
+	AccountManagementSnapshot,
   ApiList,
   AgentStatus,
   AppInstallPortStatus,
@@ -39,6 +42,7 @@ import type {
   MonitoringHistoryQuery,
   MonitoringRange,
   NetworkInterfacesSnapshot,
+	PortUsageSnapshot,
   PanelSettings,
   ProcessQuery,
   ProcessSnapshot,
@@ -54,6 +58,9 @@ import type {
   SystemResourceActionInput,
   SystemResourceActionResult,
   SystemOverview,
+	TrafficShutdownActionInput,
+	TrafficShutdownActionResult,
+	TrafficShutdownSnapshot,
   CronSnapshot,
   TOTPEnrollment,
   TOTPRecoveryCodes,
@@ -1330,6 +1337,16 @@ export const api = {
       request<NetworkInterfacesSnapshot>('/system/network-interfaces', { signal }),
     firewall: (signal?: AbortSignal): Promise<FirewallSnapshot> =>
       request<FirewallSnapshot>('/system/firewall', { signal }),
+	portUsage: (signal?: AbortSignal): Promise<PortUsageSnapshot> =>
+		request<PortUsageSnapshot>('/system/port-usage', { signal }),
+	trafficShutdown: (signal?: AbortSignal): Promise<TrafficShutdownSnapshot> =>
+		request<TrafficShutdownSnapshot>('/system/traffic-shutdown', { signal }),
+	trafficShutdownAction: (body: TrafficShutdownActionInput): Promise<TrafficShutdownActionResult> =>
+		request<TrafficShutdownActionResult>('/system/traffic-shutdown/actions', { method: 'POST', body }),
+	accounts: (signal?: AbortSignal): Promise<AccountManagementSnapshot> =>
+		request<AccountManagementSnapshot>('/system/accounts', { signal }),
+	accountAction: (body: AccountManagementActionInput): Promise<AccountManagementActionResult> =>
+		request<AccountManagementActionResult>('/system/account-actions', { method: 'POST', body }),
     resourceAction: (body: SystemResourceActionInput): Promise<SystemResourceActionResult> =>
       request<SystemResourceActionResult>('/system/resource-actions', { method: 'POST', body }),
     maintenance: async (

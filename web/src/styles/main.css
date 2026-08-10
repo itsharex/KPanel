@@ -3671,6 +3671,20 @@ textarea:focus-visible,
   grid-template-columns: minmax(180px, 0.7fr) minmax(260px, 1.3fr) auto;
 }
 
+.system-resource-form--traffic {
+	grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+}
+
+.system-resource-search__input {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.system-resource-search__input input {
+	width: 100%;
+}
+
 .system-resource-form__wide {
   min-width: 0;
 }
@@ -3818,6 +3832,7 @@ textarea:focus-visible,
   .system-resource-form,
   .system-resource-form--hosts,
   .system-resource-form--cron,
+	.system-resource-form--traffic,
   .firewall-action-form--port,
   .firewall-status-grid {
     grid-template-columns: minmax(0, 1fr);

@@ -539,18 +539,35 @@ describe('API client', () => {
         pingAllowed: true,
         ddosEnabled: false,
       }))
+	  .mockResolvedValueOnce(jsonResponse({ ...envelope, observedAt: '2026-08-10T08:00:00Z' }))
+		  .mockResolvedValueOnce(jsonResponse({
+			resourceVersion: 'rv-traffic', enabled: false, health: 'disabled',
+		rxBytes: 0, txBytes: 0, rxThresholdGiB: 0, txThresholdGiB: 0, resetDay: 0,
+			observedAt: '2026-08-10T08:00:00Z',
+		  }))
+		  .mockResolvedValueOnce(jsonResponse({
+			resourceVersion: 'rv-accounts', accounts: [], total: 0, truncated: false,
+			sshPolicy: { passwordAuthentication: false, publicKeyAuthentication: true, rootLogin: 'key-only' },
+			observedAt: '2026-08-11T08:00:00Z',
+		  }))
     vi.stubGlobal('fetch', fetchMock)
 
     await api.system.hosts()
     await api.system.cron()
     await api.system.networkInterfaces()
     await api.system.firewall()
+	await api.system.portUsage()
+		await api.system.trafficShutdown()
+		await api.system.accounts()
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       '/api/v1/system/hosts',
       '/api/v1/system/cron',
       '/api/v1/system/network-interfaces',
       '/api/v1/system/firewall',
+	  '/api/v1/system/port-usage',
+		  '/api/v1/system/traffic-shutdown',
+		  '/api/v1/system/accounts',
     ])
     expect(fetchMock.mock.calls.every((call) => (call[1] as RequestInit | undefined)?.method === 'GET')).toBe(true)
   })
@@ -583,6 +600,42 @@ describe('API client', () => {
       expectedResourceVersion: 'rv-1',
     })
   })
+
+	it('submits a typed traffic shutdown action without shell fields', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+			action: 'enable', status: 'succeeded', changed: true, message: 'applied',
+			resourceVersion: 'rv-2', appliedAt: '2026-08-10T08:00:00Z',
+		}))
+		vi.stubGlobal('fetch', fetchMock)
+
+		await api.system.trafficShutdownAction({
+			action: 'enable', expectedResourceVersion: 'rv-1',
+			rxThresholdGiB: 100, txThresholdGiB: 200, resetDay: 5,
+		})
+
+		expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/system/traffic-shutdown/actions')
+		expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+			action: 'enable', expectedResourceVersion: 'rv-1',
+			rxThresholdGiB: 100, txThresholdGiB: 200, resetDay: 5,
+		})
+	})
+
+	it('submits typed account actions without raw shell fields', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+			action: 'create', status: 'succeeded', changed: true, message: 'applied',
+			resourceVersion: 'rv-2', appliedAt: '2026-08-11T08:00:00Z',
+		}))
+		vi.stubGlobal('fetch', fetchMock)
+		await api.system.accountAction({
+			action: 'create', expectedResourceVersion: 'rv-1', username: 'operator',
+			role: 'passwordless-admin', credential: 'key', secret: 'ssh-ed25519 AAAA laptop',
+		})
+		expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/system/account-actions')
+		expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+			action: 'create', expectedResourceVersion: 'rv-1', username: 'operator',
+			role: 'passwordless-admin', credential: 'key', secret: 'ssh-ed25519 AAAA laptop',
+		})
+	})
 
   it('submits only the selected system cleanup policy', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(

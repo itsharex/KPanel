@@ -588,6 +588,114 @@ export interface SystemResourceActionResult {
   appliedAt: string
 }
 
+export interface PortUsageEntry {
+  protocol: string
+  state: string
+  localAddress: string
+  localPort: string
+  peerAddress: string
+  peerPort: string
+  process?: string
+  pid?: number
+  raw: string
+}
+
+export interface PortUsageSnapshot {
+  resourceVersion: string
+  entries: PortUsageEntry[]
+  total: number
+  truncated: boolean
+  observedAt: string
+}
+
+export interface TrafficShutdownSnapshot {
+  resourceVersion: string
+  enabled: boolean
+  health: 'disabled' | 'ready' | 'inconsistent'
+  rxBytes: number
+  txBytes: number
+  rxThresholdGiB: number
+  txThresholdGiB: number
+  resetDay: number
+  observedAt: string
+}
+
+export type TrafficShutdownActionInput =
+  | {
+      action: 'enable'
+      expectedResourceVersion: string
+      rxThresholdGiB: number
+      txThresholdGiB: number
+      resetDay: number
+    }
+  | { action: 'disable'; expectedResourceVersion: string }
+
+export interface TrafficShutdownActionResult {
+  action: TrafficShutdownActionInput['action']
+  status: string
+  changed: boolean
+  message: string
+  backupPath?: string
+  resourceVersion: string
+  appliedAt: string
+}
+
+export interface SSHAuthorizedKey {
+	id: string
+	type: string
+	fingerprint: string
+	comment?: string
+}
+
+export interface SystemAccount {
+	username: string
+	uid: number
+	gid: number
+	home: string
+	shell: string
+	kind: 'root' | 'human' | 'system'
+	passwordStatus: 'enabled' | 'locked' | 'unset' | 'unknown'
+	role: 'root' | 'standard' | 'administrator' | 'passwordless-admin'
+	groups: string[]
+	sshKeys: SSHAuthorizedKey[]
+}
+
+export interface AccountManagementSnapshot {
+	resourceVersion: string
+	accounts: SystemAccount[]
+	total: number
+	truncated: boolean
+	sshPolicy: {
+		passwordAuthentication: boolean
+		publicKeyAuthentication: boolean
+		rootLogin: 'enabled' | 'key-only' | 'disabled' | 'custom'
+	}
+	observedAt: string
+}
+
+type AccountActionBase = { expectedResourceVersion: string }
+
+export type AccountManagementActionInput =
+	| (AccountActionBase & { action: 'create'; username: string; role: 'standard' | 'administrator' | 'passwordless-admin'; credential: 'password' | 'key'; secret: string })
+	| (AccountActionBase & { action: 'set-password'; username: string; secret: string })
+	| (AccountActionBase & { action: 'add-key'; username: string; secret: string })
+	| (AccountActionBase & { action: 'delete-key'; username: string; keyId: string })
+	| (AccountActionBase & { action: 'set-role'; username: string; role: 'standard' | 'administrator' | 'passwordless-admin' })
+	| (AccountActionBase & { action: 'set-ssh-policy'; passwordAuthentication: boolean; rootLogin: 'enabled' | 'key-only' | 'disabled' })
+	| (AccountActionBase & { action: 'disable-root' })
+	| (AccountActionBase & { action: 'create-admin-disable-root'; username: string; credential: 'password' | 'key'; secret: string })
+	| (AccountActionBase & { action: 'delete'; username: string; removeHome: boolean })
+
+export interface AccountManagementActionResult {
+	action: AccountManagementActionInput['action']
+	status: string
+	changed: boolean
+	message: string
+	backupPath?: string
+	resourceVersion: string
+	appliedAt: string
+}
+
 export interface AppMarketCategory {
   key: string
   zh: string

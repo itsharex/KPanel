@@ -330,7 +330,9 @@ func (m *Manager) Capabilities() []contract.Capability {
 		capability("system.reboot.write", systemctlErr == nil && systemdRunErr == nil, "systemctl 或 systemd-run 不可用"),
 		{ID: "system.reinstall", Enabled: false, Reason: "尚未实现 kejilion.sh 重装流程的非交互参数与任务恢复协议"},
 	}
-	return append(capabilities, m.SystemResourceCapabilities()...)
+	capabilities = append(capabilities, m.SystemResourceCapabilities()...)
+	capabilities = append(capabilities, m.NetworkOperationsCapabilities()...)
+	return append(capabilities, m.AccountManagementCapabilities()...)
 }
 
 func (m *Manager) Execute(ctx context.Context, input contract.SystemActionRequest) (contract.SystemActionResult, error) {

@@ -123,6 +123,7 @@ describe('OverviewView refresh stability', () => {
       'timezone',
       'swap',
       'mirror',
+	  'accounts',
       'cron',
     ])
     expect(view.basicSettings.value.find((tool) => tool.id === 'mirror')?.title).toBe('系统更新源')
@@ -131,6 +132,8 @@ describe('OverviewView refresh stability', () => {
       'hosts',
       'network-interfaces',
       'firewall',
+	  'port-usage',
+	  'traffic-shutdown',
       'ip-preference',
       'kernel',
       'bbr',

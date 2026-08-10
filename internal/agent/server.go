@@ -251,12 +251,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemNetworkInterfaces)
 	case r.URL.Path == "/v1/system/firewall":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemFirewall)
+	case r.URL.Path == "/v1/system/port-usage":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemPortUsage)
+	case r.URL.Path == "/v1/system/traffic-shutdown":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemTrafficShutdown)
+	case r.URL.Path == "/v1/system/accounts":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemAccounts)
 	case r.URL.Path == "/v1/monitoring/history":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.monitoringHistory)
 	case r.URL.Path == "/v1/system/actions":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.systemAction)
 	case r.URL.Path == "/v1/system/resource-actions":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.systemResourceAction)
+	case r.URL.Path == "/v1/system/traffic-shutdown/actions":
+		s.requireMethod(w, r, requestID, http.MethodPost, s.systemTrafficShutdownAction)
+	case r.URL.Path == "/v1/system/account-actions":
+		s.requireMethod(w, r, requestID, http.MethodPost, s.systemAccountAction)
 	case r.URL.Path == "/v1/terminals":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.terminalOpen)
 	case strings.HasPrefix(r.URL.Path, "/v1/terminals/"):

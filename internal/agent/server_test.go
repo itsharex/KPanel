@@ -271,6 +271,7 @@ func TestSystemWriteCapabilitiesRemainExplicitlyDisabled(t *testing.T) {
 		"system.cron.write",
 		"system.network-interfaces.write",
 		"system.firewall.write",
+		"system.traffic-shutdown.write",
 		"system.reinstall",
 	} {
 		found := false

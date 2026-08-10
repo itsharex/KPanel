@@ -246,6 +246,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSystemAction(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/resource-actions":
 		s.handleSystemResourceAction(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/traffic-shutdown/actions":
+		s.handleTrafficShutdownAction(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/account-actions":
+		s.handleAccountManagementAction(w, r)
 	case r.Method == http.MethodGet:
 		s.handleAgentProxy(w, r)
 	default:
@@ -903,6 +907,9 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		"/api/v1/system/cron":               "/v1/system/cron",
 		"/api/v1/system/network-interfaces": "/v1/system/network-interfaces",
 		"/api/v1/system/firewall":           "/v1/system/firewall",
+		"/api/v1/system/port-usage":         "/v1/system/port-usage",
+		"/api/v1/system/traffic-shutdown":   "/v1/system/traffic-shutdown",
+		"/api/v1/system/accounts":           "/v1/system/accounts",
 		"/api/v1/monitoring/history":        "/v1/monitoring/history",
 		"/api/v1/sites":                     "/v1/sites",
 		"/api/v1/site-installations":        "/v1/site-installations",

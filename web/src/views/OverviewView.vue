@@ -45,6 +45,9 @@ import CronManagerDialog from '@/components/overview/CronManagerDialog.vue'
 import FirewallManagerDialog from '@/components/overview/FirewallManagerDialog.vue'
 import HostsManagerDialog from '@/components/overview/HostsManagerDialog.vue'
 import NetworkInterfacesDialog from '@/components/overview/NetworkInterfacesDialog.vue'
+import PortUsageDialog from '@/components/overview/PortUsageDialog.vue'
+import TrafficShutdownDialog from '@/components/overview/TrafficShutdownDialog.vue'
+import AccountManagementDialog from '@/components/overview/AccountManagementDialog.vue'
 import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import { ApiError, api } from '@/lib/api'
@@ -101,7 +104,7 @@ interface ManagementTool {
 
 type KernelProfile = 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
 type BBRv3Policy = 'install' | 'update' | 'uninstall'
-type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall'
+type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall' | 'port-usage' | 'traffic-shutdown' | 'accounts'
 
 const mirrorPresets: Array<{
   value: MirrorPreset
@@ -311,6 +314,17 @@ const basicSettings = computed<ManagementTool[]>(() => {
       tone: 'blue',
     },
     {
+		id: 'accounts',
+		title: '账户管理',
+		description: '管理 Linux 账户、密码、SSH 公钥和 Root 登录策略。',
+		value: capabilityState('system.accounts.read').enabled ? '打开后读取真实账户' : '适配器未就绪',
+		detail: '创建账户、修改密码、密钥登录与禁用 Root',
+		capability: 'system.accounts.read',
+		safety: '密码和公钥正文仅通过受限 stdin 交给 kejilion.sh；写入使用资源版本、SSH 语法校验和失败回滚。',
+		icon: KeyRound,
+		tone: 'amber',
+	},
+	{
       id: 'cron',
       title: '定时任务管理',
       description: '读取并管理 kejilion.sh 兼容的系统定时任务。',
@@ -422,6 +436,28 @@ const networkTools = computed<ManagementTool[]>(() => {
       icon: ShieldCheck,
       tone: 'danger',
     },
+	{
+		id: 'port-usage',
+		title: '端口占用查看',
+		description: '通过 kejilion.sh 查看当前 TCP / UDP 监听端口和占用进程。',
+		value: capabilityState('system.port-usage.read').enabled ? '打开后读取实时端口' : '适配器未就绪',
+		detail: '最多显示 512 条，支持按端口、进程和 PID 筛选',
+		capability: 'system.port-usage.read',
+		safety: '只读调用 ss 的固定参数，由脚本限制单行、总量和返回条数。',
+		icon: ListTree,
+		tone: 'blue',
+	},
+	{
+		id: 'traffic-shutdown',
+		title: '限流自动关机',
+		description: '累计接收或发送流量达到阈值后自动关闭服务器。',
+		value: capabilityState('system.traffic-shutdown.read').enabled ? '打开后读取真实状态' : '适配器未就绪',
+		detail: '阈值、累计流量和每月重启日均由脚本回读',
+		capability: 'system.traffic-shutdown.read',
+		safety: '脚本只维护自己的文件和 cron 标记区块；写入带资源版本、事务回滚和明确关机确认。',
+		icon: Power,
+		tone: 'danger',
+	},
     {
       id: 'ip-preference',
       title: 'V4 / V6 优先',
@@ -576,6 +612,9 @@ const resourceCapabilityNames: Record<ResourceDialogID, string> = {
   cron: 'system.cron',
   'network-interfaces': 'system.network-interfaces',
   firewall: 'system.firewall',
+	'port-usage': 'system.port-usage',
+		'traffic-shutdown': 'system.traffic-shutdown',
+		accounts: 'system.accounts',
 }
 
 const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
@@ -583,6 +622,9 @@ const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
   cron: '当前 Agent 的定时任务适配器未就绪。',
   'network-interfaces': '当前 Agent 的网卡适配器未就绪。',
   firewall: '当前 Agent 的防火墙适配器未就绪。',
+	'port-usage': '当前 Agent 的端口占用适配器未就绪。',
+		'traffic-shutdown': '当前 Agent 的限流关机适配器未就绪。',
+		accounts: '当前 Agent 的账户管理适配器未就绪。',
 }
 
 function isResourceDialogID(id: string): id is ResourceDialogID {
@@ -1614,5 +1656,25 @@ onBeforeUnmount(() => {
       :unavailable-reason="resourceCapability('firewall', 'read').reason"
       @close="closeResourceDialog"
     />
+	<PortUsageDialog
+		:open="selectedResourceDialog === 'port-usage'"
+		:readable="resourceCapability('port-usage', 'read').enabled"
+		:unavailable-reason="resourceCapability('port-usage', 'read').reason"
+		@close="closeResourceDialog"
+	/>
+	<TrafficShutdownDialog
+		:open="selectedResourceDialog === 'traffic-shutdown'"
+		:readable="resourceCapability('traffic-shutdown', 'read').enabled"
+		:writable="resourceCapability('traffic-shutdown', 'write').enabled"
+		:unavailable-reason="resourceCapability('traffic-shutdown', 'read').reason"
+		@close="closeResourceDialog"
+	/>
+	<AccountManagementDialog
+		:open="selectedResourceDialog === 'accounts'"
+		:readable="resourceCapability('accounts', 'read').enabled"
+		:writable="resourceCapability('accounts', 'write').enabled"
+		:unavailable-reason="resourceCapability('accounts', 'read').reason"
+		@close="closeResourceDialog"
+	/>
   </div>
 </template>

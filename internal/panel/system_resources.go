@@ -17,7 +17,8 @@ const systemResourceAgentTimeout = 55 * time.Second
 func isSystemResourcePublicPath(path string) bool {
 	switch path {
 	case "/api/v1/system/hosts", "/api/v1/system/cron",
-		"/api/v1/system/network-interfaces", "/api/v1/system/firewall":
+		"/api/v1/system/network-interfaces", "/api/v1/system/firewall",
+		"/api/v1/system/port-usage", "/api/v1/system/traffic-shutdown", "/api/v1/system/accounts":
 		return true
 	default:
 		return false
