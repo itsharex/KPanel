@@ -121,8 +121,8 @@ SSH 策略由脚本维护独立配置片段，并确保主配置包含该目录�
 底层 `userdel -r` 的文件删除不可逆，界面必须直接说明这一影响，不能宣称能够恢复已删除的主目录。
 
 该功能使用 `KPANEL_ACCOUNT_MANAGEMENT_PROTOCOL_VERSION="1"`，固定到
-`kejilion/sh@a01067d63676b36c6067275d03a4827a7cb142bd` 与原始 SHA-256
-`d9d9aa70de2c440f557c4db433bf0435ced813e46cb1acbb5c96f8ff601d8181`。2026-08-11 已在隔离的
+`kejilion/sh@d82f043aa95064235b2bfe370e25e141cd75c321` 与原始 SHA-256
+`40a9d77aa89d53a4e360026a6d0698622a248d01f059a1c92299dc56068d14f2`。2026-08-11 已在隔离的
 Ubuntu 24.04 root Linux 环境完成密码/密钥账户、Root 密码与安全迁移、三种角色、公钥增删、SSH
 策略 reload、删除、版本/锁冲突、失败回滚、`rollback-failed`、`needs-attention` 及原状恢复的
 Shell→Agent→Panel L2 闭环。
