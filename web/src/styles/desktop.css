@@ -2015,11 +2015,17 @@ body.desktop-mode-open::-webkit-scrollbar {
     padding: 10px;
   }
 
-  .desktop-window__body .ai-agent-access {
-    font-size: 0;
+  .desktop-window__body .ai-choice--access .ai-choice__trigger {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
   }
 
-  .desktop-window__body .ai-composer-model select {
+  .desktop-window__body .ai-choice--access :is(.ai-choice__label, .ai-choice__short-label, .ai-choice__trigger > svg:last-child) {
+    display: none;
+  }
+
+  .desktop-window__body .ai-choice--model .ai-choice__trigger {
     width: 110px;
   }
 

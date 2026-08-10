@@ -3,6 +3,8 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } fr
 import { useRoute,useRouter } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 import { Archive, ArchiveRestore, ArrowDown, Bot, Brain, Check, CheckCircle2, ChevronLeft, CircleStop, Copy, FileText, Image, LoaderCircle, Menu, MessageSquarePlus, Paperclip, Pencil, Pin, Search, Send, Settings2, ShieldCheck, Sparkles, Trash2, Wifi, WifiOff, X } from '@lucide/vue'
+import AiChoiceMenu from '@/components/ai/AiChoiceMenu.vue'
+import type { AiChoiceOption } from '@/components/ai/AiChoiceMenu.vue'
 import AiMarkdown from '@/components/ai/AiMarkdown.vue'
 import AiSettings from '@/components/ai/AiSettings.vue'
 import { aiApi,runEventURL } from '@/lib/aiApi'
@@ -14,7 +16,7 @@ usePhraseCatalog(() => import('@/i18n/pages/AiView/en-US').then((module) => modu
 const route=useRoute();const router=useRouter()
 const desktopWindowActive=inject(desktopWindowActiveKey,computed(()=>true))
 const providers=ref<AIProvider[]>([]);const models=ref<AIModel[]>([]);const sessions=ref<AISession[]>([]);const messages=ref<AIMessage[]>([]);const toolCalls=ref<AIToolCall[]>([])
-const currentRun=ref<AIRun>();const streamText=ref('');const search=ref('');const input=ref('');const error=ref('');const loading=ref(true);const sending=ref(false);const connected=ref(false);const settingsOpen=ref(false);const sessionDrawer=ref(false)
+const currentRun=ref<AIRun>();const streamText=ref('');const search=ref('');const input=ref('');const error=ref('');const loading=ref(true);const sending=ref(false);const cancelling=ref(false);const connected=ref(false);const settingsOpen=ref(false);const sessionDrawer=ref(false)
 const attachments=ref<AIUploadAttachment[]>([]);const followOutput=ref(true);const copiedMessage=ref('')
 const creatingSession=ref(false);const showArchived=ref(false)
 const messageCursor=ref('');const loadingOlder=ref(false)
@@ -26,6 +28,25 @@ const defaultModel=computed(()=>availableModels.value.find(item=>item.isDefault)
 const activeModel=computed(()=>models.value.find(item=>item.id===active.value?.modelId))
 const activeProvider=computed(()=>providers.value.find(item=>item.id===active.value?.providerId))
 const runActive=computed(()=>!!currentRun.value&&!['completed','failed','cancelled','interrupted'].includes(currentRun.value.status))
+const composerHasPayload=computed(()=>!!input.value.trim()||attachments.value.length>0)
+const composerStopsRun=computed(()=>runActive.value&&!composerHasPayload.value)
+const approvalChoices=computed<AiChoiceOption[]>(()=>[
+  {value:'manual',label:'手动审批',shortLabel:'手动',description:'写操作逐次确认，只读操作自动执行'},
+  {value:'auto',label:'安全自动审批',shortLabel:'自动',description:'常规结构化写操作自动执行，核心操作仍需确认'},
+])
+const thinkingChoices=computed<AiChoiceOption[]>(()=>[
+  {value:'low',label:'低',description:'快速响应，适合简单查询'},
+  {value:'medium',label:'中',description:'平衡速度、分析与结果核对'},
+  {value:'high',label:'高',description:'深入检查复杂运维任务'},
+])
+const modelChoices=computed<AiChoiceOption[]>(()=>{
+  const choices:AiChoiceOption[]=modelGroups.value.flatMap(group=>group.models.map(model=>({
+    value:model.id,label:model.displayName,description:model.modelId,group:group.provider.name,
+    badges:[model.toolCalling?'工具':'',model.vision?'图像':'',model.reasoning?'思考':''].filter(Boolean),
+  })))
+  if(active.value&&!active.value.modelAvailable&&!choices.some(item=>item.value===active.value?.modelId))choices.unshift({value:active.value.modelId,label:`${active.value.modelName}（不可用）`,disabled:true})
+  return choices
+})
 const modelQueued=computed(()=>runActive.value&&!!active.value&&!!currentRun.value&&active.value.modelId!==currentRun.value.modelId)
 const approvalModeQueued=computed(()=>runActive.value&&!!active.value&&!!currentRun.value&&active.value.approvalMode!==currentRun.value.approvalMode)
 const thinkingQueued=computed(()=>runActive.value&&!!active.value&&!!currentRun.value&&(active.value.thinkingLevel||'medium')!==(currentRun.value.thinkingLevel||'medium'))
@@ -83,13 +104,14 @@ function openStream(runId:string){closeStream();connected.value=false;source=new
 function mergeTool(value:AIToolCall){const index=toolCalls.value.findIndex(item=>item.id===value.id);if(index>=0)toolCalls.value.splice(index,1,value);else toolCalls.value.push(value);scrollBottom()}
 function closeStream(){source?.close();source=undefined;connected.value=false}
 async function decide(approve:boolean){const call=pendingApproval.value;if(!call||!currentRun.value)return;try{await aiApi.runs.decision(currentRun.value.id,call.id,approve);call.status=approve?'running':'rejected';openStream(currentRun.value.id)}catch(reason){error.value=reason instanceof Error?reason.message:'审批提交失败'}}
-async function cancelRun(){if(!currentRun.value)return;await aiApi.runs.cancel(currentRun.value.id);closeStream();await loadMessages();await refreshSessions()}
+async function cancelRun(){if(!currentRun.value||cancelling.value)return;cancelling.value=true;error.value='';try{await aiApi.runs.cancel(currentRun.value.id);closeStream();await refreshSessions();await loadMessages()}catch(reason){error.value=reason instanceof Error?reason.message:'停止运行失败'}finally{cancelling.value=false}}
+async function composerAction(){if(composerStopsRun.value){await cancelRun();return}await send()}
 async function retryRun(){if(!currentRun.value)return;try{const result=await aiApi.runs.retry(currentRun.value.id);openStream(result.runId);await refreshSessions()}catch(reason){error.value=reason instanceof Error?reason.message:'重试失败'}}
 async function refreshSessions(){sessions.value=await aiApi.sessions.list(search.value,showArchived.value)}
 async function toggleArchiveView(){showArchived.value=!showArchived.value;search.value='';if(activeId.value)await router.push('/ai');await refreshSessions();if(sessions.value[0])await router.push(`/ai/s/${sessions.value[0].id}`)}
-async function updateModel(event:Event){const modelId=(event.target as HTMLSelectElement).value;const model=models.value.find(item=>item.id===modelId);const provider=providers.value.find(item=>item.id===model?.providerId);if(!active.value||!model||!provider)return;error.value='';try{const updated=await aiApi.sessions.update(active.value.id,{providerId:provider.id,modelId:model.id});sessions.value=sessions.value.map(item=>item.id===updated.id?updated:item)}catch(reason){error.value=reason instanceof Error?reason.message:'模型切换失败'}}
-async function updateApprovalMode(event:Event){const approvalMode=(event.target as HTMLSelectElement).value as AIApprovalMode;if(!active.value)return;error.value='';try{const updated=await aiApi.sessions.update(active.value.id,{approvalMode});sessions.value=sessions.value.map(item=>item.id===updated.id?updated:item)}catch(reason){error.value=reason instanceof Error?reason.message:'权限模式切换失败'}}
-async function updateThinkingLevel(event:Event){const thinkingLevel=(event.target as HTMLSelectElement).value as AIThinkingLevel;if(!active.value)return;error.value='';try{const updated=await aiApi.sessions.update(active.value.id,{thinkingLevel});sessions.value=sessions.value.map(item=>item.id===updated.id?updated:item)}catch(reason){error.value=reason instanceof Error?reason.message:'思考强度切换失败'}}
+async function updateModel(modelId:string){const model=models.value.find(item=>item.id===modelId);const provider=providers.value.find(item=>item.id===model?.providerId);if(!active.value||!model||!provider)return;error.value='';try{const updated=await aiApi.sessions.update(active.value.id,{providerId:provider.id,modelId:model.id});sessions.value=sessions.value.map(item=>item.id===updated.id?updated:item)}catch(reason){error.value=reason instanceof Error?reason.message:'模型切换失败'}}
+async function updateApprovalMode(value:string){const approvalMode=value as AIApprovalMode;if(!active.value)return;error.value='';try{const updated=await aiApi.sessions.update(active.value.id,{approvalMode});sessions.value=sessions.value.map(item=>item.id===updated.id?updated:item)}catch(reason){error.value=reason instanceof Error?reason.message:'权限模式切换失败'}}
+async function updateThinkingLevel(value:string){const thinkingLevel=value as AIThinkingLevel;if(!active.value)return;error.value='';try{const updated=await aiApi.sessions.update(active.value.id,{thinkingLevel});sessions.value=sessions.value.map(item=>item.id===updated.id?updated:item)}catch(reason){error.value=reason instanceof Error?reason.message:'思考强度切换失败'}}
 async function rename(item?:AISession){const target=item||active.value;if(!target)return;const title=prompt('会话名称',target.title)?.trim();if(!title)return;try{const updated=await aiApi.sessions.update(target.id,{title});sessions.value=sessions.value.map(value=>value.id===updated.id?updated:value)}catch(reason){error.value=reason instanceof Error?reason.message:'会话重命名失败'}}
 async function togglePin(item:AISession){try{const updated=await aiApi.sessions.update(item.id,{pinned:!item.pinned});sessions.value=sessions.value.map(value=>value.id===updated.id?updated:value)}catch(reason){error.value=reason instanceof Error?reason.message:'会话置顶失败'}}
 async function refreshAfterSessionLeaves(item:AISession){const wasActive=item.id===activeId.value;if(wasActive)await router.push('/ai');await refreshSessions();if(wasActive&&sessions.value[0])await router.push(`/ai/s/${sessions.value[0].id}`)}
@@ -125,7 +147,7 @@ onMounted(loadAll);onBeforeUnmount(()=>{closeStream();resetStream();if(searchTim
         <header class="ai-chat-header">
           <button class="icon-button ai-session-toggle" aria-label="打开会话列表" @click="sessionDrawer=true"><Menu :size="19"/></button>
           <button class="ai-chat-title" title="重命名会话" @click="rename()"><strong>{{active.title}}</strong><small>{{activeProvider?.name||active.providerName}} · {{activeModel?.displayName||active.modelName}}</small></button>
-          <div class="ai-chat-controls"><span class="ai-context" :title="`上下文使用约 ${contextUsage}%`"><i :style="{width:`${contextUsage}%`}"/>{{contextUsage}}%</span><span class="ai-connection" :class="runState.tone"><Wifi v-if="runState.tone==='online'" :size="14"/><WifiOff v-else-if="runState.tone==='offline'" :size="14"/><CheckCircle2 v-else :size="14"/>{{runState.label}}</span><button v-if="runActive" class="icon-button" title="取消运行" aria-label="取消运行" @click="cancelRun"><CircleStop :size="18"/></button><button class="icon-button" title="添加 API 或管理模型" aria-label="AI 设置" @click="settingsOpen=true"><Settings2 :size="18"/></button></div>
+          <div class="ai-chat-controls"><span class="ai-context" :title="`上下文使用约 ${contextUsage}%`"><i :style="{width:`${contextUsage}%`}"/>{{contextUsage}}%</span><span class="ai-connection" :class="runState.tone"><Wifi v-if="runState.tone==='online'" :size="14"/><WifiOff v-else-if="runState.tone==='offline'" :size="14"/><CheckCircle2 v-else :size="14"/>{{runState.label}}</span><button class="icon-button" title="添加 API 或管理模型" aria-label="AI 设置" @click="settingsOpen=true"><Settings2 :size="18"/></button></div>
         </header>
         <div v-if="!active.modelAvailable" class="ai-model-warning"><span>当前模型已停用或 Provider 不可用，请切换模型后继续。</span><button class="button button--small" @click="settingsOpen=true">管理模型</button></div>
         <div ref="messagesPane" class="ai-messages" @scroll.passive="onMessagesScroll">
@@ -145,7 +167,26 @@ onMounted(loadAll);onBeforeUnmount(()=>{closeStream();resetStream();if(searchTim
           <div v-if="currentRun&&['failed','interrupted'].includes(currentRun.status)" class="ai-run-error"><strong>{{currentRun.status==='interrupted'?'运行因 Panel 重启中断':'运行失败'}}</strong><span>{{currentRun.errorMessage||currentRun.errorCode}}</span><button class="button button--small" @click="retryRun">重试本轮</button></div>
           <button v-if="!followOutput" class="ai-follow-output" type="button" @click="scrollBottom(true,true)"><ArrowDown :size="14"/>回到最新</button>
         </div>
-        <footer class="ai-composer-wrap"><p v-if="error" class="ai-inline-error">{{error}}</p><div class="ai-composer"><input ref="fileInput" hidden type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.log,.md,.json,.yaml,.yml,.toml,.ini,.conf,.csv,.xml,.html,.css,.js,.ts,.vue,.go,.py,.sh" @change="chooseAttachments"/><div v-if="attachments.length" class="ai-attachment-tray"><span v-for="(file,index) in attachments" :key="`${file.name}-${index}`"><img v-if="file.previewUrl" :src="file.previewUrl" :alt="file.name"/><FileText v-else :size="15"/><b>{{file.name}}</b><button type="button" :aria-label="`移除 ${file.name}`" @click="removeAttachment(index)"><X :size="13"/></button></span></div><textarea ref="composer" v-model="input" rows="1" maxlength="16384" :placeholder="runActive?'可继续补充要求，将加入当前任务…':'告诉 AI 你想完成什么…'" @input="resizeComposer" @keydown="onKeydown"/><div class="ai-composer-toolbar"><div class="ai-composer-left"><button type="button" class="ai-attach-button" title="上传图片或文本文件" aria-label="上传附件" @click="fileInput?.click()"><Paperclip :size="15"/></button><label class="ai-agent-access" :title="active.approvalMode==='manual'?'所有写操作逐次确认，只读自动执行':'常规结构化写操作自动执行；核心、删除、exec 和受保护路径仍需确认'"><ShieldCheck :size="14"/><select :value="active.approvalMode" aria-label="权限模式" @change="updateApprovalMode"><option value="manual">手动审批</option><option value="auto">安全自动审批</option></select></label></div><div class="ai-composer-actions"><span v-if="modelQueued||approvalModeQueued||thinkingQueued" class="ai-next-model">下一轮</span><label class="ai-thinking-level" :title="activeModel?.reasoning?'使用模型原生思考强度':'使用通用规划强度提示'"><Brain :size="14"/><select :value="active.thinkingLevel||'medium'" aria-label="思考强度" @change="updateThinkingLevel"><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label><label class="ai-composer-model"><select :value="active.modelId" :title="runActive?'切换后从下一轮开始使用':'切换当前会话模型'" aria-label="选择模型" @change="updateModel"><option v-if="!active.modelAvailable" :value="active.modelId" disabled>{{active.modelName}}（不可用）</option><optgroup v-for="group in modelGroups" :key="group.provider.id" :label="group.provider.name"><option v-for="model in group.models" :key="model.id" :value="model.id">{{model.displayName}}</option></optgroup></select></label><button :disabled="(!input.trim()&&!attachments.length)||sending" :title="runActive?'追加到当前任务':'发送消息'" aria-label="发送" @click="send"><LoaderCircle v-if="sending" class="spin" :size="18"/><Send v-else :size="18"/></button></div></div></div></footer>
+        <footer class="ai-composer-wrap">
+          <p v-if="error" class="ai-inline-error">{{error}}</p>
+          <div class="ai-composer">
+            <input ref="fileInput" hidden type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.log,.md,.json,.yaml,.yml,.toml,.ini,.conf,.csv,.xml,.html,.css,.js,.ts,.vue,.go,.py,.sh" @change="chooseAttachments"/>
+            <div v-if="attachments.length" class="ai-attachment-tray"><span v-for="(file,index) in attachments" :key="`${file.name}-${index}`"><img v-if="file.previewUrl" :src="file.previewUrl" :alt="file.name"/><FileText v-else :size="15"/><b>{{file.name}}</b><button type="button" :aria-label="`移除 ${file.name}`" @click="removeAttachment(index)"><X :size="13"/></button></span></div>
+            <textarea ref="composer" v-model="input" rows="1" maxlength="16384" :placeholder="runActive?'可继续补充要求，将加入当前任务…':'告诉 AI 你想完成什么…'" @input="resizeComposer" @keydown="onKeydown"/>
+            <div class="ai-composer-toolbar">
+              <div class="ai-composer-left">
+                <button type="button" class="ai-attach-button" title="上传图片或文本文件" aria-label="上传附件" @click="fileInput?.click()"><Paperclip :size="15"/></button>
+                <AiChoiceMenu :model-value="active.approvalMode" :options="approvalChoices" label="权限模式" variant="access" :title="active.approvalMode==='manual'?'所有写操作逐次确认，只读自动执行':'常规结构化写操作自动执行；核心、删除、exec 和受保护路径仍需确认'" @change="updateApprovalMode"><template #icon><ShieldCheck :size="14"/></template></AiChoiceMenu>
+              </div>
+              <div class="ai-composer-actions">
+                <span v-if="modelQueued||approvalModeQueued||thinkingQueued" class="ai-next-model">下一轮</span>
+                <AiChoiceMenu :model-value="active.thinkingLevel||'medium'" :options="thinkingChoices" label="思考强度" variant="thinking" :title="activeModel?.reasoning?'使用模型原生思考强度':'使用通用规划强度提示'" @change="updateThinkingLevel"><template #icon><Brain :size="14"/></template></AiChoiceMenu>
+                <AiChoiceMenu :model-value="active.modelId" :options="modelChoices" label="选择模型" variant="model" searchable :title="runActive?'切换后从下一轮开始使用':'切换当前会话模型'" @change="updateModel"/>
+                <button class="ai-composer-submit" :class="{'ai-composer-submit--stop':composerStopsRun}" :disabled="sending||cancelling||(!composerHasPayload&&!runActive)" :title="cancelling?'正在停止':composerStopsRun?'停止运行':runActive?'追加到当前任务':'发送消息'" :aria-label="composerStopsRun?'停止运行':'发送'" @click="composerAction"><LoaderCircle v-if="sending||cancelling" class="spin" :size="18"/><CircleStop v-else-if="composerStopsRun" :size="18"/><Send v-else :size="18"/></button>
+              </div>
+            </div>
+          </div>
+        </footer>
       </template>
       <div v-else-if="!loading" class="ai-empty-chat"><button class="ai-session-toggle button" @click="sessionDrawer=true"><ChevronLeft :size="16"/>打开会话列表</button><Sparkles :size="30"/><h2>{{showArchived?'选择一个归档会话':'开始一次新的对话'}}</h2><p v-if="showArchived">可以恢复、查看或删除归档会话。</p><p v-else>自动使用默认模型创建会话，随后可在输入框中随时切换。</p><button v-if="!showArchived" class="button button--primary" :disabled="creatingSession" @click="openNewSession"><LoaderCircle v-if="creatingSession" class="spin" :size="16"/><span>新建会话</span></button></div>
     </section>

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   sessions: vi.fn(),
   update: vi.fn(),
   send: vi.fn(),
+  cancel: vi.fn(),
 }))
 
 vi.mock('@/lib/aiApi', () => ({
@@ -24,7 +25,7 @@ vi.mock('@/lib/aiApi', () => ({
       messages: mocks.messages,
       create: mocks.create, update: mocks.update, remove: vi.fn(), send: mocks.send,
     },
-    runs: { get: vi.fn(), decision: vi.fn(), cancel: vi.fn(), retry: vi.fn(), propose: vi.fn() },
+    runs: { get: vi.fn(), decision: vi.fn(), cancel: mocks.cancel, retry: vi.fn(), propose: vi.fn() },
     evolution: { memories: vi.fn(), procedures: vi.fn(), proposals: vi.fn() },
   },
 }))
@@ -107,9 +108,10 @@ describe('AI workspace reconnect', () => {
     await flushPromises()
     MockEventSource.instances[0]?.emit('run.snapshot',{run:{id:'run-active',sessionId:'s1',providerId:'p1',providerName:'Primary',modelId:'m1',modelName:'Mock',status:'running',step:1,usage:{inputTokens:0,outputTokens:0,totalTokens:0},createdAt:'',updatedAt:''},toolCalls:[],messages:[]})
     await flushPromises()
-    const picker=wrapper.get('select[aria-label="选择模型"]')
-    expect((picker.element as HTMLSelectElement).disabled).toBe(false)
-    await picker.setValue('m2')
+    const picker=wrapper.get('.ai-choice--model .ai-choice__trigger')
+    expect((picker.element as HTMLButtonElement).disabled).toBe(false)
+    await picker.trigger('click')
+    await wrapper.get('.ai-choice--model [data-value="m2"]').trigger('click')
     await flushPromises()
     expect(mocks.update).toHaveBeenCalledWith('s1',{providerId:'p2',modelId:'m2'})
     expect(wrapper.text()).toContain('下一轮')
@@ -121,11 +123,43 @@ describe('AI workspace reconnect', () => {
 	const wrapper = mount(AiView, { global: { plugins: [router] } })
 	await flushPromises()
 	MockEventSource.instances[0]?.emit('run.snapshot',{run:{id:'run-active',sessionId:'s1',providerId:'p1',providerName:'Primary',modelId:'m1',modelName:'Mock',approvalMode:'manual',status:'running',step:1,usage:{inputTokens:0,outputTokens:0,totalTokens:0},createdAt:'',updatedAt:''},toolCalls:[],messages:[]})
-	await wrapper.get('select[aria-label="权限模式"]').setValue('auto')
+	await wrapper.get('.ai-choice--access .ai-choice__trigger').trigger('click')
+	await wrapper.get('.ai-choice--access [data-value="auto"]').trigger('click')
 	await flushPromises()
 	expect(mocks.update).toHaveBeenCalledWith('s1',{approvalMode:'auto'})
 	expect(wrapper.text()).toContain('下一轮')
 	wrapper.unmount()
+  })
+
+  it('uses the empty composer action to stop an active run', async () => {
+    const router = await makeRouter()
+    const wrapper = mount(AiView, { global: { plugins: [router] } })
+    await flushPromises()
+    MockEventSource.instances[0]?.emit('run.snapshot',{run:{id:'run-active',sessionId:'s1',providerId:'p1',providerName:'Primary',modelId:'m1',modelName:'Mock',approvalMode:'manual',thinkingLevel:'medium',status:'running',step:1,usage:{inputTokens:0,outputTokens:0,totalTokens:0},createdAt:'',updatedAt:''},toolCalls:[],messages:[]})
+    await flushPromises()
+    const action=wrapper.get('.ai-composer-submit')
+    expect(action.attributes('aria-label')).toBe('停止运行')
+    expect((action.element as HTMLButtonElement).disabled).toBe(false)
+    await action.trigger('click')
+    await flushPromises()
+    expect(mocks.cancel).toHaveBeenCalledWith('run-active')
+    wrapper.unmount()
+  })
+
+  it('adds composer input to the active run without cancelling it', async () => {
+    mocks.send.mockResolvedValue({runId:'run-active'})
+    const router = await makeRouter()
+    const wrapper = mount(AiView, { global: { plugins: [router] } })
+    await flushPromises()
+    MockEventSource.instances[0]?.emit('run.snapshot',{run:{id:'run-active',sessionId:'s1',providerId:'p1',providerName:'Primary',modelId:'m1',modelName:'Mock',approvalMode:'manual',thinkingLevel:'medium',status:'running',step:1,usage:{inputTokens:0,outputTokens:0,totalTokens:0},createdAt:'',updatedAt:''},toolCalls:[],messages:[]})
+    await wrapper.get('.ai-composer textarea').setValue('补充检查最新错误日志')
+    const action=wrapper.get('.ai-composer-submit')
+    expect(action.attributes('aria-label')).toBe('发送')
+    await action.trigger('click')
+    await flushPromises()
+    expect(mocks.send).toHaveBeenCalledWith('s1','补充检查最新错误日志',[])
+    expect(mocks.cancel).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('loads archived conversations from the sidebar filter', async () => {
@@ -290,14 +324,15 @@ describe('AI workspace reconnect', () => {
     mocks.send.mockResolvedValue({runId:'run-next'})
     vi.stubGlobal('FileReader',class {result:string|ArrayBuffer|null=null;error:DOMException|null=null;onload:(()=>void)|null=null;onerror:(()=>void)|null=null;readAsDataURL(){this.result='data:image/png;base64,iVBORw0KGgo=';this.onload?.()}})
     const router=await makeRouter();const wrapper=mount(AiView,{global:{plugins:[router]}});await flushPromises()
-    await wrapper.get('select[aria-label="思考强度"]').setValue('high');await flushPromises()
+    await wrapper.get('.ai-choice--thinking .ai-choice__trigger').trigger('click')
+    await wrapper.get('.ai-choice--thinking [data-value="high"]').trigger('click');await flushPromises()
     expect(mocks.update).toHaveBeenCalledWith('s1',{thinkingLevel:'high'})
     const input=wrapper.get('input[type="file"]')
     const file=new File([new Uint8Array([137,80,78,71])],'screen.png',{type:'image/png'})
     Object.defineProperty(input.element,'files',{value:[file],configurable:true})
     await input.trigger('change');await flushPromises()
     expect(wrapper.text()).toContain('screen.png')
-    await wrapper.get('button[aria-label="发送"]').trigger('click');await flushPromises()
+    await wrapper.get('.ai-composer-submit').trigger('click');await flushPromises()
     expect(mocks.send).toHaveBeenCalledWith('s1','',expect.arrayContaining([expect.objectContaining({name:'screen.png',kind:'image'})]))
     wrapper.unmount()
   })
