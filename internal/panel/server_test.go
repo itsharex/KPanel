@@ -87,8 +87,7 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 	if status.Code != http.StatusOK || status.Header().Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("unexpected bootstrap status: %d headers=%v", status.Code, status.Header())
 	}
-	if policy := status.Header().Get("Content-Security-Policy");
-		!strings.Contains(policy, "frame-src 'self' blob:") || strings.Contains(policy, " http:") || strings.Contains(policy, " https:") {
+	if policy := status.Header().Get("Content-Security-Policy"); !strings.Contains(policy, "frame-src 'self' blob:") || strings.Contains(policy, " http:") || strings.Contains(policy, " https:") {
 		t.Fatalf("embedded browser frame policy missing: %q", policy)
 	}
 	token, err := os.ReadFile(tokenPath)
