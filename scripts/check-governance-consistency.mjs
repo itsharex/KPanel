@@ -60,6 +60,7 @@ requireText('PROJECT_RULES.md', [
   'docs/release-acceptance-template.md',
   '受控自我改进',
   '不得自动放宽',
+  '公共默认',
 ]);
 requireText('docs/project-management.md', [
   'Definition of Ready',
@@ -80,6 +81,7 @@ requireText('docs/release-acceptance-template.md', [
   '## 回滚',
   '## 交付节奏数据',
   '首个纳入提交时间',
+  '公共默认更新通道决策',
   '## 遗留风险与后续准入',
 ]);
 requireText('docs/quality-improvement-proposal-template.md', [

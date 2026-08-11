@@ -1,7 +1,7 @@
 ---
 name: release-kpanel
 description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产观察和回滚记录"
-version: "1.5"
+version: "1.6"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, apps_repo]
@@ -241,8 +241,13 @@ KPANEL_EXPECTED_VERSION="${{version}}" \
 若用户只授权发布正式产物而未授权生产部署，停止在此步骤并明确记录“正式产物已发布，生产未部署/
 未验证”，不得复用上一版本生产结果或把公开镜像 E2E 写成生产成功。
 
+若生产验收失败并执行回滚，恢复生产实例后必须继续完成公共分发审计：核对 GitHub Latest、
+`${{image}}:latest` 和 `kpanel.conf` 标准更新入口实际指向。历史 tag、Release 和不可变版本镜像不得
+删除或改写，但失败版本不得无提示继续作为公共默认更新；应恢复上一稳定默认版本，或在 Release 与
+验收记录中明确已知问题、影响范围、负责人和修复期限后短期保留。该事件按变更失败计入交付节奏数据。
+
 **Expected output:** 已授权时生产运行版本与正式 digest/commit 一致、备份和回滚可执行；未授权时没有
-生产状态变化且未验证边界清晰。
+生产状态变化且未验证边界清晰；发生回滚时，生产实例和公共默认更新通道均有明确、可复核状态。
 
 ### 10. 形成统一验收记录并交付
 
