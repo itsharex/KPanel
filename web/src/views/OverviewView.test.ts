@@ -123,6 +123,7 @@ describe('OverviewView refresh stability', () => {
       'timezone',
       'swap',
       'mirror',
+	  'system-tuning',
 	  'accounts',
       'cron',
     ])

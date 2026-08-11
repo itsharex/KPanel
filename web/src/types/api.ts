@@ -298,8 +298,8 @@ export interface SystemManagement {
   maintenance: {
     id?: string
     state: 'idle' | 'running' | 'succeeded' | 'failed'
-    action?: 'update' | 'cleanup' | 'ssh-defense' | 'bbrv3'
-    policy?: 'full' | 'cache' | 'standard' | 'enable' | 'disable' | 'install' | 'update' | 'uninstall'
+    action?: 'update' | 'cleanup' | 'ssh-defense' | 'bbrv3' | 'system-tuning'
+    policy?: string
     stage?: string
     progress: number
     message?: string
@@ -638,6 +638,43 @@ export interface TrafficShutdownActionResult {
   backupPath?: string
   resourceVersion: string
   appliedAt: string
+}
+
+export type SystemTuningItemID =
+	| 'system-update'
+	| 'system-cleanup'
+	| 'swap-1g'
+	| 'ssh-port-5522'
+	| 'ssh-defense'
+	| 'firewall-open-all'
+	| 'bbr'
+	| 'timezone-shanghai'
+	| 'dns-auto'
+	| 'ipv4-preferred'
+	| 'basic-tools'
+	| 'kernel-auto'
+
+export interface SystemTuningSnapshot {
+	resourceVersion: string
+	items: Array<{ id: SystemTuningItemID; state: 'ready' | 'pending' }>
+	maintenance: SystemManagement['maintenance']
+	observedAt: string
+}
+
+export interface SystemTuningActionInput {
+	action: 'apply'
+	items: SystemTuningItemID[]
+	expectedResourceVersion: string
+}
+
+export interface SystemTuningActionResult {
+	action: 'apply'
+	items: SystemTuningItemID[]
+	status: string
+	changed: boolean
+	message: string
+	resourceVersion: string
+	acceptedAt: string
 }
 
 export interface SSHAuthorizedKey {

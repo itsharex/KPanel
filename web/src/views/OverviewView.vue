@@ -49,6 +49,7 @@ import PortUsageDialog from '@/components/overview/PortUsageDialog.vue'
 import TrafficShutdownDialog from '@/components/overview/TrafficShutdownDialog.vue'
 import AccountManagementDialog from '@/components/overview/AccountManagementDialog.vue'
 import SSHDefenseDialog from '@/components/overview/SSHDefenseDialog.vue'
+import SystemTuningDialog from '@/components/overview/SystemTuningDialog.vue'
 import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import { ApiError, api } from '@/lib/api'
@@ -105,7 +106,7 @@ interface ManagementTool {
 
 type KernelProfile = 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
 type BBRv3Policy = 'install' | 'update' | 'uninstall'
-type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall' | 'port-usage' | 'traffic-shutdown' | 'accounts' | 'ssh-defense'
+type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall' | 'port-usage' | 'traffic-shutdown' | 'accounts' | 'ssh-defense' | 'system-tuning'
 
 const mirrorPresets: Array<{
   value: MirrorPreset
@@ -313,7 +314,21 @@ const basicSettings = computed<ManagementTool[]>(() => {
       icon: Globe2,
       tone: 'blue',
     },
-    {
+	{
+		id: 'system-tuning',
+		title: '一条龙系统调优',
+		description: '沿用 kejilion.sh 原有 12 项调优流程，可按需勾选后一次执行。',
+		value:
+			management.maintenance.state === 'running' && management.maintenance.action === 'system-tuning'
+				? `正在调优 · ${management.maintenance.progress}%`
+				: capabilityState('system.tuning.read').enabled ? '12 项可选 · 默认全选' : '适配器未就绪',
+		detail: '更新、清理、Swap、SSH、防御、防火墙、BBR、时区、DNS、IPv4、工具与网络参数',
+		capability: 'system.tuning.read',
+		safety: '每项由固定 kejilion.sh 协议执行并回读验证；外部脚本固定提交与 SHA-256，首项失败即停止。',
+		icon: Wrench,
+		tone: 'violet',
+	},
+	{
 		id: 'accounts',
 		title: '账户管理',
 		description: '管理 Linux 账户、密码、SSH 公钥和 Root 登录策略。',
@@ -616,6 +631,7 @@ const resourceCapabilityNames: Record<ResourceDialogID, string> = {
 		'traffic-shutdown': 'system.traffic-shutdown',
 		accounts: 'system.accounts',
 		'ssh-defense': 'system.ssh-defense',
+		'system-tuning': 'system.tuning',
 }
 
 const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
@@ -627,6 +643,7 @@ const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
 		'traffic-shutdown': '当前 Agent 的限流关机适配器未就绪。',
 		accounts: '当前 Agent 的账户管理适配器未就绪。',
 		'ssh-defense': '当前 Agent 的 SSH 防御适配器未就绪。',
+		'system-tuning': '当前 Agent 的一条龙系统调优适配器未就绪。',
 }
 
 function isResourceDialogID(id: string): id is ResourceDialogID {
@@ -1656,6 +1673,13 @@ onBeforeUnmount(() => {
 		:readable="resourceCapability('ssh-defense', 'read').enabled"
 		:writable="resourceCapability('ssh-defense', 'write').enabled"
 		:unavailable-reason="resourceCapability('ssh-defense', 'read').reason"
+		@close="closeResourceDialog"
+	/>
+	<SystemTuningDialog
+		:open="selectedResourceDialog === 'system-tuning'"
+		:readable="resourceCapability('system-tuning', 'read').enabled"
+		:writable="resourceCapability('system-tuning', 'write').enabled"
+		:unavailable-reason="resourceCapability('system-tuning', 'read').reason"
 		@close="closeResourceDialog"
 	/>
   </div>

@@ -116,8 +116,8 @@ Panel 不保存第二份规则。策略与信任地址写入独立受管配置�
 systemd 维护队列，关闭浏览器不会中断；停用不删除配置，卸载才移除 Fail2Ban 及其配置。
 
 该功能使用 `KPANEL_F2B_MANAGER_PROTOCOL_VERSION="1"`，固定到
-`kejilion/sh@e9c3078eb516b05f9df6d2a9294cf3b226ca02bd` 与原始 SHA-256
-`147f624c479931c21b7d92392ff3e3a1a58b19bea4f98741f4ec114ab933546a`。
+`kejilion/sh@28f89c1b34df4b25e6ef9b144c328fdea75dbac9` 与原始 SHA-256
+`0583f7cd5be1f0bb6ec48d92e2cf224bfabfafada5788658bda4414ba9561229`。
 2026-08-11 已在 154 的隔离 Ubuntu 24.04 root 容器内以真实 Fail2Ban 完成信任地址、封禁解封、
 三档策略、Agent/Panel 审计和浏览器桌面/窄屏闭环；生产宿主未安装或修改 Fail2Ban，测试资源已清理。
 
@@ -142,8 +142,8 @@ SSH 策略由脚本维护独立配置片段，并确保主配置包含该目录�
 底层 `userdel -r` 的文件删除不可逆，界面必须直接说明这一影响，不能宣称能够恢复已删除的主目录。
 
 该功能使用 `KPANEL_ACCOUNT_MANAGEMENT_PROTOCOL_VERSION="1"`，固定到
-`kejilion/sh@e9c3078eb516b05f9df6d2a9294cf3b226ca02bd` 与原始 SHA-256
-`147f624c479931c21b7d92392ff3e3a1a58b19bea4f98741f4ec114ab933546a`。2026-08-11 已在隔离的
+`kejilion/sh@28f89c1b34df4b25e6ef9b144c328fdea75dbac9` 与原始 SHA-256
+`0583f7cd5be1f0bb6ec48d92e2cf224bfabfafada5788658bda4414ba9561229`。2026-08-11 已在隔离的
 Ubuntu 24.04 root Linux 环境完成密码/密钥账户、Root 密码与安全迁移、三种角色、公钥增删、SSH
 策略 reload、删除、版本/锁冲突、失败回滚、`rollback-failed`、`needs-attention` 及原状恢复的
 Shell→Agent→Panel L2 闭环。
@@ -235,6 +235,16 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 - 文件系统写入由固定参数的 root systemd transient service 完成。常驻
   Agent 仍受原 systemd 沙箱限制，Web 不能传入路径或任意命令。浏览器请求
   中断不会杀死已经启动的事务，事务仍会完成或执行自身回滚。
+
+## 一条龙系统调优
+
+- 入口位于“概览 → 基础系统设置”，与“内核调优”保持独立：前者是 kejilion.sh 原有的一次性系统准备流程，后者用于长期切换内核参数预设。
+- 页面固定展示原脚本的 12 个项目并默认全选；管理员可以取消任意项目，但不能提交路径、命令、软件包名或其他 Shell 参数。
+- Agent 将所选项目拆成持久化 systemd 后台步骤，逐项调用 `KJ_SYSTEM_TUNING_NONINTERACTIVE=1 k kpanel system-tuning apply-item <id>`。页面关闭或浏览器断开不会取消任务，重新打开会继续显示真实阶段和进度。
+- 每个项目由脚本共享锁串行执行并输出结构化回执；项目失败时任务立即停止，后续项目不会被标记为成功。系统更新、清理、换源和安装软件包属于不可整体回滚操作，界面不宣称整套事务可以自动撤销。
+- 原脚本第 6 项此前只显示“开放所有端口”而未执行动作；现在交互菜单与 KPanel 都调用同一个事务化 firewall `open-all` 真源实现，并在持久化或回读失败时恢复快照。
+- LinuxMirrors 固定到 `649e948763042e485e411be540d21c32cface1c1`，网络参数脚本固定到 `e9c3078eb516b05f9df6d2a9294cf3b226ca02bd`；两者下载后都先校验已登记 SHA-256，再交给 Bash 执行。
+- 发布门禁：必须先发布固定的 kejilion.sh 提交，再构建 KPanel 镜像，并在隔离 Linux root 环境完成 Shell → Agent → Panel 的 12 项选择、逐项进度、失败停止和重新打开恢复进度闭环。
 
 ## v0.6 内核优化
 

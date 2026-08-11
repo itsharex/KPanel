@@ -35,6 +35,7 @@ type maintenanceStep struct {
 const (
 	maintenanceOperationPacmanOrphans = "pacman-orphans"
 	maintenanceOperationBBRv3         = "bbrv3"
+	maintenanceOperationSystemTuning  = "system-tuning"
 )
 
 var pacmanPackagePattern = regexp.MustCompile(`^[a-z0-9@._+][a-z0-9@._+-]{0,127}$`)
@@ -45,7 +46,11 @@ func (m *Manager) MaintenanceStatus() contract.SystemMaintenanceSummary {
 	defer m.mu.Unlock()
 	status := m.readMaintenance()
 	m.reconcileMaintenanceLaunch(&status)
-	if status.State == "running" && status.StartedAt != nil && m.now().Sub(*status.StartedAt) > time.Hour {
+	limit := time.Hour
+	if status.Action == "system-tuning" {
+		limit = 2 * time.Hour
+	}
+	if status.State == "running" && status.StartedAt != nil && m.now().Sub(*status.StartedAt) > limit {
 		finishedAt := m.now().UTC()
 		status.State = "failed"
 		status.Stage = "interrupted"
@@ -169,6 +174,11 @@ func (m *Manager) startMaintenance(
 			return false, "", fmt.Errorf("%w: BBRv3 policy must be install, update, or uninstall", ErrInvalidInput)
 		}
 		mode = "bbrv3-" + policy
+	case "system-tuning":
+		if _, _, ok := parseSystemTuningMaintenancePolicy(policy); !ok {
+			return false, "", fmt.Errorf("%w: system tuning policy is invalid", ErrInvalidInput)
+		}
+		mode = "system-tuning-" + policy
 	default:
 		return false, "", fmt.Errorf("%w: unknown maintenance action", ErrInvalidInput)
 	}
@@ -196,12 +206,16 @@ func (m *Manager) startMaintenance(
 		return false, "", fmt.Errorf("%w: persist maintenance state: %v", ErrUnsupported, err)
 	}
 
+	timeoutStart := "45min"
+	if action == "system-tuning" {
+		timeoutStart = "90min"
+	}
 	arguments := []string{
 		"--unit=" + maintenanceUnitPrefix + status.ID,
 		"--collect",
 		"--no-block",
 		"--property=Type=oneshot",
-		"--property=TimeoutStartSec=45min",
+		"--property=TimeoutStartSec=" + timeoutStart,
 		"--property=TimeoutStopSec=5min",
 		"--property=User=root",
 		"--property=UMask=0027",
@@ -277,6 +291,25 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 			if runErr == nil {
 				bbrv3RebootRequired, runErr = verifyBBRv3ActionOutput(output, policy)
 			}
+		} else if step.operation == maintenanceOperationSystemTuning {
+			var output []byte
+			output, runErr = m.runner.Run(ctx, step.command, step.arguments...)
+			if runErr == nil {
+				_, _, ok := parseSystemTuningMaintenancePolicy(policy)
+				if !ok {
+					runErr = errors.New("system tuning policy became invalid")
+				} else {
+					var receiptStatus, selected string
+					_, receiptStatus, selected, runErr = parseSystemTuningOutput(output)
+					if runErr == nil && receiptStatus != "applied" && receiptStatus != "unchanged" {
+						runErr = fmt.Errorf("kejilion.sh returned system tuning status %q", receiptStatus)
+					}
+					expected := strings.TrimPrefix(step.stage, "system_tuning_")
+					if runErr == nil && selected != expected {
+						runErr = errors.New("system tuning completion receipt did not match the selected item")
+					}
+				}
+			}
 		} else {
 			_, runErr = m.runner.Run(ctx, step.command, step.arguments...)
 		}
@@ -314,6 +347,33 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 func (m *Manager) maintenanceSteps(
 	mode string,
 ) (string, string, []maintenanceStep, error) {
+	if strings.HasPrefix(mode, "system-tuning-") {
+		policy := strings.TrimPrefix(mode, "system-tuning-")
+		items, _, ok := parseSystemTuningMaintenancePolicy(policy)
+		if !ok {
+			return "", "", nil, fmt.Errorf("%w: unknown system tuning policy", ErrInvalidInput)
+		}
+		script, err := m.systemTuningScriptPath()
+		if err != nil {
+			return "", "", nil, fmt.Errorf("%w: update kejilion.sh to enable one-click system tuning", ErrUnsupported)
+		}
+		for _, command := range []string{"env", "bash"} {
+			if _, err := m.runner.LookPath(command); err != nil {
+				return "", "", nil, fmt.Errorf("%w: system tuning command %s is unavailable", ErrUnsupported, command)
+			}
+		}
+		steps := make([]maintenanceStep, 0, len(items))
+		for index, item := range items {
+			steps = append(steps, maintenanceStep{
+				stage: "system_tuning_" + item, progress: 8 + index*86/len(items), command: "env", operation: maintenanceOperationSystemTuning,
+				arguments: []string{
+					"KJ_SYSTEM_TUNING_NONINTERACTIVE=1", "LC_ALL=C.UTF-8", "LANG=C.UTF-8", "bash", script,
+					"kpanel", "system-tuning", "apply-item", item,
+				},
+			})
+		}
+		return "system-tuning", policy, steps, nil
+	}
 	if mode == "ssh-defense-enable" || mode == "ssh-defense-disable" || mode == "ssh-defense-uninstall" {
 		script, err := m.sshDefenseManagerScriptPath()
 		if err != nil {
@@ -620,6 +680,21 @@ func idForMaintenance(now time.Time) string {
 }
 
 func maintenanceStageMessage(stage string) string {
+	if strings.HasPrefix(stage, "system_tuning_") {
+		item := strings.TrimPrefix(stage, "system_tuning_")
+		labels := map[string]string{
+			"system-update": "优化更新源并更新系统", "system-cleanup": "清理系统垃圾",
+			"swap-1g": "设置 1 GB 虚拟内存", "ssh-port-5522": "设置 SSH 端口为 5522",
+			"ssh-defense": "开启 SSH 防御", "firewall-open-all": "开放所有端口",
+			"bbr": "开启 BBR 加速", "timezone-shanghai": "设置上海时区",
+			"dns-auto": "自动优化 DNS", "ipv4-preferred": "设置 IPv4 优先",
+			"basic-tools": "安装基础工具", "kernel-auto": "自动网络参数优化",
+		}
+		if label := labels[item]; label != "" {
+			return "正在执行：" + label
+		}
+		return "正在执行一条龙系统调优"
+	}
 	switch stage {
 	case "dpkg_configure":
 		return "正在完成未结束的软件包配置"
@@ -678,6 +753,9 @@ func maintenanceSuccessMessage(action, policy string, rebootRequired bool) strin
 		default:
 			return "BBRv3 内核已卸载；请安排重启切换回发行版内核"
 		}
+	}
+	if action == "system-tuning" {
+		return "所选一条龙系统调优项目已全部完成"
 	}
 	if action == "update" {
 		return "系统更新已完成；如内核或核心组件变化，请按提示安排重启"

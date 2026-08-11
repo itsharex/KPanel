@@ -318,4 +318,11 @@ export default [
 	['当前 Agent 的账户管理适配器未就绪。', 'The current Agent account-management adapter is unavailable.'],
 	['通过可信 kejilion.sh 管理 Fail2Ban；支持轻量策略、封禁 IP 与信任地址管理。', 'Manage Fail2Ban through trusted kejilion.sh with simple profiles, banned IPs, and trusted addresses.'],
 	['当前 Agent 的 SSH 防御适配器未就绪。', 'The current Agent SSH defense adapter is unavailable.'],
+	['一条龙系统调优', 'One-click system tuning'],
+	['沿用 kejilion.sh 原有 12 项调优流程，可按需勾选后一次执行。', 'Use the original 12-step kejilion.sh tuning flow and select only the items you need.'],
+	['正在调优 · {0}%', 'Tuning · {0}%'],
+	['12 项可选 · 默认全选', '12 selectable items · all selected by default'],
+	['更新、清理、Swap、SSH、防御、防火墙、BBR、时区、DNS、IPv4、工具与网络参数', 'Updates, cleanup, swap, SSH, defense, firewall, BBR, timezone, DNS, IPv4, tools, and network parameters'],
+	['每项由固定 kejilion.sh 协议执行并回读验证；外部脚本固定提交与 SHA-256，首项失败即停止。', 'Each item runs through the fixed kejilion.sh protocol and is read back for verification. External scripts are pinned by commit and SHA-256, and execution stops at the first failure.'],
+	['当前 Agent 的一条龙系统调优适配器未就绪。', 'The current Agent one-click system tuning adapter is unavailable.'],
 ] as const satisfies PhraseCatalog

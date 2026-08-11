@@ -258,6 +258,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleAccountManagementAction(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/ssh-defense/actions":
 		s.handleSSHDefenseAction(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/system-tuning/actions":
+		s.handleSystemTuningAction(w, r)
 	case r.Method == http.MethodGet:
 		s.handleAgentProxy(w, r)
 	default:
@@ -919,6 +921,7 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		"/api/v1/system/traffic-shutdown":   "/v1/system/traffic-shutdown",
 		"/api/v1/system/accounts":           "/v1/system/accounts",
 		"/api/v1/system/ssh-defense":        "/v1/system/ssh-defense",
+		"/api/v1/system/system-tuning":      "/v1/system/system-tuning",
 		"/api/v1/monitoring/history":        "/v1/monitoring/history",
 		"/api/v1/sites":                     "/v1/sites",
 		"/api/v1/site-installations":        "/v1/site-installations",

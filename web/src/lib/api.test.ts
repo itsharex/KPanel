@@ -550,6 +550,10 @@ describe('API client', () => {
 			sshPolicy: { passwordAuthentication: false, publicKeyAuthentication: true, rootLogin: 'key-only' },
 			observedAt: '2026-08-11T08:00:00Z',
 		  }))
+		  .mockResolvedValueOnce(jsonResponse({
+			resourceVersion: 'a'.repeat(64), items: [], maintenance: { state: 'idle', progress: 0, rebootRequired: false },
+			observedAt: '2026-08-11T08:00:00Z',
+		  }))
     vi.stubGlobal('fetch', fetchMock)
 
     await api.system.hosts()
@@ -559,6 +563,7 @@ describe('API client', () => {
 	await api.system.portUsage()
 		await api.system.trafficShutdown()
 		await api.system.accounts()
+		await api.system.systemTuning()
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       '/api/v1/system/hosts',
@@ -568,6 +573,7 @@ describe('API client', () => {
 	  '/api/v1/system/port-usage',
 		  '/api/v1/system/traffic-shutdown',
 		  '/api/v1/system/accounts',
+		  '/api/v1/system/system-tuning',
     ])
     expect(fetchMock.mock.calls.every((call) => (call[1] as RequestInit | undefined)?.method === 'GET')).toBe(true)
   })
@@ -653,6 +659,18 @@ describe('API client', () => {
 		expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
 			action: 'create', expectedResourceVersion: 'rv-1', username: 'operator',
 			role: 'passwordless-admin', credential: 'key', secret: 'ssh-ed25519 AAAA laptop',
+		})
+	})
+
+	it('submits only fixed system tuning item IDs', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ status: 'accepted' }))
+		vi.stubGlobal('fetch', fetchMock)
+		await api.system.systemTuningAction({
+			action: 'apply', items: ['bbr', 'kernel-auto'], expectedResourceVersion: 'a'.repeat(64),
+		})
+		expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/system/system-tuning/actions')
+		expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+			action: 'apply', items: ['bbr', 'kernel-auto'], expectedResourceVersion: 'a'.repeat(64),
 		})
 	})
 

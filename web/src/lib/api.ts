@@ -62,6 +62,9 @@ import type {
   SystemResourceActionInput,
   SystemResourceActionResult,
   SystemOverview,
+	SystemTuningActionInput,
+	SystemTuningActionResult,
+	SystemTuningSnapshot,
 	TrafficShutdownActionInput,
 	TrafficShutdownActionResult,
 	TrafficShutdownSnapshot,
@@ -1366,6 +1369,10 @@ export const api = {
 		request<SSHDefenseSnapshot>('/system/ssh-defense', { signal }),
 	sshDefenseAction: (body: SSHDefenseActionInput): Promise<SSHDefenseActionResult> =>
 		request<SSHDefenseActionResult>('/system/ssh-defense/actions', { method: 'POST', body }),
+	systemTuning: (signal?: AbortSignal): Promise<SystemTuningSnapshot> =>
+		request<SystemTuningSnapshot>('/system/system-tuning', { signal }),
+	systemTuningAction: (body: SystemTuningActionInput): Promise<SystemTuningActionResult> =>
+		request<SystemTuningActionResult>('/system/system-tuning/actions', { method: 'POST', body }),
     resourceAction: (body: SystemResourceActionInput): Promise<SystemResourceActionResult> =>
       request<SystemResourceActionResult>('/system/resource-actions', { method: 'POST', body }),
     maintenance: async (

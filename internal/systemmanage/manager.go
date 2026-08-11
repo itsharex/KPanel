@@ -327,7 +327,8 @@ func (m *Manager) Capabilities() []contract.Capability {
 	capabilities = append(capabilities, m.SystemResourceCapabilities()...)
 	capabilities = append(capabilities, m.NetworkOperationsCapabilities()...)
 	capabilities = append(capabilities, m.AccountManagementCapabilities()...)
-	return append(capabilities, m.SSHDefenseManagementCapabilities()...)
+	capabilities = append(capabilities, m.SSHDefenseManagementCapabilities()...)
+	return append(capabilities, m.SystemTuningCapabilities()...)
 }
 
 func (m *Manager) Execute(ctx context.Context, input contract.SystemActionRequest) (contract.SystemActionResult, error) {
