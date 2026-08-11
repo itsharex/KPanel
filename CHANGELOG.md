@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.66.0] - 2026-08-12
+
+### Added
+
+- 桌面模式内置浏览器新增独立轻量安全阅读内核：Panel 只签发 10 分钟短时会话，第三方公网 HTTP(S) 内容由独立 Relay 获取、净化并在隔离 Origin 中渲染，不再把目标站点直接交给第三方 iframe。
+- 新增 Relay 的 SSRF/DNS 重绑定防护、精确 CORS/CSP、并发与流量预算、响应空闲超时、图片代理和内核健康检查；复杂网站仍保留“用系统浏览器打开”兜底。
+- 正式 Compose 和安装器新增 `kpanel-browser-relay` 非特权容器、只读共享密钥、独立健康检查及双 Origin 部署参数；直接端口测试拓扑使用相邻独立端口。
+
+### Changed
+
+- 浏览器 iframe 的 `frame-src` 从宽泛 HTTP(S) 收紧为 `'self'`、`blob:` 与配置的精确 Relay Origin；未配置或不可用时不会回退为直接加载第三方站点。
+- Relay 默认限制为 0.5 CPU、128 MiB、64 PIDs、只读根文件系统、无 Linux capabilities；默认全局并发 24、单会话并发 6，避免复杂链路无界占用资源。
+
+### Upgrade Notes
+
+- 本版本新增独立浏览器 Relay 服务。正式 HTTPS 部署必须为 Panel 与 Relay 提供两个不同 Origin，并为两个容器只读挂载同一随机密钥；应用市场直连测试部署使用 Panel `:8080`、Relay `:8081`。
+- 当前内核定位是安全阅读预览：支持普通 HTML、文本、表格、链接及有限图片，不执行第三方 JavaScript，也不承诺 SPA、登录态、视频、WebSocket 或下载管理完整兼容；这些站点继续使用系统浏览器兜底。
+- 回滚至 `v0.65.0` 时先恢复旧 Compose、环境文件、Agent/脚本和不可变镜像，再停止并移除仅由本版本创建的 Relay 容器；面板数据格式未迁移，浏览器 Relay 密钥可保留以便重新升级。
+
 ## [0.65.0] - 2026-08-12
 
 ### Added
