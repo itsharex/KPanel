@@ -508,10 +508,11 @@ onBeforeUnmount(() => {
 .diagnostic-workbench {
   display: grid;
   grid-template-columns: minmax(270px, 310px) minmax(0, 1fr);
-  height: clamp(680px, calc(100vh - 190px), 860px);
+  height: var(--terminal-workspace-height);
+  min-height: var(--terminal-workspace-min-height);
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--terminal-workspace-radius);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   transition: grid-template-columns 180ms ease;

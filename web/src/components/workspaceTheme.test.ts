@@ -13,6 +13,14 @@ const diagnosticsSource = readFileSync(
   new URL('../views/DiagnosticsView.vue', import.meta.url),
   'utf8',
 )
+const terminalViewSource = readFileSync(
+  new URL('../views/TerminalView.vue', import.meta.url),
+  'utf8',
+)
+const hostTerminalSource = readFileSync(
+  new URL('./terminal/HostTerminal.vue', import.meta.url),
+  'utf8',
+)
 const filesSource = readFileSync(
   new URL('../views/FilesView.vue', import.meta.url),
   'utf8',
@@ -48,6 +56,21 @@ describe('terminal and editor workspace theme', () => {
   it('uses the same terminal surface before and after an interactive diagnostic starts', () => {
     expect(diagnosticsSource).toContain('background: var(--terminal-shell-background, #0b1214)')
     expect(diagnosticsSource).toContain('background: var(--terminal-shell-panel, #111a1d)')
+    expect(terminalViewSource).toContain('background:var(--terminal-shell-background,#0b1214)')
+    expect(hostTerminalSource).toContain('background:var(--terminal-shell-background,#0b1214)')
+    expect(terminalSource).toContain('--terminal-background: var(--terminal-shell-background, #0b1214)')
+  })
+
+  it('uses one classic-mode height for terminal and diagnostics workspaces', () => {
+    expect(globalThemeSource).toContain('--terminal-workspace-height: clamp(620px, calc(100dvh - 190px), 760px)')
+    expect(globalThemeSource).toContain('--terminal-workspace-min-height: 620px')
+    expect(globalThemeSource).toContain('--terminal-workspace-radius: var(--radius-lg)')
+    expect(terminalViewSource).toContain('height:var(--terminal-workspace-height)')
+    expect(terminalViewSource).toContain('min-height:var(--terminal-workspace-min-height)')
+    expect(terminalViewSource).toContain('border-radius:var(--terminal-workspace-radius)')
+    expect(diagnosticsSource).toContain('height: var(--terminal-workspace-height)')
+    expect(diagnosticsSource).toContain('min-height: var(--terminal-workspace-min-height)')
+    expect(diagnosticsSource).toContain('border-radius: var(--terminal-workspace-radius)')
   })
 
   it('keeps the editor dark while using KPanel brand and semantic tokens for controls', () => {

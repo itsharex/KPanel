@@ -59,6 +59,9 @@
   --terminal-shell-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
   --terminal-shell-scrollbar: #35474a;
   --terminal-shell-scrollbar-hover: #506367;
+  --terminal-workspace-height: clamp(620px, calc(100dvh - 190px), 760px);
+  --terminal-workspace-min-height: 620px;
+  --terminal-workspace-radius: var(--radius-lg);
   --terminal-ansi-black: #1d2426;
   --terminal-ansi-red: #d86f74;
   --terminal-ansi-green: #91b56d;
