@@ -345,7 +345,8 @@ EOF
 	grep -Fx 'ENABLE_STATS="false"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 	grep -Fx 'canshu="CN"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 
-	: >"$KPANEL_MOCK_SYSTEMCTL_LOG"
+	local systemctl_lines_before=""
+	systemctl_lines_before="$(wc -l <"$KPANEL_MOCK_SYSTEMCTL_LOG")"
 	if KPANEL_MOCK_PORT_PUBLISH_FAIL=1 docker_app_update \
 		>"$TEST_DIR/network-preflight-output.txt" 2>&1; then
 		echo "KPanel update ignored a failed Docker port-publish preflight" >&2
@@ -353,7 +354,7 @@ EOF
 	fi
 	grep -F 'Docker 端口映射预检失败' \
 		"$TEST_DIR/network-preflight-output.txt" >/dev/null
-	test ! -s "$KPANEL_MOCK_SYSTEMCTL_LOG"
+	test "$(wc -l <"$KPANEL_MOCK_SYSTEMCTL_LOG")" = "$systemctl_lines_before"
 	test ! -e "$MOCK_STATE/network-preflight"
 	test ! -e "$MOCK_STATE/rollback-tagged"
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
