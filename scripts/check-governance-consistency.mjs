@@ -132,6 +132,7 @@ requireText('docs/project-management.md', [
   '.codex-workflows/evolve-kpanel.workflow.yaml',
   '.codex-workflows/maintain-kpanel-dependencies.workflow.yaml',
   'make dependency-report',
+  '每日安全审计',
 ]);
 requireText('.codex-workflows/README.md', [
   'evolve-kpanel.workflow.yaml',
@@ -145,6 +146,7 @@ requireText('docs/release-acceptance-template.md', [
   '## 多维质量结论',
   '## 自动门禁',
   '## 依赖与技术栈变化',
+  '最近每日安全通告审计、EOL 复核状态及证据',
   '## 隔离真机与浏览器验收',
   '## 生产部署与观察',
   '## 回滚',

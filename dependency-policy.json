@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "policyVersion": "2026-08-12",
-  "purpose": "Continuously detect stable dependency candidates without turning freshness into automatic adoption.",
+  "purpose": "Continuously detect version-channel-stable dependency candidates without turning freshness into automatic adoption.",
   "stableRelease": {
     "excludePrerelease": true,
     "excludeDraftOrWithdrawn": true,
@@ -10,10 +10,26 @@
     "requireImmutableProductionPin": true
   },
   "cadence": {
-    "scheduledDetection": "weekly",
-    "securityAdvisories": "continuous",
-    "exceptionReview": "at-least-monthly",
-    "eolReview": "at-least-quarterly"
+    "scheduledDetectionCron": "17 2 * * 1",
+    "scheduledDetectionMaximumDays": 7,
+    "securityAdvisoryCron": "43 2 * * *",
+    "securityAdvisoryMaximumHours": 24,
+    "exceptionReviewMaximumDays": 31,
+    "eolReviewMaximumDays": 92
+  },
+  "reviewState": {
+    "lastEolReview": "2026-07-28",
+    "eolReviewEvidence": "docs/security-performance-hardening-2026-07-28.md"
+  },
+  "detectorQualification": {
+    "candidateLevel": "version-channel-stable",
+    "adoptionEvidenceStillRequired": [
+      "supported-upstream-and-eol",
+      "license-and-source-trust",
+      "kpanel-architecture-and-linux-support",
+      "behavior-contract-and-resource-impact",
+      "rollback-feasibility"
+    ]
   },
   "requiredGroups": [
     "go-modules",
@@ -142,6 +158,7 @@
   "automationBoundary": {
     "automaticDetection": true,
     "automaticReport": true,
+    "automaticSecurityAdvisoryCheck": true,
     "automaticMainCommit": false,
     "automaticRelease": false,
     "automaticProductionDeployment": false

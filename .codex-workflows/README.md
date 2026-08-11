@@ -21,7 +21,9 @@
 - 重复缺陷、指标恶化或门禁缺口使用 `docs/quality-improvement-proposal-template.md` 建立提案，并通过
   `make release-metrics` 和受控自我改进工作流验证；数据不足时保持“未报告”。
 - 依赖、工具链和底层组件使用 `make dependency-policy-check` 离线验证清单，使用
-  `make dependency-report` 联网生成稳定候选；检测源失败保持“未报告”，不得推断为全部最新。
+  `make dependency-report` 联网生成版本通道稳定候选；检测源失败保持“未报告”，不得推断为全部最新。
+  GitHub Actions 每周生成候选、每日复核当前依赖图安全通告，并在例外或 EOL 复核到期时失败告警；采用
+  资格仍由风险分级任务补齐。
 
 工作流由 `codex-workflows` 技能管理。使用前运行 `workflow.py list`，执行前使用
 `workflow.py run <name> --param key=value` 渲染参数，修改后必须运行

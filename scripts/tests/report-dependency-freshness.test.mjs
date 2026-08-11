@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -7,6 +9,7 @@ import {
   goExecutable,
   immutableDigestCandidate,
   isStableVersion,
+  maintenanceStatus,
   npmInvocation,
   parseConcatenatedJson,
   requestHeaders,
@@ -75,6 +78,34 @@ test('policy validation requires complete coverage and prohibits automatic main 
   const failures = validatePolicy(policy, process.cwd());
   assert.ok(failures.some((failure) => failure.includes('go-modules')));
   assert.ok(failures.some((failure) => failure.includes('automatic main')));
+});
+
+test('policy validation keeps automation, cadence, and workflow triggers enforceable', () => {
+  const policy = JSON.parse(readFileSync(resolve(process.cwd(), 'dependency-policy.json'), 'utf8'));
+  assert.deepEqual(validatePolicy(policy, process.cwd()), []);
+  policy.automationBoundary.automaticSecurityAdvisoryCheck = false;
+  policy.cadence.eolReviewMaximumDays = 93;
+  const failures = validatePolicy(policy, process.cwd());
+  assert.ok(failures.some((failure) => failure.includes('security advisory')));
+  assert.ok(failures.some((failure) => failure.includes('governed maximum') && failure.includes('eolReviewMaximumDays')));
+});
+
+test('maintenance status exposes due exceptions and EOL review deadlines', () => {
+  const policy = {
+    cadence: { eolReviewMaximumDays: 92, exceptionReviewMaximumDays: 31 },
+    reviewState: { lastEolReview: '2026-01-01', eolReviewEvidence: 'evidence.md' },
+    exceptions: [
+      { component: 'due', reviewDate: '2026-04-01' },
+      { component: 'active', reviewDate: '2026-05-01' },
+      { component: 'overlong', reviewDate: '2026-07-01' },
+    ],
+  };
+  const status = maintenanceStatus(policy, new Date('2026-04-15T00:00:00Z'));
+  assert.equal(status.exceptionActionRequiredCount, 2);
+  assert.equal(status.exceptions[0].status, 'due');
+  assert.equal(status.exceptions[1].status, 'active');
+  assert.equal(status.exceptions[2].status, 'review-window-exceeds-policy');
+  assert.equal(status.eolReviewStatus, 'due');
 });
 
 test('summary does not turn missing sources into an all-current conclusion', () => {

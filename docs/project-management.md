@@ -150,7 +150,8 @@ worktree / branch / base / rollback：
 5. L0-L3、受影响用户旅程、自动/实机/浏览器证据和权限边界明确；
 6. 缺失用户选择会实质改变方案时已经请求输入；仅是实现细节时由任务作最小合理假设并记录。
 7. 涉及依赖、工具链、基础镜像、Action、扫描器或受管脚本时，已读取 `dependency-policy.json` 和最近
-   一次 `make dependency-report`，明确稳定候选、检测失败、采用分类、例外期限和是否需要独立 L2/L3。
+   一次 `make dependency-report`，明确版本通道候选、检测失败、每日安全审计、EOL/例外期限、采用分类和
+   是否需要独立 L2/L3。
 
 启动检查至少包含：
 

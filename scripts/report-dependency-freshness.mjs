@@ -17,6 +17,18 @@ const REQUIRED_GROUPS = [
   'security-tools',
   'managed-kejilion-script',
 ];
+const REQUIRED_FRESHNESS_TRIGGERS = [
+  'dependency-policy.json',
+  'go.mod',
+  'go.sum',
+  'web/package.json',
+  'web/package-lock.json',
+  'Dockerfile',
+  'Makefile',
+  'scripts/report-dependency-freshness.mjs',
+  'scripts/security-scan.sh',
+  '.github/workflows/**',
+];
 
 export function parseArguments(argv) {
   const options = {
@@ -118,6 +130,9 @@ export function validatePolicy(policy, repo) {
     }
   }
   const automation = policy.automationBoundary ?? {};
+  if (automation.automaticDetection !== true || automation.automaticReport !== true || automation.automaticSecurityAdvisoryCheck !== true) {
+    failures.push('automation boundary must require detection, reporting, and security advisory checks');
+  }
   if (automation.automaticMainCommit !== false || automation.automaticRelease !== false || automation.automaticProductionDeployment !== false) {
     failures.push('automation boundary must prohibit automatic main, release, and production changes');
   }
@@ -135,6 +150,45 @@ export function validatePolicy(policy, repo) {
     if (exception.reviewDate && Number.isNaN(new Date(exception.reviewDate).getTime())) {
       failures.push('exception ' + index + ' reviewDate is invalid');
     }
+  }
+  const cadence = policy.cadence ?? {};
+  const cadenceLimits = {
+    scheduledDetectionMaximumDays: 7,
+    securityAdvisoryMaximumHours: 24,
+    exceptionReviewMaximumDays: 31,
+    eolReviewMaximumDays: 92,
+  };
+  for (const [field, maximum] of Object.entries(cadenceLimits)) {
+    if (!Number.isInteger(cadence[field]) || cadence[field] <= 0) failures.push('cadence field must be a positive integer: ' + field);
+    else if (cadence[field] > maximum) failures.push('cadence field exceeds the governed maximum: ' + field);
+  }
+  for (const field of ['scheduledDetectionCron', 'securityAdvisoryCron']) {
+    if (!String(cadence[field] ?? '').trim()) failures.push('cadence field is missing: ' + field);
+  }
+  const reviewState = policy.reviewState ?? {};
+  if (Number.isNaN(new Date(reviewState.lastEolReview).getTime())) failures.push('reviewState.lastEolReview is invalid');
+  if (!reviewState.eolReviewEvidence || !existsSync(resolve(repo, reviewState.eolReviewEvidence))) {
+    failures.push('reviewState.eolReviewEvidence must reference an existing file');
+  }
+  const qualification = policy.detectorQualification ?? {};
+  if (qualification.candidateLevel !== 'version-channel-stable' || !Array.isArray(qualification.adoptionEvidenceStillRequired) || qualification.adoptionEvidenceStillRequired.length === 0) {
+    failures.push('detector qualification must distinguish discovery from adoption evidence');
+  }
+  const freshnessWorkflow = readFileSync(resolve(repo, '.github/workflows/dependency-freshness.yml'), 'utf8');
+  for (const trigger of REQUIRED_FRESHNESS_TRIGGERS) {
+    if (!freshnessWorkflow.includes('- ' + trigger)) failures.push('dependency freshness push trigger is missing: ' + trigger);
+  }
+  for (const cron of [cadence.scheduledDetectionCron, cadence.securityAdvisoryCron].filter(Boolean)) {
+    if (!freshnessWorkflow.includes('cron: "' + cron + '"')) failures.push('dependency freshness schedule is missing: ' + cron);
+  }
+  if (!freshnessWorkflow.includes('group: dependency-freshness-${{ github.ref }}')) {
+    failures.push('dependency freshness concurrency must be isolated by ref');
+  }
+  for (const token of ['security-advisories:', 'make security-audit', 'bash scripts/security-scan.sh source', 'contents: read']) {
+    if (!freshnessWorkflow.includes(token)) failures.push('dependency freshness security monitor is missing: ' + token);
+  }
+  if (/^\s+[A-Za-z0-9_-]+:\s*write\s*$/m.test(freshnessWorkflow)) {
+    failures.push('dependency freshness workflow must not request write permissions');
   }
   const trivy = policy.groups?.find((group) => group.id === 'security-tools')?.components?.trivy;
   if (trivy) {
@@ -163,6 +217,36 @@ export function validatePolicy(policy, repo) {
   );
   if (govulnPins.size !== 1) failures.push('govulncheck must use one stable version across Makefile and CI/Release workflows');
   return failures;
+}
+
+function endOfUtcDate(value) {
+  const text = String(value ?? '');
+  return new Date(/^\d{4}-\d{2}-\d{2}$/.test(text) ? text + 'T23:59:59.999Z' : text);
+}
+
+export function maintenanceStatus(policy, now = new Date()) {
+  const exceptions = (policy.exceptions ?? []).map((exception) => {
+    const reviewAt = endOfUtcDate(exception.reviewDate);
+    const maximumReviewAt = now.getTime() + (policy.cadence?.exceptionReviewMaximumDays ?? 0) * 86_400_000;
+    const status = reviewAt.getTime() < now.getTime()
+      ? 'due'
+      : reviewAt.getTime() > maximumReviewAt
+        ? 'review-window-exceeds-policy'
+        : 'active';
+    return { ...exception, status };
+  });
+  const lastEolReview = endOfUtcDate(policy.reviewState?.lastEolReview);
+  const maximumDays = policy.cadence?.eolReviewMaximumDays;
+  const hasEolReview = !Number.isNaN(lastEolReview.getTime()) && Number.isInteger(maximumDays) && maximumDays > 0;
+  const nextEolReview = hasEolReview ? new Date(lastEolReview.getTime() + maximumDays * 86_400_000) : null;
+  return {
+    exceptions,
+    exceptionActionRequiredCount: exceptions.filter((exception) => exception.status !== 'active').length,
+    lastEolReview: policy.reviewState?.lastEolReview,
+    nextEolReview: nextEolReview?.toISOString() ?? 'unreported',
+    eolReviewEvidence: policy.reviewState?.eolReviewEvidence,
+    eolReviewStatus: !nextEolReview ? 'unreported' : nextEolReview.getTime() < now.getTime() ? 'due' : 'current',
+  };
 }
 
 function run(repo, command, arguments_, acceptedStatuses = [0]) {
@@ -437,6 +521,8 @@ export function summarize(policy, sources, now = new Date()) {
     classCounts,
     candidates,
     sources,
+    maintenance: maintenanceStatus(policy, now),
+    detectorQualification: policy.detectorQualification,
     decision: 'report-only; every adoption requires risk classification, evidence, and the existing integration authorization',
   };
 }
@@ -448,10 +534,13 @@ export function renderMarkdown(report) {
     '- 生成时间：' + report.generatedAt,
     '- 策略版本：' + report.policyVersion,
     '- 检测源完整性：' + report.successfulSources + '/' + report.sourceCount,
-    '- 稳定候选数量：' + report.candidateCount,
+    '- 版本通道稳定候选数量：' + report.candidateCount,
+    '- 候选资格：仅表示版本通道稳定；EOL、许可证、架构、行为、资源与回滚仍须采用决策证据。',
+    '- 需处理依赖例外：' + report.maintenance.exceptionActionRequiredCount,
+    '- EOL 复核：' + report.maintenance.eolReviewStatus + '（下次截止 ' + report.maintenance.nextEolReview + '）',
     '- 决策边界：本报告只发现候选，不代表应升级，也不授权提交、合入、发布或部署。',
     '',
-    '## 稳定候选',
+    '## 版本通道稳定候选',
     '',
     '| 分类 | 数量 |',
     '| --- | ---: |',
@@ -464,6 +553,12 @@ export function renderMarkdown(report) {
   for (const item of report.candidates) {
     lines.push('| ' + markdownCell(item.group) + ' | ' + markdownCell(item.dependencyScope ?? 'foundation') + ' | ' + markdownCell(item.component) + ' | ' + markdownCell(item.current) + ' | ' + markdownCell(item.candidate) + ' | ' + markdownCell(item.updateClass) + ' | ' + markdownCell(item.source) + ' |');
   }
+  lines.push('', '## 例外与 EOL 复核', '', '| 组件 | 当前 | 候选 | 负责人 | 复核日期 | 状态 | 退出条件 |', '| --- | --- | --- | --- | --- | --- | --- |');
+  if (report.maintenance.exceptions.length === 0) lines.push('| - | - | - | - | - | 无例外 | - |');
+  for (const exception of report.maintenance.exceptions) {
+    lines.push('| ' + markdownCell(exception.component) + ' | ' + markdownCell(exception.currentVersion) + ' | ' + markdownCell(exception.candidateVersion) + ' | ' + markdownCell(exception.owner) + ' | ' + markdownCell(exception.reviewDate) + ' | ' + markdownCell(exception.status) + ' | ' + markdownCell(exception.exitCondition) + ' |');
+  }
+  lines.push('', '- 最近 EOL 复核：' + report.maintenance.lastEolReview, '- 证据：`' + report.maintenance.eolReviewEvidence + '`');
   lines.push('', '## 检测源状态', '', '| 检测源 | 状态 | 错误 |', '| --- | --- | --- |');
   for (const source of report.sources) lines.push('| ' + markdownCell(source.id) + ' | ' + markdownCell(source.status) + ' | ' + markdownCell(source.error ?? '-') + ' |');
   lines.push('', '> “未发现候选”只有在所有检测源成功时才有效；任何检测源失败都必须按数据缺口处理。');
@@ -515,7 +610,9 @@ export async function main(argv) {
   const rendered = options.format === 'json' ? JSON.stringify(report, null, 2) : renderMarkdown(report);
   process.stdout.write(rendered + '\n');
   if (options.output) writeFileSync(options.output, rendered + '\n', 'utf8');
-  return report.failedSources > 0 && !options.allowPartial ? 2 : 0;
+  if (report.failedSources > 0 && !options.allowPartial) return 2;
+  if (report.maintenance.exceptionActionRequiredCount > 0 || report.maintenance.eolReviewStatus === 'due') return 3;
+  return 0;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
