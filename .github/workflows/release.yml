@@ -400,8 +400,28 @@ jobs:
               ;;
           esac
           gh api --method DELETE "$delete_ref"
-          if gh api "$get_ref" >/dev/null 2>&1; then
-            echo "Candidate branch still exists after deletion: $candidate" >&2
-            exit 1
-          fi
-          echo "Removed published candidate branch: $candidate"
+          remote_url="https://github.com/${GITHUB_REPOSITORY}.git"
+          for attempt in {1..6}; do
+            set +e
+            git ls-remote --exit-code "$remote_url" "refs/heads/${candidate}" >/dev/null 2>&1
+            remote_status=$?
+            set -e
+            case "$remote_status" in
+              2)
+                echo "Removed published candidate branch: $candidate"
+                exit 0
+                ;;
+              0)
+                if (( attempt < 6 )); then
+                  sleep $((attempt * 2))
+                  continue
+                fi
+                echo "Candidate branch still exists after deletion: $candidate" >&2
+                exit 1
+                ;;
+              *)
+                echo "Failed to verify candidate branch deletion: $candidate" >&2
+                exit "$remote_status"
+                ;;
+            esac
+          done
