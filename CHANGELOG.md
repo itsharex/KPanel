@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.61.4] - 2026-08-11
+
+### Fixed
+
+- 修复正式 systemd 沙箱会移除 `ss` 读取 socket 进程归属所需权限、导致端口占用全部降级为“未知程序”的问题；Agent 单元现在保留 `CAP_SYS_PTRACE`，端口列表可展示真实程序名和 PID。
+- KPanel 自更新会在切换 Agent、镜像或配置前，用当前镜像和 Docker 网络真实验证临时端口发布；Docker 防火墙链异常时提前停止并保持当前服务不变，避免新版本与自动回滚同时无法启动。
+- 发布镜像继续固定 `kejilion/sh@d82f043aa95064235b2bfe370e25e141cd75c321`，原始脚本 SHA-256 为 `40a9d77aa89d53a4e360026a6d0698622a248d01f059a1c92299dc56068d14f2`。
+
+### Upgrade Notes
+
+- 本补丁为 Agent systemd 单元新增 `CAP_SYS_PTRACE`，仅供固定只读 `ss` 适配器取得 socket 的程序名和 PID；没有新增通用 ptrace、进程内存或任意命令接口。
+- 应用市场安装/更新契约同步变化；不修改数据库、端口、Compose 或 `kejilion.sh` 协议，可从 `0.61.2` 或 `0.61.3` 直接更新并保留现有配置和数据回滚。
+
 ## [0.61.3] - 2026-08-11
 
 ### Fixed
