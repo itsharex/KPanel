@@ -1,0 +1,113 @@
+---
+name: maintain-kpanel-dependencies
+description: "发现 KPanel 全技术栈的稳定依赖候选，按风险形成最小升级任务并在现有授权边界内完成验收"
+version: "1.0"
+author: "Codex"
+tags: [kpanel, dependencies, supply-chain, maintenance, multi-agent, security]
+params: [project_dir, baseline_ref, dependency_scope, observation_window]
+created: "2026-08-11T16:35:57Z"
+updated: "2026-08-11T16:35:57Z"
+---
+
+# Maintain Kpanel Dependencies
+
+## Purpose
+
+把定时依赖新鲜度报告转换为可复核的升级决策。检测覆盖 Go/npm 直接与传递依赖、工具链、基础镜像、
+GitHub Actions、扫描器和受管 `kejilion.sh`，但“存在最新稳定版”不自动等于“应当升级”。本流程不得
+直接修改共享 `main`、创建 Release 或操作生产。
+
+## Prerequisites
+
+- 已完整阅读 `PROJECT_RULES.md`、`dependency-policy.json`、`docs/development-quality-standard.md` 和
+  `docs/project-management.md`。
+- `${{project_dir}}` 是独立干净的 KPanel worktree，`${{baseline_ref}}` 是经过确认的远端主线提交。
+- 已明确 `${{dependency_scope}}`、允许修改的清单/锁文件、风险等级、回滚点及提交/推送权限。
+- 定时报告只构成候选发现证据；检测源失败、版本被撤回、上游 EOL 或供应链事件必须单独标记。
+
+## Steps
+
+### 1. 固定基线并重新生成报告
+
+```bash
+cd "${{project_dir}}"
+git status --short --branch
+git rev-parse HEAD
+node scripts/report-dependency-freshness.mjs --format markdown
+```
+
+**Expected output:** 精确基线、检测时间、所有检测源状态和稳定候选明确；部分检测失败不被解释为“全部最新”。
+
+### 2. 对候选做采用分类
+
+按 `dependency-policy.json` 区分紧急安全、兼容补丁、次版本、主版本/工具链/基础组件和预发布版本。
+补充漏洞可达性、维护/EOL、行为变化、许可证、资源预算、KPanel 双端契约以及回滚难度。没有产品或维护
+收益的候选可以拒绝；拒绝与暂缓必须写明证据。
+
+**Expected output:** 每个候选都有“采用、批量等待、暂缓、拒绝或实验”结论，不以版本号大小替代判断。
+
+### 3. 建立或复核例外记录
+
+暂缓候选必须包含当前/候选版本、原因、安全与产品影响、缓解、负责人、复核日期、结束条件和回滚点。
+到期例外重新进入任务队列；不得通过 suppress、删除检测源或固定假数据隐藏候选。
+
+**Expected output:** 没有无期限、无负责人或无退出条件的依赖例外。
+
+### 4. 在独立分支实施最小升级
+
+```bash
+git diff --check
+node scripts/report-dependency-freshness.mjs --validate-only
+```
+
+只修改 `${{dependency_scope}}` 必需的版本声明、摘要、锁文件、测试和兼容说明。主版本、工具链、基础镜像、
+扫描器和受管脚本不得与无关业务功能混合；不得使用浮动 `latest` 代替固定版本、SHA 或 digest。
+
+**Expected output:** 差异范围聚焦，锁文件可重建，旧版本和回滚点明确，未获得授权时不提交或推送。
+
+### 5. 按风险执行验收
+
+```bash
+make governance-check
+make verify-change
+```
+
+兼容补丁按实际影响执行 L1/L2；次版本至少 L2；主版本、工具链、基础镜像、扫描器、受管脚本及发布链变化
+执行 L2 或 L3，并比较构建、测试、镜像、安全、启动、内存和受影响用户旅程。验证完成后再次运行新鲜度报告，
+确认候选变化来自真实依赖图而非检测遗漏。
+
+**Expected output:** 精确提交/差异、检测源、命令结果、性能资源差异、兼容结论和未验证层级可复核。
+
+### 6. 交付采用决策并观察
+
+使用 `docs/project-management.md` 标准交付包记录采用/暂缓/拒绝、回滚方式和权限状态。只有对应等级门禁通过且
+用户明确授权时才推送任务分支或快进主线；发布与生产仍进入既有 L3 单写者流程。采用后在
+`${{observation_window}}` 内观察 CI/生产失败、资源回退和回滚，恶化时回退升级而不是降低门禁。
+
+**Expected output:** 检测、采用、合入、发布和生产五个状态没有混写，下一会话能从 Git、报告和验收记录重建决策。
+
+## Parameters
+
+- `${{project_dir}}`：KPanel 专用 worktree 的绝对路径。
+- `${{baseline_ref}}`：检测和升级前的精确稳定提交。
+- `${{dependency_scope}}`：单个组件、同一生态批次或明确的工具链范围。
+- `${{observation_window}}`：采用后的观察窗口，默认 14 天，可按风险和样本调整。
+
+## Verification
+
+```bash
+git diff --check
+node scripts/check-governance-consistency.mjs
+node scripts/report-dependency-freshness.mjs --validate-only
+node --test scripts/tests/report-dependency-freshness.test.mjs
+make verify-change
+```
+
+工作流本身修改后必须使用 `workflow.py validate maintain-kpanel-dependencies` 验证结构。
+
+## Notes
+
+- 新鲜度是维护信号，不是绩效指标；不得为了提高“最新率”跳过兼容、资源或供应链复核。
+- `latest`、分支头和上游最新 Release 只用于发现候选；构建和发布继续使用固定版本、SHA 与 digest。
+- 网络或上游 API 失败是“未报告”，不是“无更新”。
+- 自动检测和报告不扩大提交、推送、合入、发布或生产权限。

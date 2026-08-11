@@ -149,6 +149,8 @@ worktree / branch / base / rollback：
 4. 写任务有专用 worktree、分支、精确基线和回滚点，工作树状态已记录；
 5. L0-L3、受影响用户旅程、自动/实机/浏览器证据和权限边界明确；
 6. 缺失用户选择会实质改变方案时已经请求输入；仅是实现细节时由任务作最小合理假设并记录。
+7. 涉及依赖、工具链、基础镜像、Action、扫描器或受管脚本时，已读取 `dependency-policy.json` 和最近
+   一次 `make dependency-report`，明确稳定候选、检测失败、采用分类、例外期限和是否需要独立 L2/L3。
 
 启动检查至少包含：
 
@@ -182,6 +184,7 @@ worktree / branch / base：
 已验证事实：
 验证命令与结果：
 质量维度状态：业务 / 安全 / 稳定 / 性能资源 / 用户体验 / 数据迁移：
+依赖状态：检测源 / 当前与候选版本 / 采用分类 / 例外期限：
 证据层级：自动测试 / 隔离真机 / 公开产物 / 生产观察：
 未验证风险：
 与其他任务的依赖或冲突：
@@ -201,6 +204,8 @@ worktree / branch / base：
 5. 已授权提交时形成聚焦提交；未授权时明确保留的专用 worktree 与差异，状态不得写成待集成；
 6. 回滚点和回滚方式明确，所有推送、主线、标签、Release、部署状态如实记录；
 7. 只有具备长期复用价值时才更新共享规范/工作流，且已检查没有重复或冲突。
+8. 依赖类任务已重新生成新鲜度报告；采用、暂缓或拒绝都有证据，锁文件/固定 SHA/digest 可重建，
+   自动检测、任务分支、主线、Release 和生产状态没有混写。
 
 ### 7.2 验证证据复用
 
@@ -324,10 +329,26 @@ KPanel 允许智能体持续优化规范、自动门禁和协作流程，但“�
 该循环不能自动降低安全/质量门禁，不能自动提交、推送、发布或操作生产。可复用执行步骤见
 `.codex-workflows/evolve-kpanel.workflow.yaml`，滚动指标统一由 `make release-metrics` 生成。
 
+### 14.1 依赖与底层技术栈维护循环
+
+依赖新鲜度采用“自动检测、人工/智能体分级决策、受控实施、按风险验收”的现有任务模型：
+
+1. 定时 CI 和 `make dependency-report` 只读取上游稳定来源，输出候选和检测源完整性，不写代码；
+2. 协调中心按安全可达性、EOL、补丁/次/主版本、工具链/基础组件和产品收益建立聚焦任务；
+3. 暂缓候选按 `dependency-policy.json` 建立有负责人、复核日期、退出条件和回滚点的例外；
+4. 升级在独立 worktree 实施，补丁按影响 L1/L2，次版本至少 L2，主版本、工具链、基础镜像、Action、
+   扫描器和受管脚本执行 L2/L3；
+5. 只有门禁和授权满足后才允许任务分支、快进主线、发布或生产进入各自状态；采用后观察失败、资源、
+   兼容和回滚，结果恶化时回退升级，不降低既有门禁。
+
+可复用步骤见 `.codex-workflows/maintain-kpanel-dependencies.workflow.yaml`。该流程不是第二套集成或发布
+通道，也不要求所有候选立即升级；目标是全量可见、决策有证据、例外有期限、结果可回滚。
+
 可复用执行步骤见：
 
 - `.codex-workflows/session-collaboration.workflow.yaml`
 - `.codex-workflows/release-kpanel.workflow.yaml`
 - `.codex-workflows/evolve-kpanel.workflow.yaml`
+- `.codex-workflows/maintain-kpanel-dependencies.workflow.yaml`
 
 跨工具执行说明和交接模板见 `docs/multi-agent-collaboration.md`。

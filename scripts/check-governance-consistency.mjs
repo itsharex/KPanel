@@ -17,13 +17,17 @@ const requiredFiles = [
   'docs/development-quality-standard.md',
   'docs/release-acceptance-template.md',
   'docs/quality-improvement-proposal-template.md',
+  'dependency-policy.json',
   'scripts/report-release-metrics.mjs',
   'scripts/tests/report-release-metrics.test.mjs',
+  'scripts/report-dependency-freshness.mjs',
+  'scripts/tests/report-dependency-freshness.test.mjs',
   '.codex-workflows/README.md',
   '.codex-workflows/session-collaboration.workflow.yaml',
   '.codex-workflows/release-kpanel.workflow.yaml',
   '.codex-workflows/quality-audit-kpanel.workflow.yaml',
   '.codex-workflows/evolve-kpanel.workflow.yaml',
+  '.codex-workflows/maintain-kpanel-dependencies.workflow.yaml',
 ];
 
 function read(relativePath) {
@@ -116,6 +120,8 @@ requireText('PROJECT_RULES.md', [
   '受控自我改进',
   '不得自动放宽',
   '公共默认',
+  'dependency-policy.json',
+  '最新稳定版',
 ]);
 requireText('docs/project-management.md', [
   'Definition of Ready',
@@ -124,13 +130,21 @@ requireText('docs/project-management.md', [
   '受控自我改进循环',
   'docs/quality-improvement-proposal-template.md',
   '.codex-workflows/evolve-kpanel.workflow.yaml',
+  '.codex-workflows/maintain-kpanel-dependencies.workflow.yaml',
+  'make dependency-report',
 ]);
-requireText('.codex-workflows/README.md', ['evolve-kpanel.workflow.yaml']);
+requireText('.codex-workflows/README.md', [
+  'evolve-kpanel.workflow.yaml',
+  'maintain-kpanel-dependencies.workflow.yaml',
+  'make dependency-policy-check',
+  'make dependency-report',
+]);
 
 requireText('docs/release-acceptance-template.md', [
   '## 发布画像',
   '## 多维质量结论',
   '## 自动门禁',
+  '## 依赖与技术栈变化',
   '## 隔离真机与浏览器验收',
   '## 生产部署与观察',
   '## 回滚',
@@ -154,6 +168,7 @@ const workflows = [
   '.codex-workflows/release-kpanel.workflow.yaml',
   '.codex-workflows/quality-audit-kpanel.workflow.yaml',
   '.codex-workflows/evolve-kpanel.workflow.yaml',
+  '.codex-workflows/maintain-kpanel-dependencies.workflow.yaml',
 ];
 for (const workflow of workflows) {
   const content = read(workflow);

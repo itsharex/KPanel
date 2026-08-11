@@ -10,6 +10,8 @@
   发布门禁健康审计。
 - `evolve-kpanel.workflow.yaml`：从可复核证据形成改进假设，经独立复核、最小试行、指标对比和观察窗口
   决定采纳、拒绝或回滚；不自动放宽门禁或扩大提交、发布权限。
+- `maintain-kpanel-dependencies.workflow.yaml`：读取全技术栈新鲜度报告，按安全、兼容、维护和资源风险
+  决定采用、暂缓或拒绝，在独立 worktree 完成升级与分级验收；检测不自动等于合入或发布。
 - 最近一次完整证据见 [`docs/quality-audit-2026-08-02.md`](../docs/quality-audit-2026-08-02.md)，
   后续审计应复用相同指标和环境比较，不重复发明基线。
 - `kpanel-real-machine-app-lifecycle.workflow.yaml`：用隔离候选实例和真实 Chrome 验证应用
@@ -18,6 +20,8 @@
   交付节奏和回滚点；不批量改写历史验收记录。
 - 重复缺陷、指标恶化或门禁缺口使用 `docs/quality-improvement-proposal-template.md` 建立提案，并通过
   `make release-metrics` 和受控自我改进工作流验证；数据不足时保持“未报告”。
+- 依赖、工具链和底层组件使用 `make dependency-policy-check` 离线验证清单，使用
+  `make dependency-report` 联网生成稳定候选；检测源失败保持“未报告”，不得推断为全部最新。
 
 工作流由 `codex-workflows` 技能管理。使用前运行 `workflow.py list`，执行前使用
 `workflow.py run <name> --param key=value` 渲染参数，修改后必须运行

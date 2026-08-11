@@ -45,6 +45,8 @@ bash scripts/check-version-consistency.sh
 bash scripts/check-managed-script-contract.sh
 node scripts/check-governance-consistency.mjs
 node --test scripts/tests/report-release-metrics.test.mjs
+node --test scripts/tests/report-dependency-freshness.test.mjs
+node scripts/report-dependency-freshness.mjs --validate-only
 
 if [[ ${#changed_files[@]} -eq 0 ]]; then
   echo "No changes require verification."
@@ -65,7 +67,7 @@ go_domains=()
 
 for path in "${changed_files[@]}"; do
   case "$path" in
-    *.md|docs/*|LICENSE|.codex-workflows/*|.github/ISSUE_TEMPLATE/*)
+    *.md|docs/*|LICENSE|dependency-policy.json|.codex-workflows/*|.github/ISSUE_TEMPLATE/*)
       ;;
     web/*)
       docs_only=false

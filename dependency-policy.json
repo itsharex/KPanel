@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": "2026-08-12",
+  "purpose": "Continuously detect stable dependency candidates without turning freshness into automatic adoption.",
+  "stableRelease": {
+    "excludePrerelease": true,
+    "excludeDraftOrWithdrawn": true,
+    "nodeChannel": "latest-lts",
+    "requireSupportedUpstream": true,
+    "requireImmutableProductionPin": true
+  },
+  "cadence": {
+    "scheduledDetection": "weekly",
+    "securityAdvisories": "continuous",
+    "exceptionReview": "at-least-monthly",
+    "eolReview": "at-least-quarterly"
+  },
+  "requiredGroups": [
+    "go-modules",
+    "npm-packages",
+    "go-toolchain",
+    "node-toolchain",
+    "docker-base-images",
+    "dockerfile-frontend",
+    "github-actions",
+    "security-tools",
+    "managed-kejilion-script"
+  ],
+  "groups": [
+    {
+      "id": "go-modules",
+      "scope": "direct-and-transitive",
+      "manifests": ["go.mod", "go.sum"],
+      "detector": "go-list"
+    },
+    {
+      "id": "npm-packages",
+      "scope": "production-and-development-direct-and-transitive",
+      "manifests": ["web/package.json", "web/package-lock.json"],
+      "detector": "npm-outdated-all"
+    },
+    {
+      "id": "go-toolchain",
+      "scope": "compiler-and-build-runtime",
+      "manifests": ["go.mod", "Dockerfile", ".github/workflows/ci.yml", ".github/workflows/release.yml"],
+      "detector": "go-stable-releases"
+    },
+    {
+      "id": "node-toolchain",
+      "scope": "latest-supported-lts",
+      "manifests": ["web/package.json", "Dockerfile", ".github/workflows/ci.yml", ".github/workflows/release.yml"],
+      "detector": "node-lts-releases"
+    },
+    {
+      "id": "docker-base-images",
+      "scope": "build-images-and-pinned-index-digests",
+      "manifests": ["Dockerfile"],
+      "detector": "dockerfile-base-images"
+    },
+    {
+      "id": "dockerfile-frontend",
+      "scope": "stable-version-and-pinned-digest",
+      "manifests": ["Dockerfile"],
+      "detector": "docker-hub-tags"
+    },
+    {
+      "id": "github-actions",
+      "scope": "all-workflow-actions",
+      "manifests": [".github/workflows"],
+      "detector": "github-releases"
+    },
+    {
+      "id": "security-tools",
+      "scope": "govulncheck-and-trivy",
+      "manifests": ["Makefile", ".github/workflows/ci.yml", ".github/workflows/release.yml", "scripts/security-scan.sh"],
+      "detector": "github-releases",
+      "components": {
+        "trivy": {
+          "repository": "aquasecurity/trivy",
+          "currentVersion": "0.72.0",
+          "pinnedDigest": "sha256:c6e969c5662a546ad5de4a73c2a6b7a7c627f86d916903e175aa623af5b97ada"
+        },
+        "govulncheck": {
+          "repository": "golang/vuln"
+        }
+      }
+    },
+    {
+      "id": "managed-kejilion-script",
+      "scope": "upstream-commit-and-content-digest",
+      "manifests": ["Dockerfile", "docs/external-config-sources.md"],
+      "detector": "github-branch-head",
+      "repository": "kejilion/sh",
+      "branch": "main"
+    }
+  ],
+  "adoptionClasses": [
+    {
+      "id": "emergency-security",
+      "criteria": "actively exploited, withdrawn, or reachable critical/high vulnerability",
+      "default": "immediate-triage-and-fix-or-mitigate",
+      "minimumVerification": "L2-or-L3"
+    },
+    {
+      "id": "compatible-patch",
+      "criteria": "stable patch within the supported compatibility line",
+      "default": "follow-after-change-aware-verification",
+      "minimumVerification": "L1-or-L2-by-impact"
+    },
+    {
+      "id": "minor",
+      "criteria": "stable minor without a declared breaking contract",
+      "default": "batch-and-adopt-after-benefit-and-compatibility-evidence",
+      "minimumVerification": "L2"
+    },
+    {
+      "id": "major-toolchain-base",
+      "criteria": "major version, compiler/runtime, base image, build frontend, scanner, or managed script",
+      "default": "isolated-upgrade-task-with-explicit-decision",
+      "minimumVerification": "L2-or-L3"
+    },
+    {
+      "id": "prerelease",
+      "criteria": "alpha, beta, rc, nightly, canary, or preview",
+      "default": "do-not-adopt-outside-an-explicit-experiment",
+      "minimumVerification": "isolated-experiment"
+    }
+  ],
+  "exceptionRequiredFields": [
+    "component",
+    "currentVersion",
+    "candidateVersion",
+    "reason",
+    "securityAndProductImpact",
+    "mitigation",
+    "owner",
+    "reviewDate",
+    "exitCondition",
+    "rollbackPoint"
+  ],
+  "exceptions": [],
+  "automationBoundary": {
+    "automaticDetection": true,
+    "automaticReport": true,
+    "automaticMainCommit": false,
+    "automaticRelease": false,
+    "automaticProductionDeployment": false
+  }
+}
