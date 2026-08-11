@@ -404,7 +404,9 @@ type idleReadCloser struct {
 
 func newIdleReadCloser(reader io.ReadCloser, timeout time.Duration) io.ReadCloser {
 	idle := &idleReadCloser{reader: reader, timeout: timeout}
+	idle.mu.Lock()
 	idle.timer = time.AfterFunc(timeout, func() { _ = idle.Close() })
+	idle.mu.Unlock()
 	return idle
 }
 
