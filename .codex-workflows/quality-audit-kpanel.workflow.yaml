@@ -1,7 +1,7 @@
 ---
 name: quality-audit-kpanel
 description: "审计快速迭代后的 KPanel 业务正确性、体验、性能、稳定、安全、交付节奏和发布门禁"
-version: "1.1"
+version: "1.2"
 author: "Codex"
 tags: [quality, security, performance, stability, ux, delivery, review, regression]
 params: [project_dir, baseline_ref, candidate_image, test_host]
@@ -138,7 +138,7 @@ make release-metrics
 
 ```bash
 git diff --check
-py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
+py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workflow.py}" \
   validate quality-audit-kpanel --project-dir "${{project_dir}}"
 ```
 

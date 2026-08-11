@@ -1,7 +1,7 @@
 ---
 name: evolve-kpanel
 description: "用可验证证据驱动 KPanel 规范、门禁和开发流程的受控自我改进，不自动提交、发布或放宽质量要求"
-version: "1.0"
+version: "1.1"
 author: "Codex"
 tags: [quality, governance, continuous-improvement, multi-agent, metrics]
 params: [project_dir, baseline_ref, observation_window, release_count, proposal_slug]
@@ -111,7 +111,7 @@ make verify-change
 git diff --check
 node scripts/check-governance-consistency.mjs
 node --test scripts/tests/report-release-metrics.test.mjs
-py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
+py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workflow.py}" \
   validate evolve-kpanel --project-dir "${{project_dir}}"
 ```
 

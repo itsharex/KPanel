@@ -2,6 +2,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -41,7 +42,61 @@ function requireText(relativePath, tokens) {
   }
 }
 
+function checkRepositoryHygiene() {
+  const trackedPaths = execFileSync(
+    'git',
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    },
+  ).split('\0').filter(Boolean);
+  const forbiddenTrackedPaths = [
+    /(^|\/)\.codex-tmp\//i,
+    /(^|\/)node_modules\//i,
+    /(^|\/)web\/dist\//i,
+    /(^|\/)coverage\//i,
+  ];
+  const forbiddenContent = [
+    {
+      pattern: /[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s"'`<>]+[\\/]+/i,
+      label: 'machine-specific Windows user path',
+    },
+    {
+      pattern: /AppData[\\/]+Local[\\/]+Temp/i,
+      label: 'local temporary attachment path',
+    },
+    {
+      pattern: new RegExp('codex-' + 'clipboard', 'i'),
+      label: 'temporary clipboard attachment marker',
+    },
+    {
+      pattern: new RegExp('<codex_' + 'delegation|<source_' + 'thread_id', 'i'),
+      label: 'Codex session delegation envelope',
+    },
+  ];
+
+  for (const relativePath of trackedPaths) {
+    const normalizedPath = relativePath.replaceAll('\\', '/');
+    if (forbiddenTrackedPaths.some((pattern) => pattern.test(normalizedPath))) {
+      failures.push(relativePath + ': generated or temporary path must not be tracked');
+      continue;
+    }
+
+    const raw = readFileSync(resolve(repoRoot, relativePath));
+    if (raw.includes(0)) continue;
+    const content = raw.toString('utf8');
+    for (const rule of forbiddenContent) {
+      const match = rule.pattern.exec(content);
+      if (!match) continue;
+      const line = content.slice(0, match.index).split('\n').length;
+      failures.push(relativePath + ':' + line + ': contains ' + rule.label);
+    }
+  }
+}
+
 for (const relativePath of requiredFiles) read(relativePath);
+checkRepositoryHygiene();
 
 const adapterTokens = [
   'PROJECT_RULES.md',

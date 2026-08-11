@@ -22,3 +22,9 @@
 工作流由 `codex-workflows` 技能管理。使用前运行 `workflow.py list`，执行前使用
 `workflow.py run <name> --param key=value` 渲染参数，修改后必须运行
 `workflow.py validate <name>`。
+
+## Portability and repository hygiene
+
+- Resolve the workflow CLI from `CODEX_WORKFLOWS_CLI` when set; otherwise use the current user's `$HOME` skill directory. Never commit a workstation username or temporary attachment path.
+- Keep session delegation envelopes, clipboard attachments, generated output, and local evidence outside tracked source files.
+- `node scripts/check-governance-consistency.mjs` enforces these rules on every tracked file.

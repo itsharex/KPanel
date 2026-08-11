@@ -1,7 +1,7 @@
 ---
 name: release-kpanel
 description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产观察和回滚记录"
-version: "1.6"
+version: "1.7"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, apps_repo]
@@ -169,7 +169,8 @@ git push origin "v${{version}}"
 5. Docker Hub 登录；
 6. 多架构版本镜像；
 7. 稳定版 `latest` 提升；
-8. GitHub Release 正式公开。
+8. GitHub Release 正式公开；
+9. 确认候选分支提交已包含于发布标签后自动删除候选分支。
 
 **Expected output:** Release workflow 全绿，GitHub Release 为非 draft、非 prerelease。
 
@@ -287,9 +288,9 @@ KPANEL_EXPECTED_VERSION="${{version}}" \
 ## Verification
 
 ```bash
-py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
+py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workflow.py}" \
   validate release-kpanel --project-dir "${{project_dir}}"
-py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
+py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workflow.py}" \
   run release-kpanel --project-dir "${{project_dir}}" \
   --param project_dir="${{project_dir}}" \
   --param version=0.0.0-test \

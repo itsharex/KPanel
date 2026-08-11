@@ -263,6 +263,9 @@ git push origin HEAD:refs/heads/<task-branch>
 - `origin/main` 前移或候选 `HEAD` 改变时立即停止，重新构造候选并重验；
 - 候选 CI、主线 CI、Release 和公开镜像依次通过后可标记“产物已发布”；只有生产部署已明确授权且
   备份、部署和生产验收通过，才标记“生产已验证”。
+- GitHub Release 公开后，Release workflow 仅在候选分支提交已包含于发布标签时自动删除该候选分支；
+  失败或发生分叉时保留分支并阻断清理，禁止强删。已合并功能分支在确认提交可由 `main`、Tag 或本地
+  bundle 恢复后及时删除，并解除本地 upstream，避免普通推送重新创建。
 - 生产回滚不以单台实例恢复为结束：发布任务必须在同一交付包中记录 GitHub Latest、Docker `latest`
   和标准更新入口的实际指向。未通过生产验收的版本不得无提示继续成为公共默认更新；历史 tag、Release
   和不可变版本镜像继续保留，默认通道恢复或短期例外必须有证据、负责人和结束条件。
