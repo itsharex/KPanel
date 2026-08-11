@@ -9,6 +9,7 @@ import {
   isStableVersion,
   npmInvocation,
   parseConcatenatedJson,
+  requestHeaders,
   renderMarkdown,
   summarize,
   validatePolicy,
@@ -29,6 +30,13 @@ test('npm invocation avoids Windows command-shell wrappers and supports override
   assert.deepEqual(npmInvocation('win32', { NPM: 'custom-npm' }, 'node'), { command: 'custom-npm', prefixArguments: [] });
   assert.equal(goExecutable({}), 'go');
   assert.equal(goExecutable({ GO: 'custom-go' }), 'custom-go');
+});
+
+test('GitHub token is never sent to non-GitHub upstreams', () => {
+  const environment = { GITHUB_TOKEN: 'secret' };
+  assert.equal(requestHeaders('https://api.github.com/repos/actions/checkout', environment).Authorization, 'Bearer secret');
+  assert.equal(requestHeaders('https://hub.docker.com/v2/repositories/library/node', environment).Authorization, undefined);
+  assert.equal(requestHeaders('https://nodejs.org/dist/index.json', environment).Authorization, undefined);
 });
 
 test('version comparison and classification separate patch, minor, and major/toolchain changes', () => {

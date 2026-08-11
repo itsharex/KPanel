@@ -2,7 +2,7 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, win32 as win32Path } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_POLICY = 'dependency-policy.json';
@@ -60,7 +60,7 @@ export function npmInvocation(platform = process.platform, environment = process
   if (platform === 'win32') {
     return {
       command: nodeExecutable,
-      prefixArguments: [environment.NPM_CLI_JS || resolve(dirname(nodeExecutable), 'node_modules/npm/bin/npm-cli.js')],
+      prefixArguments: [environment.NPM_CLI_JS || win32Path.resolve(win32Path.dirname(nodeExecutable), 'node_modules/npm/bin/npm-cli.js')],
     };
   }
   return { command: 'npm', prefixArguments: [] };
@@ -208,14 +208,18 @@ export function parseConcatenatedJson(input) {
   return values;
 }
 
-function headers() {
-  const result = { Accept: 'application/vnd.github+json', 'User-Agent': 'KPanel-Dependency-Freshness' };
-  if (process.env.GITHUB_TOKEN) result.Authorization = 'Bearer ' + process.env.GITHUB_TOKEN;
+export function requestHeaders(url, environment = process.env) {
+  const host = new URL(url).hostname.toLowerCase();
+  const result = { Accept: 'application/json', 'User-Agent': 'KPanel-Dependency-Freshness' };
+  if (host === 'api.github.com') {
+    result.Accept = 'application/vnd.github+json';
+    if (environment.GITHUB_TOKEN) result.Authorization = 'Bearer ' + environment.GITHUB_TOKEN;
+  }
   return result;
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url, { headers: headers(), signal: AbortSignal.timeout(20_000) });
+  const response = await fetch(url, { headers: requestHeaders(url), signal: AbortSignal.timeout(20_000) });
   if (!response.ok) throw new Error(url + ' returned HTTP ' + response.status);
   return response.json();
 }
