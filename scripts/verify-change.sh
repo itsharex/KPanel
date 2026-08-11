@@ -42,6 +42,8 @@ if [[ -n "$base_ref" ]] && git cat-file -e "${base_ref}^{commit}" 2>/dev/null; t
 fi
 ECOSYSTEM_POLICY_BASE_REF="$base_ref" bash scripts/check-ecosystem-policy.sh
 bash scripts/check-version-consistency.sh
+node scripts/check-governance-consistency.mjs
+node --test scripts/tests/report-release-metrics.test.mjs
 
 if [[ ${#changed_files[@]} -eq 0 ]]; then
   echo "No changes require verification."

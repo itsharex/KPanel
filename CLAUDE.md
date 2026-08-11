@@ -1,46 +1,41 @@
-# KPanel Claude 协作入口
+# KPanel Claude 适配入口
 
-本文件是 Claude/Claude Code 参与 KPanel 开发时的入口。开始任何任务前完整阅读：
+本文件只说明 Claude/Claude Code 如何进入共享规范，不维护 Claude 专属的产品规则、质量标准或门禁。
+开始任务前完整阅读：
 
-1. `PROJECT_RULES.md`
-2. `docs/project-management.md`
-3. `docs/multi-agent-collaboration.md`
-4. 与任务相关的设计文档、实现和测试
+1. `PROJECT_RULES.md`；
+2. `docs/project-management.md`；
+3. `docs/multi-agent-collaboration.md`；
+4. 与任务相关的设计文档、现有实现和测试。
 
-## 强制规则
+## 启动与所有权
 
-- 远端任务分支、聚焦提交、CI 和发布记录是跨 Codex、Claude 和其他智能体的任务真源。GitHub Issue、
-  PR、API 和 `gh` 登录不是写任务前置条件。
-- Git fetch/push 统一使用 SSH 远端 `git@github.com:kejilion/KPanel.git`；私钥和本机 SSH 配置不得写入
-  仓库。任务开始前必须明确负责人、允许路径、基线、分支、worktree、验收等级和权限。
-- 一个写任务只拥有一个独立 Git worktree 和一个短期分支；不得在
-  `C:\GitHub\kejilion-panel` 管理工作树中开发。
-- 开始和恢复任务时重新读取 `origin/main`、目标远端分支、最新提交、`git worktree list` 和工作树状态；
+- 先核对 `origin/main`、目标远端分支、`git status --short --branch`、`git worktree list` 和精确基线；
   不根据旧会话记忆继续写入。
-- 不修改其他智能体声明的路径，不切换、重置、清理或删除其他任务的工作树、分支和未提交内容。
-- 使用 `PROJECT_RULES.md` 的 L0-L3 核验等级以及项目的 `make verify-change`、
-  `make verify-release` 权威入口，不创建 Claude 专属的平行门禁。
-- `.codex-workflows/` 是 Codex 适配层。除非任务就是维护 Codex 工作流，否则 Claude 只读取其内容
-  作为参考，不把它当作跨智能体状态真源。
-- 未经用户明确授权，不提交、推送、快进 `main`、打标签、发布或部署。
+- 按 `docs/project-management.md` 使用统一任务契约和 Definition of Ready/Done。任务必须明确角色、
+  scope、允许/禁止路径、共享契约、业务真源、受影响用户旅程、worktree/branch/base、L0-L3、证据和权限。
+- 一个写任务独占一个专用 worktree 和短期分支；管理工作树只用于同步、盘点和只读比较。
+- 不修改其他智能体拥有的路径，不切换、重置、清理、删除或覆盖其他任务的工作树、分支和未提交内容。
+- SSH 远端 `git@github.com:kejilion/KPanel.git`、聚焦提交、CI、Release 和验收记录是跨工具真源；
+  会话历史、Todo、模型记忆、GitHub Issue/PR/API 和 `gh` 不是写任务前置条件或长期状态。
 
-## 任务交付
+## 实施与验证
 
-结束前形成聚焦提交；已获推送授权时通过 SSH 推送任务分支，并在回复中同步：
+- 先使用 `rg` 定位直接相关代码、测试和文档，已有精确证据足够时不重复全仓扫描。
+- 使用 `PROJECT_RULES.md` 的 L0-L3 和 `make verify-change`、`make verify-l2`、`make verify-release`
+  权威入口，不创建 Claude 专属平行命令。
+- 定向测试用于反馈，不能替代对应等级门禁；门禁不能替代受影响业务互通、实机、浏览器、性能或回滚证据。
+- 证据只对精确提交、环境、工具和参数有效；未变化时复用，变化时从受影响层重跑。
+- `.codex-workflows/` 是 Codex 执行适配层。Claude 可参考步骤，但共享规则仍以根规范和项目管理文档为准。
+- 发现 `HEAD`、分支、文件或所有权非预期变化时立即停止并按冲突恢复流程保留现场，不执行破坏性清理。
 
-```text
-AI / 会话角色：
-目标与范围：
-worktree / branch / base：
-提交：
-修改文件：
-验证命令与结果：
-未验证风险：
-依赖或冲突：
-建议状态与目标版本：
-回滚方式：
-推送/合并/发布状态：
-```
+## 交付与权限
 
-跨智能体移交必须先释放原负责人写入权，再由接手者重新核对远端分支、提交和工作树状态；禁止两个智能体
-在同一分支或 worktree 中同时写入。
+达到 Definition of Done 后使用项目管理规范的标准交付包，区分已验证事实、分析结论、建议和未验证
+风险，并包含精确 Git 状态、质量维度、证据层级、测试、回滚和权限状态。
+
+- 用户要求修改不自动授权提交、推送、更新 `main`、tag、Release 或部署。
+- 未获提交授权时保留专用 worktree 差异并标记“待提交授权”，不得交给下一智能体集成。
+- 获得提交/推送授权后形成聚焦提交并通过 SSH 推送任务分支；只有唯一集成/发布任务在明确授权后
+  才能更新 `main` 或发布。
+- 跨智能体交接前原负责人停止写入并释放所有权；接手者重新 fetch、核对提交和差异后再接管。

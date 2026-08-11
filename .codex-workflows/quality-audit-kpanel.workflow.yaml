@@ -1,20 +1,21 @@
 ---
 name: quality-audit-kpanel
-description: "审计快速迭代后的 KPanel 规范一致性、功能正确性、性能预算、安全暴露面和发布门禁"
-version: "1.0"
+description: "审计快速迭代后的 KPanel 业务正确性、体验、性能、稳定、安全、交付节奏和发布门禁"
+version: "1.1"
 author: "Codex"
-tags: [quality, security, performance, review, regression]
+tags: [quality, security, performance, stability, ux, delivery, review, regression]
 params: [project_dir, baseline_ref, candidate_image, test_host]
 created: "2026-08-02T13:02:08Z"
-updated: "2026-08-02T13:02:08Z"
+updated: "2026-08-11T00:00:00+08:00"
 ---
 
 # KPanel Quality Audit
 
 ## Purpose
 
-在不改业务、不发布的前提下，对高频迭代后的 KPanel 做可重复健康审计。先收集证据，
-再只修复可复现缺陷或缺失门禁，避免把一次性人工检查误当成长期质量保障。
+在不改业务、不发布的前提下，对高频迭代后的 KPanel 做可重复健康审计。按项目真实业务域和用户
+旅程收集业务正确性、体验、性能、稳定、安全与交付节奏证据，再只修复可复现缺陷或缺失门禁，
+避免把一次性人工检查、发布次数或测试退出码误当成长期质量结论。
 
 ## Prerequisites
 
@@ -64,6 +65,9 @@ docker run --rm \
 
 **Expected output:** Go/Web/Shell、race、版本一致性、源码与镜像扫描、Linux 构建和应用生命周期全部通过。
 
+同时选择本轮改动影响的核心用户旅程，核对真实状态来源、`kejilion.sh`/Web 双向继续管理、
+Agent 离线降级和长任务恢复。没有影响的旅程记录不适用依据，不无差别制造生产写操作。
+
 ### 4. 验证性能预算
 
 在 `${{test_host}}` 的隔离目录和端口，以以下限制启动 `${{candidate_image}}`：
@@ -77,7 +81,16 @@ memory=256 MiB, cpu=1, pids=128, read-only, non-root, cap-drop=ALL
 
 **Expected output:** 满足文档预算；单次波动不得直接定性为回归，超预算必须复跑并保留原始证据。
 
-### 5. 验证网络入侵与供应链安全
+### 5. 验证用户体验与可访问性
+
+在真实浏览器验证受影响页面的桌面/窄视口、浅/深色、键盘与焦点、缩放、多语言、加载/空/失败态、
+长文本和控制台错误。终端、对话框、固定底栏和桌面窗口不得遮挡焦点或输入；点击目标、焦点可见和
+无意外上下文切换按 `docs/development-quality-standard.md` 的 WCAG 2.2 目标复核。
+
+**Expected output:** 受影响用户旅程能够完成，问题有视口、主题、语言、步骤和截图/浏览器证据；
+未登录或未执行写操作的范围明确标记，不用登录页正常代替登录后功能结论。
+
+### 6. 验证网络入侵与供应链安全
 
 ```bash
 make security-audit
@@ -91,10 +104,26 @@ Unix Socket 鉴权和最终容器限制。记录 Docker、containerd、runc、�
 
 **Expected output:** 无可达 High/Critical；不可达项有版本、调用路径和复核日期证据。
 
-### 6. 只修复可复现缺陷或自动门禁
+### 7. 复核发布节奏与证据质量
+
+从标签、验收记录和发布结果统计滚动 14 天及最近 20 个正式版本的部署频率、提交到生产用时、
+变更失败/回滚/紧急热修复、恢复时间和重复发布原因。检查验收记录是否区分自动测试、隔离真机、
+公开产物和生产观察，是否把未验证项或历史版本结果误写为当前通过。
+
+```bash
+make release-metrics
+```
+
+**Expected output:** 同时报告交付速度和稳定性；数据不足时先形成基线，不以高频或低频单独定性。
+
+### 8. 只修复可复现缺陷或自动门禁
 
 优先级：可利用安全缺陷、数据完整性、错误成功判定、资源无界、竞态、发布门禁缺失、性能回归。
 只修改最小范围并重跑受影响测试，不顺带重构或发布。
+
+如果问题属于重复缺陷、指标持续恶化或规范/门禁缺口，先按
+`docs/quality-improvement-proposal-template.md` 形成提案，再运行 `evolve-kpanel` 工作流；一次偶发环境失败
+只记录证据，不直接改写永久规范。
 
 **Expected output:** 修复可回滚，自动测试能阻止同类问题再次进入主线。
 
@@ -113,8 +142,8 @@ py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
   validate quality-audit-kpanel --project-dir "${{project_dir}}"
 ```
 
-最终报告必须包含：已验证事实、修改文件、测试和性能原始结果、安全可达性结论、回滚点、
-无法验证部分，以及是否提交、推送或发布。
+最终报告必须包含：项目/版本基线、已验证事实、修改文件、受影响用户旅程、体验与性能原始结果、
+安全可达性、稳定/恢复、交付节奏、证据层级、回滚点、无法验证部分，以及是否提交、推送或发布。
 
 ## Notes
 

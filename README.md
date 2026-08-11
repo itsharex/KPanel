@@ -130,7 +130,7 @@ Compose/`daemon.json` 通用编辑器、系统重装非交互适配器，以及�
   [两步验证安全契约](docs/two-factor-authentication.md)、
   [管理员密码恢复](docs/password-recovery.md)、
   [多语言架构与本地化契约](docs/internationalization.md)、
-  [性能、稳定性、资源与网络入侵安全开发规范](docs/development-quality-standard.md)
+  [产品质量与验收标准](docs/development-quality-standard.md)
 - 生态兼容：[kejilion.sh 兼容基线](docs/compatibility.md)、
   [网站业务分析](docs/legacy-site-contract.md)、
   [应用市场对齐](docs/application-market.md)

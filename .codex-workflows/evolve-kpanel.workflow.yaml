@@ -1,0 +1,126 @@
+---
+name: evolve-kpanel
+description: "用可验证证据驱动 KPanel 规范、门禁和开发流程的受控自我改进，不自动提交、发布或放宽质量要求"
+version: "1.0"
+author: "Codex"
+tags: [quality, governance, continuous-improvement, multi-agent, metrics]
+params: [project_dir, baseline_ref, observation_window, release_count, proposal_slug]
+created: "2026-08-11T00:00:00+08:00"
+updated: "2026-08-11T00:00:00+08:00"
+---
+
+# KPanel Controlled Evolution
+
+## Purpose
+
+把重复缺陷、指标恶化、证据缺口、事故逃逸或反复人工步骤转化为小范围、可证伪、可回滚的工程改进。
+本流程只产生改进提案、任务分支差异和验证证据；规范不能自行放宽门禁，流程不能自行提交、推送、发布或操作生产。
+
+## Prerequisites
+
+- 已完整阅读 `PROJECT_RULES.md`、`docs/project-management.md` 和 `docs/development-quality-standard.md`。
+- `${{project_dir}}` 是独立 KPanel worktree，`${{baseline_ref}}` 是精确且已批准的基线提交或标签。
+- 已有至少一种可复核触发证据：重复缺陷、滚动指标退化、验收记录缺口、CI/生产事件或高成本人工步骤。
+- 已明确允许修改范围、非目标、验证等级和回滚点；没有用户授权时不提交、不推送、不发布、不操作生产。
+
+## Steps
+
+### 1. 固定基线并建立事实窗口
+
+```bash
+cd "${{project_dir}}"
+git status --short --branch
+git rev-parse HEAD
+git diff --stat "${{baseline_ref}}..HEAD"
+node scripts/report-release-metrics.mjs \
+  --days "${{observation_window}}" \
+  --releases "${{release_count}}" \
+  --ref "${{baseline_ref}}" \
+  --format markdown
+```
+
+**Expected output:** 工作树、精确基线、观察窗口、可用样本和缺失数据清楚；标签时间不冒充生产完成时间。
+
+### 2. 创建结构化改进提案
+
+复制 `docs/quality-improvement-proposal-template.md` 为
+`docs/quality-improvement-<YYYY-MM-DD>-${{proposal_slug}}.md`，填写原始证据、原因假设、替代解释、
+基线、目标、防回归指标、范围、非目标、权限和回滚。没有足够数据时提案状态保持“草案/建立基线”。
+
+**Expected output:** 提案中的每项结论能追溯到版本、环境、命令、日志、验收记录或事件，不使用“AI 认为”作为证据。
+
+### 3. 对齐产品核心约束并评估方案
+
+核对 `kejilion.sh` 业务真源、真实系统资源、Panel/Agent 权限边界、双端互通、轻量资源预算和六维质量标准。
+至少比较“维持现状”和一个最小改动方案，说明收益、成本、失败边界以及是否会形成第二真源或额外常驻复杂度。
+
+**Expected output:** 方案解决已观察问题，不因追求单一指标破坏安全、稳定、性能、体验、数据或兼容性。
+
+### 4. 独立复核假设与准入
+
+由未编写方案的复核者独立读取原始证据，检查样本代表性、替代解释、可证伪目标、规则自我弱化和指标投机风险。
+按 `docs/project-management.md` 完成 Definition of Ready；复核不通过时停止实施并保留拒绝理由。
+
+**Expected output:** 复核结论、异议和修订均写入提案，不能只记录“同意”。
+
+### 5. 实施最小可回滚改动
+
+只在专用分支/worktree 修改提案范围内文件。优先改唯一脚本、测试或 Make 入口，再让文档和工具适配引用该入口；
+不得为了让门禁通过而删除测试、降低阈值、扩大例外或批量重写历史证据。
+
+**Expected output:** 差异聚焦、回滚点明确、现有用户改动保留，没有提交、推送或发布越权。
+
+### 6. 从受影响层级验证并比较指标
+
+```bash
+node scripts/check-governance-consistency.mjs
+node --test scripts/tests/report-release-metrics.test.mjs
+make verify-change
+```
+
+按风险补 `make verify-l2`、`make verify-release`、隔离真机、浏览器、公开产物或经授权的生产观察。
+使用与基线相同环境、样本和参数比较主指标及防回归指标；记录无法验证的层级。
+
+**Expected output:** 改进目标和所有受影响质量维度有证据；工具退出码不被解释为未执行业务场景成功。
+
+### 7. 做出采纳、继续试行、拒绝或回滚决定
+
+将精确差异、命令结果、指标比较、未验证风险和权限状态写入提案。只有目标达成且防回归指标未恶化时才建议采纳；
+采纳永久规范仍需独立复核和正常集成授权。结果不达标时拒绝、缩小假设或按预定步骤回滚。
+
+**Expected output:** 决策可由下一会话从 Git、CI、验收记录和提案独立重建，不依赖会话记忆。
+
+### 8. 在观察窗口结束后复盘
+
+在 `${{observation_window}}` 天或约定样本量结束后重新运行相同指标，核对缺陷复发、误报、人工成本和六维质量变化。
+把稳定有效的能力沉淀到唯一规范、自动门禁或现有工作流；无长期价值的临时实验不进入永久规范。
+
+**Expected output:** 提案状态和最终结果已更新；恶化时触发回滚，成功时没有重复规范或平行入口。
+
+## Parameters
+
+- `${{project_dir}}`：KPanel 专用 worktree 绝对路径。
+- `${{baseline_ref}}`：改进前精确提交或稳定标签。
+- `${{observation_window}}`：观察天数，通常为 `14`，可按风险和样本量调整。
+- `${{release_count}}`：滚动正式版本样本，通常为 `20`。
+- `${{proposal_slug}}`：只含小写字母、数字和连字符的提案标识。
+
+## Verification
+
+```bash
+git diff --check
+node scripts/check-governance-consistency.mjs
+node --test scripts/tests/report-release-metrics.test.mjs
+py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
+  validate evolve-kpanel --project-dir "${{project_dir}}"
+```
+
+最终交付必须说明：触发证据、基线和目标、修改文件、验证结果、独立复核、观察窗口、未验证风险、回滚点，
+以及提交、推送、发布、生产和知识沉淀状态。
+
+## Notes
+
+- 高频发布、低频发布、测试数量或模型信心都不能单独触发规范变化。
+- 指标用于发现问题和验证假设，不是绩效目标；数据缺失必须显式报告，不得按成功计入。
+- 安全边界、真实资源真源、双端兼容和授权边界属于硬约束，不能由本流程自行取消。
+- 生产观察和发布必须进入现有发布通道并获得明确授权，本流程不扩大权限。

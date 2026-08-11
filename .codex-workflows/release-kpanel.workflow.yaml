@@ -1,21 +1,21 @@
 ---
 name: release-kpanel
-description: "完成 KPanel 版本准备、CI、GitHub Release、Docker Hub、应用市场契约核对和公开镜像验收"
-version: "1.4"
+description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产观察和回滚记录"
+version: "1.5"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, apps_repo]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-05T00:00:00+08:00"
+updated: "2026-08-11T00:00:00+08:00"
 ---
 
 # Release KPanel
 
 ## Purpose
 
-把 KPanel 的 L3 发布链路固化为可重复执行、可验证、可回滚的流程。链路包括版本准备、
+把 KPanel 的 L3 发布链路固化为可重复执行、可验证、可回滚的流程。链路包括发布画像、版本准备、
 发布候选与主仓库 CI、GitHub Release、Docker Hub 多架构镜像、`latest` 提升、
-`kejilion/apps` 应用市场契约核对和公开镜像端到端验收。
+`kejilion/apps` 应用市场契约核对、公开镜像端到端验收，以及隔离真机/生产证据和统一验收记录。
 
 ## Prerequisites
 
@@ -57,8 +57,15 @@ git tag --list "v${{version}}"
 可追溯版本；若版本已占用，必须提升版本号。把 `origin/main` 的提交记为发布基线；
 正式推送前若远端已前移，必须停止并重新审计，不得顺带合入其他会话或功能的代码。
 
+在冻结候选前按 `docs/release-acceptance-template.md` 建立发布画像，至少写明：
+
+- 业务域和变更面（展示、只读、宿主机写入、协议/数据、部署）；
+- 受影响核心用户旅程和未变化契约；
+- 业务正确性、安全、稳定、性能/资源、用户体验、数据/迁移分别需要的证据；
+- 哪些危险、付费或耗流量场景只在隔离真机执行，哪些生产动作已获得授权。
+
 **Expected output:** 发布单写者成立，候选提交清单和基线明确，目标版本未占用，记录
-`${{previous_version}}` 对应源码和镜像回滚点。
+`${{previous_version}}` 对应源码和镜像回滚点；发布画像能够解释必测项和不适用维度。
 
 ### 2. 准备一致的版本变更
 
@@ -113,6 +120,10 @@ docker run --rm \
 - 镜像平台包含 `linux/amd64` 和 `linux/arm64`；
 - 稳定版本才提升 `latest`；
 - Release action 和 Docker action 使用固定提交摘要。
+
+按发布画像补充自动门禁不能代替的证据：受影响性能基准、桌面/窄视口、浅/深色、键盘/焦点、
+多语言、失败状态、`kejilion.sh` 双向互通，以及 L2/L3 写路径的失败注入、重启恢复和回滚。
+危险或破坏性写操作优先使用隔离真机，不为了生产形式完整主动改变无关业务数据。
 
 **Expected output:** L3 测试、构建、安装安全、应用配置生命周期和工作流静态检查全部通过。
 
@@ -217,7 +228,31 @@ KPANEL_EXPECTED_VERSION="${{version}}" \
 **Expected output:** 输出 `image_e2e=pass`，Release、Actions 和 Docker Hub 均与
 `${{version}}` 一致；应用市场为“同哈希且无需提交”或“配置已同步并提交”。
 
-### 9. 统一交付并记录证据
+### 9. 在明确授权范围内完成生产部署与观察
+
+生产操作必须有本次明确授权。部署前记录当前版本、Panel/Agent 健康、镜像摘要、数据/配置位置和
+可恢复备份；使用 KPanel 标准应用市场更新入口，不直接改正式数据或绕过安装事务。部署后至少复核：
+
+- 健康接口版本、Panel healthy/重启/OOM、Agent active/重启/协议版本；
+- 生产镜像 digest、OCI 源码修订、宿主机 Agent 与正式镜像内二进制摘要；
+- 状态文件可解析、数据库完整性、近期日志、权威公网入口和连续健康采样；
+- 发布画像中已授权的用户旅程；危险、付费、耗流量或无关写操作继续使用隔离真机证据。
+
+若用户只授权发布正式产物而未授权生产部署，停止在此步骤并明确记录“正式产物已发布，生产未部署/
+未验证”，不得复用上一版本生产结果或把公开镜像 E2E 写成生产成功。
+
+**Expected output:** 已授权时生产运行版本与正式 digest/commit 一致、备份和回滚可执行；未授权时没有
+生产状态变化且未验证边界清晰。
+
+### 10. 形成统一验收记录并交付
+
+从 `docs/release-acceptance-template.md` 创建 `docs/release-v${{version}}-acceptance.md`，记录精确提交、
+发布画像、多维质量状态、候选/主线/Release、公开产物、隔离真机、生产观察、回滚和遗留风险。
+自动测试、隔离真机、公开产物和生产观察必须分层填写；生产未执行的管理员写操作不得写成已验证。
+
+记录候选冻结和生产完成时间、提交到生产用时、是否发生回滚/紧急热修复/重复发布及原因，供滚动
+14 天和最近 20 个版本的发布节奏复核。验收记录在获得相应提交/推送授权后形成独立聚焦提交；
+未获授权时保留工作树差异并回传，不得擅自更新 `main`。
 
 最终回传必须包含：
 
@@ -227,10 +262,14 @@ KPANEL_EXPECTED_VERSION="${{version}}" \
 - 支持的平台；
 - `kejilion/apps` 契约核对结果，以及有变更时的提交；
 - 公开镜像 E2E 结果；
+- 多维质量状态、受影响用户旅程和证据层级；
+- 生产已验证动作与仅在隔离真机验证的动作；
+- 发布节奏数据和重复发布原因（如有）；
 - 保留的无关本地改动；
 - `${{previous_version}}` 回滚点及任何未验证风险。
 
-**Expected output:** 用户无需查看其他会话即可获得完整、可追溯的发布结论。
+**Expected output:** 验收文档结构完整，用户无需查看其他会话即可区分已验证、不适用和未验证风险，
+并获得完整、可追溯的发布结论。
 
 ## Parameters
 
@@ -262,6 +301,8 @@ py -3 C:/Users/Administrator/.codex/skills/codex-workflows/scripts/workflow.py \
 - Release 失败时先定位精确失败步骤；不得把登录成功等同于推送和提升 `latest` 成功。
 - 若失败发生在正式产物生成之后，修复后发布新的 patch 版本，不移动或覆盖旧 tag。
 - 若仅生成 draft Release，不得手工公开；镜像成功且线上验收通过后才允许公开。
+- 高频发布不自动视为失败，也不自动豁免门禁；同一问题的候选冻结前连续微调应尽量聚合，
+  冻结后的独立修复使用新 patch 版本并记录原因。
 - 源码回滚与镜像回滚分别记录；历史源码 tag 不代表一定存在可用 Docker 镜像。
 - 发布 worktree 的分支、`HEAD` 或文件被外部任务改变时立即停止；不得重置他人改动，迁移到新的
   专用候选 worktree 并重新执行受影响门禁。

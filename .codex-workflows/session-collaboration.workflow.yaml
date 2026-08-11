@@ -1,19 +1,20 @@
 ---
 name: session-collaboration
 description: "Route KPanel work through isolated worktrees and SSH-backed remote branches."
-version: "4.0"
+version: "4.1"
 author: "Codex"
 tags: [kpanel, collaboration, multi-agent, worktree, review]
 params: [role, scope, agent_provider, base_ref, verification_level]
 created: "2026-07-27T08:45:12Z"
-updated: "2026-08-08T04:03:10Z"
+updated: "2026-08-11T00:00:00+08:00"
 ---
 
 # KPanel Session Collaboration
 
 ## Purpose
 
-Safely route KPanel work across Codex, Claude, or another agent, isolate every writer in its own worktree, and keep cross-tool state in SSH remote branches, focused commits, and CI evidence.
+Safely route KPanel work across Codex, Claude, or another agent, enforce the shared Definition of Ready/Done,
+isolate every writer in its own worktree, and keep cross-tool state in SSH remote branches, focused commits, and evidence.
 
 ## Prerequisites
 
@@ -50,13 +51,17 @@ Expected: one task owns one worktree and one branch; no writer uses the manageme
 
 ### 3. Send the task contract
 
-The prompt must include `${{scope}}`, provider, goal, allowed scope, forbidden scope, worktree path, branch, base commit, rollback point, verification level, permission to commit/push/update main/release, and the required delivery-package fields from `docs/project-management.md`.
+Use the exact shared contract from `docs/project-management.md`. It must include `${{scope}}`, provider/role, user
+value, allowed/forbidden paths and shared contracts, business truth source and affected user journeys, worktree, branch,
+base/rollback, dependencies/conflicts, verification level and evidence, permissions, completion criteria, and deliverables.
 
-Expected: the task can act without guessing ownership or release authority.
+Expected: Definition of Ready is satisfied; the task can act without guessing ownership, quality scope, or authority.
 
 ### 4. Wait and inspect the result
 
-Use provider-specific waiting only as a local optimization. The agent must form a focused commit before handoff or completion and, when authorized, push the task branch over SSH. Then inspect:
+Use provider-specific waiting only as a local optimization. The agent must meet Definition of Done and return the
+standard delivery package. When commit/push is authorized, form a focused commit and push the task branch over SSH;
+without commit authority keep the diff in the dedicated worktree and do not classify it ready for integration. Then inspect:
 
 ```powershell
 git status --short --branch
@@ -65,13 +70,18 @@ git diff --check ${{base_ref}}...HEAD
 git diff --stat ${{base_ref}}...HEAD
 ```
 
-Run the required repository-native check for `${{verification_level}}` if the task evidence is incomplete.
+Reuse successful evidence only when commit, environment, tools and parameters are unchanged. Run the required
+repository-native check for `${{verification_level}}` when evidence is incomplete or invalidated; complement it with
+affected business, browser, real-machine, performance, or production evidence rather than repeating identical commands.
 
-Expected: the diff matches the requested scope and the reported tests are reproducible.
+Expected: the diff matches the requested scope, quality dimensions and user journeys are classified, and the reported
+tests and evidence are reproducible.
 
 ### 5. Classify the delivery
 
-Set the outcome to one of: development, verification, ready-for-integration, blocked, or abandoned. Report the exact commit, remaining risk, target version recommendation, rollback point, and whether anything was pushed or deployed.
+Set the outcome to one of: executing, awaiting-input, awaiting-commit-authorization, awaiting-verification,
+ready-for-integration, blocked, or abandoned. Report exact Git state, quality/evidence status, remaining risk, target
+version recommendation, rollback point, and whether anything was committed, pushed, released, or deployed.
 
 ## Parameters
 
@@ -86,6 +96,8 @@ Set the outcome to one of: development, verification, ready-for-integration, blo
 - No two write tasks own the same worktree or branch.
 - The management worktree was not used for feature or release writes.
 - The delivery package contains exact Git state and reproducible verification evidence.
+- Definition of Ready and Definition of Done were applied from `docs/project-management.md`, not redefined locally.
+- Existing evidence was reused only for an unchanged commit/environment/parameter tuple.
 - No push, tag, release, or deployment occurred without explicit authority.
 
 ## Notes
