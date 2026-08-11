@@ -696,6 +696,52 @@ export interface AccountManagementActionResult {
 	appliedAt: string
 }
 
+export interface SSHDefenseEvent {
+	occurredAt: string
+	action: 'found' | 'ban' | 'unban'
+	address: string
+}
+
+export interface SSHDefenseSnapshot {
+	resourceVersion: string
+	installed: boolean
+	running: boolean
+	enabled: boolean
+	autostart: boolean
+	jail: 'sshd' | 'alpine-sshd'
+	profile: 'mild' | 'standard' | 'strict' | 'custom'
+	banTimeSeconds: number
+	findTimeSeconds: number
+	maxRetry: number
+	currentFailed: number
+	totalFailed: number
+	currentBanned: number
+	totalBanned: number
+	bannedIps: string[]
+	bansTruncated: boolean
+	trustedAddresses: string[]
+	recentEvents: SSHDefenseEvent[]
+	maintenance: SystemManagement['maintenance']
+	observedAt: string
+}
+
+type SSHDefenseActionBase = { expectedResourceVersion: string }
+
+export type SSHDefenseActionInput =
+	| (SSHDefenseActionBase & { action: 'enable' | 'disable' | 'uninstall' | 'unban-all' })
+	| (SSHDefenseActionBase & { action: 'set-profile'; profile: 'mild' | 'standard' | 'strict' })
+	| (SSHDefenseActionBase & { action: 'add-trusted' | 'remove-trusted' | 'unban'; address: string })
+
+export interface SSHDefenseActionResult {
+	action: SSHDefenseActionInput['action']
+	status: string
+	changed: boolean
+	message: string
+	backupPath?: string
+	resourceVersion: string
+	appliedAt: string
+}
+
 export interface AppMarketCategory {
   key: string
   zh: string

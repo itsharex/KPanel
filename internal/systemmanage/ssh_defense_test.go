@@ -3,7 +3,9 @@ package systemmanage
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -86,11 +88,26 @@ func TestSSHDefenseStatusReportsUnavailableProtocol(t *testing.T) {
 }
 
 func TestSSHDefenseRunsAsPersistentFixedMaintenanceTask(t *testing.T) {
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		t.Skip("trusted root-owned script contract is Linux/root only")
+	}
 	runner := &fakeRunner{}
 	manager, _, _, stateDir := testManager(t, runner)
 	manager.executable = filepath.Join(stateDir, "kejilion-agent")
-	manager.f2bScript = func() (string, error) {
-		return "/home/docker/kpanel/bin/kejilion.sh", nil
+	script := filepath.Join(stateDir, "kejilion.sh")
+	content := strings.Repeat("# padding\n", 160) + strings.Join([]string{
+		`permission_granted="true"`, `KPANEL_SYSTEM_RESOURCE_PROTOCOL_VERSION="3"`,
+		"KJ_SYSTEM_RESOURCE_NONINTERACTIVE", "kpanel_system_resource_dispatch", "KPANEL_SYSTEM_RESOURCE_STATUS", "KPANEL_SYSTEM_RESOURCE_VERSION",
+		`KPANEL_F2B_MANAGER_PROTOCOL_VERSION="1"`, "KJ_F2B_NONINTERACTIVE", "kpanel_f2b_manager_dispatch", "KPANEL_F2B_MANAGER_STATUS",
+	}, "\n")
+	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manager.resourceScript = func() (string, error) {
+		return script, nil
+	}
+	if _, err := manager.sshDefenseManagerScriptPath(); err != nil {
+		t.Fatalf("trusted SSH defense script: %v", err)
 	}
 
 	changed, message, err := manager.startMaintenance(
@@ -114,7 +131,7 @@ func TestSSHDefenseRunsAsPersistentFixedMaintenanceTask(t *testing.T) {
 		"--unit=kejilion-panel-maintenance-",
 		manager.executable + " maintenance-run --state-dir " + stateDir + " ssh-defense-enable",
 		"env KJ_F2B_NONINTERACTIVE=1 LC_ALL=C.UTF-8 LANG=C.UTF-8 bash " +
-			"/home/docker/kpanel/bin/kejilion.sh f2b enable",
+			script + " f2b manager enable",
 	} {
 		if !strings.Contains(command, required) {
 			t.Fatalf("SSH defense task missing %q:\n%s", required, command)

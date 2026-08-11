@@ -48,6 +48,7 @@ import NetworkInterfacesDialog from '@/components/overview/NetworkInterfacesDial
 import PortUsageDialog from '@/components/overview/PortUsageDialog.vue'
 import TrafficShutdownDialog from '@/components/overview/TrafficShutdownDialog.vue'
 import AccountManagementDialog from '@/components/overview/AccountManagementDialog.vue'
+import SSHDefenseDialog from '@/components/overview/SSHDefenseDialog.vue'
 import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import { ApiError, api } from '@/lib/api'
@@ -104,7 +105,7 @@ interface ManagementTool {
 
 type KernelProfile = 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
 type BBRv3Policy = 'install' | 'update' | 'uninstall'
-type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall' | 'port-usage' | 'traffic-shutdown' | 'accounts'
+type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall' | 'port-usage' | 'traffic-shutdown' | 'accounts' | 'ssh-defense'
 
 const mirrorPresets: Array<{
   value: MirrorPreset
@@ -155,7 +156,6 @@ const actionForm = reactive({
   profile: 'balanced' as KernelProfile,
   bbrEnabled: true,
   bbrv3Policy: 'install' as BBRv3Policy,
-  sshDefenseEnabled: true,
   maintenancePolicy: 'full' as 'full' | 'cache' | 'standard',
 })
 
@@ -273,8 +273,8 @@ const basicSettings = computed<ManagementTool[]>(() => {
       detail: management.ssh.defense.enabled
         ? `${management.ssh.defense.jail || 'sshd'} jail · 当前封禁 ${management.ssh.defense.banned} 个 IP`
         : management.ssh.defense.message || '开启时安装并启用 Fail2Ban，关闭时保留现有配置',
-      capability: 'system.ssh-defense.write',
-      safety: '通过可信 kejilion.sh 的固定 `k f2b enable|disable` 协议执行；后台安装不会因关闭页面中断，关闭仅停用服务和开机自启，不卸载软件或删除配置。',
+      capability: 'system.ssh-defense.read',
+      safety: '通过可信 kejilion.sh 管理 Fail2Ban；支持轻量策略、封禁 IP 与信任地址管理。',
       icon: ShieldCheck,
       tone: management.ssh.defense.enabled ? undefined : 'amber',
     },
@@ -615,6 +615,7 @@ const resourceCapabilityNames: Record<ResourceDialogID, string> = {
 	'port-usage': 'system.port-usage',
 		'traffic-shutdown': 'system.traffic-shutdown',
 		accounts: 'system.accounts',
+		'ssh-defense': 'system.ssh-defense',
 }
 
 const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
@@ -625,6 +626,7 @@ const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
 	'port-usage': '当前 Agent 的端口占用适配器未就绪。',
 		'traffic-shutdown': '当前 Agent 的限流关机适配器未就绪。',
 		accounts: '当前 Agent 的账户管理适配器未就绪。',
+		'ssh-defense': '当前 Agent 的 SSH 防御适配器未就绪。',
 }
 
 function isResourceDialogID(id: string): id is ResourceDialogID {
@@ -676,7 +678,6 @@ function openTool(tool: ManagementTool): void {
   )
   actionForm.bbrEnabled = !management?.bbr.enabled
   actionForm.bbrv3Policy = management?.bbrv3.installed ? 'update' : 'install'
-  actionForm.sshDefenseEnabled = !management?.ssh.defense.enabled
   actionForm.maintenancePolicy = tool.id === 'system-cleanup' ? 'standard' : 'full'
   selectedTool.value = tool
 }
@@ -736,8 +737,6 @@ const actionInput = computed<SystemActionInput | undefined>(() => {
       return { action: 'hostname', hostname: actionForm.hostname.trim().toLowerCase() }
     case 'ssh-port':
       return { action: 'ssh-port', port: Number(actionForm.port) }
-    case 'ssh-defense':
-      return { action: 'ssh-defense', enabled: actionForm.sshDefenseEnabled }
     case 'dns':
       return {
         action: 'dns',
@@ -774,7 +773,6 @@ const actionValid = computed(() => {
   if (
     (input.action === 'update' ||
       input.action === 'cleanup' ||
-      input.action === 'ssh-defense' ||
       input.action === 'bbrv3') &&
     maintenanceRunning.value
   ) {
@@ -818,7 +816,6 @@ async function executeAction(): Promise<void> {
     if (
       input.action === 'update' ||
       input.action === 'cleanup' ||
-      input.action === 'ssh-defense' ||
       input.action === 'bbrv3'
     ) {
       toast.success(`${tool.title}任务已提交`, result.message)
@@ -1281,18 +1278,8 @@ onBeforeUnmount(() => {
                 <small>{{ managementDetailLabel(tool.detail) }}</small>
               </span>
               <span class="configuration-row__action">
-                <template v-if="tool.id === 'ssh-defense'">
-                  <span
-                    class="configuration-switch"
-                    :class="{ 'is-on': data.management.ssh.defense.enabled }"
-                    aria-hidden="true"
-                  ><span></span></span>
-                  <span>{{ data.management.ssh.defense.enabled ? '关闭' : '开启' }}</span>
-                </template>
-                <template v-else>
-                  <span>{{ isResourceDialogID(tool.id) ? toolAvailabilityLabel(tool) : capabilityState(tool.capability).enabled ? '可配置' : '查看' }}</span>
-                  <ChevronRight :size="16" />
-                </template>
+                <span>{{ isResourceDialogID(tool.id) ? toolAvailabilityLabel(tool) : capabilityState(tool.capability).enabled ? '可配置' : '查看' }}</span>
+                <ChevronRight :size="16" />
               </span>
             </button>
           </div>
@@ -1398,16 +1385,6 @@ onBeforeUnmount(() => {
             <span>新的 SSH 端口</span>
             <input v-model.number="actionForm.port" type="number" min="1" max="65535" inputmode="numeric" />
             <small>成功后替换原 SSH 监听端口；当前 SSH 会话通常不会立即断开。</small>
-          </label>
-          <label v-else-if="selectedTool.id === 'ssh-defense'" class="field">
-            <span>目标状态</span>
-            <select v-model="actionForm.sshDefenseEnabled">
-              <option :value="true">开启 SSH 防御</option>
-              <option :value="false">关闭 SSH 防御并保留配置</option>
-            </select>
-            <small>
-              开启会按 `k f2b` 原生流程安装或启动 Fail2Ban，并验证 SSH jail；关闭不会删除历史配置。
-            </small>
           </label>
           <div v-else-if="selectedTool.id === 'dns'" class="form-stack compact">
             <label class="field">
@@ -1587,13 +1564,11 @@ onBeforeUnmount(() => {
                 : maintenanceRunning &&
               (selectedTool.id === 'system-update' ||
                 selectedTool.id === 'system-cleanup' ||
-                selectedTool.id === 'ssh-defense' ||
                 selectedTool.id === 'bbrv3')
                 ? '已有系统维护任务正在后台执行，请等待完成后再提交新任务。'
                 : capabilityState(selectedTool.capability).enabled
                   ? selectedTool.id === 'system-update' ||
                     selectedTool.id === 'system-cleanup' ||
-                    selectedTool.id === 'ssh-defense' ||
                     selectedTool.id === 'bbrv3'
                     ? '任务由独立 systemd 单元执行；关闭浏览器不会中断，页面将持续读取进度。'
                     : selectedTool.id === 'system-reboot'
@@ -1674,6 +1649,13 @@ onBeforeUnmount(() => {
 		:readable="resourceCapability('accounts', 'read').enabled"
 		:writable="resourceCapability('accounts', 'write').enabled"
 		:unavailable-reason="resourceCapability('accounts', 'read').reason"
+		@close="closeResourceDialog"
+	/>
+	<SSHDefenseDialog
+		:open="selectedResourceDialog === 'ssh-defense'"
+		:readable="resourceCapability('ssh-defense', 'read').enabled"
+		:writable="resourceCapability('ssh-defense', 'write').enabled"
+		:unavailable-reason="resourceCapability('ssh-defense', 'read').reason"
 		@close="closeResourceDialog"
 	/>
   </div>

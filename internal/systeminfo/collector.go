@@ -489,7 +489,7 @@ func (c *Collector) connectionCount(name string) int {
 func (c *Collector) readDisks() []contract.DiskSummary {
 	data := c.readOptional("self/mounts")
 	seen := make(map[string]bool)
-	var result []contract.DiskSummary
+	result := make([]contract.DiskSummary, 0)
 	for _, line := range strings.Split(data, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 3 {

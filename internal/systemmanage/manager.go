@@ -251,7 +251,6 @@ func (m *Manager) Capabilities() []contract.Capability {
 			sshScriptErr = errors.New("trusted kejilion.sh SSH port protocol was not found")
 		}
 	}
-	_, f2bScriptErr := m.f2bScript()
 	_, bbrv3ScriptErr := m.bbrv3Script()
 
 	sshConfig := regularFile(filepath.Join(m.etcRoot, "ssh", "sshd_config"))
@@ -307,11 +306,6 @@ func (m *Manager) Capabilities() []contract.Capability {
 	capabilities := []contract.Capability{
 		capability("system.hostname.write", hostnamectlErr == nil, "hostnamectl 不可用"),
 		capability("system.ssh-port.write", envErr == nil && bashErr == nil && sshdErr == nil && ssErr == nil && sshScriptErr == nil && sshConfig, "请更新本机 kejilion.sh 并安装 OpenSSH/ss 以启用 KPanel SSH 端口协议"),
-		capability(
-			"system.ssh-defense.write",
-			systemdRunErr == nil && helperErr == nil && envErr == nil && bashErr == nil && f2bScriptErr == nil,
-			"请更新本机 kejilion.sh 以启用 SSH 防御固定协议",
-		),
 		capability("system.dns.write", dnsSupported, dnsReason),
 		capability("system.timezone.write", timedatectlErr == nil, "timedatectl 不可用"),
 		capability("system.processes.signal", processSignalSupported, "进程信号仅支持 Linux"),
@@ -332,7 +326,8 @@ func (m *Manager) Capabilities() []contract.Capability {
 	}
 	capabilities = append(capabilities, m.SystemResourceCapabilities()...)
 	capabilities = append(capabilities, m.NetworkOperationsCapabilities()...)
-	return append(capabilities, m.AccountManagementCapabilities()...)
+	capabilities = append(capabilities, m.AccountManagementCapabilities()...)
+	return append(capabilities, m.SSHDefenseManagementCapabilities()...)
 }
 
 func (m *Manager) Execute(ctx context.Context, input contract.SystemActionRequest) (contract.SystemActionResult, error) {

@@ -42,7 +42,7 @@ IPinfo IPv4/IPv6 HTTPS 端点，成功结果缓存 30 分钟；外部查询超�
 | --- | --- | --- |
 | 主机名 | kernel hostname | hostname 规则校验、原子更新、回读 |
 | SSH 端口 | `sshd_config` 与片段 | 调用本机可信 `kejilion.sh ssh-port` 非交互适配入口；脚本复用原有 `new_ssh_port` 主业务，并强制验证配置语法与新端口监听；Agent 负责结构化校验、执行前备份和结果回读 |
-| SSH 防御 | `k f2b status|enable|disable` | 读取真实 Fail2Ban SSH jail；开启由后台任务安装并验证，关闭仅停用服务与自启、保留配置 |
+| SSH 防御 | `k f2b manager status|enable|disable|set-profile|unban|unban-all|add-trusted|remove-trusted|uninstall` | 读取真实 Fail2Ban SSH jail；提供三档策略、封禁 IP 解封、信任地址和最近事件；启停/卸载由后台任务执行 |
 | DNS | `resolv.conf`、systemd-resolved 与脚本 DNS 协议 | 调用本机可信 `kejilion.sh` 固定非交互入口；systemd-resolved 使用原生配置，其他管理器沿用脚本的 `resolv.conf` 写入与锁定语义 |
 | 时区 | `/etc/timezone` 或 `localtime` | 有效 IANA 时区名称、回读 |
 | 虚拟内存 | `/proc/meminfo`、`/proc/swaps`、`/swapfile` | 与 `kejilion.sh` 共用 `/swapfile`；合并旧版 KPanel Swap，不清除现有分区或第三方 swapfile |
@@ -100,6 +100,27 @@ Agent 的私有 `/tmp` 路径不会作为可恢复备份回传。
 进程内写锁最多等待 2 秒，脚本跨进程锁最多等待 5 秒；取得写锁后的事务使用独立 45 秒期限，浏览器断开
 不会中止正在进行的系统写入和回滚。
 
+### SSH 防御业务模型
+
+SSH 防御以“状态、强度、封禁、信任”四个区域呈现，不暴露 Fail2Ban 的复杂 jail 配置：
+
+- 防御开关：未安装时一键安装并启用；停用保留配置；卸载放在页面底部并单独确认；
+- 防御强度：温和、标准、严格三档，默认推荐标准；页面直接说明失败次数和封禁时长；
+- 已封禁 IP：支持 IP 搜索、单个解封和全部解封；最多返回 256 条并明确截断状态；
+- 信任地址与最近事件：支持精确 IP/CIDR 增删，展示最近 20 条登录失败、封禁和解封事件。
+
+页面状态每次来自 Fail2Ban 服务、实际 SSH jail、有效 `bantime/findtime/maxretry`、`ignoreip` 和日志，
+Panel 不保存第二份规则。策略与信任地址写入独立受管配置片段，脚本在共享 root-only 锁内复核
+`resourceVersion`，备份后原子替换，执行 `fail2ban-client -t`、reload 和回读；失败时恢复原配置。
+动态封禁和日志不参与资源版本，避免正常攻击流量造成无意义的写冲突。启停和卸载继续使用现有
+systemd 维护队列，关闭浏览器不会中断；停用不删除配置，卸载才移除 Fail2Ban 及其配置。
+
+该功能使用 `KPANEL_F2B_MANAGER_PROTOCOL_VERSION="1"`，固定到
+`kejilion/sh@e9c3078eb516b05f9df6d2a9294cf3b226ca02bd` 与原始 SHA-256
+`147f624c479931c21b7d92392ff3e3a1a58b19bea4f98741f4ec114ab933546a`。
+2026-08-11 已在 154 的隔离 Ubuntu 24.04 root 容器内以真实 Fail2Ban 完成信任地址、封禁解封、
+三档策略、Agent/Panel 审计和浏览器桌面/窄屏闭环；生产宿主未安装或修改 Fail2Ban，测试资源已清理。
+
 ### 账户管理业务模型
 
 账户管理不复制 `kejilion.sh` 的交互菜单，而是把同一业务目的整理为四个简单区域：
@@ -121,8 +142,8 @@ SSH 策略由脚本维护独立配置片段，并确保主配置包含该目录�
 底层 `userdel -r` 的文件删除不可逆，界面必须直接说明这一影响，不能宣称能够恢复已删除的主目录。
 
 该功能使用 `KPANEL_ACCOUNT_MANAGEMENT_PROTOCOL_VERSION="1"`，固定到
-`kejilion/sh@d82f043aa95064235b2bfe370e25e141cd75c321` 与原始 SHA-256
-`40a9d77aa89d53a4e360026a6d0698622a248d01f059a1c92299dc56068d14f2`。2026-08-11 已在隔离的
+`kejilion/sh@e9c3078eb516b05f9df6d2a9294cf3b226ca02bd` 与原始 SHA-256
+`147f624c479931c21b7d92392ff3e3a1a58b19bea4f98741f4ec114ab933546a`。2026-08-11 已在隔离的
 Ubuntu 24.04 root Linux 环境完成密码/密钥账户、Root 密码与安全迁移、三种角色、公钥增删、SSH
 策略 reload、删除、版本/锁冲突、失败回滚、`rollback-failed`、`needs-attention` 及原状恢复的
 Shell→Agent→Panel L2 闭环。

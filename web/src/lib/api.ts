@@ -2,6 +2,9 @@ import type {
 	AccountManagementActionInput,
 	AccountManagementActionResult,
 	AccountManagementSnapshot,
+	SSHDefenseActionInput,
+	SSHDefenseActionResult,
+	SSHDefenseSnapshot,
   ApiList,
   AgentStatus,
   AppInstallPortStatus,
@@ -1358,6 +1361,10 @@ export const api = {
 		normalizeAccountManagementSnapshot(await request<AccountManagementSnapshot>('/system/accounts', { signal })),
 	accountAction: (body: AccountManagementActionInput): Promise<AccountManagementActionResult> =>
 		request<AccountManagementActionResult>('/system/account-actions', { method: 'POST', body }),
+	sshDefense: (signal?: AbortSignal): Promise<SSHDefenseSnapshot> =>
+		request<SSHDefenseSnapshot>('/system/ssh-defense', { signal }),
+	sshDefenseAction: (body: SSHDefenseActionInput): Promise<SSHDefenseActionResult> =>
+		request<SSHDefenseActionResult>('/system/ssh-defense/actions', { method: 'POST', body }),
     resourceAction: (body: SystemResourceActionInput): Promise<SystemResourceActionResult> =>
       request<SystemResourceActionResult>('/system/resource-actions', { method: 'POST', body }),
     maintenance: async (

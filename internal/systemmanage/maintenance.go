@@ -160,8 +160,8 @@ func (m *Manager) startMaintenance(
 		}
 		mode = "cleanup-" + policy
 	case "ssh-defense":
-		if policy != "enable" && policy != "disable" {
-			return false, "", fmt.Errorf("%w: SSH defense policy must be enable or disable", ErrInvalidInput)
+		if policy != "enable" && policy != "disable" && policy != "uninstall" {
+			return false, "", fmt.Errorf("%w: SSH defense policy must be enable, disable, or uninstall", ErrInvalidInput)
 		}
 		mode = "ssh-defense-" + policy
 	case "bbrv3":
@@ -314,8 +314,8 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 func (m *Manager) maintenanceSteps(
 	mode string,
 ) (string, string, []maintenanceStep, error) {
-	if mode == "ssh-defense-enable" || mode == "ssh-defense-disable" {
-		script, err := m.f2bScript()
+	if mode == "ssh-defense-enable" || mode == "ssh-defense-disable" || mode == "ssh-defense-uninstall" {
+		script, err := m.sshDefenseManagerScriptPath()
 		if err != nil {
 			return "", "", nil, fmt.Errorf(
 				"%w: update kejilion.sh to enable the SSH defense protocol",
@@ -343,6 +343,7 @@ func (m *Manager) maintenanceSteps(
 				"bash",
 				script,
 				"f2b",
+				"manager",
 				policy,
 			},
 		}}, nil
@@ -642,6 +643,8 @@ func maintenanceStageMessage(stage string) string {
 		return "正在安装并启用 Fail2Ban SSH 防御"
 	case "ssh_defense_disable":
 		return "正在停用 Fail2Ban SSH 防御并保留配置"
+	case "ssh_defense_uninstall":
+		return "正在卸载 Fail2Ban SSH 防御"
 	case "bbrv3_install":
 		return "正在安装 XanMod BBRv3 内核"
 	case "bbrv3_update":
@@ -657,6 +660,9 @@ func maintenanceSuccessMessage(action, policy string, rebootRequired bool) strin
 	if action == "ssh-defense" {
 		if policy == "enable" {
 			return "SSH 防御已启用，Fail2Ban SSH jail 已验证"
+		}
+		if policy == "uninstall" {
+			return "SSH 防御已卸载"
 		}
 		return "SSH 防御已停用，Fail2Ban 配置仍保留"
 	}

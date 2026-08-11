@@ -99,6 +99,20 @@ func TestCollectorReadsLinuxFixtures(t *testing.T) {
 	}
 }
 
+func TestReadDisksReturnsStableEmptyCollection(t *testing.T) {
+	procRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(procRoot, "self"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(procRoot, "self", "mounts"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	disks := (&Collector{ProcRoot: procRoot}).readDisks()
+	if disks == nil || len(disks) != 0 {
+		t.Fatalf("empty disks = %#v, want non-nil empty collection", disks)
+	}
+}
+
 func TestCollectRuntimeSkipsNetworkIdentityAndManagementProbes(t *testing.T) {
 	root := filepath.Join("testdata", "root")
 	lookupCalls := 0

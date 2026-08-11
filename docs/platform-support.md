@@ -29,6 +29,7 @@ Rocky 等系统分别制作 Panel 镜像。
 | 主机名、时区、Swap、IP 优先级、内核优化、BBR | 按命令和内核能力动态开放 | 缺少工具时明确显示依赖未就绪 |
 | BBRv3 管理 | x86_64 Debian 12 / Ubuntu 24 及脚本支持的后续版本；可信 `kejilion.sh` 固定协议 | ARM64 外部安装器未固定摘要时只保留 SSH 脚本入口；面板不自动重启 |
 | SSH 端口 | 由可信 `kejilion.sh ssh-port` 协议复用脚本现有 `new_ssh_port` 主业务 | 本机脚本必须包含该非交互协议；云安全组仍需在厂商控制面单独放行 |
+| SSH 防御 | 由可信 `kejilion.sh f2b manager` 协议读取和管理 Fail2Ban SSH jail、三档策略、封禁与信任地址 | 需要 root、systemd、`fail2ban-client`（未安装时可通过维护任务安装）和 Python 3 地址校验；Alpine/OpenRC 仅保留脚本兼容路径，不属于正式 KPanel 安装目标 |
 | DNS 写入 | 可信 `kejilion.sh` 非交互协议；systemd-resolved 原生配置或脚本兼容 `resolv.conf` 事务 | 本机脚本版本过旧或底层 `systemctl`/`chattr` 不可用时禁用 |
 | 本地 Hosts | 读取 `/etc/hosts`；可信 `kejilion.sh` 按精确行事务写入 | 文件过大、非普通文件、脚本协议过旧或权限不可信时写入禁用 |
 | 定时任务 | 读取并管理 root 用户 Crontab；命令仅作为 Crontab 数据并通过有界 stdin 传输 | 读取需要 root；写入需要 `crontab` 和可信脚本协议；无 Crontab 视为空表，写入与防火墙持久化共享互斥锁 |
