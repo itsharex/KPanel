@@ -62,7 +62,7 @@ func intString(value int) string     { return strconv.Itoa(value) }
 
 func TestPortUsageProtocolParsesBoundedIPv6AndProcessData(t *testing.T) {
 	version := strings.Repeat("a", 64)
-	raw := `tcp LISTEN 0 4096 [::1]:8080 [::]:* users:(("demo",pid=42,fd=3))`
+	raw := `udp UNCONN 0 0 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=798910,fd=16),("nginx",pid=798909,fd=16)) ino:2669375 sk:1011 cgroup:/system.slice/docker-example.scope <->`
 	output := []byte(strings.Join([]string{
 		"KPANEL_NETWORK_OPERATIONS_STATUS=ok",
 		"KPANEL_NETWORK_OPERATIONS_VERSION=" + version,
@@ -75,7 +75,7 @@ func TestPortUsageProtocolParsesBoundedIPv6AndProcessData(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := snapshot.Entries[0]
-	if entry.LocalAddress != "::1" || entry.LocalPort != "8080" || entry.PeerAddress != "::" || entry.PeerPort != "*" || entry.PID != 42 {
+	if entry.LocalAddress != "0.0.0.0" || entry.LocalPort != "443" || entry.PeerAddress != "0.0.0.0" || entry.PeerPort != "*" || entry.Process != "nginx" || entry.PID != 798910 {
 		t.Fatalf("unexpected port entry: %#v", entry)
 	}
 

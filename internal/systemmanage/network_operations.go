@@ -21,6 +21,7 @@ const networkOperationsOutputLimit = 5 << 20
 var (
 	networkOperationsProtocolV1Pattern = regexp.MustCompile(`(?m)^KPANEL_NETWORK_OPERATIONS_PROTOCOL_VERSION="1"\r?$`)
 	networkOperationsPIDPattern        = regexp.MustCompile(`(?:^|,)pid=([0-9]+)(?:,|\))`)
+	networkOperationsProcessPattern    = regexp.MustCompile(`(?:^|\s)users:\(\("([^"]{1,128})"`)
 	networkOperationsRecoveryPattern   = regexp.MustCompile(`^/var/lib/kejilion-panel/system/recovery/system-resource/[0-9]{8}T[0-9]{6}Z-traffic-shutdown\.[A-Za-z0-9]{6}$`)
 )
 
@@ -215,8 +216,11 @@ func parsePortUsageLine(raw string) (contract.PortUsageEntry, error) {
 		PeerAddress: peerAddress, PeerPort: peerPort, Raw: raw,
 	}
 	if len(fields) > 6 {
-		entry.Process = strings.Join(fields[6:], " ")
-		if match := networkOperationsPIDPattern.FindStringSubmatch(entry.Process); len(match) == 2 {
+		processDetails := strings.Join(fields[6:], " ")
+		if match := networkOperationsProcessPattern.FindStringSubmatch(processDetails); len(match) == 2 {
+			entry.Process = match[1]
+		}
+		if match := networkOperationsPIDPattern.FindStringSubmatch(processDetails); len(match) == 2 {
 			entry.PID, _ = strconv.Atoi(match[1])
 		}
 	}
