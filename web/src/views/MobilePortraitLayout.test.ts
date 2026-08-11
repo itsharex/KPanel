@@ -31,9 +31,11 @@ describe('phone portrait layout contract', () => {
   it('keeps operational pages usable at 360 to 430 pixels', () => {
     expect(view('DockerView')).toMatch(/\.workspace-card > header:not\(\.resource-section__header\)\s*\{[^}]*display:\s*grid;/)
     expect(view('FilesView')).toMatch(/@media \(max-width: 480px\)[\s\S]*?\.file-command-bar__actions,[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/)
-    expect(view('DiagnosticsView')).toContain('max-height: 220px;')
+    expect(view('DiagnosticsView')).toMatch(/@media \(max-width: 680px\)[\s\S]*?\.diagnostic-command-panel\s*\{[^}]*transform: translateX\(-105%\);/)
+    expect(view('DiagnosticsView')).toContain('class="diagnostic-mobile-selector"')
     expect(view('DiagnosticsView')).toContain('min-height: min(400px, 48dvh);')
     expect(view('TerminalView')).toContain('height:calc(100dvh - 94px)')
+    expect(view('TerminalView')).toContain('class="terminal-stage__mobile-selector"')
     expect(view('MonitoringView')).toMatch(/@media \(max-width: 780px\)[\s\S]*?\.summary-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/)
     expect(view('EnvironmentView')).toContain('repeat(3, 40px)')
     expect(view('ProcessManagerView')).toMatch(/@media \(max-width: 480px\)[\s\S]*?\.process-toolbar__controls\s*\{[^}]*flex-wrap:\s*wrap;/)

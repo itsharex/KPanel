@@ -11,12 +11,14 @@ import {
   Gauge,
   Globe2,
   LoaderCircle,
+  Menu,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
   Timer,
   TriangleAlert,
+  X,
 } from '@lucide/vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
@@ -41,6 +43,7 @@ const loading = ref(true)
 const starting = ref(false)
 const error = ref('')
 const commandsCollapsed = ref(false)
+const mobileCommandsOpen = ref(false)
 const toast = useToast()
 const i18n = useI18n()
 const windowActive = inject(desktopWindowActiveKey, computed(() => true))
@@ -260,6 +263,7 @@ function openJob(job: DiagnosticJob): void {
 
 function selectCheck(check: DiagnosticCheck): void {
   selectedCheck.value = check
+  mobileCommandsOpen.value = false
   const matchingJob = jobs.value.find((job) => job.checkId === check.id)
   if (matchingJob) openJob(matchingJob)
   else if (!hasActiveJob.value) activeJob.value = undefined
@@ -321,10 +325,23 @@ onBeforeUnmount(() => {
     <ErrorState v-else-if="error" title="体检功能暂不可用" :message="error" @retry="load()" />
 
     <template v-else-if="catalog">
-      <section class="diagnostic-workbench" :class="{ 'is-command-panel-collapsed': commandsCollapsed }">
-        <aside class="diagnostic-command-panel">
+      <section
+        class="diagnostic-workbench"
+        :class="{
+          'is-command-panel-collapsed': commandsCollapsed,
+          'is-command-drawer-open': mobileCommandsOpen,
+        }"
+      >
+        <button
+          v-if="mobileCommandsOpen"
+          class="diagnostic-command-overlay"
+          type="button"
+          aria-label="关闭体检项目选择"
+          @click="mobileCommandsOpen = false"
+        />
+        <aside id="diagnostic-command-drawer" class="diagnostic-command-panel">
           <button
-            class="diagnostic-command-panel__toggle"
+            class="diagnostic-command-panel__toggle diagnostic-command-panel__desktop-toggle"
             type="button"
             aria-controls="diagnostic-command-selector"
             :aria-expanded="!commandsCollapsed"
@@ -335,7 +352,15 @@ onBeforeUnmount(() => {
             <PanelLeftOpen v-if="commandsCollapsed" :size="17" />
             <PanelLeftClose v-else :size="17" />
           </button>
-          <div id="diagnostic-command-selector" v-if="groupedChecks.length" v-show="!commandsCollapsed" class="diagnostic-command-list">
+          <button
+            class="diagnostic-command-panel__toggle diagnostic-command-panel__mobile-close"
+            type="button"
+            aria-label="关闭体检项目选择"
+            @click="mobileCommandsOpen = false"
+          >
+            <X :size="17" />
+          </button>
+          <div id="diagnostic-command-selector" v-if="groupedChecks.length" v-show="!commandsCollapsed || mobileCommandsOpen" class="diagnostic-command-list">
             <section
               v-for="group in groupedChecks"
               :key="group.id"
@@ -371,7 +396,7 @@ onBeforeUnmount(() => {
               </div>
             </section>
           </div>
-          <div v-if="commandsCollapsed" class="diagnostic-command-rail" aria-label="收起的体检命令列表">
+          <div v-if="commandsCollapsed && !mobileCommandsOpen" class="diagnostic-command-rail" aria-label="收起的体检命令列表">
             <button
               v-for="check in catalog.items"
               :key="check.id"
@@ -385,10 +410,23 @@ onBeforeUnmount(() => {
               <component :is="categoryIcon(check.category)" :size="17" />
             </button>
           </div>
-          <EmptyState v-if="!commandsCollapsed && !groupedChecks.length" title="暂无体检项目" description="请刷新后重试。" />
+          <EmptyState v-if="(!commandsCollapsed || mobileCommandsOpen) && !groupedChecks.length" title="暂无体检项目" description="请刷新后重试。" />
         </aside>
 
         <section class="diagnostic-result">
+          <div class="diagnostic-mobile-selector">
+            <button
+              type="button"
+              aria-controls="diagnostic-command-drawer"
+              :aria-expanded="mobileCommandsOpen"
+              aria-label="打开体检项目选择"
+              @click="mobileCommandsOpen = true"
+            >
+              <Menu :size="18" />
+              <span>{{ selectedCheck ? checkNameLabel(selectedCheck.name) : '选择体检项目' }}</span>
+            </button>
+            <small>{{ catalog.items.length }} 个项目</small>
+          </div>
           <div v-if="hasActiveJob" class="diagnostic-progress" aria-label="任务进度">
             <span :style="{ width: `${activeJob?.progress || 0}%` }" />
           </div>
@@ -490,7 +528,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface-muted) 38%, var(--surface));
+  background: color-mix(in srgb, var(--surface-subtle) 38%, var(--surface));
 }
 
 .diagnostic-command-panel__toggle {
@@ -514,6 +552,12 @@ onBeforeUnmount(() => {
   color: var(--primary);
   border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
   outline: none;
+}
+
+.diagnostic-command-panel__mobile-close,
+.diagnostic-command-overlay,
+.diagnostic-mobile-selector {
+  display: none;
 }
 
 .diagnostic-workbench.is-command-panel-collapsed .diagnostic-command-panel__toggle {
@@ -873,22 +917,89 @@ onBeforeUnmount(() => {
 
 @media (max-width: 680px) {
   .diagnostic-workbench {
-    grid-template-columns: 1fr;
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
     height: auto;
+    min-height: min(580px, calc(100dvh - 110px));
     border-radius: 14px;
   }
 
   .diagnostic-workbench.is-command-panel-collapsed {
-    grid-template-columns: 52px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .diagnostic-command-panel {
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
+    position: absolute;
+    z-index: 22;
+    inset: 0 auto 0 0;
+    width: min(320px, calc(100% - 48px));
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+    box-shadow: var(--shadow-md);
+    transform: translateX(-105%);
+    transition: transform .2s ease;
+  }
+
+  .diagnostic-workbench.is-command-drawer-open .diagnostic-command-panel {
+    transform: translateX(0);
+  }
+
+  .diagnostic-command-overlay {
+    position: absolute;
+    z-index: 21;
+    inset: 0;
+    display: block;
+    border: 0;
+    background: rgb(5 16 13 / 42%);
+  }
+
+  .diagnostic-command-panel__desktop-toggle {
+    display: none;
+  }
+
+  .diagnostic-command-panel__mobile-close {
+    display: grid;
   }
 
   .diagnostic-command-list {
-    max-height: 220px;
+    max-height: none;
+    padding-top: 44px;
+  }
+
+  .diagnostic-mobile-selector {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 50px;
+    padding: 8px 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--terminal-shell-border, #29383a) 78%, var(--terminal-shell-text, #d8dddc));
+    background: var(--terminal-shell-panel, #111a1d);
+  }
+
+  .diagnostic-mobile-selector button {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    padding: 7px 8px;
+    color: var(--terminal-shell-text, #d8dddc);
+    background: transparent;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .diagnostic-mobile-selector button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .diagnostic-mobile-selector small {
+    flex: 0 0 auto;
+    color: var(--terminal-shell-muted, #8a9695);
   }
 
   .diagnostic-log,
@@ -902,5 +1013,11 @@ onBeforeUnmount(() => {
     padding-left: 14px;
   }
 
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .diagnostic-command-panel {
+    transition: none;
+  }
 }
 </style>

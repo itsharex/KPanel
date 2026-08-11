@@ -47,6 +47,21 @@ describe('diagnostics workspace layout', () => {
     )
   })
 
+  it('uses an overlay drawer for command selection on mobile', () => {
+    expect(diagnosticsSource).toContain("'is-command-drawer-open': mobileCommandsOpen")
+    expect(diagnosticsSource).toContain('class="diagnostic-command-overlay"')
+    expect(diagnosticsSource).toContain('aria-label="打开体检项目选择"')
+    expect(diagnosticsSource).toContain('aria-label="关闭体检项目选择"')
+    expect(diagnosticsSource).toContain('mobileCommandsOpen.value = false')
+    expect(diagnosticsSource).toContain('background: color-mix(in srgb, var(--surface-subtle) 38%, var(--surface));')
+    expect(diagnosticsSource).toMatch(
+      /@media \(max-width: 680px\)[\s\S]*?\.diagnostic-command-panel\s*\{[^}]*position: absolute;[^}]*transform: translateX\(-105%\);/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-workbench\.is-command-drawer-open \.diagnostic-command-panel\s*\{[^}]*transform: translateX\(0\);/,
+    )
+  })
+
   it('uses darker category accents in light mode and brighter accents in dark mode', () => {
     expect(diagnosticsSource).toContain('--diagnostic-category: #087a72;')
     expect(diagnosticsSource).toContain('--diagnostic-category: #2563c4;')

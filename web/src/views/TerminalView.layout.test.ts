@@ -35,7 +35,21 @@ describe('multi-host terminal workspace layout', () => {
 
   it('reserves the remaining stage height for the terminal and composer', () => {
     expect(terminalSource).toMatch(
-      /\.terminal-stage\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\);[^}]*min-height:0;[^}]*overflow:hidden;/,
+      /\.terminal-stage\s*\{[^}]*grid-template-rows:auto auto minmax\(0,1fr\);[^}]*min-height:0;[^}]*overflow:hidden;/,
+    )
+  })
+
+  it('uses an overlay drawer for host selection on mobile', () => {
+    expect(terminalSource).toContain("'is-connections-drawer-open': mobileConnectionsOpen")
+    expect(terminalSource).toContain('class="terminal-connections-overlay"')
+    expect(terminalSource).toContain('aria-label="打开主机选择"')
+    expect(terminalSource).toContain('aria-label="关闭主机选择"')
+    expect(terminalSource).toContain('mobileConnectionsOpen.value = false')
+    expect(terminalSource).toMatch(
+      /@media \(max-width: 900px\)[\s\S]*?\.terminal-connections\s*\{[^}]*position:absolute;[^}]*transform:translateX\(-105%\);/,
+    )
+    expect(terminalSource).toMatch(
+      /\.terminal-workspace\.is-connections-drawer-open \.terminal-connections\s*\{[^}]*transform:translateX\(0\);/,
     )
   })
 

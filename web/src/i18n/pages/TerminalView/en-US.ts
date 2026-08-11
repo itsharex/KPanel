@@ -10,6 +10,8 @@ export default [
   ['连接列表', 'Connections'],
   ['台主机', 'hosts'],
   ['搜索主机', 'Search hosts'],
+  ['打开主机选择', 'Open host selector'],
+  ['关闭主机选择', 'Close host selector'],
   ['暂无可显示主机', 'No hosts to display'],
   ['本机终端', 'Local terminal'],
   ['加密直连', 'Encrypted direct connection'],
