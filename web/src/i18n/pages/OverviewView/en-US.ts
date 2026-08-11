@@ -343,4 +343,5 @@ export default [
 	['危险操作', 'Dangerous operations'],
 	['可能导致服务中断或数据丢失，操作前请确认恢复通道', 'May interrupt services or cause data loss. Confirm a recovery path before proceeding.'],
 	['1 项', '1 item'],
+	['推荐', 'Recommended'],
 ] as const satisfies PhraseCatalog

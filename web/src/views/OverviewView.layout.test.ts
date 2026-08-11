@@ -48,6 +48,7 @@ describe('OverviewView service status layout', () => {
     expect(source).toContain("title: '网络与流量'")
     expect(source).toContain("title: '性能优化'")
     expect(source).toContain('<h2 id="system-center-danger-title">危险操作</h2>')
+    expect(source).toContain('v-if="tool.recommended" class="system-tool__recommend">推荐</span>')
     expect(source).not.toContain('<h2>基础系统设置</h2>')
     expect(source).not.toContain('<h2>网络工具</h2>')
     expect(source).toContain('<SystemTuningDialog')

@@ -3460,6 +3460,25 @@ textarea:focus-visible,
   height: 35px;
 }
 
+.system-tool__badges {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.system-tool__recommend {
+  padding: 3px 6px;
+  color: var(--violet);
+  background: var(--violet-soft);
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
 .system-tool__state {
   padding: 3px 6px;
   color: var(--muted);

@@ -29,7 +29,7 @@ interface OverviewBindings {
   basicSettings: ComputedRef<Array<{ id: string; title: string; capability: string }>>
   networkTools: ComputedRef<Array<{ id: string; title: string; capability: string }>>
   overviewSystemTools: ComputedRef<Array<{ id: string; title: string; capability: string }>>
-  systemCenterSections: ComputedRef<Array<{ id: string; title: string; tools: Array<{ id: string }> }>>
+  systemCenterSections: ComputedRef<Array<{ id: string; title: string; tools: Array<{ id: string; recommended?: boolean }> }>>
   selectedResourceDialog: Ref<string | undefined>
   toolAvailabilityLabel: (tool: { id: string; capability: string }) => string
   actionForm: { timezone: string; timezonePreset: string }
@@ -181,6 +181,12 @@ describe('OverviewView refresh stability', () => {
       },
       { id: 'performance', tools: ['system-tuning', 'bbr', 'kernel', 'bbrv3'] },
     ])
+    expect(
+      view.systemCenterSections.value
+        .flatMap((section) => section.tools)
+        .filter((tool) => tool.recommended)
+        .map((tool) => tool.id),
+    ).toEqual(['system-update', 'system-cleanup', 'swap', 'ssh-defense', 'dns', 'bbr'])
 
     view.openTool({ id: 'hosts' })
     expect(view.selectedResourceDialog.value).toBe('hosts')

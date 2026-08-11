@@ -109,6 +109,7 @@ interface ManagementTool {
   safety: string
   icon: Component
   tone?: 'blue' | 'violet' | 'amber' | 'danger'
+  recommended?: boolean
 }
 
 interface SystemCenterSection {
@@ -641,6 +642,14 @@ function capabilityState(id: string): { enabled: boolean; reason: string } {
 }
 
 const overviewSystemToolIDs = ['swap', 'ssh-port', 'dns', 'ip-preference', 'bbr', 'system-tuning'] as const
+const recommendedSystemToolIDs = new Set([
+  'system-update',
+  'system-cleanup',
+  'swap',
+  'ssh-defense',
+  'dns',
+  'bbr',
+])
 
 const overviewSystemToolTitles: Record<(typeof overviewSystemToolIDs)[number], string> = {
   swap: '虚拟内存',
@@ -667,7 +676,7 @@ const systemCenterSections = computed<SystemCenterSection[]>(() => {
   )
   const select = (ids: string[]) => ids.flatMap((id) => {
     const tool = tools.get(id)
-    return tool ? [tool] : []
+    return tool ? [{ ...tool, recommended: recommendedSystemToolIDs.has(tool.id) }] : []
   })
 
   return [
@@ -677,7 +686,10 @@ const systemCenterSections = computed<SystemCenterSection[]>(() => {
       description: '系统更新、空间清理与可控重启',
       icon: RefreshCw,
       iconTone: 'violet',
-      tools: maintenanceTools.value,
+      tools: maintenanceTools.value.map((tool) => ({
+        ...tool,
+        recommended: recommendedSystemToolIDs.has(tool.id),
+      })),
     },
     {
       id: 'basic',
@@ -1365,18 +1377,21 @@ onBeforeUnmount(() => {
                   <span class="system-tool__icon" :class="tool.tone ? `is-${tool.tone}` : ''">
                     <component :is="tool.icon" :size="19" />
                   </span>
-                  <span class="system-tool__state">
-                    {{
-                      section.id === 'maintenance'
-                        ? maintenanceRunning && maintenanceActionFor(tool.id)
-                          ? data.management.maintenance.action === maintenanceActionFor(tool.id)
-                            ? `进行中 ${data.management.maintenance.progress}%`
-                            : '任务占用'
-                          : capabilityState(tool.capability).enabled
-                            ? '可执行'
-                            : '依赖未就绪'
-                        : toolAvailabilityLabel(tool)
-                    }}
+                  <span class="system-tool__badges">
+                    <span v-if="tool.recommended" class="system-tool__recommend">推荐</span>
+                    <span class="system-tool__state">
+                      {{
+                        section.id === 'maintenance'
+                          ? maintenanceRunning && maintenanceActionFor(tool.id)
+                            ? data.management.maintenance.action === maintenanceActionFor(tool.id)
+                              ? `进行中 ${data.management.maintenance.progress}%`
+                              : '任务占用'
+                            : capabilityState(tool.capability).enabled
+                              ? '可执行'
+                              : '依赖未就绪'
+                          : toolAvailabilityLabel(tool)
+                      }}
+                    </span>
                   </span>
                 </span>
                 <strong>{{ tool.title }}</strong>
