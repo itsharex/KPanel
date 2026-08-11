@@ -291,9 +291,9 @@ EOF
 	grep -F 'host.docker.internal:host-gateway' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F 'ExecStart=/home/docker/kpanel/bin/kejilion-agent' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
-	grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_CHOWN CAP_LINUX_IMMUTABLE' \
+	grep -Fx 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_CHOWN CAP_LINUX_IMMUTABLE CAP_SYS_PTRACE' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
-	grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_CHOWN CAP_LINUX_IMMUTABLE' \
+	grep -Fx 'AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_CHOWN CAP_LINUX_IMMUTABLE CAP_SYS_PTRACE' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
 		/home/docker/kpanel/kejilion-agent.service >/dev/null

@@ -329,7 +329,9 @@ make verify-release
 3. 复跑受影响性能基准并与最近稳定报告比较；
 4. 实测 `k fd` 可信 HTTPS 反代和伪造代理头拒绝；
 5. 对 L2/L3 系统动作执行失败注入和回滚验证；
-6. 记录实际 Docker、containerd、runc、内核及 Agent/Panel 协议版本。
+6. 记录实际 Docker、containerd、runc、内核及 Agent/Panel 协议版本；
+7. 涉及 systemd capability、沙箱或进程可见性时，L2 必须通过候选中完整、未放宽的正式 unit 启动
+   Agent，并复核真实业务输出；脱离 unit 直接以 root 运行只能用于定位，不能作为上线证据。
 
 自动门禁对应关系：
 

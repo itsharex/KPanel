@@ -240,6 +240,9 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
   `enable`、`disable`、双向 GiB 阈值、每月重置日和资源版本。
 - 端口记录由可信 `kejilion.sh` 固定执行 `ss -H -lntup`；脚本限制原始结果为 4 MiB/4096 行，
   最多向 Agent 返回 512 条，超出时明确标记截断。页面只在打开弹窗后读取，并支持本地筛选。
+- Agent 的 systemd 单元保留 `CAP_SYS_PTRACE`，当前用途仅是让可信 `ss` 适配器取得 socket 的程序名
+  和 PID；Web 与 Agent 不提供通用 ptrace、进程内存或任意命令入口。内核仍未返回归属时，页面降级为
+  “未知程序”分组并保留原始技术详情，不伪造进程身份。
 - 限流累计值继续只统计 `/proc/net/dev` 中 eth/ens/enp/eno 接口，从本次开机开始累计；接收或发送
   任一值达到阈值时执行 `shutdown -h now`。每月重置日会在 01:00 重启主机，以重置开机累计值。
 - 脚本内置生成 `/root/Limiting_Shut_down.sh`，不再下载浮动远程模板；root crontab 使用
@@ -250,7 +253,8 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 - 页面在启用前明确提示“达到任一阈值会关机”和“重置日会重启”，停用前说明不会删除其他
   `reboot` 项。不设置自定义确认词，也不增加默认路由、面板连接或阈值大小的业务阻止条件。
 - 2026-08-11 已在隔离的 Ubuntu 24.04 root Linux 环境完成真实 `ss`、启用/更新/停用、保留无关
-  crontab、可审计关机/重启替身、版本/锁冲突、失败回滚及原状恢复的 Shell→Agent→Panel L2 闭环。
+  crontab、可审计关机/重启替身、版本/锁冲突、失败回滚及原状恢复的 Shell→Agent→Panel L2 闭环；
+  端口归属另外使用与生产完全一致的候选 systemd 单元复核，禁止用脱离单元的 root 进程替代。
 
 ## 多发行版维护
 
