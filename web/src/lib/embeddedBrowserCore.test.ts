@@ -1,0 +1,44 @@
+import { describe, expect, it } from 'vitest'
+import {
+  createBrowserCoreNavigateMessage,
+  isBrowserCoreEvent,
+  resolveBrowserCoreLocation,
+} from './embeddedBrowserCore'
+
+const session = {
+  relayUrl: 'https://browser.example.com',
+  token: 'signed-token',
+  sessionId: 'session-1',
+  expiresAt: '2030-01-01T00:00:00Z',
+}
+
+describe('embeddedBrowserCore', () => {
+  it('always resolves the isolated kernel page instead of a target URL', () => {
+    expect(resolveBrowserCoreLocation(session)).toEqual({
+      frameURL: 'https://browser.example.com/kernel/',
+      origin: 'https://browser.example.com',
+    })
+  })
+
+  it('rejects a relay URL that is not an isolated origin', () => {
+    expect(resolveBrowserCoreLocation({ ...session, relayUrl: 'https://browser.example.com/base' }))
+      .toBeUndefined()
+    expect(resolveBrowserCoreLocation({ ...session, relayUrl: 'https://user@browser.example.com' }))
+      .toBeUndefined()
+  })
+
+  it('keeps the target and token in a postMessage payload', () => {
+    expect(createBrowserCoreNavigateMessage(session, 'https://target.example/path')).toEqual({
+      type: 'kpanel-browser:navigate',
+      token: 'signed-token',
+      url: 'https://target.example/path',
+    })
+  })
+
+  it('accepts only bounded known kernel events', () => {
+    expect(isBrowserCoreEvent({ type: 'kpanel-browser:ready' })).toBe(true)
+    expect(isBrowserCoreEvent({ type: 'kpanel-browser:navigation', url: 'https://example.com' })).toBe(true)
+    expect(isBrowserCoreEvent({ type: 'kpanel-browser:navigation', url: 1 })).toBe(false)
+    expect(isBrowserCoreEvent({ type: 'kpanel-browser:unknown' })).toBe(false)
+  })
+})

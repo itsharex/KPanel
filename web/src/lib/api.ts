@@ -14,6 +14,7 @@ import type {
   AuditEvent,
   AuthSession,
   AuthStatus,
+  BrowserCoreSession,
   ClusterController,
   ClusterHost,
   ClusterHostList,
@@ -988,6 +989,12 @@ export const api = {
       }
     },
     logout: () => request<void>('/auth/logout', { method: 'POST' }),
+  },
+  browser: {
+    createSession: (signal?: AbortSignal): Promise<BrowserCoreSession> => request(
+      '/browser/sessions',
+      { method: 'POST', signal },
+    ),
   },
   agent: {
     health: async (signal?: AbortSignal) => normalizeAgent(await request<RawAgentHealth>('/agent/health', { signal })),

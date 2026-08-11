@@ -24,9 +24,16 @@ import {
   type EmbeddedBrowserShortcut,
   type EmbeddedBrowserTarget,
 } from '@/lib/embeddedBrowser'
+import {
+  createBrowserCoreNavigateMessage,
+  isBrowserCoreEvent,
+  resolveBrowserCoreLocation,
+} from '@/lib/embeddedBrowserCore'
+import { api } from '@/lib/api'
 import { desktopWindowActiveKey, desktopWindowTitlebarTargetKey } from '@/lib/desktopRouteKeys'
 import { useI18n } from '@/i18n'
 import { usePhraseCatalog } from '@/i18n/phrase'
+import type { BrowserCoreSession } from '@/types/api'
 
 interface BrowserTab {
   id: string
@@ -36,6 +43,7 @@ interface BrowserTab {
   iconURL?: string
   frameVersion: number
   lastActiveAt: number
+  error?: string
 }
 
 interface PendingBrowserRequest {
@@ -64,12 +72,25 @@ const pendingRequest = ref<PendingBrowserRequest>()
 const addressValue = ref('')
 const addressInvalid = ref(false)
 const frameColorScheme = ref<'light' | 'dark'>('light')
+const coreSession = ref<BrowserCoreSession>()
+const coreStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const coreError = ref('')
+const coreLocation = computed(() => coreSession.value
+  ? resolveBrowserCoreLocation(coreSession.value)
+  : undefined)
 const sleepTimers = new Map<string, number>()
+const kernelFrames = new Map<string, HTMLIFrameElement>()
+const initializedKernelTabs = new Set<string>()
+const coreAbortController = new AbortController()
+let coreSessionRequest: Promise<BrowserCoreSession | undefined> | undefined
 let themeObserver: MutationObserver | undefined
 let tabSequence = 0
 
 const activeTab = computed(() => tabs.value.find((tab) => tab.id === activeTabID.value))
 const liveTabs = computed(() => tabs.value.filter((tab) => liveTabIDs.value.has(tab.id)))
+const kernelTabs = computed(() => coreStatus.value === 'ready' && coreLocation.value
+  ? liveTabs.value
+  : [])
 const oldestClosableTab = computed(() => tabs.value
   .filter((tab) => tab.id !== activeTabID.value)
   .sort((left, right) => left.lastActiveAt - right.lastActiveAt)[0])
@@ -117,11 +138,98 @@ function enforceLiveLimit(): void {
   }
 }
 
+async function ensureBrowserCore(force = false): Promise<BrowserCoreSession | undefined> {
+  const current = coreSession.value
+  if (!force && current && Date.parse(current.expiresAt) > Date.now() + 60_000) return current
+  if (coreSessionRequest) return coreSessionRequest
+  coreStatus.value = 'loading'
+  coreError.value = ''
+  const request = api.browser.createSession(coreAbortController.signal)
+    .then((session) => {
+      if (!resolveBrowserCoreLocation(session)) throw new Error('Invalid browser relay URL')
+      coreSession.value = session
+      coreStatus.value = 'ready'
+      return session
+    })
+    .catch((error: unknown) => {
+      if (coreAbortController.signal.aborted) return undefined
+      coreSession.value = undefined
+      coreStatus.value = 'error'
+      coreError.value = error instanceof Error ? error.message : i18n.t('desktop.browserCoreUnavailableMessage')
+      return undefined
+    })
+    .finally(() => {
+      if (coreSessionRequest === request) coreSessionRequest = undefined
+    })
+  coreSessionRequest = request
+  return request
+}
+
+function postNavigation(tab: BrowserTab): void {
+  const session = coreSession.value
+  const location = coreLocation.value
+  const frame = kernelFrames.get(tab.id)
+  if (!session || !location || !frame?.contentWindow || !tab.target || initializedKernelTabs.has(tab.id)) return
+  tab.error = undefined
+  initializedKernelTabs.add(tab.id)
+  frame.contentWindow.postMessage(
+    createBrowserCoreNavigateMessage(session, tab.target.href),
+    location.origin,
+  )
+}
+
+function setKernelFrame(tabID: string, value: unknown): void {
+  if (value instanceof HTMLIFrameElement) {
+    if (kernelFrames.get(tabID) !== value) initializedKernelTabs.delete(tabID)
+    kernelFrames.set(tabID, value)
+    return
+  }
+  kernelFrames.delete(tabID)
+  initializedKernelTabs.delete(tabID)
+}
+
+function handleKernelLoad(tab: BrowserTab): void {
+  postNavigation(tab)
+}
+
+async function refreshBrowserCore(): Promise<void> {
+  await ensureBrowserCore(true)
+}
+
+function handleKernelMessage(event: MessageEvent): void {
+  const location = coreLocation.value
+  if (!location || event.origin !== location.origin || !isBrowserCoreEvent(event.data)) return
+  const tab = tabs.value.find((candidate) => kernelFrames.get(candidate.id)?.contentWindow === event.source)
+  if (!tab) return
+  const message = event.data
+  if (message.type === 'kpanel-browser:ready') {
+    postNavigation(tab)
+    return
+  }
+  if (message.type === 'kpanel-browser:session-expired') {
+    void refreshBrowserCore()
+    return
+  }
+  if (message.type === 'kpanel-browser:error') {
+    tab.error = message.message
+    return
+  }
+  if (message.type === 'kpanel-browser:title') {
+    if (!tab.shortcutID && message.title.trim()) tab.title = message.title.trim()
+    return
+  }
+  const target = resolveEmbeddedBrowserTarget(message.url)
+  if (!target) return
+  tab.target = target
+  if (tab.id === activeTabID.value) addressValue.value = target.href
+}
+
 function mountTab(tab: BrowserTab): void {
-  if (!tab.target || tab.target.mixedContent) return
+  if (!tab.target) return
   clearSleepTimer(tab.id)
   replaceLiveTabIDs((next) => next.add(tab.id))
   enforceLiveLimit()
+  void ensureBrowserCore()
 }
 
 function activateTab(tabID: string): void {
@@ -336,7 +444,7 @@ function goHome(): void {
 
 function reload(): void {
   const tab = activeTab.value
-  if (!tab?.target || tab.target.mixedContent) return
+  if (!tab?.target) return
   tab.frameVersion += 1
   mountTab(tab)
 }
@@ -358,6 +466,7 @@ function syncFrameColorScheme(): void {
 syncFrameColorScheme()
 
 onMounted(() => {
+  window.addEventListener('message', handleKernelMessage)
   themeObserver = new MutationObserver(syncFrameColorScheme)
   themeObserver.observe(document.documentElement, {
     attributes: true,
@@ -412,7 +521,11 @@ watch(windowActive, (active) => {
 })
 
 onBeforeUnmount(() => {
+  coreAbortController.abort()
+  window.removeEventListener('message', handleKernelMessage)
   themeObserver?.disconnect()
+  kernelFrames.clear()
+  initializedKernelTabs.clear()
   for (const timer of sleepTimers.values()) window.clearTimeout(timer)
   sleepTimers.clear()
 })
@@ -453,7 +566,7 @@ onBeforeUnmount(() => {
               <Globe2 v-else :size="15" aria-hidden="true" />
               <span>{{ tab.title }}</span>
               <MoonStar
-                v-if="tab.target && !tab.target.mixedContent && !liveTabIDs.has(tab.id)"
+                v-if="tab.target && !liveTabIDs.has(tab.id)"
                 class="embedded-browser__tab-sleep"
                 :size="12"
                 :aria-label="i18n.t('desktop.browserTabSleeping')"
@@ -514,7 +627,7 @@ onBeforeUnmount(() => {
       <button
         class="embedded-browser__tool"
         type="button"
-        :disabled="!activeTab?.target || activeTab.target.mixedContent"
+        :disabled="!activeTab?.target"
         :title="i18n.t('desktop.browserReload')"
         :aria-label="i18n.t('desktop.browserReload')"
         @click="reload"
@@ -610,33 +723,51 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
-      <div v-else-if="activeTab.target.mixedContent" class="embedded-browser__state" role="alert">
+      <div v-else-if="coreStatus === 'loading' || coreStatus === 'idle'" class="embedded-browser__state" role="status">
         <span><ShieldCheck :size="24" aria-hidden="true" /></span>
-        <strong>{{ i18n.t('desktop.browserMixedContentTitle') }}</strong>
-        <p>{{ i18n.t('desktop.browserMixedContentMessage') }}</p>
-        <button class="button button--primary" type="button" @click="openExternal">
-          <ExternalLink :size="15" aria-hidden="true" />
-          {{ i18n.t('desktop.browserOpenExternal') }}
-        </button>
+        <strong>{{ i18n.t('desktop.browserCoreLoadingTitle') }}</strong>
+        <p>{{ i18n.t('desktop.browserCoreLoadingMessage') }}</p>
+      </div>
+
+      <div v-else-if="coreStatus === 'error'" class="embedded-browser__state" role="alert">
+        <span><TriangleAlert :size="24" aria-hidden="true" /></span>
+        <strong>{{ i18n.t('desktop.browserCoreUnavailableTitle') }}</strong>
+        <p>{{ coreError || i18n.t('desktop.browserCoreUnavailableMessage') }}</p>
+        <div class="embedded-browser__state-actions">
+          <button class="button button--primary" type="button" @click="refreshBrowserCore">
+            <RefreshCw :size="15" aria-hidden="true" />
+            {{ i18n.t('common.retry') }}
+          </button>
+          <button class="button button--secondary" type="button" @click="openExternal">
+            <ExternalLink :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.browserOpenExternal') }}
+          </button>
+        </div>
       </div>
 
       <iframe
-        v-for="tab in liveTabs"
+        v-for="tab in kernelTabs"
         v-show="tab.id === activeTabID"
         :key="`${tab.id}:${tab.frameVersion}`"
+        :ref="(value) => setKernelFrame(tab.id, value)"
         class="embedded-browser__frame"
         :style="{ colorScheme: frameColorScheme }"
-        :src="tab.target?.href"
+        :src="coreLocation?.frameURL"
         :title="tab.title"
-        sandbox="allow-downloads allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
+        sandbox="allow-same-origin allow-scripts"
         referrerpolicy="no-referrer"
-        allow="fullscreen"
+        @load="handleKernelLoad(tab)"
       />
     </main>
 
-    <footer v-if="activeTab?.target && !activeTab.target.mixedContent" class="embedded-browser__hint">
-      <ShieldCheck :size="13" aria-hidden="true" />
-      <span>{{ i18n.t('desktop.browserEmbedHint') }}</span>
+    <footer
+      v-if="activeTab?.target"
+      class="embedded-browser__hint"
+      :class="{ 'embedded-browser__hint--error': activeTab.error }"
+    >
+      <TriangleAlert v-if="activeTab.error" :size="13" aria-hidden="true" />
+      <ShieldCheck v-else :size="13" aria-hidden="true" />
+      <span>{{ activeTab.error || i18n.t('desktop.browserEmbedHint') }}</span>
     </footer>
   </section>
 </template>
@@ -933,11 +1064,14 @@ onBeforeUnmount(() => {
 .embedded-browser__hint { display: flex; min-width: 0; align-items: center; gap: 6px; padding: 5px 11px; overflow: hidden; color: var(--muted); background: var(--surface); border-top: 1px solid var(--border); font-size: 10px; white-space: nowrap; }
 .embedded-browser__hint svg { flex: 0 0 auto; color: var(--success); }
 .embedded-browser__hint span { overflow: hidden; text-overflow: ellipsis; }
+.embedded-browser__hint--error { color: var(--danger); }
+.embedded-browser__hint--error svg { color: var(--danger); }
 
 .embedded-browser__state { display: flex; min-height: 260px; align-items: center; align-self: stretch; justify-content: center; flex-direction: column; gap: 10px; padding: 28px; color: var(--muted); text-align: center; }
 .embedded-browser__state > span { display: grid; width: 48px; height: 48px; place-items: center; color: var(--warning); background: var(--warning-soft); border-radius: 14px; }
 .embedded-browser__state strong { color: var(--text); font-size: 15px; }
 .embedded-browser__state p { max-width: 480px; margin: 0; font-size: 12px; line-height: 1.7; }
+.embedded-browser__state-actions { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
 .embedded-browser__sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @container desktop-window (max-width: 820px) {

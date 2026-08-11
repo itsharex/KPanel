@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { mount, type VueWrapper } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
@@ -12,6 +12,21 @@ import {
   type EmbeddedBrowserShortcut,
 } from '@/lib/embeddedBrowser'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
+
+const { createBrowserSession } = vi.hoisted(() => ({
+  createBrowserSession: vi.fn(),
+}))
+
+vi.mock('@/lib/api', () => ({
+  api: { browser: { createSession: createBrowserSession } },
+}))
+
+const coreSession = {
+  relayUrl: 'https://browser-relay.example.com',
+  token: 'signed-browser-token',
+  sessionId: 'browser-session-1',
+  expiresAt: '2030-01-01T00:00:00Z',
+}
 
 const configuredShortcuts: EmbeddedBrowserShortcut[] = [
   {
@@ -49,6 +64,8 @@ async function mountBrowser(
       },
     },
   })
+  await flushPromises()
+  await nextTick()
   return { wrapper, router }
 }
 
@@ -64,9 +81,24 @@ async function openNewURL(wrapper: VueWrapper, value: string): Promise<void> {
   await visitFromStart(wrapper, value)
 }
 
+async function postedNavigation(wrapper: VueWrapper): Promise<{ token: string; url: string }> {
+  const frame = wrapper.get('iframe.embedded-browser__frame')
+  const postMessage = vi.fn()
+  Object.defineProperty(frame.element, 'contentWindow', {
+    configurable: true,
+    value: { postMessage },
+  })
+  await frame.trigger('load')
+  const message = postMessage.mock.calls.at(-1)?.[0]
+  expect(postMessage).toHaveBeenLastCalledWith(message, 'https://browser-relay.example.com')
+  return message as { token: string; url: string }
+}
+
 describe('WebBrowserView', () => {
   beforeEach(() => {
     window.open = vi.fn()
+    createBrowserSession.mockReset()
+    createBrowserSession.mockResolvedValue(coreSession)
   })
 
   afterEach(() => {
@@ -89,8 +121,13 @@ describe('WebBrowserView', () => {
     await visitFromStart(wrapper, 'example.com/path')
 
     expect(wrapper.get('iframe.embedded-browser__frame').attributes('src')).toBe(
-      'https://example.com/path',
+      'https://browser-relay.example.com/kernel/',
     )
+    expect(await postedNavigation(wrapper)).toEqual({
+      type: 'kpanel-browser:navigate',
+      token: 'signed-browser-token',
+      url: 'https://example.com/path',
+    })
     expect(wrapper.get('.embedded-browser__content').classes())
       .not.toContain('embedded-browser__content--start')
     expect(wrapper.get('.embedded-browser__tab-count').text()).toBe('1/8')
@@ -104,7 +141,7 @@ describe('WebBrowserView', () => {
     await domesticInput.setValue('KPanel 部署教程')
     await domesticInput.trigger('keydown', { key: 'Enter' })
     await nextTick()
-    const bingURL = new URL(domestic.wrapper.get('iframe').attributes('src')!)
+    const bingURL = new URL((await postedNavigation(domestic.wrapper)).url)
     expect(bingURL.hostname).toBe('www.bing.com')
     expect(bingURL.searchParams.get('q')).toBe('KPanel 部署教程')
     expect(domestic.wrapper.get('[role="tab"]').text()).toContain('搜索：KPanel 部署教程')
@@ -113,7 +150,7 @@ describe('WebBrowserView', () => {
     const international = await mountBrowser('/browser')
     expect(international.wrapper.text()).toContain('Bing')
     await visitFromStart(international.wrapper, 'KPanel documentation')
-    const bingURLInternational = new URL(international.wrapper.get('iframe').attributes('src')!)
+    const bingURLInternational = new URL((await postedNavigation(international.wrapper)).url)
     expect(bingURLInternational.hostname).toBe('www.bing.com')
     expect(bingURLInternational.searchParams.get('q')).toBe('KPanel documentation')
     international.wrapper.unmount()
@@ -125,8 +162,9 @@ describe('WebBrowserView', () => {
     )
 
     expect(wrapper.get('iframe.embedded-browser__frame').attributes('src')).toBe(
-      'https://nginx.example.com/admin',
+      'https://browser-relay.example.com/kernel/',
     )
+    expect((await postedNavigation(wrapper)).url).toBe('https://nginx.example.com/admin')
     expect(wrapper.get('[role="tab"]').text()).toContain('Nginx')
     expect(wrapper.get('.embedded-browser__tab-icon').attributes('src')).toBe(
       '/api/v1/apps/nginx/icon',
@@ -134,15 +172,16 @@ describe('WebBrowserView', () => {
     wrapper.unmount()
   })
 
-  it('embeds a configured website in a sandbox and provides an external-browser action', async () => {
+  it('loads only the isolated browser kernel and provides an external-browser action', async () => {
     const { wrapper } = await mountBrowser(
       '/browser?site=blog&url=https%3A%2F%2Fblog.example.com%2Fpath&request=1',
     )
 
     const frame = wrapper.get('iframe.embedded-browser__frame')
-    expect(frame.attributes('src')).toBe('https://blog.example.com/path')
+    expect(frame.attributes('src')).toBe('https://browser-relay.example.com/kernel/')
     expect(frame.attributes('sandbox')).toContain('allow-scripts')
-    expect(frame.attributes('sandbox')).not.toContain('allow-top-navigation')
+    expect(frame.attributes('sandbox')).not.toContain('allow-popups')
+    expect(wrapper.html()).not.toContain('src="https://blog.example.com/path"')
     expect(wrapper.get('[role="tab"]').text()).toContain('我的博客')
 
     await wrapper.get('.embedded-browser__external').trigger('click')
@@ -151,6 +190,17 @@ describe('WebBrowserView', () => {
       '_blank',
       'noopener,noreferrer',
     )
+    wrapper.unmount()
+  })
+
+  it('routes an HTTP target through the HTTPS browser kernel without direct mixed content', async () => {
+    const { wrapper } = await mountBrowser('/browser?url=http%3A%2F%2Flegacy.example.com%2Fstatus')
+
+    expect(wrapper.get('iframe.embedded-browser__frame').attributes('src')).toBe(
+      'https://browser-relay.example.com/kernel/',
+    )
+    expect((await postedNavigation(wrapper)).url).toBe('http://legacy.example.com/status')
+    expect(wrapper.text()).not.toContain('浏览器阻止了不安全的内嵌网页')
     wrapper.unmount()
   })
 
@@ -225,6 +275,16 @@ describe('WebBrowserView', () => {
 
     expect(wrapper.find('iframe').exists()).toBe(false)
     expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows a recoverable state when the isolated browser core is unavailable', async () => {
+    createBrowserSession.mockRejectedValueOnce(new Error('relay unavailable'))
+    const { wrapper } = await mountBrowser('/browser?url=https%3A%2F%2Fexample.com')
+
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(wrapper.get('[role="alert"]').text()).toContain('relay unavailable')
+    expect(wrapper.text()).toContain('安全浏览器内核暂不可用')
     wrapper.unmount()
   })
 

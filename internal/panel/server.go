@@ -26,6 +26,7 @@ import (
 
 	"github.com/kejilion/kejilion-panel/internal/ai"
 	"github.com/kejilion/kejilion-panel/internal/auth"
+	"github.com/kejilion/kejilion-panel/internal/browsercore"
 	"github.com/kejilion/kejilion-panel/internal/cluster"
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
@@ -63,6 +64,7 @@ type Server struct {
 	downloadTickets     map[[32]byte]fileDownloadTicket
 	ai                  *ai.Service
 	aiError             string
+	browserTokens       *browsercore.TokenCodec
 }
 
 type agentAPI interface {
@@ -103,6 +105,17 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 	if err != nil {
 		return nil, fmt.Errorf("initialize cluster service: %w", err)
 	}
+	var browserTokens *browsercore.TokenCodec
+	if config.BrowserRelayURL != "" {
+		secret, secretErr := browsercore.LoadSecretFile(config.BrowserRelaySecretFile)
+		if secretErr != nil {
+			return nil, secretErr
+		}
+		browserTokens, err = browsercore.NewTokenCodec(secret)
+		if err != nil {
+			return nil, err
+		}
+	}
 	server := &Server{
 		config: config, auth: authService, store: storage, agent: agent,
 		cluster:             clusterService,
@@ -110,6 +123,7 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		terminalOpeningUser: make(map[string]int),
 		trustedProxies:      trustedProxies,
 		lastAuthAudit:       make(map[string]time.Time),
+		browserTokens:       browserTokens,
 	}
 	server.hostOps = newHostOperationService(server)
 	return server, nil
@@ -172,6 +186,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleLogin(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/session":
 		s.handleSession(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/browser/sessions":
+		s.handleBrowserSessionCreate(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/logout":
 		s.handleLogout(w, r)
 	case r.Method == http.MethodPut && r.URL.Path == "/api/v1/settings/password":

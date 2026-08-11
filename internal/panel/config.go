@@ -13,32 +13,36 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kejilion/kejilion-panel/internal/browsercore"
 )
 
 var cookieNamePattern = regexp.MustCompile(`^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$`)
 
 type Config struct {
-	Listen              string        `json:"listen"`
-	DataDir             string        `json:"dataDir"`
-	StorePath           string        `json:"storePath"`
-	BootstrapTokenPath  string        `json:"bootstrapTokenPath"`
-	TOTPKeyPath         string        `json:"totpKeyPath"`
-	AgentSocket         string        `json:"agentSocket"`
-	AgentTokenFile      string        `json:"agentTokenFile"`
-	WebRoot             string        `json:"webRoot"`
-	PublicURL           string        `json:"publicUrl"`
-	AllowIPHosts        bool          `json:"allowIpHosts"`
-	SecureCookie        bool          `json:"secureCookie"`
-	CookieName          string        `json:"cookieName"`
-	SessionTTL          time.Duration `json:"-"`
-	SessionTTLText      string        `json:"sessionTtl"`
-	LoginWindow         time.Duration `json:"-"`
-	LoginWindowText     string        `json:"loginWindow"`
-	MaxLoginFailures    int           `json:"maxLoginFailures"`
-	MaxRequestBytes     int64         `json:"maxRequestBytes"`
-	MaxAgentBytes       int64         `json:"maxAgentBytes"`
-	TrustedProxyCIDRs   []string      `json:"trustedProxyCidrs"`
-	ClusterPrivateCIDRs []string      `json:"clusterPrivateCidrs"`
+	Listen                 string        `json:"listen"`
+	DataDir                string        `json:"dataDir"`
+	StorePath              string        `json:"storePath"`
+	BootstrapTokenPath     string        `json:"bootstrapTokenPath"`
+	TOTPKeyPath            string        `json:"totpKeyPath"`
+	AgentSocket            string        `json:"agentSocket"`
+	AgentTokenFile         string        `json:"agentTokenFile"`
+	WebRoot                string        `json:"webRoot"`
+	PublicURL              string        `json:"publicUrl"`
+	BrowserRelayURL        string        `json:"browserRelayUrl"`
+	BrowserRelaySecretFile string        `json:"browserRelaySecretFile"`
+	AllowIPHosts           bool          `json:"allowIpHosts"`
+	SecureCookie           bool          `json:"secureCookie"`
+	CookieName             string        `json:"cookieName"`
+	SessionTTL             time.Duration `json:"-"`
+	SessionTTLText         string        `json:"sessionTtl"`
+	LoginWindow            time.Duration `json:"-"`
+	LoginWindowText        string        `json:"loginWindow"`
+	MaxLoginFailures       int           `json:"maxLoginFailures"`
+	MaxRequestBytes        int64         `json:"maxRequestBytes"`
+	MaxAgentBytes          int64         `json:"maxAgentBytes"`
+	TrustedProxyCIDRs      []string      `json:"trustedProxyCidrs"`
+	ClusterPrivateCIDRs    []string      `json:"clusterPrivateCidrs"`
 }
 
 func DefaultConfig() Config {
@@ -91,6 +95,8 @@ func LoadConfig(path string) (Config, error) {
 	applyStringEnv("KEJILION_PANEL_AGENT_TOKEN_FILE", &config.AgentTokenFile)
 	applyStringEnv("KEJILION_PANEL_WEB_ROOT", &config.WebRoot)
 	applyStringEnv("KEJILION_PANEL_PUBLIC_URL", &config.PublicURL)
+	applyStringEnv("KEJILION_PANEL_BROWSER_RELAY_URL", &config.BrowserRelayURL)
+	applyStringEnv("KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE", &config.BrowserRelaySecretFile)
 	applyStringEnv("KEJILION_PANEL_COOKIE_NAME", &config.CookieName)
 	applyStringEnv("KEJILION_PANEL_SESSION_TTL", &config.SessionTTLText)
 	applyStringEnv("KEJILION_PANEL_LOGIN_WINDOW", &config.LoginWindowText)
@@ -151,8 +157,12 @@ func LoadConfig(path string) (Config, error) {
 		}
 	}
 	config.PublicURL = strings.TrimRight(strings.TrimSpace(config.PublicURL), "/")
+	config.BrowserRelayURL = strings.TrimRight(strings.TrimSpace(config.BrowserRelayURL), "/")
 	if err := config.Validate(); err != nil {
 		return Config{}, err
+	}
+	if config.BrowserRelayURL != "" {
+		config.BrowserRelayURL, _ = browsercore.NormalizeOrigin(config.BrowserRelayURL)
 	}
 	return config, nil
 }
@@ -175,6 +185,8 @@ func (c Config) Validate() error {
 		return errors.New("agentTokenFile must be absolute")
 	case strings.TrimSpace(c.WebRoot) == "" || !filepath.IsAbs(c.WebRoot):
 		return errors.New("webRoot must be absolute")
+	case strings.TrimSpace(c.BrowserRelaySecretFile) != "" && !filepath.IsAbs(c.BrowserRelaySecretFile):
+		return errors.New("browserRelaySecretFile must be absolute")
 	case c.SessionTTL < 5*time.Minute || c.SessionTTL > 7*24*time.Hour:
 		return errors.New("sessionTtl must be between 5 minutes and 7 days")
 	case c.LoginWindow < time.Minute || c.LoginWindow > 24*time.Hour:
@@ -195,6 +207,9 @@ func (c Config) Validate() error {
 	if c.TOTPKeyPath != "" {
 		protectedPaths["totpKeyPath"] = c.TOTPKeyPath
 	}
+	if c.BrowserRelaySecretFile != "" {
+		protectedPaths["browserRelaySecretFile"] = c.BrowserRelaySecretFile
+	}
 	for label, protectedPath := range protectedPaths {
 		if pathsOverlap(c.WebRoot, protectedPath) {
 			return fmt.Errorf("webRoot must not overlap %s", label)
@@ -205,8 +220,15 @@ func (c Config) Validate() error {
 		samePath(c.StorePath, c.AgentTokenFile) ||
 		(c.TOTPKeyPath != "" && samePath(c.BootstrapTokenPath, c.TOTPKeyPath)) ||
 		samePath(c.BootstrapTokenPath, c.AgentTokenFile) ||
-		(c.TOTPKeyPath != "" && samePath(c.TOTPKeyPath, c.AgentTokenFile)) {
+		(c.TOTPKeyPath != "" && samePath(c.TOTPKeyPath, c.AgentTokenFile)) ||
+		(c.BrowserRelaySecretFile != "" && (samePath(c.BrowserRelaySecretFile, c.StorePath) ||
+			samePath(c.BrowserRelaySecretFile, c.BootstrapTokenPath) ||
+			samePath(c.BrowserRelaySecretFile, c.AgentTokenFile) ||
+			(c.TOTPKeyPath != "" && samePath(c.BrowserRelaySecretFile, c.TOTPKeyPath)))) {
 		return errors.New("store and secret paths must be distinct")
+	}
+	if (c.BrowserRelayURL == "") != (c.BrowserRelaySecretFile == "") {
+		return errors.New("browserRelayUrl and browserRelaySecretFile must be configured together")
 	}
 	if !cookieNamePattern.MatchString(c.CookieName) {
 		return errors.New("cookieName is invalid")
@@ -264,6 +286,18 @@ func (c Config) Validate() error {
 		}
 		if c.SecureCookie && parsed.Scheme != "https" {
 			return errors.New("secure cookies require an HTTPS publicUrl")
+		}
+	}
+	if c.BrowserRelayURL != "" {
+		relayOrigin, err := browsercore.NormalizeOrigin(c.BrowserRelayURL)
+		if err != nil {
+			return errors.New("browserRelayUrl must be an HTTP(S) origin")
+		}
+		if c.PublicURL != "" {
+			publicOrigin, publicErr := browsercore.NormalizeOrigin(c.PublicURL)
+			if publicErr == nil && relayOrigin == publicOrigin {
+				return errors.New("browserRelayUrl must use an isolated origin")
+			}
 		}
 	}
 	return nil

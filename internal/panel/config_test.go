@@ -1,6 +1,9 @@
 package panel
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestLoadConfigAllowIPHostsEnvironment(t *testing.T) {
 	t.Setenv("KEJILION_PANEL_CONFIG", "")
@@ -113,6 +116,55 @@ func TestConfigValidatesTrustedProxyCIDRs(t *testing.T) {
 	config.TrustedProxyCIDRs = []string{"not-a-cidr"}
 	if err := config.Validate(); err == nil {
 		t.Fatal("Validate accepted an invalid trusted proxy CIDR")
+	}
+}
+
+func TestConfigRequiresIsolatedBrowserRelayOriginAndSecret(t *testing.T) {
+	directory := t.TempDir()
+	base := validTestConfig()
+	base.DataDir = filepath.Join(directory, "data")
+	base.StorePath = filepath.Join(base.DataDir, "panel-state.json")
+	base.BootstrapTokenPath = filepath.Join(base.DataDir, "bootstrap.token")
+	base.TOTPKeyPath = filepath.Join(base.DataDir, "totp.key")
+	base.AgentSocket = filepath.Join(directory, "run", "agent.sock")
+	base.AgentTokenFile = filepath.Join(directory, "run", "agent.token")
+	base.WebRoot = filepath.Join(directory, "web")
+	base.PublicURL = "https://panel.example.com"
+
+	valid := base
+	valid.BrowserRelayURL = "https://browser.example.com"
+	valid.BrowserRelaySecretFile = filepath.Join(directory, "run", "browser.secret")
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid browser relay config rejected: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*Config){
+		"missing secret": func(config *Config) { config.BrowserRelayURL = "https://browser.example.com" },
+		"missing URL":    func(config *Config) { config.BrowserRelaySecretFile = filepath.Join(directory, "browser.secret") },
+		"same origin": func(config *Config) {
+			config.BrowserRelayURL = config.PublicURL
+			config.BrowserRelaySecretFile = filepath.Join(directory, "browser.secret")
+		},
+		"same default port origin": func(config *Config) {
+			config.BrowserRelayURL = "https://PANEL.example.com:443"
+			config.BrowserRelaySecretFile = filepath.Join(directory, "browser.secret")
+		},
+		"URL path": func(config *Config) {
+			config.BrowserRelayURL = "https://browser.example.com/path"
+			config.BrowserRelaySecretFile = filepath.Join(directory, "browser.secret")
+		},
+		"relative secret": func(config *Config) {
+			config.BrowserRelayURL = "https://browser.example.com"
+			config.BrowserRelaySecretFile = "browser.secret"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := base
+			mutate(&config)
+			if err := config.Validate(); err == nil {
+				t.Fatal("invalid browser relay config accepted")
+			}
+		})
 	}
 }
 

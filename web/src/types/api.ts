@@ -1496,6 +1496,13 @@ export interface PanelSettings {
   telemetryEnabled?: boolean
 }
 
+export interface BrowserCoreSession {
+  relayUrl: string
+  token: string
+  sessionId: string
+  expiresAt: string
+}
+
 export interface SecurityEntranceSettings {
   enabled: boolean
   path?: string
