@@ -178,6 +178,13 @@ func TestFileEndpointsListWriteUploadAndRejectProtectedPaths(t *testing.T) {
 	if response.Code != http.StatusOK || response.Body.String() != "new" {
 		t.Fatalf("text read status=%d body=%q", response.Code, response.Body.String())
 	}
+	head := fileRequest(
+		server, http.MethodHead,
+		"/v1/files/content?path=%2Fhello.txt&disposition=attachment", "",
+	)
+	if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Length") != "3" {
+		t.Fatalf("file HEAD status=%d length=%q body=%q", head.Code, head.Header().Get("Content-Length"), head.Body.String())
+	}
 
 	response = fileRequest(server, http.MethodPost, "/v1/files/upload?path=%2F&name=upload.txt", "uploaded")
 	if response.Code != http.StatusCreated {

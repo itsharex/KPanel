@@ -59,6 +59,8 @@ type Server struct {
 	terminalSessions    map[string]panelTerminalSession
 	terminalOpening     int
 	terminalOpeningUser map[string]int
+	downloadTicketMu    sync.Mutex
+	downloadTickets     map[[32]byte]fileDownloadTicket
 	ai                  *ai.Service
 	aiError             string
 }
@@ -231,6 +233,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleFileTrashList(w, r)
 	case r.URL.Path == "/api/v1/files/content":
 		s.handleFileContent(w, r)
+	case r.URL.Path == "/api/v1/files/download-tickets":
+		s.handleFileDownloadTicketCreate(w, r)
+	case isFileDownloadTicketPath(r.URL.Path):
+		s.handleFileDownloadTicket(w, r)
 	case r.URL.Path == "/api/v1/files/upload":
 		s.handleFileUpload(w, r)
 	case r.URL.Path == "/api/v1/files/actions":
@@ -609,7 +615,7 @@ func (s *Server) handleSecurityEntrance(w http.ResponseWriter, r *http.Request) 
 }
 
 func securityEntrancePublicPath(requestPath string) bool {
-	return requestPath == "/api/v1/health" || isStaticAssetPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/") || strings.HasPrefix(requestPath, "/api/v3/federation/light/")
+	return requestPath == "/api/v1/health" || isFileDownloadTicketPath(requestPath) || isStaticAssetPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/") || strings.HasPrefix(requestPath, "/api/v3/federation/light/")
 }
 
 func isStaticAssetPath(requestPath string) bool {

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   action: vi.fn(),
   trash: vi.fn(),
   write: vi.fn(),
+  createDownloadTicket: vi.fn(),
   thumbnailUrl: vi.fn(),
   success: vi.fn(),
   danger: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('@/lib/api', () => ({
       action: mocks.action,
       trash: mocks.trash,
       contentUrl: vi.fn(),
+      createDownloadTicket: mocks.createDownloadTicket,
       thumbnailUrl: mocks.thumbnailUrl,
       text: vi.fn(),
       write: mocks.write,
@@ -69,6 +71,7 @@ interface FileBindings {
   loadDirectory: (path?: string, append?: boolean) => Promise<string | undefined>
   navigateDirectory: (path: string) => Promise<void>
   savePreview: (content?: string) => Promise<void>
+  download: (entry: TestFileEntry) => Promise<void>
   submitDialog: () => Promise<void>
   cancelArchive: () => void
   openTrash: () => Promise<void>
@@ -200,7 +203,44 @@ beforeEach(() => {
   mocks.write.mockImplementation(async (_path: string, _content: string, _version: string) => ({
     entry: testEntry('saved.txt'),
   }))
+  mocks.createDownloadTicket.mockResolvedValue({
+    downloadUrl: '/api/v1/files/download/test-ticket',
+    expiresAt: '2026-07-30T00:05:00Z',
+  })
   mocks.thumbnailUrl.mockImplementation((path: string, version: string) => `/thumb?path=${path}&version=${version}`)
+})
+
+describe('FilesView downloads', () => {
+  it('uses a short-lived download URL and reports ticket failures', async () => {
+    const anchor = {
+      href: '',
+      download: '',
+      rel: '',
+      click: vi.fn(),
+      remove: vi.fn(),
+    }
+    const appendChild = vi.fn()
+    vi.stubGlobal('document', {
+      activeElement: null,
+      body: { appendChild },
+      createElement: vi.fn(() => anchor),
+    })
+    const view = setupView()
+    const entry = testEntry('hello.txt')
+
+    await view.download(entry)
+
+    expect(mocks.createDownloadTicket).toHaveBeenCalledWith('/hello.txt')
+    expect(anchor.href).toBe('/api/v1/files/download/test-ticket')
+    expect(anchor.download).toBe('hello.txt')
+    expect(appendChild).toHaveBeenCalledWith(anchor)
+    expect(anchor.click).toHaveBeenCalledOnce()
+    expect(anchor.remove).toHaveBeenCalledOnce()
+
+    mocks.createDownloadTicket.mockRejectedValueOnce(new Error('ticket failed'))
+    await view.download(entry)
+    expect(mocks.danger).toHaveBeenCalledWith('下载失败', 'ticket failed')
+  })
 })
 
 describe('FilesView route path', () => {

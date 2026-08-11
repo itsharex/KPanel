@@ -67,6 +67,7 @@ export default [
   ["文件操作完成", "File operation complete."],
   ["文件操作未完成", "File operation not completed"],
   ["文件打开失败", "File Opening Failed"],
+  ["下载失败", "Download failed"],
   ["文件大图标列表", "File Large Icon List"],
   ["文件管理", "File manager"],
   ["文件列表", "File List"],

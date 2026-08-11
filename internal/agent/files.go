@@ -112,12 +112,12 @@ func (s *Server) fileTrashList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) fileContent(w http.ResponseWriter, r *http.Request, requestID string) {
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		s.fileRead(w, r, requestID)
 	case http.MethodPut:
 		s.fileWrite(w, r, requestID)
 	default:
-		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPut)
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead+", "+http.MethodPut)
 		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
 	}
 }

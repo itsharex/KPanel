@@ -756,19 +756,24 @@ async function runTrashAction(action: 'trash_restore' | 'trash_delete' | 'trash_
   }
 }
 
-function download(entry: FileEntry): void {
+async function download(entry: FileEntry): Promise<void> {
   contextMenu.value = undefined
-  const anchor = document.createElement('a')
-  anchor.href = api.files.contentUrl(entry.path, 'attachment')
-  anchor.download = entry.name
-  anchor.rel = 'noopener'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
+  try {
+    const ticket = await api.files.createDownloadTicket(entry.path)
+    const anchor = document.createElement('a')
+    anchor.href = ticket.downloadUrl
+    anchor.download = entry.name
+    anchor.rel = 'noopener'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+  } catch (error) {
+    toast.danger('下载失败', errorMessage(error))
+  }
 }
 
 function downloadSelected(): void {
-  selectedEntries.value.filter((entry) => entry.kind === 'file').forEach(download)
+  selectedEntries.value.filter((entry) => entry.kind === 'file').forEach((entry) => void download(entry))
 }
 
 function setSort(key: 'name' | 'size' | 'modified'): void {

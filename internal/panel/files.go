@@ -3,12 +3,17 @@ package panel
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
@@ -19,7 +24,25 @@ import (
 const (
 	panelFileTransferIdleTimeout = 45 * time.Second
 	panelFileTransferMaxDuration = 2 * time.Hour
+	fileDownloadTicketTTL        = 5 * time.Minute
+	maxFileDownloadTickets       = 128
 )
+
+type fileDownloadTicket struct {
+	Path      string
+	ExpiresAt time.Time
+}
+
+type fileDownloadTicketRequest struct {
+	Path string `json:"path"`
+}
+
+type fileDownloadTicketResponse struct {
+	DownloadURL string    `json:"downloadUrl"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+}
+
+var errFileDownloadTicketLimit = errors.New("file download ticket limit reached")
 
 type agentStreamAPI interface {
 	OpenStream(
@@ -76,12 +99,12 @@ func (s *Server) handleFileTrashList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		s.handleFileDownload(w, r)
 	case http.MethodPut:
 		s.handleFileWrite(w, r)
 	default:
-		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPut)
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead+", "+http.MethodPut)
 		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
 }
@@ -95,6 +118,74 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.streamFileDownload(w, r, r.URL.RawQuery)
+}
+
+func (s *Server) handleFileDownloadTicketCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusBadRequest, "file_query_invalid", "文件查询参数无效", "")
+		return
+	}
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	var input fileDownloadTicketRequest
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	if !validFileDownloadPath(input.Path) {
+		s.writeValidationProblem(w, r, "path", "file path must be a canonical absolute path")
+		return
+	}
+	token, expiresAt, err := s.issueFileDownloadTicket(input.Path)
+	if errors.Is(err, errFileDownloadTicketLimit) {
+		s.writeProblem(w, r, http.StatusTooManyRequests, "file_download_ticket_limit", "下载请求过多，请稍后重试", "")
+		return
+	}
+	if err != nil {
+		s.writeProblem(w, r, http.StatusInternalServerError, "file_download_ticket_unavailable", "无法创建下载链接", "")
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, fileDownloadTicketResponse{
+		DownloadURL: "/api/v1/files/download/" + token,
+		ExpiresAt:   expiresAt,
+	})
+}
+
+func (s *Server) handleFileDownloadTicket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
+		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusNotFound, "file_download_not_found", "下载链接无效或已过期", "")
+		return
+	}
+	key, ok := fileDownloadTicketKey(strings.TrimPrefix(r.URL.Path, "/api/v1/files/download/"))
+	if !ok {
+		s.writeProblem(w, r, http.StatusNotFound, "file_download_not_found", "下载链接无效或已过期", "")
+		return
+	}
+	ticket, ok := s.lookupFileDownloadTicket(key)
+	if !ok {
+		s.writeProblem(w, r, http.StatusNotFound, "file_download_not_found", "下载链接无效或已过期", "")
+		return
+	}
+	query := url.Values{"path": []string{ticket.Path}, "disposition": []string{"attachment"}}
+	s.streamFileDownload(w, r, query.Encode())
+}
+
+func (s *Server) streamFileDownload(w http.ResponseWriter, r *http.Request, rawQuery string) {
 	streamer, ok := s.agent.(agentStreamAPI)
 	if !ok {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_stream_unavailable", "Agent 文件流不可用", "")
@@ -109,7 +200,7 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	transferContext, cancel := context.WithTimeout(r.Context(), panelFileTransferMaxDuration)
 	defer cancel()
 	response, err := streamer.OpenStream(
-		transferContext, http.MethodGet, "/v1/files/content", r.URL.RawQuery,
+		transferContext, r.Method, "/v1/files/content", rawQuery,
 		requestID(r), http.NoBody, headers, 0,
 	)
 	if err != nil {
@@ -124,7 +215,78 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 		transferContext, w, panelFileTransferIdleTimeout,
 	)
 	writer.WriteHeader(response.StatusCode)
+	if r.Method == http.MethodHead {
+		return
+	}
 	_, _ = io.CopyBuffer(writer, response.Body, make([]byte, 64<<10))
+}
+
+func validFileDownloadPath(value string) bool {
+	return value != "" && len(value) <= 4096 && strings.HasPrefix(value, "/") &&
+		!strings.ContainsAny(value, "\\\x00") && path.Clean(value) == value
+}
+
+func isFileDownloadTicketPath(requestPath string) bool {
+	if !strings.HasPrefix(requestPath, "/api/v1/files/download/") {
+		return false
+	}
+	_, ok := fileDownloadTicketKey(strings.TrimPrefix(requestPath, "/api/v1/files/download/"))
+	return ok
+}
+
+func fileDownloadTicketKey(token string) ([32]byte, bool) {
+	if len(token) != 43 {
+		return [32]byte{}, false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(decoded) != 32 {
+		return [32]byte{}, false
+	}
+	return sha256.Sum256(decoded), true
+}
+
+func (s *Server) issueFileDownloadTicket(filePath string) (string, time.Time, error) {
+	now := time.Now().UTC()
+	s.downloadTicketMu.Lock()
+	defer s.downloadTicketMu.Unlock()
+	if s.downloadTickets == nil {
+		s.downloadTickets = make(map[[32]byte]fileDownloadTicket)
+	}
+	for key, ticket := range s.downloadTickets {
+		if !ticket.ExpiresAt.After(now) {
+			delete(s.downloadTickets, key)
+		}
+	}
+	if len(s.downloadTickets) >= maxFileDownloadTickets {
+		return "", time.Time{}, errFileDownloadTicketLimit
+	}
+	for range 3 {
+		value := make([]byte, 32)
+		if _, err := rand.Read(value); err != nil {
+			return "", time.Time{}, err
+		}
+		token := base64.RawURLEncoding.EncodeToString(value)
+		key := sha256.Sum256(value)
+		if _, exists := s.downloadTickets[key]; exists {
+			continue
+		}
+		expiresAt := now.Add(fileDownloadTicketTTL)
+		s.downloadTickets[key] = fileDownloadTicket{Path: filePath, ExpiresAt: expiresAt}
+		return token, expiresAt, nil
+	}
+	return "", time.Time{}, errors.New("file download ticket collision")
+}
+
+func (s *Server) lookupFileDownloadTicket(key [32]byte) (fileDownloadTicket, bool) {
+	now := time.Now().UTC()
+	s.downloadTicketMu.Lock()
+	defer s.downloadTicketMu.Unlock()
+	ticket, ok := s.downloadTickets[key]
+	if !ok || !ticket.ExpiresAt.After(now) {
+		delete(s.downloadTickets, key)
+		return fileDownloadTicket{}, false
+	}
+	return ticket, true
 }
 
 func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {

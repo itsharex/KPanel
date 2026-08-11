@@ -3,11 +3,15 @@ package panel
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/kejilion/kejilion-panel/internal/store"
 )
 
 type streamAgentCall struct {
@@ -188,6 +192,119 @@ func TestFileContentStreamsRangeAndUploadRequiresCSRF(t *testing.T) {
 	if len(streamCalls) != 2 || streamCalls[1].method != http.MethodPost ||
 		string(streamCalls[1].body) != "payload" {
 		t.Fatalf("upload stream calls = %#v", streamCalls)
+	}
+}
+
+func TestFileDownloadTicketSupportsCookielessRangeHeadAndSecurityEntrance(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &fileStubAgent{
+		stubAgent:      &stubAgent{},
+		streamStatus:   http.StatusPartialContent,
+		streamResponse: []byte("hello"),
+		streamHeaders: http.Header{
+			"Content-Type":   []string{"text/plain"},
+			"Content-Range":  []string{"bytes 0-4/5"},
+			"Content-Length": []string{"5"},
+			"Accept-Ranges":  []string{"bytes"},
+		},
+	}
+	server.agent = agent
+	body := []byte(`{"path":"/hello.txt"}`)
+	headers := map[string]string{
+		"Content-Type": "application/json", "Origin": "http://panel.test",
+		"X-CSRF-Token": csrfCookie.Value,
+	}
+
+	unauthenticated := performRequest(
+		server, http.MethodPost, "/api/v1/files/download-tickets", body,
+		map[string]string{"Content-Type": "application/json", "Origin": "http://panel.test"},
+	)
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated ticket = %d %s", unauthenticated.Code, unauthenticated.Body.String())
+	}
+	missingOrigin := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/download-tickets", body,
+		sessionCookie, csrfCookie,
+		map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value},
+	)
+	if missingOrigin.Code != http.StatusForbidden || !strings.Contains(missingOrigin.Body.String(), "origin_validation_failed") {
+		t.Fatalf("missing origin ticket = %d %s", missingOrigin.Code, missingOrigin.Body.String())
+	}
+	missingCSRF := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/download-tickets", body,
+		sessionCookie, csrfCookie,
+		map[string]string{"Content-Type": "application/json", "Origin": "http://panel.test"},
+	)
+	if missingCSRF.Code != http.StatusForbidden || !strings.Contains(missingCSRF.Body.String(), "csrf_validation_failed") {
+		t.Fatalf("missing CSRF ticket = %d %s", missingCSRF.Code, missingCSRF.Body.String())
+	}
+
+	created := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/download-tickets", body,
+		sessionCookie, csrfCookie, headers,
+	)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("ticket create = %d %s", created.Code, created.Body.String())
+	}
+	var ticket fileDownloadTicketResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &ticket); err != nil || ticket.DownloadURL == "" || !ticket.ExpiresAt.After(time.Now()) {
+		t.Fatalf("ticket response = %#v err=%v", ticket, err)
+	}
+
+	_, version := server.store.SecurityEntrance()
+	if err := server.store.ReplaceSecurityEntrance(version, store.SecurityEntrance{Enabled: true, Path: "panel-secure1"}); err != nil {
+		t.Fatal(err)
+	}
+	download := performRequest(server, http.MethodGet, ticket.DownloadURL, nil, map[string]string{"Range": "bytes=0-4"})
+	if download.Code != http.StatusPartialContent || download.Body.String() != "hello" {
+		t.Fatalf("cookieless download = %d %q", download.Code, download.Body.String())
+	}
+	calls := agent.snapshotStreamCalls()
+	if len(calls) != 1 || calls[0].method != http.MethodGet ||
+		calls[0].rawQuery != "disposition=attachment&path=%2Fhello.txt" || calls[0].headers.Get("Range") != "bytes=0-4" {
+		t.Fatalf("download Agent call = %#v", calls)
+	}
+
+	agent.mu.Lock()
+	agent.streamStatus = http.StatusOK
+	agent.streamHeaders.Set("Content-Length", "5")
+	agent.mu.Unlock()
+	head := performRequest(server, http.MethodHead, ticket.DownloadURL, nil, nil)
+	if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Length") != "5" {
+		t.Fatalf("ticket HEAD = %d length=%q body=%q", head.Code, head.Header().Get("Content-Length"), head.Body.String())
+	}
+	calls = agent.snapshotStreamCalls()
+	if len(calls) != 2 || calls[1].method != http.MethodHead {
+		t.Fatalf("HEAD Agent call = %#v", calls)
+	}
+
+	key, ok := fileDownloadTicketKey(strings.TrimPrefix(ticket.DownloadURL, "/api/v1/files/download/"))
+	if !ok {
+		t.Fatal("created ticket token was invalid")
+	}
+	server.downloadTicketMu.Lock()
+	server.downloadTickets[key] = fileDownloadTicket{Path: "/hello.txt", ExpiresAt: time.Now().Add(-time.Second)}
+	server.downloadTicketMu.Unlock()
+	expired := performRequest(server, http.MethodGet, ticket.DownloadURL, nil, nil)
+	if expired.Code != http.StatusNotFound || len(agent.snapshotStreamCalls()) != 2 {
+		t.Fatalf("expired ticket = %d calls=%#v", expired.Code, agent.snapshotStreamCalls())
+	}
+
+	server.downloadTicketMu.Lock()
+	server.downloadTickets = make(map[[32]byte]fileDownloadTicket, maxFileDownloadTickets)
+	for index := range maxFileDownloadTickets {
+		var itemKey [32]byte
+		itemKey[0] = byte(index)
+		server.downloadTickets[itemKey] = fileDownloadTicket{Path: "/hello.txt", ExpiresAt: time.Now().Add(time.Minute)}
+	}
+	server.downloadTicketMu.Unlock()
+	limited := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/download-tickets", body,
+		sessionCookie, csrfCookie, headers,
+	)
+	if limited.Code != http.StatusTooManyRequests || !strings.Contains(limited.Body.String(), "file_download_ticket_limit") {
+		t.Fatalf("ticket limit = %d %s", limited.Code, limited.Body.String())
 	}
 }
 

@@ -31,6 +31,7 @@ import type {
   FileActionResult,
   FileTrashDirectory,
   FileDirectory,
+  FileDownloadTicket,
   FileEntry,
   FileWriteResult,
   FirewallSnapshot,
@@ -1571,6 +1572,11 @@ export const api = {
       }),
     contentUrl: (path: string, disposition: 'inline' | 'attachment' = 'inline'): string =>
       buildUrl('/files/content', { path, disposition }),
+    createDownloadTicket: (path: string): Promise<FileDownloadTicket> =>
+      request<FileDownloadTicket>('/files/download-tickets', {
+        method: 'POST',
+        body: { path },
+      }),
     thumbnailUrl: (path: string, version: string): string =>
       buildUrl('/files/content', { path, disposition: 'inline', mode: 'thumbnail', version }),
     text: async (path: string): Promise<string> =>

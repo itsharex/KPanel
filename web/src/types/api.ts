@@ -1494,6 +1494,11 @@ export interface FileDirectory {
   readAt: string
 }
 
+export interface FileDownloadTicket {
+  downloadUrl: string
+  expiresAt: string
+}
+
 export type FileAction =
   | 'mkdir'
   | 'rename'
