@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.63.0] - 2026-08-11
+
+### Added
+
+- 概览“基础系统设置”新增一条龙系统调优：默认选择脚本菜单 66 的 12 个固定项目，也可逐项取消；执行后按真实脚本顺序展示后台进度，页面关闭或连接中断后重新打开仍可恢复任务状态。
+- 新增独立 typed Agent/Panel API `GET/POST /api/v1/system/system-tuning`，使用资源版本、共享写锁、持久化维护任务和危险操作审计；首个项目失败即停止，后续项目不会继续执行。
+
+### Changed
+
+- 发布镜像固定 `kejilion/sh@28f89c1b34df4b25e6ef9b144c328fdea75dbac9`，原始脚本 SHA-256 为 `0583f7cd5be1f0bb6ec48d92e2cf224bfabfafada5788658bda4414ba9561229`；脚本提供 `KPANEL_SYSTEM_TUNING_PROTOCOL_VERSION="1"` 非交互协议，并使菜单 66 与 KPanel 共用同一组实现。
+- LinuxMirrors 与网络参数脚本使用固定提交和 SHA-256 下载；菜单 66 的“开放所有端口”改为调用带资源版本、共享锁和回执的事务化防火墙 `open-all` 动作，不再只显示成功文案。
+
+### Upgrade Notes
+
+- 本版本不新增数据库、端口、Compose 或 systemd 权限迁移；升级本身不会自动执行系统调优，也不会修改 Swap、SSH、Fail2Ban、防火墙、DNS、软件源、时区或内核参数。
+- 系统调优包含升级系统、修改 SSH 端口、开放所有端口等高风险宿主机操作，只会在已认证管理员明确提交后执行；回滚 KPanel 不会自动撤销已经完成的宿主机调优，需根据任务审计和系统备份逐项恢复。
+
 ## [0.62.2] - 2026-08-11
 
 ### Fixed
