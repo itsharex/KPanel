@@ -42,6 +42,7 @@ if [[ -n "$base_ref" ]] && git cat-file -e "${base_ref}^{commit}" 2>/dev/null; t
 fi
 ECOSYSTEM_POLICY_BASE_REF="$base_ref" bash scripts/check-ecosystem-policy.sh
 bash scripts/check-version-consistency.sh
+bash scripts/check-managed-script-contract.sh
 node scripts/check-governance-consistency.mjs
 node --test scripts/tests/report-release-metrics.test.mjs
 
@@ -187,6 +188,7 @@ if [[ "$requested_level" == "3" || "$requested_level" == "l3" || "$requested_lev
   bash scripts/security-scan.sh source
   make build-linux
   docker build --build-arg "VERSION=$(tr -d '\r\n' < VERSION)" -t kejilion-panel:verify .
+  bash scripts/check-managed-script-contract.sh kejilion-panel:verify
   bash scripts/security-scan.sh image kejilion-panel:verify
   echo "L3 release verification completed."
   exit 0
