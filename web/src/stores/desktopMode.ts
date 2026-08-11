@@ -91,6 +91,7 @@ function titleKeyForWindowPath(path: string): string | undefined {
   path = desktopRoutePath(path)
   if (path === '/monitoring') return 'route.monitoring'
   if (path === '/processes') return 'route.processes'
+  if (path === '/system') return 'route.systemCenter'
   if (path === '/sites/environment') return 'route.environment'
   if (path.startsWith('/ai/s/') && !/^\/ai\/s\/[A-Za-z0-9_-]{1,128}$/.test(path)) return undefined
   return findDesktopApp(path)?.labelKey
@@ -108,7 +109,7 @@ function isSafeWindowFullPath(fullPath: string): boolean {
 
 function windowPreferencePath(path: string): string | undefined {
   const routePath = desktopRoutePath(path)
-  if (routePath === '/processes' || routePath === '/app-script') return routePath
+  if (routePath === '/processes' || routePath === '/system' || routePath === '/app-script') return routePath
   return findDesktopApp(path)?.path
 }
 

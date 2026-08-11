@@ -62,6 +62,25 @@ describe('DesktopView', () => {
     wrapper.unmount()
   })
 
+  it('launches the system center from its dedicated desktop icon', async () => {
+    const desktop = useDesktopMode()
+    desktop.enterDesktop()
+    const wrapper = mount(DesktopView)
+    const icon = wrapper.findAll('.desktop__icon')
+      .find((entry) => entry.find('.system-center-icon').exists())
+
+    expect(icon).toBeDefined()
+    await icon!.trigger('dblclick')
+    await nextTick()
+
+    expect(desktop.windows.value).toHaveLength(1)
+    expect(desktop.windows.value[0]).toMatchObject({
+      path: '/system',
+      titleKey: 'route.systemCenter',
+    })
+    wrapper.unmount()
+  })
+
   it('opens a desktop app on one touch tap', async () => {
     setupViewport(390, 844)
     const desktop = useDesktopMode()

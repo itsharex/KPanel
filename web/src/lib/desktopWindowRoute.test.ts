@@ -25,6 +25,7 @@ describe('desktop window route', () => {
 
     expect(paths).toEqual(expect.arrayContaining([
       '/overview',
+      '/system',
       '/monitoring',
       '/processes',
       '/browser',
@@ -46,6 +47,7 @@ describe('desktop window route', () => {
     ]))
     expect(names).toEqual(expect.arrayContaining([
       'overview',
+      'system',
       'monitoring',
       'processes',
       'browser',

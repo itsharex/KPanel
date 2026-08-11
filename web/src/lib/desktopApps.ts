@@ -14,6 +14,7 @@ import {
   Store,
 } from '@lucide/vue'
 import type { MessageKey } from '@/i18n/messages/zh-CN'
+import SystemCenterIcon from '@/components/icons/SystemCenterIcon.vue'
 
 /**
  * Desktop application catalogue. Mirrors the left-navigation items in
@@ -103,6 +104,13 @@ export const desktopApps: DesktopApp[] = [
     icon: Network,
     allowMultiple: false,
     gradient: ['#818cf8', '#4338ca'],
+  },
+  {
+    path: '/system',
+    labelKey: 'route.systemCenter',
+    icon: SystemCenterIcon,
+    allowMultiple: false,
+    gradient: ['#8b5cf6', '#4338ca'],
   },
   {
     path: '/activity',

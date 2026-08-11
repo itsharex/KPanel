@@ -18,6 +18,7 @@ export const zhCNMessages = {
   'route.setup': '初始化',
   'route.login': '登录',
   'route.overview': '概览',
+  'route.systemCenter': '系统中心',
   'route.ai': 'AI 助手',
   'route.monitoring': '历史监控',
   'route.processes': '进程管理器',

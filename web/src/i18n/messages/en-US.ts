@@ -20,6 +20,7 @@ export const enUSMessages = {
   'route.setup': 'Setup',
   'route.login': 'Sign in',
   'route.overview': 'Overview',
+  'route.systemCenter': 'System center',
   'route.ai': 'AI assistant',
   'route.monitoring': 'Monitoring history',
   'route.processes': 'Process manager',

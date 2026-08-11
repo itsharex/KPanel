@@ -145,6 +145,7 @@ describe('DesktopWindow lazy view loading', () => {
         return {
           openMonitoring: () => router.push('/monitoring'),
           openProcesses: () => router.push('/processes'),
+          openSystem: () => router.push('/system'),
           goBack: () => router.back(),
         }
       },
@@ -152,6 +153,7 @@ describe('DesktopWindow lazy view loading', () => {
         <main>
           <button data-testid="open-monitoring" @click="openMonitoring">Monitoring</button>
           <button data-testid="open-processes" @click="openProcesses">Processes</button>
+          <button data-testid="open-system" @click="openSystem">System</button>
           <button data-testid="go-back" @click="goBack">Back</button>
         </main>
       `,
@@ -191,13 +193,23 @@ describe('DesktopWindow lazy view loading', () => {
       { windowId: id, fullPath: '/processes' },
     )
 
+    await wrapper.get('[data-testid="open-system"]').trigger('click')
+    await flushPromises()
+    expect(windowState.path).toBe('/system')
+    expect(windowState.titleKey).toBe('route.systemCenter')
+    expect(desktop.windows.value).toHaveLength(1)
+    expect(nativeHistory.history.navigate).toHaveBeenLastCalledWith(
+      { windowId: id, fullPath: '/processes' },
+      { windowId: id, fullPath: '/system' },
+    )
+
     await wrapper.get('[data-testid="go-back"]').trigger('click')
     expect(nativeHistory.history.go).toHaveBeenCalledWith(-1)
-    expect(windowState.path).toBe('/processes')
+    expect(windowState.path).toBe('/system')
 
     desktop.minimizeWindow(id)
     nativeHistory.emit({ windowId: id + 1, fullPath: '/overview' })
-    expect(windowState.path).toBe('/processes')
+    expect(windowState.path).toBe('/system')
     expect(windowState.minimized).toBe(true)
 
     nativeHistory.emit({ windowId: id, fullPath: '/monitoring' })

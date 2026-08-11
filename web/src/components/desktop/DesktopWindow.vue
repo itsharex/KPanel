@@ -115,6 +115,7 @@ function titleKeyForPath(path: string): string {
   path = desktopRoutePath(path)
   if (path === '/monitoring') return 'route.monitoring'
   if (path === '/processes') return 'route.processes'
+  if (path === '/system') return 'route.systemCenter'
   if (path === '/sites/environment') return 'route.environment'
   return findDesktopApp(path)?.labelKey ?? props.windowState.titleKey
 }
@@ -133,6 +134,9 @@ function browserHistoryPoint(fullPath = router.currentRoute.value.fullPath): Des
 let lastBrowserHistoryPoint = browserHistoryPoint(props.windowState.path)
 
 function handoffDesktopRoute(fullPath: string): boolean {
+  // System Center is launchable from the desktop, but links inside Overview
+  // stay in the current window just like the Process Manager utility route.
+  if (desktopRoutePath(fullPath) === '/system') return false
   const app = findDesktopApp(fullPath)
   if (!app) return false
   const from = browserHistoryPoint()

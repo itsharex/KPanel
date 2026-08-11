@@ -7,6 +7,7 @@ describe('desktop app catalogue', () => {
     expect(paths).toEqual(
       expect.arrayContaining([
         '/overview',
+        '/system',
         '/ai',
         '/sites',
         '/browser',
@@ -20,7 +21,7 @@ describe('desktop app catalogue', () => {
         '/settings',
       ]),
     )
-    expect(desktopApps).toHaveLength(12)
+    expect(desktopApps).toHaveLength(13)
   })
 
   it('gives every app a distinct gradient', () => {
@@ -45,6 +46,14 @@ describe('desktop app catalogue', () => {
     expect(findDesktopApp('/browser?site=site-1')?.labelKey).toBe('desktop.browserWindowTitle')
     expect(findDesktopApp('/browser?site=site-1')?.allowMultiple).toBe(false)
     expect(desktopApps.map((app) => app.path)).toContain('/browser')
+  })
+
+  it('exposes the system center launcher while keeping the process utility route internal', () => {
+    expect(findDesktopApp('/system')?.labelKey).toBe('route.systemCenter')
+    expect(findDesktopApp('/system')?.allowMultiple).toBe(false)
+    expect(findDesktopApp('/processes')).toBeUndefined()
+    const paths = desktopApps.map((app) => app.path)
+    expect(paths.indexOf('/system')).toBe(paths.indexOf('/cluster') + 1)
   })
 
   it('returns undefined for unknown paths', () => {

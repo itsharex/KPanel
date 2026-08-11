@@ -46,6 +46,12 @@ export const router = createRouter({
           meta: { titleKey: 'route.overview' },
         },
         {
+          path: 'system',
+          name: 'system',
+          component: () => loadNavigationRoute('/system'),
+          meta: { titleKey: 'route.systemCenter' },
+        },
+        {
           path: 'monitoring',
           name: 'monitoring',
           component: () => loadNavigationRoute('/monitoring'),

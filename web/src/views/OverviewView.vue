@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
 import { RouterLink } from 'vue-router'
+import { rememberOverviewViewport, restoreOverviewViewport } from '@/lib/overviewViewport'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog(() => import('@/i18n/pages/OverviewView/en-US').then((module) => module.default))
@@ -77,6 +78,12 @@ import { usePanelState } from '@/stores/panel'
 import { useToast } from '@/stores/toast'
 import type { SystemActionInput, SystemOverview } from '@/types/api'
 
+const props = withDefaults(defineProps<{
+  systemCenterOnly?: boolean
+}>(), {
+  systemCenterOnly: false,
+})
+
 const data = ref<SystemOverview>()
 const loading = ref(true)
 const refreshing = ref(false)
@@ -102,6 +109,15 @@ interface ManagementTool {
   safety: string
   icon: Component
   tone?: 'blue' | 'violet' | 'amber' | 'danger'
+}
+
+interface SystemCenterSection {
+  id: 'maintenance' | 'basic' | 'security' | 'network' | 'performance'
+  title: string
+  description: string
+  icon: Component
+  iconTone?: 'blue' | 'violet' | 'amber'
+  tools: ManagementTool[]
 }
 
 type KernelProfile = 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
@@ -314,21 +330,23 @@ const basicSettings = computed<ManagementTool[]>(() => {
       icon: Globe2,
       tone: 'blue',
     },
-	{
-		id: 'system-tuning',
-		title: '一条龙系统调优',
-		description: '沿用 kejilion.sh 原有 12 项调优流程，可按需勾选后一次执行。',
-		value:
-			management.maintenance.state === 'running' && management.maintenance.action === 'system-tuning'
-				? `正在调优 · ${management.maintenance.progress}%`
-				: capabilityState('system.tuning.read').enabled ? '12 项可选 · 默认全选' : '适配器未就绪',
-		detail: '更新、清理、Swap、SSH、防御、防火墙、BBR、时区、DNS、IPv4、工具与网络参数',
-		capability: 'system.tuning.read',
-		safety: '每项由固定 kejilion.sh 协议执行并回读验证；外部脚本固定提交与 SHA-256，首项失败即停止。',
-		icon: Wrench,
-		tone: 'violet',
-	},
-	{
+    {
+      id: 'system-tuning',
+      title: '一条龙系统调优',
+      description: '沿用 kejilion.sh 原有 12 项调优流程，可按需勾选后一次执行。',
+      value:
+        management.maintenance.state === 'running' && management.maintenance.action === 'system-tuning'
+          ? `正在调优 · ${management.maintenance.progress}%`
+          : capabilityState('system.tuning.read').enabled
+            ? '12 项可选 · 默认全选'
+            : '适配器未就绪',
+      detail: '更新、清理、Swap、SSH、防御、防火墙、BBR、时区、DNS、IPv4、工具与网络参数',
+      capability: 'system.tuning.read',
+      safety: '每项由固定 kejilion.sh 协议执行并回读验证；外部脚本固定提交与 SHA-256，首项失败即停止。',
+      icon: Wrench,
+      tone: 'violet',
+    },
+    {
 		id: 'accounts',
 		title: '账户管理',
 		description: '管理 Linux 账户、密码、SSH 公钥和 Root 登录策略。',
@@ -622,6 +640,79 @@ function capabilityState(id: string): { enabled: boolean; reason: string } {
   }
 }
 
+const overviewSystemToolIDs = ['swap', 'ssh-port', 'dns', 'ip-preference', 'bbr', 'system-tuning'] as const
+
+const overviewSystemToolTitles: Record<(typeof overviewSystemToolIDs)[number], string> = {
+  swap: '虚拟内存',
+  'ssh-port': 'SSH 端口',
+  dns: 'DNS 优化',
+  'ip-preference': 'V4 / V6 优先',
+  bbr: 'BBR 管理',
+  'system-tuning': '一条龙优化',
+}
+
+const overviewSystemTools = computed<ManagementTool[]>(() => {
+  const tools = new Map(
+    [...basicSettings.value, ...networkTools.value].map((tool) => [tool.id, tool]),
+  )
+  return overviewSystemToolIDs.flatMap((id) => {
+    const tool = tools.get(id)
+    return tool ? [{ ...tool, title: overviewSystemToolTitles[id] }] : []
+  })
+})
+
+const systemCenterSections = computed<SystemCenterSection[]>(() => {
+  const tools = new Map(
+    [...basicSettings.value, ...networkTools.value].map((tool) => [tool.id, tool]),
+  )
+  const select = (ids: string[]) => ids.flatMap((id) => {
+    const tool = tools.get(id)
+    return tool ? [tool] : []
+  })
+
+  return [
+    {
+      id: 'maintenance',
+      title: '日常维护',
+      description: '系统更新、空间清理与可控重启',
+      icon: RefreshCw,
+      iconTone: 'violet',
+      tools: maintenanceTools.value,
+    },
+    {
+      id: 'basic',
+      title: '基础配置',
+      description: '主机身份、资源与常用系统参数',
+      icon: Wrench,
+      tools: select(['swap', 'hostname', 'timezone', 'mirror', 'cron']),
+    },
+    {
+      id: 'security',
+      title: '登录与安全',
+      description: '账户、SSH 与入站访问保护',
+      icon: ShieldCheck,
+      iconTone: 'amber',
+      tools: select(['ssh-port', 'ssh-defense', 'accounts', 'firewall']),
+    },
+    {
+      id: 'network',
+      title: '网络与流量',
+      description: '解析、网卡、端口与流量策略',
+      icon: Network,
+      iconTone: 'blue',
+      tools: select(['dns', 'port-usage', 'network-interfaces', 'ip-preference', 'hosts', 'traffic-shutdown']),
+    },
+    {
+      id: 'performance',
+      title: '性能优化',
+      description: '一键调优、内核与网络加速',
+      icon: Gauge,
+      iconTone: 'violet',
+      tools: select(['system-tuning', 'bbr', 'kernel', 'bbrv3']),
+    },
+  ]
+})
+
 const resourceCapabilityNames: Record<ResourceDialogID, string> = {
   hosts: 'system.hosts',
   cron: 'system.cron',
@@ -873,7 +964,20 @@ async function load(silent = false): Promise<void> {
   } finally {
     loading.value = false
     refreshing.value = false
+    if (!props.systemCenterOnly) {
+      await nextTick()
+      if (restoreOverviewViewport(pageElement.value) === 'desktop') {
+        overviewSystemSection.value?.scrollIntoView({ block: 'start' })
+      }
+    }
   }
+}
+
+const pageElement = ref<HTMLElement>()
+const overviewSystemSection = ref<HTMLElement>()
+
+function rememberViewportBeforeSystemCenter(): void {
+  rememberOverviewViewport(pageElement.value)
 }
 
 onMounted(() => {
@@ -906,10 +1010,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page">
+  <div ref="pageElement" class="page">
     <PageHeader
-      title="系统监控与管理"
-      description="实时资源状态与 kejilion.sh 系统工具统一入口；所有配置均以宿主机实际状态为准。"
+      :title="props.systemCenterOnly ? '系统中心' : '系统监控与管理'"
+      :description="props.systemCenterOnly
+        ? '集中管理系统维护、基础设置、网络工具与系统重装。'
+        : '实时资源状态与 kejilion.sh 系统工具统一入口；所有配置均以宿主机实际状态为准。'"
     />
 
     <LoadingState v-if="loading" :rows="4" cards />
@@ -920,7 +1026,11 @@ onBeforeUnmount(() => {
         自动刷新暂时失败，正在显示上一次观测结果。
       </div>
 
-      <section class="realtime-monitoring" aria-labelledby="realtime-monitoring-title">
+      <section
+        v-if="!props.systemCenterOnly"
+        class="realtime-monitoring"
+        aria-labelledby="realtime-monitoring-title"
+      >
         <header class="realtime-monitoring__header">
           <div>
             <span class="realtime-monitoring__icon"><Activity :size="18" /></span>
@@ -1023,7 +1133,7 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <div class="overview-grid">
+      <div v-if="!props.systemCenterOnly" class="overview-grid">
         <section class="panel-card panel-card--system">
           <header class="panel-card__header">
             <div>
@@ -1153,7 +1263,7 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
-      <section class="panel-card panel-card--resource-overview">
+      <section v-if="!props.systemCenterOnly" class="panel-card panel-card--resource-overview">
         <header class="panel-card__header">
           <div>
             <span class="panel-card__icon panel-card__icon--violet"><Activity :size="18" /></span>
@@ -1202,153 +1312,180 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <div class="management-layout">
-        <section class="panel-card panel-card--wide">
-          <header class="panel-card__header">
-            <div>
-              <span class="panel-card__icon panel-card__icon--violet"><RefreshCw :size="18" /></span>
+      <template v-if="props.systemCenterOnly">
+        <div class="system-center-layout">
+          <section
+            v-for="section in systemCenterSections"
+            :id="`system-center-${section.id}`"
+            :key="section.id"
+            class="panel-card system-center-section"
+            :aria-labelledby="`system-center-${section.id}-title`"
+          >
+            <header class="panel-card__header system-center-section__header">
               <div>
-                <h2>系统维护</h2>
-                <p>参考 kejilion.sh 更新与清理流程，使用独立后台任务执行</p>
+                <span
+                  class="panel-card__icon"
+                  :class="section.iconTone ? `panel-card__icon--${section.iconTone}` : ''"
+                >
+                  <component :is="section.icon" :size="18" />
+                </span>
+                <div>
+                  <h2 :id="`system-center-${section.id}-title`">{{ section.title }}</h2>
+                  <p>{{ section.description }}</p>
+                </div>
               </div>
-            </div>
-            <span v-if="maintenanceRunning" class="management-read-state">
-              <RefreshCw :size="14" class="spin" />
-              {{ data.management.maintenance.progress }}%
-            </span>
-            <span v-else-if="data.management.maintenance.rebootRequired" class="management-read-state is-warning">
-              <CircleAlert :size="14" /> 建议重启
-            </span>
-          </header>
-
-          <div class="system-tool-grid system-tool-grid--maintenance">
-            <button
-              v-for="tool in maintenanceTools"
-              :key="tool.id"
-              class="system-tool"
-              type="button"
-              @click="openTool(tool)"
-            >
-              <span class="system-tool__top">
-                <span class="system-tool__icon" :class="tool.tone ? `is-${tool.tone}` : ''">
-                  <component :is="tool.icon" :size="19" />
-                </span>
-                <span class="system-tool__state">
-                  {{
-                    maintenanceRunning && maintenanceActionFor(tool.id)
-                      ? data.management.maintenance.action === maintenanceActionFor(tool.id)
-                        ? `进行中 ${data.management.maintenance.progress}%`
-                        : '任务占用'
-                      : capabilityState(tool.capability).enabled
-                        ? '可执行'
-                        : '依赖未就绪'
-                  }}
-                </span>
-              </span>
-              <strong>{{ tool.title }}</strong>
-              <span>{{ tool.value }}</span>
-              <small>{{ managementDetailLabel(tool.detail) }}</small>
               <span
-                v-if="
-                  maintenanceRunning &&
-                  data.management.maintenance.action === maintenanceActionFor(tool.id)
-                "
-                class="maintenance-progress"
-                role="progressbar"
-                aria-label="系统维护进度"
-                :aria-valuenow="data.management.maintenance.progress"
-                aria-valuemin="0"
-                aria-valuemax="100"
+                v-if="section.id === 'maintenance' && maintenanceRunning"
+                class="management-read-state"
               >
-                <span :style="{ width: `${data.management.maintenance.progress}%` }"></span>
+                <RefreshCw :size="14" class="spin" />
+                {{ data.management.maintenance.progress }}%
               </span>
-            </button>
-          </div>
-        </section>
-
-        <section class="panel-card">
-          <header class="panel-card__header">
-            <div>
-              <span class="panel-card__icon"><Wrench :size="18" /></span>
-              <div>
-                <h2>基础系统设置</h2>
-                <p>与 kejilion.sh 当前系统配置双向识别</p>
-              </div>
-            </div>
-            <span class="management-read-state"><ShieldCheck :size="14" /> 状态实时同步</span>
-          </header>
-
-          <div class="configuration-list">
-            <button
-              v-for="tool in basicSettings"
-              :key="tool.id"
-              class="configuration-row"
-              type="button"
-              @click="openTool(tool)"
-            >
-              <span class="configuration-row__icon" :class="tool.tone ? `is-${tool.tone}` : ''">
-                <component :is="tool.icon" :size="18" />
+              <span
+                v-else-if="
+                  section.id === 'maintenance' && data.management.maintenance.rebootRequired
+                "
+                class="management-read-state is-warning"
+              >
+                <CircleAlert :size="14" /> 建议重启
               </span>
-              <span class="configuration-row__body">
-                <span>{{ tool.title }}</span>
-                <strong>{{ tool.value }}</strong>
+              <span v-else class="system-center-section__count">{{ section.tools.length }} 项</span>
+            </header>
+
+            <div class="system-center-grid">
+              <button
+                v-for="tool in section.tools"
+                :key="tool.id"
+                class="system-tool"
+                :class="{ 'is-featured': tool.id === 'system-tuning' }"
+                type="button"
+                @click="openTool(tool)"
+              >
+                <span class="system-tool__top">
+                  <span class="system-tool__icon" :class="tool.tone ? `is-${tool.tone}` : ''">
+                    <component :is="tool.icon" :size="19" />
+                  </span>
+                  <span class="system-tool__state">
+                    {{
+                      section.id === 'maintenance'
+                        ? maintenanceRunning && maintenanceActionFor(tool.id)
+                          ? data.management.maintenance.action === maintenanceActionFor(tool.id)
+                            ? `进行中 ${data.management.maintenance.progress}%`
+                            : '任务占用'
+                          : capabilityState(tool.capability).enabled
+                            ? '可执行'
+                            : '依赖未就绪'
+                        : toolAvailabilityLabel(tool)
+                    }}
+                  </span>
+                </span>
+                <strong>{{ tool.title }}</strong>
+                <span>{{ tool.value }}</span>
                 <small>{{ managementDetailLabel(tool.detail) }}</small>
-              </span>
-              <span class="configuration-row__action">
-                <span>{{ isResourceDialogID(tool.id) ? toolAvailabilityLabel(tool) : capabilityState(tool.capability).enabled ? '可配置' : '查看' }}</span>
-                <ChevronRight :size="16" />
-              </span>
-            </button>
-          </div>
-        </section>
-
-        <section class="panel-card">
-          <header class="panel-card__header">
-            <div>
-              <span class="panel-card__icon panel-card__icon--blue"><Settings2 :size="18" /></span>
-              <div>
-                <h2>网络工具</h2>
-                <p>集中管理解析、主机映射、网卡、防火墙与网络优化</p>
-              </div>
+                <span
+                  v-if="
+                    section.id === 'maintenance' &&
+                    maintenanceRunning &&
+                    data.management.maintenance.action === maintenanceActionFor(tool.id)
+                  "
+                  class="maintenance-progress"
+                  role="progressbar"
+                  aria-label="系统维护进度"
+                  :aria-valuenow="data.management.maintenance.progress"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                >
+                  <span :style="{ width: `${data.management.maintenance.progress}%` }"></span>
+                </span>
+              </button>
             </div>
-          </header>
+          </section>
 
-          <div class="system-tool-grid">
-            <button
-              v-for="tool in networkTools"
-              :key="tool.id"
-              class="system-tool"
-              type="button"
-              @click="openTool(tool)"
-            >
-              <span class="system-tool__top">
-                <span class="system-tool__icon" :class="tool.tone ? `is-${tool.tone}` : ''">
-                  <component :is="tool.icon" :size="19" />
+          <section
+            id="system-center-danger"
+            class="panel-card system-center-section system-center-section--danger"
+            aria-labelledby="system-center-danger-title"
+          >
+            <header class="panel-card__header system-center-section__header">
+              <div>
+                <span class="panel-card__icon panel-card__icon--danger">
+                  <CircleAlert :size="18" />
                 </span>
-                <span class="system-tool__state">
-                  {{ toolAvailabilityLabel(tool) }}
-                </span>
+                <div>
+                  <h2 id="system-center-danger-title">危险操作</h2>
+                  <p>可能导致服务中断或数据丢失，操作前请确认恢复通道</p>
+                </div>
+              </div>
+              <span class="system-center-section__count is-danger">1 项</span>
+            </header>
+
+            <div class="danger-zone" aria-labelledby="reinstall-title">
+              <span class="danger-zone__icon"><CircleAlert :size="21" /></span>
+              <span class="danger-zone__body">
+                <strong id="reinstall-title">重装系统</strong>
+                <small>清除系统数据并导致 KPanel 离线。没有带外恢复通道时保持锁定。</small>
               </span>
+              <button
+                class="button button--danger button--small"
+                type="button"
+                @click="openTool(reinstallTool)"
+              >
+                查看安全要求
+              </button>
+            </div>
+          </section>
+        </div>
+      </template>
+
+      <section
+        v-else
+        ref="overviewSystemSection"
+        class="panel-card overview-system-management"
+        aria-labelledby="overview-system-management-title"
+      >
+        <header class="panel-card__header overview-system-management__header">
+          <div>
+            <span class="panel-card__icon panel-card__icon--violet"><Settings2 :size="18" /></span>
+            <div>
+              <h2 id="overview-system-management-title">系统管理</h2>
+              <p>常用系统设置集中入口，其余功能由系统中心承接。</p>
+            </div>
+          </div>
+          <RouterLink
+            class="button button--secondary button--small overview-system-management__more"
+            to="/system"
+            @click="rememberViewportBeforeSystemCenter"
+          >
+            更多设置
+            <ChevronRight :size="16" />
+          </RouterLink>
+        </header>
+
+        <div class="overview-system-grid" aria-label="6 项常用功能">
+          <button
+            v-for="tool in overviewSystemTools"
+            :key="tool.id"
+            class="overview-system-card"
+            type="button"
+            @click="openTool(tool)"
+          >
+            <span class="overview-system-card__top">
+              <span class="overview-system-card__icon" :class="tool.tone ? `is-${tool.tone}` : ''">
+                <component :is="tool.icon" :size="20" />
+              </span>
+              <span class="overview-system-card__state">{{ toolAvailabilityLabel(tool) }}</span>
+            </span>
+            <span class="overview-system-card__body">
               <strong>{{ tool.title }}</strong>
               <span>{{ tool.value }}</span>
               <small>{{ managementDetailLabel(tool.detail) }}</small>
-            </button>
-          </div>
-        </section>
-      </div>
-
-      <section class="danger-zone" aria-labelledby="reinstall-title">
-        <span class="danger-zone__icon"><CircleAlert :size="21" /></span>
-        <span class="danger-zone__body">
-          <strong id="reinstall-title">重装系统</strong>
-          <small>清除系统数据并导致 KPanel 离线。没有带外恢复通道时保持锁定。</small>
-        </span>
-        <button class="button button--danger button--small" type="button" @click="openTool(reinstallTool)">
-          查看安全要求
-        </button>
+            </span>
+            <ChevronRight class="overview-system-card__arrow" :size="17" />
+          </button>
+        </div>
       </section>
 
-      <section v-if="data.services.length" class="panel-card">
+      <section v-if="!props.systemCenterOnly && data.services.length" class="panel-card">
         <header class="panel-card__header">
           <div>
             <span class="panel-card__icon panel-card__icon--violet"><Database :size="18" /></span>

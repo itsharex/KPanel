@@ -40,6 +40,7 @@ describe('locale selection', () => {
     await initializeI18n()
 
     expect(t('route.overview')).toBe('Overview')
+    expect(t('route.systemCenter')).toBe('System center')
     expect(documentElement.lang).toBe('en-US')
     expect(addEventListener).toHaveBeenCalledWith('storage', expect.any(Function))
   })
@@ -71,6 +72,7 @@ describe('translations', () => {
     await Promise.all([setLocale('en-US'), setLocale('zh-CN')])
 
     expect(t('route.overview')).toBe('概览')
+    expect(t('route.systemCenter')).toBe('系统中心')
     expect(documentElement.lang).toBe('zh-CN')
   })
 

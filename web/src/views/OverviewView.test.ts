@@ -28,6 +28,8 @@ interface OverviewBindings {
   data: Ref<SystemOverview | undefined>
   basicSettings: ComputedRef<Array<{ id: string; title: string; capability: string }>>
   networkTools: ComputedRef<Array<{ id: string; title: string; capability: string }>>
+  overviewSystemTools: ComputedRef<Array<{ id: string; title: string; capability: string }>>
+  systemCenterSections: ComputedRef<Array<{ id: string; title: string; tools: Array<{ id: string }> }>>
   selectedResourceDialog: Ref<string | undefined>
   toolAvailabilityLabel: (tool: { id: string; capability: string }) => string
   actionForm: { timezone: string; timezonePreset: string }
@@ -112,7 +114,7 @@ describe('OverviewView refresh stability', () => {
     expect(view.actionForm.timezonePreset).toBe('__custom__')
   })
 
-  it('groups basic settings and network tools without restoring a system center', () => {
+  it('groups basic settings and network tools for the overview and system center', () => {
     const view = setupView()
     view.data.value = overview('grouping')
 
@@ -141,6 +143,44 @@ describe('OverviewView refresh stability', () => {
       'bbrv3',
     ])
     expect(view.toolAvailabilityLabel(view.networkTools.value[1]!)).toBe('适配器未就绪')
+    expect(view.overviewSystemTools.value.map((tool) => tool.id)).toEqual([
+      'swap',
+      'ssh-port',
+      'dns',
+      'ip-preference',
+      'bbr',
+      'system-tuning',
+    ])
+    expect(view.overviewSystemTools.value.map((tool) => tool.title)).toEqual([
+      '虚拟内存',
+      'SSH 端口',
+      'DNS 优化',
+      'V4 / V6 优先',
+      'BBR 管理',
+      '一条龙优化',
+    ])
+    expect(
+      view.systemCenterSections.value.map((section) => ({
+        id: section.id,
+        tools: section.tools.map((tool) => tool.id),
+      })),
+    ).toEqual([
+      { id: 'maintenance', tools: ['system-update', 'system-cleanup', 'system-reboot'] },
+      { id: 'basic', tools: ['swap', 'hostname', 'timezone', 'mirror', 'cron'] },
+      { id: 'security', tools: ['ssh-port', 'ssh-defense', 'accounts', 'firewall'] },
+      {
+        id: 'network',
+        tools: [
+          'dns',
+          'port-usage',
+          'network-interfaces',
+          'ip-preference',
+          'hosts',
+          'traffic-shutdown',
+        ],
+      },
+      { id: 'performance', tools: ['system-tuning', 'bbr', 'kernel', 'bbrv3'] },
+    ])
 
     view.openTool({ id: 'hosts' })
     expect(view.selectedResourceDialog.value).toBe('hosts')
