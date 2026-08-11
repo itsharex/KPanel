@@ -1,6 +1,6 @@
 # KPanel 轻量安全浏览器内核
 
-- 状态：第一阶段 MVP，尚未进入发布与部署流程
+- 状态：第一阶段安全阅读内核，已进入 v0.66.0 独立发布候选与生产门禁
 - 更新：2026-08-12
 - 目标：允许管理员访问任意公网 HTTP(S) URL，同时不把第三方站点直接嵌入 KPanel
 
@@ -80,26 +80,26 @@ KPanel 的 iframe 永远只加载 Relay 的 `/kernel/`，不会出现 `iframe sr
 
 任何阶段都不得回退为直接加载第三方 iframe，也不得把任意 URL 网络出口移回 Panel 进程。
 
-## 6. 运行配置（未部署）
+## 6. 运行配置
 
 Panel 需要同时设置：
 
 ```text
 KEJILION_PANEL_BROWSER_RELAY_URL=https://browser.example.com
-KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE=/run/kejilion/browser-relay.secret
+KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE=/run/secrets/browser-relay-secret
 ```
 
 Relay 使用同一密钥文件启动：
 
 ```text
 kpanel-browser-relay \
-  -listen 127.0.0.1:8090 \
+  -listen :8090 \
   -allowed-origin https://panel.example.com \
   -public-url https://browser.example.com \
-  -secret-file /run/kejilion/browser-relay.secret
+  -secret-file /run/secrets/browser-relay-secret
 ```
 
-密钥至少 32 个随机字节，文件权限应仅允许服务账户读取。`browser.example.com` 应由独立反向代理转发到 Relay，并保持流式响应；不能与 `panel.example.com` 共用 origin。
+正式 Compose 以同一不可变镜像启动独立 Relay 容器，限制为 0.5 CPU、128 MiB、64 PIDs、只读根文件系统、无 Linux capabilities。安装器生成 32 字节随机密钥并以 `root:kejilion-panel 0640` 只读挂载给两个容器。`browser.example.com` 应由独立反向代理转发到 Relay 并保持流式响应；不能与 `panel.example.com` 共用 origin。
 
 ## 7. 本地验证与性能基线
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -21,15 +23,29 @@ func main() {
 }
 
 func run() error {
-	listen := flag.String("listen", "127.0.0.1:8090", "HTTP listen address")
-	allowedOrigin := flag.String("allowed-origin", "", "exact KPanel HTTP(S) origin")
-	publicURL := flag.String("public-url", "", "public HTTP(S) origin of this relay")
-	secretFile := flag.String("secret-file", "", "file containing at least 32 random bytes")
-	maxGlobal := flag.Int("max-global", 24, "maximum concurrent upstream requests")
-	maxSession := flag.Int("max-session", 6, "maximum concurrent requests per browser session")
-	maxRequestBytes := flag.Int64("max-request-bytes", 16<<20, "maximum relayed request body")
-	bodyIdleTimeout := flag.Duration("body-idle-timeout", 30*time.Second, "close upstream bodies that stop producing data")
-	flag.Parse()
+	return runArgs(os.Args[1:])
+}
+
+func runArgs(args []string) error {
+	if len(args) == 1 && args[0] == "healthcheck" {
+		return relayHealthcheck(os.Getenv("KEJILION_BROWSER_RELAY_HEALTH_URL"))
+	}
+
+	flags := flag.NewFlagSet("kpanel-browser-relay", flag.ContinueOnError)
+	listen := flags.String("listen", "127.0.0.1:8090", "HTTP listen address")
+	allowedOrigin := flags.String("allowed-origin", "", "exact KPanel HTTP(S) origin")
+	publicURL := flags.String("public-url", "", "public HTTP(S) origin of this relay")
+	secretFile := flags.String("secret-file", "", "file containing at least 32 random bytes")
+	maxGlobal := flags.Int("max-global", 24, "maximum concurrent upstream requests")
+	maxSession := flags.Int("max-session", 6, "maximum concurrent requests per browser session")
+	maxRequestBytes := flags.Int64("max-request-bytes", 16<<20, "maximum relayed request body")
+	bodyIdleTimeout := flags.Duration("body-idle-timeout", 30*time.Second, "close upstream bodies that stop producing data")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
 
 	secret, err := browsercore.LoadSecretFile(*secretFile)
 	if err != nil {
@@ -78,4 +94,30 @@ func run() error {
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
 	}
+}
+
+func relayHealthcheck(rawURL string) error {
+	if rawURL == "" {
+		rawURL = "http://127.0.0.1:8090/healthz"
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, rawURL, nil)
+	if err != nil {
+		return fmt.Errorf("create relay healthcheck: %w", err)
+	}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			Proxy: nil,
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("relay healthcheck: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("relay healthcheck returned %s", response.Status)
+	}
+	return nil
 }

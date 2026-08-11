@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,5 +30,30 @@ func TestReadSecretRequiresBoundedStrongFile(t *testing.T) {
 	}
 	if _, err := browsercore.LoadSecretFile(""); err == nil {
 		t.Fatal("missing path accepted")
+	}
+}
+
+func TestRelayHealthcheck(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/healthz" {
+			t.Fatalf("path = %q", request.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	if err := relayHealthcheck(server.URL + "/healthz"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRelayHealthcheckRejectsFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	if err := relayHealthcheck(server.URL); err == nil {
+		t.Fatal("failed healthcheck accepted")
 	}
 }

@@ -155,12 +155,22 @@ AGENT
 		exit 0
 		;;
 	"rm "*)
+		if [ "${2:-}" = "-f" ] && [ "${3:-}" = "kejilion-browser-relay" ]; then
+			require_state
+			rm -f "$state/browser-relay"
+		fi
 		exit 0
+		;;
+	"inspect kejilion-browser-relay")
+		require_state
+		[ -f "$state/browser-relay" ]
+		exit
 		;;
 	"inspect --format")
 		case "$3" in
 			*"{{.Image}}"*) printf '%s\n' \
 				'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
+			*'"8090/tcp"'*) printf '%s\n' "${KPANEL_MOCK_CURRENT_RELAY_PORT:-18081}" ;;
 			*PortBindings*) printf '%s\n' "${KPANEL_MOCK_CURRENT_PORT:-18080}" ;;
 			*NetworkSettings*) printf '%s\n' 1 ;;
 			*)
@@ -180,6 +190,9 @@ AGENT
 		case "${4:-}" in
 			create) : >"$state/network" ;;
 			up)
+				if grep -q '^  browser-relay:' /home/docker/kpanel/docker-compose.yml; then
+					: >"$state/browser-relay"
+				fi
 				if [ "${KPANEL_MOCK_BOOTSTRAP_MISSING:-0}" != 1 ]; then
 					mkdir -p /home/docker/kpanel/data/panel
 					printf '%s\n' 'test-bootstrap-token' \
@@ -187,7 +200,7 @@ AGENT
 					chmod 600 /home/docker/kpanel/data/panel/bootstrap.token
 				fi
 				;;
-			down) rm -f "$state/network" ;;
+			down) rm -f "$state/network" "$state/browser-relay" ;;
 			*) exit 2 ;;
 		esac
 		exit 0
@@ -288,21 +301,33 @@ EOF
 	grep -F "image: docker.io/kjlion/kejilion-panel:latest" \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx 'KPANEL_PUBLIC_URL=http://127.0.0.1:18080' \
+	grep -Fx 'KPANEL_PUBLIC_URL=http://198.51.100.25:18080' \
+		/home/docker/kpanel/.env >/dev/null
+	grep -Fx 'KPANEL_BROWSER_RELAY_URL=http://198.51.100.25:18081' \
 		/home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_ALLOW_IP_HOSTS=true' \
 		/home/docker/kpanel/.env >/dev/null
-	if grep -F '198.51.100.25' /home/docker/kpanel/.env >/dev/null; then
-		echo "install still pins the Panel origin to the detected public IP" >&2
-		return 1
-	fi
+	grep -F 'KEJILION_PANEL_BROWSER_RELAY_URL: ${KPANEL_BROWSER_RELAY_URL}' \
+		/home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -F 'KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE: /run/secrets/browser-relay-secret' \
+		/home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -F -- '- "18081:8090"' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '    container_name: kejilion-browser-relay' \
+		/home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '    user: "65532:65532"' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '    read_only: true' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '    pids_limit: 64' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '    mem_limit: 128m' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '    cpus: 0.5' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx '      test: ["CMD", "/kpanel-browser-relay", "healthcheck"]' \
+		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F 'KEJILION_PANEL_ALLOW_IP_HOSTS: ${KPANEL_ALLOW_IP_HOSTS:-true}' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx 'KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.30.0.0/16,172.31.0.1/32' \
 		/home/docker/kpanel/.env >/dev/null
 	grep -F 'KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS: ${KPANEL_CLUSTER_PRIVATE_CIDRS:-}' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
-	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 1
+	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 2
 	grep -Fx '      - kpanel-internal' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx '      - kpanel-egress' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx '    internal: true' /home/docker/kpanel/docker-compose.yml >/dev/null
@@ -338,6 +363,10 @@ EOF
 	test "$(stat -c '%a' /home/docker/kpanel/secrets/agent.token)" = 640
 	test "$(stat -c '%u:%g' /home/docker/kpanel/secrets/agent.token)" = 0:987
 	test "$(tr -d '\r\n' </home/docker/kpanel/secrets/agent.token | wc -c)" = 64
+	test -f /home/docker/kpanel/secrets/browser-relay.secret
+	test "$(stat -c '%a' /home/docker/kpanel/secrets/browser-relay.secret)" = 640
+	test "$(stat -c '%u:%g' /home/docker/kpanel/secrets/browser-relay.secret)" = 0:987
+	test "$(tr -d '\r\n' </home/docker/kpanel/secrets/browser-relay.secret | wc -c)" = 64
 	test -f /home/docker/kpanel/.managed-by-kejilion-app
 	test -x /home/docker/kpanel/bin/kejilion.sh
 	test "$(stat -c '%a' /home/docker/kpanel/bin/kejilion.sh)" = 700
@@ -347,6 +376,16 @@ EOF
 
 	local systemctl_lines_before=""
 	systemctl_lines_before="$(wc -l <"$KPANEL_MOCK_SYSTEMCTL_LOG")"
+	if KPANEL_MOCK_CURRENT_RELAY_PORT=19081 docker_app_update \
+		>"$TEST_DIR/relay-port-output.txt" 2>&1; then
+		echo "KPanel update ignored a mismatched existing Browser Relay port" >&2
+		return 1
+	fi
+	grep -F 'Browser Relay' "$TEST_DIR/relay-port-output.txt" >/dev/null
+	test "$(wc -l <"$KPANEL_MOCK_SYSTEMCTL_LOG")" = "$systemctl_lines_before"
+	test ! -e "$MOCK_STATE/network-preflight"
+	test ! -e "$MOCK_STATE/rollback-tagged"
+
 	if KPANEL_MOCK_PORT_PUBLISH_FAIL=1 docker_app_update \
 		>"$TEST_DIR/network-preflight-output.txt" 2>&1; then
 		echo "KPanel update ignored a failed Docker port-publish preflight" >&2
@@ -376,6 +415,9 @@ EOF
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 	grep -Fx 'permission_granted="true"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -F -- '- "18081:8090"' /home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -Fx 'KPANEL_BROWSER_RELAY_URL=http://198.51.100.25:18081' \
+		/home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.30.0.0/16,172.31.0.1/32' \
 		/home/docker/kpanel/.env >/dev/null
 	test ! -e /home/docker/kpanel/.env.rollback
