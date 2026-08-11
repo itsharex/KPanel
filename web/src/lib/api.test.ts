@@ -572,6 +572,25 @@ describe('API client', () => {
     expect(fetchMock.mock.calls.every((call) => (call[1] as RequestInit | undefined)?.method === 'GET')).toBe(true)
   })
 
+  it('normalizes empty account collections from older Agent responses', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      resourceVersion: 'a'.repeat(64),
+      accounts: [{
+        username: 'root', uid: 0, gid: 0, home: '/root', shell: '/bin/bash',
+        kind: 'root', passwordStatus: 'enabled', role: 'root', groups: null, sshKeys: null,
+      }],
+      total: 1,
+      truncated: false,
+      sshPolicy: { passwordAuthentication: true, publicKeyAuthentication: true, rootLogin: 'enabled' },
+      observedAt: '2026-08-11T08:00:00Z',
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.system.accounts()).resolves.toMatchObject({
+      accounts: [{ username: 'root', groups: [], sshKeys: [] }],
+    })
+  })
+
   it('submits exact typed system resource actions without protocol or raw shell fields', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({

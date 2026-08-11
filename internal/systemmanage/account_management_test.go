@@ -78,6 +78,9 @@ func TestParseAccountManagementSnapshot(t *testing.T) {
 	if len(snapshot.Accounts) != 2 || snapshot.Accounts[1].Username != "operator" || len(snapshot.Accounts[1].SSHKeys) != 1 {
 		t.Fatalf("unexpected accounts: %#v", snapshot.Accounts)
 	}
+	if snapshot.Accounts == nil || snapshot.Accounts[0].Groups == nil || snapshot.Accounts[0].SSHKeys == nil {
+		t.Fatalf("empty account collections must serialize as arrays: %#v", snapshot.Accounts[0])
+	}
 }
 
 func TestAccountManagementInvocationKeepsSecretOutOfArgv(t *testing.T) {

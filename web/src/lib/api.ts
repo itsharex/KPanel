@@ -691,6 +691,17 @@ function normalizeMaintenance(
   }
 }
 
+function normalizeAccountManagementSnapshot(snapshot: AccountManagementSnapshot): AccountManagementSnapshot {
+  return {
+    ...snapshot,
+    accounts: (Array.isArray(snapshot.accounts) ? snapshot.accounts : []).map((account) => ({
+      ...account,
+      groups: Array.isArray(account.groups) ? account.groups : [],
+      sshKeys: Array.isArray(account.sshKeys) ? account.sshKeys : [],
+    })),
+  }
+}
+
 async function createSite(
   body: SiteInput,
   onProgress?: (progress: SiteInstallationProgress) => void,
@@ -1343,8 +1354,8 @@ export const api = {
 		request<TrafficShutdownSnapshot>('/system/traffic-shutdown', { signal }),
 	trafficShutdownAction: (body: TrafficShutdownActionInput): Promise<TrafficShutdownActionResult> =>
 		request<TrafficShutdownActionResult>('/system/traffic-shutdown/actions', { method: 'POST', body }),
-	accounts: (signal?: AbortSignal): Promise<AccountManagementSnapshot> =>
-		request<AccountManagementSnapshot>('/system/accounts', { signal }),
+	accounts: async (signal?: AbortSignal): Promise<AccountManagementSnapshot> =>
+		normalizeAccountManagementSnapshot(await request<AccountManagementSnapshot>('/system/accounts', { signal })),
 	accountAction: (body: AccountManagementActionInput): Promise<AccountManagementActionResult> =>
 		request<AccountManagementActionResult>('/system/account-actions', { method: 'POST', body }),
     resourceAction: (body: SystemResourceActionInput): Promise<SystemResourceActionResult> =>

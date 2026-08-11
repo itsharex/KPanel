@@ -249,9 +249,13 @@ func parseAccountManagementSnapshot(output []byte) (contract.AccountManagementSn
 		}
 		return left.Username < right.Username
 	})
+	snapshot.Accounts = make([]contract.SystemAccount, 0, len(usernames))
 	for _, username := range usernames {
 		account := accounts[username]
 		account.SSHKeys = keys[username]
+		if account.SSHKeys == nil {
+			account.SSHKeys = []contract.SSHAuthorizedKey{}
+		}
 		if len(account.SSHKeys) != keyCounts[username] {
 			return snapshot, errors.New("account SSH key count does not match key records")
 		}

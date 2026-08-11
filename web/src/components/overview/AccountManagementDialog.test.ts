@@ -36,6 +36,18 @@ beforeEach(() => {
 })
 
 describe('AccountManagementDialog', () => {
+  it('stays open while the first account snapshot is still loading', async () => {
+    mocks.accounts.mockReturnValueOnce(new Promise(() => undefined))
+    const wrapper = mount(AccountManagementDialog, {
+      props: { open: true, readable: true, writable: true }, global: { stubs: { teleport: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[role="status"]').exists()).toBe(true)
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
   it('shows human login accounts first and keeps system accounts optional', async () => {
     const wrapper = mount(AccountManagementDialog, {
       props: { open: true, readable: true, writable: true }, global: { stubs: { teleport: true } },
