@@ -63,6 +63,26 @@ case "$1 ${2:-}" in
 		printf '%s\n' mock-release-container
 		exit 0
 		;;
+	"container create")
+		require_state
+		: >"$state/network-preflight"
+		printf '%s\n' mock-network-preflight
+		exit 0
+		;;
+	"container start")
+		require_state
+		[ -f "$state/network-preflight" ]
+		if [ "${KPANEL_MOCK_PORT_PUBLISH_FAIL:-0}" = 1 ]; then
+			echo "simulated missing DOCKER chain" >&2
+			exit 1
+		fi
+		exit 0
+		;;
+	"container rm")
+		require_state
+		rm -f "$state/network-preflight"
+		exit 0
+		;;
 	"cp "*)
 		destination=$3
 		case "$2" in
@@ -324,6 +344,19 @@ EOF
 	grep -Fx 'permission_granted="true"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 	grep -Fx 'ENABLE_STATS="false"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 	grep -Fx 'canshu="CN"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
+
+	: >"$KPANEL_MOCK_SYSTEMCTL_LOG"
+	if KPANEL_MOCK_PORT_PUBLISH_FAIL=1 docker_app_update \
+		>"$TEST_DIR/network-preflight-output.txt" 2>&1; then
+		echo "KPanel update ignored a failed Docker port-publish preflight" >&2
+		return 1
+	fi
+	grep -F 'Docker 端口映射预检失败' \
+		"$TEST_DIR/network-preflight-output.txt" >/dev/null
+	test ! -s "$KPANEL_MOCK_SYSTEMCTL_LOG"
+	test ! -e "$MOCK_STATE/network-preflight"
+	test ! -e "$MOCK_STATE/rollback-tagged"
+	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 
 	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
 	if KPANEL_MOCK_AGENT_VERSION=9.9.9 docker_app_update; then
