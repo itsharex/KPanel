@@ -68,7 +68,7 @@ if KP_BROWSER_MODE=alpha run_installer >"$TEST_DIR/browser-mode.out" 2>&1; then
 	echo "installer accepted an unsupported browser mode" >&2
 	exit 1
 fi
-grep -F -- '--browser-mode must be disabled or beta' "$TEST_DIR/browser-mode.out" >/dev/null
+grep -F -- '--browser-mode must be disabled, reader, or beta' "$TEST_DIR/browser-mode.out" >/dev/null
 test "$(wc -l <"$DOCKER_LOG" | tr -d ' ')" = 1
 grep -Fx -- '--host unix:///var/run/docker.sock compose version' "$DOCKER_LOG" >/dev/null
 
@@ -247,9 +247,13 @@ grep -F 'ipv4_address: ${KEJILION_BROWSER_RELAY_IPV4:' \
 	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
 grep -F 'KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE: /run/secrets/browser-relay-secret' \
 	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
-grep -F 'KEJILION_PANEL_BROWSER_MODE: ${KEJILION_PANEL_BROWSER_MODE:-disabled}' \
+grep -F 'KEJILION_PANEL_BROWSER_MODE: ${KEJILION_PANEL_BROWSER_MODE:-reader}' \
 	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
-grep -F '"-mode=${KEJILION_PANEL_BROWSER_MODE:-disabled}"' \
+grep -F 'KEJILION_PANEL_BROWSER_RELAY_INTERNAL_URL: http://browser-relay:8090' \
+	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
+grep -F '"-mode=${KEJILION_PANEL_BROWSER_MODE:-reader}"' \
+	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
+grep -F 'KEJILION_BROWSER_RELAY_EXPECT_MODE: ${KEJILION_PANEL_BROWSER_MODE:-reader}' \
 	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
 grep -F "printf 'KEJILION_PANEL_BROWSER_MODE=%s" \
 	"$PROJECT_DIR/deploy/install.sh" >/dev/null

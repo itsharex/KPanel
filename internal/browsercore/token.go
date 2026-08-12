@@ -19,6 +19,11 @@ const (
 	maxTokenTTL   = 15 * time.Minute
 )
 
+const (
+	TokenScopeBeta   = "beta"
+	TokenScopeReader = "reader"
+)
+
 var ErrInvalidToken = errors.New("invalid browser relay token")
 
 type Claims struct {
@@ -26,6 +31,7 @@ type Claims struct {
 	SessionID string `json:"sid"`
 	Subject   string `json:"sub"`
 	Audience  string `json:"aud"`
+	Scope     string `json:"scope,omitempty"`
 	IssuedAt  int64  `json:"iat"`
 	ExpiresAt int64  `json:"exp"`
 }
@@ -43,7 +49,11 @@ func NewTokenCodec(secret []byte) (*TokenCodec, error) {
 }
 
 func (c *TokenCodec) Issue(subject string, ttl time.Duration) (string, Claims, error) {
-	if !validTokenText(subject, 128) || ttl < minTokenTTL || ttl > maxTokenTTL {
+	return c.IssueScoped(subject, TokenScopeBeta, ttl)
+}
+
+func (c *TokenCodec) IssueScoped(subject, scope string, ttl time.Duration) (string, Claims, error) {
+	if !validTokenText(subject, 128) || !validTokenScope(scope) || ttl < minTokenTTL || ttl > maxTokenTTL {
 		return "", Claims{}, ErrInvalidToken
 	}
 	random := make([]byte, 16)
@@ -52,10 +62,11 @@ func (c *TokenCodec) Issue(subject string, ttl time.Duration) (string, Claims, e
 	}
 	now := c.now().UTC()
 	claims := Claims{
-		Version:   1,
+		Version:   2,
 		SessionID: base64.RawURLEncoding.EncodeToString(random),
 		Subject:   subject,
 		Audience:  tokenAudience,
+		Scope:     scope,
 		IssuedAt:  now.Unix(),
 		ExpiresAt: now.Add(ttl).Unix(),
 	}
@@ -86,8 +97,14 @@ func (c *TokenCodec) Verify(token string) (Claims, error) {
 	var claims Claims
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&claims) != nil || claims.Version != 1 || claims.Audience != tokenAudience ||
+	if decoder.Decode(&claims) != nil || (claims.Version != 1 && claims.Version != 2) || claims.Audience != tokenAudience ||
 		!validTokenText(claims.SessionID, 64) || !validTokenText(claims.Subject, 128) {
+		return Claims{}, ErrInvalidToken
+	}
+	if claims.Version == 1 && claims.Scope == "" {
+		// Tokens issued by v0.68.0 were beta-only. Preserve their short rolling-update window.
+		claims.Scope = TokenScopeBeta
+	} else if claims.Version != 2 || !validTokenScope(claims.Scope) {
 		return Claims{}, ErrInvalidToken
 	}
 	now := c.now().UTC().Unix()
@@ -95,6 +112,10 @@ func (c *TokenCodec) Verify(token string) (Claims, error) {
 		return Claims{}, ErrInvalidToken
 	}
 	return claims, nil
+}
+
+func validTokenScope(value string) bool {
+	return value == TokenScopeBeta || value == TokenScopeReader
 }
 
 func (c *TokenCodec) sign(claims Claims) (string, error) {

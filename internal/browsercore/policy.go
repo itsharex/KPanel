@@ -162,6 +162,8 @@ func reservedHostname(host string) bool {
 var nonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
+	// Azure WireServer is a host-node virtual IP reachable from every Azure VM.
+	netip.MustParsePrefix("168.63.129.16/32"),
 	netip.MustParsePrefix("192.0.0.0/24"),
 	netip.MustParsePrefix("192.0.2.0/24"),
 	netip.MustParsePrefix("192.31.196.0/24"),

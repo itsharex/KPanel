@@ -5,6 +5,8 @@ import "testing"
 func TestNormalizeRuntimeMode(t *testing.T) {
 	for input, expected := range map[string]string{
 		"disabled": RuntimeModeDisabled,
+		" reader ": RuntimeModeReader,
+		"READER":   RuntimeModeReader,
 		" beta ":   RuntimeModeBeta,
 		"BETA":     RuntimeModeBeta,
 	} {
@@ -21,8 +23,15 @@ func TestNormalizeRuntimeMode(t *testing.T) {
 }
 
 func TestRuntimeModeEnabledOnlyForBeta(t *testing.T) {
-	if RuntimeModeEnabled(RuntimeModeDisabled) || RuntimeModeEnabled("enabled") ||
+	if RuntimeModeEnabled(RuntimeModeDisabled) || RuntimeModeEnabled(RuntimeModeReader) || RuntimeModeEnabled("enabled") ||
 		!RuntimeModeEnabled(RuntimeModeBeta) || !RuntimeModeEnabled(" BETA ") {
 		t.Fatal("runtime mode gate does not fail closed")
+	}
+}
+
+func TestRuntimeModeUsesRelayForReaderAndBeta(t *testing.T) {
+	if RuntimeModeUsesRelay(RuntimeModeDisabled) || RuntimeModeUsesRelay("enabled") ||
+		!RuntimeModeUsesRelay(RuntimeModeReader) || !RuntimeModeUsesRelay(RuntimeModeBeta) {
+		t.Fatal("relay mode gate does not fail closed")
 	}
 }

@@ -77,8 +77,57 @@ func TestBrowserSessionCreateRequiresAuthOriginCSRFAndConfiguration(t *testing.T
 	if unconfigured.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unconfigured status = %d, body = %s", unconfigured.Code, unconfigured.Body.String())
 	}
-	if !strings.Contains(unconfigured.Body.String(), "browser_beta_disabled") {
+	if !strings.Contains(unconfigured.Body.String(), "browser_disabled") {
 		t.Fatalf("disabled beta response = %s", unconfigured.Body.String())
+	}
+}
+
+func TestBrowserSessionCreateSupportsReaderOnPublicHTTPAndProxyHTTPS(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	codec, err := browsercore.NewTokenCodec([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.config.BrowserMode = browsercore.RuntimeModeReader
+	server.config.BrowserRelayURL = "http://198.51.100.10:8081"
+	server.config.BrowserRelayInternalURL = "http://browser-relay:8090"
+	server.config.AllowIPHosts = true
+	server.browserTokens = codec
+	server.browserRelayClient = &http.Client{}
+
+	for name, configure := range map[string]func(*http.Request){
+		"public HTTP IP": func(request *http.Request) {
+			request.Host = "198.51.100.10:8080"
+			request.Header.Set("Origin", "http://198.51.100.10:8080")
+		},
+		"trusted proxy HTTPS": func(request *http.Request) {
+			request.RemoteAddr = "127.0.0.1:12345"
+			request.Host = "panel.example.com"
+			request.Header.Set("Origin", "https://panel.example.com")
+			request.Header.Set("X-Forwarded-Proto", "https")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := newAuthenticatedSiteRequest(
+				sessionCookie, csrfCookie, http.MethodPost, "/api/v1/browser/sessions", nil, true,
+			)
+			configure(request)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusCreated {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+			var payload browserRelaySessionResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			claims, err := codec.Verify(payload.Token)
+			if err != nil || claims.Scope != browsercore.TokenScopeReader || payload.Mode != browsercore.RuntimeModeReader ||
+				payload.RelayURL != request.Header.Get("Origin") {
+				t.Fatalf("reader response = %#v, claims = %#v, err = %v", payload, claims, err)
+			}
+		})
 	}
 }
 

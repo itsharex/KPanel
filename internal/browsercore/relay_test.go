@@ -30,6 +30,13 @@ type discardResponseWriter struct {
 
 type shortResponseWriter struct{ header http.Header }
 
+type zeroReader struct{}
+
+func (zeroReader) Read(payload []byte) (int, error) {
+	clear(payload)
+	return len(payload), nil
+}
+
 func (w *shortResponseWriter) Header() http.Header { return w.header }
 
 func (*shortResponseWriter) WriteHeader(int) {}
@@ -61,6 +68,33 @@ func newTestRelay(t testing.TB, roundTripper http.RoundTripper) (*Relay, string)
 	relay, err := NewRelay(RelayConfig{
 		AllowedOrigin: "https://panel.example.com",
 		RelayOrigin:   "https://relay.example.com",
+	}, tokens, policy, NewLimiter(4, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roundTripper != nil {
+		relay.client.Transport = roundTripper
+	}
+	return relay, token
+}
+
+func newTestReaderRelay(t testing.TB, roundTripper http.RoundTripper) (*Relay, string) {
+	t.Helper()
+	tokens, err := NewTokenCodec([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := tokens.IssueScoped("admin", TokenScopeReader, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := NewTargetPolicy(staticResolver{
+		"example.com": {netip.MustParseAddr("93.184.216.34")},
+	})
+	relay, err := NewRelay(RelayConfig{
+		RuntimeMode:   RuntimeModeReader,
+		AllowedOrigin: "http://198.51.100.10:8080",
+		RelayOrigin:   "http://198.51.100.10:8081",
 	}, tokens, policy, NewLimiter(4, 2))
 	if err != nil {
 		t.Fatal(err)
@@ -123,6 +157,139 @@ func TestRelayStreamsResponseAndKeepsUpstreamMetadataOutOfBrowserHeaders(t *test
 	if json.Unmarshal(payload, &responsePairs) != nil || len(responsePairs) != 3 {
 		t.Fatalf("response metadata = %s", payload)
 	}
+}
+
+func TestReaderRelayIsReadOnlyAndDoesNotServeTheBetaKernel(t *testing.T) {
+	upstreamCalls := 0
+	relay, token := newTestReaderRelay(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		upstreamCalls++
+		if request.Method != http.MethodGet || request.Header.Get("Cookie") != "" || request.Header.Get("Authorization") != "" {
+			t.Fatalf("unsafe reader request reached upstream: %#v", request)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type":    {"text/html; charset=utf-8"},
+				"Content-Length":  {"2"},
+				"Location":        {"https://example.com/next"},
+				"Set-Cookie":      {"target=secret; Secure"},
+				"X-Frame-Options": {"DENY"},
+			},
+			Body: io.NopCloser(strings.NewReader("ok")),
+		}, nil
+	}))
+	encoded, err := EncodeHeaderPairs([]HeaderPair{{"Accept", "text/html"}, {"Accept-Language", "zh-CN"}, {"User-Agent", "KPanel-Test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := relayRequest(t, token, nil)
+	valid.Header.Set("Origin", "http://198.51.100.10:8081")
+	valid.Header.Set(HeaderTargetHeaders, encoded)
+	response := httptest.NewRecorder()
+	relay.Handler().ServeHTTP(response, valid)
+	if response.Code != http.StatusOK || response.Body.String() != "ok" || upstreamCalls != 1 {
+		t.Fatalf("reader response = %d %q, calls=%d", response.Code, response.Body.String(), upstreamCalls)
+	}
+	metadata, err := base64.RawURLEncoding.DecodeString(response.Header().Get(HeaderUpstreamHeaders))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(metadata), "Set-Cookie") || strings.Contains(string(metadata), "X-Frame-Options") ||
+		!strings.Contains(string(metadata), "Content-Type") || !strings.Contains(string(metadata), "Location") {
+		t.Fatalf("reader metadata = %s", metadata)
+	}
+
+	for name, mutate := range map[string]func(*http.Request){
+		"write method": func(request *http.Request) { request.Header.Set(HeaderTargetMethod, http.MethodPost) },
+		"request body": func(request *http.Request) {
+			request.Body = io.NopCloser(strings.NewReader("write"))
+			request.ContentLength = 5
+		},
+		"cookie header": func(request *http.Request) {
+			value, _ := EncodeHeaderPairs([]HeaderPair{{"Cookie", "target=secret"}})
+			request.Header.Set(HeaderTargetHeaders, value)
+		},
+		"authorization header": func(request *http.Request) {
+			value, _ := EncodeHeaderPairs([]HeaderPair{{"Authorization", "Bearer secret"}})
+			request.Header.Set(HeaderTargetHeaders, value)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := relayRequest(t, token, nil)
+			request.Header.Set("Origin", "http://198.51.100.10:8081")
+			request.Header.Set(HeaderTargetHeaders, encoded)
+			mutate(request)
+			recorder := httptest.NewRecorder()
+			relay.Handler().ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusBadRequest || upstreamCalls != 1 ||
+				!strings.Contains(recorder.Body.String(), "reader_request_not_allowed") {
+				t.Fatalf("invalid reader request = %d %q, calls=%d", recorder.Code, recorder.Body.String(), upstreamCalls)
+			}
+		})
+	}
+
+	codec, _ := NewTokenCodec([]byte("0123456789abcdef0123456789abcdef"))
+	betaToken, _, _ := codec.Issue("admin", 10*time.Minute)
+	wrongScope := relayRequest(t, betaToken, nil)
+	wrongScope.Header.Set("Origin", "http://198.51.100.10:8081")
+	wrongScopeResponse := httptest.NewRecorder()
+	relay.Handler().ServeHTTP(wrongScopeResponse, wrongScope)
+	if wrongScopeResponse.Code != http.StatusUnauthorized || upstreamCalls != 1 {
+		t.Fatalf("wrong scope response = %d %q", wrongScopeResponse.Code, wrongScopeResponse.Body.String())
+	}
+
+	kernel := httptest.NewRecorder()
+	relay.Handler().ServeHTTP(kernel, httptest.NewRequest(http.MethodGet, "/kernel/", nil))
+	if kernel.Code != http.StatusNotFound {
+		t.Fatalf("reader relay served beta kernel: %d", kernel.Code)
+	}
+	health := httptest.NewRecorder()
+	relay.Handler().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if health.Code != http.StatusOK || !strings.Contains(health.Body.String(), `"mode":"reader"`) {
+		t.Fatalf("reader health = %d %q", health.Code, health.Body.String())
+	}
+}
+
+func TestReaderRelayBoundsDeclaredAndStreamingResponses(t *testing.T) {
+	t.Run("declared length", func(t *testing.T) {
+		relay, token := newTestReaderRelay(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        http.Header{"Content-Type": {"text/html"}},
+				Body:          io.NopCloser(strings.NewReader("")),
+				ContentLength: defaultReaderBodyBytes + 1,
+			}, nil
+		}))
+		request := relayRequest(t, token, nil)
+		request.Header.Set("Origin", "http://198.51.100.10:8081")
+		response := httptest.NewRecorder()
+		relay.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusRequestEntityTooLarge ||
+			!strings.Contains(response.Body.String(), "reader_response_too_large") {
+			t.Fatalf("declared oversized response = %d %q", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("streaming length", func(t *testing.T) {
+		relay, token := newTestReaderRelay(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        http.Header{"Content-Type": {"text/html"}},
+				Body:          io.NopCloser(io.LimitReader(zeroReader{}, defaultReaderBodyBytes+1)),
+				ContentLength: -1,
+			}, nil
+		}))
+		request := relayRequest(t, token, nil)
+		request.Header.Set("Origin", "http://198.51.100.10:8081")
+		response := httptest.NewRecorder()
+		relay.Handler().ServeHTTP(response, request)
+		result := response.Result()
+		if response.Code != http.StatusOK || int64(response.Body.Len()) != defaultReaderBodyBytes ||
+			result.Trailer.Get(HeaderReaderError) != "response_too_large" {
+			t.Fatalf("streamed oversized response = %d, bytes=%d, trailer=%q", response.Code,
+				response.Body.Len(), result.Trailer.Get(HeaderReaderError))
+		}
+	})
 }
 
 func TestResponseHeaderMetadataLimitIncludesJSONAndBase64Expansion(t *testing.T) {

@@ -20,6 +20,17 @@ describe('embeddedBrowserCore', () => {
     expect(resolveBrowserCoreLocation(session)).toEqual({
       frameURL: 'https://browser.example.com/kernel/',
       origin: 'https://browser.example.com',
+      targetOrigin: 'https://browser.example.com',
+      sandbox: 'allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-downloads',
+    })
+  })
+
+  it('resolves reader mode to a same-origin opaque sandbox', () => {
+    expect(resolveBrowserCoreLocation({ ...session, mode: 'reader' })).toEqual({
+      frameURL: 'https://browser.example.com/browser-reader/',
+      origin: 'null',
+      targetOrigin: '*',
+      sandbox: 'allow-scripts',
     })
   })
 
@@ -30,8 +41,8 @@ describe('embeddedBrowserCore', () => {
       .toBeUndefined()
   })
 
-  it('fails closed when the API does not explicitly return beta mode', () => {
-    expect(resolveBrowserCoreLocation({ ...session, mode: 'disabled' as 'beta' })).toBeUndefined()
+  it('fails closed when the API returns an unknown mode', () => {
+    expect(resolveBrowserCoreLocation({ ...session, mode: 'disabled' as 'reader' })).toBeUndefined()
   })
 
   it('keeps the target and token in a postMessage payload', () => {

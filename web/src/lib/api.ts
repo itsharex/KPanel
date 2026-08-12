@@ -15,6 +15,7 @@ import type {
   AuthSession,
   AuthStatus,
   BrowserCoreSession,
+  BrowserReaderResponse,
   ClusterController,
   ClusterHost,
   ClusterHostList,
@@ -559,6 +560,73 @@ async function rawFileResponse(
   return response
 }
 
+function decodeBrowserHeaderPairs(value: string | null): Array<[string, string]> {
+  if (!value || value.length > 32 << 10) throw new ApiError('浏览器 Relay 返回了无效元数据。', 502, 'browser_reader_invalid_response')
+  try {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+    const binary = atob(normalized + '='.repeat((4 - normalized.length % 4) % 4))
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+    const payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown
+    if (!Array.isArray(payload) || payload.length > 128 || !payload.every((pair) => {
+      if (!Array.isArray(pair) || pair.length !== 2) return false
+      const [name, headerValue] = pair
+      return typeof name === 'string' && typeof headerValue === 'string' &&
+        name.length <= 256 && headerValue.length <= 8 << 10 &&
+        !/[\u0000\r\n]/.test(name) && !/[\u0000\r\n]/.test(headerValue)
+    })) throw new Error('invalid header metadata')
+    return payload as Array<[string, string]>
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    throw new ApiError('浏览器 Relay 返回了无效元数据。', 502, 'browser_reader_invalid_response', error)
+  }
+}
+
+async function browserReaderResponse(
+  token: string,
+  url: string,
+  kind: 'document' | 'image',
+  signal?: AbortSignal,
+): Promise<BrowserReaderResponse> {
+  const headers = new Headers({
+    Accept: 'application/octet-stream',
+    'Content-Type': 'application/json',
+    'X-KPanel-Browser-Token': token,
+  })
+  if (csrfToken) headers.set('X-CSRF-Token', csrfToken)
+  let response: Response
+  try {
+    response = await fetch(buildUrl('/browser/reader/fetch'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers,
+      body: JSON.stringify({ url, kind }),
+      signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new ApiError('无法连接到安全阅读服务，请稍后重试。', 0, 'network_error', error)
+  }
+  if (!response.ok) {
+    const payload = await parsePayload(response)
+    const problem = payload && typeof payload === 'object' ? payload as ProblemPayload : undefined
+    throw new ApiError(
+      problem?.detail || problem?.title || `安全阅读请求失败（HTTP ${response.status}）`,
+      response.status,
+      problem?.code || `http_${response.status}`,
+      payload,
+      problem?.requestId,
+    )
+  }
+  const status = Number(response.headers.get('X-KPanel-Browser-Upstream-Status'))
+  if (!Number.isInteger(status) || status < 100 || status > 599) {
+    await response.body?.cancel()
+    throw new ApiError('浏览器 Relay 返回了无效状态。', 502, 'browser_reader_invalid_response')
+  }
+  const responseHeaders = decodeBrowserHeaderPairs(response.headers.get('X-KPanel-Browser-Upstream-Headers'))
+  return { status, headers: responseHeaders, body: await response.arrayBuffer() }
+}
+
 function pickCsrfToken(headers: Headers, payload: unknown): void {
   const headerToken = headers.get('x-csrf-token')
   if (headerToken) {
@@ -995,6 +1063,7 @@ export const api = {
       '/browser/sessions',
       { method: 'POST', signal },
     ),
+    fetchReader: browserReaderResponse,
   },
   agent: {
     health: async (signal?: AbortSignal) => normalizeAgent(await request<RawAgentHealth>('/agent/health', { signal })),

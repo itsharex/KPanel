@@ -5,7 +5,7 @@ LC_ALL=C
 export LC_ALL
 
 PUBLIC_URL=
-BROWSER_MODE=disabled
+BROWSER_MODE=reader
 BROWSER_RELAY_URL=
 NETWORK_SUBNET=172.29.255.240/28
 FAILURES=0
@@ -16,12 +16,13 @@ usage() {
 Usage:
   ./deploy/preflight.sh \
     --public-url https://panel.example.com \
-    [--browser-mode beta] \
+    [--browser-mode disabled|reader|beta] \
     --browser-relay-url https://browser.example.com \
     [--network-subnet 172.29.255.240/28]
 
 This command is read-only. It does not connect to the Docker socket, start a
 service, create a directory, or change kejilion.sh and /home/web.
+Browser mode defaults to reader. Use disabled as the explicit kill switch.
 EOF
 }
 
@@ -147,9 +148,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$BROWSER_MODE" in
-	disabled) ok "Browser Beta is disabled by default" ;;
+	disabled) ok "the embedded browser is disabled by the deployment kill switch" ;;
+	reader) ok "safe browser reader mode is enabled; target-site scripts stay disabled" ;;
 	beta) warn "Browser Beta is explicitly enabled; the vendored Scramjet runtime is prerelease software" ;;
-	*) fail "--browser-mode must be disabled or beta" ;;
+	*) fail "--browser-mode must be disabled, reader, or beta" ;;
 esac
 
 if [ "$(uname -s 2>/dev/null || true)" = Linux ]; then

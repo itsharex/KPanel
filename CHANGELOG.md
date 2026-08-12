@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- 为应用市场直连 HTTP/IP 与单 Panel HTTPS 反向代理部署恢复可用的安全阅读模式，避免 v0.68.0 升级后因自动写入 `KPANEL_BROWSER_MODE=disabled` 而让桌面浏览器固定返回 `browser_beta_disabled`。
+- Relay 健康检查同时核对期望运行模式，避免 Relay 仅 `/healthz` 正常但实际浏览器模式错误时仍通过升级验收。
+
+### Security
+
+- 新增 `reader` scope 短期令牌；Reader 只允许 `GET/HEAD`，拒绝请求体以及 Cookie、Authorization、Origin、Referer 等目标请求头，并剔除目标 `Set-Cookie` 响应元数据。现有 SSRF、DNS 拨号复核、TLS 与并发边界保持不变。
+- Reader iframe 不接收 Relay 令牌，通过私有 `MessageChannel` 接收有界网页字节；iframe 不含 `allow-same-origin`，CSP 禁止联网，目标内容按标签和属性 allowlist 重建，不执行目标脚本、表单、下载或媒体。
+- `disabled` 继续作为硬 kill switch；完整 Scramjet v2 仍只允许显式 `beta` 且继续要求双独立安全 Origin 与 Secure Cookie。
+
+### Upgrade Notes
+
+- 新安装默认写入 `reader`。应用市场检测到尚未标记的 v0.68.0 `disabled` 时由管理员明确选择是否迁移；非交互更新默认保持关闭，也可显式设置临时环境变量 `KPANEL_BROWSER_READER_MIGRATION=reader`。一次性 `reader-v1` 标记写入后，后续更新不再覆盖管理员选择。
+- 回滚时必须成套恢复升级前的镜像、Compose 和 `.env`。不得把含 `reader` 或 `-mode` 参数的新版配置交给旧版；特别是 `v0.67.0` Relay 不支持 `-mode` 参数，仅修改模式值不能替代匹配版本配置。
+
 ## [0.68.0] - 2026-08-12
 
 ### Added

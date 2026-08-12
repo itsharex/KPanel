@@ -51,6 +51,11 @@ func (s *Server) StartBackground(ctx context.Context) {
 
 func (s *Server) Close() error {
 	s.closeTerminalSessions()
+	if s.browserRelayClient != nil {
+		if transport, ok := s.browserRelayClient.Transport.(interface{ CloseIdleConnections() }); ok {
+			transport.CloseIdleConnections()
+		}
+	}
 	var aiErr error
 	if s.ai != nil {
 		aiErr = s.ai.Close()

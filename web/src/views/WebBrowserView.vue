@@ -32,12 +32,13 @@ import {
   createBrowserCoreUpdateSessionMessage,
   isBrowserCoreEvent,
   resolveBrowserCoreLocation,
+  type BrowserCoreEvent,
 } from '@/lib/embeddedBrowserCore'
 import { api } from '@/lib/api'
 import { desktopWindowActiveKey, desktopWindowTitlebarTargetKey } from '@/lib/desktopRouteKeys'
 import { useI18n } from '@/i18n'
 import { usePhraseCatalog } from '@/i18n/phrase'
-import type { BrowserCoreSession } from '@/types/api'
+import type { BrowserCoreSession, BrowserReaderResponse } from '@/types/api'
 
 interface BrowserTab {
   id: string
@@ -53,6 +54,21 @@ interface BrowserTab {
 interface PendingBrowserRequest {
   target?: EmbeddedBrowserTarget
   shortcut?: EmbeddedBrowserShortcut
+}
+
+interface ReaderHistory {
+  entries: EmbeddedBrowserTarget[]
+  index: number
+}
+
+interface ReaderRuntime {
+  port: MessagePort
+  navigationID: string
+  documentController?: AbortController
+  resourceController: AbortController
+  resourceActive: number
+  resourceCount: number
+  resourceBytes: number
 }
 
 const START_PAGE_SHORTCUT_LIMIT = 12
@@ -86,13 +102,30 @@ const coreLocation = computed(() => coreSession.value
   : undefined)
 const sleepTimers = new Map<string, number>()
 const kernelFrames = new Map<string, HTMLIFrameElement>()
+const readerRuntimes = new Map<string, ReaderRuntime>()
+const readerHistories = new Map<string, ReaderHistory>()
 const initializedKernelTabs = new Set<string>()
 const activeNavigations = new Map<string, string>()
+const readerSessionRetries = new Map<string, number>()
+const readerNavigationDeadlines = new Map<string, number>()
+const readerSessionRetrying = new Map<string, string>()
 const coreAbortController = new AbortController()
 let coreSessionRequest: Promise<BrowserCoreSession | undefined> | undefined
 let themeObserver: MutationObserver | undefined
 let tabSequence = 0
 let navigationSequence = 0
+
+const READER_IMAGE_LIMIT = 24
+const READER_IMAGE_BYTES = 2 * 1024 * 1024
+const READER_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024
+const READER_IMAGE_CONCURRENCY = 4
+const READER_REDIRECT_LIMIT = 5
+const READER_NAVIGATION_TIMEOUT_MS = 45_000
+
+function apiErrorCode(error: unknown): string {
+  if (!error || typeof error !== 'object' || !('code' in error)) return ''
+  return typeof error.code === 'string' ? error.code : ''
+}
 
 const activeTab = computed(() => tabs.value.find((tab) => tab.id === activeTabID.value))
 const liveTabs = computed(() => tabs.value.filter((tab) => liveTabIDs.value.has(tab.id)))
@@ -124,10 +157,20 @@ function clearSleepTimer(tabID: string): void {
   sleepTimers.delete(tabID)
 }
 
+function closeReaderRuntime(tabID: string): void {
+  const runtime = readerRuntimes.get(tabID)
+  if (!runtime) return
+  runtime.documentController?.abort()
+  runtime.resourceController.abort()
+  runtime.port.close()
+  readerRuntimes.delete(tabID)
+}
+
 function sleepTab(tabID: string): void {
   clearSleepTimer(tabID)
   replaceLiveTabIDs((next) => next.delete(tabID))
   activeNavigations.delete(tabID)
+  closeReaderRuntime(tabID)
 }
 
 function scheduleSleep(tabID: string): void {
@@ -164,7 +207,11 @@ async function ensureBrowserCore(force = false): Promise<BrowserCoreSession | un
       if (coreAbortController.signal.aborted) return undefined
       coreSession.value = undefined
       coreStatus.value = 'error'
-      coreError.value = error instanceof Error ? error.message : i18n.t('desktop.browserCoreUnavailableMessage')
+      coreError.value = apiErrorCode(error) === 'browser_disabled'
+        ? i18n.t('desktop.browserDisabledMessage')
+        : error instanceof Error
+          ? error.message
+          : i18n.t('desktop.browserCoreUnavailableMessage')
       return undefined
     })
     .finally(() => {
@@ -174,20 +221,208 @@ async function ensureBrowserCore(force = false): Promise<BrowserCoreSession | un
   return request
 }
 
-function postNavigation(tab: BrowserTab, force = false): void {
+function nextNavigationID(tab: BrowserTab): string {
+  navigationSequence += 1
+  const navigationID = `${tab.id}:${navigationSequence}`
+  activeNavigations.set(tab.id, navigationID)
+  return navigationID
+}
+
+function readerFailure(tab: BrowserTab, navigationID: string, message: string): void {
+  if (activeNavigations.get(tab.id) !== navigationID) return
+  tab.error = message
+  readerRuntimes.get(tab.id)?.port.postMessage({ type: 'error', navigationId: navigationID, message })
+}
+
+function refreshReaderSession(tab: BrowserTab, navigationID: string): void {
+  if (readerSessionRetrying.get(tab.id) === navigationID) return
+  const retries = readerSessionRetries.get(tab.id) || 0
+  if (retries >= 1) {
+    readerFailure(tab, navigationID, i18n.t('desktop.browserSessionExpired'))
+    return
+  }
+  readerSessionRetries.set(tab.id, retries + 1)
+  readerSessionRetrying.set(tab.id, navigationID)
+  const deadline = readerNavigationDeadlines.get(tab.id) || Date.now() + READER_NAVIGATION_TIMEOUT_MS
+  readerNavigationDeadlines.set(tab.id, deadline)
+  const previousSession = coreSession.value
+  const controller = new AbortController()
+  const abortRefresh = () => controller.abort()
+  coreAbortController.signal.addEventListener('abort', abortRefresh, { once: true })
+  let timedOut = false
+  const timeout = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, Math.max(1, deadline - Date.now()))
+  void api.browser.createSession(controller.signal)
+    .then((session) => {
+      if (readerSessionRetrying.get(tab.id) !== navigationID ||
+        activeNavigations.get(tab.id) !== navigationID || !tab.target) return
+      if (!session || session.mode !== 'reader' || session.token === previousSession?.token) {
+        throw new Error(i18n.t('desktop.browserSessionExpired'))
+      }
+      if (previousSession) Object.assign(previousSession, session)
+      else coreSession.value = session
+      coreStatus.value = 'ready'
+      coreError.value = ''
+      postNavigation(tab, true, true)
+    })
+    .catch((error: unknown) => {
+      if (coreAbortController.signal.aborted || readerSessionRetrying.get(tab.id) !== navigationID ||
+        activeNavigations.get(tab.id) !== navigationID) return
+      const message = timedOut
+        ? i18n.t('desktop.browserReaderTimeout')
+        : error instanceof Error
+          ? error.message
+          : i18n.t('desktop.browserSessionExpired')
+      readerFailure(tab, navigationID, message)
+    })
+    .finally(() => {
+      window.clearTimeout(timeout)
+      coreAbortController.signal.removeEventListener('abort', abortRefresh)
+      if (readerSessionRetrying.get(tab.id) === navigationID) readerSessionRetrying.delete(tab.id)
+    })
+}
+
+function readerHeaderValue(headers: Array<[string, string]>, name: string): string {
+  return headers.find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1] || ''
+}
+
+function readerHistory(tab: BrowserTab): ReaderHistory {
+  let history = readerHistories.get(tab.id)
+  if (!history) {
+    history = { entries: [], index: -1 }
+    readerHistories.set(tab.id, history)
+  }
+  return history
+}
+
+function recordReaderTarget(tab: BrowserTab, target: EmbeddedBrowserTarget): void {
+  const history = readerHistory(tab)
+  if (history.entries[history.index]?.href === target.href) return
+  history.entries.splice(history.index + 1)
+  history.entries.push(target)
+  history.index = history.entries.length - 1
+}
+
+function replaceReaderTarget(tab: BrowserTab, target: EmbeddedBrowserTarget): void {
+  const history = readerHistory(tab)
+  if (history.index >= 0) history.entries[history.index] = target
+}
+
+async function fetchReaderWithRedirects(
+  session: BrowserCoreSession,
+  initialTarget: EmbeddedBrowserTarget,
+  kind: 'document' | 'image',
+  signal: AbortSignal,
+): Promise<{ target: EmbeddedBrowserTarget; response: BrowserReaderResponse }> {
+  let target = initialTarget
+  for (let redirects = 0; redirects <= READER_REDIRECT_LIMIT; redirects += 1) {
+    const response = await api.browser.fetchReader(session.token, target.href, kind, signal)
+    if (response.status < 300 || response.status >= 400) return { target, response }
+    const location = readerHeaderValue(response.headers, 'location')
+    let redirected: EmbeddedBrowserTarget | undefined
+    try {
+      redirected = location
+        ? resolveEmbeddedBrowserTarget(new URL(location, target.href).href)
+        : undefined
+    } catch {
+      redirected = undefined
+    }
+    if (!redirected || redirects === READER_REDIRECT_LIMIT) {
+      throw new Error(i18n.t('desktop.browserRedirectError'))
+    }
+    target = redirected
+  }
+  throw new Error(i18n.t('desktop.browserRedirectError'))
+}
+
+async function loadReaderDocument(
+  tab: BrowserTab,
+  initialTarget: EmbeddedBrowserTarget,
+  navigationID: string,
+): Promise<void> {
+  const runtime = readerRuntimes.get(tab.id)
+  const session = coreSession.value
+  if (!runtime || session?.mode !== 'reader') return
+  runtime.documentController?.abort()
+  runtime.resourceController.abort()
+  runtime.documentController = new AbortController()
+  runtime.resourceController = new AbortController()
+  runtime.navigationID = navigationID
+  runtime.resourceActive = 0
+  runtime.resourceCount = 0
+  runtime.resourceBytes = 0
+  const controller = runtime.documentController
+  const signal = controller.signal
+  let timedOut = false
+  const deadline = readerNavigationDeadlines.get(tab.id) || Date.now() + READER_NAVIGATION_TIMEOUT_MS
+  readerNavigationDeadlines.set(tab.id, deadline)
+  const timeout = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, Math.max(1, deadline - Date.now()))
+  runtime.port.postMessage({ type: 'loading', navigationId: navigationID, url: initialTarget.href })
+  try {
+    const { target, response } = await fetchReaderWithRedirects(session, initialTarget, 'document', signal)
+    if (activeNavigations.get(tab.id) !== navigationID) return
+    if (target.href !== initialTarget.href) {
+      tab.target = target
+      replaceReaderTarget(tab, target)
+      if (tab.id === activeTabID.value && !addressEditing.value) addressValue.value = target.href
+    }
+    tab.error = undefined
+    runtime.port.postMessage({
+      type: 'render',
+      navigationId: navigationID,
+      url: target.href,
+      status: response.status,
+      headers: response.headers,
+      body: response.body,
+    }, [response.body])
+    readerNavigationDeadlines.delete(tab.id)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError' && !timedOut) return
+    if (apiErrorCode(error) === 'browser_session_expired') {
+      refreshReaderSession(tab, navigationID)
+      return
+    }
+    if (activeNavigations.get(tab.id) !== navigationID) return
+    const message = timedOut
+      ? i18n.t('desktop.browserReaderTimeout')
+      : error instanceof Error
+        ? error.message
+        : i18n.t('desktop.browserCoreUnavailableMessage')
+    tab.error = message
+    runtime.port.postMessage({ type: 'error', navigationId: navigationID, message })
+    readerNavigationDeadlines.delete(tab.id)
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
+function postNavigation(tab: BrowserTab, force = false, preserveReaderAttempt = false): void {
   const session = coreSession.value
   const location = coreLocation.value
   const frame = kernelFrames.get(tab.id)
   if (!session || !location || !frame?.contentWindow || !tab.target ||
     (!force && initializedKernelTabs.has(tab.id))) return
+  if (session.mode === 'reader' && !readerRuntimes.has(tab.id)) return
   tab.error = undefined
   initializedKernelTabs.add(tab.id)
-  navigationSequence += 1
-  const navigationID = `${tab.id}:${navigationSequence}`
-  activeNavigations.set(tab.id, navigationID)
+  const navigationID = nextNavigationID(tab)
+  if (session.mode === 'reader') {
+    if (!preserveReaderAttempt) {
+      readerSessionRetries.set(tab.id, 0)
+      readerNavigationDeadlines.set(tab.id, Date.now() + READER_NAVIGATION_TIMEOUT_MS)
+    }
+    recordReaderTarget(tab, tab.target)
+    void loadReaderDocument(tab, tab.target, navigationID)
+    return
+  }
   frame.contentWindow.postMessage(
     createBrowserCoreNavigateMessage(session, tab.target.href, navigationID),
-    location.origin,
+    location.targetOrigin,
   )
 }
 
@@ -197,30 +432,14 @@ function setKernelFrame(tabID: string, value: unknown): void {
     kernelFrames.set(tabID, value)
     return
   }
+  closeReaderRuntime(tabID)
   kernelFrames.delete(tabID)
   initializedKernelTabs.delete(tabID)
   activeNavigations.delete(tabID)
 }
 
-function handleKernelLoad(tab: BrowserTab): void {
-  postNavigation(tab)
-}
-
-async function refreshBrowserCore(): Promise<void> {
-  const session = await ensureBrowserCore(true)
-  const location = coreLocation.value
-  if (!session || !location) return
-  for (const frame of kernelFrames.values()) {
-    frame.contentWindow?.postMessage(createBrowserCoreUpdateSessionMessage(session), location.origin)
-  }
-}
-
-function handleKernelMessage(event: MessageEvent): void {
-  const location = coreLocation.value
-  if (!location || event.origin !== location.origin || !isBrowserCoreEvent(event.data)) return
-  const tab = tabs.value.find((candidate) => kernelFrames.get(candidate.id)?.contentWindow === event.source)
-  if (!tab) return
-  const message = event.data
+function handleBrowserCoreEvent(tab: BrowserTab, message: BrowserCoreEvent | undefined): void {
+  if (!message) return
   if (message.type === 'kpanel-browser:ready') {
     postNavigation(tab)
     return
@@ -242,6 +461,142 @@ function handleKernelMessage(event: MessageEvent): void {
   if (!target) return
   tab.target = target
   if (tab.id === activeTabID.value && !addressEditing.value) addressValue.value = target.href
+}
+
+function normalizeReaderCoreEvent(value: unknown): BrowserCoreEvent | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const message = value as Record<string, unknown>
+  const type = typeof message.type === 'string' ? `kpanel-browser:${message.type}` : ''
+  const normalized = { ...message, type }
+  return isBrowserCoreEvent(normalized) ? normalized : undefined
+}
+
+function handleReaderResource(tab: BrowserTab, message: Record<string, unknown>): void {
+  const runtime = readerRuntimes.get(tab.id)
+  const session = coreSession.value
+  const requestID = typeof message.requestId === 'string' ? message.requestId : ''
+  const navigationID = typeof message.navigationId === 'string' ? message.navigationId : ''
+  const target = typeof message.url === 'string' ? resolveEmbeddedBrowserTarget(message.url) : undefined
+  if (!runtime || session?.mode !== 'reader' || !requestID || requestID.length > 64 ||
+    navigationID !== runtime.navigationID || navigationID !== activeNavigations.get(tab.id)) return
+  if (!target || runtime.resourceCount >= READER_IMAGE_LIMIT || runtime.resourceActive >= READER_IMAGE_CONCURRENCY) {
+    runtime.port.postMessage({ type: 'resource-result', navigationId: navigationID, requestId: requestID, headers: [] })
+    return
+  }
+  runtime.resourceCount += 1
+  runtime.resourceActive += 1
+  const resourceController = new AbortController()
+  const abortResource = () => resourceController.abort()
+  const resourceSignal = runtime.resourceController.signal
+  resourceSignal.addEventListener('abort', abortResource, { once: true })
+  const timeout = window.setTimeout(abortResource, READER_NAVIGATION_TIMEOUT_MS)
+  void fetchReaderWithRedirects(session, target, 'image', resourceController.signal)
+    .then(({ response }) => {
+      if (runtime.navigationID !== navigationID || activeNavigations.get(tab.id) !== navigationID ||
+        response.status < 200 || response.status >= 300 || response.body.byteLength > READER_IMAGE_BYTES ||
+        runtime.resourceBytes + response.body.byteLength > READER_IMAGE_TOTAL_BYTES) {
+        runtime.port.postMessage({ type: 'resource-result', navigationId: navigationID, requestId: requestID, headers: [] })
+        return
+      }
+      runtime.resourceBytes += response.body.byteLength
+      runtime.port.postMessage({
+        type: 'resource-result',
+        navigationId: navigationID,
+        requestId: requestID,
+        headers: response.headers,
+        body: response.body,
+      }, [response.body])
+    })
+    .catch((error: unknown) => {
+      if (apiErrorCode(error) === 'browser_session_expired') refreshReaderSession(tab, navigationID)
+      if (runtime.navigationID === navigationID && activeNavigations.get(tab.id) === navigationID) {
+        runtime.port.postMessage({ type: 'resource-result', navigationId: navigationID, requestId: requestID, headers: [] })
+      }
+    })
+    .finally(() => {
+      window.clearTimeout(timeout)
+      resourceSignal.removeEventListener('abort', abortResource)
+      if (runtime.navigationID === navigationID) runtime.resourceActive = Math.max(0, runtime.resourceActive - 1)
+    })
+}
+
+function handleReaderPortMessage(tab: BrowserTab, value: unknown): void {
+  if (!value || typeof value !== 'object') return
+  const message = value as Record<string, unknown>
+  if (message.type === 'ready') {
+    handleBrowserCoreEvent(tab, { type: 'kpanel-browser:ready' })
+    return
+  }
+  if (message.type === 'open') {
+    if (message.navigationId !== activeNavigations.get(tab.id) || typeof message.url !== 'string') return
+    const target = resolveEmbeddedBrowserTarget(message.url)
+    if (!target) return
+    tab.target = target
+    tab.shortcutID = undefined
+    tab.iconURL = undefined
+    tab.title = target.hostname
+    if (tab.id === activeTabID.value && !addressEditing.value) addressValue.value = target.href
+    postNavigation(tab, true)
+    return
+  }
+  if (message.type === 'resource') {
+    handleReaderResource(tab, message)
+    return
+  }
+  handleBrowserCoreEvent(tab, normalizeReaderCoreEvent(message))
+}
+
+function handleKernelLoad(tab: BrowserTab): void {
+  const frame = kernelFrames.get(tab.id)
+  const session = coreSession.value
+  const location = coreLocation.value
+  if (!frame?.contentWindow || !session || !location) return
+  if (session.mode !== 'reader') {
+    postNavigation(tab)
+    return
+  }
+  closeReaderRuntime(tab.id)
+  initializedKernelTabs.delete(tab.id)
+  const channel = new MessageChannel()
+  const runtime: ReaderRuntime = {
+    port: channel.port1,
+    navigationID: '',
+    resourceController: new AbortController(),
+    resourceActive: 0,
+    resourceCount: 0,
+    resourceBytes: 0,
+  }
+  readerRuntimes.set(tab.id, runtime)
+  channel.port1.onmessage = (event) => handleReaderPortMessage(tab, event.data)
+  channel.port1.start()
+  // The reader intentionally has an opaque origin because its sandbox excludes
+  // allow-same-origin. The transferred port is bound to this exact iframe window;
+  // subsequent content and credentials travel only over the private channel.
+  frame.contentWindow.postMessage({ type: 'kpanel-browser-reader:connect' }, '*', [channel.port2])
+}
+
+async function refreshBrowserCore(): Promise<void> {
+  const session = await ensureBrowserCore(true)
+  const location = coreLocation.value
+  if (!session || !location) return
+  if (session.mode === 'reader') {
+    readerSessionRetries.clear()
+    for (const tab of tabs.value) {
+      if (readerRuntimes.has(tab.id) && tab.target) postNavigation(tab, true)
+    }
+    return
+  }
+  for (const frame of kernelFrames.values()) {
+    frame.contentWindow?.postMessage(createBrowserCoreUpdateSessionMessage(session), location.targetOrigin)
+  }
+}
+
+function handleKernelMessage(event: MessageEvent): void {
+  const location = coreLocation.value
+  if (coreSession.value?.mode !== 'beta' || !location || event.origin !== location.origin || !isBrowserCoreEvent(event.data)) return
+  const tab = tabs.value.find((candidate) => kernelFrames.get(candidate.id)?.contentWindow === event.source)
+  if (!tab) return
+  handleBrowserCoreEvent(tab, event.data)
 }
 
 function mountTab(tab: BrowserTab): void {
@@ -373,6 +728,11 @@ function closeTab(tabID: string, consumePending = true): void {
   if (index < 0) return
   const wasActive = tabID === activeTabID.value
   clearSleepTimer(tabID)
+  closeReaderRuntime(tabID)
+  readerHistories.delete(tabID)
+  readerSessionRetries.delete(tabID)
+  readerNavigationDeadlines.delete(tabID)
+  readerSessionRetrying.delete(tabID)
   replaceLiveTabIDs((next) => next.delete(tabID))
   tabs.value.splice(index, 1)
 
@@ -454,6 +814,7 @@ function goHome(): void {
     return
   }
   sleepTab(tab.id)
+  readerHistories.delete(tab.id)
   tab.target = undefined
   tab.shortcutID = undefined
   tab.iconURL = undefined
@@ -465,16 +826,34 @@ function goHome(): void {
 
 function postBrowserCommand(command: 'back' | 'forward' | 'reload'): void {
   const tab = activeTab.value
+  const session = coreSession.value
   const location = coreLocation.value
   const frame = tab ? kernelFrames.get(tab.id) : undefined
-  if (!tab?.target || !location || !frame?.contentWindow) return
+  if (!tab?.target || !session || !location || !frame?.contentWindow) return
   tab.error = undefined
-  navigationSequence += 1
-  const navigationID = `${tab.id}:${navigationSequence}`
-  activeNavigations.set(tab.id, navigationID)
+  if (session.mode === 'reader') {
+    const history = readerHistory(tab)
+    if (command === 'back') {
+      if (history.index <= 0) return
+      history.index -= 1
+    } else if (command === 'forward') {
+      if (history.index >= history.entries.length - 1) return
+      history.index += 1
+    }
+    const target = command === 'reload' ? tab.target : history.entries[history.index]
+    if (!target) return
+    readerSessionRetries.set(tab.id, 0)
+    readerNavigationDeadlines.set(tab.id, Date.now() + READER_NAVIGATION_TIMEOUT_MS)
+    const navigationID = nextNavigationID(tab)
+    tab.target = target
+    if (tab.id === activeTabID.value && !addressEditing.value) addressValue.value = target.href
+    void loadReaderDocument(tab, target, navigationID)
+    return
+  }
+  const navigationID = nextNavigationID(tab)
   frame.contentWindow.postMessage(
     createBrowserCoreCommandMessage(command, navigationID),
-    location.origin,
+    location.targetOrigin,
   )
 }
 
@@ -565,9 +944,14 @@ onBeforeUnmount(() => {
   coreAbortController.abort()
   window.removeEventListener('message', handleKernelMessage)
   themeObserver?.disconnect()
+  for (const tabID of readerRuntimes.keys()) closeReaderRuntime(tabID)
   kernelFrames.clear()
   initializedKernelTabs.clear()
   activeNavigations.clear()
+  readerHistories.clear()
+  readerSessionRetries.clear()
+  readerNavigationDeadlines.clear()
+  readerSessionRetrying.clear()
   for (const timer of sleepTimers.values()) window.clearTimeout(timer)
   sleepTimers.clear()
 })
@@ -637,9 +1021,10 @@ onBeforeUnmount(() => {
           <Plus :size="16" aria-hidden="true" />
         </button>
         <span
+          v-if="coreSession"
           class="embedded-browser__beta"
-          :title="i18n.t('desktop.browserBetaDescription')"
-        >{{ i18n.t('desktop.browserBetaBadge') }}</span>
+          :title="i18n.t(coreSession?.mode === 'reader' ? 'desktop.browserReaderDescription' : 'desktop.browserBetaDescription')"
+        >{{ i18n.t(coreSession?.mode === 'reader' ? 'desktop.browserReaderBadge' : 'desktop.browserBetaBadge') }}</span>
         <span class="embedded-browser__tab-count">{{ tabs.length }}/{{ MAX_EMBEDDED_BROWSER_TABS }}</span>
       </nav>
     </Teleport>
@@ -829,9 +1214,9 @@ onBeforeUnmount(() => {
         :title="tab.title"
         :aria-hidden="tab.id !== activeTabID"
         :tabindex="tab.id === activeTabID ? 0 : -1"
-        sandbox="allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-downloads"
-        allow="autoplay; fullscreen; picture-in-picture"
-        allowfullscreen
+        :sandbox="coreLocation?.sandbox"
+        :allow="coreSession?.mode === 'beta' ? 'autoplay; fullscreen; picture-in-picture' : ''"
+        :allowfullscreen="coreSession?.mode === 'beta'"
         referrerpolicy="no-referrer"
         @load="handleKernelLoad(tab)"
       />
@@ -844,7 +1229,7 @@ onBeforeUnmount(() => {
     >
       <TriangleAlert v-if="activeTab.error" :size="13" aria-hidden="true" />
       <ShieldCheck v-else :size="13" aria-hidden="true" />
-      <span>{{ activeTab.error || i18n.t('desktop.browserEmbedHint') }}</span>
+      <span>{{ activeTab.error || i18n.t(coreSession?.mode === 'reader' ? 'desktop.browserReaderHint' : 'desktop.browserEmbedHint') }}</span>
     </footer>
   </section>
 </template>

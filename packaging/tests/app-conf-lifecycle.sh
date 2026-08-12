@@ -293,7 +293,7 @@ EOF
 		"$TEST_DIR/install-output.txt" >/dev/null
 	grep -Fx '请复制此 Token 完成管理员账户初始化；初始化成功后 Token 自动失效。' \
 		"$TEST_DIR/install-output.txt" >/dev/null
-	grep -Fx '内置浏览器 Beta 默认关闭；启用前必须为 Panel 与 Relay 配置两个不同的 HTTPS Origin。' \
+	grep -Fx '内置浏览器已启用安全阅读模式；完整 Beta 仍需为 Panel 与 Relay 配置两个不同的 HTTPS Origin。' \
 		"$TEST_DIR/install-output.txt" >/dev/null
 	if grep -F '首次初始化 Token 文件：' "$TEST_DIR/install-output.txt" >/dev/null; then
 		echo "install output still asks the user to read the token file" >&2
@@ -307,7 +307,9 @@ EOF
 		/home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_SECURE_COOKIE=false' \
 		/home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_MODE=disabled' \
+	grep -Fx 'KPANEL_BROWSER_MODE=reader' \
+		/home/docker/kpanel/.env >/dev/null
+	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' \
 		/home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_BROWSER_RELAY_URL=http://198.51.100.25:18081' \
 		/home/docker/kpanel/.env >/dev/null
@@ -315,7 +317,9 @@ EOF
 		/home/docker/kpanel/.env >/dev/null
 	grep -F 'KEJILION_PANEL_BROWSER_RELAY_URL: ${KPANEL_BROWSER_RELAY_URL}' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -F 'KEJILION_PANEL_BROWSER_MODE: ${KPANEL_BROWSER_MODE:-disabled}' \
+	grep -F 'KEJILION_PANEL_BROWSER_MODE: ${KPANEL_BROWSER_MODE:-reader}' \
+		/home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -F 'KEJILION_PANEL_BROWSER_RELAY_INTERNAL_URL: http://browser-relay:8090' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F 'KEJILION_PANEL_SECURE_COOKIE: ${KPANEL_SECURE_COOKIE:-false}' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
@@ -324,7 +328,9 @@ EOF
 	grep -F -- '- "18081:8090"' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx '    container_name: kejilion-browser-relay' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -F -- '- "-mode=${KPANEL_BROWSER_MODE:-disabled}"' \
+	grep -F -- '- "-mode=${KPANEL_BROWSER_MODE:-reader}"' \
+		/home/docker/kpanel/docker-compose.yml >/dev/null
+	grep -F 'KEJILION_BROWSER_RELAY_EXPECT_MODE: ${KPANEL_BROWSER_MODE:-reader}' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx '    user: "65532:65532"' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx '    read_only: true' /home/docker/kpanel/docker-compose.yml >/dev/null
@@ -411,7 +417,26 @@ EOF
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 
 	cp -p /home/docker/kpanel/.env "$TEST_DIR/valid-browser-env"
-	sed -i 's/^KPANEL_BROWSER_MODE=disabled$/KPANEL_BROWSER_MODE=enabled/' \
+	sed -i 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=disabled/' \
+		/home/docker/kpanel/.env
+	sed -i '/^KPANEL_BROWSER_MODE_MIGRATION=/d' /home/docker/kpanel/.env
+	docker_app_update
+	grep -Fx 'KPANEL_BROWSER_MODE=disabled' /home/docker/kpanel/.env >/dev/null
+	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' /home/docker/kpanel/.env >/dev/null
+
+	sed -i '/^KPANEL_BROWSER_MODE_MIGRATION=/d' /home/docker/kpanel/.env
+	KPANEL_BROWSER_READER_MIGRATION=reader docker_app_update
+	grep -Fx 'KPANEL_BROWSER_MODE=reader' /home/docker/kpanel/.env >/dev/null
+	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' /home/docker/kpanel/.env >/dev/null
+
+	sed -i 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=disabled/' \
+		/home/docker/kpanel/.env
+	docker_app_update
+	grep -Fx 'KPANEL_BROWSER_MODE=disabled' /home/docker/kpanel/.env >/dev/null
+	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' /home/docker/kpanel/.env >/dev/null
+	cp -p "$TEST_DIR/valid-browser-env" /home/docker/kpanel/.env
+
+	sed -i 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=enabled/' \
 		/home/docker/kpanel/.env
 	cp -p /home/docker/kpanel/.env "$TEST_DIR/invalid-browser-env"
 	systemctl_lines_before="$(wc -l <"$KPANEL_MOCK_SYSTEMCTL_LOG")"
@@ -420,7 +445,7 @@ EOF
 		echo "KPanel update accepted an invalid Browser mode" >&2
 		return 1
 	fi
-	grep -F 'KPANEL_BROWSER_MODE 只允许 disabled 或 beta' \
+	grep -F 'KPANEL_BROWSER_MODE 只允许 disabled、reader 或 beta' \
 		"$TEST_DIR/invalid-browser-mode-output.txt" >/dev/null
 	cmp -s "$TEST_DIR/invalid-browser-env" /home/docker/kpanel/.env
 	test "$(wc -l <"$KPANEL_MOCK_SYSTEMCTL_LOG")" = "$systemctl_lines_before"
@@ -428,7 +453,7 @@ EOF
 	test ! -e "$MOCK_STATE/image-tag"
 	cp -p "$TEST_DIR/valid-browser-env" /home/docker/kpanel/.env
 
-	sed -i 's/^KPANEL_BROWSER_MODE=disabled$/KPANEL_BROWSER_MODE=beta/' \
+	sed -i 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=beta/' \
 		/home/docker/kpanel/.env
 	cp -p /home/docker/kpanel/.env "$TEST_DIR/direct-http-beta-env"
 	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
@@ -467,7 +492,9 @@ EOF
 	grep -F -- '- "18081:8090"' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx 'KPANEL_BROWSER_RELAY_URL=http://198.51.100.25:18081' \
 		/home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_MODE=disabled' \
+	grep -Fx 'KPANEL_BROWSER_MODE=reader' \
+		/home/docker/kpanel/.env >/dev/null
+	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' \
 		/home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_SECURE_COOKIE=false' \
 		/home/docker/kpanel/.env >/dev/null
@@ -478,7 +505,7 @@ EOF
 	sed -i \
 		-e 's#^KPANEL_PUBLIC_URL=.*#KPANEL_PUBLIC_URL=https://panel.example.com#' \
 		-e 's#^KPANEL_BROWSER_RELAY_URL=.*#KPANEL_BROWSER_RELAY_URL=https://browser.example.com#' \
-		-e 's/^KPANEL_BROWSER_MODE=disabled$/KPANEL_BROWSER_MODE=beta/' \
+		-e 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=beta/' \
 		/home/docker/kpanel/.env
 	sed -i '/^KPANEL_SECURE_COOKIE=/d' /home/docker/kpanel/.env
 	docker_app_update

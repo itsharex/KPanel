@@ -28,8 +28,9 @@ services:
       KEJILION_PANEL_SECURE_COOKIE: ${KEJILION_PANEL_SECURE_COOKIE:-true}
       KEJILION_PANEL_TRUSTED_PROXY_CIDRS: ${KEJILION_PANEL_TRUSTED_PROXY_CIDRS:-127.0.0.0/8,::1/128,172.29.255.240/28}
       KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS: ${KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS:-}
-      KEJILION_PANEL_BROWSER_MODE: ${KEJILION_PANEL_BROWSER_MODE:-disabled}
+      KEJILION_PANEL_BROWSER_MODE: ${KEJILION_PANEL_BROWSER_MODE:-reader}
       KEJILION_PANEL_BROWSER_RELAY_URL: ${KEJILION_PANEL_BROWSER_RELAY_URL:?Set the isolated browser relay origin}
+      KEJILION_PANEL_BROWSER_RELAY_INTERNAL_URL: http://browser-relay:8090
       KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE: /run/secrets/browser-relay-secret
     volumes:
       - ${KEJILION_PANEL_DATA_DIR_HOST:-/var/lib/kejilion-panel/panel}:/var/lib/kejilion-panel
@@ -69,10 +70,12 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp:size=8m,mode=1777
+    environment:
+      KEJILION_BROWSER_RELAY_EXPECT_MODE: ${KEJILION_PANEL_BROWSER_MODE:-reader}
     entrypoint: ["/kpanel-browser-relay"]
     command:
       - "-listen=:8090"
-      - "-mode=${KEJILION_PANEL_BROWSER_MODE:-disabled}"
+      - "-mode=${KEJILION_PANEL_BROWSER_MODE:-reader}"
       - "-allowed-origin=${KEJILION_PANEL_PUBLIC_URL:?Set the exact Panel origin}"
       - "-public-url=${KEJILION_PANEL_BROWSER_RELAY_URL:?Set the isolated browser relay origin}"
       - "-secret-file=/run/secrets/browser-relay-secret"

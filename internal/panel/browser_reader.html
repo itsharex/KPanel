@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>KPanel 安全阅读模式</title>
+  <link rel="stylesheet" href="/browser-reader/reader.css">
+</head>
+<body>
+  <main class="reader-shell">
+    <section id="reader-status" class="reader-status" role="status" aria-live="polite">
+      <span class="reader-spinner" aria-hidden="true"></span>
+      <strong>安全阅读模式已就绪</strong>
+      <small>等待 KPanel 加载网页内容</small>
+    </section>
+    <article id="reader-content" class="reader-content" hidden></article>
+  </main>
+  <script src="/browser-reader/reader.js" defer></script>
+</body>
+</html>

@@ -32,30 +32,44 @@ func (s *Server) handleBrowserSessionCreate(w http.ResponseWriter, r *http.Reque
 	if !ok || !s.checkCSRF(w, r, session) {
 		return
 	}
-	if !browsercore.RuntimeModeEnabled(s.config.BrowserMode) {
-		s.writeProblem(w, r, http.StatusServiceUnavailable, "browser_beta_disabled", "Browser Beta is disabled", "Enable the explicit browser beta mode to use this experimental runtime.")
+	mode, err := browsercore.NormalizeRuntimeMode(s.config.BrowserMode)
+	if err != nil || mode == browsercore.RuntimeModeDisabled {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "browser_disabled", "Embedded browser is disabled", "Enable browser reader mode or the explicit browser beta mode.")
 		return
 	}
-	if code := s.validateBrowserSessionOrigin(r); code != "" {
-		if code == "browser_origin_mismatch" {
-			s.writeProblem(w, r, http.StatusMisdirectedRequest, code, "Browser origin does not match the configured public URL", "Use the configured Panel HTTPS origin to start Browser Beta.")
-		} else {
-			s.writeProblem(w, r, http.StatusServiceUnavailable, code, "Browser Beta requires a secure context", "Use HTTPS for both Panel and Browser Relay; HTTP is supported only on loopback origins.")
+	if mode == browsercore.RuntimeModeBeta {
+		if code := s.validateBrowserSessionOrigin(r); code != "" {
+			if code == "browser_origin_mismatch" {
+				s.writeProblem(w, r, http.StatusMisdirectedRequest, code, "Browser origin does not match the configured public URL", "Use the configured Panel HTTPS origin to start Browser Beta.")
+			} else {
+				s.writeProblem(w, r, http.StatusServiceUnavailable, code, "Browser Beta requires a secure context", "Use HTTPS for both Panel and Browser Relay; HTTP is supported only on loopback origins.")
+			}
+			return
 		}
-		return
 	}
-	if s.browserTokens == nil || s.config.BrowserRelayURL == "" {
+	if s.browserTokens == nil || s.config.BrowserRelayURL == "" ||
+		(mode == browsercore.RuntimeModeReader && (s.config.BrowserRelayInternalURL == "" || s.browserRelayClient == nil)) {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "browser_core_unavailable", "Browser core is not configured", "")
 		return
 	}
-	token, claims, err := s.browserTokens.Issue(session.User.ID, browserRelaySessionTTL)
+	relayURL := s.config.BrowserRelayURL
+	scope := browsercore.TokenScopeBeta
+	if mode == browsercore.RuntimeModeReader {
+		relayURL, err = browsercore.NormalizeOrigin(r.Header.Get("Origin"))
+		if err != nil {
+			s.writeProblem(w, r, http.StatusBadRequest, "browser_origin_invalid", "Browser origin is invalid", "")
+			return
+		}
+		scope = browsercore.TokenScopeReader
+	}
+	token, claims, err := s.browserTokens.IssueScoped(session.User.ID, scope, browserRelaySessionTTL)
 	if err != nil {
 		s.writeProblem(w, r, http.StatusInternalServerError, "browser_session_failed", "Browser session could not be created", "")
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, browserRelaySessionResponse{
-		Mode:      "beta",
-		RelayURL:  s.config.BrowserRelayURL,
+		Mode:      mode,
+		RelayURL:  relayURL,
 		Token:     token,
 		SessionID: claims.SessionID,
 		ExpiresAt: time.Unix(claims.ExpiresAt, 0).UTC(),

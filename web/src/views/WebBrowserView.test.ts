@@ -13,12 +13,38 @@ import {
 } from '@/lib/embeddedBrowser'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 
-const { createBrowserSession } = vi.hoisted(() => ({
+const { createBrowserSession, fetchBrowserReader } = vi.hoisted(() => ({
   createBrowserSession: vi.fn(),
+  fetchBrowserReader: vi.fn(),
 }))
 
+class ReaderTestPort {
+  onmessage: ((event: { data: unknown }) => void) | null = null
+  peer?: ReaderTestPort
+
+  postMessage(data: unknown): void {
+    this.peer?.onmessage?.({ data })
+  }
+
+  start(): void {}
+
+  close(): void {
+    this.onmessage = null
+  }
+}
+
+class ReaderTestChannel {
+  port1 = new ReaderTestPort()
+  port2 = new ReaderTestPort()
+
+  constructor() {
+    this.port1.peer = this.port2
+    this.port2.peer = this.port1
+  }
+}
+
 vi.mock('@/lib/api', () => ({
-  api: { browser: { createSession: createBrowserSession } },
+  api: { browser: { createSession: createBrowserSession, fetchReader: fetchBrowserReader } },
 }))
 
 const coreSession = {
@@ -27,6 +53,12 @@ const coreSession = {
   token: 'signed-browser-token',
   sessionId: 'browser-session-1',
   expiresAt: '2030-01-01T00:00:00Z',
+}
+
+const readerSession = {
+  ...coreSession,
+  mode: 'reader' as const,
+  relayUrl: 'https://panel.example.com',
 }
 
 const configuredShortcuts: EmbeddedBrowserShortcut[] = [
@@ -97,14 +129,22 @@ async function postedNavigation(wrapper: VueWrapper): Promise<{ token: string; u
 
 describe('WebBrowserView', () => {
   beforeEach(() => {
+    vi.stubGlobal('MessageChannel', ReaderTestChannel)
     window.open = vi.fn()
     createBrowserSession.mockReset()
+    fetchBrowserReader.mockReset()
     createBrowserSession.mockResolvedValue(coreSession)
+    fetchBrowserReader.mockResolvedValue({
+      status: 200,
+      headers: [['Content-Type', 'text/html; charset=utf-8']],
+      body: new TextEncoder().encode('<main>reader page</main>').buffer,
+    })
   })
 
   afterEach(() => {
     vi.useRealTimers()
     delete document.documentElement.dataset.theme
+    vi.unstubAllGlobals()
   })
 
   it('opens on a lightweight start page and accepts a bare domain', async () => {
@@ -118,13 +158,14 @@ describe('WebBrowserView', () => {
     expect(wrapper.find('iframe').exists()).toBe(false)
     expect(wrapper.text()).toContain('Nginx')
     expect(wrapper.text()).toContain('我的博客')
-    expect(wrapper.get('.embedded-browser__beta').text()).toBe('Beta')
+    expect(wrapper.find('.embedded-browser__beta').exists()).toBe(false)
 
     await visitFromStart(wrapper, 'example.com/path')
 
     expect(wrapper.get('iframe.embedded-browser__frame').attributes('src')).toBe(
       'https://browser-relay.example.com/kernel/',
     )
+    expect(wrapper.get('.embedded-browser__beta').text()).toBe('Beta')
     expect(await postedNavigation(wrapper)).toEqual({
       type: 'kpanel-browser:navigate',
       token: 'signed-browser-token',
@@ -253,6 +294,193 @@ describe('WebBrowserView', () => {
       '_blank',
       'noopener,noreferrer',
     )
+    wrapper.unmount()
+  })
+
+  it('uses an opaque no-network sandbox for safe reader mode', async () => {
+    createBrowserSession.mockResolvedValue(readerSession)
+    const { wrapper } = await mountBrowser('/browser?url=https%3A%2F%2Fblog.example.com%2Fpath')
+
+    const frame = wrapper.get('iframe.embedded-browser__frame')
+    expect(frame.attributes('src')).toBe('https://panel.example.com/browser-reader/')
+    expect(frame.attributes('sandbox')).toBe('allow-scripts')
+    expect(frame.attributes('sandbox')).not.toContain('allow-same-origin')
+    expect(frame.attributes('allow')).toBe('')
+    expect(wrapper.text()).toContain('阅读')
+    expect(wrapper.html()).not.toContain('src="https://blog.example.com/path"')
+
+    const childMessages: unknown[] = []
+    Object.defineProperty(frame.element, 'contentWindow', {
+      configurable: true,
+      value: {
+        postMessage: vi.fn((_message: unknown, origin: string, ports: ReaderTestPort[]) => {
+          if (origin !== '*') throw new Error('opaque reader connection requires a wildcard target origin')
+          const connectedPort = ports[0]
+          if (!connectedPort) throw new Error('reader port was not transferred')
+          connectedPort.onmessage = (event) => childMessages.push(event.data)
+          connectedPort.postMessage({ type: 'ready' })
+        }),
+      },
+    })
+    await frame.trigger('load')
+    await flushPromises()
+
+    expect(fetchBrowserReader).toHaveBeenCalledWith(
+      'signed-browser-token',
+      'https://blog.example.com/path',
+      'document',
+      expect.any(AbortSignal),
+    )
+    expect(childMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'loading', url: 'https://blog.example.com/path' }),
+      expect.objectContaining({ type: 'render', status: 200 }),
+    ]))
+    wrapper.unmount()
+  })
+
+  it('follows reader image redirects and always completes the child resource request', async () => {
+    createBrowserSession.mockResolvedValue(readerSession)
+    fetchBrowserReader.mockImplementation(async (_token, url, kind) => {
+      if (kind === 'document') {
+        return {
+          status: 200,
+          headers: [['Content-Type', 'text/html; charset=utf-8']],
+          body: new TextEncoder().encode('<main>reader page</main>').buffer,
+        }
+      }
+      if (url === 'https://cdn.example.com/image') {
+        return { status: 302, headers: [['Location', '/image.png']], body: new ArrayBuffer(0) }
+      }
+      return {
+        status: 200,
+        headers: [['Content-Type', 'image/png']],
+        body: Uint8Array.from([1, 2, 3]).buffer,
+      }
+    })
+    const { wrapper } = await mountBrowser('/browser?url=https%3A%2F%2Fblog.example.com%2Fpath')
+    const frame = wrapper.get('iframe.embedded-browser__frame')
+    const childMessages: Array<Record<string, unknown>> = []
+    let childPort: ReaderTestPort | undefined
+    Object.defineProperty(frame.element, 'contentWindow', {
+      configurable: true,
+      value: {
+        postMessage: vi.fn((_message: unknown, origin: string, ports: ReaderTestPort[]) => {
+          if (origin !== '*') throw new Error('opaque reader connection requires a wildcard target origin')
+          const connectedPort = ports[0]
+          if (!connectedPort) throw new Error('reader port was not transferred')
+          childPort = connectedPort
+          connectedPort.onmessage = (event) => childMessages.push(event.data as Record<string, unknown>)
+          connectedPort.postMessage({ type: 'ready' })
+        }),
+      },
+    })
+    await frame.trigger('load')
+    await flushPromises()
+    const navigationID = childMessages.find((message) => message.type === 'render')?.navigationId
+    childPort?.postMessage({
+      type: 'resource',
+      navigationId: navigationID,
+      requestId: 'image-1',
+      url: 'https://cdn.example.com/image',
+    })
+    await flushPromises()
+
+    expect(fetchBrowserReader).toHaveBeenCalledWith(
+      'signed-browser-token', 'https://cdn.example.com/image.png', 'image', expect.any(AbortSignal),
+    )
+    expect(childMessages).toContainEqual(expect.objectContaining({
+      type: 'resource-result',
+      requestId: 'image-1',
+      body: expect.any(ArrayBuffer),
+    }))
+    wrapper.unmount()
+  })
+
+  it('renews a reader session and stops after one failed retry', async () => {
+    createBrowserSession
+      .mockResolvedValueOnce(readerSession)
+      .mockResolvedValueOnce({ ...readerSession, token: 'renewed-reader-token', sessionId: 'browser-session-2' })
+    fetchBrowserReader.mockRejectedValue(Object.assign(new Error('expired'), { code: 'browser_session_expired' }))
+    const { wrapper } = await mountBrowser('/browser?url=https%3A%2F%2Fblog.example.com%2Fpath')
+    const frame = wrapper.get('iframe.embedded-browser__frame')
+    const childMessages: Array<Record<string, unknown>> = []
+    Object.defineProperty(frame.element, 'contentWindow', {
+      configurable: true,
+      value: {
+        postMessage: vi.fn((_message: unknown, origin: string, ports: ReaderTestPort[]) => {
+          if (origin !== '*') throw new Error('opaque reader connection requires a wildcard target origin')
+          const connectedPort = ports[0]
+          if (!connectedPort) throw new Error('reader port was not transferred')
+          connectedPort.onmessage = (event) => childMessages.push(event.data as Record<string, unknown>)
+          connectedPort.postMessage({ type: 'ready' })
+        }),
+      },
+    })
+    await frame.trigger('load')
+    await flushPromises()
+    await vi.waitFor(() => expect(fetchBrowserReader).toHaveBeenCalledTimes(2))
+
+    expect(createBrowserSession).toHaveBeenCalledTimes(2)
+    expect(fetchBrowserReader.mock.calls.at(-1)?.[0]).toBe('renewed-reader-token')
+    expect(childMessages).toContainEqual(expect.objectContaining({
+      type: 'error',
+      message: expect.stringContaining('续期失败'),
+    }))
+    wrapper.unmount()
+  })
+
+  it('lets a new navigation replace an in-flight reader session renewal', async () => {
+    let finishStaleRenewal: ((session: typeof readerSession) => void) | undefined
+    const staleRenewal = new Promise<typeof readerSession>((resolve) => {
+      finishStaleRenewal = resolve
+    })
+    createBrowserSession
+      .mockResolvedValueOnce(readerSession)
+      .mockReturnValueOnce(staleRenewal)
+      .mockResolvedValueOnce({ ...readerSession, token: 'fresh-reader-token', sessionId: 'browser-session-3' })
+    fetchBrowserReader.mockImplementation(async (token) => {
+      if (token !== 'fresh-reader-token') {
+        throw Object.assign(new Error('expired'), { code: 'browser_session_expired' })
+      }
+      return {
+        status: 200,
+        headers: [['Content-Type', 'text/html; charset=utf-8']],
+        body: new TextEncoder().encode('<main>fresh page</main>').buffer,
+      }
+    })
+    const { wrapper } = await mountBrowser('/browser?url=https%3A%2F%2Fblog.example.com%2Fold')
+    const frame = wrapper.get('iframe.embedded-browser__frame')
+    const childMessages: Array<Record<string, unknown>> = []
+    Object.defineProperty(frame.element, 'contentWindow', {
+      configurable: true,
+      value: {
+        postMessage: vi.fn((_message: unknown, origin: string, ports: ReaderTestPort[]) => {
+          if (origin !== '*') throw new Error('opaque reader connection requires a wildcard target origin')
+          const connectedPort = ports[0]
+          if (!connectedPort) throw new Error('reader port was not transferred')
+          connectedPort.onmessage = (event) => childMessages.push(event.data as Record<string, unknown>)
+          connectedPort.postMessage({ type: 'ready' })
+        }),
+      },
+    })
+    await frame.trigger('load')
+    await vi.waitFor(() => expect(createBrowserSession).toHaveBeenCalledTimes(2))
+
+    const address = wrapper.get('.embedded-browser__address input')
+    await address.setValue('https://blog.example.com/new')
+    await address.trigger('keydown.enter')
+    await vi.waitFor(() => expect(createBrowserSession).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(fetchBrowserReader).toHaveBeenCalledWith(
+      'fresh-reader-token', 'https://blog.example.com/new', 'document', expect.any(AbortSignal),
+    ))
+    expect(childMessages).toContainEqual(expect.objectContaining({
+      type: 'render',
+      url: 'https://blog.example.com/new',
+    }))
+
+    finishStaleRenewal?.({ ...readerSession, token: 'stale-reader-token', sessionId: 'browser-session-2' })
+    await flushPromises()
+    expect(fetchBrowserReader.mock.calls.at(-1)?.[0]).toBe('fresh-reader-token')
     wrapper.unmount()
   })
 

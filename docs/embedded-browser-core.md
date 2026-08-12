@@ -1,9 +1,23 @@
 # KPanel 轻量内置浏览器内核
 
-- 候选版本：`v0.68.0`
-- 产品状态：Beta，默认关闭，必须显式配置 `KEJILION_PANEL_BROWSER_MODE=beta`
-- 运行时：Scramjet v2 Service Worker/WASM + Scramjet Controller + KPanel Relay Transport
-- 更新日期：2026-08-12
+- 基线版本：`v0.68.0`；本文同时记录待发布补丁中的安全阅读模式
+- 产品状态：`reader` 默认启用；完整脚本运行时仍为显式 `beta`
+- 运行时：安全 Reader + Scramjet v2 Service Worker/WASM + KPanel Relay Transport
+- 更新日期：2026-08-13
+
+## 0. 运行模式
+
+| 模式 | 默认 | 能力 | 安全要求 |
+| --- | --- | --- | --- |
+| `disabled` | 否 | 硬关闭内置浏览器，仅保留 Relay `/healthz` | 紧急止损和管理员显式 kill switch |
+| `reader` | 是 | 净化后显示 HTML、文本、JSON 和受限栅格图片；不执行目标脚本、表单、下载或媒体 | 可用于应用市场的 HTTP/IP 拓扑；仅允许 `GET/HEAD` |
+| `beta` | 否 | Scramjet v2 上下文重写与第三方脚本运行 | 必须显式启用、双独立安全 Origin 和 Secure Cookie |
+
+Reader 的目标出网仍由独立 `browser-relay` sidecar 完成。已登录的 Panel 页面使用短期 `reader` scope 令牌调用固定内网 Relay 地址，取得有界字节后通过私有 `MessageChannel` 传入同源 reader iframe。令牌不会进入 iframe；reader iframe 同时受 `sandbox="allow-scripts"` 和响应头 `CSP: sandbox allow-scripts` 约束，不含 `allow-same-origin`，且 `connect-src 'none'`。目标内容通过新建 DOM 节点的 allowlist 净化后显示，不使用 `innerHTML` 或 `srcdoc`。
+
+Reader 与 Beta 的令牌 scope 不可互换。Reader Relay 拒绝写方法、请求体以及 Cookie、Authorization、Origin、Referer 等上游请求头，并从返回元数据中剔除 `Set-Cookie`。Relay 对 Reader 单次响应实施 8 MiB 和 30 秒总上限；Panel 丢弃重定向 body，并把完整导航链限制为 45 秒。文档响应上限为 8 MiB，HTML 解析前另限制为 4 Mi 字符和 12,000 个标记，净化树限制 12,000 节点与 128 层；单图 2 MiB、每页最多 24 张和 12 MiB，总并发最多 4。SSRF、DNS 拨号复核、TLS、Origin、会话并发和空闲超时继续复用当前 Relay 安全边界。
+
+下文第 1 至第 6 节主要描述完整 `beta` 运行时；Reader 的差异以本节和第 7 节为准。
 
 ## 1. 定位与非目标
 
@@ -156,13 +170,26 @@ Chrome/Edge/Firefox 只作为真实用户浏览器和验收工具使用，不会
 Panel：
 
 ```text
+KEJILION_PANEL_BROWSER_MODE=reader
+KEJILION_PANEL_BROWSER_RELAY_URL=http://PUBLIC_IP:8081
+KEJILION_PANEL_BROWSER_RELAY_INTERNAL_URL=http://browser-relay:8090
+KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE=/run/secrets/browser-relay-secret
+KEJILION_PANEL_SECURE_COOKIE=false
+```
+
+标准 Compose 和应用市场默认使用 `reader`。Reader 需要公开 Relay Origin、固定内网 Relay Origin 与共享密钥，但 iframe 只加载 Panel 同源的 `/browser-reader/`，因此 HTTPS 反向代理不会再尝试嵌入 HTTP Relay。成功会话显式返回 `mode: "reader"`。`disabled` 继续作为硬 kill switch；其他模式值会在配置校验阶段被拒绝。
+
+应用市场使用一次性 `KPANEL_BROWSER_MODE_MIGRATION=reader-v1` 标记记录迁移选择。由于 v0.68.0 没有记录模式来源，更新器不会静默覆盖尚未标记的 `disabled`：交互更新会询问是否启用 Reader，默认答案为否；非交互更新保持 `disabled`，需要迁移时显式设置临时环境变量 `KPANEL_BROWSER_READER_MIGRATION=reader`。标记写入后，管理员选择的 `reader` 或 `disabled` 都会被后续更新保留。
+
+完整 Beta 配置仍为：
+
+```text
 KEJILION_PANEL_BROWSER_MODE=beta
 KEJILION_PANEL_BROWSER_RELAY_URL=https://browser.example.com
+KEJILION_PANEL_BROWSER_RELAY_INTERNAL_URL=http://browser-relay:8090
 KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE=/run/secrets/browser-relay-secret
 KEJILION_PANEL_SECURE_COOKIE=true
 ```
-
-默认值为 `disabled`。只有精确值 `beta` 会初始化浏览器令牌服务、把 Relay 加入 Panel `frame-src` 并允许创建浏览器会话；成功响应显式返回 `mode: "beta"`，界面常驻 Beta 标识。禁用时会话接口返回 `503 browser_beta_disabled`，Relay 只保留 `/healthz`，旧令牌立即失效，并保留系统浏览器兜底；其他模式值会在配置校验阶段被拒绝。停用 Beta 不需要删除 Relay 密钥或数据。
 
 Relay：
 
@@ -175,33 +202,34 @@ kpanel-browser-relay \
   -secret-file /run/secrets/browser-relay-secret
 ```
 
-正式 Compose 使用同一不可变镜像启动 Panel 和独立 Relay 容器，并把同一个 `KEJILION_PANEL_BROWSER_MODE` 同时传给 Panel 和 Relay。安装器通过 `--browser-mode disabled|beta` 接收模式，默认 `disabled`；同时生成 32 字节随机密钥，以 `root:kejilion-panel 0640` 只读挂载给两个容器。批准 Beta 例外后，部署配置才可显式启用 `beta`；HTTPS Beta 必须同时启用 Secure Cookie。Panel 与 Relay 必须同时升级，避免 Service Worker、Controller、WASM 和 Transport 版本不一致。
+正式 Compose 使用同一不可变镜像启动 Panel 和独立 Relay 容器，并把同一个 `KEJILION_PANEL_BROWSER_MODE` 同时传给 Panel 和 Relay。安装器通过 `--browser-mode disabled|reader|beta` 接收模式，默认 `reader`；同时生成 32 字节随机密钥，以 `root:kejilion-panel 0640` 只读挂载给两个容器。Relay 健康检查会校验实际模式与期望模式一致，避免“健康但功能被禁用”。批准 Beta 例外后，部署配置才可显式启用 `beta`；HTTPS Beta 必须同时启用 Secure Cookie。Panel 与 Relay 必须同时升级。
 
 ## 8. 上线门禁
 
 发布前至少完成：
 
-1. 在真实、受信任的双 HTTPS Origin 上验证 Service Worker 注册、更新和刷新，不使用公网 IP 明文 HTTP 代替。
+1. 在应用市场直连 HTTP/IP 与单 Panel HTTPS 反向代理上验证 Reader；在真实、受信任的双 HTTPS Origin 上验证 Beta Service Worker 注册、更新和刷新。
 2. 使用真实桌面 Chrome/Edge 进行静态站、服务端渲染站、SPA、搜索、表单、媒体和异常页测试，覆盖输入、点击、滚动、跳转、后退、前进、刷新和标签休眠恢复。
 3. 验证 Google/Bing 搜索结果、GitHub/Baidu 等普通站点，以及 YouTube 页面和实际播放状态；未通过项必须写入已知限制。
 4. 验证错误 Origin、无令牌/过期令牌、私网地址、DNS 重绑定、重定向到内网、无效 TLS 证书、超限请求和并发限流。
 5. 完成持续负载、内存、CPU、重启、OOM、连接回收和服务器出口流量观测。
 6. 复核固定依赖哈希、许可证、SBOM、漏洞扫描及 alpha 版本例外记录。
-7. 验证默认 `disabled` 不签发浏览器会话、不放宽 Panel `frame-src`，只有显式 `beta` 才启用运行时。
+7. 验证默认 `reader` 的 iframe 不含 `allow-same-origin`、CSP 禁止联网、目标脚本零执行、目标请求零直连；同时验证 `disabled` 硬关闭，只有显式 `beta` 才启用完整脚本运行时。
 8. 演练 v0.67.0 回滚，并验证旧内核不受客户端遗留 Service Worker 影响。
 
 `docs/embedded-browser-core-154-acceptance.md` 记录的是 v0.66.0 Phase 1 历史验收，不能作为 v0.68.0 v2 运行时的上线证据。
 
 ## 9. 回滚
 
-生产回滚点为上一稳定版本 `v0.67.0` 的不可变镜像和发布资产。浏览器内核变更没有数据库迁移，也不应删除 Panel 数据、站点、应用、Relay 密钥或业务容器。
+生产回滚点必须是本次上线前实际运行的不可变镜像、Compose 和 `.env`：从 `v0.68.0` 升级时回到 `v0.68.0`，仍锁定在 `v0.67.0` 的环境则回到 `v0.67.0`。浏览器内核变更没有数据库迁移，也不应删除 Panel 数据、站点、应用、Relay 密钥或业务容器。
 
 回滚时：
 
-1. 同时把 Panel 和 Relay 恢复到同一份 v0.67.0 不可变镜像，不能混跑 v2 Panel 与旧 Relay。
-2. 按标准应用市场/部署回滚流程恢复镜像，复核 Panel、Relay、Agent 健康、重启次数和 OOM 状态。
-3. Service Worker 是客户端持久状态，单纯回滚服务器镜像不会主动删除已注册 Worker。正式演练必须验证旧内核可正常接管；如出现干扰，应在同一 Relay Origin 提供明确的 Worker 退役流程，或切换到干净的 Relay Origin，并提示用户刷新站点数据。
-4. 复测普通网页、错误提示和“使用系统浏览器打开”兜底，再恢复发布流量。
+1. 在替换镜像前成套恢复升级前的 Compose 与 `.env`，不得把含 `reader` 或 `-mode` 参数的新版配置交给旧版。`v0.68.0` 不识别 `reader`，`v0.67.0` Relay 还不支持 `-mode` 参数；备份不可用时停止自动回滚并人工重建目标版本的匹配配置。
+2. 同时把 Panel 和 Relay 恢复到同一份上线前不可变镜像，不能混跑新版 Panel 与旧 Relay。
+3. 按标准应用市场/部署回滚流程恢复镜像，复核 Panel、Relay、Agent 健康、重启次数和 OOM 状态。
+4. Service Worker 是客户端持久状态，单纯回滚服务器镜像不会主动删除已注册 Worker。正式演练必须验证旧内核可正常接管；如出现干扰，应在同一 Relay Origin 提供明确的 Worker 退役流程，或切换到干净的 Relay Origin，并提示用户刷新站点数据。
+5. 复测普通网页、错误提示和“使用系统浏览器打开”兜底，再恢复发布流量。
 
 源码层面优先使用 `git revert` 撤销候选提交，不改写共享分支历史。发布标签和既有 Release 保持不可变。
 

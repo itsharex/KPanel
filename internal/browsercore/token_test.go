@@ -21,8 +21,26 @@ func TestTokenCodecIssuesAndVerifiesShortLivedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verified != issued || verified.Subject != "admin" || verified.SessionID == "" {
+	if verified != issued || verified.Subject != "admin" || verified.SessionID == "" || verified.Scope != TokenScopeBeta {
 		t.Fatalf("verified claims = %#v", verified)
+	}
+}
+
+func TestTokenCodecSeparatesReaderAndBetaScopes(t *testing.T) {
+	codec, err := NewTokenCodec([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, issued, err := codec.IssueScoped("admin", TokenScopeReader, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := codec.Verify(token)
+	if err != nil || verified != issued || verified.Scope != TokenScopeReader || verified.Version != 2 {
+		t.Fatalf("reader claims = %#v, %v", verified, err)
+	}
+	if _, _, err := codec.IssueScoped("admin", "write", 10*time.Minute); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("unsupported token scope error = %v", err)
 	}
 }
 

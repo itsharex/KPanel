@@ -32,18 +32,32 @@ export type BrowserCoreEvent =
 export interface BrowserCoreLocation {
   frameURL: string
   origin: string
+  targetOrigin: string
+  sandbox: string
 }
 
 export function resolveBrowserCoreLocation(session: BrowserCoreSession): BrowserCoreLocation | undefined {
-  if (session.mode !== 'beta') return undefined
   try {
     const relay = new URL(session.relayUrl)
     if ((relay.protocol !== 'http:' && relay.protocol !== 'https:') || relay.username || relay.password ||
       (relay.pathname !== '/' && relay.pathname !== '') || relay.search || relay.hash) return undefined
-    return {
-      frameURL: new URL('/kernel/', relay.origin).href,
-      origin: relay.origin,
+    if (session.mode === 'reader') {
+      return {
+        frameURL: new URL('/browser-reader/', relay.origin).href,
+        origin: 'null',
+        targetOrigin: '*',
+        sandbox: 'allow-scripts',
+      }
     }
+    if (session.mode === 'beta') {
+      return {
+        frameURL: new URL('/kernel/', relay.origin).href,
+        origin: relay.origin,
+        targetOrigin: relay.origin,
+        sandbox: 'allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-downloads',
+      }
+    }
+    return undefined
   } catch {
     return undefined
   }

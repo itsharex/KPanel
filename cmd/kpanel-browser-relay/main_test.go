@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kejilion/kejilion-panel/internal/browsercore"
@@ -58,12 +59,31 @@ func TestRelayHealthcheckRejectsFailure(t *testing.T) {
 	}
 }
 
+func TestRelayHealthcheckRequiresExpectedRuntimeMode(t *testing.T) {
+	t.Setenv("KEJILION_BROWSER_RELAY_EXPECT_MODE", browsercore.RuntimeModeReader)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"mode":"reader"}`))
+	}))
+	t.Cleanup(server.Close)
+	if err := relayHealthcheck(server.URL); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KEJILION_BROWSER_RELAY_EXPECT_MODE", browsercore.RuntimeModeBeta)
+	if err := relayHealthcheck(server.URL); err == nil {
+		t.Fatal("relay mode mismatch was accepted")
+	}
+}
+
 func TestDisabledRuntimeHandlerKeepsHealthAndRejectsBrowserTraffic(t *testing.T) {
 	handler := disabledRuntimeHandler()
 	health := httptest.NewRecorder()
 	handler.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if health.Code != http.StatusOK {
 		t.Fatalf("health status = %d", health.Code)
+	}
+	if !strings.Contains(health.Body.String(), `"mode":"disabled"`) {
+		t.Fatalf("disabled health payload = %q", health.Body.String())
 	}
 	head := httptest.NewRecorder()
 	handler.ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/healthz", nil))

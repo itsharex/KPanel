@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,7 +36,7 @@ func runArgs(args []string) error {
 	listen := flags.String("listen", "127.0.0.1:8090", "HTTP listen address")
 	allowedOrigin := flags.String("allowed-origin", "", "exact KPanel HTTP(S) origin")
 	publicURL := flags.String("public-url", "", "public HTTP(S) origin of this relay")
-	modeValue := flags.String("mode", browsercore.RuntimeModeDisabled, "browser runtime mode: disabled or beta")
+	modeValue := flags.String("mode", browsercore.RuntimeModeDisabled, "browser runtime mode: disabled, reader, or beta")
 	secretFile := flags.String("secret-file", "", "file containing at least 32 random bytes")
 	maxGlobal := flags.Int("max-global", 64, "maximum concurrent upstream requests")
 	maxSession := flags.Int("max-session", 16, "maximum concurrent requests per browser session")
@@ -54,7 +55,7 @@ func runArgs(args []string) error {
 	}
 
 	var handler http.Handler = disabledRuntimeHandler()
-	if browsercore.RuntimeModeEnabled(mode) {
+	if browsercore.RuntimeModeUsesRelay(mode) {
 		secret, secretErr := browsercore.LoadSecretFile(*secretFile)
 		if secretErr != nil {
 			return secretErr
@@ -64,6 +65,7 @@ func runArgs(args []string) error {
 			return tokenErr
 		}
 		relay, relayErr := browsercore.NewRelay(browsercore.RelayConfig{
+			RuntimeMode:     mode,
 			AllowedOrigin:   *allowedOrigin,
 			RelayOrigin:     *publicURL,
 			MaxRequestBytes: *maxRequestBytes,
@@ -112,14 +114,18 @@ func disabledRuntimeHandler() http.Handler {
 		if r.URL.Path == "/healthz" {
 			switch r.Method {
 			case http.MethodGet, http.MethodHead:
+				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
+				if r.Method == http.MethodGet {
+					_, _ = io.WriteString(w, `{"ok":true,"engine":"kpanel-browser-core","version":1,"mode":"disabled"}`)
+				}
 			default:
 				w.Header().Set("Allow", "GET, HEAD")
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
 			return
 		}
-		http.Error(w, "Browser Beta is disabled", http.StatusServiceUnavailable)
+		http.Error(w, "Embedded browser is disabled", http.StatusServiceUnavailable)
 	})
 }
 
@@ -142,9 +148,25 @@ func relayHealthcheck(rawURL string) error {
 		return fmt.Errorf("relay healthcheck: %w", err)
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
 	if response.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
 		return fmt.Errorf("relay healthcheck returned %s", response.Status)
+	}
+	expected := os.Getenv("KEJILION_BROWSER_RELAY_EXPECT_MODE")
+	if expected == "" {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
+		return nil
+	}
+	var payload struct {
+		OK   bool   `json:"ok"`
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<10)).Decode(&payload); err != nil || !payload.OK {
+		return errors.New("relay healthcheck returned an invalid payload")
+	}
+	mode, err := browsercore.NormalizeRuntimeMode(expected)
+	if err != nil || payload.Mode != mode {
+		return fmt.Errorf("relay healthcheck mode mismatch: got %q, want %q", payload.Mode, expected)
 	}
 	return nil
 }

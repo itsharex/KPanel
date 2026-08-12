@@ -12,7 +12,7 @@ AGENT_BINARY=
 AGENT_SHA256=
 IMAGE=
 PUBLIC_URL=
-BROWSER_MODE=disabled
+BROWSER_MODE=reader
 BROWSER_RELAY_URL=
 NETWORK_SUBNET=172.29.255.240/28
 DRY_RUN=false
@@ -25,13 +25,14 @@ Usage:
     --agent-sha256 <64-character-sha256> \
     --image docker.io/OWNER/kejilion-panel@sha256:<64-character-digest> \
     --public-url https://panel.example.com \
-    [--browser-mode beta] \
+    [--browser-mode disabled|reader|beta] \
     --browser-relay-url https://browser.example.com \
     [--network-subnet 172.29.255.240/28] \
     [--dry-run]
 
 The installer only creates KPanel files and services. It does not edit
 kejilion.sh, /home/web, Nginx configuration, firewall rules, or existing sites.
+Browser mode defaults to reader. Use disabled as the explicit kill switch.
 EOF
 }
 
@@ -222,8 +223,8 @@ printf '%s' "$IMAGE" | grep -Eq '@sha256:[a-f0-9]{64}$' || fail "image must be p
 printf '%s' "$PUBLIC_URL" | grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)(:[0-9]{1,5})?$' ||
 	fail "--public-url must be an https origin without path, userinfo, query, or fragment"
 case "$BROWSER_MODE" in
-	disabled|beta) ;;
-	*) fail "--browser-mode must be disabled or beta" ;;
+	disabled|reader|beta) ;;
+	*) fail "--browser-mode must be disabled, reader, or beta" ;;
 esac
 PUBLIC_PORT=$(printf '%s' "$PUBLIC_URL" | sed -n 's#^https://[^:]*:\([0-9][0-9]*\)$#\1#p')
 if [ -n "$PUBLIC_PORT" ]; then

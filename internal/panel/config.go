@@ -20,30 +20,31 @@ import (
 var cookieNamePattern = regexp.MustCompile(`^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$`)
 
 type Config struct {
-	Listen                 string        `json:"listen"`
-	DataDir                string        `json:"dataDir"`
-	StorePath              string        `json:"storePath"`
-	BootstrapTokenPath     string        `json:"bootstrapTokenPath"`
-	TOTPKeyPath            string        `json:"totpKeyPath"`
-	AgentSocket            string        `json:"agentSocket"`
-	AgentTokenFile         string        `json:"agentTokenFile"`
-	WebRoot                string        `json:"webRoot"`
-	PublicURL              string        `json:"publicUrl"`
-	BrowserMode            string        `json:"browserMode"`
-	BrowserRelayURL        string        `json:"browserRelayUrl"`
-	BrowserRelaySecretFile string        `json:"browserRelaySecretFile"`
-	AllowIPHosts           bool          `json:"allowIpHosts"`
-	SecureCookie           bool          `json:"secureCookie"`
-	CookieName             string        `json:"cookieName"`
-	SessionTTL             time.Duration `json:"-"`
-	SessionTTLText         string        `json:"sessionTtl"`
-	LoginWindow            time.Duration `json:"-"`
-	LoginWindowText        string        `json:"loginWindow"`
-	MaxLoginFailures       int           `json:"maxLoginFailures"`
-	MaxRequestBytes        int64         `json:"maxRequestBytes"`
-	MaxAgentBytes          int64         `json:"maxAgentBytes"`
-	TrustedProxyCIDRs      []string      `json:"trustedProxyCidrs"`
-	ClusterPrivateCIDRs    []string      `json:"clusterPrivateCidrs"`
+	Listen                  string        `json:"listen"`
+	DataDir                 string        `json:"dataDir"`
+	StorePath               string        `json:"storePath"`
+	BootstrapTokenPath      string        `json:"bootstrapTokenPath"`
+	TOTPKeyPath             string        `json:"totpKeyPath"`
+	AgentSocket             string        `json:"agentSocket"`
+	AgentTokenFile          string        `json:"agentTokenFile"`
+	WebRoot                 string        `json:"webRoot"`
+	PublicURL               string        `json:"publicUrl"`
+	BrowserMode             string        `json:"browserMode"`
+	BrowserRelayURL         string        `json:"browserRelayUrl"`
+	BrowserRelayInternalURL string        `json:"browserRelayInternalUrl"`
+	BrowserRelaySecretFile  string        `json:"browserRelaySecretFile"`
+	AllowIPHosts            bool          `json:"allowIpHosts"`
+	SecureCookie            bool          `json:"secureCookie"`
+	CookieName              string        `json:"cookieName"`
+	SessionTTL              time.Duration `json:"-"`
+	SessionTTLText          string        `json:"sessionTtl"`
+	LoginWindow             time.Duration `json:"-"`
+	LoginWindowText         string        `json:"loginWindow"`
+	MaxLoginFailures        int           `json:"maxLoginFailures"`
+	MaxRequestBytes         int64         `json:"maxRequestBytes"`
+	MaxAgentBytes           int64         `json:"maxAgentBytes"`
+	TrustedProxyCIDRs       []string      `json:"trustedProxyCidrs"`
+	ClusterPrivateCIDRs     []string      `json:"clusterPrivateCidrs"`
 }
 
 func DefaultConfig() Config {
@@ -99,6 +100,7 @@ func LoadConfig(path string) (Config, error) {
 	applyStringEnv("KEJILION_PANEL_PUBLIC_URL", &config.PublicURL)
 	applyStringEnv("KEJILION_PANEL_BROWSER_MODE", &config.BrowserMode)
 	applyStringEnv("KEJILION_PANEL_BROWSER_RELAY_URL", &config.BrowserRelayURL)
+	applyStringEnv("KEJILION_PANEL_BROWSER_RELAY_INTERNAL_URL", &config.BrowserRelayInternalURL)
 	applyStringEnv("KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE", &config.BrowserRelaySecretFile)
 	applyStringEnv("KEJILION_PANEL_COOKIE_NAME", &config.CookieName)
 	applyStringEnv("KEJILION_PANEL_SESSION_TTL", &config.SessionTTLText)
@@ -172,7 +174,8 @@ func LoadConfig(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
-	if _, err := browsercore.NormalizeRuntimeMode(c.BrowserMode); err != nil {
+	mode, err := browsercore.NormalizeRuntimeMode(c.BrowserMode)
+	if err != nil {
 		return err
 	}
 	switch {
@@ -237,8 +240,11 @@ func (c Config) Validate() error {
 	if (c.BrowserRelayURL == "") != (c.BrowserRelaySecretFile == "") {
 		return errors.New("browserRelayUrl and browserRelaySecretFile must be configured together")
 	}
-	if browsercore.RuntimeModeEnabled(c.BrowserMode) && c.BrowserRelayURL == "" {
-		return errors.New("browser beta mode requires browserRelayUrl and browserRelaySecretFile")
+	if browsercore.RuntimeModeUsesRelay(c.BrowserMode) && c.BrowserRelayURL == "" {
+		return errors.New("browser reader and beta modes require browserRelayUrl and browserRelaySecretFile")
+	}
+	if mode == browsercore.RuntimeModeReader && c.BrowserRelayInternalURL == "" {
+		return errors.New("browser reader mode requires browserRelayInternalUrl")
 	}
 	if !cookieNamePattern.MatchString(c.CookieName) {
 		return errors.New("cookieName is invalid")
@@ -308,6 +314,11 @@ func (c Config) Validate() error {
 			if publicErr == nil && relayOrigin == publicOrigin {
 				return errors.New("browserRelayUrl must use an isolated origin")
 			}
+		}
+	}
+	if c.BrowserRelayInternalURL != "" {
+		if _, err := browsercore.NormalizeOrigin(c.BrowserRelayInternalURL); err != nil {
+			return errors.New("browserRelayInternalUrl must be an HTTP(S) origin")
 		}
 	}
 	if browsercore.RuntimeModeEnabled(c.BrowserMode) {

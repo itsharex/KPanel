@@ -65,6 +65,7 @@ type Server struct {
 	ai                  *ai.Service
 	aiError             string
 	browserTokens       *browsercore.TokenCodec
+	browserRelayClient  *http.Client
 }
 
 type agentAPI interface {
@@ -106,7 +107,8 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		return nil, fmt.Errorf("initialize cluster service: %w", err)
 	}
 	var browserTokens *browsercore.TokenCodec
-	if browsercore.RuntimeModeEnabled(config.BrowserMode) {
+	var browserRelayClient *http.Client
+	if browsercore.RuntimeModeUsesRelay(config.BrowserMode) {
 		secret, secretErr := browsercore.LoadSecretFile(config.BrowserRelaySecretFile)
 		if secretErr != nil {
 			return nil, secretErr
@@ -114,6 +116,22 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		browserTokens, err = browsercore.NewTokenCodec(secret)
 		if err != nil {
 			return nil, err
+		}
+		if mode, _ := browsercore.NormalizeRuntimeMode(config.BrowserMode); mode == browsercore.RuntimeModeReader {
+			browserRelayClient = &http.Client{
+				Transport: &http.Transport{
+					Proxy:                 nil,
+					DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+					ForceAttemptHTTP2:     true,
+					MaxIdleConns:          16,
+					MaxIdleConnsPerHost:   8,
+					IdleConnTimeout:       90 * time.Second,
+					TLSHandshakeTimeout:   10 * time.Second,
+					ExpectContinueTimeout: time.Second,
+				},
+				CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+				Timeout:       35 * time.Second,
+			}
 		}
 	}
 	server := &Server{
@@ -124,6 +142,7 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		trustedProxies:      trustedProxies,
 		lastAuthAudit:       make(map[string]time.Time),
 		browserTokens:       browserTokens,
+		browserRelayClient:  browserRelayClient,
 	}
 	server.hostOps = newHostOperationService(server)
 	return server, nil
@@ -146,6 +165,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.handleSecurityEntrance(w, r) {
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, browserReaderAssetPrefix) {
+		s.handleBrowserReaderAsset(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -188,6 +211,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSession(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/browser/sessions":
 		s.handleBrowserSessionCreate(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/browser/reader/fetch":
+		s.handleBrowserReaderFetch(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/logout":
 		s.handleLogout(w, r)
 	case r.Method == http.MethodPut && r.URL.Path == "/api/v1/settings/password":
@@ -640,7 +665,7 @@ func (s *Server) handleSecurityEntrance(w http.ResponseWriter, r *http.Request) 
 }
 
 func securityEntrancePublicPath(requestPath string) bool {
-	return requestPath == "/api/v1/health" || isFileDownloadTicketPath(requestPath) || isStaticAssetPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/") || strings.HasPrefix(requestPath, "/api/v3/federation/light/")
+	return requestPath == "/api/v1/health" || strings.HasPrefix(requestPath, browserReaderAssetPrefix) || isFileDownloadTicketPath(requestPath) || isStaticAssetPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/") || strings.HasPrefix(requestPath, "/api/v3/federation/light/")
 }
 
 func isStaticAssetPath(requestPath string) bool {

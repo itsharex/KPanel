@@ -72,6 +72,39 @@ func TestBrowserBetaRequiresServiceWorkerSecureOrigins(t *testing.T) {
 	}
 }
 
+func TestBrowserReaderSupportsPublicHTTPAndRequiresInternalRelay(t *testing.T) {
+	directory := t.TempDir()
+	config := validTestConfig()
+	config.DataDir = filepath.Join(directory, "data")
+	config.StorePath = filepath.Join(config.DataDir, "panel-state.json")
+	config.BootstrapTokenPath = filepath.Join(config.DataDir, "bootstrap.token")
+	config.TOTPKeyPath = filepath.Join(config.DataDir, "totp.key")
+	config.AgentSocket = filepath.Join(directory, "run", "agent.sock")
+	config.AgentTokenFile = filepath.Join(directory, "run", "agent.token")
+	config.WebRoot = filepath.Join(directory, "web")
+	config.BrowserMode = browsercore.RuntimeModeReader
+	config.PublicURL = "http://198.51.100.10:8080"
+	config.BrowserRelayURL = "http://198.51.100.10:8081"
+	config.BrowserRelayInternalURL = "http://browser-relay:8090"
+	config.BrowserRelaySecretFile = filepath.Join(directory, "run", "browser.secret")
+	config.SecureCookie = false
+	config.CookieName = "kejilion_session"
+	if err := config.Validate(); err != nil {
+		t.Fatalf("public HTTP reader config rejected: %v", err)
+	}
+
+	missingInternal := config
+	missingInternal.BrowserRelayInternalURL = ""
+	if err := missingInternal.Validate(); err == nil {
+		t.Fatal("reader mode without an internal relay URL was accepted")
+	}
+	invalidInternal := config
+	invalidInternal.BrowserRelayInternalURL = "http://browser-relay:8090/path"
+	if err := invalidInternal.Validate(); err == nil {
+		t.Fatal("reader mode accepted an internal relay URL with a path")
+	}
+}
+
 func TestLoadConfigAllowIPHostsEnvironment(t *testing.T) {
 	t.Setenv("KEJILION_PANEL_CONFIG", "")
 	t.Setenv("KEJILION_PANEL_ALLOW_IP_HOSTS", "true")

@@ -23,17 +23,23 @@ const (
 	HeaderUpstreamStatus  = "X-KPanel-Browser-Upstream-Status"
 	HeaderUpstreamHeaders = "X-KPanel-Browser-Upstream-Headers"
 	HeaderMetadataCut     = "X-KPanel-Browser-Metadata-Truncated"
+	HeaderReaderError     = "X-KPanel-Browser-Reader-Error"
 
 	defaultMaxRequestBytes   = int64(16 << 20)
 	defaultMaxHeaderMetadata = 32 << 10
 	defaultBodyIdleTimeout   = 30 * time.Second
+	defaultReaderBodyBytes   = int64(8 << 20)
+	defaultReaderTotalTime   = 30 * time.Second
 )
+
+var errReaderResponseTooLarge = errors.New("reader response exceeds the safety limit")
 
 var relayBufferPool = sync.Pool{New: func() any { return make([]byte, 32<<10) }}
 
 type HeaderPair [2]string
 
 type RelayConfig struct {
+	RuntimeMode     string
 	AllowedOrigin   string
 	RelayOrigin     string
 	MaxRequestBytes int64
@@ -52,6 +58,14 @@ func NewRelay(config RelayConfig, tokens *TokenCodec, policy *TargetPolicy, limi
 	if tokens == nil || policy == nil || limiter == nil {
 		return nil, errors.New("browser relay dependencies are required")
 	}
+	if strings.TrimSpace(config.RuntimeMode) == "" {
+		config.RuntimeMode = RuntimeModeBeta
+	}
+	mode, err := NormalizeRuntimeMode(config.RuntimeMode)
+	if err != nil || !RuntimeModeUsesRelay(mode) {
+		return nil, errors.New("browser relay mode must be reader or beta")
+	}
+	config.RuntimeMode = mode
 	allowedOrigin, err := NormalizeOrigin(config.AllowedOrigin)
 	if err != nil {
 		return nil, err
@@ -61,7 +75,7 @@ func NewRelay(config RelayConfig, tokens *TokenCodec, policy *TargetPolicy, limi
 	if err != nil {
 		return nil, err
 	}
-	if !SupportsServiceWorkerOrigin(allowedOrigin) || !SupportsServiceWorkerOrigin(relayOrigin) {
+	if mode == RuntimeModeBeta && (!SupportsServiceWorkerOrigin(allowedOrigin) || !SupportsServiceWorkerOrigin(relayOrigin)) {
 		return nil, errors.New("browser relay origins must support Service Worker secure contexts")
 	}
 	if relayOrigin == allowedOrigin {
@@ -96,7 +110,9 @@ func NewRelay(config RelayConfig, tokens *TokenCodec, policy *TargetPolicy, limi
 
 func (r *Relay) Handler() http.Handler {
 	mux := http.NewServeMux()
-	r.registerKernel(mux)
+	if r.config.RuntimeMode == RuntimeModeBeta {
+		r.registerKernel(mux)
+	}
 	mux.HandleFunc("GET /healthz", r.handleHealth)
 	mux.HandleFunc("OPTIONS /v1/fetch", r.handlePreflight)
 	mux.HandleFunc("POST /v1/fetch", r.handleFetch)
@@ -112,7 +128,9 @@ func (r *Relay) CloseIdleConnections() {
 func (r *Relay) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = io.WriteString(w, `{"ok":true,"engine":"kpanel-browser-core","version":1}`)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok": true, "engine": "kpanel-browser-core", "version": 1, "mode": r.config.RuntimeMode,
+	})
 }
 
 func (r *Relay) handlePreflight(w http.ResponseWriter, request *http.Request) {
@@ -138,6 +156,18 @@ func (r *Relay) handleFetch(w http.ResponseWriter, request *http.Request) {
 		writeRelayProblem(w, http.StatusUnauthorized, "invalid_session")
 		return
 	}
+	if (r.config.RuntimeMode == RuntimeModeReader && claims.Scope != TokenScopeReader) ||
+		(r.config.RuntimeMode == RuntimeModeBeta && claims.Scope != TokenScopeBeta) {
+		writeRelayProblem(w, http.StatusUnauthorized, "invalid_session_scope")
+		return
+	}
+	var readerDeadline time.Time
+	if claims.Scope == TokenScopeReader {
+		readerDeadline = time.Now().Add(defaultReaderTotalTime)
+		readerContext, cancel := context.WithTimeout(request.Context(), defaultReaderTotalTime)
+		defer cancel()
+		request = request.WithContext(readerContext)
+	}
 	release, ok := r.limiter.Acquire(claims.SessionID)
 	if !ok {
 		w.Header().Set("Retry-After", "1")
@@ -145,14 +175,6 @@ func (r *Relay) handleFetch(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	defer release()
-
-	resolveContext, cancelResolve := context.WithTimeout(request.Context(), defaultConnectTimeout)
-	target, err := r.policy.Resolve(resolveContext, request.Header.Get(HeaderTargetURL))
-	cancelResolve()
-	if err != nil {
-		writeRelayProblem(w, http.StatusBadRequest, "invalid_target")
-		return
-	}
 	method := strings.ToUpper(strings.TrimSpace(request.Header.Get(HeaderTargetMethod)))
 	if method == "" {
 		method = http.MethodGet
@@ -166,8 +188,20 @@ func (r *Relay) handleFetch(w http.ResponseWriter, request *http.Request) {
 		writeRelayProblem(w, http.StatusBadRequest, "invalid_headers")
 		return
 	}
+	if claims.Scope == TokenScopeReader && (!readerMethodAllowed(method) || request.ContentLength != 0 || !readerHeadersAllowed(headers)) {
+		writeRelayProblem(w, http.StatusBadRequest, "reader_request_not_allowed")
+		return
+	}
 	if request.ContentLength > r.config.MaxRequestBytes {
 		writeRelayProblem(w, http.StatusRequestEntityTooLarge, "request_too_large")
+		return
+	}
+
+	resolveContext, cancelResolve := context.WithTimeout(request.Context(), defaultConnectTimeout)
+	target, err := r.policy.Resolve(resolveContext, request.Header.Get(HeaderTargetURL))
+	cancelResolve()
+	if err != nil {
+		writeRelayProblem(w, http.StatusBadRequest, "invalid_target")
 		return
 	}
 
@@ -197,8 +231,16 @@ func (r *Relay) handleFetch(w http.ResponseWriter, request *http.Request) {
 	}
 	response.Body = newIdleReadCloser(response.Body, r.config.BodyIdleTimeout)
 	defer response.Body.Close()
+	if claims.Scope == TokenScopeReader && response.ContentLength > defaultReaderBodyBytes {
+		writeRelayProblem(w, http.StatusRequestEntityTooLarge, "reader_response_too_large")
+		return
+	}
 
-	metadata, truncated := encodeResponseHeaders(response.Header)
+	responseHeaders := response.Header
+	if claims.Scope == TokenScopeReader {
+		responseHeaders = readerResponseHeaders(response.Header)
+	}
+	metadata, truncated := encodeResponseHeaders(responseHeaders)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set(HeaderUpstreamStatus, strconv.Itoa(response.StatusCode))
@@ -207,15 +249,50 @@ func (r *Relay) handleFetch(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set(HeaderMetadataCut, "1")
 	}
 	w.Header().Set("Access-Control-Expose-Headers", strings.Join([]string{
-		HeaderUpstreamStatus, HeaderUpstreamHeaders, HeaderMetadataCut,
+		HeaderUpstreamStatus, HeaderUpstreamHeaders, HeaderMetadataCut, HeaderReaderError,
 	}, ", "))
+	if claims.Scope == TokenScopeReader {
+		w.Header().Add("Trailer", HeaderReaderError)
+	}
 	w.WriteHeader(http.StatusOK)
 	buffer := relayBufferPool.Get().([]byte)
 	defer relayBufferPool.Put(buffer)
+	if claims.Scope == TokenScopeReader {
+		if err := copyReaderResponse(w, response.Body, buffer, r.config.BodyIdleTimeout, defaultReaderBodyBytes, readerDeadline); err != nil {
+			if errors.Is(err, errReaderResponseTooLarge) {
+				w.Header().Set(HeaderReaderError, "response_too_large")
+			} else {
+				w.Header().Set(HeaderReaderError, "response_incomplete")
+			}
+		}
+		return
+	}
 	_ = copyRelayResponse(w, response.Body, buffer, r.config.BodyIdleTimeout)
 }
 
+func copyReaderResponse(w http.ResponseWriter, body io.Reader, buffer []byte, idleTimeout time.Duration, limit int64, deadline time.Time) error {
+	if limit <= 0 {
+		return errReaderResponseTooLarge
+	}
+	if err := copyRelayResponseUntil(w, io.LimitReader(body, limit), buffer, idleTimeout, deadline); err != nil {
+		return err
+	}
+	var extra [1]byte
+	n, err := body.Read(extra[:])
+	if n > 0 {
+		return errReaderResponseTooLarge
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
+}
+
 func copyRelayResponse(w http.ResponseWriter, body io.Reader, buffer []byte, idleTimeout time.Duration) error {
+	return copyRelayResponseUntil(w, body, buffer, idleTimeout, time.Time{})
+}
+
+func copyRelayResponseUntil(w http.ResponseWriter, body io.Reader, buffer []byte, idleTimeout time.Duration, deadline time.Time) error {
 	controller := http.NewResponseController(w)
 	defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
 	emptyReads := 0
@@ -223,7 +300,11 @@ func copyRelayResponse(w http.ResponseWriter, body io.Reader, buffer []byte, idl
 		read, readErr := body.Read(buffer)
 		if read > 0 {
 			emptyReads = 0
-			_ = controller.SetWriteDeadline(time.Now().Add(idleTimeout))
+			writeDeadline := time.Now().Add(idleTimeout)
+			if !deadline.IsZero() && deadline.Before(writeDeadline) {
+				writeDeadline = deadline
+			}
+			_ = controller.SetWriteDeadline(writeDeadline)
 			written, writeErr := w.Write(buffer[:read])
 			if writeErr != nil {
 				return writeErr
@@ -305,6 +386,49 @@ func allowedTargetMethod(method string) bool {
 	default:
 		return false
 	}
+}
+
+func readerMethodAllowed(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
+}
+
+func readerHeadersAllowed(headers http.Header) bool {
+	for name := range headers {
+		switch http.CanonicalHeaderKey(name) {
+		case "Accept", "Accept-Language", "User-Agent":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func readerResponseHeaders(headers http.Header) http.Header {
+	filtered := make(http.Header)
+	for _, name := range []string{"Content-Type", "Content-Length", "Content-Language", "Location"} {
+		for _, value := range headers.Values(name) {
+			filtered.Add(name, value)
+		}
+	}
+	return filtered
+}
+
+func EncodeHeaderPairs(pairs []HeaderPair) (string, error) {
+	if len(pairs) > 128 {
+		return "", errors.New("too many header pairs")
+	}
+	payload, err := json.Marshal(pairs)
+	if err != nil || len(payload) > defaultMaxHeaderMetadata {
+		return "", errors.New("header metadata too large")
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	if len(encoded) > defaultMaxHeaderMetadata {
+		return "", errors.New("header metadata too large")
+	}
+	if _, err := decodeHeaderPairs(encoded); err != nil {
+		return "", err
+	}
+	return encoded, nil
 }
 
 func decodeHeaderPairs(encoded string) (http.Header, error) {

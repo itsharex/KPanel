@@ -61,6 +61,7 @@ func TestTargetPolicyRejectsPrivateOrMixedDNSAnswers(t *testing.T) {
 func TestTargetPolicyRejectsSpecialUsePublicLookingAddresses(t *testing.T) {
 	policy := NewTargetPolicy(staticResolver{})
 	for _, raw := range []string{
+		"https://168.63.129.16/",
 		"https://192.0.2.1/",
 		"https://192.88.99.2/",
 		"https://198.51.100.1/",
