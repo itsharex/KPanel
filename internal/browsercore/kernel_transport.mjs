@@ -5,6 +5,7 @@ const upstreamStatusHeader = 'X-KPanel-Browser-Upstream-Status'
 const upstreamHeadersHeader = 'X-KPanel-Browser-Upstream-Headers'
 const sessionChannelName = 'kpanel-browser-session-v1'
 const maxRelayedURLBytes = 16 * 1024
+const maxRelayedBodyBytes = 16 * 1024 * 1024
 
 const blockedRequestHeaders = new Set([
   'accept-encoding',
@@ -74,6 +75,66 @@ async function discard(response) {
   }
 }
 
+function byteView(value) {
+  if (value instanceof Uint8Array) return value
+  if (value instanceof ArrayBuffer) return new Uint8Array(value)
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+  }
+  throw new TypeError('browser request stream yielded a non-byte chunk')
+}
+
+function ensureBodyLimit(size) {
+  if (size > maxRelayedBodyBytes) throw new RangeError('browser request body exceeds 16 MiB')
+}
+
+async function bufferRequestBody(body, signal) {
+  if (body == null) return undefined
+  signal?.throwIfAborted()
+  if (body instanceof ArrayBuffer) {
+    ensureBodyLimit(body.byteLength)
+    return body
+  }
+  if (ArrayBuffer.isView(body)) {
+    ensureBodyLimit(body.byteLength)
+    return body
+  }
+  if (!(body instanceof ReadableStream)) return body
+
+  const reader = body.getReader()
+  const chunks = []
+  let size = 0
+  const abort = () => { void reader.cancel(signal?.reason).catch(() => {}) }
+  signal?.addEventListener('abort', abort, { once: true })
+  try {
+    while (true) {
+      signal?.throwIfAborted()
+      const { value, done } = await reader.read()
+      if (done) break
+      const chunk = byteView(value)
+      size += chunk.byteLength
+      ensureBodyLimit(size)
+      chunks.push(chunk)
+    }
+    signal?.throwIfAborted()
+  } catch (error) {
+    await reader.cancel(error).catch(() => {})
+    throw error
+  } finally {
+    signal?.removeEventListener('abort', abort)
+    reader.releaseLock()
+  }
+
+  if (size === 0) return undefined
+  const buffered = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    buffered.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return buffered
+}
+
 export default class KPanelRelayTransport {
   constructor(token) {
     if (typeof token !== 'string' || token.length === 0 || token.length > 2048) {
@@ -98,6 +159,7 @@ export default class KPanelRelayTransport {
     if ((target.protocol !== 'http:' && target.protocol !== 'https:') || target.href.length > maxRelayedURLBytes) {
       throw new TypeError('unsupported browser target')
     }
+    const bufferedBody = await bufferRequestBody(body, signal)
     const init = {
       method: 'POST',
       signal,
@@ -107,9 +169,8 @@ export default class KPanelRelayTransport {
         [targetMethodHeader]: String(method || 'GET').toUpperCase(),
         [targetHeadersHeader]: encodeBase64URL(JSON.stringify(requestHeaderPairs(headers))),
       },
-      body: body ?? undefined,
+      body: bufferedBody,
     }
-    if (body instanceof ReadableStream) init.duplex = 'half'
 
     const response = await fetch('/v1/fetch', init)
     if (response.status === 401) {

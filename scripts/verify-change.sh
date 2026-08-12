@@ -44,6 +44,7 @@ ECOSYSTEM_POLICY_BASE_REF="$base_ref" bash scripts/check-ecosystem-policy.sh
 bash scripts/check-version-consistency.sh
 bash scripts/check-managed-script-contract.sh
 node scripts/check-governance-consistency.mjs
+node --test scripts/tests/browser-transport.test.mjs
 node --test scripts/tests/report-release-metrics.test.mjs
 node --test scripts/tests/report-dependency-freshness.test.mjs
 node scripts/report-dependency-freshness.mjs --validate-only

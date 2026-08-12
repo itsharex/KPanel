@@ -172,7 +172,11 @@ func (r *Relay) handleFetch(w http.ResponseWriter, request *http.Request) {
 
 	body := http.MaxBytesReader(w, request.Body, r.config.MaxRequestBytes)
 	defer body.Close()
-	upstream, err := http.NewRequestWithContext(request.Context(), method, target.URL.String(), body)
+	var upstreamBody io.Reader = body
+	if request.ContentLength == 0 {
+		upstreamBody = http.NoBody
+	}
+	upstream, err := http.NewRequestWithContext(request.Context(), method, target.URL.String(), upstreamBody)
 	if err != nil {
 		writeRelayProblem(w, http.StatusBadRequest, "invalid_request")
 		return

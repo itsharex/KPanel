@@ -25,6 +25,7 @@ security-audit:
 
 governance-check:
 	node scripts/check-governance-consistency.mjs
+	node --test scripts/tests/browser-transport.test.mjs
 	node --test scripts/tests/report-release-metrics.test.mjs
 	node --test scripts/tests/report-dependency-freshness.test.mjs
 	node scripts/report-dependency-freshness.mjs --validate-only

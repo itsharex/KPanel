@@ -12,6 +12,10 @@
 - 以完整资源和常用浏览器 API 重写替代 v0.67.0 的 Phase 1 只读净化器；重写后的第三方 JavaScript 和 CSS 仅在专用 Relay Origin 的外层沙箱中运行，不进入 Panel Origin。
 - Relay 默认并发调整为全局 64、单会话 16，单目标主机最多 6 个连接；响应继续使用 32 KiB 复用缓冲流式转发，前端最多保留 8 个标签和 2 个活动运行时。
 
+### Fixed
+
+- 将 Scramjet 转交的流式请求体在浏览器端按 16 MiB 上限转换为定长二进制请求，并把空 POST 保留为明确的零长度请求，避免普通 HTTP/1.1 Relay 链路因流式上传协商失败或 chunked 空 body 而阻断表单、搜索和媒体请求；超限时不会发送部分请求，响应仍保持流式转发。
+
 ### Security
 
 - 新运行时默认关闭；只有显式设置 `KEJILION_PANEL_BROWSER_MODE=beta` 才会初始化令牌服务、放行精确 Relay `frame-src` 并创建浏览器会话，非法模式会在配置校验阶段拒绝启动。切回 `disabled` 并重启 Panel/Relay 后，会话接口返回 `503 browser_beta_disabled`，Relay 除 `/healthz` 外返回 503，旧令牌立即失去可用入口。

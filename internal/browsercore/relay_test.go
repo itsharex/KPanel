@@ -174,6 +174,37 @@ func TestRelayCapsStreamingRequestBody(t *testing.T) {
 	}
 }
 
+func TestRelayPreservesAnEmptyPostAsAZeroLengthBody(t *testing.T) {
+	relay, token := newTestRelay(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost {
+			t.Fatalf("method = %q", request.Method)
+		}
+		if request.ContentLength != 0 || request.Body != http.NoBody {
+			t.Fatalf("empty POST = length %d, body %#v", request.ContentLength, request.Body)
+		}
+		var wire bytes.Buffer
+		if err := request.Write(&wire); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(wire.String(), "Content-Length: 0\r\n") ||
+			strings.Contains(strings.ToLower(wire.String()), "transfer-encoding: chunked") {
+			t.Fatalf("empty POST wire headers = %q", wire.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       http.NoBody,
+		}, nil
+	}))
+	request := relayRequest(t, token, nil)
+	request.Header.Set(HeaderTargetMethod, http.MethodPost)
+	recorder := httptest.NewRecorder()
+	relay.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestRelayPreflightIsNarrowAndHealthDoesNotExposeSecrets(t *testing.T) {
 	relay, _ := newTestRelay(t, nil)
 	preflight := httptest.NewRequest(http.MethodOptions, "https://relay.example.com/v1/fetch", nil)
@@ -287,10 +318,15 @@ func TestKernelPreservesBrowserContextsInsteadOfSanitizingPages(t *testing.T) {
 		"body: response.body",
 		"this.sessionChannel.postMessage({ type: 'session-expired' })",
 		"blockedRequestHeaders",
+		"bufferRequestBody(body, signal)",
+		"maxRelayedBodyBytes = 16 * 1024 * 1024",
 	} {
 		if !strings.Contains(transport, required) {
 			t.Fatalf("kernel transport is missing relay behavior %q", required)
 		}
+	}
+	if strings.Contains(transport, "init.duplex = 'half'") {
+		t.Fatal("kernel transport still requires an HTTP/2 streaming upload to reach Relay")
 	}
 }
 
