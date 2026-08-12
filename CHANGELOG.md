@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.68.1] - 2026-08-13
+
 ### Fixed
 
 - 为应用市场直连 HTTP/IP 与单 Panel HTTPS 反向代理部署恢复可用的安全阅读模式，避免 v0.68.0 升级后因自动写入 `KPANEL_BROWSER_MODE=disabled` 而让桌面浏览器固定返回 `browser_beta_disabled`。
