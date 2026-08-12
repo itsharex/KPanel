@@ -60,6 +60,9 @@ func NewRelay(config RelayConfig, tokens *TokenCodec, policy *TargetPolicy, limi
 	if err != nil {
 		return nil, err
 	}
+	if !SupportsServiceWorkerOrigin(allowedOrigin) || !SupportsServiceWorkerOrigin(relayOrigin) {
+		return nil, errors.New("browser relay origins must support Service Worker secure contexts")
+	}
 	if relayOrigin == allowedOrigin {
 		return nil, errors.New("browser relay must use an isolated origin")
 	}

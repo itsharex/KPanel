@@ -35,6 +35,7 @@ export interface BrowserCoreLocation {
 }
 
 export function resolveBrowserCoreLocation(session: BrowserCoreSession): BrowserCoreLocation | undefined {
+  if (session.mode !== 'beta') return undefined
   try {
     const relay = new URL(session.relayUrl)
     if ((relay.protocol !== 'http:' && relay.protocol !== 'https:') || relay.username || relay.password ||

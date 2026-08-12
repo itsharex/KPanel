@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.68.0] - 2026-08-12
+
+### Added
+
+- 内置浏览器升级为上下文保持型 v2 网页重写运行时：在独立 Relay Origin 内使用 Service Worker、WASM、Scramjet Controller 和 KPanel Relay Transport 加载公开 HTTP(S) 网站；没有嵌入 Chromium、Chrome、Electron 或其他浏览器进程。
+- 增加地址/标题同步、页面内跳转、后退、前进、刷新、会话自动续期、渐进显示、可操作超时提示及标签休眠恢复；保留“使用系统浏览器打开”兜底。
+
+### Changed
+
+- 以完整资源和常用浏览器 API 重写替代 v0.67.0 的 Phase 1 只读净化器；重写后的第三方 JavaScript 和 CSS 仅在专用 Relay Origin 的外层沙箱中运行，不进入 Panel Origin。
+- Relay 默认并发调整为全局 64、单会话 16，单目标主机最多 6 个连接；响应继续使用 32 KiB 复用缓冲流式转发，前端最多保留 8 个标签和 2 个活动运行时。
+
+### Security
+
+- 新运行时默认关闭；只有显式设置 `KEJILION_PANEL_BROWSER_MODE=beta` 才会初始化令牌服务、放行精确 Relay `frame-src` 并创建浏览器会话，非法模式会在配置校验阶段拒绝启动。切回 `disabled` 并重启 Panel/Relay 后，会话接口返回 `503 browser_beta_disabled`，Relay 除 `/healthz` 外返回 503，旧令牌立即失去可用入口。
+- 保留 Panel/Relay 精确双 Origin、HMAC-SHA256 十分钟会话、CSRF、CORS/消息来源校验、SSRF 公网目标策略、拨号时 DNS 复核、标准 TLS 证书验证、请求/头部预算、连接超时和容器资源限制。
+- Relay 专用 CSP 才允许 Scramjet 所需的 `'unsafe-eval'`/`'wasm-unsafe-eval'`；Panel CSP 不放宽。Relay 禁止摄像头、麦克风、定位、支付和 USB 权限，不直接嵌入第三方站点 iframe。
+
+### Compatibility
+
+- 正式部署要求 Panel 与 Relay 使用两个不同的受信任 HTTPS Origin，并启用 Secure Cookie；公网 IP 明文 HTTP 不属于可支持的 Service Worker 验收环境。Chrome/Edge 等浏览器只作为用户运行环境和测试工具，不进入 KPanel 镜像。
+- UI 常驻 Beta 标识；禁用 Beta 时保留系统浏览器降级入口，不把该能力展示为稳定内核。
+- 普通 HTML、CSS、JavaScript、表单、点击、滚动和历史导航进入 v2 兼容范围；WebSocket 当前明确不支持，DRM、复杂 SSO、第三方登录弹窗、站点 Service Worker、完整下载管理及所有媒体边缘语义不作完整兼容承诺。
+
+### Upgrade Notes
+
+- 浏览器运行时固定为 `@mercuryworkshop/scramjet@2.0.67-alpha.2` 和 `@mercuryworkshop/scramjet-controller@0.0.14`，文件哈希记录在 `internal/browsercore/vendor/manifest.json`。Scramjet 版本属于 v2 alpha，并非稳定版；本能力按默认关闭的 Beta 发布，生产使用必须显式启用并记录精确版本例外、复核日期、退出条件和回滚点。零已知漏洞不等同于独立安全审计。
+- Panel 与 Relay 必须使用同一 v0.68.0 不可变镜像同步升级。该版本没有数据库迁移；回滚到 v0.67.0 时同步恢复 Panel/Relay，并验证或退役 Relay Origin 上遗留的 v2 Service Worker，避免客户端持久状态影响旧内核。
+- Compose 与安装器新增 `disabled|beta` 模式传递，默认 `disabled`；只有在批准版本例外并配置双 HTTPS Origin 与 Secure Cookie 后，才使用 `--browser-mode beta` 或等价环境配置。应用市场的直接 IP HTTP 安装会保持 `disabled`，不会以不安全上下文启用 Beta。
+
 ## [0.67.0] - 2026-08-12
 
 ### Added

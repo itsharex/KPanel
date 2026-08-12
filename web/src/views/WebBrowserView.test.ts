@@ -22,6 +22,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 const coreSession = {
+  mode: 'beta' as const,
   relayUrl: 'https://browser-relay.example.com',
   token: 'signed-browser-token',
   sessionId: 'browser-session-1',
@@ -117,6 +118,7 @@ describe('WebBrowserView', () => {
     expect(wrapper.find('iframe').exists()).toBe(false)
     expect(wrapper.text()).toContain('Nginx')
     expect(wrapper.text()).toContain('我的博客')
+    expect(wrapper.get('.embedded-browser__beta').text()).toBe('Beta')
 
     await visitFromStart(wrapper, 'example.com/path')
 

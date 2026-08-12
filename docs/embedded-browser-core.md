@@ -1,135 +1,203 @@
-# KPanel 轻量安全浏览器内核
+# KPanel 轻量内置浏览器内核
 
-- 状态：第一阶段安全阅读内核，已进入 v0.66.0 独立发布候选与生产门禁
-- 更新：2026-08-12
-- 目标：允许管理员访问任意公网 HTTP(S) URL，同时不把第三方站点直接嵌入 KPanel
+- 候选版本：`v0.68.0`
+- 产品状态：Beta，默认关闭，必须显式配置 `KEJILION_PANEL_BROWSER_MODE=beta`
+- 运行时：Scramjet v2 Service Worker/WASM + Scramjet Controller + KPanel Relay Transport
+- 更新日期：2026-08-12
 
-## 1. “任意 URL”的准确含义
+## 1. 定位与非目标
 
-内核接受语法有效、无用户信息、长度不超过 2048 字节的公网 `http://` 和 `https://` URL。
-HTTP 目标由 Relay 在服务端访问，因此 KPanel 使用 HTTPS 时也不会产生浏览器混合内容请求。
+KPanel 没有嵌入 Chromium、Chrome、Electron、CEF 或其他独立浏览器进程。内置浏览器复用用户现有浏览器提供的 iframe、Service Worker、WASM 和标准 Web API，在独立 Relay Origin 内重写网页，并由服务器 Relay 访问目标站点。
 
-默认拒绝以下目标：
+这里仍使用 iframe，但它只承担隔离视口：Panel iframe 加载的是 KPanel 自己控制的 Relay `/kernel/`，内层 iframe 加载的是同一 Relay Origin 下的重写结果，不会直接使用 `iframe src="https://第三方站点"`。因此它不是旧版“直接嵌入第三方 iframe”架构。
 
-- `localhost`、`.local`、`.internal`、`.home.arpa`
-- 回环、私网、链路本地、组播、文档网段及其他特殊用途 IPv4/IPv6 地址
-- DNS 同时返回公网与非公网地址的主机
-- 非 HTTP(S) 协议、带用户名或密码的 URL、非法端口和非浏览器规范化主机名
+目标是兼容公开互联网中的常见 HTTP(S) 网页，同时保持轻量、可回滚和较好的日常浏览体验。它不是 Chromium 的完整替代品，也不是经过独立安全审计的高敏感业务浏览器。
 
-因此，“任意 URL”不等于允许访问宿主机、内网服务、云元数据地址或本地文件。未来如需访问私有站点，必须通过显式 CIDR/域名白名单单独设计，不能关闭默认 SSRF 防护。
+“任意 URL”仅指语法有效且目标解析为公网地址的 `http://` 或 `https://` URL，不包括本机、内网、云元数据、本地文件和其他协议。
 
-## 2. 信任边界与数据流
+## 2. 运行链路
 
 ```text
-KPanel 页面
-  ├─ POST /api/v1/browser/sessions
-  │    └─ 获得 10 分钟短时签名令牌
-  └─ iframe src=https://独立Relay域名/kernel/
-       └─ postMessage(令牌, 目标URL；精确校验双方 origin)
-            └─ Relay /v1/fetch
-                 ├─ URL/DNS/IP/端口校验
-                 ├─ 每次新连接重新解析并固定到已校验 IP
-                 ├─ 并发、请求体、请求头和空闲超时限制
-                 └─ 流式访问公网目标
-                      └─ Kernel 净化 HTML、代理图片、隔离渲染
+用户现有浏览器
+  ├─ HTTPS → Panel Origin（例如 https://panel.example.com）
+  │    └─ POST /api/v1/browser/sessions
+  │         └─ 生成 10 分钟 HMAC-SHA256 浏览器会话令牌
+  └─ HTTPS → Relay Origin（例如 https://browser.example.com）
+       └─ /kernel/ 外层隔离 iframe
+            ├─ 注册 Relay Origin 根 Scope Service Worker
+            ├─ Scramjet Controller 创建内层网页视口
+            ├─ 重写 HTML、JavaScript、CSS、URL 和常用浏览器 API
+            └─ KPanel Relay Transport → POST /v1/fetch
+                 ├─ 校验令牌、Origin、URL、DNS/IP 和资源预算
+                 └─ HTTP(S) → 目标网站
 ```
 
-KPanel 的 iframe 永远只加载 Relay 的 `/kernel/`，不会出现 `iframe src="https://第三方站点"`。令牌不进入 URL、日志或持久化存储。Relay 必须使用与 KPanel 不同的 HTTP(S) origin。
+目标网站脚本在重写后的 Relay 运行环境中执行。Panel 只通过精确 Origin、精确消息来源和导航事务 ID 接收地址、标题和错误状态，不读取第三方 DOM。
 
-## 3. 已实现的安全与稳定性控制
+所有正常目标资源流量均经过 Relay，因此：
 
-| 控制面 | 当前实现 |
-| --- | --- |
-| 身份 | HMAC-SHA256 短时令牌，默认 10 分钟，绑定随机浏览器会话 ID |
-| SSRF | 公网地址策略、全 DNS 结果检查、连接时二次解析并固定已验证 IP |
-| Origin | `/v1/fetch` 只接受规范化后的 Relay 自身 origin；KPanel origin 只用于 frame ancestor 与消息校验 |
-| 隔离 | 独立 Relay origin；外层 iframe 只开放 `allow-same-origin allow-scripts`；内容 iframe 不开放脚本 |
-| 内容 | 删除脚本、样式、外链样式、表单、iframe、对象、SVG/MathML 及事件属性；链接重新走内核 |
-| 响应头 | 上游 `Set-Cookie`、CSP、X-Frame-Options 等不进入 Relay HTTP 响应头，只作为有界元数据交给内核 |
-| 网络 | 不继承环境代理；HTTP/2；连接、TLS、响应头和响应体空闲超时；禁止自动重定向 |
-| 并发 | 默认全局 24、每会话 6；KPanel 前端最多 8 标签、2 个活动内核文档、45 秒休眠 |
-| 内存预算 | HTML 8 MiB；单个二进制 16 MiB；单图 2 MiB；每页图片合计 12 MiB；图片并发 4 |
-| 流式 | Relay 使用 32 KiB 复用缓冲区；Kernel 使用 `ReadableStream` 有界读取，超限立即取消 |
+- 目标网站看到的是 Relay 服务器出口 IP；
+- Relay 承担页面、脚本、图片和媒体流量；
+- Relay 会终止到目标 HTTPS 的连接并能够看到明文内容；
+- “使用系统浏览器打开”是显式兜底，只有该入口会让用户浏览器直接访问目标站点。
 
-## 4. 当前兼容性边界
+## 3. TLS 与双 Origin 部署
 
-第一阶段优先验证安全边界和轻量传输，当前属于“安全阅读/预览内核”，不是完整 Chromium 替代品。
-
-已支持：
-
-- 普通 HTML 内容、文本、表格、链接和有限数量图片
-- 同站及跨站 HTTP(S) 跳转，最多 5 次重定向
-- 图片和小型二进制资源通过 Relay 加载
-- 标签休眠、短时会话自动刷新、系统浏览器兜底
-
-尚未支持：
-
-- 执行第三方 JavaScript、现代 SPA hydration、Service Worker、WebSocket
-- 原站 CSS 布局、视频/音频流、下载管理
-- 表单提交、登录态、Cookie Jar、LocalStorage/IndexedDB
-- CSP/SRI/ES Module/CSS URL 的完整重写语义
-
-这些限制会明显影响复杂网站体验。因此在完成第二阶段“资源图谱重写”和第三阶段“受限脚本运行时”前，不能把本 MVP 宣称为任意现代网站的完整兼容浏览器，也不应移除“用系统浏览器打开”的兜底入口。
-
-## 5. 后续兼容层路线
-
-白屏防护按通用协议实现，不按站点增加分支：
-
-1. 每次导航分配事务 ID，内核与外壳只接受当前事务的地址、标题和错误回执。
-2. 响应先结合声明 MIME 与有界内容采样分类为 HTML、文本或二进制；错误 MIME 不直接决定渲染路径。
-3. iframe 先注册 `load/error/abort` 监听再赋值；正文完成即显示，图片后台按预算加载。
-4. Relay 请求保留浏览器 User-Agent、语言和标准 Accept 语义；30 秒仍未完成则显示可操作错误。
-5. `textarea/xmp/plaintext/noembed/noframes` 等原始文本容器按语义整体丢弃，不能像普通未知布局标签一样展开子节点。
-6. 净化后无可见正文或图片时显示统一能力边界，不再留下无反馈空白；内核固定 URL 禁止陈旧缓存。
-7. 所有无法安全分类或执行的内容保持只读/外部打开兜底，不为单个站点放宽脚本、Cookie 或 SSRF 边界。
-
-对 Scramjet 的源码评估结论：它通过 Service Worker、WASM 和浏览器 API 虚拟化重写完整
-HTML/JavaScript/CSS/URL 资源链，复杂站点兼容性明显高于第一阶段阅读内核；代价是允许重写后的第三方
-脚本运行、根 scope Service Worker、Cookie/Storage 状态和更大的供应链/运行时攻击面。其文档响应仍以声明
-`Content-Type` 决定是否重写 HTML，不能替代上述内容分类；当前上游版本仍标为 experimental/alpha。
-后续只借鉴资源图谱、事务协议和测试矩阵，不直接复制其运行时，也不采用其关闭 SSH host key 与 TLS
-证书校验的示例配置。
-
-1. 资源图谱：HTML/CSS URL 解析与重写、字体/媒体分段流、缓存和请求去重。
-2. 会话状态：Relay 侧按短时会话隔离 Cookie Jar，执行 Public Suffix 校验并设置总量预算。
-3. 受限运行时：在独立 origin 内实现脚本 URL/API 重写，覆盖 `fetch`、XHR、Worker 和 WebSocket；默认按站点能力降级。
-4. 兼容性门禁：建立静态站、传统服务端站、登录站、SPA、媒体站五类回归样本和长稳压测。
-
-任何阶段都不得回退为直接加载第三方 iframe，也不得把任意 URL 网络出口移回 Panel 进程。
-
-## 6. 运行配置
-
-Panel 需要同时设置：
+正式环境必须提供两个不同的 HTTPS Origin：
 
 ```text
+https://panel.example.com    → Panel
+https://browser.example.com  → browser-relay
+```
+
+不能只通过同一域名的不同路径部署，也不能在正式环境使用公网 IP 的明文 HTTP。Service Worker 需要安全上下文；标准浏览器仅对 HTTPS 和本机开发环境等有限场景开放该能力。
+
+TLS 分为两段：
+
+1. 用户浏览器到 Panel/Relay：由正式反向代理提供 HTTPS，并由用户浏览器验证证书。
+2. Relay 到 HTTPS 目标：使用 Go 标准 TLS，验证目标域名和证书链；没有关闭证书验证。
+
+访问 `http://` 目标时，用户到 Relay 仍应是 HTTPS，但 Relay 到目标的最后一段没有 TLS。该模式用于兼容旧站点，不应输入敏感信息。
+
+反向代理必须保留流式响应，并正确转发 Service Worker 的 `Content-Type`、`Service-Worker-Allowed` 和缓存策略。`/kernel/runtime/v3/sw.js` 使用 `no-cache`，固定版本的 JS/WASM 资源使用不可变缓存。
+
+## 4. 安全边界
+
+### 4.1 Panel 与网页运行时隔离
+
+- Panel Origin 与 Relay Origin 必须不同；配置校验会拒绝相同 Origin。
+- Panel 的 `frame-src` 只放行自身、`blob:` 和配置的精确 Relay Origin。
+- Panel 与 Relay 的 `postMessage` 同时校验 `event.origin`、`event.source` 和有界导航 ID。
+- 第三方网页脚本只在 Relay Origin 的外层沙箱内执行，无法按同源策略读取 Panel DOM、Panel Cookie 或 Panel Storage。
+- Relay CSP 所需的 `'unsafe-eval'` 和 `'wasm-unsafe-eval'` 不进入 Panel CSP；摄像头、麦克风、定位、支付和 USB 权限在 Relay 上关闭。
+
+Scramjet 的隔离正确性属于安全边界的一部分。第三方脚本与重写控制器共享专用 Relay Origin，因此该 Origin 必须专用于浏览器内核，不能同时承载后台、登录页、API 控制台或其他可信业务，也不能在该 Origin 保存 Panel 凭证。
+
+### 4.2 会话与请求授权
+
+- Panel 登录会话通过同源、CSRF 和权限校验后才能创建浏览器会话。
+- Relay 令牌使用至少 32 字节随机共享密钥和 HMAC-SHA256；默认有效期 10 分钟，协议上限 15 分钟。
+- 令牌绑定随机浏览器会话 ID，不进入 URL、持久化存储或正常日志。
+- `/v1/fetch` 只接受来自 Relay 自身精确 Origin 的请求，并要求 Bearer 令牌。
+
+### 4.3 SSRF 与网络出口
+
+Relay 只允许 `GET`、`HEAD`、`POST`、`PUT`、`PATCH`、`DELETE` 和 `OPTIONS`，并拒绝：
+
+- 非 HTTP(S) 协议、带用户名或密码的 URL、非法端口和非规范主机名；
+- `localhost`、`.local`、`.internal`、`.home.arpa`；
+- 回环、私网、链路本地、共享地址、组播、文档网段、转换前缀及其他特殊用途 IPv4/IPv6；
+- 任一 DNS 结果包含非公网地址的主机。
+
+首次请求和实际拨号都会重新解析并校验目标，连接只拨向已验证 IP。Go Transport 不继承环境代理，不自动跟随重定向；重写运行时发起的后续 URL 请求会再次经过完整策略。HTTPS 目标保留标准证书和主机名验证。
+
+### 4.4 资源与稳定性预算
+
+| 项目 | 默认值 |
+| --- | --- |
+| Relay 全局并发 | 64 |
+| 单浏览器会话并发 | 16 |
+| 单目标主机连接 | 6 |
+| 最大空闲连接 | 128 |
+| 请求体 | 16 MiB，配置硬上限 64 MiB |
+| 请求/响应头元数据 | 32 KiB、最多 128 对；上游响应头读取上限 64 KiB |
+| 连接 / TLS / 响应头超时 | 5 秒 / 10 秒 / 15 秒 |
+| 响应体空闲超时 | 30 秒 |
+| 流式复制缓冲 | 32 KiB 复用缓冲 |
+| 前端标签 | 最多 8 个，最多 2 个活动运行时；非活动 45 秒后休眠 |
+| Relay 容器 | 0.5 CPU、128 MiB、64 PIDs、非 root、只读根、`cap_drop: ALL` |
+
+响应体采用流式转发，没有固定的页面总下载字节上限；大型媒体会消耗服务器带宽，但不应被整页缓冲进 Relay 内存。并发、单主机连接和空闲超时用于限制异常站点造成的无界占用。
+
+## 5. 兼容性与用户体验
+
+当前 v2 运行时不再是 Phase 1 的“删除脚本和 CSS 的只读净化器”。它允许重写后的第三方 JavaScript 执行，并保留上下文相关的资源、导航和存储语义，以提高 SPA 和复杂网页兼容性。
+
+当前实现提供：
+
+- 地址输入、搜索、链接点击、滚动、表单交互；
+- 后退、前进、刷新、页面内跳转、地址和标题同步；
+- HTML、CSS、JavaScript、图片、字体及普通媒体资源的 Relay 重写和流式加载；
+- 会话令牌自动刷新、加载超时提示、错误反馈和“使用系统浏览器打开”兜底；
+- 最多 8 个标签、最多 2 个活动运行时和非活动标签休眠。
+
+以下能力仍不承诺完整兼容：
+
+- WebSocket：当前 KPanel Transport 明确返回不支持；
+- DRM、受保护媒体、浏览器扩展、原生协议、摄像头/麦克风/定位/支付/USB；
+- 依赖严格反代理检测、复杂 SSO、第三方登录弹窗、站点自身 Service Worker 或非标准浏览器行为的页面；
+- 下载管理、跨窗口状态、Cookie/Storage/SRI/CSP/ES Module 等所有边缘语义；
+- YouTube 等媒体站点的持续播放闭环，在真实 HTTPS 环境完成门禁前不能宣称完整兼容。
+
+安全策略命中、上游主动反代理、网络不可达或未实现 API 时，应显示可操作错误或允许外部打开，不应以放宽 Panel Origin、TLS 或 SSRF 边界换取单站点兼容。
+
+Chrome/Edge/Firefox 只作为真实用户浏览器和验收工具使用，不会被打包到 KPanel 镜像，也不会在生产服务器中作为内核进程运行。
+
+## 6. 第三方运行时与发布状态
+
+| 组件 | 固定版本 | 发布通道 | 完整性记录 |
+| --- | --- | --- | --- |
+| `@mercuryworkshop/scramjet` | `2.0.67-alpha.2` | v2 alpha，非稳定版 | `internal/browsercore/vendor/manifest.json` |
+| `@mercuryworkshop/scramjet-controller` | `0.0.14` | 与上述 v2 运行时配套 | `internal/browsercore/vendor/manifest.json` |
+
+运行文件已 vendored 到 Go 二进制，不在用户运行时从 npm 或 CDN 下载；发布前必须复核包完整性、文件 SHA-256、许可证、SBOM 和已知漏洞扫描结果。
+
+`2.0.67-alpha.2` 不能描述为“最新稳定版”。`npm audit` 或漏洞数据库返回零已知漏洞，只说明当前数据库没有匹配公告，不代表不存在未知绕过，也不等同于独立安全审计。
+
+因此 v0.68.0 的该能力按 Beta 管理并默认关闭。若允许生产发布，必须显式设置 Beta 模式，并在发布验收中记录针对该精确版本的限期例外、责任人、复核日期、退出条件和回滚点；兼容的 Scramjet v2 稳定版可用后，应重新评估并优先退出 alpha 例外。
+
+## 7. 运行配置
+
+Panel：
+
+```text
+KEJILION_PANEL_BROWSER_MODE=beta
 KEJILION_PANEL_BROWSER_RELAY_URL=https://browser.example.com
 KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE=/run/secrets/browser-relay-secret
+KEJILION_PANEL_SECURE_COOKIE=true
 ```
 
-Relay 使用同一密钥文件启动：
+默认值为 `disabled`。只有精确值 `beta` 会初始化浏览器令牌服务、把 Relay 加入 Panel `frame-src` 并允许创建浏览器会话；成功响应显式返回 `mode: "beta"`，界面常驻 Beta 标识。禁用时会话接口返回 `503 browser_beta_disabled`，Relay 只保留 `/healthz`，旧令牌立即失效，并保留系统浏览器兜底；其他模式值会在配置校验阶段被拒绝。停用 Beta 不需要删除 Relay 密钥或数据。
+
+Relay：
 
 ```text
 kpanel-browser-relay \
   -listen :8090 \
+  -mode beta \
   -allowed-origin https://panel.example.com \
   -public-url https://browser.example.com \
   -secret-file /run/secrets/browser-relay-secret
 ```
 
-正式 Compose 以同一不可变镜像启动独立 Relay 容器，限制为 0.5 CPU、128 MiB、64 PIDs、只读根文件系统、无 Linux capabilities。安装器生成 32 字节随机密钥并以 `root:kejilion-panel 0640` 只读挂载给两个容器。`browser.example.com` 应由独立反向代理转发到 Relay 并保持流式响应；不能与 `panel.example.com` 共用 origin。
+正式 Compose 使用同一不可变镜像启动 Panel 和独立 Relay 容器，并把同一个 `KEJILION_PANEL_BROWSER_MODE` 同时传给 Panel 和 Relay。安装器通过 `--browser-mode disabled|beta` 接收模式，默认 `disabled`；同时生成 32 字节随机密钥，以 `root:kejilion-panel 0640` 只读挂载给两个容器。批准 Beta 例外后，部署配置才可显式启用 `beta`；HTTPS Beta 必须同时启用 Secure Cookie。Panel 与 Relay 必须同时升级，避免 Service Worker、Controller、WASM 和 Transport 版本不一致。
 
-## 7. 本地验证与性能基线
+## 8. 上线门禁
 
-2026-08-12 在 Windows amd64、Intel i5-12600KF、Go 1.26.5 上验证：
+发布前至少完成：
 
-- `go test ./internal/browsercore ./cmd/kpanel-browser-relay`：通过
-- Panel 浏览器会话与配置定向测试：通过
-- `go vet`（browsercore、Relay、Panel）：通过
-- 前端类型检查、i18n 检查、生产构建：通过
-- 浏览器核心与桌面浏览器组件：14 项测试通过
-- 64 KiB 内存上游 Relay 微基准：约 25.1–25.5 µs/op、约 12.1 KiB/op、102 allocs/op
-- 并发限制器微基准：多数约 87 ns/op、64 B/op、2 allocs/op；一次运行出现 202 ns/op 抖动
+1. 在真实、受信任的双 HTTPS Origin 上验证 Service Worker 注册、更新和刷新，不使用公网 IP 明文 HTTP 代替。
+2. 使用真实桌面 Chrome/Edge 进行静态站、服务端渲染站、SPA、搜索、表单、媒体和异常页测试，覆盖输入、点击、滚动、跳转、后退、前进、刷新和标签休眠恢复。
+3. 验证 Google/Bing 搜索结果、GitHub/Baidu 等普通站点，以及 YouTube 页面和实际播放状态；未通过项必须写入已知限制。
+4. 验证错误 Origin、无令牌/过期令牌、私网地址、DNS 重绑定、重定向到内网、无效 TLS 证书、超限请求和并发限流。
+5. 完成持续负载、内存、CPU、重启、OOM、连接回收和服务器出口流量观测。
+6. 复核固定依赖哈希、许可证、SBOM、漏洞扫描及 alpha 版本例外记录。
+7. 验证默认 `disabled` 不签发浏览器会话、不放宽 Panel `frame-src`，只有显式 `beta` 才启用运行时。
+8. 演练 v0.67.0 回滚，并验证旧内核不受客户端遗留 Service Worker 影响。
 
-微基准只测进程内策略、令牌、请求封装和流式复制，不包含公网 DNS、TCP/TLS、目标站延迟和浏览器 DOM 解析，不能当作真实页面加载耗时。真实体验主要由目标站 RTT、资源数量及第二阶段重写能力决定。
+`docs/embedded-browser-core-154-acceptance.md` 记录的是 v0.66.0 Phase 1 历史验收，不能作为 v0.68.0 v2 运行时的上线证据。
 
-完整 `go test ./...` 在 Windows 上仍有仓库既有的 Linux/path/静态资源假设失败；本次新增包和定向测试通过。`go test -race` 因当前 Windows Go 环境未启用 CGO 而未执行，合并前应在 Linux CI 运行竞态检测及 30–60 分钟并发长稳测试。
+## 9. 回滚
+
+生产回滚点为上一稳定版本 `v0.67.0` 的不可变镜像和发布资产。浏览器内核变更没有数据库迁移，也不应删除 Panel 数据、站点、应用、Relay 密钥或业务容器。
+
+回滚时：
+
+1. 同时把 Panel 和 Relay 恢复到同一份 v0.67.0 不可变镜像，不能混跑 v2 Panel 与旧 Relay。
+2. 按标准应用市场/部署回滚流程恢复镜像，复核 Panel、Relay、Agent 健康、重启次数和 OOM 状态。
+3. Service Worker 是客户端持久状态，单纯回滚服务器镜像不会主动删除已注册 Worker。正式演练必须验证旧内核可正常接管；如出现干扰，应在同一 Relay Origin 提供明确的 Worker 退役流程，或切换到干净的 Relay Origin，并提示用户刷新站点数据。
+4. 复测普通网页、错误提示和“使用系统浏览器打开”兜底，再恢复发布流量。
+
+源码层面优先使用 `git revert` 撤销候选提交，不改写共享分支历史。发布标签和既有 Release 保持不可变。
+
+紧急止损不必先回滚镜像：把 Panel 与 Relay 的模式同时改为 `disabled` 并重启两个容器，即可停止签发新会话，让 Relay 除 `/healthz` 外全部返回 503，并立即使已有令牌失去可用入口；随后再按上述流程回滚或排障。

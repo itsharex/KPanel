@@ -29,6 +29,7 @@ type Config struct {
 	AgentTokenFile         string        `json:"agentTokenFile"`
 	WebRoot                string        `json:"webRoot"`
 	PublicURL              string        `json:"publicUrl"`
+	BrowserMode            string        `json:"browserMode"`
 	BrowserRelayURL        string        `json:"browserRelayUrl"`
 	BrowserRelaySecretFile string        `json:"browserRelaySecretFile"`
 	AllowIPHosts           bool          `json:"allowIpHosts"`
@@ -52,6 +53,7 @@ func DefaultConfig() Config {
 		AgentSocket:       "/run/kejilion-panel/agent.sock",
 		AgentTokenFile:    "/run/secrets/agent-token",
 		WebRoot:           "/app/web",
+		BrowserMode:       browsercore.RuntimeModeDisabled,
 		SecureCookie:      true,
 		SessionTTL:        12 * time.Hour,
 		SessionTTLText:    "12h",
@@ -95,6 +97,7 @@ func LoadConfig(path string) (Config, error) {
 	applyStringEnv("KEJILION_PANEL_AGENT_TOKEN_FILE", &config.AgentTokenFile)
 	applyStringEnv("KEJILION_PANEL_WEB_ROOT", &config.WebRoot)
 	applyStringEnv("KEJILION_PANEL_PUBLIC_URL", &config.PublicURL)
+	applyStringEnv("KEJILION_PANEL_BROWSER_MODE", &config.BrowserMode)
 	applyStringEnv("KEJILION_PANEL_BROWSER_RELAY_URL", &config.BrowserRelayURL)
 	applyStringEnv("KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE", &config.BrowserRelaySecretFile)
 	applyStringEnv("KEJILION_PANEL_COOKIE_NAME", &config.CookieName)
@@ -157,6 +160,7 @@ func LoadConfig(path string) (Config, error) {
 		}
 	}
 	config.PublicURL = strings.TrimRight(strings.TrimSpace(config.PublicURL), "/")
+	config.BrowserMode = strings.ToLower(strings.TrimSpace(config.BrowserMode))
 	config.BrowserRelayURL = strings.TrimRight(strings.TrimSpace(config.BrowserRelayURL), "/")
 	if err := config.Validate(); err != nil {
 		return Config{}, err
@@ -168,6 +172,9 @@ func LoadConfig(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if _, err := browsercore.NormalizeRuntimeMode(c.BrowserMode); err != nil {
+		return err
+	}
 	switch {
 	case strings.TrimSpace(c.Listen) == "":
 		return errors.New("listen address is required")
@@ -229,6 +236,9 @@ func (c Config) Validate() error {
 	}
 	if (c.BrowserRelayURL == "") != (c.BrowserRelaySecretFile == "") {
 		return errors.New("browserRelayUrl and browserRelaySecretFile must be configured together")
+	}
+	if browsercore.RuntimeModeEnabled(c.BrowserMode) && c.BrowserRelayURL == "" {
+		return errors.New("browser beta mode requires browserRelayUrl and browserRelaySecretFile")
 	}
 	if !cookieNamePattern.MatchString(c.CookieName) {
 		return errors.New("cookieName is invalid")
@@ -298,6 +308,19 @@ func (c Config) Validate() error {
 			if publicErr == nil && relayOrigin == publicOrigin {
 				return errors.New("browserRelayUrl must use an isolated origin")
 			}
+		}
+	}
+	if browsercore.RuntimeModeEnabled(c.BrowserMode) {
+		if c.PublicURL == "" {
+			return errors.New("browser beta mode requires publicUrl")
+		}
+		if !browsercore.SupportsServiceWorkerOrigin(c.PublicURL) ||
+			!browsercore.SupportsServiceWorkerOrigin(c.BrowserRelayURL) {
+			return errors.New("browser beta origins must support Service Worker secure contexts")
+		}
+		publicOrigin, _ := url.Parse(c.PublicURL)
+		if publicOrigin.Scheme == "https" && !c.SecureCookie {
+			return errors.New("browser beta HTTPS publicUrl requires secureCookie=true")
 		}
 	}
 	return nil

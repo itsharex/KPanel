@@ -1499,6 +1499,7 @@ export interface PanelSettings {
 }
 
 export interface BrowserCoreSession {
+  mode: 'beta'
   relayUrl: string
   token: string
   sessionId: string

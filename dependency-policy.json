@@ -40,7 +40,8 @@
     "dockerfile-frontend",
     "github-actions",
     "security-tools",
-    "managed-kejilion-script"
+    "managed-kejilion-script",
+    "vendored-browser-runtime"
   ],
   "groups": [
     {
@@ -108,6 +109,26 @@
       "detector": "github-branch-head",
       "repository": "kejilion/sh",
       "branch": "main"
+    },
+    {
+      "id": "vendored-browser-runtime",
+      "scope": "vendored-production-runtime",
+      "manifests": ["internal/browsercore/vendor/manifest.json", "THIRD_PARTY_NOTICES.md"],
+      "detector": "npm-registry-dist-tags",
+      "components": {
+        "scramjet": {
+          "package": "@mercuryworkshop/scramjet",
+          "manifestKey": "scramjet-v2",
+          "assetDirectory": "internal/browsercore/vendor/scramjet-v2",
+          "currentVersion": "2.0.67-alpha.2"
+        },
+        "controller": {
+          "package": "@mercuryworkshop/scramjet-controller",
+          "manifestKey": "scramjet-controller",
+          "assetDirectory": "internal/browsercore/vendor/controller",
+          "currentVersion": "0.0.14"
+        }
+      }
     }
   ],
   "adoptionClasses": [
@@ -154,7 +175,22 @@
     "exitCondition",
     "rollbackPoint"
   ],
-  "exceptions": [],
+  "exceptions": [
+    {
+      "component": "@mercuryworkshop/scramjet",
+      "currentVersion": "2.0.67-alpha.2",
+      "candidateVersion": "1.1.0",
+      "reason": "Scramjet Controller 0.0.14 requires the v2 runtime, while upstream has not published a compatible stable v2 release.",
+      "securityAndProductImpact": "The prerelease rewriter may contain unknown compatibility gaps or sandbox-bypass paths; it must not be presented as KPanel's stable default browser runtime.",
+      "mitigation": "The runtime is disabled by default, requires explicit beta mode, uses isolated Panel and Relay origins, HMAC-scoped sessions, SSRF revalidation, bounded concurrency and response limits, and can be disabled at both Panel and Relay.",
+      "owner": "KPanel browser runtime maintainers",
+      "reviewDate": "2026-09-11",
+      "exitCondition": "Adopt a controller-compatible stable Scramjet v2 release after L2/L3 verification, or remove the vendored v2 runtime before this exception expires.",
+      "rollbackPoint": "v0.67.0 (6aaabea)",
+      "experimentMode": "beta",
+      "runtimeDefault": "disabled"
+    }
+  ],
   "automationBoundary": {
     "automaticDetection": true,
     "automaticReport": true,

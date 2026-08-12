@@ -8,6 +8,7 @@ import {
 } from './embeddedBrowserCore'
 
 const session = {
+  mode: 'beta' as const,
   relayUrl: 'https://browser.example.com',
   token: 'signed-token',
   sessionId: 'session-1',
@@ -27,6 +28,10 @@ describe('embeddedBrowserCore', () => {
       .toBeUndefined()
     expect(resolveBrowserCoreLocation({ ...session, relayUrl: 'https://user@browser.example.com' }))
       .toBeUndefined()
+  })
+
+  it('fails closed when the API does not explicitly return beta mode', () => {
+    expect(resolveBrowserCoreLocation({ ...session, mode: 'disabled' as 'beta' })).toBeUndefined()
   })
 
   it('keeps the target and token in a postMessage payload', () => {

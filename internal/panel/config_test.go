@@ -3,7 +3,74 @@ package panel
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/kejilion/kejilion-panel/internal/browsercore"
 )
+
+func TestBrowserRuntimeDefaultsDisabledAndRequiresExplicitBeta(t *testing.T) {
+	t.Setenv("KEJILION_PANEL_CONFIG", "")
+	config, err := LoadConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.BrowserMode != browsercore.RuntimeModeDisabled {
+		t.Fatalf("default browser mode = %q", config.BrowserMode)
+	}
+
+	t.Setenv("KEJILION_PANEL_BROWSER_MODE", "BETA")
+	t.Setenv("KEJILION_PANEL_PUBLIC_URL", "https://panel.example.com")
+	t.Setenv("KEJILION_PANEL_BROWSER_RELAY_URL", "https://browser.example.com")
+	t.Setenv("KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE", "/run/secrets/browser-relay-secret")
+	config, err = LoadConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.BrowserMode != browsercore.RuntimeModeBeta {
+		t.Fatalf("explicit browser mode = %q", config.BrowserMode)
+	}
+
+	t.Setenv("KEJILION_PANEL_BROWSER_MODE", "enabled")
+	if _, err := LoadConfig(""); err == nil {
+		t.Fatal("unsupported browser mode was accepted")
+	}
+}
+
+func TestBrowserBetaRequiresServiceWorkerSecureOrigins(t *testing.T) {
+	directory := t.TempDir()
+	config := validTestConfig()
+	config.BrowserMode = browsercore.RuntimeModeBeta
+	config.BrowserRelaySecretFile = filepath.Join(directory, "browser.secret")
+	config.SecureCookie = false
+	config.CookieName = "kejilion_session"
+
+	config.PublicURL = "http://198.51.100.10:8080"
+	config.BrowserRelayURL = "http://198.51.100.10:8081"
+	if err := config.Validate(); err == nil {
+		t.Fatal("public HTTP beta origins were accepted")
+	}
+
+	config.PublicURL = "http://localhost:8080"
+	config.BrowserRelayURL = "http://127.0.0.1:8081"
+	if err := config.Validate(); err != nil {
+		t.Fatalf("loopback HTTP beta origins were rejected: %v", err)
+	}
+
+	config.PublicURL = "https://panel.example.com"
+	config.BrowserRelayURL = "https://browser.example.com"
+	if err := config.Validate(); err == nil {
+		t.Fatal("HTTPS beta origin without secure cookies was accepted")
+	}
+	config.SecureCookie = true
+	config.CookieName = "__Host-kejilion_session"
+	if err := config.Validate(); err != nil {
+		t.Fatalf("HTTPS beta origin with secure cookies was rejected: %v", err)
+	}
+
+	config.PublicURL = ""
+	if err := config.Validate(); err == nil {
+		t.Fatal("beta mode without publicUrl was accepted")
+	}
+}
 
 func TestLoadConfigAllowIPHostsEnvironment(t *testing.T) {
 	t.Setenv("KEJILION_PANEL_CONFIG", "")
@@ -132,6 +199,7 @@ func TestConfigRequiresIsolatedBrowserRelayOriginAndSecret(t *testing.T) {
 	base.PublicURL = "https://panel.example.com"
 
 	valid := base
+	valid.BrowserMode = browsercore.RuntimeModeBeta
 	valid.BrowserRelayURL = "https://browser.example.com"
 	valid.BrowserRelaySecretFile = filepath.Join(directory, "run", "browser.secret")
 	if err := valid.Validate(); err != nil {
@@ -139,8 +207,9 @@ func TestConfigRequiresIsolatedBrowserRelayOriginAndSecret(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*Config){
-		"missing secret": func(config *Config) { config.BrowserRelayURL = "https://browser.example.com" },
-		"missing URL":    func(config *Config) { config.BrowserRelaySecretFile = filepath.Join(directory, "browser.secret") },
+		"beta without relay": func(config *Config) { config.BrowserMode = browsercore.RuntimeModeBeta },
+		"missing secret":     func(config *Config) { config.BrowserRelayURL = "https://browser.example.com" },
+		"missing URL":        func(config *Config) { config.BrowserRelaySecretFile = filepath.Join(directory, "browser.secret") },
 		"same origin": func(config *Config) {
 			config.BrowserRelayURL = config.PublicURL
 			config.BrowserRelaySecretFile = filepath.Join(directory, "browser.secret")

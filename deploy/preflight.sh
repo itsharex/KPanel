@@ -5,6 +5,7 @@ LC_ALL=C
 export LC_ALL
 
 PUBLIC_URL=
+BROWSER_MODE=disabled
 BROWSER_RELAY_URL=
 NETWORK_SUBNET=172.29.255.240/28
 FAILURES=0
@@ -15,6 +16,7 @@ usage() {
 Usage:
   ./deploy/preflight.sh \
     --public-url https://panel.example.com \
+    [--browser-mode beta] \
     --browser-relay-url https://browser.example.com \
     [--network-subnet 172.29.255.240/28]
 
@@ -125,6 +127,14 @@ while [ "$#" -gt 0 ]; do
 			BROWSER_RELAY_URL=$2
 			shift 2
 			;;
+		--browser-mode)
+			[ "$#" -ge 2 ] || {
+				fail "--browser-mode requires a value"
+				break
+			}
+			BROWSER_MODE=$2
+			shift 2
+			;;
 		-h|--help)
 			usage
 			exit 0
@@ -135,6 +145,12 @@ while [ "$#" -gt 0 ]; do
 			;;
 	esac
 done
+
+case "$BROWSER_MODE" in
+	disabled) ok "Browser Beta is disabled by default" ;;
+	beta) warn "Browser Beta is explicitly enabled; the vendored Scramjet runtime is prerelease software" ;;
+	*) fail "--browser-mode must be disabled or beta" ;;
+esac
 
 if [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
 	ok "Linux host detected"

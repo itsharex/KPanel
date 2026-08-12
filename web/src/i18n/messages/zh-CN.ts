@@ -191,6 +191,8 @@ export const zhCNMessages = {
   'desktop.browserOpenEmbedded': '在桌面窗口打开',
   'desktop.browserOpenExternal': '用系统浏览器打开',
   'desktop.browserTabsLabel': '浏览器标签页',
+  'desktop.browserBetaBadge': 'Beta',
+  'desktop.browserBetaDescription': '实验功能，管理员可随时关闭并使用系统浏览器。',
   'desktop.browserTabSleeping': '标签页已休眠',
   'desktop.browserCloseTab': '关闭标签页',
   'desktop.browserCloseNamedTab': '关闭 {name}',

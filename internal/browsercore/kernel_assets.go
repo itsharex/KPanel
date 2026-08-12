@@ -95,7 +95,7 @@ func (r *Relay) serveVersionedKernelAsset(w http.ResponseWriter, _ *http.Request
 
 func (r *Relay) setKernelHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
-	// Scramjet v1 evaluates rewritten page scripts inside this isolated Relay
+	// The Scramjet v2 rewritten runtime evaluates page scripts inside this isolated Relay
 	// origin. Keep that capability out of the Panel origin and constrain every
 	// other source to the vendored runtime served here.
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors "+r.config.AllowedOrigin+"; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:; frame-src blob: data: 'self'; img-src data: blob: 'self'; object-src 'none'; form-action 'none'")

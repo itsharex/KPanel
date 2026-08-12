@@ -636,6 +636,10 @@ onBeforeUnmount(() => {
         >
           <Plus :size="16" aria-hidden="true" />
         </button>
+        <span
+          class="embedded-browser__beta"
+          :title="i18n.t('desktop.browserBetaDescription')"
+        >{{ i18n.t('desktop.browserBetaBadge') }}</span>
         <span class="embedded-browser__tab-count">{{ tabs.length }}/{{ MAX_EMBEDDED_BROWSER_TABS }}</span>
       </nav>
     </Teleport>
@@ -971,6 +975,19 @@ onBeforeUnmount(() => {
 .embedded-browser__tab-close:hover { color: var(--text); background: var(--surface-hover); }
 .embedded-browser__new-tab { width: 30px; height: 30px; align-self: center; border-radius: 8px; }
 .embedded-browser__new-tab:hover { color: var(--text); background: var(--surface-hover); }
+.embedded-browser__beta {
+  align-self: center;
+  padding: 2px 5px;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #f59e0b66;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: .03em;
+  white-space: nowrap;
+}
 .embedded-browser__tab-count { align-self: center; margin: 0 2px 0 auto; color: var(--muted); font-size: 10px; white-space: nowrap; }
 
 .embedded-browser__toolbar {

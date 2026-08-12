@@ -35,6 +35,7 @@ func runArgs(args []string) error {
 	listen := flags.String("listen", "127.0.0.1:8090", "HTTP listen address")
 	allowedOrigin := flags.String("allowed-origin", "", "exact KPanel HTTP(S) origin")
 	publicURL := flags.String("public-url", "", "public HTTP(S) origin of this relay")
+	modeValue := flags.String("mode", browsercore.RuntimeModeDisabled, "browser runtime mode: disabled or beta")
 	secretFile := flags.String("secret-file", "", "file containing at least 32 random bytes")
 	maxGlobal := flags.Int("max-global", 64, "maximum concurrent upstream requests")
 	maxSession := flags.Int("max-session", 16, "maximum concurrent requests per browser session")
@@ -47,28 +48,37 @@ func runArgs(args []string) error {
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
 
-	secret, err := browsercore.LoadSecretFile(*secretFile)
+	mode, err := browsercore.NormalizeRuntimeMode(*modeValue)
 	if err != nil {
 		return err
 	}
-	tokens, err := browsercore.NewTokenCodec(secret)
-	if err != nil {
-		return err
+
+	var handler http.Handler = disabledRuntimeHandler()
+	if browsercore.RuntimeModeEnabled(mode) {
+		secret, secretErr := browsercore.LoadSecretFile(*secretFile)
+		if secretErr != nil {
+			return secretErr
+		}
+		tokens, tokenErr := browsercore.NewTokenCodec(secret)
+		if tokenErr != nil {
+			return tokenErr
+		}
+		relay, relayErr := browsercore.NewRelay(browsercore.RelayConfig{
+			AllowedOrigin:   *allowedOrigin,
+			RelayOrigin:     *publicURL,
+			MaxRequestBytes: *maxRequestBytes,
+			BodyIdleTimeout: *bodyIdleTimeout,
+		}, tokens, browsercore.NewTargetPolicy(nil), browsercore.NewLimiter(*maxGlobal, *maxSession))
+		if relayErr != nil {
+			return relayErr
+		}
+		defer relay.CloseIdleConnections()
+		handler = relay.Handler()
 	}
-	relay, err := browsercore.NewRelay(browsercore.RelayConfig{
-		AllowedOrigin:   *allowedOrigin,
-		RelayOrigin:     *publicURL,
-		MaxRequestBytes: *maxRequestBytes,
-		BodyIdleTimeout: *bodyIdleTimeout,
-	}, tokens, browsercore.NewTargetPolicy(nil), browsercore.NewLimiter(*maxGlobal, *maxSession))
-	if err != nil {
-		return err
-	}
-	defer relay.CloseIdleConnections()
 
 	server := &http.Server{
 		Addr:              *listen,
-		Handler:           relay.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -79,7 +89,7 @@ func runArgs(args []string) error {
 
 	errorsChannel := make(chan error, 1)
 	go func() {
-		log.Printf("kpanel browser relay listening on %s", *listen)
+		log.Printf("kpanel browser relay listening on %s (mode=%s)", *listen, mode)
 		errorsChannel <- server.ListenAndServe()
 	}()
 
@@ -94,6 +104,23 @@ func runArgs(args []string) error {
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
 	}
+}
+
+func disabledRuntimeHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if r.URL.Path == "/healthz" {
+			switch r.Method {
+			case http.MethodGet, http.MethodHead:
+				w.WriteHeader(http.StatusOK)
+			default:
+				w.Header().Set("Allow", "GET, HEAD")
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+			return
+		}
+		http.Error(w, "Browser Beta is disabled", http.StatusServiceUnavailable)
+	})
 }
 
 func relayHealthcheck(rawURL string) error {

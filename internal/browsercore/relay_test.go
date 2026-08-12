@@ -341,6 +341,18 @@ func TestRelayCanonicalizesOriginsBeforeIsolationChecks(t *testing.T) {
 	}, tokens, policy, NewLimiter(4, 2)); err == nil {
 		t.Fatal("origin with a CSP delimiter was accepted")
 	}
+	if _, err := NewRelay(RelayConfig{
+		AllowedOrigin: "http://198.51.100.10:8080",
+		RelayOrigin:   "http://198.51.100.10:8081",
+	}, tokens, policy, NewLimiter(4, 2)); err == nil {
+		t.Fatal("public HTTP origins without Service Worker support were accepted")
+	}
+	if _, err := NewRelay(RelayConfig{
+		AllowedOrigin: "http://localhost:8080",
+		RelayOrigin:   "http://127.0.0.1:8081",
+	}, tokens, policy, NewLimiter(4, 2)); err != nil {
+		t.Fatalf("loopback HTTP origins were rejected: %v", err)
+	}
 }
 
 func TestIdleReadCloserClosesAStalledBody(t *testing.T) {

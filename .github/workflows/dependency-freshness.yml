@@ -12,6 +12,8 @@ on:
       - Makefile
       - scripts/report-dependency-freshness.mjs
       - scripts/security-scan.sh
+      - internal/browsercore/vendor/**
+      - THIRD_PARTY_NOTICES.md
       - .github/workflows/**
   schedule:
     - cron: "17 2 * * 1"

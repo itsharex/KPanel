@@ -12,6 +12,7 @@ AGENT_BINARY=
 AGENT_SHA256=
 IMAGE=
 PUBLIC_URL=
+BROWSER_MODE=disabled
 BROWSER_RELAY_URL=
 NETWORK_SUBNET=172.29.255.240/28
 DRY_RUN=false
@@ -24,6 +25,7 @@ Usage:
     --agent-sha256 <64-character-sha256> \
     --image docker.io/OWNER/kejilion-panel@sha256:<64-character-digest> \
     --public-url https://panel.example.com \
+    [--browser-mode beta] \
     --browser-relay-url https://browser.example.com \
     [--network-subnet 172.29.255.240/28] \
     [--dry-run]
@@ -184,6 +186,11 @@ while [ "$#" -gt 0 ]; do
 			BROWSER_RELAY_URL=$2
 			shift 2
 			;;
+		--browser-mode)
+			[ "$#" -ge 2 ] || fail "--browser-mode requires a value"
+			BROWSER_MODE=$2
+			shift 2
+			;;
 		--network-subnet)
 			[ "$#" -ge 2 ] || fail "--network-subnet requires a value"
 			NETWORK_SUBNET=$2
@@ -214,6 +221,10 @@ printf '%s' "$IMAGE" | grep -Eq '^[A-Za-z0-9._/@:+-]+$' || fail "invalid image r
 printf '%s' "$IMAGE" | grep -Eq '@sha256:[a-f0-9]{64}$' || fail "image must be pinned by sha256 digest"
 printf '%s' "$PUBLIC_URL" | grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)(:[0-9]{1,5})?$' ||
 	fail "--public-url must be an https origin without path, userinfo, query, or fragment"
+case "$BROWSER_MODE" in
+	disabled|beta) ;;
+	*) fail "--browser-mode must be disabled or beta" ;;
+esac
 PUBLIC_PORT=$(printf '%s' "$PUBLIC_URL" | sed -n 's#^https://[^:]*:\([0-9][0-9]*\)$#\1#p')
 if [ -n "$PUBLIC_PORT" ]; then
 	[ "$PUBLIC_PORT" -ge 1 ] && [ "$PUBLIC_PORT" -le 65535 ] || fail "public URL port is invalid"
@@ -301,8 +312,8 @@ fi
 
 if [ "$DRY_RUN" = true ]; then
 	printf 'Preflight passed.\n'
-	printf 'Agent: %s\nImage: %s\nPublic URL: %s\nBrowser Relay URL: %s\nPrivate Panel endpoint: http://%s:8080\nPrivate Relay endpoint: http://%s:8090\nNetwork subnet: %s\n' \
-		"$AGENT_BINARY" "$IMAGE" "$PUBLIC_URL" "$BROWSER_RELAY_URL" \
+	printf 'Agent: %s\nImage: %s\nPublic URL: %s\nBrowser mode: %s\nBrowser Relay URL: %s\nPrivate Panel endpoint: http://%s:8080\nPrivate Relay endpoint: http://%s:8090\nNetwork subnet: %s\n' \
+		"$AGENT_BINARY" "$IMAGE" "$PUBLIC_URL" "$BROWSER_MODE" "$BROWSER_RELAY_URL" \
 		"$PANEL_IPV4" "$BROWSER_RELAY_IPV4" "$NETWORK_SUBNET"
 	printf 'Docker daemon was not queried and no host state was changed.\n'
 	exit 0
@@ -520,6 +531,7 @@ TEMP_ENV=$(mktemp "$OPT_DIR/.env.XXXXXX")
 	printf 'KEJILION_PANEL_IPV4=%s\n' "$PANEL_IPV4"
 	printf 'KEJILION_BROWSER_RELAY_IPV4=%s\n' "$BROWSER_RELAY_IPV4"
 	printf 'KEJILION_PANEL_PUBLIC_URL=%s\n' "$PUBLIC_URL"
+	printf 'KEJILION_PANEL_BROWSER_MODE=%s\n' "$BROWSER_MODE"
 	printf 'KEJILION_PANEL_BROWSER_RELAY_URL=%s\n' "$BROWSER_RELAY_URL"
 	printf 'KEJILION_PANEL_SECURE_COOKIE=true\n'
 	printf 'KEJILION_PANEL_NETWORK_SUBNET=%s\n' "$NETWORK_SUBNET"
@@ -648,6 +660,7 @@ INSTALL_SUCCEEDED=true
 printf '\nKPanel is healthy on the private Docker endpoint http://%s:8080.\n' "$PANEL_IPV4"
 printf 'Browser Relay is healthy on the private Docker endpoint http://%s:8090.\n' "$BROWSER_RELAY_IPV4"
 printf 'Public URL: %s\n' "$PUBLIC_URL"
+printf 'Browser mode: %s\n' "$BROWSER_MODE"
 printf 'Browser Relay URL: %s\n' "$BROWSER_RELAY_URL"
 printf 'Point the two host Nginx origins at http://%s:8080 and http://%s:8090; no host port is published.\n' \
 	"$PANEL_IPV4" "$BROWSER_RELAY_IPV4"

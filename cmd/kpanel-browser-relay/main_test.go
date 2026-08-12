@@ -57,3 +57,34 @@ func TestRelayHealthcheckRejectsFailure(t *testing.T) {
 		t.Fatal("failed healthcheck accepted")
 	}
 }
+
+func TestDisabledRuntimeHandlerKeepsHealthAndRejectsBrowserTraffic(t *testing.T) {
+	handler := disabledRuntimeHandler()
+	health := httptest.NewRecorder()
+	handler.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if health.Code != http.StatusOK {
+		t.Fatalf("health status = %d", health.Code)
+	}
+	head := httptest.NewRecorder()
+	handler.ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/healthz", nil))
+	if head.Code != http.StatusOK {
+		t.Fatalf("HEAD health status = %d", head.Code)
+	}
+	post := httptest.NewRecorder()
+	handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/healthz", nil))
+	if post.Code != http.StatusMethodNotAllowed || post.Header().Get("Allow") != "GET, HEAD" {
+		t.Fatalf("POST health status = %d, headers = %v", post.Code, post.Header())
+	}
+
+	request := httptest.NewRecorder()
+	handler.ServeHTTP(request, httptest.NewRequest(http.MethodGet, "/kpanel-browser/kernel.html", nil))
+	if request.Code != http.StatusServiceUnavailable || request.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("browser status = %d, headers = %v", request.Code, request.Header())
+	}
+}
+
+func TestRelayRejectsUnsupportedRuntimeModeBeforeListening(t *testing.T) {
+	if err := runArgs([]string{"-mode=alpha"}); err == nil {
+		t.Fatal("unsupported runtime mode accepted")
+	}
+}

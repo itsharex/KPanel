@@ -193,6 +193,8 @@ export const enUSMessages = {
   'desktop.browserOpenEmbedded': 'Open in desktop window',
   'desktop.browserOpenExternal': 'Open in system browser',
   'desktop.browserTabsLabel': 'Browser tabs',
+  'desktop.browserBetaBadge': 'Beta',
+  'desktop.browserBetaDescription': 'Experimental feature. Administrators can disable it at any time and use the system browser.',
   'desktop.browserTabSleeping': 'Tab is sleeping',
   'desktop.browserCloseTab': 'Close tab',
   'desktop.browserCloseNamedTab': 'Close {name}',

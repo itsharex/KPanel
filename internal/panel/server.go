@@ -106,7 +106,7 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		return nil, fmt.Errorf("initialize cluster service: %w", err)
 	}
 	var browserTokens *browsercore.TokenCodec
-	if config.BrowserRelayURL != "" {
+	if browsercore.RuntimeModeEnabled(config.BrowserMode) {
 		secret, secretErr := browsercore.LoadSecretFile(config.BrowserRelaySecretFile)
 		if secretErr != nil {
 			return nil, secretErr
@@ -1364,7 +1364,7 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, value any) {
 
 func (s *Server) setSecurityHeaders(w http.ResponseWriter, r *http.Request) {
 	frameSources := []string{"'self'", "blob:"}
-	if s.config.BrowserRelayURL != "" {
+	if browsercore.RuntimeModeEnabled(s.config.BrowserMode) && s.config.BrowserRelayURL != "" {
 		frameSources = append(frameSources, s.config.BrowserRelayURL)
 	}
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; frame-src "+strings.Join(frameSources, " ")+"; form-action 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")

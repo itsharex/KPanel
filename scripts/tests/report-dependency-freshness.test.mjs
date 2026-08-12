@@ -90,6 +90,19 @@ test('policy validation keeps automation, cadence, and workflow triggers enforce
   assert.ok(failures.some((failure) => failure.includes('governed maximum') && failure.includes('eolReviewMaximumDays')));
 });
 
+test('vendored prerelease browser dependencies require a pinned beta exception', () => {
+  const policy = JSON.parse(readFileSync(resolve(process.cwd(), 'dependency-policy.json'), 'utf8'));
+  policy.exceptions = [];
+  let failures = validatePolicy(policy, process.cwd());
+  assert.ok(failures.some((failure) => failure.includes('prerelease runtime lacks an explicit experiment exception')));
+
+  const original = JSON.parse(readFileSync(resolve(process.cwd(), 'dependency-policy.json'), 'utf8'));
+  original.groups.find((group) => group.id === 'vendored-browser-runtime')
+    .components.scramjet.currentVersion = '2.0.66-alpha.1';
+  failures = validatePolicy(original, process.cwd());
+  assert.ok(failures.some((failure) => failure.includes('version does not match the vendored manifest')));
+});
+
 test('maintenance status exposes due exceptions and EOL review deadlines', () => {
   const policy = {
     cadence: { eolReviewMaximumDays: 92, exceptionReviewMaximumDays: 31 },
