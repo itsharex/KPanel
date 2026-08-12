@@ -9,6 +9,19 @@ export interface BrowserCoreNavigateMessage {
   navigationId: string
 }
 
+export interface BrowserCoreUpdateSessionMessage {
+  type: 'kpanel-browser:update-session'
+  token: string
+}
+
+export type BrowserCoreCommand = 'back' | 'forward' | 'reload'
+
+export interface BrowserCoreCommandMessage {
+  type: 'kpanel-browser:command'
+  command: BrowserCoreCommand
+  navigationId: string
+}
+
 export type BrowserCoreEvent =
   | { type: 'kpanel-browser:ready' }
   | { type: 'kpanel-browser:navigation'; url: string; navigationId: string }
@@ -44,6 +57,26 @@ export function createBrowserCoreNavigateMessage(
     type: 'kpanel-browser:navigate',
     token: session.token,
     url,
+    navigationId,
+  }
+}
+
+export function createBrowserCoreUpdateSessionMessage(
+  session: BrowserCoreSession,
+): BrowserCoreUpdateSessionMessage {
+  return {
+    type: 'kpanel-browser:update-session',
+    token: session.token,
+  }
+}
+
+export function createBrowserCoreCommandMessage(
+  command: BrowserCoreCommand,
+  navigationId: string,
+): BrowserCoreCommandMessage {
+  return {
+    type: 'kpanel-browser:command',
+    command,
     navigationId,
   }
 }

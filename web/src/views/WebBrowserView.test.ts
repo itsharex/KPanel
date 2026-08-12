@@ -183,11 +183,10 @@ describe('WebBrowserView', () => {
     }))
     expect(wrapper.get('[role="tab"]').text()).not.toContain('Stale first page')
 
-    await wrapper.findAll('.embedded-browser__tool')[1]?.trigger('click')
+    await wrapper.get('[data-browser-action="reload"]').trigger('click')
     expect(postMessage.mock.calls.at(-1)?.[0]).toEqual({
-      type: 'kpanel-browser:navigate',
-      token: 'signed-browser-token',
-      url: 'https://two.example.com/',
+      type: 'kpanel-browser:command',
+      command: 'reload',
       navigationId: expect.any(String),
     })
     wrapper.unmount()
@@ -239,7 +238,10 @@ describe('WebBrowserView', () => {
     const frame = wrapper.get('iframe.embedded-browser__frame')
     expect(frame.attributes('src')).toBe('https://browser-relay.example.com/kernel/')
     expect(frame.attributes('sandbox')).toContain('allow-scripts')
-    expect(frame.attributes('sandbox')).not.toContain('allow-popups')
+    expect(frame.attributes('sandbox')).toContain('allow-forms')
+    expect(frame.attributes('sandbox')).toContain('allow-popups')
+    expect(frame.attributes('sandbox')).not.toContain('allow-popups-to-escape-sandbox')
+    expect(frame.attributes('allow')).toContain('autoplay')
     expect(wrapper.html()).not.toContain('src="https://blog.example.com/path"')
     expect(wrapper.get('[role="tab"]').text()).toContain('我的博客')
 

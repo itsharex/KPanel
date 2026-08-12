@@ -1,0 +1,19 @@
+{
+  "scramjet-v2": {
+    "version": "2.0.67-alpha.2",
+    "packageIntegrity": "sha512-E/vmwQTqIoYmPLDb76t8Nv7O9kUdv8C6mRejdsT8APk5vBUYyIMI6CO0gyUVRX77Fc/NyoopfZNSaJ4qufJEww==",
+    "files": {
+      "scramjet.js": "sha256-e116b8adbdae9e9d9bee6abd8370990faa2615796c2e8fc0b7b8942537c0d92e",
+      "scramjet.wasm": "sha256-c8740c340a506686d9e46feb82894ab710cf57cd20564d001d0aef04310661e8"
+    }
+  },
+  "scramjet-controller": {
+    "version": "0.0.14",
+    "packageIntegrity": "sha512-0Sfn0xcUM69h6pIaPmntwFYcAOLyNzGPE6AQSMwrakYUFhJNLbEYWMa4actp6w3jVnwpQ9suggOO1bKrX5zioA==",
+    "files": {
+      "controller.api.js": "sha256-9bc38bc6dce704ebf71fd7c418151bf7192b0a6c10e15f1037c77e146c163c91",
+      "controller.inject.js": "sha256-4744bb39bcfcdbe2baa43f26c760abc5c6248475da5086b2be0eefcd1724fb87",
+      "controller.sw.js": "sha256-805309725993d31a8e540c20c575dcc176a86e7fdfc6b9d69ccf4ee8f94c736d"
+    }
+  }
+}

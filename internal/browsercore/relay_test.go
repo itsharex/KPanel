@@ -2,9 +2,11 @@ package browsercore
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -199,7 +201,10 @@ func TestKernelAssetsAreBoundToThePanelOrigin(t *testing.T) {
 	}
 	policy := page.Header().Get("Content-Security-Policy")
 	if !strings.Contains(policy, "frame-ancestors https://panel.example.com") ||
-		!strings.Contains(policy, "connect-src 'self'") {
+		!strings.Contains(policy, "connect-src 'self'") ||
+		!strings.Contains(policy, "worker-src 'self' blob:") ||
+		!strings.Contains(policy, "'unsafe-eval'") ||
+		!strings.Contains(policy, "'wasm-unsafe-eval'") {
 		t.Fatalf("kernel CSP = %q", policy)
 	}
 	if strings.Contains(page.Body.String(), "signed-token") || strings.Contains(page.Body.String(), "secret") {
@@ -208,50 +213,102 @@ func TestKernelAssetsAreBoundToThePanelOrigin(t *testing.T) {
 	if page.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("kernel page cache policy = %q", page.Header().Get("Cache-Control"))
 	}
+	if !strings.Contains(page.Body.String(), "/scramjet/scramjet.js") ||
+		!strings.Contains(page.Body.String(), "/controller/controller.api.js") ||
+		!strings.Contains(page.Body.String(), "allow-scripts allow-forms allow-modals allow-popups allow-downloads") {
+		t.Fatalf("kernel page is missing the context-preserving runtime: %q", page.Body.String())
+	}
 
 	for _, asset := range []struct {
 		path        string
 		contentType string
+		cache       string
 	}{
-		{path: "/kernel/kernel.js", contentType: "text/javascript; charset=utf-8"},
-		{path: "/kernel/kernel.css", contentType: "text/css; charset=utf-8"},
+		{path: "/kernel/kernel.js", contentType: "text/javascript; charset=utf-8", cache: "no-store"},
+		{path: "/kernel/kernel.css", contentType: "text/css; charset=utf-8", cache: "no-store"},
+		{path: "/kernel/runtime/v3/transport.mjs", contentType: "text/javascript; charset=utf-8", cache: "public, max-age=31536000, immutable"},
+		{path: "/scramjet/scramjet.js", contentType: "text/javascript; charset=utf-8", cache: "public, max-age=31536000, immutable"},
+		{path: "/scramjet/scramjet.wasm", contentType: "application/wasm", cache: "public, max-age=31536000, immutable"},
+		{path: "/controller/controller.api.js", contentType: "text/javascript; charset=utf-8", cache: "public, max-age=31536000, immutable"},
+		{path: "/controller/controller.inject.js", contentType: "text/javascript; charset=utf-8", cache: "public, max-age=31536000, immutable"},
+		{path: "/controller/controller.sw.js", contentType: "text/javascript; charset=utf-8", cache: "public, max-age=31536000, immutable"},
 	} {
 		response := httptest.NewRecorder()
 		relay.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, asset.path, nil))
 		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != asset.contentType || response.Body.Len() == 0 {
 			t.Fatalf("asset %s = %d %q (%d bytes)", asset.path, response.Code, response.Header().Get("Content-Type"), response.Body.Len())
 		}
-		if response.Header().Get("Cache-Control") != "no-store" {
+		if response.Header().Get("Cache-Control") != asset.cache {
 			t.Fatalf("asset %s cache policy = %q", asset.path, response.Header().Get("Cache-Control"))
+		}
+	}
+
+	worker := httptest.NewRecorder()
+	relay.Handler().ServeHTTP(worker, httptest.NewRequest(http.MethodGet, "/kernel/runtime/v3/sw.js", nil))
+	if worker.Code != http.StatusOK || worker.Header().Get("Cache-Control") != "no-cache" ||
+		worker.Header().Get("Service-Worker-Allowed") != "/" ||
+		!strings.Contains(worker.Body.String(), "$scramjetController.shouldRoute") {
+		t.Fatalf("service worker = %d %#v %q", worker.Code, worker.Header(), worker.Body.String())
+	}
+}
+
+func TestKernelPreservesBrowserContextsInsteadOfSanitizingPages(t *testing.T) {
+	script := string(kernelJS)
+	for _, required := range []string{
+		"new Controller",
+		"new KPanelRelayTransport",
+		"controller.createFrame(viewport)",
+		"decodedFrameURL",
+		"window.setInterval(syncFrameState, 500)",
+		"frame.go(target)",
+		"navigator.serviceWorker.register",
+		"worker.scriptURL !== runtimeWorkerURL",
+		"registration.active.state === 'activated'",
+		"网页重写 Service Worker 激活超时",
+		"网页重写控制器握手超时",
+		"document.body?.childElementCount > 0",
+		"transport.setToken(token)",
+		"const navigationTimeoutMs = 45_000",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("kernel is missing browser compatibility behavior %q", required)
+		}
+	}
+	for _, forbidden := range []string{"allowedTags", "discardedTags", "sanitizeHTML", "viewport.srcdoc"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("kernel still contains destructive sanitizer behavior %q", forbidden)
+		}
+	}
+
+	transport := string(kernelTransport)
+	for _, required := range []string{
+		"export default class KPanelRelayTransport",
+		"Authorization: `Bearer ${this.token}`",
+		"body: response.body",
+		"this.sessionChannel.postMessage({ type: 'session-expired' })",
+		"blockedRequestHeaders",
+	} {
+		if !strings.Contains(transport, required) {
+			t.Fatalf("kernel transport is missing relay behavior %q", required)
 		}
 	}
 }
 
-func TestKernelHandlesMislabelledHTMLWithoutBlockingFirstPaint(t *testing.T) {
-	script := string(kernelJS)
-	for _, required := range []string{
-		"function looksLikeHTML(bytes)",
-		"function looksLikeText(bytes)",
-		"['User-Agent', navigator.userAgent]",
-		"text/html,application/xhtml+xml,application/xml;q=0.9",
-		"'NOSCRIPT', 'TEMPLATE', 'TEXTAREA'",
-		"function hasRenderableContent(documentRoot)",
-		"if (looksLikeHTML(bytes))",
-		"await renderHTMLBytes(bytes, target, signal, navigationID)",
-		"function loadViewport(attribute, value, signal)",
-		"await loadViewport('srcdoc'",
-		"await loadViewport('src', objectURL, signal)",
-		"async function renderTextBytes(bytes, target, signal, navigationID)",
-		"navigationId: navigationID",
-		"connectDocument(viewport.contentDocument, navigationID)",
-		"navigate(anchor.dataset.kpanelHref, 0, navigationID)",
-		"type.toLowerCase().includes('json')",
-		"const navigationTimeoutMs = 30_000",
-		"showStatus('网页加载超时'",
-		"hideStatus()\n    void hydrateImages",
+func TestPinnedV2RuntimeAssetsMatchReviewedDigests(t *testing.T) {
+	for _, asset := range []struct {
+		name   string
+		bytes  []byte
+		sha256 string
+	}{
+		{name: "scramjet.js", bytes: scramjetV2JS, sha256: "e116b8adbdae9e9d9bee6abd8370990faa2615796c2e8fc0b7b8942537c0d92e"},
+		{name: "scramjet.wasm", bytes: scramjetV2WASM, sha256: "c8740c340a506686d9e46feb82894ab710cf57cd20564d001d0aef04310661e8"},
+		{name: "controller.api.js", bytes: scramjetControllerAPI, sha256: "9bc38bc6dce704ebf71fd7c418151bf7192b0a6c10e15f1037c77e146c163c91"},
+		{name: "controller.inject.js", bytes: scramjetControllerInject, sha256: "4744bb39bcfcdbe2baa43f26c760abc5c6248475da5086b2be0eefcd1724fb87"},
+		{name: "controller.sw.js", bytes: scramjetControllerWorker, sha256: "805309725993d31a8e540c20c575dcc176a86e7fdfc6b9d69ccf4ee8f94c736d"},
 	} {
-		if !strings.Contains(script, required) {
-			t.Fatalf("kernel is missing browser compatibility behavior %q", required)
+		digest := sha256.Sum256(asset.bytes)
+		if got := fmt.Sprintf("%x", digest); got != asset.sha256 {
+			t.Fatalf("%s digest = %s, want %s", asset.name, got, asset.sha256)
 		}
 	}
 }

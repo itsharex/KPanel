@@ -36,8 +36,8 @@ func runArgs(args []string) error {
 	allowedOrigin := flags.String("allowed-origin", "", "exact KPanel HTTP(S) origin")
 	publicURL := flags.String("public-url", "", "public HTTP(S) origin of this relay")
 	secretFile := flags.String("secret-file", "", "file containing at least 32 random bytes")
-	maxGlobal := flags.Int("max-global", 24, "maximum concurrent upstream requests")
-	maxSession := flags.Int("max-session", 6, "maximum concurrent requests per browser session")
+	maxGlobal := flags.Int("max-global", 64, "maximum concurrent upstream requests")
+	maxSession := flags.Int("max-session", 16, "maximum concurrent requests per browser session")
 	maxRequestBytes := flags.Int64("max-request-bytes", 16<<20, "maximum relayed request body")
 	bodyIdleTimeout := flags.Duration("body-idle-timeout", 30*time.Second, "close upstream bodies that stop producing data")
 	if err := flags.Parse(args); err != nil {

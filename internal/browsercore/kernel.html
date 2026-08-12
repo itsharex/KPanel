@@ -5,16 +5,25 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>KPanel Browser Core</title>
   <link rel="stylesheet" href="/kernel/kernel.css">
+  <script src="/scramjet/scramjet.js"></script>
+  <script src="/controller/controller.api.js"></script>
 </head>
 <body>
   <main class="kernel-shell">
     <div id="status" class="kernel-status" role="status" aria-live="polite">
       <span class="kernel-spinner" aria-hidden="true"></span>
-      <strong>浏览器内核已就绪</strong>
-      <small>等待 KPanel 发送安全会话</small>
+      <strong>正在启动浏览器内核</strong>
+      <small>正在建立隔离的网页重写与服务器代理通道。</small>
     </div>
-    <iframe id="viewport" class="kernel-viewport" title="网页内容" sandbox="allow-same-origin"></iframe>
+    <iframe
+      id="viewport"
+      class="kernel-viewport"
+      title="网页内容"
+      sandbox="allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+      allow="autoplay; fullscreen; picture-in-picture"
+      allowfullscreen
+    ></iframe>
   </main>
-  <script src="/kernel/kernel.js" defer></script>
+  <script type="module" src="/kernel/kernel.js"></script>
 </body>
 </html>

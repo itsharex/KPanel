@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  createBrowserCoreCommandMessage,
   createBrowserCoreNavigateMessage,
+  createBrowserCoreUpdateSessionMessage,
   isBrowserCoreEvent,
   resolveBrowserCoreLocation,
 } from './embeddedBrowserCore'
@@ -33,6 +35,21 @@ describe('embeddedBrowserCore', () => {
       token: 'signed-token',
       url: 'https://target.example/path',
       navigationId: 'tab-1:7',
+    })
+  })
+
+  it('refreshes the relay token without forcing a page navigation', () => {
+    expect(createBrowserCoreUpdateSessionMessage(session)).toEqual({
+      type: 'kpanel-browser:update-session',
+      token: 'signed-token',
+    })
+  })
+
+  it('creates bounded browser history commands', () => {
+    expect(createBrowserCoreCommandMessage('back', 'tab-1:8')).toEqual({
+      type: 'kpanel-browser:command',
+      command: 'back',
+      navigationId: 'tab-1:8',
     })
   })
 

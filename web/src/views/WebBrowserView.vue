@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   Globe2,
   Home,
@@ -25,7 +27,9 @@ import {
   type EmbeddedBrowserTarget,
 } from '@/lib/embeddedBrowser'
 import {
+  createBrowserCoreCommandMessage,
   createBrowserCoreNavigateMessage,
+  createBrowserCoreUpdateSessionMessage,
   isBrowserCoreEvent,
   resolveBrowserCoreLocation,
 } from '@/lib/embeddedBrowserCore'
@@ -203,7 +207,12 @@ function handleKernelLoad(tab: BrowserTab): void {
 }
 
 async function refreshBrowserCore(): Promise<void> {
-  await ensureBrowserCore(true)
+  const session = await ensureBrowserCore(true)
+  const location = coreLocation.value
+  if (!session || !location) return
+  for (const frame of kernelFrames.values()) {
+    frame.contentWindow?.postMessage(createBrowserCoreUpdateSessionMessage(session), location.origin)
+  }
 }
 
 function handleKernelMessage(event: MessageEvent): void {
@@ -454,11 +463,31 @@ function goHome(): void {
   addressInvalid.value = false
 }
 
-function reload(): void {
+function postBrowserCommand(command: 'back' | 'forward' | 'reload'): void {
   const tab = activeTab.value
-  if (!tab?.target) return
-  mountTab(tab)
-  postNavigation(tab, true)
+  const location = coreLocation.value
+  const frame = tab ? kernelFrames.get(tab.id) : undefined
+  if (!tab?.target || !location || !frame?.contentWindow) return
+  tab.error = undefined
+  navigationSequence += 1
+  const navigationID = `${tab.id}:${navigationSequence}`
+  activeNavigations.set(tab.id, navigationID)
+  frame.contentWindow.postMessage(
+    createBrowserCoreCommandMessage(command, navigationID),
+    location.origin,
+  )
+}
+
+function goBack(): void {
+  postBrowserCommand('back')
+}
+
+function goForward(): void {
+  postBrowserCommand('forward')
+}
+
+function reload(): void {
+  postBrowserCommand('reload')
 }
 
 function openExternal(): void {
@@ -615,6 +644,28 @@ onBeforeUnmount(() => {
       <button
         class="embedded-browser__tool"
         type="button"
+        data-browser-action="back"
+        :disabled="!activeTab?.target"
+        :title="i18n.t('desktop.browserBack')"
+        :aria-label="i18n.t('desktop.browserBack')"
+        @click="goBack"
+      >
+        <ChevronLeft :size="17" aria-hidden="true" />
+      </button>
+      <button
+        class="embedded-browser__tool"
+        type="button"
+        data-browser-action="forward"
+        :disabled="!activeTab?.target"
+        :title="i18n.t('desktop.browserForward')"
+        :aria-label="i18n.t('desktop.browserForward')"
+        @click="goForward"
+      >
+        <ChevronRight :size="17" aria-hidden="true" />
+      </button>
+      <button
+        class="embedded-browser__tool"
+        type="button"
         :title="i18n.t('desktop.browserHome')"
         :aria-label="i18n.t('desktop.browserHome')"
         @click="goHome"
@@ -644,6 +695,7 @@ onBeforeUnmount(() => {
       <button
         class="embedded-browser__tool"
         type="button"
+        data-browser-action="reload"
         :disabled="!activeTab?.target"
         :title="i18n.t('desktop.browserReload')"
         :aria-label="i18n.t('desktop.browserReload')"
@@ -773,7 +825,9 @@ onBeforeUnmount(() => {
         :title="tab.title"
         :aria-hidden="tab.id !== activeTabID"
         :tabindex="tab.id === activeTabID ? 0 : -1"
-        sandbox="allow-same-origin allow-scripts"
+        sandbox="allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+        allow="autoplay; fullscreen; picture-in-picture"
+        allowfullscreen
         referrerpolicy="no-referrer"
         @load="handleKernelLoad(tab)"
       />
