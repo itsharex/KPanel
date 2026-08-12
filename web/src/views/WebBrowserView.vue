@@ -1020,11 +1020,6 @@ onBeforeUnmount(() => {
         >
           <Plus :size="16" aria-hidden="true" />
         </button>
-        <span
-          v-if="coreSession"
-          class="embedded-browser__beta"
-          :title="i18n.t(coreSession?.mode === 'reader' ? 'desktop.browserReaderDescription' : 'desktop.browserBetaDescription')"
-        >{{ i18n.t(coreSession?.mode === 'reader' ? 'desktop.browserReaderBadge' : 'desktop.browserBetaBadge') }}</span>
         <span class="embedded-browser__tab-count">{{ tabs.length }}/{{ MAX_EMBEDDED_BROWSER_TABS }}</span>
       </nav>
     </Teleport>
@@ -1223,13 +1218,11 @@ onBeforeUnmount(() => {
     </main>
 
     <footer
-      v-if="activeTab?.target"
-      class="embedded-browser__hint"
-      :class="{ 'embedded-browser__hint--error': activeTab.error }"
+      v-if="activeTab?.target && activeTab.error"
+      class="embedded-browser__hint embedded-browser__hint--error"
     >
-      <TriangleAlert v-if="activeTab.error" :size="13" aria-hidden="true" />
-      <ShieldCheck v-else :size="13" aria-hidden="true" />
-      <span>{{ activeTab.error || i18n.t(coreSession?.mode === 'reader' ? 'desktop.browserReaderHint' : 'desktop.browserEmbedHint') }}</span>
+      <TriangleAlert :size="13" aria-hidden="true" />
+      <span>{{ activeTab.error }}</span>
     </footer>
   </section>
 </template>
@@ -1360,19 +1353,6 @@ onBeforeUnmount(() => {
 .embedded-browser__tab-close:hover { color: var(--text); background: var(--surface-hover); }
 .embedded-browser__new-tab { width: 30px; height: 30px; align-self: center; border-radius: 8px; }
 .embedded-browser__new-tab:hover { color: var(--text); background: var(--surface-hover); }
-.embedded-browser__beta {
-  align-self: center;
-  padding: 2px 5px;
-  color: #92400e;
-  background: #fef3c7;
-  border: 1px solid #f59e0b66;
-  border-radius: 999px;
-  font-size: 9px;
-  font-weight: 800;
-  line-height: 1.2;
-  letter-spacing: .03em;
-  white-space: nowrap;
-}
 .embedded-browser__tab-count { align-self: center; margin: 0 2px 0 auto; color: var(--muted); font-size: 10px; white-space: nowrap; }
 
 .embedded-browser__toolbar {

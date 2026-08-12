@@ -217,9 +217,9 @@
   }
 
   function renderImage(bytes, headers, target) {
-    if (bytes.byteLength > maxImageBytes) throw new Error('图片超过安全呈现上限，请使用系统浏览器打开')
+    if (bytes.byteLength > maxImageBytes) throw new Error('图片过大，请使用系统浏览器打开')
     const type = headerValue(headers, 'content-type').split(';', 1)[0].trim().toLowerCase()
-    if (!allowedImageTypes.has(type)) throw new Error('阅读模式不支持此资源类型，请使用系统浏览器打开')
+    if (!allowedImageTypes.has(type)) throw new Error('内置浏览器不支持此资源类型，请使用系统浏览器打开')
     const objectURL = URL.createObjectURL(new Blob([bytes], { type }))
     blobURLs.push(objectURL)
     const image = document.createElement('img')
@@ -250,7 +250,7 @@
       } else if (type.startsWith('text/') || type.includes('json') || looksLikeText(bytes)) {
         renderText(bytes, message.headers, target)
       } else {
-        throw new Error('阅读模式不支持此资源类型，请使用系统浏览器打开')
+        throw new Error('内置浏览器不支持此资源类型，请使用系统浏览器打开')
       }
     } catch (error) {
       const messageText = error instanceof Error ? error.message : '网页内容呈现失败'
@@ -287,7 +287,7 @@
       if (!target) return
       currentNavigationID = message.navigationId
       revokeBlobs()
-      showStatus('正在安全加载', new URL(target).hostname)
+      showStatus('正在加载', new URL(target).hostname)
     } else if (message.type === 'render') {
       handleRender(message)
     } else if (message.type === 'resource-result') {

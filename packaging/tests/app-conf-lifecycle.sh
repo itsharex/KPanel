@@ -293,10 +293,12 @@ EOF
 		"$TEST_DIR/install-output.txt" >/dev/null
 	grep -Fx '请复制此 Token 完成管理员账户初始化；初始化成功后 Token 自动失效。' \
 		"$TEST_DIR/install-output.txt" >/dev/null
-	grep -Fx '内置浏览器已启用安全阅读模式；完整 Beta 仍需为 Panel 与 Relay 配置两个不同的 HTTPS Origin。' \
-		"$TEST_DIR/install-output.txt" >/dev/null
 	if grep -F '首次初始化 Token 文件：' "$TEST_DIR/install-output.txt" >/dev/null; then
 		echo "install output still asks the user to read the token file" >&2
+		return 1
+	fi
+	if grep -F '内置浏览器' "$TEST_DIR/install-output.txt" >/dev/null; then
+		echo "install output exposes embedded-browser implementation details" >&2
 		return 1
 	fi
 
@@ -420,17 +422,21 @@ EOF
 	sed -i 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=disabled/' \
 		/home/docker/kpanel/.env
 	sed -i '/^KPANEL_BROWSER_MODE_MIGRATION=/d' /home/docker/kpanel/.env
-	docker_app_update
-	grep -Fx 'KPANEL_BROWSER_MODE=disabled' /home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' /home/docker/kpanel/.env >/dev/null
-
-	sed -i '/^KPANEL_BROWSER_MODE_MIGRATION=/d' /home/docker/kpanel/.env
-	KPANEL_BROWSER_READER_MIGRATION=reader docker_app_update
+	docker_app_update >"$TEST_DIR/browser-migration-update-output.txt"
 	grep -Fx 'KPANEL_BROWSER_MODE=reader' /home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' /home/docker/kpanel/.env >/dev/null
+	if grep -E '是否|\[y/N\]|内置浏览器|KPANEL_BROWSER_MODE' "$TEST_DIR/browser-migration-update-output.txt" >/dev/null; then
+		echo "browser migration changed the normal update presentation" >&2
+		return 1
+	fi
 
 	sed -i 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=disabled/' \
 		/home/docker/kpanel/.env
+	sed -i '/^KPANEL_BROWSER_MODE_MIGRATION=/d' /home/docker/kpanel/.env
+	KPANEL_BROWSER_READER_MIGRATION=disabled docker_app_update
+	grep -Fx 'KPANEL_BROWSER_MODE=disabled' /home/docker/kpanel/.env >/dev/null
+	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' /home/docker/kpanel/.env >/dev/null
+
 	docker_app_update
 	grep -Fx 'KPANEL_BROWSER_MODE=disabled' /home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' /home/docker/kpanel/.env >/dev/null

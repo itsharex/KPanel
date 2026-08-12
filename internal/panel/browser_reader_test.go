@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func TestBrowserReaderAssetsEnforceAnOpaqueNoNetworkSandbox(t *testing.T) {
 	server := &Server{}
 	page := httptest.NewRecorder()
 	server.handleBrowserReaderAsset(page, httptest.NewRequest(http.MethodGet, browserReaderAssetPrefix, nil))
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "/browser-reader/reader.js") {
+	if page.Code != http.StatusOK {
 		t.Fatalf("reader page = %d %q", page.Code, page.Body.String())
 	}
 	policy := page.Header().Get("Content-Security-Policy")
@@ -41,8 +42,30 @@ func TestBrowserReaderAssetsEnforceAnOpaqueNoNetworkSandbox(t *testing.T) {
 		!strings.Contains(policy, "frame-ancestors 'self'") || strings.Contains(policy, "allow-same-origin") {
 		t.Fatalf("reader CSP = %q", policy)
 	}
+	noncePattern := regexp.MustCompile(`script-src 'nonce-([^']+)'`)
+	nonceMatch := noncePattern.FindStringSubmatch(policy)
+	if len(nonceMatch) != 2 || !strings.Contains(policy, "style-src 'nonce-"+nonceMatch[1]+"'") {
+		t.Fatalf("reader CSP nonce = %q", policy)
+	}
+	pageBody := page.Body.String()
+	if !strings.Contains(pageBody, `<script nonce="`+nonceMatch[1]+`">`) ||
+		!strings.Contains(pageBody, `<style nonce="`+nonceMatch[1]+`">`) ||
+		!strings.Contains(pageBody, string(browserReaderJS)) || !strings.Contains(pageBody, string(browserReaderCSS)) {
+		t.Fatal("reader page did not inline its nonce-authorized runtime assets")
+	}
+	for _, forbidden := range []string{"<script src=", `rel="stylesheet"`, browserReaderNonceMarker, browserReaderCSSMarker, browserReaderJSMarker} {
+		if strings.Contains(pageBody, forbidden) {
+			t.Fatalf("reader page retained forbidden external asset or template marker %q", forbidden)
+		}
+	}
 	if page.Header().Get("X-Frame-Options") != "SAMEORIGIN" || page.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("reader headers = %#v", page.Header())
+	}
+	secondPage := httptest.NewRecorder()
+	server.handleBrowserReaderAsset(secondPage, httptest.NewRequest(http.MethodGet, browserReaderAssetPrefix, nil))
+	secondMatch := noncePattern.FindStringSubmatch(secondPage.Header().Get("Content-Security-Policy"))
+	if len(secondMatch) != 2 || secondMatch[1] == nonceMatch[1] {
+		t.Fatal("reader page CSP nonce was not regenerated per response")
 	}
 
 	script := httptest.NewRecorder()

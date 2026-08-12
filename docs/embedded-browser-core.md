@@ -179,7 +179,7 @@ KEJILION_PANEL_SECURE_COOKIE=false
 
 标准 Compose 和应用市场默认使用 `reader`。Reader 需要公开 Relay Origin、固定内网 Relay Origin 与共享密钥，但 iframe 只加载 Panel 同源的 `/browser-reader/`，因此 HTTPS 反向代理不会再尝试嵌入 HTTP Relay。成功会话显式返回 `mode: "reader"`。`disabled` 继续作为硬 kill switch；其他模式值会在配置校验阶段被拒绝。
 
-应用市场使用一次性 `KPANEL_BROWSER_MODE_MIGRATION=reader-v1` 标记记录迁移选择。由于 v0.68.0 没有记录模式来源，更新器不会静默覆盖尚未标记的 `disabled`：交互更新会询问是否启用 Reader，默认答案为否；非交互更新保持 `disabled`，需要迁移时显式设置临时环境变量 `KPANEL_BROWSER_READER_MIGRATION=reader`。标记写入后，管理员选择的 `reader` 或 `disabled` 都会被后续更新保留。
+应用市场使用一次性 `KPANEL_BROWSER_MODE_MIGRATION=reader-v1` 标记记录迁移结果。v0.68.0 首次升级且尚无标记的 `disabled` 会自动迁移到 `reader`，交互与非交互更新均不再询问；如需在这次迁移中保持硬关闭，可显式设置临时环境变量 `KPANEL_BROWSER_READER_MIGRATION=disabled`。标记写入后，管理员选择的 `reader` 或 `disabled` 都会被后续更新保留。由于 v0.68.0 未记录模式来源，首次自动迁移无法区分安装器默认值与当时由管理员显式设置的 `disabled`。
 
 完整 Beta 配置仍为：
 

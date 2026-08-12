@@ -605,13 +605,13 @@ async function browserReaderResponse(
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
-    throw new ApiError('无法连接到安全阅读服务，请稍后重试。', 0, 'network_error', error)
+    throw new ApiError('无法连接到内置浏览器服务，请稍后重试。', 0, 'network_error', error)
   }
   if (!response.ok) {
     const payload = await parsePayload(response)
     const problem = payload && typeof payload === 'object' ? payload as ProblemPayload : undefined
     throw new ApiError(
-      problem?.detail || problem?.title || `安全阅读请求失败（HTTP ${response.status}）`,
+      problem?.detail || problem?.title || `网页加载失败（HTTP ${response.status}）`,
       response.status,
       problem?.code || `http_${response.status}`,
       payload,

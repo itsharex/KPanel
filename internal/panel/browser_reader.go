@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"bytes"
+	"crypto/rand"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
@@ -19,6 +21,9 @@ const (
 	browserReaderDocumentBytes = int64(8 << 20)
 	browserReaderImageBytes    = int64(2 << 20)
 	browserReaderMetadataBytes = 32 << 10
+	browserReaderNonceMarker   = "__KPANEL_READER_NONCE__"
+	browserReaderCSSMarker     = "__KPANEL_READER_CSS__"
+	browserReaderJSMarker      = "__KPANEL_READER_JS__"
 )
 
 //go:embed browser_reader.html
@@ -47,9 +52,16 @@ func (s *Server) handleBrowserReaderAsset(w http.ResponseWriter, r *http.Request
 	}
 	var content []byte
 	var contentType string
+	contentSecurityPolicy := "sandbox; default-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'none'; object-src 'none'; script-src 'none'; style-src 'none'; img-src 'none'; connect-src 'none'"
 	switch r.URL.Path {
 	case browserReaderAssetPrefix, browserReaderAssetPrefix + "index.html":
-		content, contentType = browserReaderHTML, "text/html; charset=utf-8"
+		var err error
+		content, contentSecurityPolicy, err = renderBrowserReaderPage()
+		if err != nil {
+			s.writeProblem(w, r, http.StatusInternalServerError, "browser_reader_failed", "Browser reader failed to initialize", "")
+			return
+		}
+		contentType = "text/html; charset=utf-8"
 	case browserReaderAssetPrefix + "reader.js":
 		content, contentType = browserReaderJS, "text/javascript; charset=utf-8"
 	case browserReaderAssetPrefix + "reader.css":
@@ -61,7 +73,7 @@ func (s *Server) handleBrowserReaderAsset(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
-	w.Header().Set("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src blob: data:; connect-src 'none'")
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(), autoplay=()")
@@ -69,6 +81,19 @@ func (s *Server) handleBrowserReaderAsset(w http.ResponseWriter, r *http.Request
 	if r.Method == http.MethodGet {
 		_, _ = w.Write(content)
 	}
+}
+
+func renderBrowserReaderPage() ([]byte, string, error) {
+	nonceBytes := make([]byte, 24)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return nil, "", err
+	}
+	nonce := base64.RawStdEncoding.EncodeToString(nonceBytes)
+	content := bytes.ReplaceAll(browserReaderHTML, []byte(browserReaderNonceMarker), []byte(nonce))
+	content = bytes.ReplaceAll(content, []byte(browserReaderCSSMarker), browserReaderCSS)
+	content = bytes.ReplaceAll(content, []byte(browserReaderJSMarker), browserReaderJS)
+	policy := "sandbox allow-scripts; default-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'none'; object-src 'none'; script-src 'nonce-" + nonce + "'; style-src 'nonce-" + nonce + "'; img-src blob: data:; connect-src 'none'"
+	return content, policy, nil
 }
 
 func (s *Server) handleBrowserReaderFetch(w http.ResponseWriter, r *http.Request) {

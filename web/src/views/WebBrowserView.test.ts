@@ -165,7 +165,8 @@ describe('WebBrowserView', () => {
     expect(wrapper.get('iframe.embedded-browser__frame').attributes('src')).toBe(
       'https://browser-relay.example.com/kernel/',
     )
-    expect(wrapper.get('.embedded-browser__beta').text()).toBe('Beta')
+    expect(wrapper.find('.embedded-browser__beta').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Beta')
     expect(await postedNavigation(wrapper)).toEqual({
       type: 'kpanel-browser:navigate',
       token: 'signed-browser-token',
@@ -306,7 +307,8 @@ describe('WebBrowserView', () => {
     expect(frame.attributes('sandbox')).toBe('allow-scripts')
     expect(frame.attributes('sandbox')).not.toContain('allow-same-origin')
     expect(frame.attributes('allow')).toBe('')
-    expect(wrapper.text()).toContain('阅读')
+    expect(wrapper.find('.embedded-browser__beta').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('阅读模式')
     expect(wrapper.html()).not.toContain('src="https://blog.example.com/path"')
 
     const childMessages: unknown[] = []
@@ -591,7 +593,7 @@ describe('WebBrowserView', () => {
 
     expect(wrapper.find('iframe').exists()).toBe(false)
     expect(wrapper.get('[role="alert"]').text()).toContain('relay unavailable')
-    expect(wrapper.text()).toContain('安全浏览器内核暂不可用')
+    expect(wrapper.text()).toContain('内置浏览器暂不可用')
     wrapper.unmount()
   })
 
