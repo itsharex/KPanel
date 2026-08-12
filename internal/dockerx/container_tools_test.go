@@ -258,3 +258,41 @@ func TestManagedContainerCreateIsStructuredAndRollsBackStartFailure(t *testing.T
 		t.Fatalf("unexpected create payload: %#v", payload)
 	}
 }
+
+func TestManagedContainerCreatePullsMissingImageAndAllowsAutomaticName(t *testing.T) {
+	createdID := strings.Repeat("e", 64)
+	createCalls := 0
+	pulled := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/containers/create":
+			createCalls++
+			if request.URL.Query().Get("name") != "" {
+				t.Fatalf("automatic container name query = %q", request.URL.RawQuery)
+			}
+			if createCalls == 1 {
+				response.WriteHeader(http.StatusNotFound)
+				_, _ = response.Write([]byte(`{"message":"No such image: nginx:alpine"}`))
+				return
+			}
+			_, _ = response.Write([]byte(`{"Id":"` + createdID + `"}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/images/create":
+			pulled = request.URL.Query().Get("fromImage") == "nginx" && request.URL.Query().Get("tag") == "alpine"
+			_, _ = response.Write([]byte("{}\n"))
+		case request.Method == http.MethodPost && request.URL.Path == "/containers/"+createdID+"/start":
+			response.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	client := testHTTPClient(server)
+	if err := client.createManagedContainer(context.Background(), MaintenanceInput{
+		Action: "container_create", Image: "nginx:alpine",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if createCalls != 2 || !pulled {
+		t.Fatalf("create calls=%d pulled=%v", createCalls, pulled)
+	}
+}

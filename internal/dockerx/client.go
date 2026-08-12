@@ -44,9 +44,11 @@ type Client struct {
 	daemonConfigPath      string
 	restartDocker         func(context.Context) error
 	hostCommand           func(context.Context, string, ...string) ([]byte, error)
+	composeCommand        func(context.Context, ...string) ([]byte, error)
 	iptablesRulesPath     string
 	now                   func() time.Time
 	lifecycle             sync.Mutex
+	jobStart              sync.Mutex
 	jobs                  *dockerJobRegistry
 	pidFile               string
 	allowSocketActivation bool
@@ -109,6 +111,7 @@ func New(socketPath, webRoot, stateRoot string) *Client {
 		daemonConfigPath:  "/etc/docker/daemon.json",
 		restartDocker:     restartDockerDaemon,
 		hostCommand:       runFixedDockerHostCommand,
+		composeCommand:    runFixedDockerComposeCommand,
 		iptablesRulesPath: "/etc/iptables/rules.v4",
 		now:               time.Now,
 		pidFile:           "/run/docker.pid",

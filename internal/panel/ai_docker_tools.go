@@ -15,6 +15,7 @@ type dockerMaintenanceActionHint struct {
 
 var dockerMaintenanceActionHints = []dockerMaintenanceActionHint{
 	{Actions: []string{"container_create"}, Description: "创建容器时按需提供 image、name、ports、mounts、environment 等字段"},
+	{Actions: []string{"compose_deploy"}, Description: "使用用户提供的 Compose YAML 在 /home/docker 下创建并启动新项目"},
 	{Actions: []string{"container_access"}, ReadBefore: "host_docker_containers", Description: "修改容器外部访问时使用当前容器状态"},
 	{Actions: []string{"image_pull"}, Description: "拉取模型选择的完整镜像引用"},
 	{Actions: []string{"image_remove"}, ReadBefore: "host_docker_images", Description: "精确删除模型和用户选定的镜像，不得改用 image_prune"},

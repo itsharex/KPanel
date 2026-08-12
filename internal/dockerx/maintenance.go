@@ -38,7 +38,7 @@ var (
 )
 
 var maintenanceActions = []string{
-	"container_create", "container_access", "image_pull", "image_remove",
+	"container_create", "compose_deploy", "container_access", "image_pull", "image_remove",
 	"network_create", "network_remove", "network_connect", "network_disconnect",
 	"volume_create", "volume_remove", "prune", "container_prune", "image_prune",
 	"network_prune", "volume_prune", "backup_create", "backup_restore", "backup_migrate",
@@ -77,6 +77,7 @@ type MaintenanceInput struct {
 	Command                  []string                     `json:"command,omitempty"`
 	Network                  string                       `json:"network,omitempty"`
 	RestartPolicy            string                       `json:"restartPolicy,omitempty"`
+	Compose                  string                       `json:"compose,omitempty"`
 	AllowedIP                string                       `json:"allowedIp,omitempty"`
 	BackupID                 string                       `json:"backupId,omitempty"`
 	MigrationHost            string                       `json:"migrationHost,omitempty"`
@@ -172,6 +173,8 @@ func (c *Client) StartMaintenance(ctx context.Context, input MaintenanceInput) (
 	if err := c.validateMaintenanceInput(ctx, input); err != nil {
 		return MaintenanceJob{}, err
 	}
+	c.jobStart.Lock()
+	defer c.jobStart.Unlock()
 	if c.jobs.hasActive() {
 		return MaintenanceJob{}, ErrDockerJobConflict
 	}
@@ -182,6 +185,11 @@ func (c *Client) StartMaintenance(ctx context.Context, input MaintenanceInput) (
 	now := c.now().UTC()
 	target := input.Target
 	if input.Action == "container_create" {
+		target = input.Name
+		if target == "" {
+			target = input.Image
+		}
+	} else if input.Action == "compose_deploy" {
 		target = input.Name
 	} else if input.Image != "" {
 		target = input.Image
@@ -233,6 +241,10 @@ func (c *Client) validateMaintenanceInput(ctx context.Context, input Maintenance
 	switch input.Action {
 	case "container_create":
 		if _, err := c.containerCreatePayload(ctx, input); err != nil {
+			return err
+		}
+	case "compose_deploy":
+		if err := c.validateComposeDeploymentInput(ctx, input); err != nil {
 			return err
 		}
 	case "container_access":
@@ -343,6 +355,8 @@ func (c *Client) runMaintenance(record dockerJobRecord) {
 	switch record.Action {
 	case "container_create":
 		err = c.createManagedContainer(ctx, record.Input)
+	case "compose_deploy":
+		err = c.deployComposeProject(ctx, record.Input)
 	case "container_access":
 		err = c.updateContainerAccess(
 			ctx,
@@ -973,6 +987,8 @@ func dockerActionProgress(action string) string {
 	switch action {
 	case "container_create":
 		return "正在创建并启动 Docker 容器"
+	case "compose_deploy":
+		return "正在校验并启动 Docker Compose 项目"
 	case "container_access":
 		return "正在更新容器外部访问规则"
 	case "image_pull":
@@ -1012,6 +1028,8 @@ func dockerActionCompleted(action string) string {
 	switch action {
 	case "container_create":
 		return "Docker 容器已创建并启动"
+	case "compose_deploy":
+		return "Docker Compose 项目已部署"
 	case "container_access":
 		return "容器外部访问规则已更新"
 	case "image_pull":

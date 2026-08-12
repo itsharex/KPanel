@@ -341,13 +341,19 @@ func (c *Client) createManagedContainer(ctx context.Context, input MaintenanceIn
 	var created struct {
 		ID string `json:"Id"`
 	}
-	data, _, err := c.nginxDockerRequest(
-		ctx,
-		http.MethodPost,
-		"/containers/create?name="+url.QueryEscape(input.Name),
-		payload,
-		8<<10,
-	)
+	endpoint := "/containers/create"
+	if input.Name != "" {
+		endpoint += "?name=" + url.QueryEscape(input.Name)
+	}
+	data, _, err := c.nginxDockerRequest(ctx, http.MethodPost, endpoint, payload, 8<<10)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound &&
+		strings.Contains(strings.ToLower(apiErr.Message), "image") {
+		if pullErr := c.pullMaintenanceImage(ctx, input.Image); pullErr != nil {
+			return fmt.Errorf("pull missing image: %w", pullErr)
+		}
+		data, _, err = c.nginxDockerRequest(ctx, http.MethodPost, endpoint, payload, 8<<10)
+	}
 	if err != nil {
 		return err
 	}
@@ -373,7 +379,7 @@ func (c *Client) createManagedContainer(ctx context.Context, input MaintenanceIn
 }
 
 func (c *Client) containerCreatePayload(ctx context.Context, input MaintenanceInput) ([]byte, error) {
-	if !dockerNamePattern.MatchString(input.Name) || !validImageReference(input.Image) ||
+	if (input.Name != "" && !dockerNamePattern.MatchString(input.Name)) || !validImageReference(input.Image) ||
 		len(input.Ports) > 16 || len(input.Mounts) > 16 ||
 		len(input.Environment) > 64 || len(input.Command) > 32 {
 		return nil, ErrInvalidDockerJob

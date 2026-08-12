@@ -430,9 +430,16 @@ func (s *Server) handleDockerTask(w http.ResponseWriter, r *http.Request) {
 		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
 		return
 	}
+	target := input.Target
+	if target == "" {
+		target = input.Name
+	}
+	if target == "" {
+		target = input.Image
+	}
 	response, err := s.hostOps.Do(r.Context(), http.MethodPost, "/v1/docker/tasks", "", requestID(r), body)
 	if err != nil {
-		_ = s.audit(r, session.User.ID, "docker."+input.Action, "docker", input.Target, "failure", nil)
+		_ = s.audit(r, session.User.ID, "docker."+input.Action, "docker", target, "failure", nil)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
 		return
 	}
@@ -440,7 +447,7 @@ func (s *Server) handleDockerTask(w http.ResponseWriter, r *http.Request) {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		outcome = "failure"
 	}
-	_ = s.audit(r, session.User.ID, "docker."+input.Action, "docker", input.Target, outcome, nil)
+	_ = s.audit(r, session.User.ID, "docker."+input.Action, "docker", target, outcome, nil)
 	s.writeAgentResponse(w, r, response)
 }
 

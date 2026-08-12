@@ -33,7 +33,7 @@ var dockerMaintenanceToolBaseSchema = json.RawMessage(`{
     "ports":{"type":"array","items":{"type":"object","required":["privatePort","publicPort"],"properties":{"privatePort":{"type":"integer"},"publicPort":{"type":"integer"},"protocol":{"type":"string"},"hostIp":{"type":"string"}},"additionalProperties":false}},
     "mounts":{"type":"array","items":{"type":"object","required":["target"],"properties":{"type":{"type":"string"},"source":{"type":"string"},"volume":{"type":"string"},"target":{"type":"string"},"readOnly":{"type":"boolean"}},"additionalProperties":false}},
     "environment":{"type":"array","items":{"type":"object","required":["name","value"],"properties":{"name":{"type":"string"},"value":{"type":"string"}},"additionalProperties":false}},
-    "command":{"type":"array","items":{"type":"string"}},"network":{"type":"string"},"restartPolicy":{"type":"string"},"allowedIp":{"type":"string"},
+    "command":{"type":"array","items":{"type":"string"}},"network":{"type":"string"},"restartPolicy":{"type":"string"},"compose":{"type":"string"},"allowedIp":{"type":"string"},
     "backupId":{"type":"string"},"migrationHost":{"type":"string"},"migrationUser":{"type":"string"},"migrationPort":{"type":"integer"}
   },
   "additionalProperties":false

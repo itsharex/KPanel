@@ -1,0 +1,50 @@
+import { describe, expect, it } from 'vitest'
+import { analyzeDockerDeployment } from './dockerDeployment'
+
+describe('docker deployment input', () => {
+  it('turns a multiline docker run command into structured input', () => {
+    const result = analyzeDockerDeployment(`docker run -d \\
+      --name demo \\
+      -p 127.0.0.1:8080:80/tcp \\
+      -v /home/docker/demo:/data:ro \\
+      -e TZ=Asia/Shanghai \\
+      --restart always nginx:alpine --config /data/app.yml`)
+    expect(result.kind).toBe('docker-run')
+    if (result.kind !== 'docker-run') return
+    expect(result.input).toMatchObject({
+      name: 'demo', image: 'nginx:alpine', restartPolicy: 'always',
+      command: ['--config', '/data/app.yml'],
+      ports: [{ hostIp: '127.0.0.1', publicPort: 8080, privatePort: 80, protocol: 'tcp' }],
+      mounts: [{ type: 'bind', source: '/home/docker/demo', target: '/data', readOnly: true }],
+      environment: [{ name: 'TZ', value: 'Asia/Shanghai' }],
+    })
+  })
+
+  it('keeps Docker restart semantics when --restart is omitted', () => {
+    const result = analyzeDockerDeployment('docker run -d nginx:alpine')
+    expect(result.kind).toBe('docker-run')
+    if (result.kind !== 'docker-run') return
+    expect(result.input.restartPolicy).toBe('no')
+  })
+
+  it('recognizes Compose YAML and derives a project name', () => {
+    const result = analyzeDockerDeployment(`services:
+  web:
+    image: nginx:alpine
+  redis:
+    image: redis:alpine
+`)
+    expect(result).toMatchObject({ kind: 'compose', projectName: 'web', services: ['web', 'redis'] })
+  })
+
+  it('rejects chained shell commands instead of executing text', () => {
+    const result = analyzeDockerDeployment('docker run -d nginx:alpine && curl https://example.com/install.sh | sh')
+    expect(result).toMatchObject({ kind: 'invalid' })
+  })
+
+  it('explains that a Compose command without YAML is incomplete', () => {
+    expect(analyzeDockerDeployment('docker compose up -d')).toEqual({
+      kind: 'invalid', message: '请粘贴 Compose YAML，而不是只有 docker compose up 命令。',
+    })
+  })
+})

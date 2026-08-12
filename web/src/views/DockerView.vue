@@ -35,6 +35,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import { ApiError, api } from '@/lib/api'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
+import { analyzeDockerDeployment } from '@/lib/dockerDeployment'
 import {
   sortDockerContainers,
   sortDockerImages,
@@ -128,6 +129,10 @@ const membershipContainerID = ref('')
 const membershipNetworkID = ref('')
 
 const createOpen = ref(false)
+const createSource = ref('')
+const createAdvanced = ref(false)
+const createManualMode = ref(false)
+const createComposeProject = ref('')
 const createName = ref('')
 const createImage = ref('')
 const createNetwork = ref('bridge')
@@ -213,6 +218,30 @@ const availableImageTags = computed(() =>
   (data.value?.images || []).flatMap((item) => item.tags).filter((item) => item && item !== '<none>:<none>'),
 )
 const createNetworks = computed(() => data.value?.networks || [])
+const createAnalysis = computed(() => analyzeDockerDeployment(createSource.value))
+const createModeLabel = computed(() => {
+  if (createManualMode.value) return '手动配置'
+  if (createAnalysis.value.kind === 'docker-run') return 'Docker Run'
+  if (createAnalysis.value.kind === 'compose') return 'Docker Compose'
+  return ''
+})
+const createSummary = computed(() => {
+  const analysis = createAnalysis.value
+  if (createManualMode.value) return createImage.value.trim() || '填写镜像后即可部署'
+  if (analysis.kind === 'docker-run') {
+    const input = analysis.input
+    return [input.name || '自动命名', input.image, `${input.ports?.length || 0} 个端口`, `${input.mounts?.length || 0} 个挂载`].join(' · ')
+  }
+  if (analysis.kind === 'compose') return `${analysis.projectName} · ${analysis.services.length} 个服务`
+  return ''
+})
+const createCanSubmit = computed(() => {
+  if (createManualMode.value) return Boolean(createImage.value.trim())
+  if (createAnalysis.value.kind === 'docker-run') {
+    return createAdvanced.value ? Boolean(createImage.value.trim()) : true
+  }
+  return createAnalysis.value.kind === 'compose' && Boolean(createComposeProject.value.trim())
+})
 
 const sortedContainers = computed(() =>
   sortDockerContainers(data.value?.containers || [], resourceSort.value),
@@ -535,7 +564,7 @@ async function submitTask(input: DockerMaintenanceInput): Promise<void> {
     const job = await api.docker.task(input)
     pendingMaintenance.value = undefined
     createOpen.value = false
-    if (input.action === 'container_create') resetCreateForm()
+    if (input.action === 'container_create' || input.action === 'compose_deploy') resetCreateForm()
     accessOpen.value = false
     migrationOpen.value = false
     startJobPolling(job)
@@ -666,7 +695,7 @@ function addCreateEnvironment(): void {
   createEnvironment.value.push({ name: '', value: '' })
 }
 
-function resetCreateForm(): void {
+function resetStructuredCreateForm(): void {
   createName.value = ''
   createImage.value = ''
   createNetwork.value = 'bridge'
@@ -677,10 +706,50 @@ function resetCreateForm(): void {
   createEnvironment.value = []
 }
 
-function submitContainerCreate(): void {
+function resetCreateForm(): void {
+  createSource.value = ''
+  createAdvanced.value = false
+  createManualMode.value = false
+  createComposeProject.value = ''
+  resetStructuredCreateForm()
+}
+
+function applyDockerRunInput(input: DockerMaintenanceInput): void {
+  createName.value = input.name || ''
+  createImage.value = input.image || ''
+  createNetwork.value = input.network || 'bridge'
+  createRestartPolicy.value = input.restartPolicy || 'unless-stopped'
+  createCommand.value = (input.command || []).join('\n')
+  createPorts.value = (input.ports || []).map((item) => ({
+    publicPort: String(item.publicPort),
+    privatePort: String(item.privatePort),
+    protocol: item.protocol || 'tcp',
+    hostIp: item.hostIp || '0.0.0.0',
+  }))
+  createMounts.value = (input.mounts || []).map((item) => ({
+    type: item.type || 'volume', source: item.source, target: item.target, readOnly: Boolean(item.readOnly),
+  }))
+  createEnvironment.value = (input.environment || []).map((item) => ({ ...item }))
+}
+
+function showCreateAdvanced(): void {
+  createAdvanced.value = !createAdvanced.value
+  if (createAdvanced.value && createAnalysis.value.kind === 'docker-run') {
+    applyDockerRunInput(createAnalysis.value.input)
+  }
+}
+
+function startManualCreate(): void {
+  createSource.value = ''
+  createManualMode.value = true
+  createAdvanced.value = true
+  resetStructuredCreateForm()
+}
+
+function buildStructuredContainerInput(): DockerMaintenanceInput | undefined {
   const name = createName.value.trim()
   const image = createImage.value.trim()
-  if (!name || !image) return
+  if (!image) return undefined
   const ports: DockerContainerCreatePort[] = createPorts.value
     .filter((item) => item.publicPort.trim() || item.privatePort.trim())
     .map((item) => ({
@@ -721,7 +790,7 @@ function submitContainerCreate(): void {
     toast.danger('环境变量无效', '变量名必须规范且不能重复；变量值不能换行，单项最多 2048 字符。')
     return
   }
-  askTask('确认创建并启动容器', `${name} · ${image}`, {
+  return {
     action: 'container_create',
     name,
     image,
@@ -731,8 +800,43 @@ function submitContainerCreate(): void {
     ports,
     mounts,
     environment,
-  })
+  }
 }
+
+function submitContainerCreate(): void {
+  if (createManualMode.value || createAnalysis.value.kind === 'docker-run') {
+    const input = createAdvanced.value || createManualMode.value
+      ? buildStructuredContainerInput()
+      : createAnalysis.value.kind === 'docker-run' ? createAnalysis.value.input : undefined
+    if (!input) return
+    askTask('确认部署 Docker 容器', createSummary.value, input)
+    return
+  }
+  const analysis = createAnalysis.value
+  if (analysis.kind === 'compose') {
+    const projectName = createComposeProject.value.trim()
+    if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(projectName)) {
+      toast.danger('项目名称无效', '仅支持小写字母、数字、连字符和下划线，最长 63 个字符。')
+      return
+    }
+    askTask('确认部署 Compose 项目', `${projectName} · ${analysis.services.length} 个服务`, {
+      action: 'compose_deploy', name: projectName, compose: analysis.compose,
+    })
+    return
+  }
+  if (analysis.kind === 'invalid') toast.danger('无法识别部署内容', analysis.message)
+}
+
+watch(createSource, () => {
+  if (!createSource.value.trim()) return
+  createManualMode.value = false
+  const analysis = createAnalysis.value
+  if (analysis.kind === 'docker-run') {
+    applyDockerRunInput(analysis.input)
+  } else if (analysis.kind === 'compose') {
+    createComposeProject.value = analysis.projectName
+  }
+})
 
 function askAction(container: DockerContainer, action: ContainerAction): void {
   contextMenu.value = undefined
@@ -1442,47 +1546,68 @@ onBeforeUnmount(() => {
       </template>
     </div>
 
-    <ModalDialog :open="createOpen" title="新建 Docker 容器" description="使用结构化参数创建，不接受任意 docker run 命令；镜像必须已拉取到本机。" size="large" @close="createOpen = false">
-      <div class="form-grid form-grid--two">
-        <label class="field"><span>容器名称</span><input v-model="createName" class="text-input" type="text" placeholder="my-app" /></label>
-        <label class="field"><span>本地镜像</span><input v-model="createImage" class="text-input" type="text" list="docker-image-tags" placeholder="nginx:alpine" /><datalist id="docker-image-tags"><option v-for="tag in availableImageTags" :key="tag" :value="tag" /></datalist></label>
-        <label class="field"><span>网络</span><select v-model="createNetwork" class="select-input"><option v-for="item in createNetworks" :key="item.id" :value="item.name">{{ item.name }}</option></select></label>
-        <label class="field"><span>重启策略</span><select v-model="createRestartPolicy" class="select-input"><option value="unless-stopped">unless-stopped</option><option value="always">always</option><option value="on-failure">on-failure</option><option value="no">no</option></select></label>
-      </div>
-      <div class="form-section">
-        <header><div><strong>端口映射</strong><small>可填写任意宿主机 IPv4/IPv6；0.0.0.0 为公开，127.0.0.1 仅供本机反代</small></div><button class="button button--ghost button--small" type="button" @click="addCreatePort"><Plus :size="14" /> 添加</button></header>
-        <div v-for="(port, index) in createPorts" :key="index" class="repeat-row repeat-row--ports">
-          <input v-model="port.publicPort" class="text-input" inputmode="numeric" placeholder="主机端口" />
-          <span>→</span>
-          <input v-model="port.privatePort" class="text-input" inputmode="numeric" placeholder="容器端口" />
-          <select v-model="port.protocol" class="select-input"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
-          <input v-model="port.hostIp" class="text-input" type="text" list="docker-host-ip-presets" placeholder="0.0.0.0" />
-          <button class="icon-button icon-button--danger" type="button" title="移除" @click="createPorts.splice(index, 1)"><Trash2 :size="15" /></button>
+    <ModalDialog :open="createOpen" title="部署 Docker 应用" description="粘贴现成内容即可，KPanel 会自动识别 Docker Run 或 Docker Compose。" size="large" @close="createOpen = false">
+      <section v-if="!createManualMode" class="deployment-input-card">
+        <label class="field">
+          <span>粘贴部署内容</span>
+          <textarea v-model="createSource" class="text-area deployment-source" rows="9" maxlength="24576" spellcheck="false" autocomplete="off" placeholder="docker run -d --name my-app -p 8080:80 nginx:alpine&#10;&#10;也可以直接粘贴 compose.yaml 内容" />
+        </label>
+        <div class="deployment-detection" :class="{ 'is-invalid': createAnalysis.kind === 'invalid', 'is-ready': createAnalysis.kind === 'docker-run' || createAnalysis.kind === 'compose' }">
+          <template v-if="createAnalysis.kind === 'empty'">
+            <span class="deployment-kind"><FileText :size="16" />等待粘贴</span>
+            <small>支持常见 docker run 参数和完整 Compose YAML，无需先选择部署类型。</small>
+          </template>
+          <template v-else-if="createAnalysis.kind === 'invalid'">
+            <span class="deployment-kind"><CircleStop :size="16" />暂时无法识别</span>
+            <small>{{ createAnalysis.message }}</small>
+          </template>
+          <template v-else>
+            <span class="deployment-kind"><ShieldCheck :size="16" />{{ createModeLabel }}</span>
+            <small>{{ createSummary }}</small>
+          </template>
         </div>
+      </section>
+
+      <div class="deployment-options">
+        <button v-if="createManualMode" class="button button--ghost button--small" type="button" @click="resetCreateForm"><FileText :size="14" /> 返回粘贴部署内容</button>
+        <button v-else class="button button--ghost button--small" type="button" @click="startManualCreate"><Wrench :size="14" /> 没有现成内容？手动配置</button>
+        <button v-if="!createManualMode && (createAnalysis.kind === 'docker-run' || createAnalysis.kind === 'compose')" class="button button--ghost button--small" type="button" @click="showCreateAdvanced"><Wrench :size="14" /> {{ createAdvanced ? '收起高级设置' : '高级设置' }}</button>
       </div>
-      <div class="form-section">
-        <header><div><strong>存储挂载</strong><small>支持命名卷与任意宿主机绝对目录，产物与 docker run / Compose 互通</small></div><button class="button button--ghost button--small" type="button" @click="addCreateMount"><Plus :size="14" /> 添加</button></header>
-        <div v-for="(mount, index) in createMounts" :key="index" class="repeat-row repeat-row--mounts">
-          <select v-model="mount.type" class="select-input"><option value="volume">命名卷</option><option value="bind">宿主机目录</option></select>
-          <input v-model="mount.source" class="text-input" type="text" :list="mount.type === 'volume' ? 'docker-volume-presets' : undefined" :placeholder="mount.type === 'volume' ? '卷名（不存在时由 Docker 创建）' : '/home/docker/my-app'" />
-          <input v-model="mount.target" class="text-input" type="text" placeholder="/data" />
-          <label class="inline-check"><input v-model="mount.readOnly" type="checkbox" /> 只读</label>
-          <button class="icon-button icon-button--danger" type="button" title="移除" @click="createMounts.splice(index, 1)"><Trash2 :size="15" /></button>
+
+      <section v-if="createAdvanced && createAnalysis.kind === 'compose' && !createManualMode" class="deployment-advanced">
+        <label class="field"><span>Compose 项目名称</span><input v-model="createComposeProject" class="text-input" type="text" maxlength="63" autocomplete="off" /><small>已自动从服务名生成；项目文件会保存到 /home/docker 下。</small><code data-i18n-ignore>/home/docker/{{ createComposeProject || 'project' }}/docker-compose.yml</code></label>
+      </section>
+
+      <section v-if="createAdvanced && (createManualMode || createAnalysis.kind === 'docker-run')" class="deployment-advanced">
+        <div class="form-grid form-grid--two">
+          <label class="field"><span>容器名称（可选）</span><input v-model="createName" class="text-input" type="text" placeholder="留空由 Docker 自动命名" /></label>
+          <label class="field"><span>镜像</span><input v-model="createImage" class="text-input" type="text" list="docker-image-tags" placeholder="nginx:alpine" /><small>本机没有时自动拉取。</small><datalist id="docker-image-tags"><option v-for="tag in availableImageTags" :key="tag" :value="tag" /></datalist></label>
+          <label class="field"><span>网络</span><select v-model="createNetwork" class="select-input"><option v-for="item in createNetworks" :key="item.id" :value="item.name">{{ item.name }}</option></select></label>
+          <label class="field"><span>重启策略</span><select v-model="createRestartPolicy" class="select-input"><option value="unless-stopped">unless-stopped</option><option value="always">always</option><option value="on-failure">on-failure</option><option value="no">no</option></select></label>
         </div>
-      </div>
-      <datalist id="docker-host-ip-presets"><option value="0.0.0.0" /><option value="127.0.0.1" /><option value="::" /><option value="::1" /></datalist>
-      <datalist id="docker-volume-presets"><option v-for="volume in data?.volumes || []" :key="volume.name" :value="volume.name" /></datalist>
-      <div class="form-section">
-        <header><div><strong>环境变量</strong><small>按名称和值填写；任务完成后不保留在 KPanel 任务记录中</small></div><button class="button button--ghost button--small" type="button" @click="addCreateEnvironment"><Plus :size="14" /> 添加</button></header>
-        <div v-for="(variable, index) in createEnvironment" :key="index" class="repeat-row repeat-row--environment">
-          <input v-model="variable.name" class="text-input" type="text" maxlength="128" placeholder="变量名，例如 TZ" autocomplete="off" />
-          <input v-model="variable.value" class="text-input" type="text" maxlength="2048" placeholder="变量值" autocomplete="off" />
-          <button class="icon-button icon-button--danger" type="button" title="移除" @click="createEnvironment.splice(index, 1)"><Trash2 :size="15" /></button>
+        <div class="form-section">
+          <header><div><strong>端口映射</strong><small>0.0.0.0 为公开，127.0.0.1 仅供本机反代</small></div><button class="button button--ghost button--small" type="button" @click="addCreatePort"><Plus :size="14" /> 添加</button></header>
+          <div v-for="(port, index) in createPorts" :key="index" class="repeat-row repeat-row--ports">
+            <input v-model="port.publicPort" class="text-input" inputmode="numeric" placeholder="主机端口" /><span>→</span><input v-model="port.privatePort" class="text-input" inputmode="numeric" placeholder="容器端口" />
+            <select v-model="port.protocol" class="select-input"><option value="tcp">TCP</option><option value="udp">UDP</option></select><input v-model="port.hostIp" class="text-input" type="text" list="docker-host-ip-presets" placeholder="0.0.0.0" /><button class="icon-button icon-button--danger" type="button" title="移除" @click="createPorts.splice(index, 1)"><Trash2 :size="15" /></button>
+          </div>
         </div>
-      </div>
-      <label class="field"><span>启动参数（可选，每行一个参数）</span><textarea v-model="createCommand" class="text-area" rows="3" placeholder="--config&#10;/data/config.yml" /></label>
-      <div class="inline-alert inline-alert--info">新容器会写入 KPanel 管理标签，因此 `k docker ps` 与网页端都能立即识别并继续操作。</div>
-      <template #footer><button class="button button--secondary" type="button" @click="createOpen = false">取消</button><button class="button button--primary" type="button" :disabled="!createName.trim() || !createImage.trim()" @click="submitContainerCreate">检查并创建</button></template>
+        <div class="form-section">
+          <header><div><strong>存储挂载</strong><small>支持命名卷与宿主机绝对目录</small></div><button class="button button--ghost button--small" type="button" @click="addCreateMount"><Plus :size="14" /> 添加</button></header>
+          <div v-for="(mount, index) in createMounts" :key="index" class="repeat-row repeat-row--mounts">
+            <select v-model="mount.type" class="select-input"><option value="volume">命名卷</option><option value="bind">宿主机目录</option></select><input v-model="mount.source" class="text-input" type="text" :list="mount.type === 'volume' ? 'docker-volume-presets' : undefined" :placeholder="mount.type === 'volume' ? '卷名' : '/home/docker/my-app'" /><input v-model="mount.target" class="text-input" type="text" placeholder="/data" /><label class="inline-check"><input v-model="mount.readOnly" type="checkbox" /> 只读</label><button class="icon-button icon-button--danger" type="button" title="移除" @click="createMounts.splice(index, 1)"><Trash2 :size="15" /></button>
+          </div>
+        </div>
+        <datalist id="docker-host-ip-presets"><option value="0.0.0.0" /><option value="127.0.0.1" /><option value="::" /><option value="::1" /></datalist>
+        <datalist id="docker-volume-presets"><option v-for="volume in data?.volumes || []" :key="volume.name" :value="volume.name" /></datalist>
+        <div class="form-section">
+          <header><div><strong>环境变量</strong><small>任务完成后不保留在 KPanel 任务记录中</small></div><button class="button button--ghost button--small" type="button" @click="addCreateEnvironment"><Plus :size="14" /> 添加</button></header>
+          <div v-for="(variable, index) in createEnvironment" :key="index" class="repeat-row repeat-row--environment"><input v-model="variable.name" class="text-input" type="text" maxlength="128" placeholder="变量名，例如 TZ" autocomplete="off" /><input v-model="variable.value" class="text-input" type="text" maxlength="2048" placeholder="变量值" autocomplete="off" /><button class="icon-button icon-button--danger" type="button" title="移除" @click="createEnvironment.splice(index, 1)"><Trash2 :size="15" /></button></div>
+        </div>
+        <label class="field"><span>启动参数（可选，每行一个参数）</span><textarea v-model="createCommand" class="text-area" rows="3" placeholder="--config&#10;/data/config.yml" /></label>
+      </section>
+      <div class="inline-alert inline-alert--info">Docker Run 会转换为结构化 Docker API；Compose 会先校验配置，再保存到 `/home/docker` 并后台启动。启动失败会自动尝试回滚，并保留明确的处理状态。</div>
+      <template #footer><span class="modal-footer-note">{{ createModeLabel || '自动识别部署方式' }}</span><button class="button button--secondary" type="button" @click="createOpen = false">取消</button><button class="button button--primary" type="button" :disabled="!createCanSubmit" @click="submitContainerCreate">部署</button></template>
     </ModalDialog>
 
     <ModalDialog :open="logsOpen" :title="`${selectedContainer?.name || '容器'} 日志`" description="显示最近 300 行，输出经过敏感字段脱敏和大小限制。" size="large" @close="closeLogs">
@@ -1536,7 +1661,7 @@ onBeforeUnmount(() => {
     <ModalDialog :open="Boolean(pendingMaintenance)" :title="pendingMaintenance?.title || '确认 Docker 操作'" :description="pendingMaintenance?.description" size="small" @close="pendingMaintenance = undefined">
       <div class="confirm-content">
         <span class="confirm-content__icon" :class="{ 'is-danger': pendingMaintenance?.danger }"><Trash2 v-if="pendingMaintenance?.danger" :size="23" /><ShieldCheck v-else :size="23" /></span>
-        <p>Agent 会在执行前重新读取 Docker Engine 并核验资源版本，避免旧页面覆盖新的运行状态。</p>
+        <p>Agent 会在执行前重新校验输入和 Docker 实际状态；任务进入后台后可以离开当前页面。</p>
       </div>
       <template #footer><button class="button button--secondary" type="button" @click="pendingMaintenance = undefined">取消</button><button class="button" :class="pendingMaintenance?.danger ? 'button--danger' : 'button--primary'" type="button" :disabled="taskRunning || !pendingMaintenance" @click="pendingMaintenance && submitTask(pendingMaintenance.input)"><LoaderCircle v-if="taskRunning" class="spin" :size="16" />{{ taskRunning ? '正在提交…' : '确认执行' }}</button></template>
     </ModalDialog>
@@ -1690,6 +1815,16 @@ onBeforeUnmount(() => {
 .field > small { color: var(--muted); line-height: 1.45; }
 .text-area { width: 100%; resize: vertical; min-height: 84px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); padding: 10px 12px; font: inherit; }
 .text-area:focus { outline: 2px solid color-mix(in srgb, var(--brand) 25%, transparent); border-color: var(--brand); }
+.deployment-input-card { display: grid; gap: 11px; padding: 15px; border: 1px solid var(--border-strong); border-radius: 15px; background: color-mix(in srgb, var(--surface-raised) 78%, transparent); }
+.deployment-source { min-height: 190px; resize: vertical; background: var(--terminal-shell-background, #0b1214); color: var(--terminal-shell-text, #d8dddc); border-color: var(--terminal-shell-border, #29383a); font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.deployment-detection { display: flex; min-width: 0; align-items: center; gap: 10px; color: var(--muted); }
+.deployment-detection small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deployment-detection.is-ready { color: var(--text); }
+.deployment-detection.is-invalid { color: var(--danger); }
+.deployment-kind { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; font-size: .82rem; font-weight: 750; }
+.deployment-options { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.deployment-advanced { margin-top: 14px; padding: 15px; border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb, var(--surface-raised) 62%, transparent); }
+.deployment-advanced > .form-section:first-child { margin-top: 0; }
 .form-section { display: grid; gap: 10px; margin-top: 18px; }
 .repeat-row { display: grid; gap: 8px; align-items: center; }
 .repeat-row--ports { grid-template-columns: minmax(100px, 1fr) auto minmax(100px, 1fr) 100px 110px auto; }
@@ -1739,5 +1874,11 @@ onBeforeUnmount(() => {
   .network-membership { grid-template-columns: 1fr; }
   .repeat-row--ports, .repeat-row--mounts, .repeat-row--environment { grid-template-columns: 1fr; }
   .repeat-row--ports > span { display: none; }
+  .deployment-input-card, .deployment-advanced { padding: 12px; }
+  .deployment-source { min-height: 220px; }
+  .deployment-detection { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .deployment-detection small { white-space: normal; }
+  .deployment-options { justify-content: stretch; flex-direction: column; }
+  .deployment-options .button { width: 100%; }
 }
 </style>

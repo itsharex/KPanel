@@ -1378,6 +1378,7 @@ export interface DockerContainerCreateEnvironment {
 
 export type DockerMaintenanceAction =
   | 'container_create'
+  | 'compose_deploy'
   | 'container_access'
   | 'image_pull'
   | 'image_remove'
@@ -1416,6 +1417,7 @@ export interface DockerMaintenanceInput {
   command?: string[]
   network?: string
   restartPolicy?: 'no' | 'always' | 'unless-stopped' | 'on-failure'
+  compose?: string
   allowedIp?: string
   backupId?: string
   migrationHost?: string
