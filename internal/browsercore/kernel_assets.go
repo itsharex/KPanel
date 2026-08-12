@@ -36,11 +36,11 @@ func (r *Relay) handleKernel(w http.ResponseWriter, request *http.Request) {
 func (r *Relay) serveKernelAsset(w http.ResponseWriter, _ *http.Request, contentType string, content []byte) {
 	r.setKernelHeaders(w)
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "public, max-age=300")
 	_, _ = w.Write(content)
 }
 
 func (r *Relay) setKernelHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors "+r.config.AllowedOrigin+"; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src blob: 'self'; img-src data: blob: 'self'; object-src 'none'; form-action 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

@@ -6,13 +6,14 @@ export interface BrowserCoreNavigateMessage {
   type: 'kpanel-browser:navigate'
   token: string
   url: string
+  navigationId: string
 }
 
 export type BrowserCoreEvent =
   | { type: 'kpanel-browser:ready' }
-  | { type: 'kpanel-browser:navigation'; url: string }
-  | { type: 'kpanel-browser:title'; title: string }
-  | { type: 'kpanel-browser:error'; message: string }
+  | { type: 'kpanel-browser:navigation'; url: string; navigationId: string }
+  | { type: 'kpanel-browser:title'; title: string; navigationId: string }
+  | { type: 'kpanel-browser:error'; message: string; navigationId: string }
   | { type: 'kpanel-browser:session-expired' }
 
 export interface BrowserCoreLocation {
@@ -37,11 +38,13 @@ export function resolveBrowserCoreLocation(session: BrowserCoreSession): Browser
 export function createBrowserCoreNavigateMessage(
   session: BrowserCoreSession,
   url: string,
+  navigationId: string,
 ): BrowserCoreNavigateMessage {
   return {
     type: 'kpanel-browser:navigate',
     token: session.token,
     url,
+    navigationId,
   }
 }
 
@@ -56,12 +59,19 @@ export function isBrowserCoreEvent(value: unknown): value is BrowserCoreEvent {
     case 'kpanel-browser:session-expired':
       return true
     case 'kpanel-browser:navigation':
-      return typeof message.url === 'string' && message.url.length <= 2_048
+      return validNavigationID(message.navigationId) &&
+        typeof message.url === 'string' && message.url.length <= 2_048
     case 'kpanel-browser:title':
-      return typeof message.title === 'string' && message.title.length <= 160
+      return validNavigationID(message.navigationId) &&
+        typeof message.title === 'string' && message.title.length <= 160
     case 'kpanel-browser:error':
-      return typeof message.message === 'string' && message.message.length <= 512
+      return validNavigationID(message.navigationId) &&
+        typeof message.message === 'string' && message.message.length <= 512
     default:
       return false
   }
+}
+
+function validNavigationID(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 64
 }

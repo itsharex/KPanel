@@ -28,17 +28,30 @@ describe('embeddedBrowserCore', () => {
   })
 
   it('keeps the target and token in a postMessage payload', () => {
-    expect(createBrowserCoreNavigateMessage(session, 'https://target.example/path')).toEqual({
+    expect(createBrowserCoreNavigateMessage(session, 'https://target.example/path', 'tab-1:7')).toEqual({
       type: 'kpanel-browser:navigate',
       token: 'signed-token',
       url: 'https://target.example/path',
+      navigationId: 'tab-1:7',
     })
   })
 
   it('accepts only bounded known kernel events', () => {
     expect(isBrowserCoreEvent({ type: 'kpanel-browser:ready' })).toBe(true)
-    expect(isBrowserCoreEvent({ type: 'kpanel-browser:navigation', url: 'https://example.com' })).toBe(true)
-    expect(isBrowserCoreEvent({ type: 'kpanel-browser:navigation', url: 1 })).toBe(false)
+    expect(isBrowserCoreEvent({
+      type: 'kpanel-browser:navigation',
+      url: 'https://example.com',
+      navigationId: 'tab-1:7',
+    })).toBe(true)
+    expect(isBrowserCoreEvent({
+      type: 'kpanel-browser:navigation',
+      url: 'https://example.com',
+    })).toBe(false)
+    expect(isBrowserCoreEvent({
+      type: 'kpanel-browser:navigation',
+      url: 1,
+      navigationId: 'tab-1:7',
+    })).toBe(false)
     expect(isBrowserCoreEvent({ type: 'kpanel-browser:unknown' })).toBe(false)
   })
 })

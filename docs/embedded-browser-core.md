@@ -73,6 +73,23 @@ KPanel 的 iframe 永远只加载 Relay 的 `/kernel/`，不会出现 `iframe sr
 
 ## 5. 后续兼容层路线
 
+白屏防护按通用协议实现，不按站点增加分支：
+
+1. 每次导航分配事务 ID，内核与外壳只接受当前事务的地址、标题和错误回执。
+2. 响应先结合声明 MIME 与有界内容采样分类为 HTML、文本或二进制；错误 MIME 不直接决定渲染路径。
+3. iframe 先注册 `load/error/abort` 监听再赋值；正文完成即显示，图片后台按预算加载。
+4. Relay 请求保留浏览器 User-Agent、语言和标准 Accept 语义；30 秒仍未完成则显示可操作错误。
+5. `textarea/xmp/plaintext/noembed/noframes` 等原始文本容器按语义整体丢弃，不能像普通未知布局标签一样展开子节点。
+6. 净化后无可见正文或图片时显示统一能力边界，不再留下无反馈空白；内核固定 URL 禁止陈旧缓存。
+7. 所有无法安全分类或执行的内容保持只读/外部打开兜底，不为单个站点放宽脚本、Cookie 或 SSRF 边界。
+
+对 Scramjet 的源码评估结论：它通过 Service Worker、WASM 和浏览器 API 虚拟化重写完整
+HTML/JavaScript/CSS/URL 资源链，复杂站点兼容性明显高于第一阶段阅读内核；代价是允许重写后的第三方
+脚本运行、根 scope Service Worker、Cookie/Storage 状态和更大的供应链/运行时攻击面。其文档响应仍以声明
+`Content-Type` 决定是否重写 HTML，不能替代上述内容分类；当前上游版本仍标为 experimental/alpha。
+后续只借鉴资源图谱、事务协议和测试矩阵，不直接复制其运行时，也不采用其关闭 SSH host key 与 TLS
+证书校验的示例配置。
+
 1. 资源图谱：HTML/CSS URL 解析与重写、字体/媒体分段流、缓存和请求去重。
 2. 会话状态：Relay 侧按短时会话隔离 Cookie Jar，执行 Public Suffix 校验并设置总量预算。
 3. 受限运行时：在独立 origin 内实现脚本 URL/API 重写，覆盖 `fetch`、XHR、Worker 和 WebSocket；默认按站点能力降级。

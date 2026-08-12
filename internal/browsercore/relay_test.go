@@ -205,6 +205,9 @@ func TestKernelAssetsAreBoundToThePanelOrigin(t *testing.T) {
 	if strings.Contains(page.Body.String(), "signed-token") || strings.Contains(page.Body.String(), "secret") {
 		t.Fatalf("kernel page exposes credentials: %q", page.Body.String())
 	}
+	if page.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("kernel page cache policy = %q", page.Header().Get("Cache-Control"))
+	}
 
 	for _, asset := range []struct {
 		path        string
@@ -217,6 +220,38 @@ func TestKernelAssetsAreBoundToThePanelOrigin(t *testing.T) {
 		relay.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, asset.path, nil))
 		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != asset.contentType || response.Body.Len() == 0 {
 			t.Fatalf("asset %s = %d %q (%d bytes)", asset.path, response.Code, response.Header().Get("Content-Type"), response.Body.Len())
+		}
+		if response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("asset %s cache policy = %q", asset.path, response.Header().Get("Cache-Control"))
+		}
+	}
+}
+
+func TestKernelHandlesMislabelledHTMLWithoutBlockingFirstPaint(t *testing.T) {
+	script := string(kernelJS)
+	for _, required := range []string{
+		"function looksLikeHTML(bytes)",
+		"function looksLikeText(bytes)",
+		"['User-Agent', navigator.userAgent]",
+		"text/html,application/xhtml+xml,application/xml;q=0.9",
+		"'NOSCRIPT', 'TEMPLATE', 'TEXTAREA'",
+		"function hasRenderableContent(documentRoot)",
+		"if (looksLikeHTML(bytes))",
+		"await renderHTMLBytes(bytes, target, signal, navigationID)",
+		"function loadViewport(attribute, value, signal)",
+		"await loadViewport('srcdoc'",
+		"await loadViewport('src', objectURL, signal)",
+		"async function renderTextBytes(bytes, target, signal, navigationID)",
+		"navigationId: navigationID",
+		"connectDocument(viewport.contentDocument, navigationID)",
+		"navigate(anchor.dataset.kpanelHref, 0, navigationID)",
+		"type.toLowerCase().includes('json')",
+		"const navigationTimeoutMs = 30_000",
+		"showStatus('网页加载超时'",
+		"hideStatus()\n    void hydrateImages",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("kernel is missing browser compatibility behavior %q", required)
 		}
 	}
 }

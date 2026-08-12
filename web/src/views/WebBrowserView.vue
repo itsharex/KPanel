@@ -71,6 +71,8 @@ const liveTabIDs = ref<Set<string>>(new Set())
 const pendingRequest = ref<PendingBrowserRequest>()
 const addressValue = ref('')
 const addressInvalid = ref(false)
+const addressEditing = ref(false)
+const addressInput = ref<HTMLInputElement>()
 const frameColorScheme = ref<'light' | 'dark'>('light')
 const coreSession = ref<BrowserCoreSession>()
 const coreStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -81,10 +83,12 @@ const coreLocation = computed(() => coreSession.value
 const sleepTimers = new Map<string, number>()
 const kernelFrames = new Map<string, HTMLIFrameElement>()
 const initializedKernelTabs = new Set<string>()
+const activeNavigations = new Map<string, string>()
 const coreAbortController = new AbortController()
 let coreSessionRequest: Promise<BrowserCoreSession | undefined> | undefined
 let themeObserver: MutationObserver | undefined
 let tabSequence = 0
+let navigationSequence = 0
 
 const activeTab = computed(() => tabs.value.find((tab) => tab.id === activeTabID.value))
 const liveTabs = computed(() => tabs.value.filter((tab) => liveTabIDs.value.has(tab.id)))
@@ -119,6 +123,7 @@ function clearSleepTimer(tabID: string): void {
 function sleepTab(tabID: string): void {
   clearSleepTimer(tabID)
   replaceLiveTabIDs((next) => next.delete(tabID))
+  activeNavigations.delete(tabID)
 }
 
 function scheduleSleep(tabID: string): void {
@@ -165,15 +170,19 @@ async function ensureBrowserCore(force = false): Promise<BrowserCoreSession | un
   return request
 }
 
-function postNavigation(tab: BrowserTab): void {
+function postNavigation(tab: BrowserTab, force = false): void {
   const session = coreSession.value
   const location = coreLocation.value
   const frame = kernelFrames.get(tab.id)
-  if (!session || !location || !frame?.contentWindow || !tab.target || initializedKernelTabs.has(tab.id)) return
+  if (!session || !location || !frame?.contentWindow || !tab.target ||
+    (!force && initializedKernelTabs.has(tab.id))) return
   tab.error = undefined
   initializedKernelTabs.add(tab.id)
+  navigationSequence += 1
+  const navigationID = `${tab.id}:${navigationSequence}`
+  activeNavigations.set(tab.id, navigationID)
   frame.contentWindow.postMessage(
-    createBrowserCoreNavigateMessage(session, tab.target.href),
+    createBrowserCoreNavigateMessage(session, tab.target.href, navigationID),
     location.origin,
   )
 }
@@ -186,6 +195,7 @@ function setKernelFrame(tabID: string, value: unknown): void {
   }
   kernelFrames.delete(tabID)
   initializedKernelTabs.delete(tabID)
+  activeNavigations.delete(tabID)
 }
 
 function handleKernelLoad(tab: BrowserTab): void {
@@ -210,6 +220,7 @@ function handleKernelMessage(event: MessageEvent): void {
     void refreshBrowserCore()
     return
   }
+  if (message.navigationId !== activeNavigations.get(tab.id)) return
   if (message.type === 'kpanel-browser:error') {
     tab.error = message.message
     return
@@ -221,7 +232,7 @@ function handleKernelMessage(event: MessageEvent): void {
   const target = resolveEmbeddedBrowserTarget(message.url)
   if (!target) return
   tab.target = target
-  if (tab.id === activeTabID.value) addressValue.value = target.href
+  if (tab.id === activeTabID.value && !addressEditing.value) addressValue.value = target.href
 }
 
 function mountTab(tab: BrowserTab): void {
@@ -279,13 +290,12 @@ function applyTargetToTab(
   target: EmbeddedBrowserTarget,
   shortcut?: EmbeddedBrowserShortcut,
 ): void {
-  sleepTab(tab.id)
   tab.target = target
   tab.title = shortcut?.name || target.hostname
   tab.shortcutID = shortcut?.id
   tab.iconURL = shortcut?.iconURL
-  tab.frameVersion += 1
   activateTab(tab.id)
+  postNavigation(tab, true)
 }
 
 function openTarget(target: EmbeddedBrowserTarget, shortcut?: EmbeddedBrowserShortcut): boolean {
@@ -393,6 +403,8 @@ function submitAddress(): void {
     addressInvalid.value = true
     return
   }
+  addressEditing.value = false
+  addressInput.value?.blur()
   addressInvalid.value = false
   const tab = activeTab.value || createStartTab()
   applyTargetToTab(tab, target)
@@ -445,8 +457,8 @@ function goHome(): void {
 function reload(): void {
   const tab = activeTab.value
   if (!tab?.target) return
-  tab.frameVersion += 1
   mountTab(tab)
+  postNavigation(tab, true)
 }
 
 function openExternal(): void {
@@ -526,6 +538,7 @@ onBeforeUnmount(() => {
   themeObserver?.disconnect()
   kernelFrames.clear()
   initializedKernelTabs.clear()
+  activeNavigations.clear()
   for (const timer of sleepTimers.values()) window.clearTimeout(timer)
   sleepTimers.clear()
 })
@@ -612,6 +625,7 @@ onBeforeUnmount(() => {
         <ShieldCheck :size="14" aria-hidden="true" />
         <span class="embedded-browser__sr-only">{{ i18n.t('desktop.browserAddressLabel') }}</span>
         <input
+          ref="addressInput"
           v-model="addressValue"
           type="text"
           inputmode="url"
@@ -622,6 +636,9 @@ onBeforeUnmount(() => {
           :placeholder="i18n.t('desktop.browserAddressPlaceholder')"
           :aria-invalid="addressInvalid"
           @input="addressInvalid = false"
+          @focus="addressEditing = true"
+          @blur="addressEditing = false"
+          @keydown.enter.prevent="submitAddress"
         >
       </label>
       <button
@@ -747,13 +764,15 @@ onBeforeUnmount(() => {
 
       <iframe
         v-for="tab in kernelTabs"
-        v-show="tab.id === activeTabID"
         :key="`${tab.id}:${tab.frameVersion}`"
         :ref="(value) => setKernelFrame(tab.id, value)"
         class="embedded-browser__frame"
+        :class="{ 'embedded-browser__frame--active': tab.id === activeTabID }"
         :style="{ colorScheme: frameColorScheme }"
         :src="coreLocation?.frameURL"
         :title="tab.title"
+        :aria-hidden="tab.id !== activeTabID"
+        :tabindex="tab.id === activeTabID ? 0 : -1"
         sandbox="allow-same-origin allow-scripts"
         referrerpolicy="no-referrer"
         @load="handleKernelLoad(tab)"
@@ -997,11 +1016,19 @@ onBeforeUnmount(() => {
 }
 
 .embedded-browser__frame {
+  grid-area: 1 / 1;
   width: 100%;
   height: 100%;
   min-height: 0;
+  visibility: hidden;
   background: Canvas;
   border: 0;
+  pointer-events: none;
+}
+
+.embedded-browser__frame--active {
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .embedded-browser__start {

@@ -81,7 +81,7 @@ async function openNewURL(wrapper: VueWrapper, value: string): Promise<void> {
   await visitFromStart(wrapper, value)
 }
 
-async function postedNavigation(wrapper: VueWrapper): Promise<{ token: string; url: string }> {
+async function postedNavigation(wrapper: VueWrapper): Promise<{ token: string; url: string; navigationId: string }> {
   const frame = wrapper.get('iframe.embedded-browser__frame')
   const postMessage = vi.fn()
   Object.defineProperty(frame.element, 'contentWindow', {
@@ -91,7 +91,7 @@ async function postedNavigation(wrapper: VueWrapper): Promise<{ token: string; u
   await frame.trigger('load')
   const message = postMessage.mock.calls.at(-1)?.[0]
   expect(postMessage).toHaveBeenLastCalledWith(message, 'https://browser-relay.example.com')
-  return message as { token: string; url: string }
+  return message as { token: string; url: string; navigationId: string }
 }
 
 describe('WebBrowserView', () => {
@@ -127,10 +127,69 @@ describe('WebBrowserView', () => {
       type: 'kpanel-browser:navigate',
       token: 'signed-browser-token',
       url: 'https://example.com/path',
+      navigationId: expect.any(String),
     })
     expect(wrapper.get('.embedded-browser__content').classes())
       .not.toContain('embedded-browser__content--start')
     expect(wrapper.get('.embedded-browser__tab-count').text()).toBe('1/8')
+    wrapper.unmount()
+  })
+
+  it('navigates and reloads an existing tab without replacing its kernel frame', async () => {
+    const { wrapper } = await mountBrowser()
+    await visitFromStart(wrapper, 'one.example.com')
+
+    const frame = wrapper.get('iframe.embedded-browser__frame')
+    const frameElement = frame.element
+    const postMessage = vi.fn()
+    Object.defineProperty(frameElement, 'contentWindow', {
+      configurable: true,
+      value: { postMessage },
+    })
+    await frame.trigger('load')
+    const initialNavigationID = postMessage.mock.calls.at(-1)?.[0].navigationId
+
+    const address = wrapper.get('.embedded-browser__address input')
+    await address.trigger('focus')
+    await address.setValue('two.example.com')
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: 'https://browser-relay.example.com',
+      source: (frameElement as HTMLIFrameElement).contentWindow,
+      data: {
+        type: 'kpanel-browser:navigation',
+        url: 'https://one.example.com/',
+        navigationId: initialNavigationID,
+      },
+    }))
+    expect(address.element).toHaveProperty('value', 'two.example.com')
+    await address.trigger('keydown.enter')
+    await nextTick()
+
+    expect(wrapper.get('iframe.embedded-browser__frame').element).toBe(frameElement)
+    expect(postMessage.mock.calls.at(-1)?.[0]).toEqual({
+      type: 'kpanel-browser:navigate',
+      token: 'signed-browser-token',
+      url: 'https://two.example.com/',
+      navigationId: expect.any(String),
+    })
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: 'https://browser-relay.example.com',
+      source: (frameElement as HTMLIFrameElement).contentWindow,
+      data: {
+        type: 'kpanel-browser:title',
+        title: 'Stale first page',
+        navigationId: initialNavigationID,
+      },
+    }))
+    expect(wrapper.get('[role="tab"]').text()).not.toContain('Stale first page')
+
+    await wrapper.findAll('.embedded-browser__tool')[1]?.trigger('click')
+    expect(postMessage.mock.calls.at(-1)?.[0]).toEqual({
+      type: 'kpanel-browser:navigate',
+      token: 'signed-browser-token',
+      url: 'https://two.example.com/',
+      navigationId: expect.any(String),
+    })
     wrapper.unmount()
   })
 
@@ -224,6 +283,22 @@ describe('WebBrowserView', () => {
 
     expect(wrapper.findAll('[role="tab"]')).toHaveLength(3)
     expect(wrapper.findAll('iframe.embedded-browser__frame')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('keeps inactive live frames laid out so switching tabs preserves document state', async () => {
+    const { wrapper } = await mountBrowser('/browser?url=https%3A%2F%2Fone.example.com')
+
+    await openNewURL(wrapper, 'two.example.com')
+
+    const frames = wrapper.findAll('iframe.embedded-browser__frame')
+    expect(frames).toHaveLength(2)
+    expect(frames.filter((frame) => frame.classes().includes('embedded-browser__frame--active')))
+      .toHaveLength(1)
+    const inactive = frames.find((frame) => !frame.classes().includes('embedded-browser__frame--active'))
+    expect(inactive?.attributes('aria-hidden')).toBe('true')
+    expect(inactive?.attributes('tabindex')).toBe('-1')
+    expect(inactive?.attributes('style')).not.toContain('display: none')
     wrapper.unmount()
   })
 

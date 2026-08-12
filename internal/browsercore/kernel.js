@@ -10,12 +10,17 @@
   const maxImageTotalBytes = 12 * 1024 * 1024
   const maxImages = 24
   const imageConcurrency = 4
+  const navigationTimeoutMs = 30_000
   const allowedTags = new Set([
     'HTML', 'HEAD', 'TITLE', 'BODY', 'MAIN', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'NAV',
     'ASIDE', 'DIV', 'SPAN', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI',
     'DL', 'DT', 'DD', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD', 'CAPTION',
     'BLOCKQUOTE', 'PRE', 'CODE', 'EM', 'STRONG', 'B', 'I', 'U', 'S', 'SMALL', 'MARK',
     'BR', 'HR', 'A', 'IMG', 'FIGURE', 'FIGCAPTION', 'DETAILS', 'SUMMARY', 'TIME',
+  ])
+  const discardedTags = new Set([
+    'SCRIPT', 'STYLE', 'LINK', 'IFRAME', 'OBJECT', 'EMBED', 'SVG', 'MATH',
+    'NOSCRIPT', 'TEMPLATE', 'TEXTAREA', 'XMP', 'PLAINTEXT', 'NOEMBED', 'NOFRAMES',
   ])
 
   let accessToken = ''
@@ -65,6 +70,14 @@
   }
 
   async function relayFetch(target, options = {}, signal) {
+    const targetHeaders = [
+      ['User-Agent', navigator.userAgent],
+      ['Accept-Language', navigator.language || 'zh-CN'],
+      ...(options.headers || [[
+        'Accept',
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      ]]),
+    ]
     const response = await fetch('/v1/fetch', {
       method: 'POST',
       signal,
@@ -72,10 +85,7 @@
         Authorization: `Bearer ${accessToken}`,
         'X-KPanel-Browser-Target-URL': target,
         'X-KPanel-Browser-Target-Method': options.method || 'GET',
-        'X-KPanel-Browser-Target-Headers': encodeHeaders(options.headers || [
-          ['Accept', '*/*'],
-          ['Accept-Language', navigator.language || 'zh-CN'],
-        ]),
+        'X-KPanel-Browser-Target-Headers': encodeHeaders(targetHeaders),
       },
       body: options.body,
     })
@@ -147,7 +157,7 @@
     const title = parsed.title.trim().slice(0, 160)
     for (const element of [...parsed.querySelectorAll('*')]) {
       if (!allowedTags.has(element.tagName)) {
-        if (['SCRIPT', 'STYLE', 'LINK', 'IFRAME', 'OBJECT', 'EMBED', 'SVG', 'MATH'].includes(element.tagName)) {
+        if (discardedTags.has(element.tagName)) {
           element.remove()
         } else {
           element.replaceWith(...element.childNodes)
@@ -175,6 +185,34 @@
     `
     parsed.head.append(readableStyle)
     return { document: parsed, title }
+  }
+
+  function looksLikeHTML(bytes) {
+    let sample = new TextDecoder().decode(bytes.subarray(0, 2048)).replace(/^\uFEFF/, '').trimStart()
+    while (sample.startsWith('<!--')) {
+      const commentEnd = sample.indexOf('-->')
+      if (commentEnd < 0) return false
+      sample = sample.slice(commentEnd + 3).trimStart()
+    }
+    return /^(?:<!doctype\s+html\b|<html\b|<head\b|<body\b)/i.test(sample)
+  }
+
+  function looksLikeText(bytes) {
+    try {
+      const sample = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, 4096))
+      if (sample.includes('\0')) return false
+      const controls = [...sample].filter(character => {
+        const code = character.charCodeAt(0)
+        return code < 0x20 && character !== '\n' && character !== '\r' && character !== '\t'
+      }).length
+      return controls <= Math.max(2, Math.floor(sample.length * 0.01))
+    } catch {
+      return false
+    }
+  }
+
+  function hasRenderableContent(documentRoot) {
+    return Boolean(documentRoot.body.textContent.trim() || documentRoot.body.querySelector('img'))
   }
 
   async function hydrateImages(documentRoot, signal) {
@@ -213,33 +251,90 @@
     ))
   }
 
-  function connectDocument(documentRoot) {
+  function connectDocument(documentRoot, navigationID) {
     documentRoot.addEventListener('click', event => {
       const anchor = event.target.closest?.('[data-kpanel-href]')
       if (!anchor) return
       event.preventDefault()
-      navigate(anchor.dataset.kpanelHref)
+      navigate(anchor.dataset.kpanelHref, 0, navigationID)
     })
   }
 
-  async function renderHTML(result, target, signal) {
+  function loadViewport(attribute, value, signal) {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        viewport.removeEventListener('load', handleLoad)
+        viewport.removeEventListener('error', handleError)
+        signal?.removeEventListener('abort', handleAbort)
+      }
+      const handleLoad = () => {
+        cleanup()
+        resolve()
+      }
+      const handleError = () => {
+        cleanup()
+        reject(new Error('网页内容渲染失败'))
+      }
+      const handleAbort = () => {
+        cleanup()
+        reject(new DOMException('网页加载已取消', 'AbortError'))
+      }
+      viewport.addEventListener('load', handleLoad, { once: true })
+      viewport.addEventListener('error', handleError, { once: true })
+      signal?.addEventListener('abort', handleAbort, { once: true })
+      if (attribute === 'srcdoc') viewport.srcdoc = value
+      else {
+        viewport.removeAttribute('srcdoc')
+        viewport.src = value
+      }
+    })
+  }
+
+  async function renderHTMLBytes(bytes, target, signal, navigationID) {
+    if (bytes.byteLength > maxDocumentBytes) throw new Error('网页文档超过 8 MiB 安全预算')
+    const source = new TextDecoder().decode(bytes)
+    const sanitized = sanitizeHTML(source, target)
+    if (!hasRenderableContent(sanitized.document)) {
+      throw new Error('该网站依赖完整 JavaScript、Cookie 或浏览器验证，请使用系统浏览器打开')
+    }
+    await loadViewport('srcdoc', '<!doctype html>\n' + sanitized.document.documentElement.outerHTML, signal)
+    connectDocument(viewport.contentDocument, navigationID)
+    send('title', { title: sanitized.title || new URL(target).hostname, navigationId: navigationID })
+    hideStatus()
+    void hydrateImages(viewport.contentDocument, signal).catch(error => {
+      if (error?.name !== 'AbortError') console.warn('图片加载失败', error)
+    })
+  }
+
+  async function renderHTML(result, target, signal, navigationID) {
     const declared = Number(headerValue(result.headers, 'content-length') || 0)
     if (declared > maxDocumentBytes) {
       await cancelBody(result.response)
       throw new Error('网页文档超过 8 MiB 安全预算')
     }
     const bytes = await readBounded(result.response, maxDocumentBytes, '网页文档超过 8 MiB 安全预算')
-    const source = new TextDecoder().decode(bytes)
-    const sanitized = sanitizeHTML(source, target)
-    viewport.srcdoc = '<!doctype html>\n' + sanitized.document.documentElement.outerHTML
-    await new Promise(resolve => viewport.addEventListener('load', resolve, { once: true }))
-    connectDocument(viewport.contentDocument)
-    await hydrateImages(viewport.contentDocument, signal)
-    send('title', { title: sanitized.title || new URL(target).hostname })
+    await renderHTMLBytes(bytes, target, signal, navigationID)
+  }
+
+  async function renderTextBytes(bytes, target, signal, navigationID) {
+    if (bytes.byteLength > maxDocumentBytes) throw new Error('文本内容超过 8 MiB 安全预算')
+    const documentRoot = document.implementation.createHTMLDocument(new URL(target).hostname)
+    const readableStyle = documentRoot.createElement('style')
+    readableStyle.textContent = `
+      :root{color-scheme:light dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:Canvas;color:CanvasText}
+      body{max-width:1100px;margin:0 auto;padding:24px;line-height:1.65;overflow-wrap:anywhere}
+      pre{white-space:pre-wrap;word-break:break-word}
+    `
+    const content = documentRoot.createElement('pre')
+    content.textContent = new TextDecoder().decode(bytes)
+    documentRoot.head.append(readableStyle)
+    documentRoot.body.append(content)
+    await loadViewport('srcdoc', '<!doctype html>\n' + documentRoot.documentElement.outerHTML, signal)
+    send('title', { title: new URL(target).hostname, navigationId: navigationID })
     hideStatus()
   }
 
-  async function renderBinary(result, target) {
+  async function renderBinary(result, target, signal, navigationID) {
     const declared = Number(headerValue(result.headers, 'content-length') || 0)
     if (declared > maxBinaryBytes) {
       await cancelBody(result.response)
@@ -247,15 +342,22 @@
     }
     const bytes = await readBounded(result.response, maxBinaryBytes, '此资源超过 16 MiB，请使用外部下载')
     const type = headerValue(result.headers, 'content-type') || 'application/octet-stream'
+    if (looksLikeHTML(bytes)) {
+      await renderHTMLBytes(bytes, target, signal, navigationID)
+      return
+    }
+    if (type.toLowerCase().startsWith('text/') || type.toLowerCase().includes('json') || looksLikeText(bytes)) {
+      await renderTextBytes(bytes, target, signal, navigationID)
+      return
+    }
     const objectURL = URL.createObjectURL(new Blob([bytes], { type }))
     blobURLs.push(objectURL)
-    viewport.removeAttribute('srcdoc')
-    viewport.src = objectURL
+    await loadViewport('src', objectURL, signal)
     hideStatus()
-    send('title', { title: new URL(target).hostname })
+    send('title', { title: new URL(target).hostname, navigationId: navigationID })
   }
 
-  async function navigate(rawTarget, redirectDepth = 0) {
+  async function navigate(rawTarget, redirectDepth = 0, navigationID = '') {
     let target
     try {
       target = new URL(rawTarget).href
@@ -269,10 +371,16 @@
     }
     navigationController?.abort()
     navigationController = new AbortController()
-    const signal = navigationController.signal
+    const controller = navigationController
+    const signal = controller.signal
+    let timedOut = false
+    const navigationTimeout = window.setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, navigationTimeoutMs)
     revokeBlobs()
     showStatus('正在安全加载', new URL(target).hostname)
-    send('navigation', { url: target })
+    send('navigation', { url: target, navigationId: navigationID })
     try {
       const result = await relayFetch(target, {}, signal)
       if (result.status >= 300 && result.status < 400 && redirectDepth < 5) {
@@ -280,19 +388,29 @@
         const redirected = absoluteURL(location, target)
         if (redirected) {
           await cancelBody(result.response)
-          return navigate(redirected, redirectDepth + 1)
+          return navigate(redirected, redirectDepth + 1, navigationID)
         }
       }
       const type = headerValue(result.headers, 'content-type').toLowerCase()
       if (type.includes('text/html') || type.includes('application/xhtml+xml')) {
-        await renderHTML(result, target, signal)
+        await renderHTML(result, target, signal, navigationID)
       } else {
-        await renderBinary(result, target)
+        await renderBinary(result, target, signal, navigationID)
       }
     } catch (error) {
-      if (error?.name === 'AbortError') return
+      if (error?.name === 'AbortError' && !timedOut) return
+      if (timedOut) {
+        showStatus('网页加载超时', '目标站点超过 30 秒未完成响应，请重试或使用系统浏览器打开。', true)
+        send('error', { message: '网页加载超时', navigationId: navigationID })
+        return
+      }
       showStatus('网页加载失败', error instanceof Error ? error.message : '未知错误', true)
-      send('error', { message: error instanceof Error ? error.message : '网页加载失败' })
+      send('error', {
+        message: error instanceof Error ? error.message : '网页加载失败',
+        navigationId: navigationID,
+      })
+    } finally {
+      window.clearTimeout(navigationTimeout)
     }
   }
 
@@ -300,9 +418,11 @@
     if (event.origin !== panelOrigin || event.source !== window.parent) return
     const message = event.data
     if (!message || message.type !== 'kpanel-browser:navigate' || typeof message.token !== 'string' ||
-      typeof message.url !== 'string' || message.token.length > 2048 || message.url.length > 2048) return
+      typeof message.url !== 'string' || typeof message.navigationId !== 'string' ||
+      message.token.length > 2048 || message.url.length > 2048 || !message.navigationId.length ||
+      message.navigationId.length > 64) return
     accessToken = message.token
-    navigate(message.url)
+    navigate(message.url, 0, message.navigationId)
   })
 
   window.addEventListener('beforeunload', revokeBlobs)
