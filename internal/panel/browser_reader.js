@@ -188,10 +188,29 @@
     }
   }
 
+  function metaRefreshTarget(parsed, target) {
+    for (const meta of parsed.querySelectorAll('meta[http-equiv][content]')) {
+      if ((meta.getAttribute('http-equiv') || '').trim().toLowerCase() !== 'refresh') continue
+      const match = /^\s*(\d+(?:\.\d+)?)\s*;\s*url\s*=\s*(.*?)\s*$/i.exec(meta.getAttribute('content') || '')
+      if (!match || Number(match[1]) > 1) continue
+      let candidate = match[2].trim()
+      if ((candidate.startsWith('"') && candidate.endsWith('"')) ||
+        (candidate.startsWith("'") && candidate.endsWith("'"))) candidate = candidate.slice(1, -1).trim()
+      const resolved = absoluteURL(candidate, target)
+      if (resolved && resolved !== target) return resolved
+    }
+    return ''
+  }
+
   function renderHTML(bytes, headers, target) {
     const source = decoderFor(headers, bytes).decode(bytes)
     enforceHTMLParseBudget(source)
     const parsed = new DOMParser().parseFromString(source, 'text/html')
+    const redirected = metaRefreshTarget(parsed, target)
+    if (redirected) {
+      send({ type: 'redirect', navigationId: currentNavigationID, url: redirected })
+      return
+    }
     const fragment = document.createDocumentFragment()
     const state = { nodes: 0, images: [], hasVisibleContent: false }
     forEachChild(parsed.body, child => appendSanitized(child, fragment, target, state))

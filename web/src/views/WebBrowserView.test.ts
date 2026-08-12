@@ -340,6 +340,54 @@ describe('WebBrowserView', () => {
     wrapper.unmount()
   })
 
+  it('follows bounded document redirects reported by the isolated reader', async () => {
+    createBrowserSession.mockResolvedValue(readerSession)
+    const { wrapper } = await mountBrowser('/browser?url=https%3A%2F%2Fkejilion.sh%2F')
+    const frame = wrapper.get('iframe.embedded-browser__frame')
+    const childMessages: Array<Record<string, unknown>> = []
+    let childPort: ReaderTestPort | undefined
+    Object.defineProperty(frame.element, 'contentWindow', {
+      configurable: true,
+      value: {
+        postMessage: vi.fn((_message: unknown, _origin: string, ports: ReaderTestPort[]) => {
+          childPort = ports[0]
+          if (!childPort) throw new Error('reader port was not transferred')
+          childPort.onmessage = (event) => childMessages.push(event.data as Record<string, unknown>)
+          childPort.postMessage({ type: 'ready' })
+        }),
+      },
+    })
+    await frame.trigger('load')
+    await flushPromises()
+
+    for (let redirect = 1; redirect <= 5; redirect += 1) {
+      const navigationID = childMessages.filter((message) => message.type === 'render').at(-1)?.navigationId
+      childPort?.postMessage({
+        type: 'redirect',
+        navigationId: navigationID,
+        url: `https://kejilion.sh/page-${redirect}`,
+      })
+      await flushPromises()
+    }
+    expect(fetchBrowserReader).toHaveBeenLastCalledWith(
+      'signed-browser-token', 'https://kejilion.sh/page-5', 'document', expect.any(AbortSignal),
+    )
+
+    const finalNavigationID = childMessages.filter((message) => message.type === 'render').at(-1)?.navigationId
+    childPort?.postMessage({
+      type: 'redirect',
+      navigationId: finalNavigationID,
+      url: 'https://kejilion.sh/page-6',
+    })
+    await flushPromises()
+    expect(fetchBrowserReader).toHaveBeenCalledTimes(6)
+    expect(childMessages).toContainEqual(expect.objectContaining({
+      type: 'error',
+      message: expect.stringContaining('重定向过多'),
+    }))
+    wrapper.unmount()
+  })
+
   it('follows reader image redirects and always completes the child resource request', async () => {
     createBrowserSession.mockResolvedValue(readerSession)
     fetchBrowserReader.mockImplementation(async (_token, url, kind) => {

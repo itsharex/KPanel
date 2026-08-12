@@ -109,6 +109,7 @@ const activeNavigations = new Map<string, string>()
 const readerSessionRetries = new Map<string, number>()
 const readerNavigationDeadlines = new Map<string, number>()
 const readerSessionRetrying = new Map<string, string>()
+const readerDocumentRedirects = new Map<string, number>()
 const coreAbortController = new AbortController()
 let coreSessionRequest: Promise<BrowserCoreSession | undefined> | undefined
 let themeObserver: MutationObserver | undefined
@@ -531,6 +532,27 @@ function handleReaderPortMessage(tab: BrowserTab, value: unknown): void {
     if (message.navigationId !== activeNavigations.get(tab.id) || typeof message.url !== 'string') return
     const target = resolveEmbeddedBrowserTarget(message.url)
     if (!target) return
+    readerDocumentRedirects.delete(tab.id)
+    tab.target = target
+    tab.shortcutID = undefined
+    tab.iconURL = undefined
+    tab.title = target.hostname
+    if (tab.id === activeTabID.value && !addressEditing.value) addressValue.value = target.href
+    postNavigation(tab, true)
+    return
+  }
+  if (message.type === 'redirect') {
+    if (typeof message.navigationId !== 'string' || message.navigationId !== activeNavigations.get(tab.id) ||
+      typeof message.url !== 'string') return
+    const navigationID = message.navigationId
+    const target = resolveEmbeddedBrowserTarget(message.url)
+    if (!target || target.href === tab.target?.href) return
+    const redirects = readerDocumentRedirects.get(tab.id) || 0
+    if (redirects >= READER_REDIRECT_LIMIT) {
+      readerFailure(tab, navigationID, i18n.t('desktop.browserRedirectError'))
+      return
+    }
+    readerDocumentRedirects.set(tab.id, redirects + 1)
     tab.target = target
     tab.shortcutID = undefined
     tab.iconURL = undefined
@@ -654,6 +676,7 @@ function applyTargetToTab(
   target: EmbeddedBrowserTarget,
   shortcut?: EmbeddedBrowserShortcut,
 ): void {
+  readerDocumentRedirects.delete(tab.id)
   tab.target = target
   tab.title = shortcut?.name || target.hostname
   tab.shortcutID = shortcut?.id
@@ -733,6 +756,7 @@ function closeTab(tabID: string, consumePending = true): void {
   readerSessionRetries.delete(tabID)
   readerNavigationDeadlines.delete(tabID)
   readerSessionRetrying.delete(tabID)
+  readerDocumentRedirects.delete(tabID)
   replaceLiveTabIDs((next) => next.delete(tabID))
   tabs.value.splice(index, 1)
 
@@ -815,6 +839,7 @@ function goHome(): void {
   }
   sleepTab(tab.id)
   readerHistories.delete(tab.id)
+  readerDocumentRedirects.delete(tab.id)
   tab.target = undefined
   tab.shortcutID = undefined
   tab.iconURL = undefined
@@ -832,6 +857,7 @@ function postBrowserCommand(command: 'back' | 'forward' | 'reload'): void {
   if (!tab?.target || !session || !location || !frame?.contentWindow) return
   tab.error = undefined
   if (session.mode === 'reader') {
+    readerDocumentRedirects.delete(tab.id)
     const history = readerHistory(tab)
     if (command === 'back') {
       if (history.index <= 0) return

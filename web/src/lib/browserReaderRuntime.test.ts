@@ -106,4 +106,20 @@ describe('browser reader runtime', () => {
     expect(dom.window.document.getElementById('reader-content')?.textContent).toBe('中文')
     dom.window.close()
   })
+
+  it('follows an immediate meta refresh through the parent navigation channel', () => {
+    const { dom, port, render } = readerHarness()
+    render(new TextEncoder().encode(`<!doctype html><html><head>
+      <meta http-equiv="refresh" content="0; url=/index-zh-CN.html">
+      <title>Redirecting</title></head><body><p>Redirecting…</p></body></html>`), [
+      ['Content-Type', 'text/html; charset=utf-8'],
+    ], 'https://kejilion.sh/')
+
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'redirect',
+      url: 'https://kejilion.sh/index-zh-CN.html',
+    }), [])
+    expect(dom.window.document.getElementById('reader-content')?.hidden).toBe(true)
+    dom.window.close()
+  })
 })
