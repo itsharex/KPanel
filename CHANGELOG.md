@@ -15,6 +15,9 @@
 ### Fixed
 
 - 将 Scramjet 转交的流式请求体在浏览器端按 16 MiB 上限转换为定长二进制请求，并把空 POST 保留为明确的零长度请求，避免普通 HTTP/1.1 Relay 链路因流式上传协商失败或 chunked 空 body 而阻断表单、搜索和媒体请求；超限时不会发送部分请求，响应仍保持流式转发。
+- 将浏览器 Transport 与 Relay 的目标 URL 预算统一为 16 KiB UTF-8，避免搜索、媒体及动态资源的长 URL 被前端接受后又由 Relay 以 2 KiB 限制拒绝；HTTP(S)、公网 DNS/IP、SSRF 与标准 TLS 校验保持不变。
+- 允许隔离 Relay Origin 的 Scramjet Controller 本地读取 `data:` 与 `blob:` 资源，修复图片、JSON 和对象 URL 被 CSP 拦截后转为 Service Worker 500 的问题；CSP 仍不允许第三方 HTTP(S) 直连。
+- 响应头元数据预算改为在 JSON 转义与 Base64 后执行 32 KiB 最终编码上限，避免含大量特殊字符的目标响应头在反向代理层膨胀并触发 502。
 
 ### Security
 

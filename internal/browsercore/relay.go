@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -362,23 +363,64 @@ func validHeaderValue(value string) bool {
 
 func encodeResponseHeaders(headers http.Header) (string, bool) {
 	pairs := make([]HeaderPair, 0, len(headers))
-	size := 0
+	rawSize := 0
+	jsonSize := 2 // The surrounding JSON array brackets.
 	truncated := false
-	for name, values := range headers {
+	for _, name := range orderedResponseHeaderNames(headers) {
+		values := headers[name]
 		if hopByHopHeader(name) {
 			continue
 		}
 		for _, value := range values {
-			if len(pairs) >= 128 || size+len(name)+len(value) > defaultMaxHeaderMetadata {
+			pair := HeaderPair{name, value}
+			encodedPair, _ := json.Marshal(pair)
+			nextJSONSize := jsonSize + len(encodedPair)
+			if len(pairs) > 0 {
+				nextJSONSize++ // Comma between adjacent pairs.
+			}
+			if len(pairs) >= 128 || rawSize+len(name)+len(value) > defaultMaxHeaderMetadata ||
+				base64.RawURLEncoding.EncodedLen(nextJSONSize) > defaultMaxHeaderMetadata {
 				truncated = true
 				continue
 			}
-			pairs = append(pairs, HeaderPair{name, value})
-			size += len(name) + len(value)
+			pairs = append(pairs, pair)
+			rawSize += len(name) + len(value)
+			jsonSize = nextJSONSize
 		}
 	}
 	payload, _ := json.Marshal(pairs)
 	return base64.RawURLEncoding.EncodeToString(payload), truncated
+}
+
+func orderedResponseHeaderNames(headers http.Header) []string {
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	priority := func(name string) int {
+		switch http.CanonicalHeaderKey(name) {
+		case "Content-Type":
+			return 0
+		case "Location":
+			return 1
+		case "Set-Cookie":
+			return 2
+		default:
+			return 3
+		}
+	}
+	sort.Slice(names, func(left, right int) bool {
+		leftPriority, rightPriority := priority(names[left]), priority(names[right])
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
+		leftName, rightName := strings.ToLower(names[left]), strings.ToLower(names[right])
+		if leftName != rightName {
+			return leftName < rightName
+		}
+		return names[left] < names[right]
+	})
+	return names
 }
 
 func hopByHopHeader(name string) bool {

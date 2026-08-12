@@ -98,7 +98,7 @@ func (r *Relay) setKernelHeaders(w http.ResponseWriter) {
 	// The Scramjet v2 rewritten runtime evaluates page scripts inside this isolated Relay
 	// origin. Keep that capability out of the Panel origin and constrain every
 	// other source to the vendored runtime served here.
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors "+r.config.AllowedOrigin+"; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:; frame-src blob: data: 'self'; img-src data: blob: 'self'; object-src 'none'; form-action 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors "+r.config.AllowedOrigin+"; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' data: blob:; worker-src 'self' blob:; frame-src blob: data: 'self'; img-src data: blob: 'self'; object-src 'none'; form-action 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")

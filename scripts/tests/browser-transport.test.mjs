@@ -31,6 +31,15 @@ async function withFetchCapture(callback) {
   }
 }
 
+function targetAtUTF8ByteLimit(multibyte = false) {
+  const prefix = multibyte ? 'https://example.com/%E8%B7%AF%E5%BE%84?q=' : 'https://example.com/?q='
+  const remaining = 16 * 1024 - new TextEncoder().encode(prefix).byteLength
+  assert.ok(remaining > 0)
+  const target = new URL(prefix + 'a'.repeat(remaining))
+  assert.equal(new TextEncoder().encode(target.href).byteLength, 16 * 1024)
+  return target
+}
+
 test('buffers transferred request streams before the Relay fetch', async () => {
   await withFetchCapture(async (calls) => {
     const stream = new ReadableStream({
@@ -146,6 +155,27 @@ test('cancels a pending stream when the request is aborted during buffering', as
 
     await assert.rejects(request, error => error?.name === 'AbortError')
     assert.equal(cancelled, true)
+    assert.equal(calls.length, 0)
+  })
+})
+
+test('accepts exact-limit ASCII and encoded multibyte target URLs', async () => {
+  await withFetchCapture(async (calls) => {
+    await transportWithoutChannel().request(targetAtUTF8ByteLimit(false), 'GET', undefined, [])
+    await transportWithoutChannel().request(targetAtUTF8ByteLimit(true), 'GET', undefined, [])
+    assert.equal(calls.length, 2)
+  })
+})
+
+test('rejects target URLs above the UTF-8 byte limit before fetch', async () => {
+  await withFetchCapture(async (calls) => {
+    for (const multibyte of [false, true]) {
+      const overLimit = new URL(targetAtUTF8ByteLimit(multibyte).href + 'a')
+      await assert.rejects(
+        transportWithoutChannel().request(overLimit, 'GET', undefined, []),
+        /unsupported browser target/,
+      )
+    }
     assert.equal(calls.length, 0)
   })
 })

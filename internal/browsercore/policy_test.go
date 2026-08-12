@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +88,39 @@ func TestTargetPolicyAcceptsBrowserNormalizedInternationalHostname(t *testing.T)
 	}
 	if got := target.URL.Hostname(); got != "xn--fsqu00a.xn--0zwm56d" {
 		t.Fatalf("hostname = %q", got)
+	}
+}
+
+func TestTargetPolicyEnforcesUTF8URLByteLimit(t *testing.T) {
+	policy := NewTargetPolicy(staticResolver{
+		"example.com": {netip.MustParseAddr("93.184.216.34")},
+	})
+
+	for _, prefix := range []string{
+		"https://example.com/?q=",
+		"https://example.com/%E8%B7%AF%E5%BE%84?q=",
+	} {
+		exact := prefix + strings.Repeat("a", DefaultMaxURLBytes-len(prefix))
+		if got := len(exact); got != DefaultMaxURLBytes {
+			t.Fatalf("fixture byte length = %d, want %d", got, DefaultMaxURLBytes)
+		}
+		if _, err := policy.Resolve(context.Background(), exact); err != nil {
+			t.Fatalf("Resolve(exact UTF-8 limit) error = %v", err)
+		}
+		if _, err := policy.Resolve(context.Background(), exact+"a"); !errors.Is(err, ErrInvalidTarget) {
+			t.Fatalf("Resolve(over UTF-8 limit) error = %v, want %v", err, ErrInvalidTarget)
+		}
+	}
+
+	unicodePrefix := "https://example.com/路径?q="
+	rawExact := unicodePrefix + strings.Repeat("a", DefaultMaxURLBytes-len(unicodePrefix))
+	if got := len(rawExact); got != DefaultMaxURLBytes {
+		t.Fatalf("raw Unicode fixture byte length = %d, want %d", got, DefaultMaxURLBytes)
+	}
+	if _, err := policy.Resolve(context.Background(), rawExact); !errors.Is(err, ErrInvalidTarget) {
+		t.Fatalf("Resolve(URL expanded beyond normalized limit) error = %v, want %v", err, ErrInvalidTarget)
+	}
+	if _, err := policy.Resolve(context.Background(), "https://example.com/路径?q=ok"); err != nil {
+		t.Fatalf("Resolve(short normalized Unicode URL) error = %v", err)
 	}
 }

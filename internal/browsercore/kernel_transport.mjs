@@ -6,6 +6,7 @@ const upstreamHeadersHeader = 'X-KPanel-Browser-Upstream-Headers'
 const sessionChannelName = 'kpanel-browser-session-v1'
 const maxRelayedURLBytes = 16 * 1024
 const maxRelayedBodyBytes = 16 * 1024 * 1024
+const textEncoder = new TextEncoder()
 
 const blockedRequestHeaders = new Set([
   'accept-encoding',
@@ -156,7 +157,7 @@ export default class KPanelRelayTransport {
 
   async request(remote, method, body, headers, signal) {
     const target = remote instanceof URL ? remote : new URL(remote)
-    if ((target.protocol !== 'http:' && target.protocol !== 'https:') || target.href.length > maxRelayedURLBytes) {
+    if ((target.protocol !== 'http:' && target.protocol !== 'https:') || textEncoder.encode(target.href).byteLength > maxRelayedURLBytes) {
       throw new TypeError('unsupported browser target')
     }
     const bufferedBody = await bufferRequestBody(body, signal)

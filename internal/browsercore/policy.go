@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-const DefaultMaxURLBytes = 2 << 10
+// DefaultMaxURLBytes matches the browser transport's UTF-8 target URL budget.
+// Keep this bounded below MaxHeaderBytes so the URL and relay metadata can share
+// one request header block without weakening the target policy.
+const DefaultMaxURLBytes = 16 << 10
 
 var (
 	ErrInvalidTarget  = errors.New("invalid browser target")
@@ -73,16 +76,6 @@ func (p *TargetPolicy) Resolve(ctx context.Context, raw string) (Target, error) 
 		return Target{}, ErrBlockedTarget
 	}
 
-	addresses, err := p.lookup(ctx, host)
-	if err != nil {
-		return Target{}, err
-	}
-	for _, address := range addresses {
-		if !publicAddress(address) {
-			return Target{}, fmt.Errorf("%w: %s", ErrBlockedTarget, address)
-		}
-	}
-
 	normalized := *parsed
 	if port == "" {
 		if literal, parseErr := netip.ParseAddr(host); parseErr == nil && literal.Is6() {
@@ -95,6 +88,19 @@ func (p *TargetPolicy) Resolve(ctx context.Context, raw string) (Target, error) 
 	}
 	normalized.Fragment = ""
 	normalized.RawFragment = ""
+	if len(normalized.String()) > maxURLBytes {
+		return Target{}, ErrInvalidTarget
+	}
+
+	addresses, err := p.lookup(ctx, host)
+	if err != nil {
+		return Target{}, err
+	}
+	for _, address := range addresses {
+		if !publicAddress(address) {
+			return Target{}, fmt.Errorf("%w: %s", ErrBlockedTarget, address)
+		}
+	}
 	return Target{URL: &normalized, Addresses: addresses}, nil
 }
 

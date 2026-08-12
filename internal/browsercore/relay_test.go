@@ -125,6 +125,77 @@ func TestRelayStreamsResponseAndKeepsUpstreamMetadataOutOfBrowserHeaders(t *test
 	}
 }
 
+func TestResponseHeaderMetadataLimitIncludesJSONAndBase64Expansion(t *testing.T) {
+	encoded, truncated := encodeResponseHeaders(http.Header{
+		"Content-Type": {"text/plain; charset=utf-8"},
+		"X-Escaped":    {strings.Repeat("<&", 8<<10)},
+		"X-Small":      {"kept-after-oversized-value"},
+	})
+	if !truncated {
+		t.Fatal("expanded response header metadata was not truncated")
+	}
+	if len(encoded) > defaultMaxHeaderMetadata {
+		t.Fatalf("encoded response header metadata = %d bytes, want <= %d", len(encoded), defaultMaxHeaderMetadata)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pairs []HeaderPair
+	if err := json.Unmarshal(payload, &pairs); err != nil {
+		t.Fatal(err)
+	}
+	if len(pairs) != 2 || pairs[0] != (HeaderPair{"Content-Type", "text/plain; charset=utf-8"}) ||
+		pairs[1] != (HeaderPair{"X-Small", "kept-after-oversized-value"}) {
+		t.Fatalf("bounded response metadata = %#v", pairs)
+	}
+}
+
+func TestResponseHeaderMetadataIsDeterministicAndKeepsSemanticHeaders(t *testing.T) {
+	headers := http.Header{
+		"A-Fill":       {strings.Repeat("x", 24544)},
+		"Content-Type": {"text/html; charset=utf-8"},
+		"Location":     {"https://example.com/next"},
+		"Set-Cookie":   {"session=target; Secure; HttpOnly"},
+		"X-Tail":       {"optional"},
+	}
+	fillOnly, fillTruncated := encodeResponseHeaders(http.Header{"A-Fill": headers["A-Fill"]})
+	if fillTruncated || len(fillOnly) > defaultMaxHeaderMetadata {
+		t.Fatalf("standalone fill header was not a valid near-limit fixture: %d bytes, truncated=%t", len(fillOnly), fillTruncated)
+	}
+	first, firstTruncated := encodeResponseHeaders(headers)
+	if !firstTruncated {
+		t.Fatal("near-limit response metadata was not truncated")
+	}
+	for run := 0; run < 32; run++ {
+		encoded, truncated := encodeResponseHeaders(headers)
+		if encoded != first || truncated != firstTruncated {
+			t.Fatalf("response metadata changed across map iteration on run %d", run)
+		}
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pairs []HeaderPair
+	if err := json.Unmarshal(payload, &pairs); err != nil {
+		t.Fatal(err)
+	}
+	wantPrefix := []HeaderPair{
+		{"Content-Type", "text/html; charset=utf-8"},
+		{"Location", "https://example.com/next"},
+		{"Set-Cookie", "session=target; Secure; HttpOnly"},
+	}
+	if len(pairs) < len(wantPrefix) {
+		t.Fatalf("response metadata = %#v", pairs)
+	}
+	for index, want := range wantPrefix {
+		if pairs[index] != want {
+			t.Fatalf("response metadata pair %d = %#v, want %#v", index, pairs[index], want)
+		}
+	}
+}
+
 func TestRelayRejectsOriginTokenTargetAndHopByHopHeaders(t *testing.T) {
 	relay, token := newTestRelay(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
 		t.Fatal("upstream must not be called")
@@ -232,11 +303,16 @@ func TestKernelAssetsAreBoundToThePanelOrigin(t *testing.T) {
 	}
 	policy := page.Header().Get("Content-Security-Policy")
 	if !strings.Contains(policy, "frame-ancestors https://panel.example.com") ||
-		!strings.Contains(policy, "connect-src 'self'") ||
+		!strings.Contains(policy, "connect-src 'self' data: blob:") ||
 		!strings.Contains(policy, "worker-src 'self' blob:") ||
 		!strings.Contains(policy, "'unsafe-eval'") ||
 		!strings.Contains(policy, "'wasm-unsafe-eval'") {
 		t.Fatalf("kernel CSP = %q", policy)
+	}
+	if strings.Contains(policy, "connect-src 'self' http:") ||
+		strings.Contains(policy, "connect-src 'self' https:") ||
+		strings.Contains(policy, "connect-src *") {
+		t.Fatalf("kernel CSP permits direct third-party connections: %q", policy)
 	}
 	if strings.Contains(page.Body.String(), "signed-token") || strings.Contains(page.Body.String(), "secret") {
 		t.Fatalf("kernel page exposes credentials: %q", page.Body.String())
@@ -318,6 +394,8 @@ func TestKernelPreservesBrowserContextsInsteadOfSanitizingPages(t *testing.T) {
 		"body: response.body",
 		"this.sessionChannel.postMessage({ type: 'session-expired' })",
 		"blockedRequestHeaders",
+		"maxRelayedURLBytes = 16 * 1024",
+		"textEncoder.encode(target.href).byteLength",
 		"bufferRequestBody(body, signal)",
 		"maxRelayedBodyBytes = 16 * 1024 * 1024",
 	} {
