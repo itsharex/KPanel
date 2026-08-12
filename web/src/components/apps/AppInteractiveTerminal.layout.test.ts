@@ -48,6 +48,13 @@ describe('interactive task terminal layout', () => {
     expect(terminalSource).toMatch(
       /\.interactive-terminal__screen :deep\(\.xterm-viewport\)\s*\{[^}]*overflow-y: scroll !important;[^}]*overscroll-behavior: contain;/,
     )
+    expect(terminalSource).toMatch(
+      /\.interactive-terminal__screen :deep\(\.xterm-scrollable-element\)\s*\{[^}]*overscroll-behavior: contain;/,
+    )
+    expect(terminalSource).toContain('@touchmove="terminalTouchScroll.move"')
+    expect(terminalSource).toMatch(
+      /\.interactive-terminal__screen :deep\(\.xterm\)\s*\{[^}]*touch-action: none;/,
+    )
   })
 
   it('focuses interactive input without scrolling the desktop window', () => {

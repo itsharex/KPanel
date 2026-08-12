@@ -74,10 +74,31 @@ describe('multi-host terminal workspace layout', () => {
     )
   })
 
+  it('does not reserve an inline host-list row in mobile desktop mode', () => {
+    expect(desktopStyles).toMatch(
+      /@media \(max-width: 900px\)[\s\S]*?\.desktop-window__body \.terminal-workspace,[\s\S]*?\.desktop-window__body \.terminal-workspace\.is-connections-collapsed\s*\{[^}]*grid-template-rows:\s*minmax\(0, 1fr\) !important;/,
+    )
+    expect(desktopStyles).toMatch(
+      /@media \(max-width: 900px\)[\s\S]*?\.desktop-window__body \.terminal-connections\s*\{[^}]*border-right:\s*1px solid var\(--border\);[^}]*border-bottom:\s*0;/,
+    )
+  })
+
   it('contains wheel scrolling inside the host terminal viewport', () => {
     expect(hostTerminalSource).toContain('@wheel="containTerminalWheel"')
     expect(hostTerminalSource).toMatch(
       /\.host-terminal__screen :deep\(\.xterm-viewport\)\s*\{[^}]*overflow-y:scroll !important;[^}]*overscroll-behavior:contain;/,
+    )
+    expect(hostTerminalSource).toMatch(
+      /\.host-terminal__screen :deep\(\.xterm-scrollable-element\)\s*\{[^}]*overscroll-behavior:contain;/,
+    )
+  })
+
+  it('maps mobile vertical swipes to terminal scrollback without moving the desktop window', () => {
+    expect(hostTerminalSource).toContain('@touchstart="terminalTouchScroll.start"')
+    expect(hostTerminalSource).toContain('@touchmove="terminalTouchScroll.move"')
+    expect(hostTerminalSource).toContain('@touchend="terminalTouchScroll.end"')
+    expect(hostTerminalSource).toMatch(
+      /\.host-terminal__screen :deep\(\.xterm\)\s*\{[^}]*touch-action:none;/,
     )
   })
 

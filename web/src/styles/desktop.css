@@ -2126,6 +2126,18 @@ body.desktop-mode-open::-webkit-scrollbar {
   .desktop__icons {
     right: 8px;
   }
+
+  /* The terminal host list becomes an overlay drawer at this viewport. Do not
+     keep the narrow desktop-window row that was reserved for the inline list. */
+  .desktop-window__body .terminal-workspace,
+  .desktop-window__body .terminal-workspace.is-connections-collapsed {
+    grid-template-rows: minmax(0, 1fr) !important;
+  }
+
+  .desktop-window__body .terminal-connections {
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+  }
 }
 
 @media (max-width: 760px) {

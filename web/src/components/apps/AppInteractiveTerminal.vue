@@ -11,6 +11,7 @@ import { useTerminalFullscreen } from '@/composables/useTerminalFullscreen'
 import { useI18n } from '@/i18n'
 import { openTerminalURL } from '@/lib/terminalLinks'
 import { containWheelScroll } from '@/lib/scroll'
+import { createTerminalTouchScroll } from '@/lib/terminalTouchScroll'
 import {
   takeTerminalInputChunk,
   terminalInputShouldFlushImmediately,
@@ -84,8 +85,13 @@ function fitTerminal(): void {
 }
 
 function containTerminalWheel(event: WheelEvent): void {
-  containWheelScroll(event, host.value?.querySelector<HTMLElement>('.xterm-viewport'))
+  containWheelScroll(event, host.value?.querySelector<HTMLElement>('.xterm-viewport, .xterm-scrollable-element'))
 }
+
+const terminalTouchScroll = createTerminalTouchScroll({
+  getTerminal: () => terminal,
+  getScreen: () => host.value?.querySelector<HTMLElement>('.xterm-screen') ?? host.value,
+})
 
 async function flushInput(): Promise<void> {
   if (inputSending || !terminalInputOpen.value || disposed) return
@@ -333,6 +339,10 @@ onBeforeUnmount(() => {
       class="interactive-terminal__screen"
       @click="terminal?.focus()"
       @wheel="containTerminalWheel"
+      @touchstart="terminalTouchScroll.start"
+      @touchmove="terminalTouchScroll.move"
+      @touchend="terminalTouchScroll.end"
+      @touchcancel="terminalTouchScroll.end"
       @contextmenu="clipboardMenu?.open($event)"
       @paste.capture="clipboardMenu?.handlePaste($event)"
     />
@@ -461,10 +471,15 @@ onBeforeUnmount(() => {
 
 .interactive-terminal__screen :deep(.xterm) {
   height: 100%;
+  touch-action: none;
 }
 
 .interactive-terminal__screen :deep(.xterm-viewport) {
   overflow-y: scroll !important;
+  overscroll-behavior: contain;
+}
+
+.interactive-terminal__screen :deep(.xterm-scrollable-element) {
   overscroll-behavior: contain;
 }
 

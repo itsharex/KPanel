@@ -9,6 +9,7 @@ import { api, ApiError } from '@/lib/api'
 import { openTerminalURL } from '@/lib/terminalLinks'
 import { containWheelScroll } from '@/lib/scroll'
 import { takeTerminalInputChunk, terminalInputShouldFlushImmediately, terminalLineSubmission } from '@/lib/terminalInput'
+import { createTerminalTouchScroll } from '@/lib/terminalTouchScroll'
 import { useI18n } from '@/i18n'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 
@@ -86,8 +87,13 @@ function scrollToTop(): void {
 }
 
 function containTerminalWheel(event: WheelEvent): void {
-  containWheelScroll(event, host.value?.querySelector<HTMLElement>('.xterm-viewport'))
+  containWheelScroll(event, host.value?.querySelector<HTMLElement>('.xterm-viewport, .xterm-scrollable-element'))
 }
+
+const terminalTouchScroll = createTerminalTouchScroll({
+  getTerminal: () => terminal,
+  getScreen: () => host.value?.querySelector<HTMLElement>('.xterm-screen') ?? host.value,
+})
 
 async function flushInput(): Promise<void> {
   if (inputSending || disposed || state.value === 'finished') return
@@ -237,6 +243,10 @@ onBeforeUnmount(() => {
       class="host-terminal__screen terminal-screen"
       @click="terminal?.focus()"
       @wheel="containTerminalWheel"
+      @touchstart="terminalTouchScroll.start"
+      @touchmove="terminalTouchScroll.move"
+      @touchend="terminalTouchScroll.end"
+      @touchcancel="terminalTouchScroll.end"
       @contextmenu="clipboardMenu?.open($event)"
       @paste.capture="clipboardMenu?.handlePaste($event)"
     >
@@ -256,8 +266,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .host-terminal { display:grid; height:100%; grid-template-rows:minmax(0,1fr) auto; min-height:0; overflow:hidden; border:1px solid var(--terminal-shell-border,#29383a); border-radius:var(--terminal-shell-radius,12px); background:var(--terminal-shell-background,#0b1214); box-shadow:var(--terminal-shell-shadow); }
 .host-terminal__screen { position:relative; min-width:0; min-height:0; overflow:hidden; overscroll-behavior:contain; padding:10px 7px; }
-.host-terminal__screen :deep(.xterm) { height:100%; }
+.host-terminal__screen :deep(.xterm) { height:100%; touch-action:none; }
 .host-terminal__screen :deep(.xterm-viewport) { overflow-y:scroll !important; overscroll-behavior:contain; }
+.host-terminal__screen :deep(.xterm-scrollable-element) { overscroll-behavior:contain; }
 .host-terminal__composer { position:relative; z-index:2; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:9px 10px; border-top:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }
 .host-terminal__composer input { min-width:0; border:1px solid var(--terminal-shell-border,#29383a); border-radius:8px; padding:9px 11px; color:var(--terminal-shell-text,#d8dddc); background:var(--terminal-shell-background,#0b1214); font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 .host-terminal__composer button { border:0; border-radius:8px; padding:0 16px; color:#05251c; background:var(--brand,#35cba6); font-weight:800; }
