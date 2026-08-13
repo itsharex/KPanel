@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-08-13
+
 ### Removed
 
 - 移除桌面内置浏览器的 Web 界面、Panel API、Reader/Beta 运行时、Relay 服务、部署参数、依赖例外及相关测试与规范。
