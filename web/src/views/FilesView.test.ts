@@ -677,6 +677,31 @@ describe('FilesView directory loading', () => {
     expect(view.contextMenu.value?.entry?.path).toBe(second.path)
   })
 
+  it('trashes every selected entry from a selected entry context menu', async () => {
+    const view = setupView()
+    const first = testEntry('first.txt')
+    const second = testEntry('second.txt')
+    view.directory.value = { path: '/', entries: [first, second] }
+    view.selected.value = new Set([first.path, second.path])
+    mocks.action.mockResolvedValueOnce({
+      action: 'trash',
+      succeeded: [{ path: first.path }, { path: second.path }],
+      failed: [],
+    })
+
+    view.openDialog('trash', second)
+    await view.submitDialog()
+
+    expect(mocks.action).toHaveBeenCalledWith({
+      action: 'trash',
+      sources: [first.path, second.path],
+      expectedResourceVersions: {
+        [first.path]: first.resourceVersion,
+        [second.path]: second.resourceVersion,
+      },
+    })
+  })
+
   it('uses Windows-style click, control-click, and shift-click selection', () => {
     const view = setupView()
     const first = testEntry('a.txt')

@@ -228,6 +228,42 @@ func TestUploadCopyMoveChmodAndTrash(t *testing.T) {
 	}
 }
 
+func TestTrashActionProcessesEverySource(t *testing.T) {
+	manager, root := newTestManager(t)
+	sources := []string{"/first.txt", "/second.txt"}
+	expectedVersions := make(map[string]string, len(sources))
+	for _, source := range sources {
+		mustWrite(t, filepath.Join(root, strings.TrimPrefix(source, "/")), source)
+		entry, err := manager.Stat(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedVersions[source] = entry.ResourceVersion
+	}
+
+	result, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action:                   "trash",
+		Sources:                  sources,
+		ExpectedResourceVersions: expectedVersions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Succeeded) != len(sources) || len(result.Failed) != 0 {
+		t.Fatalf("batch trash result: %#v", result)
+	}
+	for _, source := range sources {
+		_, err := os.Stat(filepath.Join(root, strings.TrimPrefix(source, "/")))
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s was not moved to trash: %v", source, err)
+		}
+	}
+	trash, err := manager.ListTrash(context.Background())
+	if err != nil || trash.Total != len(sources) {
+		t.Fatalf("unexpected trash after batch action: %#v err=%v", trash, err)
+	}
+}
+
 func TestTrashCanBeListedRestoredAndPermanentlyDeleted(t *testing.T) {
 	manager, root := newTestManager(t)
 	mustMkdirAll(t, filepath.Join(root, "documents"))

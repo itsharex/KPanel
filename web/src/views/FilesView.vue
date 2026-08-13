@@ -503,7 +503,8 @@ function showDirectoryContext(event: MouseEvent): void {
 
 function openDialog(action: DialogAction, entry?: FileEntry): void {
   contextMenu.value = undefined
-  dialogEntries.value = entry ? [entry] : [...selectedEntries.value]
+  const useSelectedEntries = !entry || (action === 'trash' && selected.value.has(entry.path))
+  dialogEntries.value = useSelectedEntries ? [...selectedEntries.value] : [entry]
   if ((action === 'compress' || action === 'extract') && !dialogEntries.value.length) return
   dialogAction.value = action
   if (action === 'mkdir') dialogValue.value = ''
