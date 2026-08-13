@@ -188,7 +188,6 @@ export const zhCNMessages = {
   'desktop.back': '返回上一页',
   'desktop.systemBrowserOpen': '在系统浏览器中打开',
   'desktop.externalOpenConfirmTitle': '确认跳转',
-  'desktop.externalOpenConfirmNotice': '请确认目标地址可信后再继续。',
   'desktop.windowLoadFailed': '窗口内容加载失败',
   'desktop.windowLimitTitle': '窗口数量已达上限',
   'desktop.windowLimitMessage': '最多同时打开 8 个窗口，请先关闭一个窗口后再试。',

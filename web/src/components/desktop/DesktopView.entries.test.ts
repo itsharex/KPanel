@@ -115,6 +115,7 @@ describe('DesktopView dynamic entries', () => {
     expect(document.body.querySelector('.desktop__external-confirm-identity code')?.textContent)
       .toBe('https://blog.example.com')
     expect(document.body.querySelector('.desktop__external-confirm dl')).toBeNull()
+    expect(document.body.querySelector('.desktop__external-confirm > small')).toBeNull()
     const confirmIcon = document.body.querySelector<HTMLImageElement>(
       '.desktop__external-confirm-icon-image',
     )

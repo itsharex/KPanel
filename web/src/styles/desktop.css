@@ -1712,9 +1712,6 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: #fff;
   border: 1px solid rgb(255 255 255 / 28%);
   border-radius: 18px;
-  box-shadow:
-    0 12px 26px rgb(1 11 14 / 24%),
-    inset 0 1px 0 rgb(255 255 255 / 20%);
 }
 
 .desktop__external-confirm-icon-image {
@@ -1744,11 +1741,6 @@ body.desktop-mode-open::-webkit-scrollbar {
   font-size: 11px;
   line-height: 1.45;
   word-break: break-word;
-}
-
-.desktop__external-confirm > small {
-  color: var(--muted);
-  line-height: 1.5;
 }
 
 .desktop__rename-form label {

@@ -924,7 +924,6 @@ function onViewportResize(): void {
             <code>{{ externalOpenEntry.url }}</code>
           </div>
         </div>
-        <small>{{ i18n.t('desktop.externalOpenConfirmNotice') }}</small>
       </div>
       <template #footer>
         <button class="button button--ghost" type="button" @click="closeExternalOpen">
