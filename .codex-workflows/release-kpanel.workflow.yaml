@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
 description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产观察和回滚记录"
-version: "1.8"
+version: "1.9"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, apps_repo]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-13T02:48:04Z"
+updated: "2026-08-13T02:51:10Z"
 ---
 
 # Release KPanel
@@ -124,6 +124,10 @@ docker run --rm \
 按发布画像补充自动门禁不能代替的证据：受影响性能基准、桌面/窄视口、浅/深色、键盘/焦点、
 多语言、失败状态、`kejilion.sh` 双向互通，以及 L2/L3 写路径的失败注入、重启恢复和回滚。
 危险或破坏性写操作优先使用隔离真机，不为了生产形式完整主动改变无关业务数据。
+
+内置浏览器相关变更的专项连续测试窗口固定为 10 分钟，不再默认执行 30 分钟。该窗口必须在隔离真机、
+154 或另行授权的专用测试环境中覆盖受影响真实页面、导航/刷新、样式或脚本边界、健康、重启、OOM
+和资源趋势；10 分钟通过不能替代本步骤的 L3、安全扫描、公开镜像 E2E 或回滚门禁。
 
 **Expected output:** L3 测试、构建、安装安全、应用配置生命周期和工作流静态检查全部通过。
 
