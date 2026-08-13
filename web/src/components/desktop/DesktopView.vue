@@ -12,6 +12,7 @@ import {
   SquareTerminal,
   AppWindow,
   ExternalLink,
+  Globe2,
   ListTree,
   X,
 } from '@lucide/vue'
@@ -138,6 +139,7 @@ const menuEntry = ref<DesktopEntry>()
 const menuWindowId = ref<number>()
 const detailEntry = ref<DesktopEntry>()
 const externalOpenEntry = ref<DesktopEntry>()
+const externalOpenImageFailed = ref(false)
 const renameEntry = ref<DesktopEntry>()
 const renameValue = ref('')
 let contextMenuOpener: HTMLElement | undefined
@@ -253,6 +255,7 @@ function openEntry(entry: DesktopEntry): void {
 
 function requestExternalOpen(entry: DesktopEntry): void {
   if (!entry.url) return
+  externalOpenImageFailed.value = false
   externalOpenEntry.value = entry
 }
 
@@ -266,6 +269,10 @@ function confirmExternalOpen(): void {
   window.open(entry.url, '_blank', 'noopener,noreferrer')
   closeExternalOpen()
 }
+
+const externalOpenMonogram = computed(() =>
+  externalOpenEntry.value?.name.trim().slice(0, 1).toLocaleUpperCase() || 'K',
+)
 
 function openAppScriptEntry(entry: DesktopEntry): void {
   const path = `/app-script/${encodeURIComponent(entry.id)}`
@@ -887,7 +894,33 @@ function onViewportResize(): void {
       @close="closeExternalOpen"
     >
       <div v-if="externalOpenEntry" class="desktop__external-confirm">
-        <p>{{ i18n.t('desktop.externalOpenConfirmMessage', { name: externalOpenEntry.name }) }}</p>
+        <div class="desktop__external-confirm-entry">
+          <span
+            class="desktop__external-confirm-icon"
+            :style="{ background: entryGradient(externalOpenEntry) }"
+            aria-hidden="true"
+          >
+            <img
+              v-if="externalOpenEntry.iconURL && !externalOpenImageFailed"
+              class="desktop__external-confirm-icon-image"
+              :src="externalOpenEntry.iconURL"
+              alt=""
+              decoding="async"
+              referrerpolicy="no-referrer"
+              width="64"
+              height="64"
+              @error="externalOpenImageFailed = true"
+            />
+            <span v-else-if="externalOpenEntry.kind === 'site'" class="desktop__site-fallback">
+              <span class="desktop__site-fallback-letter">{{ externalOpenMonogram }}</span>
+              <span class="desktop__site-fallback-badge">
+                <Globe2 :size="11" :stroke-width="2.2" />
+              </span>
+            </span>
+            <span v-else class="desktop__icon-monogram">{{ externalOpenMonogram }}</span>
+          </span>
+          <p>{{ i18n.t('desktop.externalOpenConfirmMessage', { name: externalOpenEntry.name }) }}</p>
+        </div>
         <dl>
           <dt>{{ i18n.t('desktop.detailURL') }}</dt>
           <dd>{{ externalOpenEntry.url }}</dd>

@@ -110,6 +110,10 @@ describe('DesktopView dynamic entries', () => {
       .toContain('blog.example.com')
     expect(document.body.querySelector('.desktop__external-confirm')?.textContent)
       .toContain('https://blog.example.com')
+    const confirmIcon = document.body.querySelector<HTMLImageElement>(
+      '.desktop__external-confirm-icon-image',
+    )
+    expect(confirmIcon?.getAttribute('src')).toBe('/api/v1/sites/blog/icon')
     expect(window.open).not.toHaveBeenCalled()
 
     document.body.querySelector<HTMLButtonElement>('.modal-panel__footer .button--primary')?.click()
@@ -136,6 +140,8 @@ describe('DesktopView dynamic entries', () => {
     expect(document.body.querySelector('.desktop__external-confirm')?.textContent).toContain('Nginx')
     expect(document.body.querySelector('.desktop__external-confirm')?.textContent)
       .toContain('http://192.168.1.5:8080')
+    expect(document.body.querySelector<HTMLImageElement>('.desktop__external-confirm-icon-image')
+      ?.getAttribute('src')).toBe('/api/v1/apps/nginx/icon')
     expect(window.open).not.toHaveBeenCalled()
 
     document.body.querySelector<HTMLButtonElement>('.modal-panel__footer .button--primary')?.click()
@@ -145,6 +151,24 @@ describe('DesktopView dynamic entries', () => {
       '_blank',
       'noopener,noreferrer',
     )
+    wrapper.unmount()
+  })
+
+  it('shows a branded fallback in the confirmation when the website icon fails', async () => {
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await nextTick()
+    await nextTick()
+
+    await wrapper.find('button[title="blog.example.com"]').trigger('dblclick')
+    await nextTick()
+    document.body.querySelector<HTMLImageElement>('.desktop__external-confirm-icon-image')
+      ?.dispatchEvent(new Event('error'))
+    await nextTick()
+
+    expect(document.body.querySelector('.desktop__external-confirm .desktop__site-fallback-letter')
+      ?.textContent).toBe('B')
+    expect(document.body.querySelector('.desktop__external-confirm .desktop__site-fallback-badge'))
+      .not.toBeNull()
     wrapper.unmount()
   })
 
