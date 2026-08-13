@@ -28,7 +28,6 @@ const props = defineProps<{
 const { t } = useI18n()
 
 const host = ref<HTMLElement>()
-const composerInput = ref<HTMLInputElement>()
 const clipboardMenu = ref<InstanceType<typeof TerminalContextMenu>>()
 const connectionState = ref<'connecting' | 'connected' | 'finished' | 'error'>('connecting')
 const terminalInputOpen = ref(Boolean(props.inputOpen))
@@ -77,7 +76,17 @@ function writeTerminalOutput(data: string | Uint8Array): void {
 
 function scrollToTop(): void {
   terminal?.scrollToTop()
+  if (terminalInputOpen.value) focusTerminal()
+}
+
+function focusTerminal(): void {
   terminal?.focus()
+}
+
+function focusTerminalWhenInputOpens(): void {
+  void nextTick(() => {
+    if (terminalInputOpen.value && !disposed) focusTerminal()
+  })
 }
 
 function fitTerminal(): void {
@@ -200,6 +209,7 @@ function resetTerminal(): void {
   pendingLine.value = ''
   terminalInputOpen.value = Boolean(props.inputOpen)
   connectionState.value = 'connecting'
+  if (terminalInputOpen.value) focusTerminalWhenInputOpens()
   if (pollTimer) window.clearTimeout(pollTimer)
   pollTimer = window.setTimeout(() => void poll(), 0)
 }
@@ -212,7 +222,7 @@ watch(
   },
 )
 watch(terminalInputOpen, (open) => {
-  if (open) void nextTick(() => composerInput.value?.focus({ preventScroll: true }))
+  if (open) focusTerminalWhenInputOpens()
 })
 
 onMounted(() => {
@@ -260,11 +270,7 @@ onMounted(() => {
     fitAddon.fit()
     resizeObserver = new ResizeObserver(() => fitAddon?.fit())
     resizeObserver.observe(host.value)
-    if (terminalInputOpen.value) {
-      window.requestAnimationFrame(() => composerInput.value?.focus({ preventScroll: true }))
-    } else {
-      terminal.focus()
-    }
+    if (terminalInputOpen.value) window.requestAnimationFrame(focusTerminal)
   }
   void poll()
 })
@@ -337,7 +343,7 @@ onBeforeUnmount(() => {
     <div
       ref="host"
       class="interactive-terminal__screen"
-      @click="terminal?.focus()"
+      @click="terminalInputOpen && focusTerminal()"
       @wheel="containTerminalWheel"
       @touchstart="terminalTouchScroll.start"
       @touchmove="terminalTouchScroll.move"
@@ -352,7 +358,6 @@ onBeforeUnmount(() => {
       @submit.prevent="submitPendingLine"
     >
       <input
-        ref="composerInput"
         v-model="pendingLine"
         type="text"
         aria-label="预输入终端内容"

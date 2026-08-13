@@ -57,8 +57,11 @@ describe('interactive task terminal layout', () => {
     )
   })
 
-  it('focuses interactive input without scrolling the desktop window', () => {
-    expect(terminalSource).toContain("composerInput.value?.focus({ preventScroll: true })")
+  it('focuses the shell when input opens and leaves the composer user-activated', () => {
+    expect(terminalSource).toContain('if (open) focusTerminalWhenInputOpens()')
+    expect(terminalSource).toContain('if (terminalInputOpen.value) window.requestAnimationFrame(focusTerminal)')
+    expect(terminalSource).toContain('@click="terminalInputOpen && focusTerminal()"')
+    expect(terminalSource).not.toContain('composerInput')
   })
 
   it('shares the terminal clipboard behavior with host terminals', () => {
