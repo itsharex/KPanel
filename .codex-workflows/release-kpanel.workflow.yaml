@@ -1,7 +1,7 @@
 ---
 name: release-kpanel
 description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产部署安全核对和回滚记录"
-version: "2.0"
+version: "2.1"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, apps_repo, validation_environment, production_environment]
@@ -134,7 +134,12 @@ docker run --rm \
 `${{validation_environment}}` 后台执行，前台发布任务只记录 job ID 并由监控任务读取终态：
 
 > Invoke workflow: `background-browser-validation` with params:
-> project_dir=${{project_dir}}, candidate_ref=<步骤 1 冻结的完整提交>, test_environment=${{validation_environment}}
+> project_dir=${{project_dir}}, candidate_ref=<步骤 1 冻结的完整提交>, test_environment=${{validation_environment}},
+> evidence_dir=<本次唯一持久化证据目录>, timeout_seconds=<风险窗口加清理余量>,
+> command_spec=<无秘密、已哈希的仓库测试命令规格>
+
+六项输入必须在启动前一次固定；不得由后续监控会话自行补默认值。没有仓库稳定用例入口的新旅程可在
+本次任务中形成最小命令规格；同类旅程第二次出现时应沉淀为仓库测试入口，避免每次发布临时重写。
 
 普通确定性交互不机械执行 soak；生命周期、重连、并发、流式或资源趋势风险按画像选择窗口或循环数。
 后台化不减少断言，未获得 `passed` 终态、完整用例、资源保护和清理证据时不得继续发布。
@@ -318,6 +323,8 @@ soak、压力或失败注入；这些结论必须在部署前由隔离环境提�
 - `${{apps_repo}}`：`kejilion/apps` 本地路径，默认 `C:\GitHub\kejilion\apps`。
 - `${{validation_environment}}`：登记的隔离验收环境，默认 `arena-154`。
 - `${{production_environment}}`：登记的稳定生产部署环境，默认 `prod-108`。
+- 浏览器验收的证据目录、硬超时和命令规格仅在发布画像要求真实浏览器时固定，并完整传给
+  `background-browser-validation`；无浏览器影响时标记不适用，不创建空作业。
 
 ## Verification
 

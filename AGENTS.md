@@ -8,8 +8,11 @@
 3. `docs/multi-agent-collaboration.md`：跨 Codex、Claude 和其他智能体的运行手册；
 4. `.codex-workflows/`：Codex 可发现的参数化执行适配，不是第二套规范。
 
-开始任务前完整阅读前三项；涉及具体业务时再读取对应设计文档、现有实现和测试。已有证据足够时
-禁止重复全仓扫描。
+不机械地在每个小任务完整重读三份长文。先读本入口和
+`docs/product-quality-review-2026-08-13.md` 定位业务域，再按风险加载：L0 只读受影响文档与相关规则；
+L1 读取 `PROJECT_RULES.md` 的工程契约、产品质量和核验分级及领域文档；L2 完整读取
+`PROJECT_RULES.md` 与项目管理的任务/验证/集成章节；L3 或规范架构变更完整读取前三项和相关工作流。
+已有精确证据足够时禁止重复全仓扫描。
 
 ## 启动检查
 
@@ -27,8 +30,8 @@ git worktree list
 
 3. `origin` 必须为 `git@github.com:kejilion/KPanel.git`。GitHub App、Issue、PR、API、插件或 `gh`
    登录不是本地开发前置条件。
-4. 读取 `.codex-workflows/README.md` 并列出工作流；发布、整体质量审计、受控自我改进、真机应用生命周期
-   和站点图标验收优先复用现有工作流。
+4. 只有任务涉及发布、整体质量审计、受控自我改进或专项真机验收时，才读取
+   `.codex-workflows/README.md` 并列出相关工作流；普通 L0/L1 不为发现流程加载全部工作流。
 5. 按 `docs/project-management.md` 填写标准任务契约。写任务达到 Definition of Ready 后，才能在
    最新批准基线创建专用 branch/worktree；管理工作树只用于同步、盘点和只读比较。
 

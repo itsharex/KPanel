@@ -178,6 +178,16 @@ git worktree list
 ## 7. 开发、验证与交付包
 
 开发遵守 `PROJECT_RULES.md` 的 L0-L3 分级和 `make verify-change`/`make verify-release` 权威入口。
+执行时只走以下最短决策链：
+
+1. 日常任务只运行 `make verify-change`；它根据差异选择 Web、Go、部署或治理检查，不再由会话逐条
+   拼接固定命令。
+2. 触及跨端契约、Agent 权限或宿主机写入时显式使用 L2；形成版本、镜像或安装更新时使用 L3。
+3. 只对受影响用户旅程补实机、浏览器、性能和失败恢复证据；未触及的维度写明“不适用”依据。
+4. 只有修改永久规范、工作流、环境/依赖策略或治理入口时才完整运行
+   `scripts/verify-governance.sh`；该脚本由 `make governance-check` 和变更感知入口共同复用，禁止再维护
+   第三份命令清单。
+
 每项任务向协调中心回传同一结构的交付包：
 
 ```text

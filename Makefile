@@ -24,12 +24,7 @@ security-audit:
 	$(NPM) audit --prefix web --audit-level=high
 
 governance-check:
-	node scripts/check-governance-consistency.mjs
-	$(MAKE) environment-policy-check
-	node --test scripts/tests/background-browser-test.test.mjs
-	node --test scripts/tests/report-release-metrics.test.mjs
-	node --test scripts/tests/report-dependency-freshness.test.mjs
-	node scripts/report-dependency-freshness.mjs --validate-only
+	bash scripts/verify-governance.sh
 
 environment-policy-check:
 	node scripts/check-environment-policy.mjs --validate-only

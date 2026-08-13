@@ -43,13 +43,30 @@ fi
 ECOSYSTEM_POLICY_BASE_REF="$base_ref" bash scripts/check-ecosystem-policy.sh
 bash scripts/check-version-consistency.sh
 bash scripts/check-managed-script-contract.sh
-node scripts/check-governance-consistency.mjs
-node scripts/check-environment-policy.mjs --validate-only
-node --test scripts/tests/check-environment-policy.test.mjs
-node --test scripts/tests/background-browser-test.test.mjs
-node --test scripts/tests/report-release-metrics.test.mjs
-node --test scripts/tests/report-dependency-freshness.test.mjs
-node scripts/report-dependency-freshness.mjs --validate-only
+
+needs_governance=false
+for path in "${changed_files[@]}"; do
+  case "$path" in
+    PROJECT_RULES.md|AGENTS.md|CLAUDE.md|Makefile|dependency-policy.json|environment-policy.json|\
+    .codex-workflows/*|docs/project-management.md|docs/multi-agent-collaboration.md|\
+    docs/development-quality-standard.md|docs/release-acceptance-template.md|\
+    docs/quality-improvement-proposal-template.md|docs/product-quality-review-*.md|\
+    scripts/check-governance-consistency.mjs|scripts/check-environment-policy.mjs|\
+    scripts/background-browser-test.mjs|scripts/report-release-metrics.mjs|\
+    scripts/report-dependency-freshness.mjs|scripts/verify-governance.sh|scripts/verify-change.sh|\
+    scripts/tests/check-environment-policy.test.mjs|scripts/tests/background-browser-test.test.mjs|\
+    scripts/tests/report-release-metrics.test.mjs|scripts/tests/report-dependency-freshness.test.mjs|\
+    .github/workflows/dependency-freshness.yml)
+      needs_governance=true
+      ;;
+  esac
+done
+
+if [[ "$needs_governance" == true || "$requested_level" == "3" || "$requested_level" == "l3" || "$requested_level" == "release" ]]; then
+  bash scripts/verify-governance.sh
+else
+  node scripts/check-governance-consistency.mjs
+fi
 
 if [[ ${#changed_files[@]} -eq 0 ]]; then
   echo "No changes require verification."

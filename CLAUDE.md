@@ -1,12 +1,13 @@
 # KPanel Claude 适配入口
 
 本文件只说明 Claude/Claude Code 如何进入共享规范，不维护 Claude 专属的产品规则、质量标准或门禁。
-开始任务前完整阅读：
+先阅读本入口和 `docs/product-quality-review-2026-08-13.md` 定位业务域，再按风险加载共享规范：
 
-1. `PROJECT_RULES.md`；
-2. `docs/project-management.md`；
-3. `docs/multi-agent-collaboration.md`；
-4. 与任务相关的设计文档、现有实现和测试。
+1. L0：受影响文档与相关规则；
+2. L1：`PROJECT_RULES.md` 的工程契约、产品质量和核验分级，以及领域文档、实现和测试；
+3. L2：完整 `PROJECT_RULES.md` 与项目管理的任务、验证、集成章节；
+4. L3 或规范架构变更：完整读取 `PROJECT_RULES.md`、`docs/project-management.md`、
+   `docs/multi-agent-collaboration.md` 和相关工作流。
 
 ## 启动与所有权
 

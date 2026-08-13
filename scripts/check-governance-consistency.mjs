@@ -15,11 +15,13 @@ const requiredFiles = [
   'docs/project-management.md',
   'docs/multi-agent-collaboration.md',
   'docs/development-quality-standard.md',
+  'docs/product-quality-review-2026-08-13.md',
   'docs/release-acceptance-template.md',
   'docs/quality-improvement-proposal-template.md',
   'dependency-policy.json',
   'environment-policy.json',
   'scripts/check-environment-policy.mjs',
+  'scripts/verify-governance.sh',
   'scripts/tests/check-environment-policy.test.mjs',
   'scripts/background-browser-test.mjs',
   'scripts/tests/background-browser-test.test.mjs',
@@ -118,6 +120,7 @@ const adapterTokens = [
   'Definition of Done',
   'make verify-change',
   'make verify-release',
+  'docs/product-quality-review-2026-08-13.md',
 ];
 requireText('AGENTS.md', adapterTokens);
 requireText('CLAUDE.md', adapterTokens);
@@ -133,6 +136,17 @@ requireText('PROJECT_RULES.md', [
   'environment-policy.json',
   '后台浏览器',
   'prod-108',
+  '有界容器内控制台',
+]);
+requireText('docs/development-quality-standard.md', [
+  '宿主机系统动作',
+  '`kejilion.sh` 原生交互',
+  '目标容器内控制台',
+]);
+requireText('docs/product-quality-review-2026-08-13.md', [
+  'KPanel 业务默契度与流程效率复核',
+  'scripts/verify-governance.sh',
+  '三种信任边界',
 ]);
 requireText('docs/project-management.md', [
   'Definition of Ready',
@@ -154,6 +168,21 @@ requireText('.codex-workflows/README.md', [
   'make dependency-report',
   'background-browser-validation.workflow.yaml',
   'environment-policy.json',
+  'docs/product-quality-review-2026-08-13.md',
+]);
+requireText('Makefile', [
+  'governance-check:',
+  'bash scripts/verify-governance.sh',
+]);
+requireText('scripts/verify-change.sh', [
+  'needs_governance=false',
+  'bash scripts/verify-governance.sh',
+  'node scripts/check-governance-consistency.mjs',
+]);
+requireText('.codex-workflows/release-kpanel.workflow.yaml', [
+  'evidence_dir=<本次唯一持久化证据目录>',
+  'timeout_seconds=<风险窗口加清理余量>',
+  'command_spec=<无秘密、已哈希的仓库测试命令规格>',
 ]);
 
 requireText('docs/release-acceptance-template.md', [
@@ -163,7 +192,7 @@ requireText('docs/release-acceptance-template.md', [
   '## 依赖与技术栈变化',
   '最近每日安全通告审计、EOL 复核状态及证据',
   '## 隔离真机与浏览器验收',
-  '后台作业 ID、终态、退出码、超时和证据目录',
+  '后台作业 ID、终态、退出码、超时、证据目录、命令规格路径及 SHA-256',
   '## 生产部署安全核对',
   '不参与候选或功能验证',
   '## 回滚',
