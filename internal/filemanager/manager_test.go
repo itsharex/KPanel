@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -261,6 +262,121 @@ func TestTrashActionProcessesEverySource(t *testing.T) {
 	trash, err := manager.ListTrash(context.Background())
 	if err != nil || trash.Total != len(sources) {
 		t.Fatalf("unexpected trash after batch action: %#v err=%v", trash, err)
+	}
+}
+
+func TestBatchCopyMoveAndChmodProcessEverySource(t *testing.T) {
+	manager, root := newTestManager(t)
+	mustMkdirAll(t, filepath.Join(root, "copy-target"))
+	mustMkdirAll(t, filepath.Join(root, "move-target"))
+	copySources := []string{"/copy-first.txt", "/copy-second.txt"}
+	moveSources := []string{"/move-first.txt", "/move-second.txt"}
+	for _, source := range append(copySources, moveSources...) {
+		mustWrite(t, filepath.Join(root, strings.TrimPrefix(source, "/")), source)
+	}
+
+	result, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "copy", Sources: copySources, Target: "/copy-target",
+	})
+	if err != nil || len(result.Succeeded) != len(copySources) || len(result.Failed) != 0 {
+		t.Fatalf("batch copy result: %#v err=%v", result, err)
+	}
+	result, err = manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "move", Sources: moveSources, Target: "/move-target",
+	})
+	if err != nil || len(result.Succeeded) != len(moveSources) || len(result.Failed) != 0 {
+		t.Fatalf("batch move result: %#v err=%v", result, err)
+	}
+
+	chmodSources := make([]string, 0, len(copySources))
+	expectedVersions := make(map[string]string, len(copySources))
+	for _, source := range copySources {
+		target := "/copy-target/" + path.Base(source)
+		entry, statErr := manager.Stat(target)
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		chmodSources = append(chmodSources, target)
+		expectedVersions[target] = entry.ResourceVersion
+	}
+	result, err = manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "chmod", Sources: chmodSources, Mode: "640",
+		ExpectedResourceVersions: expectedVersions,
+	})
+	if err != nil || len(result.Succeeded) != len(chmodSources) || len(result.Failed) != 0 {
+		t.Fatalf("batch chmod result: %#v err=%v", result, err)
+	}
+
+	for _, source := range copySources {
+		if _, statErr := os.Stat(filepath.Join(root, "copy-target", path.Base(source))); statErr != nil {
+			t.Fatal(statErr)
+		}
+	}
+	for _, source := range moveSources {
+		if _, statErr := os.Stat(filepath.Join(root, strings.TrimPrefix(source, "/"))); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("move source %s still exists: %v", source, statErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(root, "move-target", path.Base(source))); statErr != nil {
+			t.Fatal(statErr)
+		}
+	}
+}
+
+func TestBatchTrashRestoreAndDeleteProcessEveryID(t *testing.T) {
+	manager, root := newTestManager(t)
+	sources := []string{"/restore-first.txt", "/restore-second.txt", "/delete-first.txt", "/delete-second.txt"}
+	expectedVersions := make(map[string]string, len(sources))
+	for _, source := range sources {
+		mustWrite(t, filepath.Join(root, strings.TrimPrefix(source, "/")), source)
+		entry, err := manager.Stat(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedVersions[source] = entry.ResourceVersion
+	}
+	result, err := manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "trash", Sources: sources, ExpectedResourceVersions: expectedVersions,
+	})
+	if err != nil || len(result.Succeeded) != len(sources) || len(result.Failed) != 0 {
+		t.Fatalf("prepare batch trash result: %#v err=%v", result, err)
+	}
+
+	trash, err := manager.ListTrash(context.Background())
+	if err != nil || trash.Total != len(sources) {
+		t.Fatalf("unexpected trash list: %#v err=%v", trash, err)
+	}
+	restoreIDs := make([]string, 0, 2)
+	deleteIDs := make([]string, 0, 2)
+	trashVersions := make(map[string]string, len(trash.Entries))
+	for _, entry := range trash.Entries {
+		trashVersions[entry.ID] = entry.ResourceVersion
+		if strings.HasPrefix(entry.Name, "restore-") {
+			restoreIDs = append(restoreIDs, entry.ID)
+		} else {
+			deleteIDs = append(deleteIDs, entry.ID)
+		}
+	}
+	result, err = manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "trash_restore", TrashIDs: restoreIDs, ExpectedResourceVersions: trashVersions,
+	})
+	if err != nil || len(result.Succeeded) != len(restoreIDs) || len(result.Failed) != 0 {
+		t.Fatalf("batch restore result: %#v err=%v", result, err)
+	}
+	result, err = manager.Action(context.Background(), contract.FileActionRequest{
+		Action: "trash_delete", TrashIDs: deleteIDs, ExpectedResourceVersions: trashVersions,
+	})
+	if err != nil || len(result.Succeeded) != len(deleteIDs) || len(result.Failed) != 0 {
+		t.Fatalf("batch delete result: %#v err=%v", result, err)
+	}
+
+	for _, source := range sources[:2] {
+		if _, statErr := os.Stat(filepath.Join(root, strings.TrimPrefix(source, "/"))); statErr != nil {
+			t.Fatalf("restored source %s is missing: %v", source, statErr)
+		}
+	}
+	trash, err = manager.ListTrash(context.Background())
+	if err != nil || trash.Total != 0 {
+		t.Fatalf("trash not empty after batch restore/delete: %#v err=%v", trash, err)
 	}
 }
 

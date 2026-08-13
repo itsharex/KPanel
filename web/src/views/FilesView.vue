@@ -193,8 +193,15 @@ const breadcrumbs = computed(() => {
 const selectedEntries = computed(() =>
   (directory.value?.entries || []).filter((entry) => selected.value.has(entry.path)),
 )
+const contextBatchEntries = computed(() =>
+  contextMenu.value?.entry ? entriesForBatch(contextMenu.value.entry) : [],
+)
+const contextHasMultipleEntries = computed(() => contextBatchEntries.value.length > 1)
 const allVisibleSelected = computed(
   () => entries.value.length > 0 && entries.value.every((entry) => selected.value.has(entry.path)),
+)
+const allTrashSelected = computed(
+  () => trashEntries.value.length > 0 && trashEntries.value.every((entry) => selectedTrash.value.has(entry.id)),
 )
 const previewMode = computed<PreviewMode>(() => {
   const entry = previewEntry.value
@@ -475,6 +482,11 @@ function selectForContext(entry: FileEntry): void {
   selectionAnchor.value = entry.path
 }
 
+function entriesForBatch(entry?: FileEntry): FileEntry[] {
+  if (entry && !selected.value.has(entry.path)) return [entry]
+  return [...selectedEntries.value]
+}
+
 function showContext(event: MouseEvent, entry: FileEntry): void {
   event.preventDefault()
   selectForContext(entry)
@@ -503,8 +515,8 @@ function showDirectoryContext(event: MouseEvent): void {
 
 function openDialog(action: DialogAction, entry?: FileEntry): void {
   contextMenu.value = undefined
-  const useSelectedEntries = !entry || (action === 'trash' && selected.value.has(entry.path))
-  dialogEntries.value = useSelectedEntries ? [...selectedEntries.value] : [entry]
+  const isBatchAction = action === 'chmod' || action === 'compress' || action === 'trash'
+  dialogEntries.value = isBatchAction ? entriesForBatch(entry) : entry ? [entry] : [...selectedEntries.value]
   if ((action === 'compress' || action === 'extract') && !dialogEntries.value.length) return
   dialogAction.value = action
   if (action === 'mkdir') dialogValue.value = ''
@@ -541,7 +553,7 @@ function cancelArchive(): void {
 
 function setClipboard(mode: ClipboardMode, entry?: FileEntry): void {
   contextMenu.value = undefined
-  const entriesToStore = entry ? [entry] : [...selectedEntries.value]
+  const entriesToStore = entriesForBatch(entry)
   if (!entriesToStore.length) return
   clipboard.value = { mode, entries: entriesToStore }
   clearSelection()
@@ -626,6 +638,9 @@ async function submitDialog(): Promise<void> {
         action,
         sources: dialogEntries.value.map((entry) => entry.path),
         mode: dialogValue.value.trim(),
+        expectedResourceVersions: Object.fromEntries(
+          dialogEntries.value.map((entry) => [entry.path, entry.resourceVersion]),
+        ),
       }
     } else if (action === 'compress') {
       input = {
@@ -723,6 +738,12 @@ function toggleTrash(id: string): void {
   selectedTrash.value = next
 }
 
+function toggleAllTrash(): void {
+  selectedTrash.value = allTrashSelected.value
+    ? new Set()
+    : new Set(trashEntries.value.map((entry) => entry.id))
+}
+
 async function runTrashAction(action: 'trash_restore' | 'trash_delete' | 'trash_empty'): Promise<void> {
   const chosen = trashEntries.value.filter((entry) => selectedTrash.value.has(entry.id))
   if (action !== 'trash_empty' && !chosen.length) return
@@ -773,8 +794,11 @@ async function download(entry: FileEntry): Promise<void> {
   }
 }
 
-function downloadSelected(): void {
-  selectedEntries.value.filter((entry) => entry.kind === 'file').forEach((entry) => void download(entry))
+async function downloadSelected(entry?: FileEntry): Promise<void> {
+  contextMenu.value = undefined
+  for (const selectedEntry of entriesForBatch(entry)) {
+    if (selectedEntry.kind === 'file') await download(selectedEntry)
+  }
 }
 
 function setSort(key: 'name' | 'size' | 'modified'): void {
@@ -1305,7 +1329,7 @@ onBeforeUnmount(() => {
         <button
           v-if="selectedEntries.some((entry) => entry.kind === 'file')"
           type="button"
-          @click="downloadSelected"
+          @click="downloadSelected()"
         ><Download :size="15" />下载</button>
         <button type="button" @click="openDialog('compress')"><Archive :size="15" />压缩</button>
         <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
@@ -1328,11 +1352,15 @@ onBeforeUnmount(() => {
       <button v-if="contextMenu.entry" type="button" @click="openEntry(contextMenu.entry)">
         <Eye :size="15" />{{ contextMenu.entry.kind === 'directory' ? '打开' : '查看' }}
       </button>
-      <button v-if="contextMenu.entry?.kind === 'file'" type="button" @click="download(contextMenu.entry)">
+      <button
+        v-if="contextMenu.entry && contextBatchEntries.some((entry) => entry.kind === 'file')"
+        type="button"
+        @click="downloadSelected(contextMenu.entry)"
+      >
         <Download :size="15" />下载
       </button>
       <button
-        v-if="contextMenu.entry && archiveFormat(contextMenu.entry)"
+        v-if="contextMenu.entry && !contextHasMultipleEntries && archiveFormat(contextMenu.entry)"
         type="button"
         @click="openDialog('extract', contextMenu.entry)"
       >
@@ -1342,7 +1370,7 @@ onBeforeUnmount(() => {
         <Archive :size="15" />压缩
       </button>
       <hr v-if="contextMenu.entry" />
-      <button v-if="contextMenu.entry" type="button" @click="openDialog('rename', contextMenu.entry)">
+      <button v-if="contextMenu.entry && !contextHasMultipleEntries" type="button" @click="openDialog('rename', contextMenu.entry)">
         <Pencil :size="15" />重命名
       </button>
       <button v-if="contextMenu.entry" type="button" @click="setClipboard('copy', contextMenu.entry)"><Copy :size="15" />复制</button>
@@ -1479,6 +1507,12 @@ onBeforeUnmount(() => {
         <header>
           <span>共 {{ trashTotal }} 项<span v-if="trashTruncated">（显示最近 500 项）</span></span>
           <div>
+            <button
+              class="button button--secondary"
+              type="button"
+              :disabled="trashLoading || trashBusy || !trashEntries.length"
+              @click="toggleAllTrash"
+            >{{ allTrashSelected ? '取消选择' : '选择当前列表' }}</button>
             <button class="button button--secondary" type="button" :disabled="trashLoading || trashBusy" @click="loadTrash">
               <RefreshCw :size="15" :class="{ spinning: trashLoading }" />刷新
             </button>

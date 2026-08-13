@@ -84,6 +84,7 @@ export default [
   ["修改权限", "Modify Permissions"],
   ["修改时间", "Modified"],
   ["选择全部", "Select All"],
+  ["选择当前列表", "Select visible items"],
   ["选择上传文件", "Select Upload File"],
   ["压缩 {0} 项", "Compress {0} Item"],
   ["压缩格式", "Compression Format"],

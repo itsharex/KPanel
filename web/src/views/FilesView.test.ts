@@ -72,9 +72,11 @@ interface FileBindings {
   navigateDirectory: (path: string) => Promise<void>
   savePreview: (content?: string) => Promise<void>
   download: (entry: TestFileEntry) => Promise<void>
+  downloadSelected: (entry?: TestFileEntry) => Promise<void>
   submitDialog: () => Promise<void>
   cancelArchive: () => void
   openTrash: () => Promise<void>
+  toggleAllTrash: () => void
   runTrashAction: (action: 'trash_restore' | 'trash_delete' | 'trash_empty') => Promise<void>
   pasteClipboard: (target?: string) => Promise<void>
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
@@ -500,10 +502,11 @@ describe('FilesView directory loading', () => {
 
   it('compresses selected entries with the chosen fixed archive format', async () => {
     const view = setupView()
-    const entry = testEntry('website.txt')
+    const first = testEntry('website.txt')
+    const second = testEntry('assets.txt')
     view.currentPath.value = '/web'
-    view.directory.value = { path: '/web', entries: [entry] }
-    view.selected.value = new Set([entry.path])
+    view.directory.value = { path: '/web', entries: [first, second] }
+    view.selected.value = new Set([first.path, second.path])
     view.openDialog('compress')
     view.dialogValue.value = 'release'
     view.dialogFormat.value = 'zip'
@@ -517,11 +520,14 @@ describe('FilesView directory loading', () => {
 
     expect(mocks.action).toHaveBeenCalledWith({
       action: 'compress',
-      sources: [entry.path],
+      sources: [first.path, second.path],
       target: '/web',
       name: 'release.zip',
       format: 'zip',
-      expectedResourceVersions: { [entry.path]: entry.resourceVersion },
+      expectedResourceVersions: {
+        [first.path]: first.resourceVersion,
+        [second.path]: second.resourceVersion,
+      },
     }, expect.any(AbortSignal))
     expect(mocks.success).toHaveBeenCalledWith('压缩完成', '1 项已处理')
   })
@@ -610,6 +616,48 @@ describe('FilesView directory loading', () => {
     expect(mocks.success).toHaveBeenCalledWith('恢复完成', '1 项已处理')
   })
 
+  it('selects and permanently deletes every visible recycle-bin entry', async () => {
+    const view = setupView()
+    const entries = [
+      { id: 'trash-first', resourceVersion: 'sha256:first', restorable: true },
+      { id: 'trash-second', resourceVersion: 'sha256:second', restorable: true },
+    ].map((entry, index) => ({
+      ...entry,
+      name: `${index}.txt`,
+      originalPath: `/${index}.txt`,
+      kind: 'file' as const,
+      sizeBytes: 4,
+      mode: '-rw-r--r--',
+      owner: 'root',
+      group: 'root',
+      deletedAt: '2026-07-30T00:00:00Z',
+    }))
+    mocks.trash.mockResolvedValueOnce({
+      entries,
+      total: entries.length,
+      readAt: '2026-07-30T00:00:00Z',
+    })
+    mocks.action.mockResolvedValueOnce({
+      action: 'trash_delete',
+      succeeded: entries.map((entry) => ({ path: entry.id })),
+      failed: [],
+    })
+
+    await view.openTrash()
+    view.toggleAllTrash()
+    await view.runTrashAction('trash_delete')
+
+    expect(window.confirm).toHaveBeenCalledWith('彻底删除选中的 2 项？此操作不可恢复。')
+    expect(mocks.action).toHaveBeenCalledWith({
+      action: 'trash_delete',
+      trashIds: ['trash-first', 'trash-second'],
+      expectedResourceVersions: {
+        'trash-first': 'sha256:first',
+        'trash-second': 'sha256:second',
+      },
+    })
+  })
+
   it('saves the live editor value without copying the document on every keystroke', async () => {
     const view = setupView()
     const entry = testEntry('config.json')
@@ -677,6 +725,42 @@ describe('FilesView directory loading', () => {
     expect(view.contextMenu.value?.entry?.path).toBe(second.path)
   })
 
+  it('keeps the full selection for every batch-capable context action', () => {
+    const view = setupView()
+    const first = testEntry('first.txt')
+    const second = testEntry('second.txt')
+    view.directory.value = { path: '/', entries: [first, second] }
+    view.selected.value = new Set([first.path, second.path])
+
+    view.openDialog('compress', second)
+    expect(view.dialogEntries.value.map((entry) => entry.path)).toEqual([first.path, second.path])
+
+    view.openDialog('chmod', second)
+    expect(view.dialogEntries.value.map((entry) => entry.path)).toEqual([first.path, second.path])
+
+    view.setClipboard('copy', second)
+    expect(view.clipboard.value?.entries.map((entry) => entry.path)).toEqual([first.path, second.path])
+
+    view.selected.value = new Set([first.path, second.path])
+    view.setClipboard('move', second)
+    expect(view.clipboard.value?.mode).toBe('move')
+    expect(view.clipboard.value?.entries.map((entry) => entry.path)).toEqual([first.path, second.path])
+  })
+
+  it('keeps rename and extract scoped to the context-menu entry', () => {
+    const view = setupView()
+    const first = testEntry('first.txt')
+    const archive = { ...testEntry('second.zip'), mime: 'application/zip' }
+    view.directory.value = { path: '/', entries: [first, archive] }
+    view.selected.value = new Set([first.path, archive.path])
+
+    view.openDialog('rename', archive)
+    expect(view.dialogEntries.value.map((entry) => entry.path)).toEqual([archive.path])
+
+    view.openDialog('extract', archive)
+    expect(view.dialogEntries.value.map((entry) => entry.path)).toEqual([archive.path])
+  })
+
   it('trashes every selected entry from a selected entry context menu', async () => {
     const view = setupView()
     const first = testEntry('first.txt')
@@ -700,6 +784,60 @@ describe('FilesView directory loading', () => {
         [second.path]: second.resourceVersion,
       },
     })
+  })
+
+  it('submits every selected entry and resource version for batch chmod', async () => {
+    const view = setupView()
+    const first = testEntry('first.txt')
+    const second = testEntry('second.txt')
+    view.directory.value = { path: '/', entries: [first, second] }
+    view.selected.value = new Set([first.path, second.path])
+    mocks.action.mockResolvedValueOnce({
+      action: 'chmod',
+      succeeded: [{ path: first.path }, { path: second.path }],
+      failed: [],
+    })
+
+    view.openDialog('chmod', second)
+    view.dialogValue.value = '640'
+    await view.submitDialog()
+
+    expect(mocks.action).toHaveBeenCalledWith({
+      action: 'chmod',
+      sources: [first.path, second.path],
+      mode: '640',
+      expectedResourceVersions: {
+        [first.path]: first.resourceVersion,
+        [second.path]: second.resourceVersion,
+      },
+    })
+  })
+
+  it('downloads every selected file sequentially from a selected entry context menu', async () => {
+    const anchors: Array<{ click: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> }> = []
+    vi.stubGlobal('document', {
+      activeElement: null,
+      body: { appendChild: vi.fn() },
+      createElement: vi.fn(() => {
+        const anchor = { href: '', download: '', rel: '', click: vi.fn(), remove: vi.fn() }
+        anchors.push(anchor)
+        return anchor
+      }),
+    })
+    const view = setupView()
+    const first = testEntry('first.txt')
+    const second = testEntry('second.txt')
+    view.directory.value = { path: '/', entries: [first, second] }
+    view.selected.value = new Set([first.path, second.path])
+    mocks.createDownloadTicket.mockImplementation(async (path: string) => ({
+      downloadUrl: `/download${path}`,
+      expiresAt: '2026-07-30T00:05:00Z',
+    }))
+
+    await view.downloadSelected(second)
+
+    expect(mocks.createDownloadTicket.mock.calls.map(([path]) => path)).toEqual([first.path, second.path])
+    expect(anchors.map((anchor) => anchor.click.mock.calls.length)).toEqual([1, 1])
   })
 
   it('uses Windows-style click, control-click, and shift-click selection', () => {
