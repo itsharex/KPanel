@@ -6,6 +6,13 @@ cd "$repo_root"
 
 requested_level="${VERIFY_LEVEL:-auto}"
 base_ref="${VERIFY_BASE_REF:-${1:-}}"
+forced_verification=false
+
+case "$requested_level" in
+  2|l2|3|l3|release)
+    forced_verification=true
+    ;;
+esac
 
 if [[ -n "$base_ref" ]] && git cat-file -e "${base_ref}^{commit}" 2>/dev/null; then
   mapfile -t changed_files < <(
@@ -55,6 +62,7 @@ for path in "${changed_files[@]}"; do
     scripts/background-browser-test.mjs|scripts/report-release-metrics.mjs|\
     scripts/report-dependency-freshness.mjs|scripts/verify-governance.sh|scripts/verify-change.sh|\
     scripts/tests/check-environment-policy.test.mjs|scripts/tests/background-browser-test.test.mjs|\
+    scripts/tests/verify-change-forced-level.test.mjs|\
     scripts/tests/report-release-metrics.test.mjs|scripts/tests/report-dependency-freshness.test.mjs|\
     .github/workflows/dependency-freshness.yml)
       needs_governance=true
@@ -68,7 +76,7 @@ else
   node scripts/check-governance-consistency.mjs
 fi
 
-if [[ ${#changed_files[@]} -eq 0 ]]; then
+if [[ ${#changed_files[@]} -eq 0 && "$forced_verification" == false ]]; then
   echo "No changes require verification."
   exit 0
 fi
@@ -153,7 +161,8 @@ if [[ ${#go_domains[@]} -gt 0 ]]; then
   fi
 fi
 
-if [[ "$requested_level" == "0" || "$requested_level" == "l0" || "$docs_only" == true ]]; then
+if [[ "$requested_level" == "0" || "$requested_level" == "l0" || \
+  ( "$docs_only" == true && "$forced_verification" == false ) ]]; then
   echo "L0 verification completed."
   exit 0
 fi

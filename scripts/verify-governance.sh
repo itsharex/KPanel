@@ -9,6 +9,7 @@ node scripts/check-environment-policy.mjs --validate-only
 node --test \
   scripts/tests/check-environment-policy.test.mjs \
   scripts/tests/background-browser-test.test.mjs \
+  scripts/tests/verify-change-forced-level.test.mjs \
   scripts/tests/report-release-metrics.test.mjs \
   scripts/tests/report-dependency-freshness.test.mjs
 node scripts/report-dependency-freshness.mjs --validate-only
