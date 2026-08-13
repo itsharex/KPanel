@@ -106,6 +106,7 @@ describe('DesktopView dynamic entries', () => {
     await nextTick()
 
     expect(desktop.windows.value).toHaveLength(0)
+    expect(document.body.querySelector('.modal-panel--compact')).not.toBeNull()
     expect(document.body.querySelector('.desktop__external-confirm')?.textContent)
       .toContain('blog.example.com')
     expect(document.body.querySelector('.desktop__external-confirm')?.textContent)

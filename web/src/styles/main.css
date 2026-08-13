@@ -5402,6 +5402,10 @@ body.terminal-fullscreen-open .modal-panel {
   width: min(100%, 450px);
 }
 
+.modal-panel--compact {
+  width: min(100%, 410px);
+}
+
 .modal-panel--large {
   width: min(100%, 780px);
 }
@@ -5958,6 +5962,7 @@ body.terminal-fullscreen-open .modal-panel {
   }
 
   .modal-panel,
+  .modal-panel--compact,
   .modal-panel--small,
   .modal-panel--large,
   .modal-panel--wide {

@@ -890,7 +890,7 @@ function onViewportResize(): void {
     <ModalDialog
       :open="Boolean(externalOpenEntry)"
       :title="i18n.t('desktop.externalOpenConfirmTitle')"
-      size="small"
+      size="compact"
       @close="closeExternalOpen"
     >
       <div v-if="externalOpenEntry" class="desktop__external-confirm">
