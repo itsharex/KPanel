@@ -154,6 +154,23 @@ AGENT
 		: >"$state/rollback-tagged"
 		exit 0
 		;;
+	"image ls")
+		printf '%s\n' "${KPANEL_MOCK_OLD_IMAGE_IDS:-}"
+		exit 0
+		;;
+	"image rm")
+		require_state
+		printf '%s\n' "$3" >>"$state/image-rm"
+		exit 0
+		;;
+	"ps -aq")
+		case "${4:-}" in
+			"ancestor=${KPANEL_MOCK_IN_USE_IMAGE_ID:-unused}")
+				printf '%s\n' mock-container
+				;;
+		esac
+		exit 0
+		;;
 	"rm "*)
 		exit 0
 		;;
@@ -360,6 +377,19 @@ EOF
 	test ! -e "$MOCK_STATE/rollback-tagged"
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 
+	rm -f "$MOCK_STATE/image-rm"
+	local current_image_id='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	local removable_image_id='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+	local retained_image_id='sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+	KPANEL_MOCK_OLD_IMAGE_IDS="$(printf '%s\n%s\n%s' \
+		"$current_image_id" "$removable_image_id" "$retained_image_id")" \
+		KPANEL_MOCK_IN_USE_IMAGE_ID="$retained_image_id" \
+		docker_app_update >"$TEST_DIR/image-cleanup-output.txt"
+	test "$(cat "$MOCK_STATE/image-rm")" = "$removable_image_id"
+	if grep -Ei 'image|镜像|cleanup|清理' "$TEST_DIR/image-cleanup-output.txt" >/dev/null; then
+		echo "successful KPanel update exposed old-image cleanup output" >&2
+		return 1
+	fi
 	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
 	if KPANEL_MOCK_AGENT_VERSION=9.9.9 docker_app_update; then
 		echo "KPanel update accepted a mismatched Agent" >&2
@@ -392,8 +422,10 @@ EOF
 	grep -Fx 'KPANEL_PUBLIC_URL=https://panel.example.com' /home/docker/kpanel/.env >/dev/null
 	cp -p /home/docker/kpanel/.env "$TEST_DIR/https-env"
 
-	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
-	if KPANEL_MOCK_UPDATE_HEALTH_FAIL=1 docker_app_update; then
+	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag" "$MOCK_STATE/image-rm"
+	if KPANEL_MOCK_UPDATE_HEALTH_FAIL=1 \
+		KPANEL_MOCK_OLD_IMAGE_IDS='sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' \
+		docker_app_update; then
 		echo "failed KPanel update unexpectedly succeeded" >&2
 		return 1
 	fi
@@ -405,6 +437,7 @@ EOF
 	cmp -s "$TEST_DIR/https-env" /home/docker/kpanel/.env
 	grep -Fx 'KPANEL_SECURE_COOKIE=true' /home/docker/kpanel/.env >/dev/null
 	test ! -e /home/docker/kpanel/.env.rollback
+	test ! -e "$MOCK_STATE/image-rm"
 
 	docker_app_uninstall
 	[ ! -e /home/docker/kpanel ]
