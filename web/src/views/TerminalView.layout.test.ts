@@ -102,8 +102,10 @@ describe('multi-host terminal workspace layout', () => {
     )
   })
 
-  it('focuses the terminal composer without scrolling the desktop window', () => {
-    expect(hostTerminalSource).toContain("composerInput.value?.focus({ preventScroll: true })")
+  it('focuses the shell cursor by default and leaves the composer user-activated', () => {
+    expect(hostTerminalSource).toContain('window.requestAnimationFrame(focusTerminal)')
+    expect(hostTerminalSource).not.toContain('composerInput')
+    expect(terminalSource).toContain('focusActiveTerminal()')
   })
 
   it('uses the terminal clipboard menu instead of the browser context menu', () => {
@@ -129,6 +131,6 @@ describe('multi-host terminal workspace layout', () => {
     expect(terminalSource).toMatch(
       /\.terminal-stage\.is-fullscreen\s*\{[^}]*position:fixed;[^}]*inset:0;[^}]*height:100dvh;/,
     )
-    expect(hostTerminalSource).toContain('defineExpose({ scrollToTop, scheduleResize })')
+    expect(hostTerminalSource).toContain('defineExpose({ focusTerminal, scrollToTop, scheduleResize })')
   })
 })

@@ -25,6 +25,7 @@ interface OpenTerminal {
 }
 
 interface HostTerminalHandle {
+  focusTerminal: () => void
   scrollToTop: () => void
   scheduleResize: () => void
 }
@@ -44,6 +45,10 @@ const connectionsCollapsedStorageKey = 'kpanel:terminal:connections-collapsed'
 
 function refreshActiveTerminal(): void {
   terminalRefs.get(activeSessionId.value)?.scheduleResize()
+}
+
+function focusActiveTerminal(): void {
+  terminalRefs.get(activeSessionId.value)?.focusTerminal()
 }
 
 const {
@@ -76,7 +81,7 @@ async function loadHosts(): Promise<void> {
 async function openHost(host: ClusterHost): Promise<void> {
   const existing = sessions.value.find((item) => item.hostId === host.id)
   if (existing) {
-    activeSessionId.value = existing.id
+    selectSession(existing.id)
     mobileConnectionsOpen.value = false
     return
   }
@@ -103,7 +108,15 @@ function removeSession(id: string): void {
   if (index < 0) return
   sessions.value.splice(index, 1)
   terminalRefs.delete(id)
-  if (activeSessionId.value === id) activeSessionId.value = sessions.value[Math.max(0, index - 1)]?.id || ''
+  if (activeSessionId.value === id) {
+    activeSessionId.value = sessions.value[Math.max(0, index - 1)]?.id || ''
+    if (activeSessionId.value) {
+      void nextTick(() => {
+        refreshActiveTerminal()
+        focusActiveTerminal()
+      })
+    }
+  }
   if (!sessions.value.length) exitWorkspaceFullscreen()
 }
 
@@ -112,7 +125,11 @@ function setTerminalRef(
   instance: Element | ComponentPublicInstance | null,
 ): void {
   const handle = instance as unknown as Partial<HostTerminalHandle> | null
-  if (typeof handle?.scrollToTop === 'function' && typeof handle.scheduleResize === 'function') {
+  if (
+    typeof handle?.focusTerminal === 'function' &&
+    typeof handle.scrollToTop === 'function' &&
+    typeof handle.scheduleResize === 'function'
+  ) {
     terminalRefs.set(id, handle as HostTerminalHandle)
   } else {
     terminalRefs.delete(id)
@@ -121,7 +138,10 @@ function setTerminalRef(
 
 function selectSession(id: string): void {
   activeSessionId.value = id
-  void nextTick(refreshActiveTerminal)
+  void nextTick(() => {
+    refreshActiveTerminal()
+    focusActiveTerminal()
+  })
 }
 
 function scrollActiveTerminalToTop(): void {

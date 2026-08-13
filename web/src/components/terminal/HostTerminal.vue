@@ -27,7 +27,6 @@ const emit = defineEmits<{
 }>()
 
 const host = ref<HTMLElement>()
-const composerInput = ref<HTMLInputElement>()
 const clipboardMenu = ref<InstanceType<typeof TerminalContextMenu>>()
 const pendingLine = ref('')
 const state = ref<'connecting' | 'connected' | 'reconnecting' | 'finished'>('connecting')
@@ -83,6 +82,10 @@ function writeTerminalOutput(data: string | Uint8Array): void {
 
 function scrollToTop(): void {
   terminal?.scrollToTop()
+  focusTerminal()
+}
+
+function focusTerminal(): void {
   terminal?.focus()
 }
 
@@ -172,7 +175,7 @@ function scheduleResize(): void {
   }, 100)
 }
 
-defineExpose({ scrollToTop, scheduleResize })
+defineExpose({ focusTerminal, scrollToTop, scheduleResize })
 
 watch(desktopWindowActive, (active) => {
   if (active) {
@@ -218,7 +221,7 @@ onMounted(() => {
     observer = new ResizeObserver(scheduleResize)
     observer.observe(host.value)
     scheduleResize()
-    window.requestAnimationFrame(() => composerInput.value?.focus({ preventScroll: true }))
+    window.requestAnimationFrame(focusTerminal)
   }
   if (desktopWindowActive.value) void poll()
 })
@@ -241,7 +244,7 @@ onBeforeUnmount(() => {
     <div
       ref="host"
       class="host-terminal__screen terminal-screen"
-      @click="terminal?.focus()"
+      @click="focusTerminal"
       @wheel="containTerminalWheel"
       @touchstart="terminalTouchScroll.start"
       @touchmove="terminalTouchScroll.move"
@@ -252,7 +255,7 @@ onBeforeUnmount(() => {
     >
     </div>
     <form class="host-terminal__composer" @submit.prevent="submitPendingLine">
-      <input ref="composerInput" v-model="pendingLine" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="8192" :placeholder="t('terminal.inputPlaceholder')" :disabled="state === 'finished'" />
+      <input v-model="pendingLine" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="8192" :placeholder="t('terminal.inputPlaceholder')" :disabled="state === 'finished'" />
       <button type="submit" :disabled="state === 'finished'">{{ t('terminal.send') }}</button>
     </form>
     <TerminalContextMenu
