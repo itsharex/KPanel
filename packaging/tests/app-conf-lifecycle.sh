@@ -155,6 +155,10 @@ AGENT
 		exit 0
 		;;
 	"image ls")
+		case " $* " in
+			*" --all "*|*" -a "*) ;;
+			*) exit 0 ;;
+		esac
 		printf '%s\n' "${KPANEL_MOCK_OLD_IMAGE_IDS:-}"
 		exit 0
 		;;
