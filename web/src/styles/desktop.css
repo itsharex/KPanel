@@ -1695,11 +1695,6 @@ body.desktop-mode-open::-webkit-scrollbar {
   font-size: 13px;
 }
 
-.desktop__external-confirm p,
-.desktop__external-confirm dl {
-  margin: 0;
-}
-
 .desktop__external-confirm-entry {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
@@ -1728,26 +1723,31 @@ body.desktop-mode-open::-webkit-scrollbar {
   object-fit: cover;
 }
 
-.desktop__external-confirm dl {
+.desktop__external-confirm-identity {
   display: grid;
-  gap: 6px;
+  min-width: 0;
+  gap: 7px;
 }
 
-.desktop__external-confirm dt,
-.desktop__external-confirm small {
-  color: var(--muted);
-}
-
-.desktop__external-confirm dd {
-  margin: 0;
-  padding: 10px 12px;
+.desktop__external-confirm-identity strong {
   overflow-wrap: anywhere;
   color: var(--text);
-  background: var(--surface-subtle);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.desktop__external-confirm-identity code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.desktop__external-confirm > small {
+  color: var(--muted);
   line-height: 1.5;
 }
 

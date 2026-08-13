@@ -919,12 +919,11 @@ function onViewportResize(): void {
             </span>
             <span v-else class="desktop__icon-monogram">{{ externalOpenMonogram }}</span>
           </span>
-          <p>{{ i18n.t('desktop.externalOpenConfirmMessage', { name: externalOpenEntry.name }) }}</p>
+          <div class="desktop__external-confirm-identity">
+            <strong>{{ externalOpenEntry.name }}</strong>
+            <code>{{ externalOpenEntry.url }}</code>
+          </div>
         </div>
-        <dl>
-          <dt>{{ i18n.t('desktop.detailURL') }}</dt>
-          <dd>{{ externalOpenEntry.url }}</dd>
-        </dl>
         <small>{{ i18n.t('desktop.externalOpenConfirmNotice') }}</small>
       </div>
       <template #footer>
