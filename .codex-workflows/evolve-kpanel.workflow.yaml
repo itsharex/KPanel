@@ -1,12 +1,12 @@
 ---
 name: evolve-kpanel
 description: "用可验证证据驱动 KPanel 规范、门禁和开发流程的受控自我改进，不自动提交、发布或放宽质量要求"
-version: "1.1"
+version: "1.2"
 author: "Codex"
 tags: [quality, governance, continuous-improvement, multi-agent, metrics]
 params: [project_dir, baseline_ref, observation_window, release_count, proposal_slug]
 created: "2026-08-11T00:00:00+08:00"
-updated: "2026-08-11T00:00:00+08:00"
+updated: "2026-08-13T00:00:00+08:00"
 ---
 
 # KPanel Controlled Evolution
@@ -78,7 +78,8 @@ node --test scripts/tests/report-release-metrics.test.mjs
 make verify-change
 ```
 
-按风险补 `make verify-l2`、`make verify-release`、隔离真机、浏览器、公开产物或经授权的生产观察。
+按风险补 `make verify-l2`、`make verify-release`、隔离真机、公开产物或生产部署安全核对。长时间浏览器
+验收使用 `background-browser-validation` 后台执行；所有远程验证目标先通过 `environment-policy.json`。
 使用与基线相同环境、样本和参数比较主指标及防回归指标；记录无法验证的层级。
 
 **Expected output:** 改进目标和所有受影响质量维度有证据；工具退出码不被解释为未执行业务场景成功。
@@ -123,4 +124,4 @@ py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workfl
 - 高频发布、低频发布、测试数量或模型信心都不能单独触发规范变化。
 - 指标用于发现问题和验证假设，不是绩效目标；数据缺失必须显式报告，不得按成功计入。
 - 安全边界、真实资源真源、双端兼容和授权边界属于硬约束，不能由本流程自行取消。
-- 生产观察和发布必须进入现有发布通道并获得明确授权，本流程不扩大权限。
+- 生产部署和部署安全核对必须进入现有发布通道并获得明确授权，本流程不扩大权限；108 不参与验证。

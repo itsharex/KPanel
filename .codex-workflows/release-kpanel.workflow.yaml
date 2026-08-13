@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
-description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产观察和回滚记录"
-version: "1.9"
+description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产部署安全核对和回滚记录"
+version: "2.0"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
-params: [project_dir, version, previous_version, image, apps_repo]
+params: [project_dir, version, previous_version, image, apps_repo, validation_environment, production_environment]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-13T02:51:10Z"
+updated: "2026-08-13T00:00:00+08:00"
 ---
 
 # Release KPanel
@@ -36,6 +36,8 @@ updated: "2026-08-13T02:51:10Z"
 - `release.yml` 的 Docker 登录不得限定仅 push 的 Buildx `scope`，因为 `latest` 提升同时需要
   拉取和推送清单的权限。
 - 保留所有无关未提交改动；只提交本次发布范围内的文件。
+- `${{validation_environment}}` 和 `${{production_environment}}` 必须登记在 `environment-policy.json`；
+  默认分别为 `arena-154` 与 `prod-108`，用途检查失败时不得连接目标。
 
 ## Steps
 
@@ -51,6 +53,9 @@ git status --short
 git rev-parse HEAD
 git rev-parse origin/main
 git tag --list "v${{version}}"
+node scripts/check-environment-policy.mjs \
+  --environment "${{validation_environment}}" \
+  --purpose candidate-validation
 ```
 
 同时检查 GitHub Release、Actions 和 Docker Hub 标签。不得覆盖已经发布的 Release、镜像或
@@ -124,6 +129,15 @@ docker run --rm \
 按发布画像补充自动门禁不能代替的证据：受影响性能基准、桌面/窄视口、浅/深色、键盘/焦点、
 多语言、失败状态、`kejilion.sh` 双向互通，以及 L2/L3 写路径的失败注入、重启恢复和回滚。
 危险或破坏性写操作优先使用隔离真机，不为了生产形式完整主动改变无关业务数据。
+
+若发布画像需要本地或远程长时间浏览器 E2E、跨视口回归或稳定性验收，使用登记的
+`${{validation_environment}}` 后台执行，前台发布任务只记录 job ID 并由监控任务读取终态：
+
+> Invoke workflow: `background-browser-validation` with params:
+> project_dir=${{project_dir}}, candidate_ref=<步骤 1 冻结的完整提交>, test_environment=${{validation_environment}}
+
+普通确定性交互不机械执行 soak；生命周期、重连、并发、流式或资源趋势风险按画像选择窗口或循环数。
+后台化不减少断言，未获得 `passed` 终态、完整用例、资源保护和清理证据时不得继续发布。
 
 **Expected output:** L3 测试、构建、安装安全、应用配置生命周期和工作流静态检查全部通过。
 
@@ -229,41 +243,50 @@ KPANEL_EXPECTED_VERSION="${{version}}" \
 **Expected output:** 输出 `image_e2e=pass`，Release、Actions 和 Docker Hub 均与
 `${{version}}` 一致；应用市场为“同哈希且无需提交”或“配置已同步并提交”。
 
-### 9. 在明确授权范围内完成生产部署与观察
+### 9. 在明确授权范围内完成生产部署安全核对
 
-生产操作必须有本次明确授权。部署前记录当前版本、Panel/Agent 健康、镜像摘要、数据/配置位置和
-可恢复备份；使用 KPanel 标准应用市场更新入口，不直接改正式数据或绕过安装事务。部署后至少复核：
+生产操作必须有本次明确授权。先再次检查环境用途：
 
-固定环境边界：`prod-108`（108 服务器）仅用于正常生产运行，不得作为线上测试、候选验收、灰度、
-canary、兼容性矩阵、失败注入、压力测试、测试账号/数据或持续观察目标。发布测试与灰度必须使用
-隔离真机、154 或另行明确授权的专用测试环境。只有用户明确授权把已经通过发布门禁的稳定版本部署到
-108 时，才允许执行必要的停写备份、标准更新以及最小非侵入式版本/健康/数据完整性/回滚就绪检查；
-这些属于生产变更安全核对，不得回填为候选或线上测试证据。未经该次部署授权，不连接、不修改 108。
+```bash
+node scripts/check-environment-policy.mjs \
+  --environment "${{production_environment}}" \
+  --purpose production-deploy
+node scripts/check-environment-policy.mjs \
+  --environment "${{production_environment}}" \
+  --purpose production-safety-check
+```
 
-- 健康接口版本、Panel healthy/重启/OOM、Agent active/重启/协议版本；
-- 生产镜像 digest、OCI 源码修订、宿主机 Agent 与正式镜像内二进制摘要；
-- 状态文件可解析、数据库完整性、近期日志、权威公网入口和连续健康采样；
-- 发布画像中已授权的用户旅程；危险、付费、耗流量或无关写操作继续使用隔离真机证据。
+部署前记录当前版本、Panel/Agent 健康、镜像摘要、数据/配置位置和可恢复备份；使用 KPanel 标准
+应用市场更新入口，不直接改正式数据或绕过安装事务。
 
-若用户只授权发布正式产物而未授权生产部署，停止在此步骤并明确记录“正式产物已发布，生产未部署/
-未验证”，不得复用上一版本生产结果或把公开镜像 E2E 写成生产成功。
+固定环境边界：`prod-108`（含别名 `108`）只用于正常生产运行，不得作为线上测试、候选/功能验收、
+浏览器 E2E、灰度、canary、兼容性矩阵、失败注入、性能/压力、测试账号/数据或持续观察目标，也不存在
+“只读测试”例外。发布测试使用 `${{validation_environment}}`。
 
-若生产验收失败并执行回滚，恢复生产实例后必须继续完成公共分发审计：核对 GitHub Latest、
+108 部署后只执行防止盲目交付所必需的安全核对：版本与不可变 digest、Panel/Agent 单次健康状态、
+数据/配置可解析、备份与回滚入口就绪。不得在 108 登录测试账号、运行功能旅程、浏览器用例、连续采样、
+soak、压力或失败注入；这些结论必须在部署前由隔离环境提供。部署安全核对失败立即回滚，但不能将
+核对成功回填为候选、功能或生产质量验证证据。未经该次部署授权，不连接、不修改 108。
+
+若用户只授权发布正式产物而未授权生产部署，停止在此步骤并明确记录“正式产物已发布，生产未部署”，
+不得复用上一版本现场结果或把公开镜像 E2E 写成生产成功。
+
+若生产部署安全核对失败并执行回滚，恢复生产实例后必须继续完成公共分发审计：核对 GitHub Latest、
 `${{image}}:latest` 和 `kpanel.conf` 标准更新入口实际指向。历史 tag、Release 和不可变版本镜像不得
 删除或改写，但失败版本不得无提示继续作为公共默认更新；应恢复上一稳定默认版本，或在 Release 与
 验收记录中明确已知问题、影响范围、负责人和修复期限后短期保留。该事件按变更失败计入交付节奏数据。
 
 **Expected output:** 已授权时生产运行版本与正式 digest/commit 一致、备份和回滚可执行；未授权时没有
-生产状态变化且未验证边界清晰；108 未被用于线上测试或持续观察；发生回滚时，生产实例和公共默认
-更新通道均有明确、可复核状态。
+生产状态变化；108 只产生部署安全核对记录且未被用于任何验证/持续观察；发生回滚时，生产实例和公共
+默认更新通道均有明确、可复核状态。
 
 ### 10. 形成统一验收记录并交付
 
 从 `docs/release-acceptance-template.md` 创建 `docs/release-v${{version}}-acceptance.md`，记录精确提交、
-发布画像、多维质量状态、候选/主线/Release、公开产物、隔离真机、生产观察、回滚和遗留风险。
-自动测试、隔离真机、公开产物和生产观察必须分层填写；生产未执行的管理员写操作不得写成已验证。
-108 因固定环境策略排除在测试/灰度/持续观察之外时，应记录为“按环境策略不适用”，不得把它写成
-测试覆盖，也不得误报为发布门禁缺失。
+发布画像、多维质量状态、候选/主线/Release、公开产物、隔离真机、生产部署安全核对、回滚和遗留风险。
+自动测试、隔离真机、公开产物和生产部署安全核对必须分层填写；生产未执行的管理员写操作不得写成
+已验证。108 固定排除在验证、灰度和持续观察之外，应记录为“不参与验证；仅完成/未执行部署安全核对”，
+不得把它写成测试覆盖，也不得误报为发布门禁缺失。
 
 记录候选冻结和生产完成时间、提交到生产用时、是否发生回滚/紧急热修复/重复发布及原因，供滚动
 14 天和最近 20 个版本的发布节奏复核。验收记录在获得相应提交/推送授权后形成独立聚焦提交；
@@ -278,7 +301,7 @@ canary、兼容性矩阵、失败注入、压力测试、测试账号/数据或�
 - `kejilion/apps` 契约核对结果，以及有变更时的提交；
 - 公开镜像 E2E 结果；
 - 多维质量状态、受影响用户旅程和证据层级；
-- 生产已验证动作与仅在隔离真机验证的动作；
+- 生产部署安全核对动作与仅在隔离真机验证的动作；
 - 发布节奏数据和重复发布原因（如有）；
 - 保留的无关本地改动；
 - `${{previous_version}}` 回滚点及任何未验证风险。
@@ -293,6 +316,8 @@ canary、兼容性矩阵、失败注入、压力测试、测试账号/数据或�
 - `${{previous_version}}`：发布前稳定源码或镜像版本，用于回滚说明。
 - `${{image}}`：完整镜像仓库，默认 `docker.io/kjlion/kejilion-panel`。
 - `${{apps_repo}}`：`kejilion/apps` 本地路径，默认 `C:\GitHub\kejilion\apps`。
+- `${{validation_environment}}`：登记的隔离验收环境，默认 `arena-154`。
+- `${{production_environment}}`：登记的稳定生产部署环境，默认 `prod-108`。
 
 ## Verification
 
@@ -305,7 +330,9 @@ py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workfl
   --param version=0.0.0-test \
   --param previous_version=0.0.0 \
   --param image=docker.io/example/kpanel \
-  --param apps_repo=C:/tmp/apps
+  --param apps_repo=C:/tmp/apps \
+  --param validation_environment=arena-154 \
+  --param production_environment=prod-108
 ```
 
 确认渲染结果中不存在未替换参数，并执行 `git diff --check`。
@@ -321,3 +348,5 @@ py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workfl
 - 源码回滚与镜像回滚分别记录；历史源码 tag 不代表一定存在可用 Docker 镜像。
 - 发布 worktree 的分支、`HEAD` 或文件被外部任务改变时立即停止；不得重置他人改动，迁移到新的
   专用候选 worktree 并重新执行受影响门禁。
+- 浏览器后台作业可以跨会话继续，但候选 `HEAD`、命令规格、环境或资源参数变化时证据作废；禁止用
+  旧 job 的通过结果覆盖新候选。

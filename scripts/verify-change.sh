@@ -44,6 +44,9 @@ ECOSYSTEM_POLICY_BASE_REF="$base_ref" bash scripts/check-ecosystem-policy.sh
 bash scripts/check-version-consistency.sh
 bash scripts/check-managed-script-contract.sh
 node scripts/check-governance-consistency.mjs
+node scripts/check-environment-policy.mjs --validate-only
+node --test scripts/tests/check-environment-policy.test.mjs
+node --test scripts/tests/background-browser-test.test.mjs
 node --test scripts/tests/report-release-metrics.test.mjs
 node --test scripts/tests/report-dependency-freshness.test.mjs
 node scripts/report-dependency-freshness.mjs --validate-only
@@ -67,7 +70,7 @@ go_domains=()
 
 for path in "${changed_files[@]}"; do
   case "$path" in
-    *.md|docs/*|LICENSE|dependency-policy.json|.codex-workflows/*|.github/ISSUE_TEMPLATE/*)
+    *.md|docs/*|LICENSE|dependency-policy.json|environment-policy.json|.codex-workflows/*|.github/ISSUE_TEMPLATE/*)
       ;;
     web/*)
       docs_only=false

@@ -1,0 +1,120 @@
+---
+name: background-browser-validation
+description: "在登记的隔离环境后台执行 KPanel 真实浏览器验收，持久化状态、证据、资源保护和清理结果"
+version: "1.0"
+author: "Codex"
+tags: [kpanel, browser, e2e, background, validation, stability]
+params: [project_dir, candidate_ref, test_environment, evidence_dir, timeout_seconds, command_spec]
+created: "2026-08-13T00:00:00+08:00"
+updated: "2026-08-13T00:00:00+08:00"
+---
+
+# KPanel Background Browser Validation
+
+## Purpose
+
+让真实浏览器 E2E、跨视口交互和必要的稳定性测试以可恢复后台作业运行，不占用前台会话、浏览器标签页
+或交互式 SSH。后台化只改变调度方式，不降低断言、环境隔离、资源上限、失败判定或发布门禁。
+
+## Prerequisites
+
+- `${{project_dir}}` 是独立、干净工作树，`${{candidate_ref}}` 是不可变提交或镜像摘要。
+- `${{test_environment}}` 已登记在 `environment-policy.json` 且允许 `browser-validation`；`prod-108` 和
+  别名 `108` 会被机器门禁拒绝。
+- `${{command_spec}}` 是本轮证据目录外的只读 JSON，包含 `command`、字符串 `args`、可选 `cwd/env`；
+  命令必须来自仓库测试入口或精确固定工具，不通过 shell 拼接用户输入。
+- 测试自身负责候选容器/cgroup、宿主内存与磁盘 watchdog、真实断言、trace/截图/video 和精确清理；
+  后台包装器不替代这些产品级门禁。
+
+## Steps
+
+### 1. 固定候选、环境角色和风险画像
+
+```bash
+cd "${{project_dir}}"
+git status --short --branch
+git rev-parse "${{candidate_ref}}^{commit}"
+node scripts/check-environment-policy.mjs \
+  --environment "${{test_environment}}" \
+  --purpose browser-validation
+```
+
+按受影响行为决定测试强度：普通视觉、文案或确定性交互只跑完成条件明确的 E2E；涉及页面生命周期、
+重连、并发或恢复时，稳定性窗口通常至少 10 分钟；存在内存泄漏、流式传输、长连接或资源趋势风险时，
+提升到 30 分钟或足以覆盖风险的明确循环数。不得把固定 10/30 分钟机械套给所有修改，也不得因后台化
+缩短原本由风险画像要求的覆盖。
+
+**Expected output:** 精确候选、登记的隔离环境、受影响旅程、完成条件、超时和资源预算清楚；108 被排除。
+
+### 2. 创建只增不改的证据目录和命令规格
+
+确认 `${{command_spec}}` 不含明文密码、Token、Cookie 或生产数据。`${{evidence_dir}}` 使用唯一 run id，
+不得复用历史 `state.json`。命令必须在结果中输出精确候选、浏览器/Playwright 版本、用例统计和清理状态。
+
+**Expected output:** 命令规格可哈希、无秘密、证据目录唯一，测试失败也能恢复现场或精确清理。
+
+### 3. 启动后台作业并立即释放前台
+
+```bash
+node scripts/background-browser-test.mjs start \
+  --environment "${{test_environment}}" \
+  --candidate-ref "${{candidate_ref}}" \
+  --spec "${{command_spec}}" \
+  --evidence-dir "${{evidence_dir}}" \
+  --timeout-seconds "${{timeout_seconds}}"
+```
+
+记录返回的 `jobId`、PID、`state.json` 和证据目录后结束当前前台等待。禁止依赖打开的浏览器标签页、
+前台 SSH 或单个 AI 回合维持测试；也禁止用无上限循环反复读取日志。
+
+**Expected output:** 命令立即返回；作业状态为 `queued/running`，前台会话可以继续其他无冲突工作或结束。
+
+### 4. 由监控任务进行有界状态检查
+
+监控者按约定间隔读取，不重新启动同一测试：
+
+```bash
+node scripts/background-browser-test.mjs status \
+  --evidence-dir "${{evidence_dir}}"
+```
+
+只有 `passed`、`failed`、`timed_out` 是终态。进程消失但无终态、宿主 watchdog 越线、候选/Runner OOM、
+断言未执行、错误页被计成功、清理失败或证据缺失均按失败处理，不根据“运行很久”推断仍正常。
+
+**Expected output:** 状态可跨会话恢复，长测不阻塞前台，失败分类和资源事件不会被吞掉。
+
+### 5. 验收证据并释放环境
+
+通过必须同时具备：`state.json=passed`、退出码 0、精确候选一致、所有必测断言实际执行、资源/健康门禁
+通过、trace/截图/video策略符合画像、候选资源精确清理。外部 CAPTCHA/WAF/网络异常与产品失败分开记录，
+但硬兼容旅程未完成时仍不得写成通过。后台作业终态不能替代 L1-L3、CI、公开镜像 E2E 或回滚证据。
+
+**Expected output:** 证据可由另一会话独立复核，测试环境恢复基线，结论为通过、失败或未验证之一。
+
+## Parameters
+
+- `${{project_dir}}`：KPanel 独立工作树。
+- `${{candidate_ref}}`：完整 40 位候选提交或不可变 `sha256:` 镜像摘要，不接受 `HEAD`、分支或标签别名。
+- `${{test_environment}}`：`environment-policy.json` 中允许浏览器验收的环境，默认使用 `arena-154`。
+- `${{evidence_dir}}`：本轮唯一、持久化、无秘密的证据目录。
+- `${{timeout_seconds}}`：作业硬超时；按画像覆盖测试窗口和清理余量，最大 86400 秒。
+- `${{command_spec}}`：无 shell 拼接的后台命令 JSON。
+
+## Verification
+
+```bash
+node scripts/check-environment-policy.mjs --validate-only
+node --test scripts/tests/check-environment-policy.test.mjs
+node --test scripts/tests/background-browser-test.test.mjs
+py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workflow.py}" \
+  validate background-browser-validation --project-dir "${{project_dir}}"
+```
+
+## Notes
+
+- 本流程中的“浏览器”是外部 Chrome/Playwright 验收工具，不恢复、重新引入或打包 v0.69.0 已移除的
+  KPanel 内置浏览器模块。
+- CI 中短小且已有超时的浏览器测试可直接前台执行；后台入口用于本地/远程长测试和会话可恢复性。
+- 后台作业不能自动获得 SSH、生产、提交、推送或发布权限。
+- `prod-108` 只允许稳定版本部署和部署安全核对，不能因“只读浏览器”或“发布后观察”获得测试例外。
+- 证据目录是作业状态真源；会话消息、PID 存在或日志仍增长都不能替代终态与完整断言。

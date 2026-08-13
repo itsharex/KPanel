@@ -1,12 +1,12 @@
 ---
 name: kpanel-site-icon-cache-validation
 description: "用隔离 Agent/Panel、真实回环网站入口和真实 Chrome 验证 KPanel 网站图标缓存、性能边界与系统发行版图标"
-version: "1.3"
+version: "1.4"
 author: "Codex"
 tags: [kpanel, site, favicon, cache, security, performance, chrome, regression]
 params: [project_dir, project_linux_dir, go_module_cache_linux_dir, candidate_commit, candidate_image, candidate_container, candidate_agent_unit, candidate_port, local_tunnel_port, ssh_host, validation_run_id, site_id, site_domain, evidence_dir]
 created: "2026-07-29T13:28:40Z"
-updated: "2026-07-29T16:00:00Z"
+updated: "2026-08-13T00:00:00+08:00"
 ---
 
 # KPanel 网站图标缓存与系统图标验收
@@ -31,6 +31,7 @@ updated: "2026-07-29T16:00:00Z"
   同一份源码。module cache 只校验目录存在，并始终只读挂载，不把它当成源码仓库。
 - 用户已授权对 `${{ssh_host}}` 启动隔离的临时 Agent/Panel；本流程不授权发布、替换生产
   容器、修改 `/home/web`、重启 Nginx 或操作业务容器。
+- `${{ssh_host}}` 必须登记在 `environment-policy.json` 且允许 `candidate-validation`；`prod-108` 被拒绝。
 - `${{site_id}}` 必须是 32 位小写十六进制站点 ID；`${{site_domain}}` 必须是该 ID 对应、
   已由 Agent 发现且当前可读的既有主域名；测试只发送 GET。
 - `${{validation_run_id}}` 必须是本次执行新生成的 32 位小写十六进制随机值；它与提交共同
@@ -44,6 +45,12 @@ updated: "2026-07-29T16:00:00Z"
 ## Steps
 
 ### 1. 锁定代码、网站与生产基线
+
+```bash
+node scripts/check-environment-policy.mjs \
+  --environment "${{ssh_host}}" \
+  --purpose candidate-validation
+```
 
 ```powershell
 $ErrorActionPreference = "Stop"

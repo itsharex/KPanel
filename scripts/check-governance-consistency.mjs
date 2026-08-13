@@ -18,12 +18,18 @@ const requiredFiles = [
   'docs/release-acceptance-template.md',
   'docs/quality-improvement-proposal-template.md',
   'dependency-policy.json',
+  'environment-policy.json',
+  'scripts/check-environment-policy.mjs',
+  'scripts/tests/check-environment-policy.test.mjs',
+  'scripts/background-browser-test.mjs',
+  'scripts/tests/background-browser-test.test.mjs',
   'scripts/report-release-metrics.mjs',
   'scripts/tests/report-release-metrics.test.mjs',
   'scripts/report-dependency-freshness.mjs',
   'scripts/tests/report-dependency-freshness.test.mjs',
   '.codex-workflows/README.md',
   '.codex-workflows/session-collaboration.workflow.yaml',
+  '.codex-workflows/background-browser-validation.workflow.yaml',
   '.codex-workflows/release-kpanel.workflow.yaml',
   '.codex-workflows/quality-audit-kpanel.workflow.yaml',
   '.codex-workflows/evolve-kpanel.workflow.yaml',
@@ -124,6 +130,9 @@ requireText('PROJECT_RULES.md', [
   '公共默认',
   'dependency-policy.json',
   '最新稳定版',
+  'environment-policy.json',
+  '后台浏览器',
+  'prod-108',
 ]);
 requireText('docs/project-management.md', [
   'Definition of Ready',
@@ -135,12 +144,16 @@ requireText('docs/project-management.md', [
   '.codex-workflows/maintain-kpanel-dependencies.workflow.yaml',
   'make dependency-report',
   '每日安全审计',
+  'background-browser-validation.workflow.yaml',
+  '生产已部署',
 ]);
 requireText('.codex-workflows/README.md', [
   'evolve-kpanel.workflow.yaml',
   'maintain-kpanel-dependencies.workflow.yaml',
   'make dependency-policy-check',
   'make dependency-report',
+  'background-browser-validation.workflow.yaml',
+  'environment-policy.json',
 ]);
 
 requireText('docs/release-acceptance-template.md', [
@@ -150,7 +163,9 @@ requireText('docs/release-acceptance-template.md', [
   '## 依赖与技术栈变化',
   '最近每日安全通告审计、EOL 复核状态及证据',
   '## 隔离真机与浏览器验收',
-  '## 生产部署与观察',
+  '后台作业 ID、终态、退出码、超时和证据目录',
+  '## 生产部署安全核对',
+  '不参与候选或功能验证',
   '## 回滚',
   '## 交付节奏数据',
   '首个纳入提交时间',
@@ -169,6 +184,7 @@ requireText('docs/quality-improvement-proposal-template.md', [
 
 const workflows = [
   '.codex-workflows/session-collaboration.workflow.yaml',
+  '.codex-workflows/background-browser-validation.workflow.yaml',
   '.codex-workflows/release-kpanel.workflow.yaml',
   '.codex-workflows/quality-audit-kpanel.workflow.yaml',
   '.codex-workflows/evolve-kpanel.workflow.yaml',
