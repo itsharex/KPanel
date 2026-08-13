@@ -51,7 +51,7 @@ function readerHarness() {
     })
   }
 
-  return { dom, port, render }
+  return { dom, port, render, realmBuffer }
 }
 
 describe('browser reader runtime', () => {
@@ -120,6 +120,40 @@ describe('browser reader runtime', () => {
       url: 'https://kejilion.sh/index-zh-CN.html',
     }), [])
     expect(dom.window.document.getElementById('reader-content')?.hidden).toBe(true)
+    dom.window.close()
+  })
+
+  it('preserves page selectors and applies inline and relayed stylesheets', () => {
+    const { dom, port, render, realmBuffer } = readerHarness()
+    render(new TextEncoder().encode(`<!doctype html><html><head>
+      <style>.layout{display:grid}.brand{font-weight:700}</style>
+      <link rel="stylesheet" href="/assets/site.css">
+      </head><body><main id="app" class="layout" style="max-width:1200px"><h1 class="brand">Styled</h1></main></body></html>`), [
+      ['Content-Type', 'text/html; charset=utf-8'],
+    ], 'https://dh.kejilion.pro/')
+
+    const content = dom.window.document.getElementById('reader-content')!
+    expect(content.querySelector('#app.layout .brand')?.textContent).toBe('Styled')
+    expect([...dom.window.document.head.querySelectorAll('style')].map(style => style.textContent).join('\n'))
+      .toContain('.layout{display:grid}')
+    expect([...dom.window.document.head.querySelectorAll('style')].map(style => style.textContent).join('\n'))
+      .toContain('max-width: 1200px')
+    const request = port.postMessage.mock.calls.find(([message]) =>
+      (message as { kind?: string }).kind === 'stylesheet')?.[0] as { requestId: string }
+    expect(request).toEqual(expect.objectContaining({
+      type: 'resource',
+      kind: 'stylesheet',
+      url: 'https://dh.kejilion.pro/assets/site.css',
+    }))
+    port.onmessage?.({ data: {
+      type: 'resource-result',
+      navigationId: 'navigation-1',
+      requestId: request.requestId,
+      headers: [['Content-Type', 'text/css; charset=utf-8']],
+      body: realmBuffer(new TextEncoder().encode('.brand{color:rgb(1,2,3)}')),
+    } })
+    expect([...dom.window.document.head.querySelectorAll('style')].map(style => style.textContent).join('\n'))
+      .toContain('.brand{color:rgb(1,2,3)}')
     dom.window.close()
   })
 })

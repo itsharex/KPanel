@@ -69,6 +69,8 @@ interface ReaderRuntime {
   resourceActive: number
   resourceCount: number
   resourceBytes: number
+  stylesheetCount: number
+  stylesheetBytes: number
 }
 
 const START_PAGE_SHORTCUT_LIMIT = 12
@@ -120,6 +122,9 @@ const READER_IMAGE_LIMIT = 24
 const READER_IMAGE_BYTES = 2 * 1024 * 1024
 const READER_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024
 const READER_IMAGE_CONCURRENCY = 4
+const READER_STYLESHEET_LIMIT = 16
+const READER_STYLESHEET_BYTES = 512 * 1024
+const READER_STYLESHEET_TOTAL_BYTES = 2 * 1024 * 1024
 const READER_REDIRECT_LIMIT = 5
 const READER_NAVIGATION_TIMEOUT_MS = 45_000
 
@@ -314,7 +319,7 @@ function replaceReaderTarget(tab: BrowserTab, target: EmbeddedBrowserTarget): vo
 async function fetchReaderWithRedirects(
   session: BrowserCoreSession,
   initialTarget: EmbeddedBrowserTarget,
-  kind: 'document' | 'image',
+  kind: 'document' | 'image' | 'stylesheet',
   signal: AbortSignal,
 ): Promise<{ target: EmbeddedBrowserTarget; response: BrowserReaderResponse }> {
   let target = initialTarget
@@ -354,6 +359,8 @@ async function loadReaderDocument(
   runtime.resourceActive = 0
   runtime.resourceCount = 0
   runtime.resourceBytes = 0
+  runtime.stylesheetCount = 0
+  runtime.stylesheetBytes = 0
   const controller = runtime.documentController
   const signal = controller.signal
   let timedOut = false
@@ -478,28 +485,38 @@ function handleReaderResource(tab: BrowserTab, message: Record<string, unknown>)
   const requestID = typeof message.requestId === 'string' ? message.requestId : ''
   const navigationID = typeof message.navigationId === 'string' ? message.navigationId : ''
   const target = typeof message.url === 'string' ? resolveEmbeddedBrowserTarget(message.url) : undefined
+  const kind = message.kind === 'stylesheet' ? 'stylesheet' : 'image'
   if (!runtime || session?.mode !== 'reader' || !requestID || requestID.length > 64 ||
     navigationID !== runtime.navigationID || navigationID !== activeNavigations.get(tab.id)) return
-  if (!target || runtime.resourceCount >= READER_IMAGE_LIMIT || runtime.resourceActive >= READER_IMAGE_CONCURRENCY) {
+  const overCount = kind === 'stylesheet'
+    ? runtime.stylesheetCount >= READER_STYLESHEET_LIMIT
+    : runtime.resourceCount >= READER_IMAGE_LIMIT
+  if (!target || overCount || runtime.resourceActive >= READER_IMAGE_CONCURRENCY) {
     runtime.port.postMessage({ type: 'resource-result', navigationId: navigationID, requestId: requestID, headers: [] })
     return
   }
-  runtime.resourceCount += 1
+  if (kind === 'stylesheet') runtime.stylesheetCount += 1
+  else runtime.resourceCount += 1
   runtime.resourceActive += 1
   const resourceController = new AbortController()
   const abortResource = () => resourceController.abort()
   const resourceSignal = runtime.resourceController.signal
   resourceSignal.addEventListener('abort', abortResource, { once: true })
   const timeout = window.setTimeout(abortResource, READER_NAVIGATION_TIMEOUT_MS)
-  void fetchReaderWithRedirects(session, target, 'image', resourceController.signal)
+  void fetchReaderWithRedirects(session, target, kind, resourceController.signal)
     .then(({ response }) => {
+      const exceedsBudget = kind === 'stylesheet'
+        ? response.body.byteLength > READER_STYLESHEET_BYTES ||
+          runtime.stylesheetBytes + response.body.byteLength > READER_STYLESHEET_TOTAL_BYTES
+        : response.body.byteLength > READER_IMAGE_BYTES ||
+          runtime.resourceBytes + response.body.byteLength > READER_IMAGE_TOTAL_BYTES
       if (runtime.navigationID !== navigationID || activeNavigations.get(tab.id) !== navigationID ||
-        response.status < 200 || response.status >= 300 || response.body.byteLength > READER_IMAGE_BYTES ||
-        runtime.resourceBytes + response.body.byteLength > READER_IMAGE_TOTAL_BYTES) {
+        response.status < 200 || response.status >= 300 || exceedsBudget) {
         runtime.port.postMessage({ type: 'resource-result', navigationId: navigationID, requestId: requestID, headers: [] })
         return
       }
-      runtime.resourceBytes += response.body.byteLength
+      if (kind === 'stylesheet') runtime.stylesheetBytes += response.body.byteLength
+      else runtime.resourceBytes += response.body.byteLength
       runtime.port.postMessage({
         type: 'resource-result',
         navigationId: navigationID,
@@ -587,6 +604,8 @@ function handleKernelLoad(tab: BrowserTab): void {
     resourceActive: 0,
     resourceCount: 0,
     resourceBytes: 0,
+    stylesheetCount: 0,
+    stylesheetBytes: 0,
   }
   readerRuntimes.set(tab.id, runtime)
   channel.port1.onmessage = (event) => handleReaderPortMessage(tab, event.data)

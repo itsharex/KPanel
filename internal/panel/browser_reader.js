@@ -10,6 +10,9 @@
   const maxImageBytes = 2 * 1024 * 1024
   const maxImageTotalBytes = 12 * 1024 * 1024
   const imageConcurrency = 4
+  const maxStylesheets = 16
+  const maxStylesheetBytes = 512 * 1024
+  const maxStylesheetTotalBytes = 2 * 1024 * 1024
   const allowedImageTypes = new Set(['image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/webp'])
   const allowedTags = new Set([
     'main', 'section', 'article', 'header', 'footer', 'nav', 'aside', 'div', 'span', 'p',
@@ -24,6 +27,7 @@
     'audio', 'video', 'source', 'track', 'canvas', 'portal', 'noscript', 'template', 'xmp',
     'plaintext', 'noembed', 'noframes',
   ])
+  const styleNonce = document.currentScript?.nonce || ''
 
   let port
   let currentNavigationID = ''
@@ -32,6 +36,12 @@
   let imageInFlight = 0
   let imageTotalBytes = 0
   const pendingImages = new Map()
+  const pendingStylesheets = new Map()
+  let stylesheetSequence = 0
+  let stylesheetQueue = []
+  let stylesheetInFlight = 0
+  let stylesheetTotalBytes = 0
+  let pageStyles = []
   let blobURLs = []
 
   function send(message, transfer = []) {
@@ -56,9 +66,15 @@
     for (const value of blobURLs) URL.revokeObjectURL(value)
     blobURLs = []
     pendingImages.clear()
+    pendingStylesheets.clear()
     imageQueue = []
     imageInFlight = 0
     imageTotalBytes = 0
+    stylesheetQueue = []
+    stylesheetInFlight = 0
+    stylesheetTotalBytes = 0
+    for (const style of pageStyles) style.remove()
+    pageStyles = []
   }
 
   function headerValue(headers, name) {
@@ -113,6 +129,21 @@
       if ((name === 'colspan' || name === 'rowspan') && !/^(?:[1-9]|[1-9][0-9]|100)$/.test(value)) continue
       if (name === 'dir' && !/^(?:ltr|rtl|auto)$/i.test(value)) continue
       element.setAttribute(name, value)
+    }
+    const id = source.getAttribute('id')
+    if (id && /^[A-Za-z][A-Za-z0-9_:.-]{0,127}$/.test(id)) element.id = id
+    const classes = (source.getAttribute('class') || '').split(/\s+/)
+      .filter(value => /^[A-Za-z_][A-Za-z0-9_-]{0,127}$/.test(value)).slice(0, 32)
+    if (classes.length) element.className = classes.join(' ')
+    const inlineStyle = source.getAttribute('style')
+    if (inlineStyle && inlineStyle.length <= 4096) {
+      const declaration = document.createElement('span').style
+      declaration.cssText = inlineStyle
+      if (declaration.cssText) {
+        const styleID = `inline-${state.inlineStyles.length + 1}`
+        element.dataset.kpanelStyle = styleID
+        state.inlineStyles.push(`[data-kpanel-style="${styleID}"]{${declaration.cssText}}`)
+      }
     }
     if (tag === 'a') {
       const href = absoluteURL(source.getAttribute('href') || '', baseURL)
@@ -188,6 +219,48 @@
     }
   }
 
+  function appendPageStyle(source) {
+    if (typeof source !== 'string') return undefined
+    const style = document.createElement('style')
+    if (styleNonce) style.nonce = styleNonce
+    style.textContent = source
+    document.head.append(style)
+    pageStyles.push(style)
+    return style
+  }
+
+  function pumpStylesheets() {
+    while (stylesheetInFlight < imageConcurrency && stylesheetQueue.length &&
+      stylesheetTotalBytes < maxStylesheetTotalBytes) {
+      const stylesheet = stylesheetQueue.shift()
+      stylesheetSequence += 1
+      const requestID = `stylesheet-${stylesheetSequence}`
+      pendingStylesheets.set(requestID, stylesheet.element)
+      stylesheetInFlight += 1
+      send({ type: 'resource', kind: 'stylesheet', requestId: requestID,
+        navigationId: currentNavigationID, url: stylesheet.url })
+    }
+  }
+
+  function collectPageStyles(parsed, target, state) {
+    for (const source of parsed.querySelectorAll('style, link[rel][href]')) {
+      if (source.localName === 'style') {
+        const css = source.textContent || ''
+        if (css.length && stylesheetTotalBytes + css.length <= maxStylesheetTotalBytes) {
+          stylesheetTotalBytes += css.length
+          appendPageStyle(css)
+        }
+        continue
+      }
+      const rel = (source.getAttribute('rel') || '').toLowerCase().split(/\s+/)
+      if (!rel.includes('stylesheet') || state.stylesheets.length >= maxStylesheets) continue
+      const href = absoluteURL(source.getAttribute('href') || '', target)
+      if (!href) continue
+      const element = appendPageStyle('')
+      if (element) state.stylesheets.push({ element, url: href })
+    }
+  }
+
   function metaRefreshTarget(parsed, target) {
     for (const meta of parsed.querySelectorAll('meta[http-equiv][content]')) {
       if ((meta.getAttribute('http-equiv') || '').trim().toLowerCase() !== 'refresh') continue
@@ -212,18 +285,22 @@
       return
     }
     const fragment = document.createDocumentFragment()
-    const state = { nodes: 0, images: [], hasVisibleContent: false }
+    const state = { nodes: 0, images: [], stylesheets: [], inlineStyles: [], hasVisibleContent: false }
     forEachChild(parsed.body, child => appendSanitized(child, fragment, target, state))
     if (!state.hasVisibleContent) {
       throw new Error('该网站依赖完整 JavaScript、Cookie 或浏览器验证，请使用系统浏览器打开')
     }
+    collectPageStyles(parsed, target, state)
     content.replaceChildren(fragment)
+    if (state.inlineStyles.length) appendPageStyle(state.inlineStyles.join('\n'))
     imageQueue = state.images
+    stylesheetQueue = state.stylesheets
     const title = parsed.title.trim().slice(0, 160) || new URL(target).hostname
     showContent()
     send({ type: 'navigation', navigationId: currentNavigationID, url: target })
     send({ type: 'title', navigationId: currentNavigationID, title })
     pumpImages()
+    pumpStylesheets()
   }
 
   function renderText(bytes, headers, target) {
@@ -280,6 +357,19 @@
 
   function handleResource(message) {
     if (message.navigationId !== currentNavigationID || typeof message.requestId !== 'string') return
+    const stylesheet = pendingStylesheets.get(message.requestId)
+    if (stylesheet) {
+      pendingStylesheets.delete(message.requestId)
+      stylesheetInFlight = Math.max(0, stylesheetInFlight - 1)
+      if (message.body instanceof ArrayBuffer && Array.isArray(message.headers) &&
+        message.body.byteLength <= maxStylesheetBytes &&
+        stylesheetTotalBytes + message.body.byteLength <= maxStylesheetTotalBytes) {
+        stylesheetTotalBytes += message.body.byteLength
+        stylesheet.textContent = decoderFor(message.headers, new Uint8Array(message.body)).decode(message.body)
+      }
+      pumpStylesheets()
+      return
+    }
     const image = pendingImages.get(message.requestId)
     if (!image) return
     pendingImages.delete(message.requestId)

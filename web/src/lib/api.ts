@@ -584,7 +584,7 @@ function decodeBrowserHeaderPairs(value: string | null): Array<[string, string]>
 async function browserReaderResponse(
   token: string,
   url: string,
-  kind: 'document' | 'image',
+  kind: 'document' | 'image' | 'stylesheet',
   signal?: AbortSignal,
 ): Promise<BrowserReaderResponse> {
   const headers = new Headers({

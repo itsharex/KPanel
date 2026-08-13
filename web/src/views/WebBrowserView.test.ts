@@ -398,6 +398,13 @@ describe('WebBrowserView', () => {
           body: new TextEncoder().encode('<main>reader page</main>').buffer,
         }
       }
+      if (kind === 'stylesheet') {
+        return {
+          status: 200,
+          headers: [['Content-Type', 'text/css; charset=utf-8']],
+          body: new TextEncoder().encode('.layout{display:grid}').buffer,
+        }
+      }
       if (url === 'https://cdn.example.com/image') {
         return { status: 302, headers: [['Location', '/image.png']], body: new ArrayBuffer(0) }
       }
@@ -434,6 +441,14 @@ describe('WebBrowserView', () => {
       url: 'https://cdn.example.com/image',
     })
     await flushPromises()
+    childPort?.postMessage({
+      type: 'resource',
+      kind: 'stylesheet',
+      navigationId: navigationID,
+      requestId: 'stylesheet-1',
+      url: 'https://blog.example.com/site.css',
+    })
+    await flushPromises()
 
     expect(fetchBrowserReader).toHaveBeenCalledWith(
       'signed-browser-token', 'https://cdn.example.com/image.png', 'image', expect.any(AbortSignal),
@@ -442,6 +457,14 @@ describe('WebBrowserView', () => {
       type: 'resource-result',
       requestId: 'image-1',
       body: expect.any(ArrayBuffer),
+    }))
+    expect(fetchBrowserReader).toHaveBeenCalledWith(
+      'signed-browser-token', 'https://blog.example.com/site.css', 'stylesheet', expect.any(AbortSignal),
+    )
+    expect(childMessages).toContainEqual(expect.objectContaining({
+      type: 'resource-result',
+      requestId: 'stylesheet-1',
+      headers: [['Content-Type', 'text/css; charset=utf-8']],
     }))
     wrapper.unmount()
   })

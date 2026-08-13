@@ -20,6 +20,7 @@ const (
 	browserReaderRequestBytes  = int64(4 << 10)
 	browserReaderDocumentBytes = int64(8 << 20)
 	browserReaderImageBytes    = int64(2 << 20)
+	browserReaderStyleBytes    = int64(512 << 10)
 	browserReaderMetadataBytes = 32 << 10
 	browserReaderNonceMarker   = "__KPANEL_READER_NONCE__"
 	browserReaderCSSMarker     = "__KPANEL_READER_CSS__"
@@ -121,7 +122,8 @@ func (s *Server) handleBrowserReaderFetch(w http.ResponseWriter, r *http.Request
 		return
 	}
 	input.URL = strings.TrimSpace(input.URL)
-	if len(input.URL) == 0 || len(input.URL) > 2_048 || (input.Kind != "document" && input.Kind != "image") {
+	if len(input.URL) == 0 || len(input.URL) > 2_048 ||
+		(input.Kind != "document" && input.Kind != "image" && input.Kind != "stylesheet") {
 		s.writeProblem(w, r, http.StatusBadRequest, "invalid_browser_reader_request", "Invalid browser reader request", "")
 		return
 	}
@@ -131,6 +133,8 @@ func (s *Server) handleBrowserReaderFetch(w http.ResponseWriter, r *http.Request
 	}
 	if input.Kind == "image" {
 		headerPairs = append(headerPairs, browsercore.HeaderPair{"Accept", "image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.9,*/*;q=0.1"})
+	} else if input.Kind == "stylesheet" {
+		headerPairs = append(headerPairs, browsercore.HeaderPair{"Accept", "text/css,*/*;q=0.1"})
 	} else {
 		headerPairs = append(headerPairs, browsercore.HeaderPair{"Accept", "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.8,*/*;q=0.1"})
 	}
@@ -191,7 +195,9 @@ func (s *Server) handleBrowserReaderFetch(w http.ResponseWriter, r *http.Request
 		return
 	}
 	limit := browserReaderDocumentBytes
-	if input.Kind == "image" || browserReaderMetadataIsImage(metadata) {
+	if input.Kind == "stylesheet" {
+		limit = browserReaderStyleBytes
+	} else if input.Kind == "image" || browserReaderMetadataIsImage(metadata) {
 		limit = browserReaderImageBytes
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
