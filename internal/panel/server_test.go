@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/kejilion/kejilion-panel/internal/auth"
-	"github.com/kejilion/kejilion-panel/internal/browsercore"
 	"github.com/kejilion/kejilion-panel/internal/store"
 )
 
@@ -89,7 +88,7 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 		t.Fatalf("unexpected bootstrap status: %d headers=%v", status.Code, status.Header())
 	}
 	if policy := status.Header().Get("Content-Security-Policy"); !strings.Contains(policy, "frame-src 'self' blob:") || strings.Contains(policy, " http:") || strings.Contains(policy, " https:") {
-		t.Fatalf("embedded browser frame policy missing: %q", policy)
+		t.Fatalf("restricted frame policy missing: %q", policy)
 	}
 	token, err := os.ReadFile(tokenPath)
 	if err != nil {
@@ -151,31 +150,6 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 	server.ServeHTTP(expiredResponse, expiredRequest)
 	if expiredResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("logged-out session accepted: %d", expiredResponse.Code)
-	}
-}
-
-func TestSecurityHeadersAllowOnlyTheConfiguredBrowserRelayFrame(t *testing.T) {
-	server, _ := newTestServer(t)
-	server.config.BrowserMode = browsercore.RuntimeModeBeta
-	server.config.BrowserRelayURL = "https://browser-relay.example.com"
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "http://panel.test/desktop", nil)
-	server.setSecurityHeaders(recorder, request)
-	policy := recorder.Header().Get("Content-Security-Policy")
-	if !strings.Contains(policy, "frame-src 'self' blob: https://browser-relay.example.com;") ||
-		strings.Contains(policy, " frame-src 'self' http:") || strings.Contains(policy, " frame-src 'self' https:") {
-		t.Fatalf("browser relay frame policy = %q", policy)
-	}
-}
-
-func TestSecurityHeadersExcludeBrowserRelayWhenBetaIsDisabled(t *testing.T) {
-	server, _ := newTestServer(t)
-	server.config.BrowserRelayURL = "https://browser-relay.example.com"
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "http://panel.test/desktop", nil)
-	server.setSecurityHeaders(recorder, request)
-	if policy := recorder.Header().Get("Content-Security-Policy"); strings.Contains(policy, server.config.BrowserRelayURL) {
-		t.Fatalf("disabled browser Relay present in frame policy: %q", policy)
 	}
 }
 

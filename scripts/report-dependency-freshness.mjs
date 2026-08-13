@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, win32 as win32Path } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +16,6 @@ const REQUIRED_GROUPS = [
   'github-actions',
   'security-tools',
   'managed-kejilion-script',
-  'vendored-browser-runtime',
 ];
 const REQUIRED_FRESHNESS_TRIGGERS = [
   'dependency-policy.json',
@@ -29,7 +27,6 @@ const REQUIRED_FRESHNESS_TRIGGERS = [
   'Makefile',
   'scripts/report-dependency-freshness.mjs',
   'scripts/security-scan.sh',
-  'internal/browsercore/vendor/**',
   'THIRD_PARTY_NOTICES.md',
   '.github/workflows/**',
 ];
@@ -153,45 +150,6 @@ export function validatePolicy(policy, repo) {
     }
     if (exception.reviewDate && Number.isNaN(new Date(exception.reviewDate).getTime())) {
       failures.push('exception ' + index + ' reviewDate is invalid');
-    }
-  }
-  const vendoredBrowser = policy.groups?.find((group) => group.id === 'vendored-browser-runtime');
-  if (vendoredBrowser) {
-    const manifestPath = resolve(repo, 'internal/browsercore/vendor/manifest.json');
-    const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : {};
-    const components = Object.values(vendoredBrowser.components ?? {});
-    if (components.length === 0) failures.push('vendored-browser-runtime must declare components');
-    for (const component of components) {
-      const label = component.package ?? component.manifestKey ?? '<unknown>';
-      if (!component.package || !component.manifestKey || !component.assetDirectory || !component.currentVersion) {
-        failures.push('vendored browser component is incomplete: ' + label);
-        continue;
-      }
-      const pinned = manifest[component.manifestKey];
-      if (!pinned || pinned.version !== component.currentVersion) {
-        failures.push(label + ' version does not match the vendored manifest');
-        continue;
-      }
-      if (!/^sha512-[A-Za-z0-9+/]+=*$/.test(pinned.packageIntegrity ?? '')) {
-        failures.push(label + ' package integrity is missing or invalid');
-      }
-      for (const [filename, digest] of Object.entries(pinned.files ?? {})) {
-        const assetPath = resolve(repo, component.assetDirectory, filename);
-        if (!existsSync(assetPath)) {
-          failures.push(label + ' vendored asset is missing: ' + filename);
-          continue;
-        }
-        const actual = 'sha256-' + createHash('sha256').update(readFileSync(assetPath)).digest('hex');
-        if (actual !== digest) failures.push(label + ' vendored asset digest mismatch: ' + filename);
-      }
-      if (!isStableVersion(component.currentVersion)) {
-        const exception = (policy.exceptions ?? []).find((item) =>
-          item.component === component.package && item.currentVersion === component.currentVersion);
-        if (!exception) failures.push(label + ' prerelease runtime lacks an explicit experiment exception');
-        else if (exception.experimentMode !== 'beta' || exception.runtimeDefault !== 'disabled') {
-          failures.push(label + ' prerelease exception must require beta mode with a disabled default');
-        }
-      }
     }
   }
   const cadence = policy.cadence ?? {};
@@ -545,32 +503,6 @@ async function collectManagedScript(repo, policy) {
   }];
 }
 
-async function collectVendoredBrowserRuntime(repo, policy) {
-  const group = policy.groups.find((item) => item.id === 'vendored-browser-runtime');
-  const manifest = JSON.parse(readFileSync(resolve(repo, 'internal/browsercore/vendor/manifest.json'), 'utf8'));
-  const results = await Promise.all(Object.values(group.components).map(async (component) => {
-    const metadata = await fetchJson('https://registry.npmjs.org/' + encodeURIComponent(component.package));
-    const stable = metadata['dist-tags']?.latest;
-    if (!isStableVersion(stable)) throw new Error(component.package + ' npm latest tag is not stable');
-    const current = manifest[component.manifestKey].version;
-    if (current === stable) return null;
-    if (!isStableVersion(current)) {
-      return {
-        component: component.package,
-        current,
-        candidate: stable,
-        updateClass: 'prerelease',
-        source: 'npm registry latest stable dist-tag',
-        dependencyScope: 'vendored',
-      };
-    }
-    return candidate(component.package, current, stable, 'package', 'npm registry latest stable dist-tag', {
-      dependencyScope: 'vendored',
-    });
-  }));
-  return results.filter(Boolean);
-}
-
 async function collectSource(id, collector) {
   try {
     return { id, status: 'ok', candidates: await collector(), error: null };
@@ -679,7 +611,6 @@ export async function main(argv) {
     collectSource('security-tools', () => collectSecurityTools(options.repo, policy)),
     collectSource('dockerfile-frontend', () => collectDockerfileFrontend(options.repo)),
     collectSource('managed-kejilion-script', () => collectManagedScript(options.repo, policy)),
-    collectSource('vendored-browser-runtime', () => collectVendoredBrowserRuntime(options.repo, policy)),
   ]);
   const report = summarize(policy, sources);
   const rendered = options.format === 'json' ? JSON.stringify(report, null, 2) : renderMarkdown(report);

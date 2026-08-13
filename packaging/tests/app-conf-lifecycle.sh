@@ -155,22 +155,12 @@ AGENT
 		exit 0
 		;;
 	"rm "*)
-		if [ "${2:-}" = "-f" ] && [ "${3:-}" = "kejilion-browser-relay" ]; then
-			require_state
-			rm -f "$state/browser-relay"
-		fi
 		exit 0
-		;;
-	"inspect kejilion-browser-relay")
-		require_state
-		[ -f "$state/browser-relay" ]
-		exit
 		;;
 	"inspect --format")
 		case "$3" in
 			*"{{.Image}}"*) printf '%s\n' \
 				'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
-			*'"8090/tcp"'*) printf '%s\n' "${KPANEL_MOCK_CURRENT_RELAY_PORT:-18081}" ;;
 			*PortBindings*) printf '%s\n' "${KPANEL_MOCK_CURRENT_PORT:-18080}" ;;
 			*NetworkSettings*) printf '%s\n' 1 ;;
 			*)
@@ -190,9 +180,6 @@ AGENT
 		case "${4:-}" in
 			create) : >"$state/network" ;;
 			up)
-				if grep -q '^  browser-relay:' /home/docker/kpanel/docker-compose.yml; then
-					: >"$state/browser-relay"
-				fi
 				if [ "${KPANEL_MOCK_BOOTSTRAP_MISSING:-0}" != 1 ]; then
 					mkdir -p /home/docker/kpanel/data/panel
 					printf '%s\n' 'test-bootstrap-token' \
@@ -200,7 +187,7 @@ AGENT
 					chmod 600 /home/docker/kpanel/data/panel/bootstrap.token
 				fi
 				;;
-			down) rm -f "$state/network" "$state/browser-relay" ;;
+			down) rm -f "$state/network" ;;
 			*) exit 2 ;;
 		esac
 		exit 0
@@ -297,11 +284,6 @@ EOF
 		echo "install output still asks the user to read the token file" >&2
 		return 1
 	fi
-	if grep -F '内置浏览器' "$TEST_DIR/install-output.txt" >/dev/null; then
-		echo "install output exposes embedded-browser implementation details" >&2
-		return 1
-	fi
-
 	grep -F "image: docker.io/kjlion/kejilion-panel:latest" \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
@@ -309,37 +291,9 @@ EOF
 		/home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_SECURE_COOKIE=false' \
 		/home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_MODE=reader' \
-		/home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' \
-		/home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_RELAY_URL=http://198.51.100.25:18081' \
-		/home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_ALLOW_IP_HOSTS=true' \
 		/home/docker/kpanel/.env >/dev/null
-	grep -F 'KEJILION_PANEL_BROWSER_RELAY_URL: ${KPANEL_BROWSER_RELAY_URL}' \
-		/home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -F 'KEJILION_PANEL_BROWSER_MODE: ${KPANEL_BROWSER_MODE:-reader}' \
-		/home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -F 'KEJILION_PANEL_BROWSER_RELAY_INTERNAL_URL: http://browser-relay:8090' \
-		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F 'KEJILION_PANEL_SECURE_COOKIE: ${KPANEL_SECURE_COOKIE:-false}' \
-		/home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -F 'KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE: /run/secrets/browser-relay-secret' \
-		/home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -F -- '- "18081:8090"' /home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx '    container_name: kejilion-browser-relay' \
-		/home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -F -- '- "-mode=${KPANEL_BROWSER_MODE:-reader}"' \
-		/home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -F 'KEJILION_BROWSER_RELAY_EXPECT_MODE: ${KPANEL_BROWSER_MODE:-reader}' \
-		/home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx '    user: "65532:65532"' /home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx '    read_only: true' /home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx '    pids_limit: 64' /home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx '    mem_limit: 128m' /home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx '    cpus: 0.5' /home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx '      test: ["CMD", "/kpanel-browser-relay", "healthcheck"]' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -F 'KEJILION_PANEL_ALLOW_IP_HOSTS: ${KPANEL_ALLOW_IP_HOSTS:-true}' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
@@ -347,7 +301,7 @@ EOF
 		/home/docker/kpanel/.env >/dev/null
 	grep -F 'KEJILION_PANEL_CLUSTER_PRIVATE_CIDRS: ${KPANEL_CLUSTER_PRIVATE_CIDRS:-}' \
 		/home/docker/kpanel/docker-compose.yml >/dev/null
-	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 2
+	test "$(grep -c '^    networks:$' /home/docker/kpanel/docker-compose.yml)" = 1
 	grep -Fx '      - kpanel-internal' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx '      - kpanel-egress' /home/docker/kpanel/docker-compose.yml >/dev/null
 	grep -Fx '    internal: true' /home/docker/kpanel/docker-compose.yml >/dev/null
@@ -368,6 +322,8 @@ EOF
 		/home/docker/kpanel/kejilion-agent.service >/dev/null
 	grep -F 'kpanel_report_failed_install' \
 		"$PROJECT_DIR/packaging/kejilion-app/kpanel.conf" >/dev/null
+	grep -F 'docker compose --env-file .env up -d --force-recreate --remove-orphans' \
+		"$PROJECT_DIR/packaging/kejilion-app/kpanel.conf" >/dev/null
 	if grep -F '请运行：systemctl status kejilion-agent' \
 		"$PROJECT_DIR/packaging/kejilion-app/kpanel.conf" >/dev/null; then
 		echo "KPanel installer still points users at a unit removed by cleanup" >&2
@@ -383,10 +339,6 @@ EOF
 	test "$(stat -c '%a' /home/docker/kpanel/secrets/agent.token)" = 640
 	test "$(stat -c '%u:%g' /home/docker/kpanel/secrets/agent.token)" = 0:987
 	test "$(tr -d '\r\n' </home/docker/kpanel/secrets/agent.token | wc -c)" = 64
-	test -f /home/docker/kpanel/secrets/browser-relay.secret
-	test "$(stat -c '%a' /home/docker/kpanel/secrets/browser-relay.secret)" = 640
-	test "$(stat -c '%u:%g' /home/docker/kpanel/secrets/browser-relay.secret)" = 0:987
-	test "$(tr -d '\r\n' </home/docker/kpanel/secrets/browser-relay.secret | wc -c)" = 64
 	test -f /home/docker/kpanel/.managed-by-kejilion-app
 	test -x /home/docker/kpanel/bin/kejilion.sh
 	test "$(stat -c '%a' /home/docker/kpanel/bin/kejilion.sh)" = 700
@@ -396,16 +348,6 @@ EOF
 
 	local systemctl_lines_before=""
 	systemctl_lines_before="$(wc -l <"$KPANEL_MOCK_SYSTEMCTL_LOG")"
-	if KPANEL_MOCK_CURRENT_RELAY_PORT=19081 docker_app_update \
-		>"$TEST_DIR/relay-port-output.txt" 2>&1; then
-		echo "KPanel update ignored a mismatched existing Browser Relay port" >&2
-		return 1
-	fi
-	grep -F 'Browser Relay' "$TEST_DIR/relay-port-output.txt" >/dev/null
-	test "$(wc -l <"$KPANEL_MOCK_SYSTEMCTL_LOG")" = "$systemctl_lines_before"
-	test ! -e "$MOCK_STATE/network-preflight"
-	test ! -e "$MOCK_STATE/rollback-tagged"
-
 	if KPANEL_MOCK_PORT_PUBLISH_FAIL=1 docker_app_update \
 		>"$TEST_DIR/network-preflight-output.txt" 2>&1; then
 		echo "KPanel update ignored a failed Docker port-publish preflight" >&2
@@ -417,64 +359,6 @@ EOF
 	test ! -e "$MOCK_STATE/network-preflight"
 	test ! -e "$MOCK_STATE/rollback-tagged"
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
-
-	cp -p /home/docker/kpanel/.env "$TEST_DIR/valid-browser-env"
-	sed -i 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=disabled/' \
-		/home/docker/kpanel/.env
-	sed -i '/^KPANEL_BROWSER_MODE_MIGRATION=/d' /home/docker/kpanel/.env
-	docker_app_update >"$TEST_DIR/browser-migration-update-output.txt"
-	grep -Fx 'KPANEL_BROWSER_MODE=reader' /home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' /home/docker/kpanel/.env >/dev/null
-	if grep -E '是否|\[y/N\]|内置浏览器|KPANEL_BROWSER_MODE' "$TEST_DIR/browser-migration-update-output.txt" >/dev/null; then
-		echo "browser migration changed the normal update presentation" >&2
-		return 1
-	fi
-
-	sed -i 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=disabled/' \
-		/home/docker/kpanel/.env
-	sed -i '/^KPANEL_BROWSER_MODE_MIGRATION=/d' /home/docker/kpanel/.env
-	KPANEL_BROWSER_READER_MIGRATION=disabled docker_app_update
-	grep -Fx 'KPANEL_BROWSER_MODE=disabled' /home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' /home/docker/kpanel/.env >/dev/null
-
-	docker_app_update
-	grep -Fx 'KPANEL_BROWSER_MODE=disabled' /home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' /home/docker/kpanel/.env >/dev/null
-	cp -p "$TEST_DIR/valid-browser-env" /home/docker/kpanel/.env
-
-	sed -i 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=enabled/' \
-		/home/docker/kpanel/.env
-	cp -p /home/docker/kpanel/.env "$TEST_DIR/invalid-browser-env"
-	systemctl_lines_before="$(wc -l <"$KPANEL_MOCK_SYSTEMCTL_LOG")"
-	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
-	if docker_app_update >"$TEST_DIR/invalid-browser-mode-output.txt" 2>&1; then
-		echo "KPanel update accepted an invalid Browser mode" >&2
-		return 1
-	fi
-	grep -F 'KPANEL_BROWSER_MODE 只允许 disabled、reader 或 beta' \
-		"$TEST_DIR/invalid-browser-mode-output.txt" >/dev/null
-	cmp -s "$TEST_DIR/invalid-browser-env" /home/docker/kpanel/.env
-	test "$(wc -l <"$KPANEL_MOCK_SYSTEMCTL_LOG")" = "$systemctl_lines_before"
-	test ! -e "$MOCK_STATE/rollback-tagged"
-	test ! -e "$MOCK_STATE/image-tag"
-	cp -p "$TEST_DIR/valid-browser-env" /home/docker/kpanel/.env
-
-	sed -i 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=beta/' \
-		/home/docker/kpanel/.env
-	cp -p /home/docker/kpanel/.env "$TEST_DIR/direct-http-beta-env"
-	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
-	if docker_app_update >"$TEST_DIR/direct-http-beta-output.txt" 2>&1; then
-		echo "KPanel update enabled Browser Beta on direct IP HTTP origins" >&2
-		return 1
-	fi
-	grep -F '不能用于当前直接 IP HTTP 安装' \
-		"$TEST_DIR/direct-http-beta-output.txt" >/dev/null
-	grep -F 'Panel 与 Relay 两个不同的 HTTPS Origin' \
-		"$TEST_DIR/direct-http-beta-output.txt" >/dev/null
-	cmp -s "$TEST_DIR/direct-http-beta-env" /home/docker/kpanel/.env
-	test ! -e "$MOCK_STATE/rollback-tagged"
-	test ! -e "$MOCK_STATE/image-tag"
-	cp -p "$TEST_DIR/valid-browser-env" /home/docker/kpanel/.env
 
 	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
 	if KPANEL_MOCK_AGENT_VERSION=9.9.9 docker_app_update; then
@@ -488,57 +372,25 @@ EOF
 
 	sed -i 's#^KPANEL_TRUSTED_PROXY_CIDRS=.*#KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.20.0.0/16#' \
 		/home/docker/kpanel/.env
-	sed -i '/^KPANEL_BROWSER_MODE=/d' /home/docker/kpanel/.env
 	sed -i '/^KPANEL_SECURE_COOKIE=/d' /home/docker/kpanel/.env
 	docker_port="8080"
 	docker_app_update
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
 	grep -Fx 'permission_granted="true"' /home/docker/kpanel/bin/kejilion.sh >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -F -- '- "18081:8090"' /home/docker/kpanel/docker-compose.yml >/dev/null
-	grep -Fx 'KPANEL_BROWSER_RELAY_URL=http://198.51.100.25:18081' \
-		/home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_MODE=reader' \
-		/home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_MODE_MIGRATION=reader-v1' \
-		/home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_SECURE_COOKIE=false' \
 		/home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.30.0.0/16,172.31.0.1/32' \
 		/home/docker/kpanel/.env >/dev/null
 	test ! -e /home/docker/kpanel/.env.rollback
 
-	sed -i \
-		-e 's#^KPANEL_PUBLIC_URL=.*#KPANEL_PUBLIC_URL=https://panel.example.com#' \
-		-e 's#^KPANEL_BROWSER_RELAY_URL=.*#KPANEL_BROWSER_RELAY_URL=https://browser.example.com#' \
-		-e 's/^KPANEL_BROWSER_MODE=reader$/KPANEL_BROWSER_MODE=beta/' \
+	sed -i 's#^KPANEL_PUBLIC_URL=.*#KPANEL_PUBLIC_URL=https://panel.example.com#' \
 		/home/docker/kpanel/.env
 	sed -i '/^KPANEL_SECURE_COOKIE=/d' /home/docker/kpanel/.env
 	docker_app_update
-	grep -Fx 'KPANEL_BROWSER_MODE=beta' /home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_SECURE_COOKIE=true' /home/docker/kpanel/.env >/dev/null
 	grep -Fx 'KPANEL_PUBLIC_URL=https://panel.example.com' /home/docker/kpanel/.env >/dev/null
-	grep -Fx 'KPANEL_BROWSER_RELAY_URL=https://browser.example.com' \
-		/home/docker/kpanel/.env >/dev/null
-
-	sed -i 's/^KPANEL_SECURE_COOKIE=true$/KPANEL_SECURE_COOKIE=false/' \
-		/home/docker/kpanel/.env
-	cp -p /home/docker/kpanel/.env "$TEST_DIR/beta-false-cookie-env"
-	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
-	if docker_app_update >"$TEST_DIR/beta-false-cookie-output.txt" 2>&1; then
-		echo "KPanel update enabled Browser Beta with insecure cookies" >&2
-		return 1
-	fi
-	grep -F 'KPanel Browser Beta 要求 KPANEL_SECURE_COOKIE=true' \
-		"$TEST_DIR/beta-false-cookie-output.txt" >/dev/null
-	grep -F '检测到显式 false，拒绝自动修改' \
-		"$TEST_DIR/beta-false-cookie-output.txt" >/dev/null
-	cmp -s "$TEST_DIR/beta-false-cookie-env" /home/docker/kpanel/.env
-	test ! -e "$MOCK_STATE/rollback-tagged"
-	test ! -e "$MOCK_STATE/image-tag"
-	sed -i 's/^KPANEL_SECURE_COOKIE=false$/KPANEL_SECURE_COOKIE=true/' \
-		/home/docker/kpanel/.env
-	cp -p /home/docker/kpanel/.env "$TEST_DIR/beta-browser-env"
+	cp -p /home/docker/kpanel/.env "$TEST_DIR/https-env"
 
 	rm -f "$MOCK_STATE/rollback-tagged" "$MOCK_STATE/image-tag"
 	if KPANEL_MOCK_UPDATE_HEALTH_FAIL=1 docker_app_update; then
@@ -550,8 +402,7 @@ EOF
 		"$MOCK_STATE/image-tag" >/dev/null
 	grep -F -- '- "18080:8080"' /home/docker/kpanel/docker-compose.yml >/dev/null
 	test "$(/home/docker/kpanel/bin/kejilion-agent version)" = "$RELEASE_VERSION v1alpha1"
-	cmp -s "$TEST_DIR/beta-browser-env" /home/docker/kpanel/.env
-	grep -Fx 'KPANEL_BROWSER_MODE=beta' /home/docker/kpanel/.env >/dev/null
+	cmp -s "$TEST_DIR/https-env" /home/docker/kpanel/.env
 	grep -Fx 'KPANEL_SECURE_COOKIE=true' /home/docker/kpanel/.env >/dev/null
 	test ! -e /home/docker/kpanel/.env.rollback
 

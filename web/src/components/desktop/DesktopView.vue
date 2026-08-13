@@ -30,7 +30,6 @@ import {
 } from '@/lib/desktopEntries'
 import { api, type SystemResourceSnapshot } from '@/lib/api'
 import { prefetchNavigationRoute } from '@/lib/navigation'
-import { embeddedBrowserShortcutsKey } from '@/lib/embeddedBrowser'
 import {
   desktopCloseGuardCoordinator,
   desktopCloseGuardCoordinatorKey,
@@ -125,12 +124,6 @@ function persistSiteNames(): void {
 }
 
 const entries = ref<DesktopEntries | undefined>(applySiteNames(getCachedDesktopEntries()))
-const browserShortcuts = computed(() => (entries.value?.visible || []).flatMap((entry) => (
-  entry.url
-    ? [{ id: entry.key, kind: entry.kind, name: entry.name, url: entry.url, iconURL: entry.iconURL }]
-    : []
-)))
-provide(embeddedBrowserShortcutsKey, browserShortcuts)
 const systemResources = ref<SystemResourceSnapshot>()
 const entriesLoading = ref(!entries.value)
 let entriesAbort: AbortController | undefined
@@ -144,6 +137,7 @@ const contextMenuElement = ref<HTMLElement>()
 const menuEntry = ref<DesktopEntry>()
 const menuWindowId = ref<number>()
 const detailEntry = ref<DesktopEntry>()
+const externalOpenEntry = ref<DesktopEntry>()
 const renameEntry = ref<DesktopEntry>()
 const renameValue = ref('')
 let contextMenuOpener: HTMLElement | undefined
@@ -171,7 +165,6 @@ const selectedIcon = ref<string>('')
 let bounceTimer: number | undefined
 let resizeFrame: number | undefined
 let resizePersistTimer: number | undefined
-let browserRequestSequence = 0
 
 function motionDuration(duration: number): number {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : duration
@@ -253,37 +246,25 @@ function openEntry(entry: DesktopEntry): void {
     return
   }
   if (entry.url) {
-    openBrowserEntry(entry)
+    requestExternalOpen(entry)
     return
   }
 }
 
-function openEntryExternally(entry: DesktopEntry): void {
+function requestExternalOpen(entry: DesktopEntry): void {
   if (!entry.url) return
-  window.open(entry.url, '_blank', 'noopener,noreferrer')
+  externalOpenEntry.value = entry
 }
 
-function openBrowserEntry(entry: DesktopEntry): void {
-  if (!entry.url) return
-  const app = findDesktopApp('/browser')
-  if (!app) return
-  browserRequestSequence += 1
-  const query = new URLSearchParams({
-    shortcut: entry.key,
-    url: entry.url,
-    request: String(browserRequestSequence),
-  })
-  const windowId = desktop.openWindow(
-    `/browser?${query.toString()}`,
-    app.labelKey,
-    app.allowMultiple,
-    true,
-  )
-  if (windowId === 0) {
-    toast.show(i18n.t('desktop.windowLimitTitle'), {
-      message: i18n.t('desktop.windowLimitMessage'),
-    })
-  }
+function closeExternalOpen(): void {
+  externalOpenEntry.value = undefined
+}
+
+function confirmExternalOpen(): void {
+  const entry = externalOpenEntry.value
+  if (!entry?.url) return
+  window.open(entry.url, '_blank', 'noopener,noreferrer')
+  closeExternalOpen()
 }
 
 function openAppScriptEntry(entry: DesktopEntry): void {
@@ -498,12 +479,6 @@ function onEntryMenuOpen(): void {
   if (entry) openEntry(entry)
 }
 
-function onEntryMenuExternal(): void {
-  const entry = menuEntry.value
-  closeContextMenu()
-  if (entry?.url) openEntryExternally(entry)
-}
-
 function onEntryMenuDetails(): void {
   const entry = menuEntry.value
   closeContextMenu()
@@ -513,6 +488,12 @@ function onEntryMenuDetails(): void {
     return
   }
   detailEntry.value = entry
+}
+
+function onDetailEntryOpen(): void {
+  const entry = detailEntry.value
+  detailEntry.value = undefined
+  if (entry) openEntry(entry)
 }
 
 function onEntryMenuRename(): void {
@@ -753,17 +734,8 @@ function onViewportResize(): void {
             {{ menuEntry.launch === 'script'
               ? i18n.t('desktop.entryScriptManage')
               : menuEntry.url
-                ? i18n.t('desktop.browserOpenEmbedded')
+                ? i18n.t('desktop.systemBrowserOpen')
                 : i18n.t('desktop.entryOpen') }}
-          </button>
-          <button
-            v-if="menuEntry.url"
-            type="button"
-            role="menuitem"
-            @click="onEntryMenuExternal"
-          >
-            <ExternalLink :size="15" aria-hidden="true" />
-            {{ i18n.t('desktop.browserOpenExternal') }}
           </button>
           <button type="button" role="menuitem" @click="onEntryMenuDetails">
             <Info :size="15" aria-hidden="true" />
@@ -909,6 +881,31 @@ function onViewportResize(): void {
     </footer>
 
     <ModalDialog
+      :open="Boolean(externalOpenEntry)"
+      :title="i18n.t('desktop.externalOpenConfirmTitle')"
+      size="small"
+      @close="closeExternalOpen"
+    >
+      <div v-if="externalOpenEntry" class="desktop__external-confirm">
+        <p>{{ i18n.t('desktop.externalOpenConfirmMessage', { name: externalOpenEntry.name }) }}</p>
+        <dl>
+          <dt>{{ i18n.t('desktop.detailURL') }}</dt>
+          <dd>{{ externalOpenEntry.url }}</dd>
+        </dl>
+        <small>{{ i18n.t('desktop.externalOpenConfirmNotice') }}</small>
+      </div>
+      <template #footer>
+        <button class="button button--ghost" type="button" @click="closeExternalOpen">
+          {{ i18n.t('common.cancel') }}
+        </button>
+        <button class="button button--primary" type="button" @click="confirmExternalOpen">
+          <ExternalLink :size="15" aria-hidden="true" />
+          {{ i18n.t('desktop.systemBrowserOpen') }}
+        </button>
+      </template>
+    </ModalDialog>
+
+    <ModalDialog
       :open="Boolean(detailEntry)"
       :title="detailEntry?.name || ''"
       size="small"
@@ -921,11 +918,7 @@ function onViewportResize(): void {
           <dt>{{ i18n.t('desktop.detailStatus') }}</dt>
           <dd>{{ detailEntry.app?.runtime.state || i18n.t('desktop.detailUnknown') }}</dd>
           <dt>{{ i18n.t('desktop.detailURL') }}</dt>
-          <dd class="desktop__detail-url">
-            <a :href="detailEntry.url" target="_blank" rel="noopener noreferrer">
-              {{ detailEntry.url }}
-            </a>
-          </dd>
+          <dd class="desktop__detail-url">{{ detailEntry.url }}</dd>
         </template>
         <template v-else>
           <dt>{{ i18n.t('desktop.detailType') }}</dt>
@@ -935,15 +928,11 @@ function onViewportResize(): void {
           <dt>{{ i18n.t('desktop.detailType2') }}</dt>
           <dd>{{ detailEntry.site?.type }}</dd>
           <dt>{{ i18n.t('desktop.detailURL') }}</dt>
-          <dd class="desktop__detail-url">
-            <a :href="detailEntry.url" target="_blank" rel="noopener noreferrer">
-              {{ detailEntry.url }}
-            </a>
-          </dd>
+          <dd class="desktop__detail-url">{{ detailEntry.url }}</dd>
         </template>
       </dl>
       <template #footer>
-        <button class="button button--primary" type="button" @click="detailEntry ? openEntry(detailEntry) : undefined">
+        <button class="button button--primary" type="button" @click="onDetailEntryOpen">
           <ExternalLink :size="15" aria-hidden="true" />
           {{ i18n.t('desktop.entryOpen') }}
         </button>

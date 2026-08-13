@@ -1498,20 +1498,6 @@ export interface PanelSettings {
   telemetryEnabled?: boolean
 }
 
-export interface BrowserCoreSession {
-  mode: 'reader' | 'beta'
-  relayUrl: string
-  token: string
-  sessionId: string
-  expiresAt: string
-}
-
-export interface BrowserReaderResponse {
-  status: number
-  headers: Array<[string, string]>
-  body: ArrayBuffer
-}
-
 export interface SecurityEntranceSettings {
   enabled: boolean
   path?: string

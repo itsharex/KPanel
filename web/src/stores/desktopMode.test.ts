@@ -188,13 +188,13 @@ describe('desktop mode', () => {
     expect(raw).not.toContain('/monitoring')
   })
 
-  it('never stores browser URLs, queries, file paths or script identifiers in size preferences', () => {
+  it('never stores queries, file paths or script identifiers in size preferences', () => {
     setupViewport(1440, 900)
     initializeDesktopMode(window.localStorage, { width: 1440, height: 900 })
     const desktop = useDesktopMode()
-    const browser = desktop.openWindow('/browser?url=https%3A%2F%2Fsecret.example%2Fprivate', 'desktop.browser', false)
-    desktop.updateGeometry(browser, { left: 40, top: 40, width: 1000, height: 640 }, false)
-    desktop.commitGeometry(browser)
+    const sites = desktop.openWindow('/sites?domain=secret.example', 'route.sites', false)
+    desktop.updateGeometry(sites, { left: 40, top: 40, width: 1000, height: 640 }, false)
+    desktop.commitGeometry(sites)
     const files = desktop.openWindow('/files?path=/root/private', 'route.files', false)
     desktop.updateGeometry(files, { left: 60, top: 60, width: 960, height: 620 }, false)
     desktop.commitGeometry(files)
@@ -203,7 +203,7 @@ describe('desktop mode', () => {
     desktop.commitGeometry(script)
 
     const raw = window.localStorage.getItem('kpanel:desktop-window-sizes:v1') ?? ''
-    expect(raw).toContain('/browser')
+    expect(raw).toContain('/sites')
     expect(raw).toContain('/files')
     expect(raw).toContain('/app-script')
     expect(raw).not.toContain('secret.example')
@@ -244,7 +244,7 @@ describe('desktop mode', () => {
       { path: '/overview', width: -1, height: 600 },
       { path: '/files?path=/secret', width: 900, height: 600 },
       { path: '/unknown', width: 900, height: 600 },
-      { path: '/browser', width: 20_000, height: 600 },
+      { path: '/sites', width: 20_000, height: 600 },
     ]))
     initializeDesktopMode(storage, { width: 1280, height: 800 })
     desktop = useDesktopMode()

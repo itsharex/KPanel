@@ -5,8 +5,6 @@ LC_ALL=C
 export LC_ALL
 
 PUBLIC_URL=
-BROWSER_MODE=reader
-BROWSER_RELAY_URL=
 NETWORK_SUBNET=172.29.255.240/28
 FAILURES=0
 WARNINGS=0
@@ -16,13 +14,10 @@ usage() {
 Usage:
   ./deploy/preflight.sh \
     --public-url https://panel.example.com \
-    [--browser-mode disabled|reader|beta] \
-    --browser-relay-url https://browser.example.com \
     [--network-subnet 172.29.255.240/28]
 
 This command is read-only. It does not connect to the Docker socket, start a
 service, create a directory, or change kejilion.sh and /home/web.
-Browser mode defaults to reader. Use disabled as the explicit kill switch.
 EOF
 }
 
@@ -87,7 +82,6 @@ derive_network_addresses() {
 	base=${address##*.}
 	PANEL_GATEWAY=$prefix.$((base + 1))
 	PANEL_IPV4=$prefix.$((base + 2))
-	BROWSER_RELAY_IPV4=$prefix.$((base + 3))
 }
 
 network_routes() {
@@ -120,22 +114,6 @@ while [ "$#" -gt 0 ]; do
 			NETWORK_SUBNET=$2
 			shift 2
 			;;
-		--browser-relay-url)
-			[ "$#" -ge 2 ] || {
-				fail "--browser-relay-url requires a value"
-				break
-			}
-			BROWSER_RELAY_URL=$2
-			shift 2
-			;;
-		--browser-mode)
-			[ "$#" -ge 2 ] || {
-				fail "--browser-mode requires a value"
-				break
-			}
-			BROWSER_MODE=$2
-			shift 2
-			;;
 		-h|--help)
 			usage
 			exit 0
@@ -147,28 +125,10 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
-case "$BROWSER_MODE" in
-	disabled) ok "the embedded browser is disabled by the deployment kill switch" ;;
-	reader) ok "safe browser reader mode is enabled; target-site scripts stay disabled" ;;
-	beta) warn "Browser Beta is explicitly enabled; the vendored Scramjet runtime is prerelease software" ;;
-	*) fail "--browser-mode must be disabled, reader, or beta" ;;
-esac
-
 if [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
 	ok "Linux host detected"
 else
 	fail "production deployment requires Linux"
-fi
-
-if printf '%s' "$BROWSER_RELAY_URL" |
-	grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)(:[0-9]{1,5})?$'; then
-	if [ "$BROWSER_RELAY_URL" = "$PUBLIC_URL" ]; then
-		fail "browser Relay must use an origin different from the Panel"
-	else
-		ok "browser Relay URL is an isolated HTTPS origin: $BROWSER_RELAY_URL"
-	fi
-else
-	fail "--browser-relay-url must be an HTTPS origin without a path, query, or fragment"
 fi
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -188,7 +148,6 @@ if validate_private_subnet "$NETWORK_SUBNET"; then
 	ok "private Docker subnet is valid: $NETWORK_SUBNET"
 	derive_network_addresses
 	ok "private Panel endpoint is reserved: http://$PANEL_IPV4:8080 (gateway $PANEL_GATEWAY)"
-	ok "private browser Relay endpoint is reserved: http://$BROWSER_RELAY_IPV4:8090"
 else
 	fail "--network-subnet must be an aligned RFC1918 IPv4 /28"
 fi

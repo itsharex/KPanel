@@ -5,7 +5,6 @@ import {
   ClipboardList,
   Container,
   Folder,
-  Globe2,
   HeartPulse,
   LayoutDashboard,
   Network,
@@ -31,15 +30,6 @@ export interface DesktopApp {
   gradient: [string, string]
 }
 
-/** Single lightweight browser shared by its desktop launcher and website entries. */
-export const desktopBrowserApp: DesktopApp = {
-  path: '/browser',
-  labelKey: 'desktop.browserWindowTitle',
-  icon: Globe2,
-  allowMultiple: false,
-  gradient: ['#38bdf8', '#0369a1'],
-}
-
 export const desktopApps: DesktopApp[] = [
   {
     path: '/overview',
@@ -62,7 +52,6 @@ export const desktopApps: DesktopApp[] = [
     allowMultiple: false,
     gradient: ['#60a5fa', '#1d4ed8'],
   },
-  desktopBrowserApp,
   {
     path: '/apps',
     labelKey: 'route.apps',

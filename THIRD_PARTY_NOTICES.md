@@ -18,19 +18,8 @@ KPanel.
 | `@xterm/xterm` | `6.0.0` | MIT | [`LICENSES/xterm-MIT.txt`](LICENSES/xterm-MIT.txt) |
 | `circle-flags` | `2.8.3` | MIT | [`LICENSES/circle-flags-MIT.txt`](LICENSES/circle-flags-MIT.txt) |
 | `simple-icons` | `16.27.1` | CC0-1.0; referenced brands retain their trademark rights | [`LICENSES/simple-icons-CC0-1.0.txt`](LICENSES/simple-icons-CC0-1.0.txt) |
-| `@mercuryworkshop/scramjet` browser runtime | `2.0.67-alpha.2` | AGPL-3.0-only | [`LICENSE`](LICENSE) |
-| `@mercuryworkshop/scramjet-controller` | `0.0.14` | AGPL-3.0-only | [`LICENSE`](LICENSE) |
 | `vue` | `3.5.40` | MIT | [`LICENSES/vue-MIT.txt`](LICENSES/vue-MIT.txt) |
 | `vue-router` | `4.6.4` | MIT | [`LICENSES/vue-router-MIT.txt`](LICENSES/vue-router-MIT.txt) |
-
-The embedded browser is released as a Beta capability. The bundled
-`@mercuryworkshop/scramjet` `2.0.67-alpha.2` package is a v2 alpha release,
-not a stable release; `@mercuryworkshop/scramjet-controller` `0.0.14` is
-coupled to that runtime. Vendored package integrity and file SHA-256 values
-are recorded in `internal/browsercore/vendor/manifest.json`. A clean known-
-vulnerability scan is not an independent security audit and does not rule
-out unknown runtime or rewrite bypasses. Production use requires a
-version-scoped release exception and an explicit rollback point.
 
 Transitive dependency versions and license identifiers are recorded in
 `go.sum` and `web/package-lock.json`. Release container images additionally

@@ -364,7 +364,7 @@ async function copyResourceValue(value: string, label: string): Promise<void> {
       await navigator.clipboard.writeText(value)
       copied = true
     } catch {
-      // HTTP IP and embedded browsers may deny the modern clipboard API.
+      // HTTP IP access and restricted browsing contexts may deny the modern clipboard API.
     }
   }
   if (!copied && typeof document.execCommand === 'function') {

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync(new URL('../../styles/desktop.css', import.meta.url), 'utf8')
 const windowSource = readFileSync(new URL('./DesktopWindow.vue', import.meta.url), 'utf8')
-const browserSource = readFileSync(new URL('../../views/WebBrowserView.vue', import.meta.url), 'utf8')
 
 describe('desktop visual and interaction contract', () => {
   it('keeps desktop chrome, windows, fullscreen views and teleports in a stable layer order', () => {
@@ -79,12 +78,6 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/\.desktop-monitor__network\s*\{[^}]*gap:\s*0;/)
     expect(styles).toMatch(/\.desktop-monitor__metric--network \.desktop-monitor__row\s*\{[^}]*gap:\s*1px;/)
     expect(styles).toMatch(/\.desktop-monitor__network-total\s*\{[^}]*padding-top:\s*1px;/)
-  })
-
-  it('uses the shared window surface, border and shadow tokens in the browser', () => {
-    expect(browserSource).toMatch(/\.embedded-browser\s*\{[^}]*background:\s*var\(--bg\);/)
-    expect(browserSource).toMatch(/\.embedded-browser__shortcuts button\s*\{[^}]*border:\s*1px solid var\(--border\);[^}]*box-shadow:\s*var\(--shadow-sm\);/)
-    expect(browserSource).toMatch(/\.embedded-browser__start-form\s*\{[^}]*box-shadow:\s*var\(--shadow-sm\);/)
   })
 
   it('does not reserve a light outer scrollbar gutter around script terminals', () => {

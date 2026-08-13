@@ -20,11 +20,6 @@ export const windowRouterViewKey = routerViewLocationKey as InjectionKey<unknown
 /** Whether a desktop window is both focused and visible. */
 export const desktopWindowActiveKey = Symbol('desktop-window-active') as InjectionKey<Readonly<Ref<boolean>>>
 
-/** Optional mount point for page-specific controls that belong in the window titlebar. */
-export const desktopWindowTitlebarTargetKey = Symbol(
-  'desktop-window-titlebar-target',
-) as InjectionKey<Readonly<Ref<HTMLElement | undefined>>>
-
 /** Native document-history bridge shared by all independent desktop windows. */
 export const desktopBrowserHistoryKey = Symbol(
   'desktop-browser-history',

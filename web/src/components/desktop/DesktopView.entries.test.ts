@@ -66,22 +66,7 @@ describe('DesktopView dynamic entries', () => {
     expect(labels).toContain('blog.example.com')
     // Static nav icons still present.
     expect(labels).toContain('概览')
-    expect(labels).toContain('浏览器')
-    wrapper.unmount()
-  })
-
-  it('opens the shared browser launcher on its lightweight start page', async () => {
-    const desktop = useDesktopMode()
-    const wrapper = mount(DesktopView)
-    await nextTick()
-    await nextTick()
-
-    await wrapper.find('button[title="浏览器"]').trigger('dblclick')
-    await nextTick()
-
-    expect(desktop.windows.value).toHaveLength(1)
-    expect(desktop.windows.value[0]?.path).toBe('/browser')
-    expect(wrapper.find('.desktop-window__title').text()).toContain('浏览器')
+    expect(labels).not.toContain('浏览器')
     wrapper.unmount()
   })
 
@@ -111,71 +96,95 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
-  it('opens websites in the reusable desktop browser by default', async () => {
+  it('confirms before opening a website in the system browser', async () => {
     const desktop = useDesktopMode()
-    const wrapper = mount(DesktopView)
+    const wrapper = mount(DesktopView, { attachTo: document.body })
     await nextTick()
     await nextTick()
 
     await wrapper.find('button[title="blog.example.com"]').trigger('dblclick')
     await nextTick()
 
-    expect(desktop.windows.value).toHaveLength(1)
-    const path = desktop.windows.value[0]?.path || ''
-    expect(path).toContain('/browser?')
-    const firstQuery = new URLSearchParams(path.split('?')[1])
-    expect(firstQuery.get('url')).toBe('https://blog.example.com')
+    expect(desktop.windows.value).toHaveLength(0)
+    expect(document.body.querySelector('.desktop__external-confirm')?.textContent)
+      .toContain('blog.example.com')
+    expect(document.body.querySelector('.desktop__external-confirm')?.textContent)
+      .toContain('https://blog.example.com')
     expect(window.open).not.toHaveBeenCalled()
 
-    await wrapper.find('button[title="blog.example.com"]').trigger('dblclick')
+    document.body.querySelector<HTMLButtonElement>('.modal-panel__footer .button--primary')?.click()
     await nextTick()
-    expect(desktop.windows.value).toHaveLength(1)
-    expect(desktop.windows.value[0]?.path).not.toBe(path)
-    expect(new URLSearchParams(desktop.windows.value[0]?.path.split('?')[1]).get('request')).not.toBe(
-      firstQuery.get('request'),
+    expect(window.open).toHaveBeenCalledWith(
+      'https://blog.example.com',
+      '_blank',
+      'noopener,noreferrer',
     )
+    expect(document.body.querySelector('.desktop__external-confirm')).toBeNull()
     wrapper.unmount()
   })
 
-  it('opens URL-capable applications in the reusable desktop browser by default', async () => {
+  it('confirms before opening a URL-capable application in the system browser', async () => {
     const desktop = useDesktopMode()
-    const wrapper = mount(DesktopView)
+    const wrapper = mount(DesktopView, { attachTo: document.body })
     await nextTick()
     await nextTick()
 
     await wrapper.find('button[title="Nginx"]').trigger('dblclick')
     await nextTick()
 
-    expect(desktop.windows.value).toHaveLength(1)
-    const path = desktop.windows.value[0]?.path || ''
-    expect(path).toContain('/browser?')
-    const query = new URLSearchParams(path.split('?')[1])
-    expect(query.get('shortcut')).toBe('app:nginx')
-    expect(query.get('url')).toBe('http://192.168.1.5:8080')
+    expect(desktop.windows.value).toHaveLength(0)
+    expect(document.body.querySelector('.desktop__external-confirm')?.textContent).toContain('Nginx')
+    expect(document.body.querySelector('.desktop__external-confirm')?.textContent)
+      .toContain('http://192.168.1.5:8080')
     expect(window.open).not.toHaveBeenCalled()
-    wrapper.unmount()
-  })
 
-  it('keeps an explicit system-browser action in the website context menu', async () => {
-    const wrapper = mount(DesktopView)
+    document.body.querySelector<HTMLButtonElement>('.modal-panel__footer .button--primary')?.click()
     await nextTick()
-    await nextTick()
-
-    await wrapper.find('button[title="blog.example.com"]').trigger('contextmenu', { clientX: 120, clientY: 80 })
-    await nextTick()
-    const siteItems = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-    expect(siteItems[1]?.text()).toContain('用系统浏览器打开')
-    await siteItems[1]?.trigger('click')
-
     expect(window.open).toHaveBeenCalledWith(
-      'https://blog.example.com',
+      'http://192.168.1.5:8080',
       '_blank',
       'noopener,noreferrer',
     )
     wrapper.unmount()
   })
 
-  it('keeps explicit external-open and application-detail actions for URL applications', async () => {
+  it('routes the website context-menu action through the same confirmation', async () => {
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await nextTick()
+    await nextTick()
+
+    await wrapper.find('button[title="blog.example.com"]').trigger('contextmenu', { clientX: 120, clientY: 80 })
+    await nextTick()
+    const siteItems = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+    expect(siteItems[0]?.text()).toContain('使用系统浏览器打开')
+    await siteItems[0]?.trigger('click')
+    expect(window.open).not.toHaveBeenCalled()
+    expect(document.body.querySelector('.desktop__external-confirm')).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  it('routes the website-detail action through the same confirmation', async () => {
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await nextTick()
+    await nextTick()
+
+    await wrapper.find('button[title="blog.example.com"]').trigger('contextmenu', { clientX: 120, clientY: 80 })
+    await nextTick()
+    await wrapper.findAll('.desktop__context-menu [role="menuitem"]')[1]?.trigger('click')
+    await nextTick()
+
+    expect(document.body.querySelector('.desktop__detail')).not.toBeNull()
+    document.body.querySelector<HTMLButtonElement>('.modal-panel__footer .button--primary')?.click()
+    await nextTick()
+
+    expect(document.body.querySelector('.desktop__detail')).toBeNull()
+    expect(document.body.querySelector('.desktop__external-confirm')?.textContent)
+      .toContain('https://blog.example.com')
+    expect(window.open).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps the application-detail action for URL applications', async () => {
     const desktop = useDesktopMode()
     const wrapper = mount(DesktopView)
     await nextTick()
@@ -184,17 +193,8 @@ describe('DesktopView dynamic entries', () => {
     await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
     await nextTick()
     const appItems = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-    expect(appItems).toHaveLength(3)
+    expect(appItems).toHaveLength(2)
     await appItems[1]?.trigger('click')
-    expect(window.open).toHaveBeenCalledWith(
-      'http://192.168.1.5:8080',
-      '_blank',
-      'noopener,noreferrer',
-    )
-
-    await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
-    await nextTick()
-    await wrapper.findAll('.desktop__context-menu [role="menuitem"]')[2]?.trigger('click')
     expect(desktop.windows.value[0]?.path).toBe('/apps?app=nginx')
     wrapper.unmount()
   })
@@ -207,7 +207,7 @@ describe('DesktopView dynamic entries', () => {
 
     await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
     await nextTick()
-    await wrapper.findAll('.desktop__context-menu [role="menuitem"]')[2]?.trigger('click')
+    await wrapper.findAll('.desktop__context-menu [role="menuitem"]')[1]?.trigger('click')
 
     expect(desktop.windows.value).toHaveLength(1)
     expect(desktop.windows.value[0]?.path).toBe('/apps?app=nginx')
@@ -222,13 +222,13 @@ describe('DesktopView dynamic entries', () => {
 
     await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
     await nextTick()
-    expect(wrapper.findAll('.desktop__context-menu [role="menuitem"]')).toHaveLength(3)
+    expect(wrapper.findAll('.desktop__context-menu [role="menuitem"]')).toHaveLength(2)
 
     await wrapper.find('button[title="blog.example.com"]').trigger('contextmenu', { clientX: 120, clientY: 80 })
     await nextTick()
     const siteItems = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-    expect(siteItems).toHaveLength(4)
-    await siteItems[3]?.trigger('click')
+    expect(siteItems).toHaveLength(3)
+    await siteItems[2]?.trigger('click')
     await nextTick()
 
     const input = document.body.querySelector<HTMLInputElement>('.desktop__rename-form input')

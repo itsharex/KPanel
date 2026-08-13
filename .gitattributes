@@ -23,6 +23,4 @@ Makefile text eol=lf
 *.css text eol=lf
 *.md text eol=lf
 internal/**/testdata/** text eol=lf
-internal/browsercore/vendor/**/*.js -text -diff !eol
-internal/browsercore/vendor/**/*.wasm -text -diff !eol
 deploy/tests/fake-bin/* text eol=lf

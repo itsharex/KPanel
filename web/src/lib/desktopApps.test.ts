@@ -10,7 +10,6 @@ describe('desktop app catalogue', () => {
         '/system',
         '/ai',
         '/sites',
-        '/browser',
         '/apps',
         '/docker',
         '/files',
@@ -21,7 +20,7 @@ describe('desktop app catalogue', () => {
         '/settings',
       ]),
     )
-    expect(desktopApps).toHaveLength(13)
+    expect(desktopApps).toHaveLength(12)
   })
 
   it('gives every app a distinct gradient', () => {
@@ -40,12 +39,6 @@ describe('desktop app catalogue', () => {
     expect(findDesktopApp('/app-script/openclaw')?.allowMultiple).toBe(false)
     expect(findDesktopApp('/app-script/bad/path')).toBeUndefined()
     expect(desktopApps.map((app) => app.path)).not.toContain('/app-script')
-  })
-
-  it('exposes the single embedded browser as a desktop launcher', () => {
-    expect(findDesktopApp('/browser?site=site-1')?.labelKey).toBe('desktop.browserWindowTitle')
-    expect(findDesktopApp('/browser?site=site-1')?.allowMultiple).toBe(false)
-    expect(desktopApps.map((app) => app.path)).toContain('/browser')
   })
 
   it('exposes the system center launcher while keeping the process utility route internal', () => {

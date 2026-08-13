@@ -1209,22 +1209,6 @@ body.desktop-mode-open::-webkit-scrollbar {
   white-space: nowrap;
 }
 
-.desktop-window__title-extension {
-  min-width: 0;
-  height: 100%;
-  flex: 1 1 auto;
-  align-self: stretch;
-  overflow: hidden;
-}
-
-.desktop-window__title-extension:empty {
-  display: none;
-}
-
-.desktop-window__title:has(.desktop-window__title-extension:not(:empty)) .desktop-window__title-label {
-  display: none;
-}
-
 .desktop-window__app-glyph {
   display: grid;
   width: 20px;
@@ -1704,13 +1688,39 @@ body.desktop-mode-open::-webkit-scrollbar {
   white-space: nowrap;
 }
 
-.desktop__detail-url a {
-  color: var(--brand-strong);
-  text-decoration: none;
+.desktop__external-confirm {
+  display: grid;
+  gap: 14px;
+  color: var(--text);
+  font-size: 13px;
 }
 
-.desktop__detail-url a:hover {
-  text-decoration: underline;
+.desktop__external-confirm p,
+.desktop__external-confirm dl {
+  margin: 0;
+}
+
+.desktop__external-confirm dl {
+  display: grid;
+  gap: 6px;
+}
+
+.desktop__external-confirm dt,
+.desktop__external-confirm small {
+  color: var(--muted);
+}
+
+.desktop__external-confirm dd {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .desktop__rename-form label {

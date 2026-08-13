@@ -19,7 +19,7 @@
 ## 未上线内容审计与排除项
 
 - 本次候选只包含移动端认证下载修复及 `0.62.2` 版本元数据，没有整体发布任何脏工作区。
-- `kejilion-panel-diagnostics-rescue` 的 3 个前端草稿、`kejilion-panel-overview-service-status` 的 2 个前端草稿、`kejilion-panel-codex-desktop-browser-tabs/web/desktop-monitor-preview.html` 和 `kejilion-apps-file-manager/kpanel.conf` 均未达到独立候选条件，已保持原状并排除。
+- `kejilion-panel-diagnostics-rescue` 的 3 个前端草稿、`kejilion-panel-overview-service-status` 的 2 个前端草稿和 `kejilion-apps-file-manager/kpanel.conf` 均未达到独立候选条件，已保持原状并排除。
 - `kejilion.sh` 主线保持 `e9c3078eb516b05f9df6d2a9294cf3b226ca02bd`，原始脚本 SHA-256 为 `147f624c479931c21b7d92392ff3e3a1a58b19bea4f98741f4ec114ab933546a`；本轮没有脚本业务变更。
 - apps 主线保持 `e7f90760b71cfe69c8b05af40131ab89739eb0f5`。KPanel 与 apps 的 `kpanel.conf` blob 均为 `7289637a42b8209b301772139ff4404d08e196d2`，因此没有制造 apps 空提交。
 

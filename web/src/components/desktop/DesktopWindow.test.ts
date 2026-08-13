@@ -4,7 +4,6 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { useRouter } from 'vue-router'
 import DesktopWindow from './DesktopWindow.vue'
 import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
-import WebBrowserView from '@/views/WebBrowserView.vue'
 import { desktopBrowserHistoryKey } from '@/lib/desktopRouteKeys'
 import type {
   DesktopBrowserHistory,
@@ -220,36 +219,6 @@ describe('DesktopWindow lazy view loading', () => {
     nativeHistory.emit({ windowId: id, fullPath: '/overview' })
     await vi.waitFor(() => expect(windowState.path).toBe('/overview'))
     expect(desktop.focusedId.value).toBe(id)
-    wrapper.unmount()
-  })
-
-  it('hosts browser tabs in the titlebar without turning tab interaction into a window gesture', async () => {
-    routeMocks.resolveWindowComponent.mockResolvedValue(WebBrowserView)
-    const desktop = useDesktopMode()
-    const id = desktop.openWindow(
-      '/browser?url=https%3A%2F%2Fexample.com',
-      'desktop.browser',
-      false,
-    )
-    const windowState = desktop.windows.value.find((item) => item.id === id)!
-    const wrapper = mount(DesktopWindow, {
-      attachTo: document.body,
-      props: {
-        windowState,
-        icon: () => null,
-      },
-    })
-
-    await flushPromises()
-    const titlebarTabs = wrapper.get('.desktop-window__title-extension .embedded-browser__tabs')
-    expect(titlebarTabs.classes()).toContain('embedded-browser__tabs--titlebar')
-    expect(wrapper.find('.desktop-window__body .embedded-browser__tabs').exists()).toBe(false)
-
-    await titlebarTabs.get('[role="tab"]').trigger('dblclick')
-    expect(windowState.maximized).toBe(false)
-
-    await titlebarTabs.get('.embedded-browser__new-tab').trigger('click')
-    expect(titlebarTabs.get('.embedded-browser__tab-count').text()).toBe('2/8')
     wrapper.unmount()
   })
 

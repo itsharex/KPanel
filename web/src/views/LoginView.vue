@@ -104,7 +104,7 @@ async function copyRecoveryCommand(): Promise<void> {
       await navigator.clipboard.writeText(recoveryCommand)
       copied = true
     } catch {
-      // HTTP IP access and embedded browsers may deny the modern clipboard API.
+      // HTTP IP access and restricted browsing contexts may deny the modern clipboard API.
     }
   }
   if (!copied && typeof document !== 'undefined' && typeof document.execCommand === 'function') {

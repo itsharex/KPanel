@@ -21,7 +21,7 @@ printf '%s\n' \
 	'#!/bin/sh' \
 	'if [ "${1:-}" = "--check" ] && [ "${2:-}" = "--status" ]; then' \
 	'  shift 2' \
-	"  exec \"$REAL_SHA256SUM\" -cs \"\$@\"" \
+	"  exec \"$REAL_SHA256SUM\" --check --status \"\$@\"" \
 	'fi' \
 	"exec \"$REAL_SHA256SUM\" \"\$@\"" >"$TEST_BIN/sha256sum"
 chmod 0700 "$TEST_BIN/sha256sum"
@@ -53,8 +53,6 @@ run_installer() {
 		--agent-sha256 "$AGENT_SHA" \
 		--image "$IMAGE" \
 		--public-url https://panel.example.com \
-		--browser-mode "${KP_BROWSER_MODE:-beta}" \
-		--browser-relay-url https://browser.example.com \
 		--network-subnet 172.29.255.240/28 \
 		--dry-run
 }
@@ -62,13 +60,6 @@ run_installer() {
 run_installer >"$TEST_DIR/success.out"
 grep -F 'Docker daemon was not queried and no host state was changed.' "$TEST_DIR/success.out" >/dev/null
 grep -F 'Private Panel endpoint: http://172.29.255.242:8080' "$TEST_DIR/success.out" >/dev/null
-grep -F 'Private Relay endpoint: http://172.29.255.243:8090' "$TEST_DIR/success.out" >/dev/null
-grep -F 'Browser mode: beta' "$TEST_DIR/success.out" >/dev/null
-if KP_BROWSER_MODE=alpha run_installer >"$TEST_DIR/browser-mode.out" 2>&1; then
-	echo "installer accepted an unsupported browser mode" >&2
-	exit 1
-fi
-grep -F -- '--browser-mode must be disabled, reader, or beta' "$TEST_DIR/browser-mode.out" >/dev/null
 test "$(wc -l <"$DOCKER_LOG" | tr -d ' ')" = 1
 grep -Fx -- '--host unix:///var/run/docker.sock compose version' "$DOCKER_LOG" >/dev/null
 
@@ -92,7 +83,6 @@ if PATH="$TEST_BIN:$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" \
 		--agent-sha256 "$AGENT_SHA" \
 		--image "$IMAGE" \
 		--public-url https://panel.example.com \
-		--browser-relay-url https://browser.example.com \
 		--network-subnet 172.29.255.241/28 \
 		--dry-run >"$TEST_DIR/subnet.out" 2>&1; then
 	echo "installer accepted a misaligned subnet" >&2
@@ -106,7 +96,6 @@ if PATH="$TEST_BIN:$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" KP_ROUTE_CONFLIC
 		--agent-sha256 "$AGENT_SHA" \
 		--image "$IMAGE" \
 		--public-url https://panel.example.com \
-		--browser-relay-url https://browser.example.com \
 		--network-subnet 172.29.255.240/28 \
 		--dry-run >"$TEST_DIR/route.out" 2>&1; then
 	echo "installer accepted an overlapping route" >&2
@@ -243,22 +232,6 @@ grep -F 'panel-egress:' "$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
 grep -F 'name: kejilion-panel-egress' "$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
 grep -F 'ipv4_address: ${KEJILION_PANEL_IPV4:' \
 	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
-grep -F 'ipv4_address: ${KEJILION_BROWSER_RELAY_IPV4:' \
-	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
-grep -F 'KEJILION_PANEL_BROWSER_RELAY_SECRET_FILE: /run/secrets/browser-relay-secret' \
-	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
-grep -F 'KEJILION_PANEL_BROWSER_MODE: ${KEJILION_PANEL_BROWSER_MODE:-reader}' \
-	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
-grep -F 'KEJILION_PANEL_BROWSER_RELAY_INTERNAL_URL: http://browser-relay:8090' \
-	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
-grep -F '"-mode=${KEJILION_PANEL_BROWSER_MODE:-reader}"' \
-	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
-grep -F 'KEJILION_BROWSER_RELAY_EXPECT_MODE: ${KEJILION_PANEL_BROWSER_MODE:-reader}' \
-	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
-grep -F "printf 'KEJILION_PANEL_BROWSER_MODE=%s" \
-	"$PROJECT_DIR/deploy/install.sh" >/dev/null
-grep -F 'test: ["CMD", "/kpanel-browser-relay", "healthcheck"]' \
-	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
 grep -F 'gateway: ${KEJILION_PANEL_GATEWAY:' \
 	"$PROJECT_DIR/deploy/compose/compose.yml" >/dev/null
 if grep -Eq '^[[:space:]]*ports:' "$PROJECT_DIR/deploy/compose/compose.yml"; then
@@ -293,14 +266,11 @@ fi
 PATH="$TEST_BIN:$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" KP_WEB_ROOT_FAIL=1 \
 	sh "$PROJECT_DIR/deploy/preflight.sh" \
 		--public-url https://panel.example.com \
-		--browser-relay-url https://browser.example.com \
 		--network-subnet 172.29.255.240/28 \
 		>"$TEST_DIR/preflight.out" 2>&1 || true
 test "$(wc -l <"$DOCKER_LOG" | tr -d ' ')" = 1
 grep -Fx -- '--host unix:///var/run/docker.sock compose version' "$DOCKER_LOG" >/dev/null
 grep -F 'private Panel endpoint is reserved: http://172.29.255.242:8080' \
-	"$TEST_DIR/preflight.out" >/dev/null
-grep -F 'private browser Relay endpoint is reserved: http://172.29.255.243:8090' \
 	"$TEST_DIR/preflight.out" >/dev/null
 grep -F 'website management will remain disabled until /home/web is initialized' \
 	"$TEST_DIR/preflight.out" >/dev/null
@@ -309,7 +279,6 @@ grep -F 'website management will remain disabled until /home/web is initialized'
 PATH="$TEST_BIN:$FAKE_BIN:$PATH" KP_DOCKER_LOG="$DOCKER_LOG" KP_GROUP_MEMBER=1 \
 	sh "$PROJECT_DIR/deploy/preflight.sh" \
 		--public-url https://panel.example.com \
-		--browser-relay-url https://browser.example.com \
 		--network-subnet 172.29.255.240/28 \
 		>"$TEST_DIR/group.out" 2>&1 || true
 grep -F 'kejilion-panel group has supplemental members' "$TEST_DIR/group.out" >/dev/null

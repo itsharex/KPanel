@@ -12,8 +12,6 @@ AGENT_BINARY=
 AGENT_SHA256=
 IMAGE=
 PUBLIC_URL=
-BROWSER_MODE=reader
-BROWSER_RELAY_URL=
 NETWORK_SUBNET=172.29.255.240/28
 DRY_RUN=false
 
@@ -25,14 +23,11 @@ Usage:
     --agent-sha256 <64-character-sha256> \
     --image docker.io/OWNER/kejilion-panel@sha256:<64-character-digest> \
     --public-url https://panel.example.com \
-    [--browser-mode disabled|reader|beta] \
-    --browser-relay-url https://browser.example.com \
     [--network-subnet 172.29.255.240/28] \
     [--dry-run]
 
 The installer only creates KPanel files and services. It does not edit
 kejilion.sh, /home/web, Nginx configuration, firewall rules, or existing sites.
-Browser mode defaults to reader. Use disabled as the explicit kill switch.
 EOF
 }
 
@@ -88,7 +83,6 @@ derive_network_addresses() {
 	base=${address##*.}
 	PANEL_GATEWAY=$prefix.$((base + 1))
 	PANEL_IPV4=$prefix.$((base + 2))
-	BROWSER_RELAY_IPV4=$prefix.$((base + 3))
 }
 
 network_routes() {
@@ -182,16 +176,6 @@ while [ "$#" -gt 0 ]; do
 			PUBLIC_URL=$2
 			shift 2
 			;;
-		--browser-relay-url)
-			[ "$#" -ge 2 ] || fail "--browser-relay-url requires a value"
-			BROWSER_RELAY_URL=$2
-			shift 2
-			;;
-		--browser-mode)
-			[ "$#" -ge 2 ] || fail "--browser-mode requires a value"
-			BROWSER_MODE=$2
-			shift 2
-			;;
 		--network-subnet)
 			[ "$#" -ge 2 ] || fail "--network-subnet requires a value"
 			NETWORK_SUBNET=$2
@@ -222,22 +206,9 @@ printf '%s' "$IMAGE" | grep -Eq '^[A-Za-z0-9._/@:+-]+$' || fail "invalid image r
 printf '%s' "$IMAGE" | grep -Eq '@sha256:[a-f0-9]{64}$' || fail "image must be pinned by sha256 digest"
 printf '%s' "$PUBLIC_URL" | grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)(:[0-9]{1,5})?$' ||
 	fail "--public-url must be an https origin without path, userinfo, query, or fragment"
-case "$BROWSER_MODE" in
-	disabled|reader|beta) ;;
-	*) fail "--browser-mode must be disabled, reader, or beta" ;;
-esac
 PUBLIC_PORT=$(printf '%s' "$PUBLIC_URL" | sed -n 's#^https://[^:]*:\([0-9][0-9]*\)$#\1#p')
 if [ -n "$PUBLIC_PORT" ]; then
 	[ "$PUBLIC_PORT" -ge 1 ] && [ "$PUBLIC_PORT" -le 65535 ] || fail "public URL port is invalid"
-fi
-printf '%s' "$BROWSER_RELAY_URL" | grep -Eq '^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)(:[0-9]{1,5})?$' ||
-	fail "--browser-relay-url must be an https origin without path, userinfo, query, or fragment"
-[ "$BROWSER_RELAY_URL" != "$PUBLIC_URL" ] ||
-	fail "browser Relay must use an origin different from the Panel"
-BROWSER_RELAY_PORT=$(printf '%s' "$BROWSER_RELAY_URL" | sed -n 's#^https://[^:]*:\([0-9][0-9]*\)$#\1#p')
-if [ -n "$BROWSER_RELAY_PORT" ]; then
-	[ "$BROWSER_RELAY_PORT" -ge 1 ] && [ "$BROWSER_RELAY_PORT" -le 65535 ] ||
-		fail "browser Relay URL port is invalid"
 fi
 validate_private_subnet "$NETWORK_SUBNET" ||
 	fail "--network-subnet must be an aligned RFC1918 IPv4 /28"
@@ -313,9 +284,8 @@ fi
 
 if [ "$DRY_RUN" = true ]; then
 	printf 'Preflight passed.\n'
-	printf 'Agent: %s\nImage: %s\nPublic URL: %s\nBrowser mode: %s\nBrowser Relay URL: %s\nPrivate Panel endpoint: http://%s:8080\nPrivate Relay endpoint: http://%s:8090\nNetwork subnet: %s\n' \
-		"$AGENT_BINARY" "$IMAGE" "$PUBLIC_URL" "$BROWSER_MODE" "$BROWSER_RELAY_URL" \
-		"$PANEL_IPV4" "$BROWSER_RELAY_IPV4" "$NETWORK_SUBNET"
+	printf 'Agent: %s\nImage: %s\nPublic URL: %s\nPrivate Panel endpoint: http://%s:8080\nNetwork subnet: %s\n' \
+		"$AGENT_BINARY" "$IMAGE" "$PUBLIC_URL" "$PANEL_IPV4" "$NETWORK_SUBNET"
 	printf 'Docker daemon was not queried and no host state was changed.\n'
 	exit 0
 fi
@@ -323,7 +293,6 @@ fi
 LOCK_DIR=/run/lock/kejilion-panel-install
 mkdir "$LOCK_DIR" 2>/dev/null || fail "another installation is running"
 TEMP_TOKEN=
-TEMP_BROWSER_SECRET=
 TEMP_ENV=
 INSTALL_SUCCEEDED=false
 AGENT_ENABLE_ATTEMPTED=false
@@ -361,8 +330,6 @@ cleanup() {
 	if [ "$INSTALL_SUCCEEDED" != true ]; then
 		if [ "$PANEL_START_ATTEMPTED" = true ]; then
 			if systemctl is-active --quiet docker.service; then
-				stop_owned_container kejilion-browser-relay browser-relay ||
-					cleanup_failure "browser Relay ownership or stopped state could not be verified"
 				stop_owned_container kejilion-panel panel ||
 					cleanup_failure "Panel ownership or stopped state could not be verified"
 			else
@@ -409,7 +376,6 @@ cleanup() {
 		fi
 	fi
 	[ -z "$TEMP_TOKEN" ] || rm -f -- "$TEMP_TOKEN"
-	[ -z "$TEMP_BROWSER_SECRET" ] || rm -f -- "$TEMP_BROWSER_SECRET"
 	[ -z "$TEMP_ENV" ] || rm -f -- "$TEMP_ENV"
 	rmdir "$LOCK_DIR" 2>/dev/null || true
 	exit "$cleanup_status"
@@ -425,9 +391,6 @@ docker_local info >/dev/null 2>&1 ||
 	fail "the active local Docker daemon is unavailable through /var/run/docker.sock"
 if docker_local container inspect kejilion-panel >/dev/null 2>&1; then
 	fail "Docker container name kejilion-panel is already in use"
-fi
-if docker_local container inspect kejilion-browser-relay >/dev/null 2>&1; then
-	fail "Docker container name kejilion-browser-relay is already in use"
 fi
 for panel_network in kejilion-panel-internal kejilion-panel-egress; do
 	if docker_local network inspect "$panel_network" >/dev/null 2>&1; then
@@ -485,7 +448,6 @@ SERVICE_TARGET=/etc/systemd/system/kejilion-agent.service
 COMPOSE_TARGET=$OPT_DIR/compose.yml
 ENV_TARGET=$OPT_DIR/.env
 TOKEN_TARGET=$ETC_DIR/agent.token
-BROWSER_SECRET_TARGET=$ETC_DIR/browser-relay.secret
 
 install -d -o root -g "$PANEL_GROUP" -m 0750 "$ETC_DIR"
 install -d -o root -g root -m 0755 "$OPT_DIR"
@@ -509,12 +471,6 @@ install -o root -g "$PANEL_GROUP" -m 0640 "$TEMP_TOKEN" "$TOKEN_TARGET"
 rm -f -- "$TEMP_TOKEN"
 TEMP_TOKEN=
 
-TEMP_BROWSER_SECRET=$(mktemp "$ETC_DIR/.browser-relay.secret.XXXXXX")
-openssl rand -hex 32 >"$TEMP_BROWSER_SECRET"
-install -o root -g "$PANEL_GROUP" -m 0640 "$TEMP_BROWSER_SECRET" "$BROWSER_SECRET_TARGET"
-rm -f -- "$TEMP_BROWSER_SECRET"
-TEMP_BROWSER_SECRET=
-
 install -o root -g root -m 0755 "$AGENT_BINARY" "$AGENT_TARGET"
 install -o root -g root -m 0644 \
 	"$PROJECT_DIR/deploy/systemd/kejilion-agent.service" "$SERVICE_TARGET"
@@ -530,10 +486,7 @@ TEMP_ENV=$(mktemp "$OPT_DIR/.env.XXXXXX")
 	printf 'KEJILION_PANEL_DATA_DIR_HOST=%s\n' "$DATA_DIR"
 	printf 'KEJILION_PANEL_GATEWAY=%s\n' "$PANEL_GATEWAY"
 	printf 'KEJILION_PANEL_IPV4=%s\n' "$PANEL_IPV4"
-	printf 'KEJILION_BROWSER_RELAY_IPV4=%s\n' "$BROWSER_RELAY_IPV4"
 	printf 'KEJILION_PANEL_PUBLIC_URL=%s\n' "$PUBLIC_URL"
-	printf 'KEJILION_PANEL_BROWSER_MODE=%s\n' "$BROWSER_MODE"
-	printf 'KEJILION_PANEL_BROWSER_RELAY_URL=%s\n' "$BROWSER_RELAY_URL"
 	printf 'KEJILION_PANEL_SECURE_COOKIE=true\n'
 	printf 'KEJILION_PANEL_NETWORK_SUBNET=%s\n' "$NETWORK_SUBNET"
 	printf 'KEJILION_PANEL_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,%s\n' "$NETWORK_SUBNET"
@@ -595,15 +548,6 @@ ACTUAL_PANEL_IPV4=$(docker_local container inspect \
 	fail "cannot inspect the Panel private IPv4 address"
 [ "$ACTUAL_PANEL_IPV4" = "$PANEL_IPV4" ] ||
 	fail "Panel private IPv4 mismatch: expected $PANEL_IPV4, got $ACTUAL_PANEL_IPV4"
-ACTUAL_BROWSER_RELAY_IPV4=$(docker_local container inspect \
-	--format '{{with index .NetworkSettings.Networks "kejilion-panel-internal"}}{{.IPAddress}}{{end}}' \
-	kejilion-browser-relay) ||
-	fail "cannot inspect the browser Relay private IPv4 address"
-[ "$ACTUAL_BROWSER_RELAY_IPV4" = "$BROWSER_RELAY_IPV4" ] ||
-	fail "browser Relay private IPv4 mismatch: expected $BROWSER_RELAY_IPV4, got $ACTUAL_BROWSER_RELAY_IPV4"
-[ "$(docker_local container inspect \
-	--format '{{len .HostConfig.PortBindings}}' kejilion-browser-relay)" = "0" ] ||
-	fail "browser Relay unexpectedly publishes a host port"
 PANEL_EGRESS_IPV4=$(docker_local container inspect \
 	--format '{{with index .NetworkSettings.Networks "kejilion-panel-egress"}}{{.IPAddress}}{{end}}' \
 	kejilion-panel) ||
@@ -617,22 +561,14 @@ while [ "$attempt" -lt 30 ]; do
 	if [ "$(docker_local container inspect \
 			--format '{{.State.Health.Status}}' \
 			kejilion-panel 2>/dev/null)" = "healthy" ] &&
-		[ "$(docker_local container inspect \
-			--format '{{.State.Health.Status}}' \
-			kejilion-browser-relay 2>/dev/null)" = "healthy" ] &&
 		docker_local compose --project-name kejilion-panel \
 		--env-file "$ENV_TARGET" -f "$COMPOSE_TARGET" \
 		exec -T panel /paneld healthcheck >/dev/null 2>&1 &&
 		docker_local compose --project-name kejilion-panel \
 			--env-file "$ENV_TARGET" -f "$COMPOSE_TARGET" \
 			exec -T panel /paneld agent-healthcheck >/dev/null 2>&1 &&
-		docker_local compose --project-name kejilion-panel \
-			--env-file "$ENV_TARGET" -f "$COMPOSE_TARGET" \
-			exec -T browser-relay /kpanel-browser-relay healthcheck >/dev/null 2>&1 &&
 		curl --noproxy '*' --fail --silent --show-error --max-time 4 \
-			"http://$PANEL_IPV4:8080/api/v1/health" >/dev/null 2>&1 &&
-		curl --noproxy '*' --fail --silent --show-error --max-time 4 \
-			"http://$BROWSER_RELAY_IPV4:8090/healthz" >/dev/null 2>&1; then
+			"http://$PANEL_IPV4:8080/api/v1/health" >/dev/null 2>&1; then
 		healthy=true
 		break
 	fi
@@ -646,25 +582,16 @@ if [ "$healthy" != true ]; then
 	docker_local compose --project-name kejilion-panel \
 		--env-file "$ENV_TARGET" -f "$COMPOSE_TARGET" \
 		exec -T panel /paneld agent-healthcheck || true
-	docker_local compose --project-name kejilion-panel \
-		--env-file "$ENV_TARGET" -f "$COMPOSE_TARGET" \
-		exec -T browser-relay /kpanel-browser-relay healthcheck || true
 	curl --noproxy '*' --fail --silent --show-error --max-time 4 \
 		"http://$PANEL_IPV4:8080/api/v1/health" >/dev/null || true
-	curl --noproxy '*' --fail --silent --show-error --max-time 4 \
-		"http://$BROWSER_RELAY_IPV4:8090/healthz" >/dev/null || true
-	fail "Panel, Agent, or browser Relay health check failed; inspect the retained resources before retrying"
+	fail "Panel or Panel-to-Agent health check failed; inspect the retained resources before retrying"
 fi
 assert_panel_data_dir "after Panel start"
 INSTALL_SUCCEEDED=true
 
 printf '\nKPanel is healthy on the private Docker endpoint http://%s:8080.\n' "$PANEL_IPV4"
-printf 'Browser Relay is healthy on the private Docker endpoint http://%s:8090.\n' "$BROWSER_RELAY_IPV4"
 printf 'Public URL: %s\n' "$PUBLIC_URL"
-printf 'Browser mode: %s\n' "$BROWSER_MODE"
-printf 'Browser Relay URL: %s\n' "$BROWSER_RELAY_URL"
-printf 'Point the two host Nginx origins at http://%s:8080 and http://%s:8090; no host port is published.\n' \
-	"$PANEL_IPV4" "$BROWSER_RELAY_IPV4"
+printf 'Point the host Nginx reverse proxy at http://%s:8080; no host port is published.\n' "$PANEL_IPV4"
 if [ -s "$DATA_DIR/bootstrap.token" ]; then
 	printf 'Read the one-time setup token as root from: %s\n' "$DATA_DIR/bootstrap.token"
 fi

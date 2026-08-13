@@ -26,7 +26,6 @@ import (
 
 	"github.com/kejilion/kejilion-panel/internal/ai"
 	"github.com/kejilion/kejilion-panel/internal/auth"
-	"github.com/kejilion/kejilion-panel/internal/browsercore"
 	"github.com/kejilion/kejilion-panel/internal/cluster"
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
@@ -64,8 +63,6 @@ type Server struct {
 	downloadTickets     map[[32]byte]fileDownloadTicket
 	ai                  *ai.Service
 	aiError             string
-	browserTokens       *browsercore.TokenCodec
-	browserRelayClient  *http.Client
 }
 
 type agentAPI interface {
@@ -106,34 +103,6 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 	if err != nil {
 		return nil, fmt.Errorf("initialize cluster service: %w", err)
 	}
-	var browserTokens *browsercore.TokenCodec
-	var browserRelayClient *http.Client
-	if browsercore.RuntimeModeUsesRelay(config.BrowserMode) {
-		secret, secretErr := browsercore.LoadSecretFile(config.BrowserRelaySecretFile)
-		if secretErr != nil {
-			return nil, secretErr
-		}
-		browserTokens, err = browsercore.NewTokenCodec(secret)
-		if err != nil {
-			return nil, err
-		}
-		if mode, _ := browsercore.NormalizeRuntimeMode(config.BrowserMode); mode == browsercore.RuntimeModeReader {
-			browserRelayClient = &http.Client{
-				Transport: &http.Transport{
-					Proxy:                 nil,
-					DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-					ForceAttemptHTTP2:     true,
-					MaxIdleConns:          16,
-					MaxIdleConnsPerHost:   8,
-					IdleConnTimeout:       90 * time.Second,
-					TLSHandshakeTimeout:   10 * time.Second,
-					ExpectContinueTimeout: time.Second,
-				},
-				CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-				Timeout:       35 * time.Second,
-			}
-		}
-	}
 	server := &Server{
 		config: config, auth: authService, store: storage, agent: agent,
 		cluster:             clusterService,
@@ -141,8 +110,6 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		terminalOpeningUser: make(map[string]int),
 		trustedProxies:      trustedProxies,
 		lastAuthAudit:       make(map[string]time.Time),
-		browserTokens:       browserTokens,
-		browserRelayClient:  browserRelayClient,
 	}
 	server.hostOps = newHostOperationService(server)
 	return server, nil
@@ -165,10 +132,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.handleSecurityEntrance(w, r) {
-		return
-	}
-	if strings.HasPrefix(r.URL.Path, browserReaderAssetPrefix) {
-		s.handleBrowserReaderAsset(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -209,10 +172,6 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleLogin(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/session":
 		s.handleSession(w, r)
-	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/browser/sessions":
-		s.handleBrowserSessionCreate(w, r)
-	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/browser/reader/fetch":
-		s.handleBrowserReaderFetch(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/logout":
 		s.handleLogout(w, r)
 	case r.Method == http.MethodPut && r.URL.Path == "/api/v1/settings/password":
@@ -665,7 +624,7 @@ func (s *Server) handleSecurityEntrance(w http.ResponseWriter, r *http.Request) 
 }
 
 func securityEntrancePublicPath(requestPath string) bool {
-	return requestPath == "/api/v1/health" || strings.HasPrefix(requestPath, browserReaderAssetPrefix) || isFileDownloadTicketPath(requestPath) || isStaticAssetPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/") || strings.HasPrefix(requestPath, "/api/v3/federation/light/")
+	return requestPath == "/api/v1/health" || isFileDownloadTicketPath(requestPath) || isStaticAssetPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/") || strings.HasPrefix(requestPath, "/api/v3/federation/light/")
 }
 
 func isStaticAssetPath(requestPath string) bool {
@@ -1388,11 +1347,7 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func (s *Server) setSecurityHeaders(w http.ResponseWriter, r *http.Request) {
-	frameSources := []string{"'self'", "blob:"}
-	if browsercore.RuntimeModeEnabled(s.config.BrowserMode) && s.config.BrowserRelayURL != "" {
-		frameSources = append(frameSources, s.config.BrowserRelayURL)
-	}
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; frame-src "+strings.Join(frameSources, " ")+"; form-action 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; frame-src 'self' blob:; form-action 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")

@@ -2,73 +2,17 @@
 
 ## [Unreleased]
 
-## [0.68.3] - 2026-08-13
+### Removed
 
-### Fixed
-
-- 修复内置浏览器打开网页后样式丢失、排版混乱的问题，保留页面选择器与安全样式，并通过 KPanel 加载外部样式表。
-
-## [0.68.2] - 2026-08-13
-
-### Fixed
-
-- 修复更新后内置浏览器可能一直停留在加载页面、无法显示网站内容的问题。
-- 应用市场升级后自动恢复内置浏览器，不再中断自动更新询问用户；桌面界面不再展示内部实现标识，打开网址后直接加载网页。
-
-## [0.68.1] - 2026-08-13
-
-### Fixed
-
-- 为应用市场直连 HTTP/IP 与单 Panel HTTPS 反向代理部署恢复可用的安全阅读模式，避免 v0.68.0 升级后因自动写入 `KPANEL_BROWSER_MODE=disabled` 而让桌面浏览器固定返回 `browser_beta_disabled`。
-- Relay 健康检查同时核对期望运行模式，避免 Relay 仅 `/healthz` 正常但实际浏览器模式错误时仍通过升级验收。
-
-### Security
-
-- 新增 `reader` scope 短期令牌；Reader 只允许 `GET/HEAD`，拒绝请求体以及 Cookie、Authorization、Origin、Referer 等目标请求头，并剔除目标 `Set-Cookie` 响应元数据。现有 SSRF、DNS 拨号复核、TLS 与并发边界保持不变。
-- Reader iframe 不接收 Relay 令牌，通过私有 `MessageChannel` 接收有界网页字节；iframe 不含 `allow-same-origin`，CSP 禁止联网，目标内容按标签和属性 allowlist 重建，不执行目标脚本、表单、下载或媒体。
-- `disabled` 继续作为硬 kill switch；完整 Scramjet v2 仍只允许显式 `beta` 且继续要求双独立安全 Origin 与 Secure Cookie。
-
-### Upgrade Notes
-
-- 新安装默认写入 `reader`。应用市场检测到尚未标记的 v0.68.0 `disabled` 时由管理员明确选择是否迁移；非交互更新默认保持关闭，也可显式设置临时环境变量 `KPANEL_BROWSER_READER_MIGRATION=reader`。一次性 `reader-v1` 标记写入后，后续更新不再覆盖管理员选择。
-- 回滚时必须成套恢复升级前的镜像、Compose 和 `.env`。不得把含 `reader` 或 `-mode` 参数的新版配置交给旧版；特别是 `v0.67.0` Relay 不支持 `-mode` 参数，仅修改模式值不能替代匹配版本配置。
-
-## [0.68.0] - 2026-08-12
-
-### Added
-
-- 内置浏览器升级为上下文保持型 v2 网页重写运行时：在独立 Relay Origin 内使用 Service Worker、WASM、Scramjet Controller 和 KPanel Relay Transport 加载公开 HTTP(S) 网站；没有嵌入 Chromium、Chrome、Electron 或其他浏览器进程。
-- 增加地址/标题同步、页面内跳转、后退、前进、刷新、会话自动续期、渐进显示、可操作超时提示及标签休眠恢复；保留“使用系统浏览器打开”兜底。
+- 移除桌面内置浏览器的 Web 界面、Panel API、Reader/Beta 运行时、Relay 服务、部署参数、依赖例外及相关测试与规范。
 
 ### Changed
 
-- 以完整资源和常用浏览器 API 重写替代 v0.67.0 的 Phase 1 只读净化器；重写后的第三方 JavaScript 和 CSS 仅在专用 Relay Origin 的外层沙箱中运行，不进入 Panel Origin。
-- Relay 默认并发调整为全局 64、单会话 16，单目标主机最多 6 个连接；响应继续使用 32 KiB 复用缓冲流式转发，前端最多保留 8 个标签和 2 个活动运行时。
-
-### Fixed
-
-- 将 Scramjet 转交的流式请求体在浏览器端按 16 MiB 上限转换为定长二进制请求，并把空 POST 保留为明确的零长度请求，避免普通 HTTP/1.1 Relay 链路因流式上传协商失败或 chunked 空 body 而阻断表单、搜索和媒体请求；超限时不会发送部分请求，响应仍保持流式转发。
-- 将浏览器 Transport 与 Relay 的目标 URL 预算统一为 16 KiB UTF-8，避免搜索、媒体及动态资源的长 URL 被前端接受后又由 Relay 以 2 KiB 限制拒绝；HTTP(S)、公网 DNS/IP、SSRF 与标准 TLS 校验保持不变。
-- 允许隔离 Relay Origin 的 Scramjet Controller 本地读取 `data:` 与 `blob:` 资源，修复图片、JSON 和对象 URL 被 CSP 拦截后转为 Service Worker 500 的问题；CSP 仍不允许第三方 HTTP(S) 直连。
-- 响应头元数据预算改为在 JSON 转义与 Base64 后执行 32 KiB 最终编码上限，避免含大量特殊字符的目标响应头在反向代理层膨胀并触发 502。
-
-### Security
-
-- 新运行时默认关闭；只有显式设置 `KEJILION_PANEL_BROWSER_MODE=beta` 才会初始化令牌服务、放行精确 Relay `frame-src` 并创建浏览器会话，非法模式会在配置校验阶段拒绝启动。切回 `disabled` 并重启 Panel/Relay 后，会话接口返回 `503 browser_beta_disabled`，Relay 除 `/healthz` 外返回 503，旧令牌立即失去可用入口。
-- 保留 Panel/Relay 精确双 Origin、HMAC-SHA256 十分钟会话、CSRF、CORS/消息来源校验、SSRF 公网目标策略、拨号时 DNS 复核、标准 TLS 证书验证、请求/头部预算、连接超时和容器资源限制。
-- Relay 专用 CSP 才允许 Scramjet 所需的 `'unsafe-eval'`/`'wasm-unsafe-eval'`；Panel CSP 不放宽。Relay 禁止摄像头、麦克风、定位、支付和 USB 权限，不直接嵌入第三方站点 iframe。
-
-### Compatibility
-
-- 正式部署要求 Panel 与 Relay 使用两个不同的受信任 HTTPS Origin，并启用 Secure Cookie；公网 IP 明文 HTTP 不属于可支持的 Service Worker 验收环境。Chrome/Edge 等浏览器只作为用户运行环境和测试工具，不进入 KPanel 镜像。
-- UI 常驻 Beta 标识；禁用 Beta 时保留系统浏览器降级入口，不把该能力展示为稳定内核。
-- 普通 HTML、CSS、JavaScript、表单、点击、滚动和历史导航进入 v2 兼容范围；WebSocket 当前明确不支持，DRM、复杂 SSO、第三方登录弹窗、站点 Service Worker、完整下载管理及所有媒体边缘语义不作完整兼容承诺。
+- 桌面已安装应用和已部署网站的 Web 地址现统一显示跳转确认窗；只有用户确认后才使用系统浏览器打开，脚本型应用继续进入脚本终端。
 
 ### Upgrade Notes
 
-- 浏览器运行时固定为 `@mercuryworkshop/scramjet@2.0.67-alpha.2` 和 `@mercuryworkshop/scramjet-controller@0.0.14`，文件哈希记录在 `internal/browsercore/vendor/manifest.json`。Scramjet 版本属于 v2 alpha，并非稳定版；本能力按默认关闭的 Beta 发布，生产使用必须显式启用并记录精确版本例外、复核日期、退出条件和回滚点。零已知漏洞不等同于独立安全审计。
-- Panel 与 Relay 必须使用同一 v0.68.0 不可变镜像同步升级。该版本没有数据库迁移；回滚到 v0.67.0 时同步恢复 Panel/Relay，并验证或退役 Relay Origin 上遗留的 v2 Service Worker，避免客户端持久状态影响旧内核。
-- Compose 与安装器新增 `disabled|beta` 模式传递，默认 `disabled`；只有在批准版本例外并配置双 HTTPS Origin 与 Secure Cookie 后，才使用 `--browser-mode beta` 或等价环境配置。应用市场的直接 IP HTTP 安装会保持 `disabled`，不会以不安全上下文启用 Beta。
+- 没有数据库迁移。受管应用市场更新会使用 Compose `--remove-orphans` 移除旧版已废弃服务；独立部署升级时应使用新 Compose 并清理不再需要的旧环境变量、密钥挂载和反向代理入口。
 
 ## [0.67.0] - 2026-08-12
 
@@ -84,28 +28,8 @@
 
 ### Upgrade Notes
 
-- 本版本不包含尚未通过新验收标准的内置浏览器改动；浏览器能力与 `v0.66.0` 保持一致。
 - 本版本没有数据库、端口、密钥、Agent 协议或 `kejilion.sh` 协议变化。只有用户明确提交 Compose 部署时才会新建 `/home/docker/<project>` 并启动容器，升级过程不会自动执行 Docker 写操作。
 - 回滚可恢复 `v0.66.0` 不可变镜像；已由本版本创建的 Compose 项目和容器不会自动删除，仍可通过 Docker CLI、Compose、`kejilion.sh` 或恢复新版面板继续管理。
-
-## [0.66.0] - 2026-08-12
-
-### Added
-
-- 桌面模式内置浏览器新增独立轻量安全阅读内核：Panel 只签发 10 分钟短时会话，第三方公网 HTTP(S) 内容由独立 Relay 获取、净化并在隔离 Origin 中渲染，不再把目标站点直接交给第三方 iframe。
-- 新增 Relay 的 SSRF/DNS 重绑定防护、精确 CORS/CSP、并发与流量预算、响应空闲超时、图片代理和内核健康检查；复杂网站仍保留“用系统浏览器打开”兜底。
-- 正式 Compose 和安装器新增 `kpanel-browser-relay` 非特权容器、只读共享密钥、独立健康检查及双 Origin 部署参数；直接端口测试拓扑使用相邻独立端口。
-
-### Changed
-
-- 浏览器 iframe 的 `frame-src` 从宽泛 HTTP(S) 收紧为 `'self'`、`blob:` 与配置的精确 Relay Origin；未配置或不可用时不会回退为直接加载第三方站点。
-- Relay 默认限制为 0.5 CPU、128 MiB、64 PIDs、只读根文件系统、无 Linux capabilities；默认全局并发 24、单会话并发 6，避免复杂链路无界占用资源。
-
-### Upgrade Notes
-
-- 本版本新增独立浏览器 Relay 服务。正式 HTTPS 部署必须为 Panel 与 Relay 提供两个不同 Origin，并为两个容器只读挂载同一随机密钥；应用市场直连测试部署使用 Panel `:8080`、Relay `:8081`。
-- 当前内核定位是安全阅读预览：支持普通 HTML、文本、表格、链接及有限图片，不执行第三方 JavaScript，也不承诺 SPA、登录态、视频、WebSocket 或下载管理完整兼容；这些站点继续使用系统浏览器兜底。
-- 回滚至 `v0.65.0` 时先恢复旧 Compose、环境文件、Agent/脚本和不可变镜像，再停止并移除仅由本版本创建的 Relay 容器；面板数据格式未迁移，浏览器 Relay 密钥可保留以便重新升级。
 
 ## [0.65.0] - 2026-08-12
 
@@ -434,7 +358,7 @@
 
 ### Fixed
 
-- 统一内置浏览器与其他桌面窗口的背景、边框和阴影层级，提升桌面图标与名称清晰度；动态应用和网站图标不再叠加白色高光遮罩，浅色主题名称移除发白文字阴影并增强前景对比。
+- 提升桌面图标与名称清晰度；动态应用和网站图标不再叠加白色高光遮罩，浅色主题名称移除发白文字阴影并增强前景对比。
 - 降低浅色桌面的壁纸漂白蒙版、暗角和光晕强度，恢复原始壁纸的纹理与色彩层次；深色主题处理及原始壁纸文件保持不变。
 
 ### Upgrade Notes
@@ -443,14 +367,8 @@
 
 ## [0.55.1] - 2026-08-09
 
-### Changed
-
-- 内置浏览器起始页的关键词搜索统一提交到 `www.bing.com/search`，地区与语言路由交由 Bing 处理；普通网址访问逻辑不变。
-
 ### Fixed
 
-- 修复内置浏览器起始页滚动条跟随居中内容块、出现在窗口中部的问题；滚动由完整内容视口承载，网页 iframe 的独立滚动不受影响。
-- 提升内置浏览器起始页与标签栏的文字、图标和快捷入口清晰度，强化前景对比并减少半透明灰雾感。
 - 修复普通桌面窗口内部跳转无法使用浏览器原生前进/后退的问题；文件目录、历史监控、进程管理器与监控缩放会按窗口恢复历史，不再重复显示窗口内返回箭头。
 - 桌面不再显示重复的 KPanel 自身应用及其代理站点入口；应用市场中的 KPanel 更新与管理能力保持不变，避免自身递归嵌入或安全策略报错。
 
@@ -462,22 +380,11 @@
 
 ### Added
 
-- 带 Web 地址的已安装应用、网站图标和自定义 URL 现统一进入桌面内置浏览器；脚本型应用继续使用独立脚本终端，并保留“用系统浏览器打开”作为目标网站拒绝 iframe 时的回退。
-- 内置浏览器起始页输入框同时支持网址访问与关键词搜索；复用服务器公网位置，中国大陆使用 Bing，其他已识别地区使用 Google，位置暂不可用时回退 Bing。
 - 新增服务器 root 本地管理员密码恢复：`paneld reset-password` 通过交互式终端隐藏输入并二次确认，只更新认证状态、撤销旧 Session，默认保留 TOTP；登录页提供可复制的安全操作指引。
-
-### Changed
-
-- 桌面内置浏览器的多标签栏融入窗口标题栏，保留标签切换、关闭、新建与休眠状态，并释放一整行页面高度。
-
-### Fixed
-
-- 修复深色桌面中跨域内嵌页面仍使用亮色原生滚动条的问题；浏览器 iframe 现传递 KPanel 深浅主题并消除加载阶段的白色背景闪烁。
 
 ### Security
 
 - 密码恢复不新增公网 API，要求服务器本地交互式终端和已停止的 Panel 状态锁；继续使用现有 Argon2id 参数原子持久化，并记录审计事件。只有显式指定 `--disable-2fa` 才会清除 TOTP 与恢复码。
-- 内嵌浏览器继续只接受规范化的无凭据 HTTP/HTTPS 地址，并受同源策略、CSP、`X-Frame-Options` 与 sandbox 约束；KPanel 不代理目标网站或转发凭据。
 
 ### Upgrade Notes
 
@@ -489,21 +396,13 @@
 
 - 修复桌面窗口内部跳转后无法返回的问题；窗口标题栏现提供统一后退按钮并支持 `Alt + ←`，文件目录、历史监控、进程管理器及监控缩放均使用当前窗口的独立导航历史。
 
-### Added
-
-- 桌面新增轻量浏览器入口和居中网址起始页；网站图标、自定义 URL 共用单实例多标签窗口，最多保留 8 个标签、同时仅保活 2 个 iframe，后台自动休眠，并在工具栏与右键菜单保留“用系统浏览器打开”。iframe 仅接受无凭据的 HTTP/HTTPS 地址，使用 sandbox 禁止顶层导航，不做代理或绕过目标网站的嵌入策略。
-
 ### Changed
 
 - 概览中的历史监控与进程管理快捷入口调整为与对应数据卡一致的顺序。
 
-### Security
-
-- 内嵌浏览器只允许经过规范化的无凭据 HTTP/HTTPS 地址；目标页面继续受浏览器同源策略、CSP、`X-Frame-Options` 和 sandbox 约束，KPanel 不转发 Cookie、认证头或目标页面响应。
-
 ### Upgrade Notes
 
-- 无数据库、端口、Compose、Agent 权限、`kejilion.sh` 协议或应用市场配置迁移；可直接回滚至 `v0.53.0` 并保留现有数据和配置。目标网站拒绝 iframe 时需使用“系统浏览器打开”。
+- 无数据库、端口、Compose、Agent 权限、`kejilion.sh` 协议或应用市场配置迁移；可直接回滚至 `v0.53.0` 并保留现有数据和配置。
 
 ## [0.53.0] - 2026-08-09
 

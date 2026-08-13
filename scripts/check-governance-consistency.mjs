@@ -87,7 +87,9 @@ function checkRepositoryHygiene() {
       continue;
     }
 
-    const raw = readFileSync(resolve(repoRoot, relativePath));
+    const absolutePath = resolve(repoRoot, relativePath);
+    if (!existsSync(absolutePath)) continue;
+    const raw = readFileSync(absolutePath);
     if (raw.includes(0)) continue;
     const content = raw.toString('utf8');
     for (const rule of forbiddenContent) {

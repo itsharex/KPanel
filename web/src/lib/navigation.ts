@@ -13,7 +13,6 @@ const routeViewLoaders = {
   '/system': () => import('@/views/SystemCenterView.vue'),
   '/monitoring': () => import('@/views/MonitoringView.vue'),
   '/processes': () => import('@/views/ProcessManagerView.vue'),
-  '/browser': () => import('@/views/WebBrowserView.vue'),
   '/cluster': () => import('@/views/ClusterView.vue'),
   '/sites': () => import('@/views/SitesView.vue'),
   '/sites/environment': () => import('@/views/EnvironmentView.vue'),

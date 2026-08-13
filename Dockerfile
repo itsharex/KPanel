@@ -36,10 +36,6 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
       go build -trimpath \
         -ldflags="-s -w -X github.com/kejilion/kejilion-panel/internal/version.Version=${VERSION}" \
-        -o /out/kpanel-browser-relay ./cmd/kpanel-browser-relay; \
-      CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
-      go build -trimpath \
-        -ldflags="-s -w -X github.com/kejilion/kejilion-panel/internal/version.Version=${VERSION}" \
         -o /out/kejilion-agent ./cmd/kejilion-agent'
 
 FROM scratch
@@ -55,7 +51,6 @@ LABEL org.opencontainers.image.title="KPanel" \
       io.kejilion.script.revision="28f89c1b34df4b25e6ef9b144c328fdea75dbac9" \
       io.kejilion.script.sha256="0583f7cd5be1f0bb6ec48d92e2cf224bfabfafada5788658bda4414ba9561229"
 COPY --from=go-build /out/paneld /paneld
-COPY --from=go-build /out/kpanel-browser-relay /kpanel-browser-relay
 COPY --from=go-build /out/kejilion-agent /release/kejilion-agent
 COPY --from=go-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 ADD --checksum=sha256:0583f7cd5be1f0bb6ec48d92e2cf224bfabfafada5788658bda4414ba9561229 \
