@@ -113,6 +113,17 @@ afterEach(() => {
 })
 
 describe('Docker resource toolbar layout', () => {
+  it('gives Docker text and select controls a consistent KPanel treatment', () => {
+    expect(dockerSource).toMatch(/\.text-input,\s*\.select-input\s*\{[^}]*border-radius:\s*11px;[^}]*background-color:\s*var\(--surface-subtle\);/)
+    expect(dockerSource).toMatch(/\.select-input\s*\{[^}]*appearance:\s*none;[^}]*background-image:\s*url\(/)
+    expect(dockerSource).toMatch(/\.text-input:focus,\s*\.select-input:focus\s*\{[^}]*border-color:\s*var\(--brand\);[^}]*box-shadow:/)
+  })
+
+  it('uses a light deployment editor by default and preserves the dark terminal treatment', () => {
+    expect(dockerSource).toMatch(/\.deployment-source\s*\{[^}]*background:\s*var\(--surface-subtle\);[^}]*color:\s*var\(--text\);/)
+    expect(dockerSource).toMatch(/:global\(:root\[data-theme='dark'\]\) \.deployment-source\s*\{[^}]*background:\s*var\(--terminal-shell-background, #0b1214\);[^}]*color:\s*var\(--terminal-shell-text, #d8dddc\);/)
+  })
+
   it('keeps resource actions aligned to the right on desktop', () => {
     expect(dockerSource).toContain('.workspace-card > header:not(.resource-section__header)')
     expect(dockerSource).toMatch(/\.resource-section__header\s*\{[^}]*align-items:\s*center;/)
