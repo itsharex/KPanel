@@ -508,6 +508,15 @@ describe('DesktopView dynamic entries', () => {
     expect(desktop.windows.value[0]?.path).toBe(
       '/files?path=%2Fetc%2Fnginx&file=%2Fetc%2Fnginx%2Fmime.types',
     )
+
+    await wrapper.get('button[title="文件"]').trigger('dblclick')
+    expect(desktop.windows.value).toHaveLength(3)
+    expect(desktop.windows.value[2]?.path).toBe('/files')
+    const rootWindowID = desktop.windows.value[2]!.id
+
+    await wrapper.get('button[title="文件"]').trigger('dblclick')
+    expect(desktop.windows.value).toHaveLength(3)
+    expect(desktop.focusedId.value).toBe(rootWindowID)
     wrapper.unmount()
   })
 

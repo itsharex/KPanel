@@ -351,7 +351,16 @@ function openApp(path: string): void {
   // a short launch animation as visual acknowledgement.
   if (bounceTimer !== undefined) window.clearTimeout(bounceTimer)
   bouncingIcon.value = path
-  const windowId = desktop.openWindow(app.path, app.labelKey, app.allowMultiple)
+  const existingFileWindow = app.path === '/files'
+    ? openWindows.value.find((windowState) => fileWindowDirectory(windowState.path) === '/')
+    : undefined
+  let windowId: number
+  if (existingFileWindow) {
+    desktop.restoreWindow(existingFileWindow.id)
+    windowId = existingFileWindow.id
+  } else {
+    windowId = desktop.openWindow(app.path, app.labelKey, app.path === '/files' ? true : app.allowMultiple)
+  }
   if (windowId === 0) {
     toast.show(i18n.t('desktop.windowLimitTitle'), {
       message: i18n.t('desktop.windowLimitMessage'),
