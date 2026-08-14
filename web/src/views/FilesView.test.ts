@@ -399,6 +399,13 @@ describe('FilesView large icon layout', () => {
     expect(source).toMatch(/:global\(\.desktop-window\) \.batch-bar\s*\{[^}]*width:\s*min\(760px, calc\(100% - 28px\)\);/)
   })
 
+  it('lets the code editor consume the remaining fullscreen height', () => {
+    const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
+
+    expect(source).toMatch(/:global\(\.modal-panel--fullscreen\) \.code-viewer\s*\{[^}]*display:\s*flex;[^}]*height:\s*100%;[^}]*flex-direction:\s*column;/)
+    expect(source).toMatch(/:global\(\.modal-panel--fullscreen\) \.code-editor\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*0;[^}]*flex:\s*1 1 auto;/)
+  })
+
   it('skips layout and paint work for offscreen directory entries', () => {
     const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
 

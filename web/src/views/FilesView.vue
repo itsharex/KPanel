@@ -2645,6 +2645,19 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
+:global(.modal-panel--fullscreen) .code-viewer {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+:global(.modal-panel--fullscreen) .code-editor {
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
 .media-viewer {
   display: grid;
   min-height: 480px;
