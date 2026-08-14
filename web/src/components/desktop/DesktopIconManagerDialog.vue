@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Link2, Pencil, Plus, RotateCcw, Trash2 } from '@lucide/vue'
+import { Grid2X2, Link2, Pencil, Plus, RotateCcw, Trash2 } from '@lucide/vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useI18n } from '@/i18n'
 import type { DesktopEntry } from '@/lib/desktopEntries'
@@ -10,6 +10,7 @@ defineProps<{
   hiddenEntries: DesktopEntry[]
   shortcuts: DesktopShortcut[]
   busy?: boolean
+  canAutoArrange?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -18,6 +19,7 @@ const emit = defineEmits<{
   edit: [shortcut: DesktopShortcut]
   remove: [shortcut: DesktopShortcut]
   restore: [entry: DesktopEntry]
+  autoArrange: []
 }>()
 
 const i18n = useI18n()
@@ -34,6 +36,21 @@ const i18n = useI18n()
       <p class="desktop-icon-manager__hint">
         {{ i18n.t('desktop.iconManagerHint') }}
       </p>
+
+      <button
+        class="desktop-icon-manager__layout-action"
+        type="button"
+        :disabled="busy || !canAutoArrange"
+        @click="emit('autoArrange')"
+      >
+        <span aria-hidden="true"><Grid2X2 :size="18" /></span>
+        <span>
+          <strong>{{ i18n.t('desktop.autoArrange') }}</strong>
+          <small>{{ i18n.t(canAutoArrange
+            ? 'desktop.autoArrangeHint'
+            : 'desktop.autoArrangeDesktopOnly') }}</small>
+        </span>
+      </button>
 
       <section>
         <header>

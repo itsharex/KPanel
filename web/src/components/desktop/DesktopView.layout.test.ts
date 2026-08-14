@@ -255,9 +255,11 @@ describe('DesktopView icon layout interaction', () => {
 
     await wrapper.trigger('contextmenu', { clientX: 220, clientY: 160 })
     await flushPromises()
-    const autoArrange = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-      .find((item) => item.text().includes('自动整理'))
-    await autoArrange?.trigger('click')
+    const manage = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+      .find((item) => item.text().includes('管理桌面图标'))
+    await manage?.trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('.desktop-icon-manager__layout-action')?.click()
     await flushPromises()
 
     expect(updateWorkspace).toHaveBeenCalledWith(expect.objectContaining({
@@ -275,12 +277,20 @@ describe('DesktopView icon layout interaction', () => {
     await wrapper.trigger('contextmenu', { clientX: 220, clientY: 160 })
     await flushPromises()
     const items = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-    const autoArrange = items.find((item) => item.text().includes('自动整理'))
-    expect(autoArrange?.attributes('disabled')).toBeDefined()
+    expect(items.slice(0, 3).map((item) => item.text())).toEqual([
+      '刷新桌面',
+      '添加快捷方式',
+      '管理桌面图标',
+    ])
+    expect(items.some((item) => item.text().includes('自动整理'))).toBe(false)
     expect(items.some((item) => item.text().includes('恢复默认位置'))).toBe(false)
     expect(items.some((item) => item.text().includes('整理模式'))).toBe(false)
 
-    await autoArrange?.trigger('click')
+    await items[2]?.trigger('click')
+    await flushPromises()
+    const autoArrange = document.body.querySelector<HTMLButtonElement>('.desktop-icon-manager__layout-action')
+    expect(autoArrange?.disabled).toBe(true)
+    autoArrange?.click()
     await flushPromises()
     expect(updateWorkspace).not.toHaveBeenCalled()
     wrapper.unmount()
@@ -337,9 +347,11 @@ describe('DesktopView icon layout interaction', () => {
 
     await wrapper.trigger('contextmenu', { clientX: 220, clientY: 160 })
     await flushPromises()
-    const autoArrange = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-      .find((item) => item.text().includes('自动整理'))
-    await autoArrange?.trigger('click')
+    const manage = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+      .find((item) => item.text().includes('管理桌面图标'))
+    await manage?.trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('.desktop-icon-manager__layout-action')?.click()
     await flushPromises()
 
     expect(updateWorkspace).not.toHaveBeenCalled()

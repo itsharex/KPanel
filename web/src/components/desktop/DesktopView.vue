@@ -14,7 +14,6 @@ import {
   ExternalLink,
   Globe2,
   ListTree,
-  Grid2X2,
   MonitorCog,
   Plus,
   Trash2,
@@ -914,7 +913,7 @@ function onDesktopPointerDown(event: PointerEvent): void {
 
 function onContextMenuAction(
   action: 'refresh' | 'theme' | 'classic' | 'about' | 'processes' | 'add-shortcut'
-    | 'auto-arrange' | 'manage-icons',
+    | 'manage-icons',
 ): void {
   closeContextMenu()
   switch (action) {
@@ -932,9 +931,6 @@ function onContextMenuAction(
       break
     case 'add-shortcut':
       openShortcutDialog()
-      break
-    case 'auto-arrange':
-      void autoArrangeIcons()
       break
     case 'manage-icons':
       iconManagerOpen.value = true
@@ -1543,6 +1539,10 @@ function onViewportResize(): void {
           </button>
         </template>
         <template v-else>
+          <button type="button" role="menuitem" @click="onContextMenuAction('refresh')">
+            <RefreshCw :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.menuRefresh') }}
+          </button>
           <button
             type="button"
             role="menuitem"
@@ -1561,20 +1561,7 @@ function onViewportResize(): void {
             <MonitorCog :size="15" aria-hidden="true" />
             {{ i18n.t('desktop.iconManagerTitle') }}
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            :disabled="compactIconLayout || !workspace.available || desktopIcons.saving.value"
-            @click="onContextMenuAction('auto-arrange')"
-          >
-            <Grid2X2 :size="15" aria-hidden="true" />
-            {{ i18n.t('desktop.autoArrange') }}
-          </button>
           <div class="desktop__context-separator" role="separator" />
-          <button type="button" role="menuitem" @click="onContextMenuAction('refresh')">
-            <RefreshCw :size="15" aria-hidden="true" />
-            {{ i18n.t('desktop.menuRefresh') }}
-          </button>
           <button type="button" role="menuitem" @click="onContextMenuAction('theme')">
             <Sun v-if="theme.resolved.value === 'dark'" :size="15" aria-hidden="true" />
             <Moon v-else :size="15" aria-hidden="true" />
@@ -1812,8 +1799,10 @@ function onViewportResize(): void {
       :hidden-entries="hiddenEntries"
       :shortcuts="shortcuts"
       :busy="desktopIcons.saving.value"
+      :can-auto-arrange="!compactIconLayout && workspace.available"
       @close="iconManagerOpen = false"
       @add="openShortcutDialog()"
+      @auto-arrange="autoArrangeIcons"
       @edit="openShortcutDialog"
       @remove="requestDeleteShortcut"
       @restore="restoreEntry"

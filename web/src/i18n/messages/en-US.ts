@@ -231,6 +231,8 @@ export const enUSMessages = {
   'desktop.iconLayoutLimitMessage': 'Positions can be saved for up to {count} desktop icons. Extra icons can still be opened but cannot be rearranged.',
   'desktop.iconOverflowNotice': '{count} icons exceed the {limit} saved-position limit; the icons below use temporary placement',
   'desktop.autoArrange': 'Auto-arrange icons',
+  'desktop.autoArrangeHint': 'Align visible desktop icons in their current order',
+  'desktop.autoArrangeDesktopOnly': 'Available in wide desktop mode only',
   'desktop.iconManagerTitle': 'Manage desktop icons',
   'desktop.iconManagerHint': 'Installed apps and sites are only shown or hidden here. This never uninstalls apps or deletes sites or data.',
   'desktop.hiddenEntriesTitle': 'Removed from desktop',
