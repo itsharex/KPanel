@@ -1935,7 +1935,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
 }
 
-:global(.desktop-window) .batch-bar {
+:global(.desktop-window .batch-bar) {
   left: 50%;
   width: min(760px, calc(100% - 28px));
   gap: 4px;
@@ -1943,15 +1943,15 @@ onBeforeUnmount(() => {
   scrollbar-width: none;
 }
 
-:global(.desktop-window) .batch-bar::-webkit-scrollbar {
+:global(.desktop-window .batch-bar::-webkit-scrollbar) {
   display: none;
 }
 
-:global(.desktop-window) .batch-bar strong {
+:global(.desktop-window .batch-bar strong) {
   margin-right: 4px;
 }
 
-:global(.desktop-window) .batch-bar button {
+:global(.desktop-window .batch-bar button) {
   gap: 4px;
   padding-inline: 7px;
 }
@@ -2645,14 +2645,14 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
-:global(.modal-panel--fullscreen) .code-viewer {
+:global(.modal-panel--fullscreen .code-viewer) {
   display: flex;
   height: 100%;
   min-height: 0;
   flex-direction: column;
 }
 
-:global(.modal-panel--fullscreen) .code-editor {
+:global(.modal-panel--fullscreen .code-editor) {
   height: auto;
   min-height: 0;
   flex: 1 1 auto;

@@ -396,14 +396,16 @@ describe('FilesView large icon layout', () => {
     expect(batchToolbar.indexOf('addEntriesToDesktop()')).toBeGreaterThan(batchToolbar.indexOf("openDialog('chmod')"))
     expect(batchToolbar.indexOf('invertSelection')).toBeGreaterThan(batchToolbar.indexOf('addEntriesToDesktop()'))
     expect(source).toMatch(/\.batch-bar button\s*\{[^}]*flex:\s*0 0 auto;[^}]*white-space:\s*nowrap;/)
-    expect(source).toMatch(/:global\(\.desktop-window\) \.batch-bar\s*\{[^}]*width:\s*min\(760px, calc\(100% - 28px\)\);/)
+    expect(source).toMatch(/:global\(\.desktop-window \.batch-bar\)\s*\{[^}]*width:\s*min\(760px, calc\(100% - 28px\)\);/)
+    expect(source).not.toMatch(/:global\(\.desktop-window\)\s+\.batch-bar/)
   })
 
   it('lets the code editor consume the remaining fullscreen height', () => {
     const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
 
-    expect(source).toMatch(/:global\(\.modal-panel--fullscreen\) \.code-viewer\s*\{[^}]*display:\s*flex;[^}]*height:\s*100%;[^}]*flex-direction:\s*column;/)
-    expect(source).toMatch(/:global\(\.modal-panel--fullscreen\) \.code-editor\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*0;[^}]*flex:\s*1 1 auto;/)
+    expect(source).toMatch(/:global\(\.modal-panel--fullscreen \.code-viewer\)\s*\{[^}]*display:\s*flex;[^}]*height:\s*100%;[^}]*flex-direction:\s*column;/)
+    expect(source).toMatch(/:global\(\.modal-panel--fullscreen \.code-editor\)\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*0;[^}]*flex:\s*1 1 auto;/)
+    expect(source).not.toMatch(/:global\(\.modal-panel--fullscreen\)\s+\.code-/)
   })
 
   it('skips layout and paint work for offscreen directory entries', () => {
