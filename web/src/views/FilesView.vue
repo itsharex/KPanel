@@ -1373,20 +1373,22 @@ onBeforeUnmount(() => {
           @click="downloadSelected()"
         ><Download :size="15" />下载</button>
         <button type="button" @click="openDialog('compress')"><Archive :size="15" />压缩</button>
+        <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
+        <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
+        <button type="button" @click="openDialog('chmod')"><ShieldCheck :size="15" />权限</button>
         <button
           v-if="selectedEntries.some(canAddToDesktop)"
           type="button"
           :disabled="desktopAdding"
           @click="addEntriesToDesktop()"
         ><Pin :size="15" />{{ desktopAdding ? '添加中…' : '添加到桌面' }}</button>
-        <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
-        <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
-        <button type="button" @click="openDialog('chmod')"><ShieldCheck :size="15" />权限</button>
         <button type="button" @click="invertSelection"><ListRestart :size="15" />反选</button>
         <button class="danger-link" type="button" @click="openDialog('trash')">
           <Trash2 :size="15" />回收站
         </button>
-        <button type="button" @click="clearSelection">取消选择</button>
+        <button type="button" aria-label="取消选择" title="取消选择" @click="clearSelection">
+          <X :size="15" />取消
+        </button>
       </div>
     </Transition>
 
@@ -1909,11 +1911,14 @@ onBeforeUnmount(() => {
 }
 
 .batch-bar strong {
+  flex: 0 0 auto;
   margin-right: 8px;
+  white-space: nowrap;
 }
 
 .batch-bar button {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 5px;
   padding: 6px 9px;
@@ -1922,11 +1927,33 @@ onBeforeUnmount(() => {
   color: var(--muted);
   background: transparent;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .batch-bar button:hover {
   color: var(--text);
   background: var(--surface);
+}
+
+:global(.desktop-window) .batch-bar {
+  left: 50%;
+  width: min(760px, calc(100% - 28px));
+  gap: 4px;
+  padding: 8px 10px;
+  scrollbar-width: none;
+}
+
+:global(.desktop-window) .batch-bar::-webkit-scrollbar {
+  display: none;
+}
+
+:global(.desktop-window) .batch-bar strong {
+  margin-right: 4px;
+}
+
+:global(.desktop-window) .batch-bar button {
+  gap: 4px;
+  padding-inline: 7px;
 }
 
 .clipboard-bar {
