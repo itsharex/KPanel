@@ -37,55 +37,6 @@ const i18n = useI18n()
         {{ i18n.t('desktop.iconManagerHint') }}
       </p>
 
-      <button
-        class="desktop-icon-manager__layout-action"
-        type="button"
-        :disabled="busy || !canAutoArrange"
-        @click="emit('autoArrange')"
-      >
-        <span aria-hidden="true"><Grid2X2 :size="18" /></span>
-        <span>
-          <strong>{{ i18n.t('desktop.autoArrange') }}</strong>
-          <small>{{ i18n.t(canAutoArrange
-            ? 'desktop.autoArrangeHint'
-            : 'desktop.autoArrangeDesktopOnly') }}</small>
-        </span>
-      </button>
-
-      <section>
-        <header>
-          <div>
-            <strong>{{ i18n.t('desktop.hiddenEntriesTitle') }}</strong>
-            <small>{{ i18n.t('desktop.hiddenEntriesHint') }}</small>
-          </div>
-          <span>{{ hiddenEntries.length }}</span>
-        </header>
-        <div v-if="hiddenEntries.length" class="desktop-icon-manager__list">
-          <article v-for="entry in hiddenEntries" :key="entry.key">
-            <span class="desktop-icon-manager__glyph" aria-hidden="true">
-              <img v-if="entry.iconURL" :src="entry.iconURL" alt="" />
-              <span v-else>{{ entry.name.trim().slice(0, 1).toLocaleUpperCase() }}</span>
-            </span>
-            <div>
-              <strong>{{ entry.name }}</strong>
-              <small>{{ entry.kind === 'app'
-                ? i18n.t('desktop.detailApp')
-                : i18n.t('desktop.detailSite') }}</small>
-            </div>
-            <button
-              class="button button--ghost"
-              type="button"
-              :disabled="busy"
-              @click="emit('restore', entry)"
-            >
-              <RotateCcw :size="14" aria-hidden="true" />
-              {{ i18n.t('desktop.restoreToDesktop') }}
-            </button>
-          </article>
-        </div>
-        <p v-else class="desktop-icon-manager__empty">{{ i18n.t('desktop.hiddenEntriesEmpty') }}</p>
-      </section>
-
       <section>
         <header>
           <div>
@@ -133,6 +84,55 @@ const i18n = useI18n()
         </div>
         <p v-else class="desktop-icon-manager__empty">{{ i18n.t('desktop.customShortcutsEmpty') }}</p>
       </section>
+
+      <section>
+        <header>
+          <div>
+            <strong>{{ i18n.t('desktop.hiddenEntriesTitle') }}</strong>
+            <small>{{ i18n.t('desktop.hiddenEntriesHint') }}</small>
+          </div>
+          <span>{{ hiddenEntries.length }}</span>
+        </header>
+        <div v-if="hiddenEntries.length" class="desktop-icon-manager__list">
+          <article v-for="entry in hiddenEntries" :key="entry.key">
+            <span class="desktop-icon-manager__glyph" aria-hidden="true">
+              <img v-if="entry.iconURL" :src="entry.iconURL" alt="" />
+              <span v-else>{{ entry.name.trim().slice(0, 1).toLocaleUpperCase() }}</span>
+            </span>
+            <div>
+              <strong>{{ entry.name }}</strong>
+              <small>{{ entry.kind === 'app'
+                ? i18n.t('desktop.detailApp')
+                : i18n.t('desktop.detailSite') }}</small>
+            </div>
+            <button
+              class="button button--ghost"
+              type="button"
+              :disabled="busy"
+              @click="emit('restore', entry)"
+            >
+              <RotateCcw :size="14" aria-hidden="true" />
+              {{ i18n.t('desktop.restoreToDesktop') }}
+            </button>
+          </article>
+        </div>
+        <p v-else class="desktop-icon-manager__empty">{{ i18n.t('desktop.hiddenEntriesEmpty') }}</p>
+      </section>
+
+      <button
+        class="desktop-icon-manager__layout-action"
+        type="button"
+        :disabled="busy || !canAutoArrange"
+        @click="emit('autoArrange')"
+      >
+        <span aria-hidden="true"><Grid2X2 :size="18" /></span>
+        <span>
+          <strong>{{ i18n.t('desktop.autoArrange') }}</strong>
+          <small>{{ i18n.t(canAutoArrange
+            ? 'desktop.autoArrangeHint'
+            : 'desktop.autoArrangeDesktopOnly') }}</small>
+        </span>
+      </button>
     </div>
     <template #footer>
       <button class="button button--primary" type="button" @click="emit('close')">

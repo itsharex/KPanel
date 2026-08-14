@@ -9,6 +9,28 @@ afterEach(() => {
 })
 
 describe('DesktopIconManagerDialog', () => {
+  it('places custom shortcuts first and the layout action after the managed sections', async () => {
+    const wrapper = mount(DesktopIconManagerDialog, {
+      attachTo: document.body,
+      props: {
+        open: true,
+        hiddenEntries: [],
+        shortcuts: [],
+        canAutoArrange: true,
+      },
+    })
+    await nextTick()
+
+    const manager = document.body.querySelector<HTMLElement>('.desktop-icon-manager')
+    const children = Array.from(manager?.children || [])
+
+    expect(children[1]?.textContent).toContain('自定义快捷方式')
+    expect(children[2]?.textContent).toContain('已从桌面移除')
+    expect(children[3]?.classList.contains('desktop-icon-manager__layout-action')).toBe(true)
+    expect(children[3]?.textContent).toContain('自动整理图标')
+    wrapper.unmount()
+  })
+
   it('emits autoArrange from the layout action when wide-layout editing is available', async () => {
     const wrapper = mount(DesktopIconManagerDialog, {
       attachTo: document.body,

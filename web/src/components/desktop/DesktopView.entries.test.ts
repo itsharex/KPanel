@@ -453,6 +453,42 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
+  it('keeps the icon manager mounted while adding a shortcut and restores it on close', async () => {
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+
+    await wrapper.trigger('contextmenu', { clientX: 220, clientY: 160 })
+    await nextTick()
+    const manage = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+      .find((item) => item.text().includes('管理桌面图标'))
+    await manage?.trigger('click')
+    await flushPromises()
+
+    const managerPanel = Array.from(document.body.querySelectorAll<HTMLElement>('.modal-panel'))
+      .find((panel) => panel.textContent?.includes('管理桌面图标'))
+    const addShortcut = Array.from(managerPanel?.querySelectorAll<HTMLButtonElement>('button') || [])
+      .find((button) => button.textContent?.includes('添加快捷方式'))
+    addShortcut?.focus()
+    addShortcut?.click()
+    await flushPromises()
+
+    const openPanels = Array.from(document.body.querySelectorAll<HTMLElement>('.modal-panel'))
+    expect(managerPanel?.isConnected).toBe(true)
+    expect(openPanels).toHaveLength(2)
+    expect(openPanels[0]?.textContent).toContain('管理桌面图标')
+    expect(openPanels[1]?.textContent).toContain('添加桌面快捷方式')
+    expect(document.body.querySelectorAll('.modal-backdrop')).toHaveLength(2)
+
+    openPanels[1]?.querySelector<HTMLButtonElement>('.modal-panel__actions .icon-button')?.click()
+    await nextTick()
+    await nextTick()
+
+    expect(document.body.querySelectorAll('.modal-panel')).toHaveLength(1)
+    expect(managerPanel?.isConnected).toBe(true)
+    expect(document.activeElement).toBe(addShortcut)
+    wrapper.unmount()
+  })
+
   it('reuses the created shortcut id when an icon upload is retried', async () => {
     mockedUploadShortcutIcon
       .mockRejectedValueOnce(new Error('upload failed'))

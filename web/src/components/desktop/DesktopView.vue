@@ -1070,7 +1070,6 @@ function openShortcutDialog(shortcut?: DesktopShortcut): void {
   editingShortcut.value = shortcut
   shortcutError.value = ''
   shortcutDialogOpen.value = true
-  iconManagerOpen.value = false
   closeContextMenu(false)
 }
 
