@@ -466,7 +466,7 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
-  it('opens different file targets in independent windows and focuses an exact existing target', async () => {
+  it('reuses an existing window for the same directory and keeps different directories independent', async () => {
     mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
       shortcuts: [
         {
@@ -475,6 +475,14 @@ describe('DesktopView dynamic entries', () => {
         },
         {
           id: 'd'.repeat(32), name: '网站目录', description: '', targetType: 'directory', path: '/home/web',
+          createdAt: '2026-08-14T00:00:00Z', updatedAt: '2026-08-14T00:00:00Z',
+        },
+        {
+          id: 'e'.repeat(32), name: 'mime.types', description: '', targetType: 'file', path: '/etc/nginx/mime.types',
+          createdAt: '2026-08-14T00:00:00Z', updatedAt: '2026-08-14T00:00:00Z',
+        },
+        {
+          id: 'f'.repeat(32), name: 'Nginx 目录', description: '', targetType: 'directory', path: '/etc/nginx',
           createdAt: '2026-08-14T00:00:00Z', updatedAt: '2026-08-14T00:00:00Z',
         },
       ],
@@ -490,9 +498,16 @@ describe('DesktopView dynamic entries', () => {
       '/files?path=%2Fhome%2Fweb',
     ])
     const firstWindowID = desktop.windows.value[0]!.id
-    await wrapper.get('button[title="nginx.conf"]').trigger('dblclick')
+    await wrapper.get('button[title="Nginx 目录"]').trigger('dblclick')
     expect(desktop.windows.value).toHaveLength(2)
     expect(desktop.focusedId.value).toBe(firstWindowID)
+
+    await wrapper.get('button[title="mime.types"]').trigger('dblclick')
+    expect(desktop.windows.value).toHaveLength(2)
+    expect(desktop.focusedId.value).toBe(firstWindowID)
+    expect(desktop.windows.value[0]?.path).toBe(
+      '/files?path=%2Fetc%2Fnginx&file=%2Fetc%2Fnginx%2Fmime.types',
+    )
     wrapper.unmount()
   })
 

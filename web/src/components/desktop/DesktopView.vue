@@ -32,7 +32,7 @@ import DesktopShortcutDialog, {
 } from '@/components/desktop/DesktopShortcutDialog.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import LogoMark from '@/components/common/LogoMark.vue'
-import { DEFAULT_WINDOW_GRADIENT, desktopApps, findDesktopApp } from '@/lib/desktopApps'
+import { DEFAULT_WINDOW_GRADIENT, desktopApps, desktopRoutePath, findDesktopApp } from '@/lib/desktopApps'
 import {
   getCachedDesktopEntries,
   loadDesktopEntries,
@@ -408,16 +408,40 @@ function fileShortcutRoute(entry: DesktopEntry): string | undefined {
   return `/files?${query.toString()}`
 }
 
+function fileWindowDirectory(fullPath: string): string | undefined {
+  if (desktopRoutePath(fullPath) !== '/files') return undefined
+  const queryIndex = fullPath.indexOf('?')
+  if (queryIndex === -1) return '/'
+  const hashIndex = fullPath.indexOf('#', queryIndex)
+  const query = new URLSearchParams(fullPath.slice(queryIndex + 1, hashIndex === -1 ? undefined : hashIndex))
+  const pathValues = query.getAll('path')
+  if (pathValues.length > 1) return undefined
+  const path = pathValues[0] || '/'
+  if (
+    !path.startsWith('/')
+    || path.length > 4096
+    || /[\u0000-\u001f\\]/.test(path)
+    || (path !== '/' && path.slice(1).split('/').some((part) => !part || part === '.' || part === '..'))
+  ) return undefined
+  return path
+}
+
 function openFileShortcut(entry: DesktopEntry): void {
   const route = fileShortcutRoute(entry)
   if (!route) return
-  const existing = openWindows.value.find((windowState) => windowState.path === route)
+  const app = findDesktopApp('/files')
+  if (!app) return
+  const directory = fileWindowDirectory(route)
+  const existing = openWindows.value.find(
+    (windowState) => directory !== undefined && fileWindowDirectory(windowState.path) === directory,
+  )
   if (existing) {
+    if (entry.launch === 'file' && existing.path !== route) {
+      desktop.updateWindowRoute(existing.id, route, app.labelKey)
+    }
     desktop.restoreWindow(existing.id)
     return
   }
-  const app = findDesktopApp('/files')
-  if (!app) return
   const windowId = desktop.openWindow(route, app.labelKey, true)
   if (windowId === 0) {
     toast.show(i18n.t('desktop.windowLimitTitle'), { message: i18n.t('desktop.windowLimitMessage') })
