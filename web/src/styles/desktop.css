@@ -853,6 +853,22 @@ body.desktop-mode-open::-webkit-scrollbar {
   display: none;
 }
 
+.desktop__selection-box {
+  position: fixed;
+  z-index: 9;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 78%, white 8%);
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
+  pointer-events: none;
+}
+
+.desktop-selection-active,
+.desktop-selection-active * {
+  cursor: crosshair !important;
+  user-select: none !important;
+}
+
 .desktop__icons-scroll-space {
   width: 1px;
   pointer-events: none;
@@ -902,6 +918,63 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-icon-dragging * {
   cursor: grabbing !important;
   user-select: none !important;
+}
+
+.desktop__selection-actions {
+  position: absolute;
+  z-index: 1201;
+  bottom: 76px;
+  left: 50%;
+  display: flex;
+  min-height: 42px;
+  max-width: calc(100vw - 24px);
+  align-items: center;
+  gap: 5px;
+  padding: 5px 6px 5px 12px;
+  color: var(--desktop-label);
+  background: var(--desktop-glass-strong);
+  border: 1px solid var(--desktop-glass-border);
+  border-radius: 13px;
+  box-shadow: 0 14px 34px rgb(0 0 0 / 24%);
+  transform: translateX(-50%);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+}
+
+.desktop__selection-actions strong {
+  margin-right: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.desktop__selection-actions button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: inherit;
+  background: color-mix(in srgb, var(--desktop-label) 7%, transparent);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.desktop__selection-actions button:hover:not(:disabled),
+.desktop__selection-actions button:focus-visible {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
+.desktop__selection-actions button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, white);
+  outline-offset: 2px;
+}
+
+.desktop__selection-actions button:disabled {
+  opacity: .42;
 }
 
 .desktop__icon {
@@ -2653,6 +2726,10 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 @media (max-width: 760px) {
+
+  .desktop__selection-actions {
+    display: none;
+  }
 
   .desktop__classic-button span,
   .desktop-clock__date {

@@ -58,6 +58,7 @@ import {
   desktopIconPositionToPixels,
   dropDesktopIcon,
   MAX_DESKTOP_ICON_POSITIONS,
+  moveDesktopIconGroup,
   moveDesktopIconByKeyboard,
   type DesktopIconBounds,
   type DesktopIconPlacement,
@@ -186,17 +187,19 @@ const shortcutEntries = computed<DesktopEntry[]>(() => shortcuts.value.map((shor
 })))
 
 const iconsElement = ref<HTMLElement>()
+const desktopElement = ref<HTMLElement>()
 const iconBounds = ref<DesktopIconBounds>({ width: 90, height: 96 })
 const compactIconLayout = ref(window.innerWidth <= 760)
 const localPositions = ref<Record<string, DesktopIconPosition>>({})
-const dragPreview = ref<{ key: string; left: number; top: number }>()
-const draggingIcon = ref('')
+const dragPreviews = ref<Record<string, { left: number; top: number }>>({})
+const draggingIcons = ref<Set<string>>(new Set())
 const iconAnnouncement = ref('')
 const iconManagerOpen = ref(false)
 const shortcutDialogOpen = ref(false)
 const editingShortcut = ref<DesktopShortcut>()
 const deletingShortcut = ref<DesktopShortcut>()
 const removingEntry = ref<DesktopEntry>()
+const batchRemovingEntries = ref<DesktopEntry[]>([])
 const shortcutSaving = ref(false)
 const shortcutError = ref('')
 const fileDropActive = ref(false)
@@ -245,7 +248,7 @@ const iconScrollHeight = computed(() => {
 })
 
 watch(() => workspace.value.positions, (positions) => {
-  if (draggingIcon.value) return
+  if (draggingIcons.value.size) return
   localPositions.value = Object.fromEntries(
     Object.entries(positions).map(([key, position]) => [key, { ...position }]),
   )
@@ -268,6 +271,12 @@ const contextMenuTarget = ref<'desktop' | 'taskbar' | 'taskbar-window'>('desktop
 const contextMenuElement = ref<HTMLElement>()
 const menuEntry = ref<DesktopEntry>()
 const menuNavPath = ref('')
+const menuSelectionKeys = ref<string[]>([])
+const menuRemovableCount = computed(() => {
+  const selected = new Set(menuSelectionKeys.value)
+  return [...visibleDynamicEntries.value, ...shortcutEntries.value]
+    .filter((entry) => selected.has(entry.key)).length
+})
 const menuWindowId = ref<number>()
 const detailEntry = ref<DesktopEntry>()
 const externalOpenEntry = ref<DesktopEntry>()
@@ -295,7 +304,22 @@ function setDesktopWindowRef(windowId: number, instance: unknown): void {
 
 /** Icons currently playing their open-bounce animation. */
 const bouncingIcon = ref<string>('')
-const selectedIcon = ref<string>('')
+const selectedIcons = ref<Set<string>>(new Set())
+const selectedIconCount = computed(() => selectedIcons.value.size)
+const selectedEntries = computed(() => {
+  const byKey = new Map(
+    [...visibleDynamicEntries.value, ...shortcutEntries.value].map((entry) => [entry.key, entry]),
+  )
+  return [...selectedIcons.value]
+    .map((key) => byKey.get(key))
+    .filter((entry): entry is DesktopEntry => Boolean(entry))
+})
+const removableSelectedCount = computed(() => selectedEntries.value.length)
+watch(allIconKeys, (keys) => {
+  const visible = new Set(keys)
+  const next = [...selectedIcons.value].filter((key) => visible.has(key))
+  if (next.length !== selectedIcons.value.size) setIconSelection(next)
+})
 let bounceTimer: number | undefined
 let resizeFrame: number | undefined
 let resizePersistTimer: number | undefined
@@ -512,12 +536,31 @@ function openNavIcon(path: string): void {
   openApp(path)
 }
 
-function selectNavIcon(path: string): void {
-  selectedIcon.value = `nav:${path}`
+function setIconSelection(keys: Iterable<string>): void {
+  selectedIcons.value = new Set(keys)
 }
 
-function selectEntry(entry: DesktopEntry): void {
-  selectedIcon.value = entry.key
+function clearIconSelection(): void {
+  setIconSelection([])
+}
+
+function selectIcon(key: string, event?: MouseEvent): void {
+  if (!event || (!event.ctrlKey && !event.metaKey && !event.shiftKey)) {
+    setIconSelection([key])
+    return
+  }
+  const next = new Set(selectedIcons.value)
+  if ((event.ctrlKey || event.metaKey) && next.has(key)) next.delete(key)
+  else next.add(key)
+  setIconSelection(next)
+}
+
+function selectNavIcon(path: string, event?: MouseEvent): void {
+  selectIcon(`nav:${path}`, event)
+}
+
+function selectEntry(entry: DesktopEntry, event?: MouseEvent): void {
+  selectIcon(entry.key, event)
 }
 
 function warmNavIcon(path: string): void {
@@ -560,6 +603,7 @@ async function showContextMenu(
   target: 'desktop' | 'taskbar' | 'taskbar-window' = 'desktop',
   windowId?: number,
   navPath = '',
+  selectionKeys: readonly string[] = [],
 ): Promise<void> {
   event.preventDefault()
   contextMenuOpener = event.currentTarget instanceof HTMLElement
@@ -571,6 +615,7 @@ async function showContextMenu(
   contextMenuTarget.value = target
   menuEntry.value = entry
   menuNavPath.value = navPath
+  menuSelectionKeys.value = [...selectionKeys]
   menuWindowId.value = windowId
   await nextTick()
 
@@ -591,13 +636,16 @@ function onContextMenu(event: MouseEvent): void {
 }
 
 function onEntryContext(event: MouseEvent, entry: DesktopEntry): void {
-  selectEntry(entry)
-  void showContextMenu(event, entry)
+  if (!selectedIcons.value.has(entry.key)) setIconSelection([entry.key])
+  const selection = selectedIcons.value.size > 1 ? [...selectedIcons.value] : []
+  void showContextMenu(event, entry, 'desktop', undefined, '', selection)
 }
 
 function onNavContext(event: MouseEvent, path: string): void {
-  selectNavIcon(path)
-  void showContextMenu(event, undefined, 'desktop', undefined, path)
+  const key = `nav:${path}`
+  if (!selectedIcons.value.has(key)) setIconSelection([key])
+  const selection = selectedIcons.value.size > 1 ? [...selectedIcons.value] : []
+  void showContextMenu(event, undefined, 'desktop', undefined, path, selection)
 }
 
 function onTaskbarContext(event: MouseEvent): void {
@@ -616,6 +664,7 @@ function closeContextMenu(restoreFocus = true): void {
   contextMenu.value.open = false
   menuEntry.value = undefined
   menuNavPath.value = ''
+  menuSelectionKeys.value = []
   menuWindowId.value = undefined
   const opener = contextMenuOpener
   contextMenuOpener = undefined
@@ -631,12 +680,18 @@ function measureIconWorkArea(): void {
     width: Math.max(90, rect?.width || window.innerWidth - fallbackRight),
     height: Math.max(96, rect?.height || window.innerHeight - 88),
   }
-  compactIconLayout.value = window.innerWidth <= 760
+  const compact = window.innerWidth <= 760
+  if (compact && !compactIconLayout.value) {
+    if (iconDrag) cancelIconDrag()
+    if (selectionFrame) cancelSelectionFrame()
+  }
+  compactIconLayout.value = compact
 }
 
 function iconSlotStyle(key: string): Record<string, string> {
-  if (dragPreview.value?.key === key) {
-    return { left: `${dragPreview.value.left}px`, top: `${dragPreview.value.top}px` }
+  const preview = dragPreviews.value[key]
+  if (preview) {
+    return { left: `${preview.left}px`, top: `${preview.top}px` }
   }
   const position = renderedPositionByKey.value.get(key)
   if (position) {
@@ -693,6 +748,7 @@ function placementsToPositions(
 
 interface IconDragState {
   key: string
+  keys: string[]
   pointerId: number
   pointerType: string
   captureTarget?: HTMLElement
@@ -702,8 +758,7 @@ interface IconDragState {
   lastX: number
   lastY: number
   startScrollTop: number
-  originLeft: number
-  originTop: number
+  origins: Record<string, { left: number; top: number }>
   moved: boolean
 }
 
@@ -727,15 +782,26 @@ function stopIconAutoScroll(): void {
 
 function updateIconDragPreview(drag: IconDragState): void {
   const scrollDelta = (iconsElement.value?.scrollTop || 0) - drag.startScrollTop
-  const normalized = desktopIconPixelsToPosition(
-    {
-      left: drag.originLeft + drag.lastX - drag.startX,
-      top: drag.originTop + drag.lastY - drag.startY + scrollDelta,
-    },
-    iconBounds.value,
+  const grid = desktopIconGrid(iconBounds.value)
+  const origins = Object.values(drag.origins)
+  const minimumLeft = Math.min(...origins.map((origin) => origin.left))
+  const maximumLeft = Math.max(...origins.map((origin) => origin.left))
+  const minimumTop = Math.min(...origins.map((origin) => origin.top))
+  const maximumTop = Math.max(...origins.map((origin) => origin.top))
+  const deltaX = Math.min(
+    grid.maxLeft - maximumLeft,
+    Math.max(-minimumLeft, drag.lastX - drag.startX),
   )
-  const pixels = desktopIconPositionToPixels(normalized, iconBounds.value)
-  dragPreview.value = { key: drag.key, ...pixels }
+  const deltaY = Math.min(
+    grid.maxRow * grid.stepY - maximumTop,
+    Math.max(-minimumTop, drag.lastY - drag.startY + scrollDelta),
+  )
+  dragPreviews.value = Object.fromEntries(
+    Object.entries(drag.origins).map(([key, origin]) => [key, {
+      left: origin.left + deltaX,
+      top: origin.top + deltaY,
+    }]),
+  )
 }
 
 function iconAutoScrollVelocity(clientY: number): number {
@@ -815,9 +881,16 @@ function beginIconDrag(event: PointerEvent, key: string): void {
   const pointerType = event.pointerType || 'mouse'
   const position = renderedPositionByKey.value.get(key)
   if (!position) return
-  const origin = desktopIconPositionToPixels(position, iconBounds.value)
+  const keys = selectedIcons.value.has(key) && selectedIcons.value.size > 1
+    ? [...selectedIcons.value].filter((selectedKey) => renderedPositionByKey.value.has(selectedKey))
+    : [key]
+  const origins = Object.fromEntries(keys.map((selectedKey) => [
+    selectedKey,
+    desktopIconPositionToPixels(renderedPositionByKey.value.get(selectedKey)!, iconBounds.value),
+  ]))
   iconDrag = {
     key,
+    keys,
     pointerId: event.pointerId,
     pointerType,
     captureTarget: event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined,
@@ -827,8 +900,7 @@ function beginIconDrag(event: PointerEvent, key: string): void {
     lastX: event.clientX,
     lastY: event.clientY,
     startScrollTop: iconsElement.value?.scrollTop || 0,
-    originLeft: origin.left,
-    originTop: origin.top,
+    origins,
     moved: false,
   }
   window.addEventListener('pointermove', onIconDragMove, { passive: false })
@@ -850,8 +922,8 @@ function onIconDragMove(event: PointerEvent): void {
   if (!drag.moved) {
     captureIconDragPointer(drag)
     drag.moved = true
-    draggingIcon.value = drag.key
-    selectedIcon.value = drag.key
+    draggingIcons.value = new Set(drag.keys)
+    if (!selectedIcons.value.has(drag.key)) setIconSelection([drag.key])
     closeContextMenu(false)
     document.body.classList.add('desktop-icon-dragging')
   }
@@ -867,36 +939,45 @@ function finishIconDrag(): IconDragState | undefined {
   removeIconDragListeners()
   if (drag) releaseIconDragPointer(drag)
   document.body.classList.remove('desktop-icon-dragging')
-  draggingIcon.value = ''
+  draggingIcons.value = new Set()
   return drag
 }
 
 function onIconDragEnd(event: PointerEvent): void {
   const drag = iconDrag
   if (!drag || event.pointerId !== drag.pointerId) return
-  const preview = dragPreview.value
+  const previews = dragPreviews.value
   finishIconDrag()
-  dragPreview.value = undefined
-  if (!drag.moved || !preview) return
-  suppressActivationAfterDrag.add(drag.key)
-  const destination = desktopIconPixelsToPosition(preview, iconBounds.value)
-  const placements = dropDesktopIcon(
-    renderedIconLayout.value.placements,
-    drag.key,
-    destination,
-    iconBounds.value,
-  )
+  dragPreviews.value = {}
+  const anchorPreview = previews[drag.key]
+  if (!drag.moved || !anchorPreview) return
+  for (const key of drag.keys) suppressActivationAfterDrag.add(key)
+  const destination = desktopIconPixelsToPosition(anchorPreview, iconBounds.value)
+  const placements = drag.keys.length > 1
+    ? moveDesktopIconGroup(
+        renderedIconLayout.value.placements,
+        drag.keys,
+        drag.key,
+        destination,
+        iconBounds.value,
+      )
+    : dropDesktopIcon(
+        renderedIconLayout.value.placements,
+        drag.key,
+        destination,
+        iconBounds.value,
+      )
   const next = placementsToPositions(placements)
-  iconAnnouncement.value = i18n.t('desktop.iconMoved', {
-    name: iconLabel(drag.key),
-  })
+  iconAnnouncement.value = drag.keys.length > 1
+    ? i18n.t('desktop.iconsMoved', { count: drag.keys.length })
+    : i18n.t('desktop.iconMoved', { name: iconLabel(drag.key) })
   void persistPositions(next).catch(() => undefined)
 }
 
 function cancelIconDrag(): void {
   const drag = finishIconDrag()
-  dragPreview.value = undefined
-  if (drag?.moved) suppressActivationAfterDrag.add(drag.key)
+  dragPreviews.value = {}
+  if (drag?.moved) for (const key of drag.keys) suppressActivationAfterDrag.add(key)
 }
 
 function onIconDragCancel(event: PointerEvent): void {
@@ -935,14 +1016,25 @@ function nudgeIcon(key: string, deltaX: number, deltaY: number): void {
     return
   }
   const direction = deltaX < 0 ? 'left' : deltaX > 0 ? 'right' : deltaY < 0 ? 'up' : 'down'
-  const placements = moveDesktopIconByKeyboard(
-    renderedIconLayout.value.placements,
-    key,
-    direction,
-    iconBounds.value,
-  )
-  selectedIcon.value = key
-  iconAnnouncement.value = i18n.t('desktop.iconMoved', { name: iconLabel(key) })
+  const movingKeys = selectedIcons.value.has(key) && selectedIcons.value.size > 1
+    ? [...selectedIcons.value].filter((selectedKey) => renderedPositionByKey.value.has(selectedKey))
+    : [key]
+  const current = renderedPositionByKey.value.get(key)!
+  const destination = desktopIconPositionForGridSlot((() => {
+    const slot = desktopIconGridSlotForPosition(current, iconBounds.value)
+    if (direction === 'left') slot.column -= 1
+    else if (direction === 'right') slot.column += 1
+    else if (direction === 'up') slot.row -= 1
+    else slot.row += 1
+    return slot
+  })(), iconBounds.value)
+  const placements = movingKeys.length > 1
+    ? moveDesktopIconGroup(renderedIconLayout.value.placements, movingKeys, key, destination, iconBounds.value)
+    : moveDesktopIconByKeyboard(renderedIconLayout.value.placements, key, direction, iconBounds.value)
+  setIconSelection(movingKeys)
+  iconAnnouncement.value = movingKeys.length > 1
+    ? i18n.t('desktop.iconsMoved', { count: movingKeys.length })
+    : i18n.t('desktop.iconMoved', { name: iconLabel(key) })
   void persistPositions(placementsToPositions(placements)).catch(() => undefined)
 }
 
@@ -965,8 +1057,124 @@ async function autoArrangeIcons(): Promise<void> {
   }
 }
 
+interface DesktopSelectionFrame {
+  pointerId: number
+  captureTarget?: HTMLElement
+  pointerCaptured: boolean
+  startX: number
+  startY: number
+  currentX: number
+  currentY: number
+  moved: boolean
+  additive: boolean
+  previousSelection: Set<string>
+}
+
+const selectionBox = ref<{ left: number; top: number; width: number; height: number }>()
+let selectionFrame: DesktopSelectionFrame | undefined
+
+function removeSelectionFrameListeners(): void {
+  window.removeEventListener('pointermove', onSelectionFrameMove)
+  window.removeEventListener('pointerup', onSelectionFrameEnd)
+  window.removeEventListener('pointercancel', onSelectionFrameCancel)
+  window.removeEventListener('blur', cancelSelectionFrame)
+}
+
+function releaseSelectionFramePointer(frame: DesktopSelectionFrame): void {
+  const target = frame.captureTarget
+  if (!target || !frame.pointerCaptured) return
+  target.removeEventListener('lostpointercapture', onSelectionFrameLostPointerCapture)
+  try {
+    if (
+      typeof target.releasePointerCapture === 'function'
+      && (typeof target.hasPointerCapture !== 'function' || target.hasPointerCapture(frame.pointerId))
+    ) {
+      target.releasePointerCapture(frame.pointerId)
+    }
+  } catch {
+    // Pointer capture may already have been released by the browser.
+  }
+  frame.pointerCaptured = false
+}
+
+function captureSelectionFramePointer(frame: DesktopSelectionFrame): void {
+  const target = frame.captureTarget
+  if (frame.pointerCaptured || !target || typeof target.setPointerCapture !== 'function') return
+  target.addEventListener('lostpointercapture', onSelectionFrameLostPointerCapture)
+  try {
+    target.setPointerCapture(frame.pointerId)
+    frame.pointerCaptured = true
+  } catch {
+    target.removeEventListener('lostpointercapture', onSelectionFrameLostPointerCapture)
+  }
+}
+
+function updateSelectionFromFrame(frame: DesktopSelectionFrame): void {
+  const left = Math.min(frame.startX, frame.currentX)
+  const top = Math.min(frame.startY, frame.currentY)
+  const right = Math.max(frame.startX, frame.currentX)
+  const bottom = Math.max(frame.startY, frame.currentY)
+  selectionBox.value = { left, top, width: right - left, height: bottom - top }
+  const next = frame.additive ? new Set(frame.previousSelection) : new Set<string>()
+  for (const slot of iconsElement.value?.querySelectorAll<HTMLElement>('[data-icon-key]') || []) {
+    const rect = slot.getBoundingClientRect()
+    if (rect.right <= left || rect.left >= right || rect.bottom <= top || rect.top >= bottom) continue
+    const key = slot.dataset.iconKey
+    if (key) next.add(key)
+  }
+  setIconSelection(next)
+}
+
+function finishSelectionFrame(cancelled: boolean): DesktopSelectionFrame | undefined {
+  const frame = selectionFrame
+  selectionFrame = undefined
+  removeSelectionFrameListeners()
+  if (frame) releaseSelectionFramePointer(frame)
+  document.body.classList.remove('desktop-selection-active')
+  selectionBox.value = undefined
+  if (cancelled && frame) setIconSelection(frame.previousSelection)
+  return frame
+}
+
+function onSelectionFrameMove(event: PointerEvent): void {
+  const frame = selectionFrame
+  if (!frame || event.pointerId !== frame.pointerId) return
+  frame.currentX = event.clientX
+  frame.currentY = event.clientY
+  if (!frame.moved && Math.hypot(event.clientX - frame.startX, event.clientY - frame.startY) < 4) return
+  if (!frame.moved) {
+    frame.moved = true
+    captureSelectionFramePointer(frame)
+    document.body.classList.add('desktop-selection-active')
+  }
+  event.preventDefault()
+  updateSelectionFromFrame(frame)
+}
+
+function onSelectionFrameEnd(event: PointerEvent): void {
+  const frame = selectionFrame
+  if (!frame || event.pointerId !== frame.pointerId) return
+  finishSelectionFrame(false)
+  if (frame.moved) {
+    iconAnnouncement.value = i18n.t('desktop.selectedCount', { count: selectedIconCount.value })
+  }
+}
+
+function cancelSelectionFrame(): void {
+  finishSelectionFrame(true)
+}
+
+function onSelectionFrameCancel(event: PointerEvent): void {
+  if (selectionFrame && event.pointerId === selectionFrame.pointerId) cancelSelectionFrame()
+}
+
+function onSelectionFrameLostPointerCapture(event: PointerEvent): void {
+  if (selectionFrame && event.pointerId === selectionFrame.pointerId) cancelSelectionFrame()
+}
+
 function onGlobalPointerDown(event: PointerEvent): void {
   if (iconDrag && event.pointerId !== iconDrag.pointerId) cancelIconDrag()
+  if (selectionFrame && event.pointerId !== selectionFrame.pointerId) cancelSelectionFrame()
   if (!contextMenu.value.open) return
   // A right-button press may be followed by one or more contextmenu events
   // while the button is held. Keep the existing menu mounted and let the
@@ -979,10 +1187,26 @@ function onGlobalPointerDown(event: PointerEvent): void {
 }
 
 function onGlobalKeyDown(event: KeyboardEvent): void {
+  const target = event.target
+  const editing = target instanceof HTMLElement
+    && (target.matches('input, textarea, select') || target.isContentEditable)
+  const desktopFocused = target instanceof Node && Boolean(desktopElement.value?.contains(target))
+  if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 'a' && desktopFocused && !editing) {
+    event.preventDefault()
+    setIconSelection(allIconKeys.value)
+    iconAnnouncement.value = i18n.t('desktop.selectedCount', { count: selectedIconCount.value })
+    return
+  }
+  if ((event.key === 'Delete' || event.key === 'Backspace') && desktopFocused && !editing && selectedIconCount.value) {
+    event.preventDefault()
+    requestBatchRemoveSelected()
+    return
+  }
   if (event.key !== 'Escape') return
-  if (iconDrag) cancelIconDrag()
+  if (selectionFrame) cancelSelectionFrame()
+  else if (iconDrag) cancelIconDrag()
   else if (contextMenu.value.open) closeContextMenu()
-  else selectedIcon.value = ''
+  else clearIconSelection()
 }
 
 function onContextMenuKeyDown(event: KeyboardEvent): void {
@@ -1002,10 +1226,37 @@ function onContextMenuKeyDown(event: KeyboardEvent): void {
 }
 
 function onDesktopPointerDown(event: PointerEvent): void {
-  const target = event.target as HTMLElement
-  if (target.closest('.desktop-window, .desktop__widgets, .desktop__taskbar, .desktop__icon')) return
-  selectedIcon.value = ''
-  ;(event.currentTarget as HTMLElement).focus({ preventScroll: true })
+  const target = event.target instanceof Element ? event.target : undefined
+  if (target?.closest('.desktop-window, .desktop__widgets, .desktop__taskbar, .desktop__icon, .desktop__selection-actions')) return
+  const currentTarget = event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
+  currentTarget?.focus({ preventScroll: true })
+  if (
+    compactIconLayout.value
+    || (event.button !== undefined && event.button !== 0)
+    || event.isPrimary === false
+    || (event.pointerType && event.pointerType !== 'mouse')
+    || selectionFrame
+  ) return
+  const previousSelection = new Set(selectedIcons.value)
+  const additive = event.ctrlKey || event.metaKey || event.shiftKey
+  if (!additive) clearIconSelection()
+  if (contextMenu.value.open) closeContextMenu(false)
+  selectionFrame = {
+    pointerId: event.pointerId,
+    captureTarget: currentTarget,
+    pointerCaptured: false,
+    startX: event.clientX,
+    startY: event.clientY,
+    currentX: event.clientX,
+    currentY: event.clientY,
+    moved: false,
+    additive,
+    previousSelection,
+  }
+  window.addEventListener('pointermove', onSelectionFrameMove, { passive: false })
+  window.addEventListener('pointerup', onSelectionFrameEnd)
+  window.addEventListener('pointercancel', onSelectionFrameCancel)
+  window.addEventListener('blur', cancelSelectionFrame)
 }
 
 function desktopFileDropAllowed(event: DragEvent): boolean {
@@ -1240,9 +1491,49 @@ async function confirmRemoveEntry(): Promise<void> {
     await desktopIcons.mutate((draft) => {
       if (!draft.hiddenEntryKeys.includes(entry.key)) draft.hiddenEntryKeys.push(entry.key)
     })
-    selectedIcon.value = ''
+    clearIconSelection()
     removingEntry.value = undefined
     toast.success(i18n.t('desktop.removedFromDesktopTitle'), entry.name)
+  } catch (error) {
+    toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
+  }
+}
+
+function requestBatchRemoveSelected(keys: readonly string[] = [...selectedIcons.value]): void {
+  const selected = new Set(keys)
+  const removable = [...visibleDynamicEntries.value, ...shortcutEntries.value]
+    .filter((entry) => selected.has(entry.key))
+  closeContextMenu()
+  if (removable.length) {
+    batchRemovingEntries.value = removable
+    return
+  }
+  iconAnnouncement.value = i18n.t('desktop.fixedEntriesCannotRemove')
+  toast.show(i18n.t('desktop.fixedEntriesCannotRemove'))
+}
+
+async function confirmBatchRemoveSelected(): Promise<void> {
+  const targets = batchRemovingEntries.value
+  if (!targets.length) return
+  const hiddenKeys = new Set(
+    targets
+      .filter((entry) => entry.kind === 'app' || entry.kind === 'site')
+      .map((entry) => entry.key),
+  )
+  const shortcutIDs = new Set(
+    targets
+      .filter((entry) => entry.kind === 'shortcut' && entry.shortcut)
+      .map((entry) => entry.shortcut!.id),
+  )
+  try {
+    await desktopIcons.mutate((draft) => {
+      draft.hiddenEntryKeys = [...new Set([...draft.hiddenEntryKeys, ...hiddenKeys])]
+      draft.shortcuts = draft.shortcuts.filter((shortcut) => !shortcutIDs.has(shortcut.id))
+      for (const id of shortcutIDs) delete draft.positions[`shortcut:${id}`]
+    })
+    batchRemovingEntries.value = []
+    clearIconSelection()
+    toast.success(i18n.t('desktop.removedSelectedTitle', { count: targets.length }))
   } catch (error) {
     toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
   }
@@ -1327,7 +1618,7 @@ async function confirmDeleteShortcut(): Promise<void> {
       delete draft.positions[`shortcut:${shortcut.id}`]
     })
     deletingShortcut.value = undefined
-    selectedIcon.value = ''
+    clearIconSelection()
     toast.success(
       i18n.t(shortcut.targetType === 'url' ? 'desktop.shortcutDeleted' : 'desktop.removedFromDesktopTitle'),
       shortcut.name,
@@ -1484,6 +1775,7 @@ onBeforeUnmount(() => {
   workspaceAbort?.abort()
   iconsResizeObserver?.disconnect()
   cancelIconDrag()
+  cancelSelectionFrame()
   clearDesktopFileDrag()
   fileDropActive.value = false
   suppressActivationAfterDrag.clear()
@@ -1512,6 +1804,7 @@ function onViewportResize(): void {
 
 <template>
   <div
+    ref="desktopElement"
     class="desktop"
     tabindex="-1"
     @pointerdown="onDesktopPointerDown"
@@ -1525,6 +1818,18 @@ function onViewportResize(): void {
       <div class="desktop__aurora desktop__aurora--two" />
       <div class="desktop__aurora desktop__aurora--three" />
     </div>
+
+    <div
+      v-if="selectionBox"
+      class="desktop__selection-box"
+      :style="{
+        left: `${selectionBox.left}px`,
+        top: `${selectionBox.top}px`,
+        width: `${selectionBox.width}px`,
+        height: `${selectionBox.height}px`,
+      }"
+      aria-hidden="true"
+    />
 
     <div v-if="fileDropActive" class="desktop__file-drop" role="status" aria-live="polite">
       <span><Plus :size="19" aria-hidden="true" /></span>
@@ -1567,7 +1872,7 @@ function onViewportResize(): void {
         v-for="(app, index) in desktopApps"
         :key="app.path"
         class="desktop__icon-slot"
-        :class="{ 'desktop__icon-slot--dragging': draggingIcon === `nav:${app.path}` }"
+        :class="{ 'desktop__icon-slot--dragging': draggingIcons.has(`nav:${app.path}`) }"
         :style="iconSlotStyle(`nav:${app.path}`)"
         :data-icon-key="`nav:${app.path}`"
         @pointerdown="beginIconDrag($event, `nav:${app.path}`)"
@@ -1580,10 +1885,10 @@ function onViewportResize(): void {
           :nav-icon="app.icon"
           :gradient="gradientFor(app.path)"
           :active="bouncingIcon === app.path"
-          :selected="selectedIcon === `nav:${app.path}`"
+          :selected="selectedIcons.has(`nav:${app.path}`)"
           :order="index"
-          :dragging="draggingIcon === `nav:${app.path}`"
-          @select="selectNavIcon(app.path)"
+          :dragging="draggingIcons.has(`nav:${app.path}`)"
+          @select="(event) => selectNavIcon(app.path, event)"
           @open="openNavIcon(app.path)"
           @context="(event) => onNavContext(event, app.path)"
           @warm="warmNavIcon(app.path)"
@@ -1597,7 +1902,7 @@ function onViewportResize(): void {
           v-for="(entry, index) in visibleDynamicEntries"
           :key="entry.key"
           class="desktop__icon-slot"
-          :class="{ 'desktop__icon-slot--dragging': draggingIcon === entry.key }"
+          :class="{ 'desktop__icon-slot--dragging': draggingIcons.has(entry.key) }"
           :style="iconSlotStyle(entry.key)"
           :data-icon-key="entry.key"
           @pointerdown="beginIconDrag($event, entry.key)"
@@ -1609,10 +1914,10 @@ function onViewportResize(): void {
             :label="entry.name"
             :entry="entry"
             :gradient="entryGradient(entry)"
-            :selected="selectedIcon === entry.key"
+            :selected="selectedIcons.has(entry.key)"
             :order="desktopApps.length + index"
-            :dragging="draggingIcon === entry.key"
-            @select="selectEntry(entry)"
+            :dragging="draggingIcons.has(entry.key)"
+            @select="(event) => selectEntry(entry, event)"
             @open="(event) => onEntryOpen(event, entry)"
             @context="(event) => onEntryContext(event, entry)"
             @nudge="(x, y) => nudgeIcon(entry.key, x, y)"
@@ -1623,7 +1928,7 @@ function onViewportResize(): void {
         v-for="(entry, index) in shortcutEntries"
         :key="entry.key"
         class="desktop__icon-slot"
-        :class="{ 'desktop__icon-slot--dragging': draggingIcon === entry.key }"
+        :class="{ 'desktop__icon-slot--dragging': draggingIcons.has(entry.key) }"
         :style="iconSlotStyle(entry.key)"
         :data-icon-key="entry.key"
         @pointerdown="beginIconDrag($event, entry.key)"
@@ -1635,10 +1940,10 @@ function onViewportResize(): void {
           :label="entry.name"
           :entry="entry"
           :gradient="entryGradient(entry)"
-          :selected="selectedIcon === entry.key"
+          :selected="selectedIcons.has(entry.key)"
           :order="desktopApps.length + visibleDynamicEntries.length + index"
-          :dragging="draggingIcon === entry.key"
-          @select="selectEntry(entry)"
+          :dragging="draggingIcons.has(entry.key)"
+          @select="(event) => selectEntry(entry, event)"
           @open="(event) => onEntryOpen(event, entry)"
           @context="(event) => onEntryContext(event, entry)"
           @nudge="(x, y) => nudgeIcon(entry.key, x, y)"
@@ -1665,14 +1970,30 @@ function onViewportResize(): void {
         v-if="contextMenu.open"
         ref="contextMenuElement"
         class="desktop__context-menu"
-        :class="{ 'desktop__context-menu--entry': menuEntry || menuNavPath }"
+        :class="{ 'desktop__context-menu--entry': menuEntry || menuNavPath || menuSelectionKeys.length > 1 }"
         :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         role="menu"
         @contextmenu.prevent.stop
         @pointerdown.stop
         @keydown="onContextMenuKeyDown"
       >
-        <template v-if="menuEntry">
+        <template v-if="menuSelectionKeys.length > 1">
+          <button
+            type="button"
+            role="menuitem"
+            class="desktop__context-danger"
+            :disabled="!menuRemovableCount || !workspace.available || desktopIcons.saving.value"
+            @click="requestBatchRemoveSelected(menuSelectionKeys)"
+          >
+            <EyeOff :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.removeFromDesktop') }}
+          </button>
+          <button type="button" role="menuitem" @click="closeContextMenu(); clearIconSelection()">
+            <X :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.clearSelection') }}
+          </button>
+        </template>
+        <template v-else-if="menuEntry">
           <button type="button" role="menuitem" @click="onEntryMenuOpen">
             <SquareTerminal v-if="menuEntry.launch === 'script'" :size="15" aria-hidden="true" />
             <FolderOpen v-else-if="menuEntry.launch === 'directory'" :size="15" aria-hidden="true" />
@@ -1800,6 +2121,31 @@ function onViewportResize(): void {
             {{ i18n.t('desktop.switchClassic') }}
           </button>
         </template>
+      </div>
+    </Transition>
+
+    <Transition name="desktop-menu">
+      <div
+        v-if="selectedIconCount > 1"
+        class="desktop__selection-actions"
+        role="toolbar"
+        :aria-label="i18n.t('desktop.selectionActionsLabel')"
+        @pointerdown.stop
+        @contextmenu.prevent.stop
+      >
+        <strong>{{ i18n.t('desktop.selectedCount', { count: selectedIconCount }) }}</strong>
+        <button
+          type="button"
+          :disabled="!removableSelectedCount || !workspace.available || desktopIcons.saving.value"
+          @click="requestBatchRemoveSelected()"
+        >
+          <EyeOff :size="15" aria-hidden="true" />
+          {{ i18n.t('desktop.removeFromDesktop') }}
+        </button>
+        <button type="button" @click="clearIconSelection">
+          <X :size="15" aria-hidden="true" />
+          {{ i18n.t('desktop.clearSelection') }}
+        </button>
       </div>
     </Transition>
 
@@ -2094,6 +2440,31 @@ function onViewportResize(): void {
           @click="confirmDeleteShortcut"
         >
           {{ i18n.t(deletingFileShortcut ? 'desktop.removeFromDesktop' : 'desktop.shortcutDelete') }}
+        </button>
+      </template>
+    </ModalDialog>
+
+    <ModalDialog
+      :open="batchRemovingEntries.length > 0"
+      :title="i18n.t('desktop.removeSelectedTitle', { count: batchRemovingEntries.length })"
+      size="compact"
+      @close="batchRemovingEntries = []"
+    >
+      <div class="desktop__confirm-copy">
+        <strong>{{ i18n.t('desktop.selectedCount', { count: batchRemovingEntries.length }) }}</strong>
+        <p>{{ i18n.t('desktop.removeSelectedMessage') }}</p>
+      </div>
+      <template #footer>
+        <button class="button button--ghost" type="button" @click="batchRemovingEntries = []">
+          {{ i18n.t('common.cancel') }}
+        </button>
+        <button
+          class="button button--primary"
+          type="button"
+          :disabled="desktopIcons.saving.value"
+          @click="confirmBatchRemoveSelected"
+        >
+          {{ i18n.t('desktop.removeSelected', { count: batchRemovingEntries.length }) }}
         </button>
       </template>
     </ModalDialog>

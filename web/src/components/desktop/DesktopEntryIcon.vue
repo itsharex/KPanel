@@ -221,6 +221,7 @@ onBeforeUnmount(clearLongPress)
     :style="{ '--desktop-entry-order': String(order ?? 0) }"
     type="button"
     :aria-label="accessibleLabel"
+    :aria-pressed="selected"
     :title="accessibleLabel"
     aria-keyshortcuts="Control+ArrowUp Control+ArrowDown Control+ArrowLeft Control+ArrowRight"
     @pointerdown="onPointerDown"

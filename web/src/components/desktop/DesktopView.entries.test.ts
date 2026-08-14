@@ -466,6 +466,55 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
+  it('removes selected apps, sites, and shortcuts with one workspace update', async () => {
+    const shortcutID = '9'.repeat(32)
+    mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
+      positions: {
+        'app:nginx': { x: 0.2, y: 0.1 },
+        'site:blog': { x: 0.3, y: 0.2 },
+        [`shortcut:${shortcutID}`]: { x: 0.4, y: 0.3 },
+      },
+      shortcuts: [{
+        id: shortcutID,
+        name: '内部文档',
+        description: '',
+        targetType: 'url',
+        url: 'https://docs.example.com/',
+        createdAt: '2026-08-14T00:00:00Z',
+        updatedAt: '2026-08-14T00:00:00Z',
+      }],
+    }))
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+
+    await wrapper.get('button[title="Nginx"]').trigger('click')
+    await wrapper.get('button[title="blog.example.com"]').trigger('click', { ctrlKey: true })
+    await wrapper.get('button[title="内部文档"]').trigger('click', { ctrlKey: true })
+    const actions = wrapper.get('.desktop__selection-actions')
+    expect(actions.text()).toContain('已选 3 项')
+    await actions.findAll('button')[0]!.trigger('click')
+    await nextTick()
+    expect(document.body.textContent).toContain('文件和目录不会被删除')
+
+    const dialog = Array.from(document.body.querySelectorAll<HTMLElement>('.modal-panel'))
+      .find((panel) => panel.textContent?.includes('确认从桌面移除 3 项'))
+    dialog?.querySelector<HTMLButtonElement>('.button--primary')?.click()
+    await flushPromises()
+
+    expect(mockedWorkspaceUpdate).toHaveBeenCalledTimes(1)
+    expect(mockedWorkspaceUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      hiddenEntryKeys: expect.arrayContaining(['app:nginx', 'site:blog']),
+      shortcuts: [],
+      positions: expect.objectContaining({
+        'app:nginx': { x: 0.2, y: 0.1 },
+        'site:blog': { x: 0.3, y: 0.2 },
+      }),
+    }))
+    expect(mockedWorkspaceUpdate.mock.calls[0]![0].positions).not.toHaveProperty(`shortcut:${shortcutID}`)
+    expect(wrapper.find('.desktop__selection-actions').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('reuses an existing window for the same directory and keeps different directories independent', async () => {
     mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
       shortcuts: [
