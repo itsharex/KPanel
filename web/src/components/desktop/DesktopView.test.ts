@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import DesktopView from '@/components/desktop/DesktopView.vue'
 import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
@@ -37,6 +37,15 @@ describe('DesktopView', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    Object.defineProperties(document, {
+      fullscreenEnabled: { configurable: true, value: false },
+      fullscreenElement: { configurable: true, value: null },
+      exitFullscreen: { configurable: true, value: undefined },
+    })
+    Object.defineProperty(document.documentElement, 'requestFullscreen', {
+      configurable: true,
+      value: undefined,
+    })
   })
 
   it('renders the icon grid for all desktop apps', () => {
@@ -244,12 +253,68 @@ describe('DesktopView', () => {
   })
 
   it('switches back to classic mode from the taskbar system area', async () => {
+    let fullscreenElement: Element | null = document.documentElement
+    const exitFullscreen = vi.fn(async () => {
+      fullscreenElement = null
+      document.dispatchEvent(new Event('fullscreenchange'))
+    })
+    Object.defineProperties(document, {
+      fullscreenElement: { configurable: true, get: () => fullscreenElement },
+      exitFullscreen: { configurable: true, value: exitFullscreen },
+    })
     const desktop = useDesktopMode()
     desktop.enterDesktop()
     const wrapper = mount(DesktopView)
     await wrapper.find('.desktop__classic-button').trigger('click')
-    await nextTick()
+    await flushPromises()
+    expect(exitFullscreen).not.toHaveBeenCalled()
+    expect(fullscreenElement).toBe(document.documentElement)
     expect(desktop.mode.value).toBe('classic')
+    wrapper.unmount()
+  })
+
+  it('places the browser fullscreen toggle directly below the theme action', async () => {
+    let fullscreenElement: Element | null = null
+    const requestFullscreen = vi.fn(async () => {
+      fullscreenElement = document.documentElement
+      document.dispatchEvent(new Event('fullscreenchange'))
+    })
+    const exitFullscreen = vi.fn(async () => {
+      fullscreenElement = null
+      document.dispatchEvent(new Event('fullscreenchange'))
+    })
+    Object.defineProperties(document, {
+      fullscreenEnabled: { configurable: true, value: true },
+      fullscreenElement: { configurable: true, get: () => fullscreenElement },
+      exitFullscreen: { configurable: true, value: exitFullscreen },
+    })
+    Object.defineProperty(document.documentElement, 'requestFullscreen', {
+      configurable: true,
+      value: requestFullscreen,
+    })
+    const wrapper = mount(DesktopView)
+
+    await wrapper.trigger('contextmenu', { clientX: 200, clientY: 150 })
+    await nextTick()
+    const actions = wrapper.findAll('[role="menuitem"]')
+    const themeIndex = actions.findIndex((action) => action.attributes('data-context-action') === 'theme')
+    const fullscreenIndex = actions.findIndex((action) => action.attributes('data-context-action') === 'fullscreen')
+    expect(fullscreenIndex).toBe(themeIndex + 1)
+    expect(actions[fullscreenIndex]?.text()).toContain('进入全屏')
+
+    await actions[fullscreenIndex]!.trigger('click')
+    await flushPromises()
+    expect(requestFullscreen).toHaveBeenCalledOnce()
+    expect(fullscreenElement).toBe(document.documentElement)
+
+    await wrapper.trigger('contextmenu', { clientX: 200, clientY: 150 })
+    await nextTick()
+    const exitAction = wrapper.find('[data-context-action="fullscreen"]')
+    expect(exitAction.text()).toContain('退出全屏')
+    await exitAction.trigger('click')
+    await flushPromises()
+    expect(exitFullscreen).toHaveBeenCalledOnce()
+    expect(fullscreenElement).toBeNull()
     wrapper.unmount()
   })
 

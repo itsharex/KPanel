@@ -23,6 +23,8 @@ import {
   HardDriveUpload,
   LoaderCircle,
   Check,
+  Maximize2,
+  Minimize2,
   X,
 } from '@lucide/vue'
 import DesktopWindow from '@/components/desktop/DesktopWindow.vue'
@@ -81,6 +83,7 @@ import {
 } from '@/lib/desktopRouteKeys'
 import { useDesktopMode } from '@/stores/desktopMode'
 import { useDesktopIcons } from '@/stores/desktopIcons'
+import { useDocumentFullscreen } from '@/composables/useDocumentFullscreen'
 import { useTheme } from '@/stores/theme'
 import { useToast } from '@/stores/toast'
 import { useI18n } from '@/i18n'
@@ -99,6 +102,7 @@ const props = defineProps<{
 
 const desktop = useDesktopMode()
 const desktopIcons = useDesktopIcons()
+const documentFullscreen = useDocumentFullscreen()
 const theme = useTheme()
 const toast = useToast()
 const i18n = useI18n()
@@ -1639,7 +1643,7 @@ async function onDesktopFileDrop(event: DragEvent): Promise<void> {
 
 function onContextMenuAction(
   action: 'refresh' | 'theme' | 'classic' | 'about' | 'processes' | 'add-shortcut'
-    | 'manage-icons',
+    | 'manage-icons' | 'fullscreen',
 ): void {
   closeContextMenu()
   switch (action) {
@@ -1648,6 +1652,9 @@ function onContextMenuAction(
       break
     case 'theme':
       theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')
+      break
+    case 'fullscreen':
+      void toggleDocumentFullscreen()
       break
     case 'classic':
       void enterClassicSafely()
@@ -1677,6 +1684,13 @@ function onNavMenuOpen(): void {
   const path = menuNavPath.value
   closeContextMenu()
   if (path) openNavIcon(path)
+}
+
+async function toggleDocumentFullscreen(): Promise<void> {
+  if (await documentFullscreen.toggle()) return
+  toast.show(i18n.t('desktop.fullscreenUnavailableTitle'), {
+    message: i18n.t('desktop.fullscreenUnavailableMessage'),
+  })
 }
 
 async function enterClassicSafely(): Promise<void> {
@@ -2475,10 +2489,22 @@ function onViewportResize(): void {
             {{ i18n.t('desktop.iconManagerTitle') }}
           </button>
           <div class="desktop__context-separator" role="separator" />
-          <button type="button" role="menuitem" @click="onContextMenuAction('theme')">
+          <button type="button" role="menuitem" data-context-action="theme" @click="onContextMenuAction('theme')">
             <Sun v-if="theme.resolved.value === 'dark'" :size="15" aria-hidden="true" />
             <Moon v-else :size="15" aria-hidden="true" />
             {{ theme.resolved.value === 'dark' ? i18n.t('desktop.menuLight') : i18n.t('desktop.menuDark') }}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-context-action="fullscreen"
+            @click="onContextMenuAction('fullscreen')"
+          >
+            <Minimize2 v-if="documentFullscreen.active.value" :size="15" aria-hidden="true" />
+            <Maximize2 v-else :size="15" aria-hidden="true" />
+            {{ documentFullscreen.active.value
+              ? i18n.t('desktop.exitFullscreen')
+              : i18n.t('desktop.enterFullscreen') }}
           </button>
           <button type="button" role="menuitem" @click="onContextMenuAction('about')">
             <Info :size="15" aria-hidden="true" />
