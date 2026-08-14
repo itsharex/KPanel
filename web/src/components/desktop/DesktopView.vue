@@ -18,6 +18,8 @@ import {
   Plus,
   Trash2,
   EyeOff,
+  File,
+  FolderOpen,
   X,
 } from '@lucide/vue'
 import DesktopWindow from '@/components/desktop/DesktopWindow.vue'
@@ -39,8 +41,19 @@ import {
 } from '@/lib/desktopEntries'
 import { api, ApiError, type SystemResourceSnapshot } from '@/lib/api'
 import {
+  addFileEntriesToDesktop,
+  clearDesktopFileDrag,
+  desktopFileDragEntries,
+  DesktopShortcutLimitError,
+  hasDesktopFileDrag,
+} from '@/lib/desktopFileShortcuts'
+import { shortcutFileIcon } from '@/lib/fileEntryPresentation'
+import {
   autoArrangeDesktopIcons,
   deriveDesktopIconLayout,
+  desktopIconGrid,
+  desktopIconGridSlotForPosition,
+  desktopIconPositionForGridSlot,
   desktopIconPixelsToPosition,
   desktopIconPositionToPixels,
   dropDesktopIcon,
@@ -161,10 +174,14 @@ const shortcutEntries = computed<DesktopEntry[]>(() => shortcuts.value.map((shor
   kind: 'shortcut',
   id: shortcut.id,
   name: shortcut.name,
-  description: shortcut.description,
-  launch: 'external',
+  description: shortcut.description || shortcut.path,
+  launch: shortcut.targetType === 'url' ? 'external' : shortcut.targetType,
   url: shortcut.url,
+  path: shortcut.path,
   iconURL: shortcut.iconURL,
+  icon: shortcut.targetType === 'file' || shortcut.targetType === 'directory'
+    ? shortcutFileIcon(shortcut.name, shortcut.targetType)
+    : undefined,
   shortcut,
 })))
 
@@ -182,6 +199,8 @@ const deletingShortcut = ref<DesktopShortcut>()
 const removingEntry = ref<DesktopEntry>()
 const shortcutSaving = ref(false)
 const shortcutError = ref('')
+const fileDropActive = ref(false)
+const deletingFileShortcut = computed(() => deletingShortcut.value?.targetType === 'file' || deletingShortcut.value?.targetType === 'directory')
 let pendingShortcutID = ''
 let workspaceAbort: AbortController | undefined
 let iconsResizeObserver: ResizeObserver | undefined
@@ -317,6 +336,8 @@ function entryGradient(entry: DesktopEntry): string {
     return `linear-gradient(145deg, ${start} 0%, ${end} 100%)`
   }
   if (entry.kind === 'shortcut') {
+    if (entry.launch === 'directory') return 'linear-gradient(145deg, #facc15 0%, #ca8a04 100%)'
+    if (entry.launch === 'file') return 'linear-gradient(145deg, #94a3b8 0%, #475569 100%)'
     return 'linear-gradient(145deg, #38bdf8 0%, #0369a1 100%)'
   }
   // App-market apps keep a neutral brand tile; the market icon image sits on it.
@@ -363,9 +384,43 @@ function openEntry(entry: DesktopEntry): void {
     openAppScriptEntry(entry)
     return
   }
+  if ((entry.launch === 'file' || entry.launch === 'directory') && entry.path) {
+    openFileShortcut(entry)
+    return
+  }
   if (entry.url) {
     requestExternalOpen(entry)
     return
+  }
+}
+
+function parentFilePath(filePath: string): string {
+  const separator = filePath.lastIndexOf('/')
+  return separator <= 0 ? '/' : filePath.slice(0, separator)
+}
+
+function fileShortcutRoute(entry: DesktopEntry): string | undefined {
+  if (!entry.path || (entry.launch !== 'file' && entry.launch !== 'directory')) return undefined
+  const query = new URLSearchParams({
+    path: entry.launch === 'directory' ? entry.path : parentFilePath(entry.path),
+  })
+  if (entry.launch === 'file') query.set('file', entry.path)
+  return `/files?${query.toString()}`
+}
+
+function openFileShortcut(entry: DesktopEntry): void {
+  const route = fileShortcutRoute(entry)
+  if (!route) return
+  const existing = openWindows.value.find((windowState) => windowState.path === route)
+  if (existing) {
+    desktop.restoreWindow(existing.id)
+    return
+  }
+  const app = findDesktopApp('/files')
+  if (!app) return
+  const windowId = desktop.openWindow(route, app.labelKey, true)
+  if (windowId === 0) {
+    toast.show(i18n.t('desktop.windowLimitTitle'), { message: i18n.t('desktop.windowLimitMessage') })
   }
 }
 
@@ -454,6 +509,14 @@ function windowIconURL(path: string): string | undefined {
 function windowTitle(titleKey: string, path?: string): string {
   const scriptEntry = path ? scriptWindowEntry(path) : undefined
   if (scriptEntry) return i18n.t('desktop.namedScriptWindowTitle', { name: scriptEntry.name })
+  if (path?.startsWith('/files?')) {
+    const query = new URLSearchParams(path.slice(path.indexOf('?') + 1))
+    const target = query.get('file') || query.get('path')
+    const name = target === '/'
+      ? i18n.t('desktop.fileRootName')
+      : target?.slice(target.lastIndexOf('/') + 1)
+    if (name) return i18n.t('desktop.namedFileWindowTitle', { name })
+  }
   return i18n.t(titleKey as Parameters<typeof i18n.t>[0])
 }
 
@@ -911,6 +974,103 @@ function onDesktopPointerDown(event: PointerEvent): void {
   ;(event.currentTarget as HTMLElement).focus({ preventScroll: true })
 }
 
+function desktopFileDropAllowed(event: DragEvent): boolean {
+  if (!hasDesktopFileDrag(event)) return false
+  const target = event.target as HTMLElement | null
+  return !target?.closest('.desktop-window, .desktop__widgets, .desktop__taskbar')
+}
+
+function onDesktopFileDragOver(event: DragEvent): void {
+  if (!desktopFileDropAllowed(event)) {
+    fileDropActive.value = false
+    return
+  }
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'link'
+  fileDropActive.value = true
+}
+
+function onDesktopFileDragLeave(event: DragEvent): void {
+  const related = event.relatedTarget as Node | null
+  if (!related || !(event.currentTarget as HTMLElement).contains(related)) fileDropActive.value = false
+}
+
+async function onDesktopFileDrop(event: DragEvent): Promise<void> {
+  if (!desktopFileDropAllowed(event)) return
+  event.preventDefault()
+  fileDropActive.value = false
+  const sourceEntries = desktopFileDragEntries(event)
+  clearDesktopFileDrag()
+  const element = iconsElement.value
+  if (!sourceEntries.length || !element) return
+  const rect = element.getBoundingClientRect()
+  const destination = desktopIconPixelsToPosition({
+    left: event.clientX - rect.left,
+    top: event.clientY - rect.top + element.scrollTop,
+  }, iconBounds.value)
+  try {
+    const result = await addFileEntriesToDesktop(sourceEntries, (draft, added) => {
+      if (!added.length) return
+      const addedKeys = added.map((shortcut) => `shortcut:${shortcut.id}`)
+      const layout = deriveDesktopIconLayout(
+        [...allIconKeys.value, ...addedKeys],
+        Object.entries(draft.positions).map(([key, position]) => ({ key, position })),
+        iconBounds.value,
+        false,
+      )
+      const placeableKeys = addedKeys.filter((key) => layout.placements.some((placement) => placement.key === key))
+      if (!placeableKeys.length) return
+      const placeableKeySet = new Set(placeableKeys)
+      const initial = new Map(layout.placements.map((placement) => [placement.key, placement.position]))
+      const grid = desktopIconGrid(iconBounds.value)
+      const start = desktopIconGridSlotForPosition(destination, iconBounds.value)
+      const page = Math.floor(start.row / grid.rows)
+      const startIndex = page * grid.pageCapacity
+        + start.column * grid.rows
+        + (start.row % grid.rows)
+      let placements = layout.placements
+      placeableKeys.forEach((key, index) => {
+        const ordered = startIndex + index
+        const targetPage = Math.floor(ordered / grid.pageCapacity)
+        const withinPage = ordered % grid.pageCapacity
+        const slot = {
+          column: Math.floor(withinPage / grid.rows),
+          row: targetPage * grid.rows + (withinPage % grid.rows),
+        }
+        placements = dropDesktopIcon(
+          placements,
+          key,
+          desktopIconPositionForGridSlot(slot, iconBounds.value),
+          iconBounds.value,
+        )
+      })
+      for (const placement of placements) {
+        const previous = initial.get(placement.key)
+        if (placeableKeySet.has(placement.key) || !previous || previous.x !== placement.position.x || previous.y !== placement.position.y) {
+          draft.positions[placement.key] = placement.position
+        }
+      }
+    })
+    if (result.added.length) {
+      toast.success(
+        result.added.length === 1 ? i18n.t('desktop.fileShortcutAdded') : i18n.t('desktop.fileShortcutsAdded', { count: result.added.length }),
+        result.added.length === 1 ? result.added[0]!.name : i18n.t('desktop.fileShortcutsDropHint'),
+      )
+    } else if (result.duplicates.length) {
+      toast.show(i18n.t('desktop.fileShortcutDuplicate'), { message: result.duplicates[0]!.name })
+    }
+  } catch (error) {
+    if (error instanceof DesktopShortcutLimitError) {
+      toast.danger(i18n.t('desktop.shortcutLimitTitle'), i18n.t('desktop.shortcutLimitMessage', {
+        available: error.available,
+        requested: error.requested,
+      }))
+    } else {
+      toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
+    }
+  }
+}
+
 function onContextMenuAction(
   action: 'refresh' | 'theme' | 'classic' | 'about' | 'processes' | 'add-shortcut'
     | 'manage-icons',
@@ -1066,6 +1226,7 @@ async function restoreEntry(entry: DesktopEntry): Promise<void> {
 }
 
 function openShortcutDialog(shortcut?: DesktopShortcut): void {
+  if (shortcut && shortcut.targetType !== 'url') return
   pendingShortcutID = ''
   editingShortcut.value = shortcut
   shortcutError.value = ''
@@ -1091,7 +1252,13 @@ async function saveShortcut(
   const id = draft.id || pendingShortcutID || desktopIcons.generateShortcutID()
   try {
     await desktopIcons.mutate((workspaceDraft) => {
-      const next = { id, name: draft.name, description: draft.description, url: draft.url }
+      const next = {
+        id,
+        name: draft.name,
+        description: draft.description,
+        targetType: draft.targetType,
+        url: draft.url,
+      }
       const index = workspaceDraft.shortcuts.findIndex((shortcut) => shortcut.id === id)
       if (index >= 0) workspaceDraft.shortcuts.splice(index, 1, next)
       else workspaceDraft.shortcuts.push(next)
@@ -1127,7 +1294,10 @@ async function confirmDeleteShortcut(): Promise<void> {
     })
     deletingShortcut.value = undefined
     selectedIcon.value = ''
-    toast.success(i18n.t('desktop.shortcutDeleted'), shortcut.name)
+    toast.success(
+      i18n.t(shortcut.targetType === 'url' ? 'desktop.shortcutDeleted' : 'desktop.removedFromDesktopTitle'),
+      shortcut.name,
+    )
   } catch (error) {
     toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
   }
@@ -1136,7 +1306,7 @@ async function confirmDeleteShortcut(): Promise<void> {
 function editMenuShortcut(): void {
   const shortcut = menuEntry.value?.shortcut
   closeContextMenu()
-  if (shortcut) openShortcutDialog(shortcut)
+  if (shortcut?.targetType === 'url') openShortcutDialog(shortcut)
 }
 
 function onTaskbarClick(windowId: number): void {
@@ -1280,6 +1450,8 @@ onBeforeUnmount(() => {
   workspaceAbort?.abort()
   iconsResizeObserver?.disconnect()
   cancelIconDrag()
+  clearDesktopFileDrag()
+  fileDropActive.value = false
   suppressActivationAfterDrag.clear()
   if (bounceTimer !== undefined) window.clearTimeout(bounceTimer)
   if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
@@ -1305,11 +1477,25 @@ function onViewportResize(): void {
 </script>
 
 <template>
-  <div class="desktop" tabindex="-1" @pointerdown="onDesktopPointerDown" @contextmenu="onContextMenu">
+  <div
+    class="desktop"
+    tabindex="-1"
+    @pointerdown="onDesktopPointerDown"
+    @contextmenu="onContextMenu"
+    @dragover="onDesktopFileDragOver"
+    @dragleave="onDesktopFileDragLeave"
+    @drop="onDesktopFileDrop"
+  >
     <div class="desktop__wallpaper" aria-hidden="true">
       <div class="desktop__aurora desktop__aurora--one" />
       <div class="desktop__aurora desktop__aurora--two" />
       <div class="desktop__aurora desktop__aurora--three" />
+    </div>
+
+    <div v-if="fileDropActive" class="desktop__file-drop" role="status" aria-live="polite">
+      <span><Plus :size="19" aria-hidden="true" /></span>
+      <strong>{{ i18n.t('desktop.fileDropTitle') }}</strong>
+      <small>{{ i18n.t('desktop.fileDropHint') }}</small>
     </div>
 
     <aside class="desktop__widgets" :aria-label="i18n.t('desktop.toolbarLabel')" @contextmenu.stop>
@@ -1455,6 +1641,8 @@ function onViewportResize(): void {
         <template v-if="menuEntry">
           <button type="button" role="menuitem" @click="onEntryMenuOpen">
             <SquareTerminal v-if="menuEntry.launch === 'script'" :size="15" aria-hidden="true" />
+            <FolderOpen v-else-if="menuEntry.launch === 'directory'" :size="15" aria-hidden="true" />
+            <File v-else-if="menuEntry.launch === 'file'" :size="15" aria-hidden="true" />
             <AppWindow v-else-if="menuEntry.url" :size="15" aria-hidden="true" />
             <ExternalLink v-else :size="15" aria-hidden="true" />
             {{ menuEntry.launch === 'script'
@@ -1477,7 +1665,7 @@ function onViewportResize(): void {
             {{ i18n.t('desktop.entryRename') }}
           </button>
           <button
-            v-if="menuEntry.kind === 'shortcut'"
+            v-if="menuEntry.kind === 'shortcut' && menuEntry.shortcut?.targetType === 'url'"
             type="button"
             role="menuitem"
             @click="editMenuShortcut"
@@ -1506,7 +1694,9 @@ function onViewportResize(): void {
             @click="requestDeleteShortcut()"
           >
             <Trash2 :size="15" aria-hidden="true" />
-            {{ i18n.t('desktop.shortcutDelete') }}
+            {{ menuEntry.shortcut?.targetType === 'file' || menuEntry.shortcut?.targetType === 'directory'
+              ? i18n.t('desktop.removeFromDesktop')
+              : i18n.t('desktop.shortcutDelete') }}
           </button>
         </template>
         <template v-else-if="menuNavPath">
@@ -1739,16 +1929,22 @@ function onViewportResize(): void {
         </template>
         <template v-else>
           <dt>{{ i18n.t('desktop.detailType') }}</dt>
-          <dd>{{ i18n.t('desktop.detailShortcut') }}</dd>
+          <dd>{{ detailEntry.launch === 'directory'
+            ? i18n.t('desktop.detailDirectoryShortcut')
+            : detailEntry.launch === 'file'
+              ? i18n.t('desktop.detailFileShortcut')
+              : i18n.t('desktop.detailShortcut') }}</dd>
           <dt>{{ i18n.t('desktop.detailDescription') }}</dt>
           <dd>{{ detailEntry.description || i18n.t('desktop.detailNoDescription') }}</dd>
-          <dt>{{ i18n.t('desktop.detailURL') }}</dt>
-          <dd class="desktop__detail-url">{{ detailEntry.url }}</dd>
+          <dt>{{ detailEntry.path ? i18n.t('desktop.detailPath') : i18n.t('desktop.detailURL') }}</dt>
+          <dd class="desktop__detail-url">{{ detailEntry.path || detailEntry.url }}</dd>
         </template>
       </dl>
       <template #footer>
         <button class="button button--primary" type="button" @click="onDetailEntryOpen">
-          <ExternalLink :size="15" aria-hidden="true" />
+          <FolderOpen v-if="detailEntry?.launch === 'directory'" :size="15" aria-hidden="true" />
+          <File v-else-if="detailEntry?.launch === 'file'" :size="15" aria-hidden="true" />
+          <ExternalLink v-else :size="15" aria-hidden="true" />
           {{ i18n.t('desktop.entryOpen') }}
         </button>
         <button class="button button--ghost" type="button" @click="detailEntry = undefined">
@@ -1845,25 +2041,25 @@ function onViewportResize(): void {
 
     <ModalDialog
       :open="Boolean(deletingShortcut)"
-      :title="i18n.t('desktop.shortcutDeleteTitle')"
+      :title="i18n.t(deletingFileShortcut ? 'desktop.fileShortcutRemoveTitle' : 'desktop.shortcutDeleteTitle')"
       size="compact"
       @close="deletingShortcut = undefined"
     >
       <div v-if="deletingShortcut" class="desktop__confirm-copy">
         <strong>{{ deletingShortcut.name }}</strong>
-        <p>{{ i18n.t('desktop.shortcutDeleteMessage') }}</p>
+        <p>{{ i18n.t(deletingFileShortcut ? 'desktop.fileShortcutRemoveMessage' : 'desktop.shortcutDeleteMessage') }}</p>
       </div>
       <template #footer>
         <button class="button button--ghost" type="button" @click="deletingShortcut = undefined">
           {{ i18n.t('common.cancel') }}
         </button>
         <button
-          class="button button--danger"
+          :class="deletingFileShortcut ? 'button button--primary' : 'button button--danger'"
           type="button"
           :disabled="desktopIcons.saving.value"
           @click="confirmDeleteShortcut"
         >
-          {{ i18n.t('desktop.shortcutDelete') }}
+          {{ i18n.t(deletingFileShortcut ? 'desktop.removeFromDesktop' : 'desktop.shortcutDelete') }}
         </button>
       </template>
     </ModalDialog>

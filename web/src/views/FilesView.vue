@@ -10,18 +10,9 @@ import {
   ClipboardPaste,
   Code2,
   Copy,
-  Database,
   Download,
   Eye,
   File,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileImage,
-  FileKey,
-  FileSpreadsheet,
-  FileText,
-  FileVideo,
   Folder,
   FolderOpen,
   HardDrive,
@@ -29,10 +20,9 @@ import {
   List,
   ListRestart,
   MoreHorizontal,
-  Package,
   Pencil,
+  Pin,
   Plus,
-  Presentation,
   RefreshCw,
   RotateCcw,
   Save,
@@ -53,6 +43,14 @@ import {
   desktopWindowCloseGuardKey,
 } from '@/lib/desktopRouteKeys'
 import type { CodeLanguage } from '@/lib/code-editor-language'
+import { fileEntryIcon as entryIcon, fileEntryIconKind as entryIconKind } from '@/lib/fileEntryPresentation'
+import {
+  addFileEntriesToDesktop,
+  beginDesktopFileDrag,
+  clearDesktopFileDrag,
+  DesktopShortcutLimitError,
+  hasDesktopFileDrag,
+} from '@/lib/desktopFileShortcuts'
 import { useToast } from '@/stores/toast'
 import type { FileActionInput, FileDirectory, FileEntry, FileTrashEntry } from '@/types/api'
 
@@ -86,7 +84,6 @@ type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
 type ClipboardMode = 'copy' | 'move'
 type ArchiveFormat = 'tar.gz' | 'zip' | 'tar'
 type FileViewMode = 'list' | 'grid'
-type FileIconKind = 'folder' | 'image' | 'media' | 'archive' | 'spreadsheet' | 'database' | 'presentation' | 'package' | 'secret' | 'code' | 'document' | 'generic'
 
 interface FileClipboard {
   mode: ClipboardMode
@@ -127,6 +124,7 @@ const dialogEntries = ref<FileEntry[]>([])
 const contextMenu = ref<{ entry?: FileEntry; x: number; y: number }>()
 const clipboard = ref<FileClipboard>()
 const pasteBusy = ref(false)
+const desktopAdding = ref(false)
 const previewEntry = ref<FileEntry>()
 const previewContent = ref('')
 const previewLoading = ref(false)
@@ -148,6 +146,7 @@ let directoryController: AbortController | undefined
 let archiveController: AbortController | undefined
 let searchTimer: number | undefined
 let unmounted = false
+let openedRouteFile = ''
 
 const fileViewStorageKey = 'kpanel:files:view:v1'
 const thumbnailSourceMaxBytes = 12 * 1024 * 1024
@@ -308,6 +307,29 @@ async function navigateDirectory(path: string): Promise<void> {
   const routePath = requestedFilePath(route.query.path) || '/'
   if (!resolvedPath || resolvedPath === routePath) return
   await router.push({ name: 'files', query: { path: resolvedPath } })
+}
+
+async function openRequestedFile(value: unknown): Promise<void> {
+  const filePath = requestedFilePath(value)
+  if (!filePath || filePath === '/' || filePath === openedRouteFile) return
+  openedRouteFile = filePath
+  try {
+    const entry = await api.files.entry(filePath)
+    if (entry.kind !== 'file') {
+      toast.show('目标类型已变化', { message: '该路径现在不是普通文件，请从文件管理重新添加。' })
+      return
+    }
+    selected.value = new Set([entry.path])
+    selectionAnchor.value = entry.path
+    await openPreview(entry)
+  } catch (error) {
+    toast.danger('桌面目标无法打开', errorMessage(error))
+  }
+}
+
+async function loadRequestedRoute(): Promise<void> {
+  await loadDirectory(requestedFilePath(route.query.path) || '/')
+  await openRequestedFile(route.query.file)
 }
 
 function setViewMode(mode: FileViewMode): void {
@@ -485,6 +507,60 @@ function selectForContext(entry: FileEntry): void {
 function entriesForBatch(entry?: FileEntry): FileEntry[] {
   if (entry && !selected.value.has(entry.path)) return [entry]
   return [...selectedEntries.value]
+}
+
+function canAddToDesktop(entry: FileEntry): boolean {
+  return entry.kind === 'file' || entry.kind === 'directory'
+}
+
+function currentDirectoryEntry() {
+  const name = currentPath.value === '/'
+    ? '根目录'
+    : currentPath.value.slice(currentPath.value.lastIndexOf('/') + 1)
+  return { name, path: currentPath.value, kind: 'directory' as const }
+}
+
+async function addEntriesToDesktop(entry?: FileEntry, currentDirectory = false): Promise<void> {
+  if (desktopAdding.value) return
+  contextMenu.value = undefined
+  const targets = currentDirectory
+    ? [currentDirectoryEntry()]
+    : entry
+      ? entriesForBatch(entry).filter(canAddToDesktop)
+      : selectedEntries.value.filter(canAddToDesktop)
+  if (!targets.length) {
+    toast.show('无法添加到桌面', { message: '请选择普通文件或文件夹。' })
+    return
+  }
+  desktopAdding.value = true
+  try {
+    const result = await addFileEntriesToDesktop(targets)
+    if (result.added.length) {
+      toast.success(
+        result.added.length === 1 ? '已添加到桌面' : `已添加 ${result.added.length} 项到桌面`,
+        result.added.length === 1 ? result.added[0]!.name : '图标已按桌面空位自动排列。',
+      )
+    } else if (result.duplicates.length) {
+      toast.show('已经在桌面', { message: result.duplicates[0]!.name })
+    }
+  } catch (error) {
+    if (error instanceof DesktopShortcutLimitError) {
+      toast.danger('桌面快捷方式已满', `还可添加 ${error.available} 项，本次选择了 ${error.requested} 项。`)
+    } else {
+      toast.danger('添加到桌面失败', errorMessage(error))
+    }
+  } finally {
+    desktopAdding.value = false
+  }
+}
+
+function startEntryDrag(event: DragEvent, entry: FileEntry): void {
+  const targets = (selected.value.has(entry.path) ? entriesForBatch(entry) : [entry]).filter(canAddToDesktop)
+  if (!beginDesktopFileDrag(event, targets)) event.preventDefault()
+}
+
+function finishEntryDrag(): void {
+  clearDesktopFileDrag()
 }
 
 function showContext(event: MouseEvent, entry: FileEntry): void {
@@ -851,62 +927,14 @@ async function uploadFiles(files: FileList | File[]): Promise<void> {
 
 function onDrop(event: DragEvent): void {
   dragging.value = false
+  if (hasDesktopFileDrag(event)) return
   if (event.dataTransfer?.files?.length) void uploadFiles(event.dataTransfer.files)
 }
 
-function fileExtension(name: string): string {
-  const normalized = name.toLocaleLowerCase()
-  if (normalized.endsWith('.tar.gz')) return 'tar.gz'
-  const separator = normalized.lastIndexOf('.')
-  return separator >= 0 ? normalized.slice(separator + 1) : ''
-}
-
-function entryIconKind(entry: FileEntry): FileIconKind {
-  if (entry.kind === 'directory') return 'folder'
-  const mime = (entry.mime || '').toLocaleLowerCase()
-  const extension = fileExtension(entry.name)
-  const normalizedName = entry.name.toLocaleLowerCase()
-  if (mime.startsWith('image/')) return 'image'
-  if (mime.startsWith('audio/') || mime.startsWith('video/')) return 'media'
-  if (
-    archiveFormat(entry) ||
-    ['application/gzip', 'application/x-7z-compressed', 'application/x-rar-compressed'].includes(mime) ||
-    ['7z', 'rar', 'gz', 'bz2', 'xz'].includes(extension)
-  ) return 'archive'
-  if (['csv', 'tsv', 'xls', 'xlsx', 'ods'].includes(extension)) return 'spreadsheet'
-  if (['db', 'sqlite', 'sqlite3', 'mdb', 'sql'].includes(extension)) return 'database'
-  if (['ppt', 'pptx', 'odp'].includes(extension)) return 'presentation'
-  if (['deb', 'rpm', 'apk', 'pkg', 'msi'].includes(extension)) return 'package'
-  if (
-    ['env', 'pem', 'key', 'pfx', 'p12', 'crt', 'cer'].includes(extension) ||
-    /^(?:id_(?:rsa|ed25519|ecdsa)|authorized_keys|known_hosts)$/.test(normalizedName)
-  ) return 'secret'
-  if (
-    entry.editable ||
-    ['json', 'yaml', 'yml', 'toml', 'xml', 'ini', 'conf', 'sh', 'bash', 'zsh', 'ps1', 'js', 'ts', 'vue', 'css', 'scss', 'html', 'go', 'py', 'php', 'java', 'c', 'h', 'cpp', 'rs'].includes(extension)
-  ) return 'code'
-  if (
-    entry.previewable ||
-    mime === 'application/pdf' ||
-    ['txt', 'md', 'log', 'pdf', 'doc', 'docx', 'odt', 'rtf'].includes(extension)
-  ) return 'document'
-  return 'generic'
-}
-
-function entryIcon(entry: FileEntry) {
-  switch (entryIconKind(entry)) {
-    case 'folder': return Folder
-    case 'image': return FileImage
-    case 'media': return entry.mime?.startsWith('audio/') ? FileAudio : FileVideo
-    case 'archive': return FileArchive
-    case 'spreadsheet': return FileSpreadsheet
-    case 'database': return Database
-    case 'presentation': return Presentation
-    case 'package': return Package
-    case 'secret': return FileKey
-    case 'code': return FileCode
-    case 'document': return FileText
-    default: return File
+function onUploadDragEnter(event: DragEvent): void {
+  if (hasDesktopFileDrag(event)) return
+  if (event.dataTransfer?.files?.length || Array.from(event.dataTransfer?.types || []).includes('Files')) {
+    dragging.value = true
   }
 }
 
@@ -1005,15 +1033,21 @@ onMounted(() => {
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleFileShortcut)
   restoreViewMode()
-  void loadDirectory(requestedFilePath(route.query.path) || '/')
+  void loadRequestedRoute()
 })
 
 watch(
-  () => route.query.path,
-  (value, previous) => {
-    if (value === previous) return
-    const path = requestedFilePath(value) || '/'
-    if (path !== currentPath.value) void loadDirectory(path)
+  () => [route.query.path, route.query.file] as const,
+  ([pathValue, fileValue], previous) => {
+    if (pathValue === previous?.[0] && fileValue === previous?.[1]) return
+    const directoryPath = requestedFilePath(pathValue) || '/'
+    void (async () => {
+      if (directoryPath !== currentPath.value) await loadDirectory(directoryPath)
+      if (fileValue !== previous?.[1]) {
+        openedRouteFile = ''
+        await openRequestedFile(fileValue)
+      }
+    })()
   },
 )
 
@@ -1026,6 +1060,7 @@ watch(search, () => {
 
 onBeforeUnmount(() => {
   unregisterWindowCloseGuard?.()
+  clearDesktopFileDrag()
   unmounted = true
   directoryController?.abort()
   archiveController?.abort()
@@ -1072,7 +1107,7 @@ onBeforeUnmount(() => {
     <section
       class="file-browser"
       :class="{ 'file-browser--dragging': dragging }"
-      @dragenter.prevent="dragging = true"
+      @dragenter.prevent="onUploadDragEnter"
       @dragover.prevent
       @dragleave.self="dragging = false"
       @drop.prevent="onDrop"
@@ -1188,10 +1223,13 @@ onBeforeUnmount(() => {
           :class="{ 'file-row--selected': selected.has(entry.path) }"
           role="row"
           tabindex="0"
+          :draggable="canAddToDesktop(entry)"
           @click="handleEntryClick($event, entry)"
           @dblclick="openEntry(entry)"
           @keydown.enter="openEntry(entry)"
           @contextmenu.stop="showContext($event, entry)"
+          @dragstart="startEntryDrag($event, entry)"
+          @dragend="finishEntryDrag"
         >
           <span @click.stop="toggleEntry(entry.path)">
             <input
@@ -1245,10 +1283,13 @@ onBeforeUnmount(() => {
           :class="{ 'file-grid-card--selected': selected.has(entry.path) }"
           role="listitem"
           tabindex="0"
+          :draggable="canAddToDesktop(entry)"
           @click="handleEntryClick($event, entry)"
           @dblclick="openEntry(entry)"
           @keydown.enter="openEntry(entry)"
           @contextmenu.stop="showContext($event, entry)"
+          @dragstart="startEntryDrag($event, entry)"
+          @dragend="finishEntryDrag"
         >
           <input
             class="file-grid-card__check"
@@ -1332,6 +1373,12 @@ onBeforeUnmount(() => {
           @click="downloadSelected()"
         ><Download :size="15" />下载</button>
         <button type="button" @click="openDialog('compress')"><Archive :size="15" />压缩</button>
+        <button
+          v-if="selectedEntries.some(canAddToDesktop)"
+          type="button"
+          :disabled="desktopAdding"
+          @click="addEntriesToDesktop()"
+        ><Pin :size="15" />{{ desktopAdding ? '添加中…' : '添加到桌面' }}</button>
         <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
         <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
         <button type="button" @click="openDialog('chmod')"><ShieldCheck :size="15" />权限</button>
@@ -1351,6 +1398,17 @@ onBeforeUnmount(() => {
     >
       <button v-if="contextMenu.entry" type="button" @click="openEntry(contextMenu.entry)">
         <Eye :size="15" />{{ contextMenu.entry.kind === 'directory' ? '打开' : '查看' }}
+      </button>
+      <button
+        v-if="contextMenu.entry && contextBatchEntries.some(canAddToDesktop)"
+        type="button"
+        :disabled="desktopAdding"
+        @click="addEntriesToDesktop(contextMenu.entry)"
+      >
+        <Pin :size="15" />{{ contextHasMultipleEntries ? `添加 ${contextBatchEntries.filter(canAddToDesktop).length} 项到桌面` : '添加到桌面' }}
+      </button>
+      <button v-else-if="!contextMenu.entry" type="button" :disabled="desktopAdding" @click="addEntriesToDesktop(undefined, true)">
+        <Pin :size="15" />将当前文件夹添加到桌面
       </button>
       <button
         v-if="contextMenu.entry && contextBatchEntries.some((entry) => entry.kind === 'file')"

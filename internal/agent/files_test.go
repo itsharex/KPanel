@@ -108,6 +108,40 @@ func TestFileTextReturnsBoundedJSONAndHonorsProtectedPaths(t *testing.T) {
 	}
 }
 
+func TestFileEntryReturnsOneProtectedFileManagerEntry(t *testing.T) {
+	server := testServer(t)
+	root := t.TempDir()
+	manager, err := filemanager.New(filemanager.Config{Root: root, ProtectedVirtual: []string{"/protected"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server.files = manager
+	if err := os.WriteFile(filepath.Join(root, "nginx.conf"), []byte("events {}"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "protected"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	response := fileRequest(server, http.MethodGet, "/v1/files/entry?path=%2Fnginx.conf", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("entry status=%d body=%s", response.Code, response.Body.String())
+	}
+	var entry contract.FileEntry
+	if err := json.Unmarshal(response.Body.Bytes(), &entry); err != nil || entry.Path != "/nginx.conf" || entry.Kind != "file" {
+		t.Fatalf("entry=%#v err=%v", entry, err)
+	}
+	protected := fileRequest(server, http.MethodGet, "/v1/files/entry?path=%2Fprotected", "")
+	if protected.Code != http.StatusForbidden {
+		t.Fatalf("protected entry status=%d body=%s", protected.Code, protected.Body.String())
+	}
+	invalid := fileRequest(server, http.MethodGet, "/v1/files/entry?path=%2Fnginx.conf&extra=1", "")
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid query status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
 func TestFileTailReadsLargeUTF8LogAndHonorsProtectedPaths(t *testing.T) {
 	server := testServer(t)
 	root := t.TempDir()

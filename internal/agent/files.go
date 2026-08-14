@@ -96,6 +96,20 @@ func (s *Server) fileList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) fileEntry(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "path") || r.URL.Query().Get("path") == "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "文件查询参数无效", "")
+		return
+	}
+	entry, err := s.files.Stat(r.URL.Query().Get("path"))
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entry)
+}
+
 func (s *Server) fileTrashList(w http.ResponseWriter, r *http.Request) {
 	requestID := requestIDFrom(w)
 	if r.URL.RawPath != "" || r.URL.RawQuery != "" {

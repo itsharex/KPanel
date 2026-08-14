@@ -76,6 +76,27 @@ func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 	s.writeAgentResponse(w, r, response)
 }
 
+func (s *Server) handleFileEntry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if r.URL.RawPath != "" || !strictPanelQuery(r.URL.Query(), "path") || r.URL.Query().Get("path") == "" {
+		s.writeProblem(w, r, http.StatusBadRequest, "file_query_invalid", "文件查询参数无效", "")
+		return
+	}
+	if _, _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	response, err := s.agent.Get(r.Context(), "/v1/files/entry", r.URL.RawQuery, requestID(r))
+	if err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	s.writeAgentResponse(w, r, response)
+}
+
 func (s *Server) handleFileTrashList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)

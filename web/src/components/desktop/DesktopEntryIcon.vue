@@ -249,7 +249,13 @@ onBeforeUnmount(clearLongPress)
         height="38"
         @error="onImageError"
       />
-      <component v-else-if="navIcon" :is="navIcon" :size="38" :stroke-width="1.6" aria-hidden="true" />
+      <component
+        v-else-if="navIcon || entry?.icon"
+        :is="navIcon || entry?.icon"
+        :size="38"
+        :stroke-width="1.6"
+        aria-hidden="true"
+      />
       <span v-else-if="entry?.kind === 'site'" class="desktop__site-fallback" aria-hidden="true">
         <span class="desktop__site-fallback-letter">{{ monogram }}</span>
         <span class="desktop__site-fallback-badge"><Globe2 :size="10" :stroke-width="2.2" /></span>

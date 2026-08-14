@@ -1607,6 +1607,8 @@ export const api = {
       }),
   },
   files: {
+    entry: (path: string, signal?: AbortSignal): Promise<FileEntry> =>
+      request<FileEntry>('/files/entry', { query: { path }, signal }),
     list: (
       path = '/',
       options?: { offset?: number; search?: string },

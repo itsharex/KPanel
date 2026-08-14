@@ -7,6 +7,7 @@ import DesktopShortcutDialog from '@/components/desktop/DesktopShortcutDialog.vu
 import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
 import { resetDesktopIconsForTest } from '@/stores/desktopIcons'
 import type { DesktopEntries } from '@/lib/desktopEntries'
+import { beginDesktopFileDrag, clearDesktopFileDrag } from '@/lib/desktopFileShortcuts'
 import { api } from '@/lib/api'
 import type { DesktopWorkspace, DesktopWorkspaceUpdate } from '@/types/api'
 
@@ -47,7 +48,7 @@ const mockedUploadShortcutIcon = vi.mocked(api.desktop.uploadShortcutIcon)
 
 function makeWorkspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     resourceVersion: `sha256:${'1'.repeat(64)}`,
     available: true,
     hiddenEntryKeys: [],
@@ -71,10 +72,21 @@ function makeEntries(): DesktopEntries {
   }
 }
 
+function internalFileDragEvent(type: string, dataTransfer: Record<string, unknown>, x = 120, y = 140): DragEvent {
+  const event = new Event(type, { bubbles: true, cancelable: true })
+  Object.defineProperties(event, {
+    dataTransfer: { value: dataTransfer },
+    clientX: { value: x },
+    clientY: { value: y },
+  })
+  return event as DragEvent
+}
+
 describe('DesktopView dynamic entries', () => {
   beforeEach(() => {
     resetDesktopModeForTest()
     resetDesktopIconsForTest()
+    clearDesktopFileDrag()
     window.localStorage.clear()
     window.scrollTo = vi.fn()
     window.open = vi.fn()
@@ -419,6 +431,7 @@ describe('DesktopView dynamic entries', () => {
         id: 'a'.repeat(32),
         name: '内部文档',
         description: '团队手册',
+        targetType: 'url',
         url: 'https://docs.example.com/',
         iconVersion: 'b'.repeat(64),
         iconURL: `/api/v1/desktop/shortcuts/${'a'.repeat(32)}/icon?v=${'b'.repeat(64)}`,
@@ -450,6 +463,72 @@ describe('DesktopView dynamic entries', () => {
     await flushPromises()
     expect(mockedWorkspaceUpdate).toHaveBeenLastCalledWith(expect.objectContaining({ shortcuts: [] }))
     expect(wrapper.find('button[title="内部文档"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('opens different file targets in independent windows and focuses an exact existing target', async () => {
+    mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
+      shortcuts: [
+        {
+          id: 'c'.repeat(32), name: 'nginx.conf', description: '', targetType: 'file', path: '/etc/nginx/nginx.conf',
+          createdAt: '2026-08-14T00:00:00Z', updatedAt: '2026-08-14T00:00:00Z',
+        },
+        {
+          id: 'd'.repeat(32), name: '网站目录', description: '', targetType: 'directory', path: '/home/web',
+          createdAt: '2026-08-14T00:00:00Z', updatedAt: '2026-08-14T00:00:00Z',
+        },
+      ],
+    }))
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const desktop = useDesktopMode()
+
+    await wrapper.get('button[title="nginx.conf"]').trigger('dblclick')
+    await wrapper.get('button[title="网站目录"]').trigger('dblclick')
+    expect(desktop.windows.value.map((windowState) => windowState.path)).toEqual([
+      '/files?path=%2Fetc%2Fnginx&file=%2Fetc%2Fnginx%2Fnginx.conf',
+      '/files?path=%2Fhome%2Fweb',
+    ])
+    const firstWindowID = desktop.windows.value[0]!.id
+    await wrapper.get('button[title="nginx.conf"]').trigger('dblclick')
+    expect(desktop.windows.value).toHaveLength(2)
+    expect(desktop.focusedId.value).toBe(firstWindowID)
+    wrapper.unmount()
+  })
+
+  it('creates a file shortcut at the desktop drop area without moving the source', async () => {
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const values = new Map<string, string>()
+    const types: string[] = []
+    const dataTransfer = {
+      types,
+      effectAllowed: 'none',
+      dropEffect: 'none',
+      setData(type: string, value: string) {
+        if (!types.includes(type)) types.push(type)
+        values.set(type, value)
+      },
+      getData(type: string) {
+        return values.get(type) || ''
+      },
+    }
+    const start = internalFileDragEvent('dragstart', dataTransfer)
+    expect(beginDesktopFileDrag(start, [{ name: 'nginx.conf', path: '/etc/nginx.conf', kind: 'file' }])).toBe(true)
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('dragover', dataTransfer))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.desktop__file-drop').exists()).toBe(true)
+    wrapper.element.dispatchEvent(internalFileDragEvent('drop', dataTransfer))
+    await flushPromises()
+
+    const update = mockedWorkspaceUpdate.mock.calls.at(-1)?.[0]
+    expect(update?.shortcuts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'nginx.conf', targetType: 'file', path: '/etc/nginx.conf' }),
+    ]))
+    const shortcut = update?.shortcuts.find((item) => item.path === '/etc/nginx.conf')
+    expect(shortcut && update?.positions[`shortcut:${shortcut.id}`]).toBeTruthy()
+    expect(wrapper.find('.desktop__file-drop').exists()).toBe(false)
     wrapper.unmount()
   })
 

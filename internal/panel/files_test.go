@@ -108,6 +108,39 @@ func TestFileListRequiresSessionAndForwardsStrictQuery(t *testing.T) {
 	}
 }
 
+func TestFileEntryRequiresSessionAndForwardsExactPath(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &fileStubAgent{stubAgent: &stubAgent{response: AgentResponse{
+		StatusCode: http.StatusOK, ContentType: "application/json",
+		Body: []byte(`{"name":"nginx.conf","path":"/etc/nginx/nginx.conf","kind":"file","sizeBytes":9,"mode":"-rw-r--r--","owner":"root","group":"root","modifiedAt":"2026-08-14T00:00:00Z","resourceVersion":"sha256:test","editable":true,"previewable":true}`),
+	}}}
+	server.agent = agent
+
+	unauthenticated := performRequest(server, http.MethodGet, "/api/v1/files/entry?path=%2Fetc%2Fnginx%2Fnginx.conf", nil, nil)
+	if unauthenticated.Code != http.StatusUnauthorized || len(agent.snapshotCalls()) != 0 {
+		t.Fatalf("unauthenticated status=%d calls=%#v", unauthenticated.Code, agent.snapshotCalls())
+	}
+	response := authenticatedRequest(
+		server, http.MethodGet, "/api/v1/files/entry?path=%2Fetc%2Fnginx%2Fnginx.conf", nil,
+		sessionCookie, csrfCookie, nil,
+	)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"path":"/etc/nginx/nginx.conf"`) {
+		t.Fatalf("entry response=%d %s", response.Code, response.Body.String())
+	}
+	calls := agent.snapshotCalls()
+	if len(calls) != 1 || calls[0].path != "/v1/files/entry" || calls[0].rawQuery != "path=%2Fetc%2Fnginx%2Fnginx.conf" {
+		t.Fatalf("unexpected Agent calls: %#v", calls)
+	}
+	invalid := authenticatedRequest(
+		server, http.MethodGet, "/api/v1/files/entry?path=%2Fetc&extra=1", nil,
+		sessionCookie, csrfCookie, nil,
+	)
+	if invalid.Code != http.StatusBadRequest || len(agent.snapshotCalls()) != 1 {
+		t.Fatalf("invalid query=%d calls=%#v", invalid.Code, agent.snapshotCalls())
+	}
+}
+
 func TestFileTrashListRequiresSessionAndForwardsToAgent(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)

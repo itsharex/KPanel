@@ -1509,7 +1509,9 @@ export interface DesktopShortcut {
   id: string
   name: string
   description: string
-  url: string
+  targetType: 'url' | 'file' | 'directory'
+  url?: string
+  path?: string
   iconVersion?: string
   iconURL?: string
   createdAt: string
@@ -1517,7 +1519,7 @@ export interface DesktopShortcut {
 }
 
 export interface DesktopWorkspace {
-  schemaVersion: 1
+  schemaVersion: 2
   resourceVersion: string
   /** False means corrupt/unsupported persisted data was isolated read-only. */
   available: boolean
@@ -1533,7 +1535,7 @@ export interface DesktopWorkspaceUpdate {
   hiddenEntryKeys: string[]
   positions: Record<string, DesktopIconPosition>
   labels: Record<string, string>
-  shortcuts: Array<Pick<DesktopShortcut, 'id' | 'name' | 'description' | 'url'>>
+  shortcuts: Array<Pick<DesktopShortcut, 'id' | 'name' | 'description' | 'targetType' | 'url' | 'path'>>
 }
 
 export interface DesktopShortcutIconResult {

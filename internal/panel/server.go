@@ -240,6 +240,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleDiagnosticInput(w, r)
 	case r.URL.Path == "/api/v1/files":
 		s.handleFileList(w, r)
+	case r.URL.Path == "/api/v1/files/entry":
+		s.handleFileEntry(w, r)
 	case r.URL.Path == "/api/v1/files/trash":
 		s.handleFileTrashList(w, r)
 	case r.URL.Path == "/api/v1/files/content":

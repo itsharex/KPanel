@@ -1007,6 +1007,29 @@ describe('API client', () => {
     expect(requestURL).toContain('offset=100')
   })
 
+  it('encodes the exact file path for desktop shortcut target lookup', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      name: 'app config.json',
+      path: '/home/app config.json',
+      kind: 'file',
+      sizeBytes: 12,
+      mode: '-rw-------',
+      owner: 'root',
+      group: 'root',
+      modifiedAt: '2026-08-14T00:00:00Z',
+      resourceVersion: 'v1',
+      editable: true,
+      previewable: true,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.files.entry('/home/app config.json')
+
+    const requestURL = String(fetchMock.mock.calls[0]?.[0])
+    expect(requestURL).toContain('/api/v1/files/entry?')
+    expect(requestURL).toContain('path=%2Fhome%2Fapp+config.json')
+  })
+
   it('normalizes kejilion.sh and legacy swap artifacts separately', async () => {
     const collectedAt = '2026-07-26T05:00:00Z'
     const system = {

@@ -2,16 +2,22 @@ import { readFileSync } from 'node:fs'
 import { createSSRApp, nextTick, reactive, ssrContextKey } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView.vue'
+import { resetDesktopIconsForTest } from '@/stores/desktopIcons'
+import type { DesktopWorkspaceUpdate } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  entry: vi.fn(),
   action: vi.fn(),
   trash: vi.fn(),
   write: vi.fn(),
   createDownloadTicket: vi.fn(),
   thumbnailUrl: vi.fn(),
+  desktopWorkspace: vi.fn(),
+  desktopUpdate: vi.fn(),
   success: vi.fn(),
   danger: vi.fn(),
+  show: vi.fn(),
   route: { query: {} as Record<string, unknown> },
   push: vi.fn(),
 }))
@@ -26,6 +32,7 @@ vi.mock('@/lib/api', () => ({
   ApiError: class MockApiError extends Error {},
   api: {
     files: {
+      entry: mocks.entry,
       list: mocks.list,
       action: mocks.action,
       trash: mocks.trash,
@@ -36,6 +43,10 @@ vi.mock('@/lib/api', () => ({
       write: mocks.write,
       upload: vi.fn(),
     },
+    desktop: {
+      workspace: mocks.desktopWorkspace,
+      updateWorkspace: mocks.desktopUpdate,
+    },
   },
 }))
 
@@ -43,6 +54,7 @@ vi.mock('@/stores/toast', () => ({
   useToast: () => ({
     success: mocks.success,
     danger: mocks.danger,
+    show: mocks.show,
   }),
 }))
 
@@ -68,6 +80,7 @@ function testDirectory(path: string): FileDirectoryResult {
 
 interface FileBindings {
   requestedFilePath: (value: unknown) => string | undefined
+  openRequestedFile: (value: unknown) => Promise<void>
   loadDirectory: (path?: string, append?: boolean) => Promise<string | undefined>
   navigateDirectory: (path: string) => Promise<void>
   savePreview: (content?: string) => Promise<void>
@@ -79,6 +92,7 @@ interface FileBindings {
   toggleAllTrash: () => void
   runTrashAction: (action: 'trash_restore' | 'trash_delete' | 'trash_empty') => Promise<void>
   pasteClipboard: (target?: string) => Promise<void>
+  addEntriesToDesktop: (entry?: TestFileEntry, currentDirectory?: boolean) => Promise<void>
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
   showContext: (event: MouseEvent, entry: TestFileEntry) => void
   showDirectoryContext: (event: MouseEvent) => void
@@ -183,6 +197,7 @@ function setupView(): FileBindings {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resetDesktopIconsForTest()
   mocks.route = reactive({ query: {} as Record<string, unknown> })
   mocks.push.mockImplementation(async (location: { query?: Record<string, unknown> }) => {
     mocks.route.query = location.query || {}
@@ -210,6 +225,61 @@ beforeEach(() => {
     expiresAt: '2026-07-30T00:05:00Z',
   })
   mocks.thumbnailUrl.mockImplementation((path: string, version: string) => `/thumb?path=${path}&version=${version}`)
+  const desktopWorkspace = {
+    schemaVersion: 2 as const,
+    resourceVersion: `sha256:${'1'.repeat(64)}`,
+    available: true,
+    hiddenEntryKeys: [],
+    positions: {},
+    labels: {},
+    shortcuts: [],
+  }
+  mocks.desktopWorkspace.mockResolvedValue(desktopWorkspace)
+  mocks.desktopUpdate.mockImplementation(async (input: DesktopWorkspaceUpdate) => ({
+    ...desktopWorkspace,
+    resourceVersion: `sha256:${'2'.repeat(64)}`,
+    shortcuts: input.shortcuts.map((shortcut: Record<string, unknown>) => ({
+      ...shortcut,
+      createdAt: '2026-08-14T00:00:00Z',
+      updatedAt: '2026-08-14T00:00:00Z',
+    })),
+  }))
+})
+
+describe('FilesView desktop shortcuts', () => {
+  it('adds the current multi-selection in one desktop workspace update', async () => {
+    const view = setupView()
+    const first = testEntry('nginx.conf')
+    const second = testEntry('site.log')
+    view.directory.value = { path: '/etc', entries: [first, second] }
+    view.selected.value = new Set([first.path, second.path])
+
+    await view.addEntriesToDesktop(first)
+
+    expect(mocks.desktopUpdate).toHaveBeenCalledTimes(1)
+    const input = mocks.desktopUpdate.mock.calls[0]![0]
+    expect(input.shortcuts.map((shortcut: Record<string, unknown>) => ({
+      name: shortcut.name,
+      targetType: shortcut.targetType,
+      path: shortcut.path,
+    }))).toEqual([
+      { name: 'nginx.conf', targetType: 'file', path: '/nginx.conf' },
+      { name: 'site.log', targetType: 'file', path: '/site.log' },
+    ])
+    expect(mocks.success).toHaveBeenCalledWith('已添加 2 项到桌面', '图标已按桌面空位自动排列。')
+  })
+
+  it('resolves a desktop file target and opens it in the file preview', async () => {
+    const view = setupView()
+    const entry = { ...testEntry('nginx.conf'), path: '/etc/nginx/nginx.conf', editable: false }
+    mocks.entry.mockResolvedValueOnce(entry)
+
+    await view.openRequestedFile(entry.path)
+
+    expect(mocks.entry).toHaveBeenCalledWith(entry.path)
+    expect(view.selected.value).toEqual(new Set([entry.path]))
+    expect(view.previewEntry.value).toEqual(entry)
+  })
 })
 
 describe('FilesView downloads', () => {
