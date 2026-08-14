@@ -105,7 +105,7 @@ export function shortcutFileIcon(name: string, kind: Extract<FileKind, 'file' | 
 }
 
 const shortcutFileGradients: Record<FileIconKind, readonly [string, string]> = {
-  folder: ['#f2c968', '#bd8724'],
+  folder: ['#facc15', '#ca8a04'],
   image: ['#a78bfa', '#6d28d9'],
   media: ['#c084fc', '#7e22ce'],
   archive: ['#fb923c', '#c2410c'],
