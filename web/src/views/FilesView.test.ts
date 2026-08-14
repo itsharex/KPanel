@@ -391,10 +391,18 @@ describe('FilesView large icon layout', () => {
   it('keeps the desktop shortcut action behind permissions without wrapping batch labels', () => {
     const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
     const batchToolbar = source.match(/aria-label="批量文件操作"[\s\S]*?<\/Transition>/)?.[0] || ''
+    const contextMenu = source.match(/class="file-context-menu"[\s\S]*?<ModalDialog/)?.[0] || ''
 
     expect(batchToolbar.indexOf("openDialog('chmod')")).toBeGreaterThan(-1)
     expect(batchToolbar.indexOf('addEntriesToDesktop()')).toBeGreaterThan(batchToolbar.indexOf("openDialog('chmod')"))
     expect(batchToolbar.indexOf('invertSelection')).toBeGreaterThan(batchToolbar.indexOf('addEntriesToDesktop()'))
+    expect(contextMenu.indexOf("openDialog('chmod', contextMenu.entry)")).toBeGreaterThan(-1)
+    expect(contextMenu.indexOf('addEntriesToDesktop(contextMenu.entry)')).toBeGreaterThan(
+      contextMenu.indexOf("openDialog('chmod', contextMenu.entry)"),
+    )
+    expect(contextMenu.indexOf("openDialog('trash', contextMenu.entry)")).toBeGreaterThan(
+      contextMenu.indexOf('addEntriesToDesktop(contextMenu.entry)'),
+    )
     expect(source).toMatch(/\.batch-bar button\s*\{[^}]*flex:\s*0 0 auto;[^}]*white-space:\s*nowrap;/)
     expect(source).toMatch(/:global\(\.desktop-window \.batch-bar\)\s*\{[^}]*width:\s*min\(760px, calc\(100% - 28px\)\);/)
     expect(source).not.toMatch(/:global\(\.desktop-window\)\s+\.batch-bar/)

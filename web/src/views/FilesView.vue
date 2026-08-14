@@ -1401,15 +1401,7 @@ onBeforeUnmount(() => {
       <button v-if="contextMenu.entry" type="button" @click="openEntry(contextMenu.entry)">
         <Eye :size="15" />{{ contextMenu.entry.kind === 'directory' ? '打开' : '查看' }}
       </button>
-      <button
-        v-if="contextMenu.entry && contextBatchEntries.some(canAddToDesktop)"
-        type="button"
-        :disabled="desktopAdding"
-        @click="addEntriesToDesktop(contextMenu.entry)"
-      >
-        <Pin :size="15" />{{ contextHasMultipleEntries ? `添加 ${contextBatchEntries.filter(canAddToDesktop).length} 项到桌面` : '添加到桌面' }}
-      </button>
-      <button v-else-if="!contextMenu.entry" type="button" :disabled="desktopAdding" @click="addEntriesToDesktop(undefined, true)">
+      <button v-if="!contextMenu.entry" type="button" :disabled="desktopAdding" @click="addEntriesToDesktop(undefined, true)">
         <Pin :size="15" />将当前文件夹添加到桌面
       </button>
       <button
@@ -1450,7 +1442,15 @@ onBeforeUnmount(() => {
       <button v-if="contextMenu.entry" type="button" @click="openDialog('chmod', contextMenu.entry)">
         <ShieldCheck :size="15" />修改权限
       </button>
-      <button v-else type="button" @click="openDialog('mkdir')">
+      <button
+        v-if="contextMenu.entry && contextBatchEntries.some(canAddToDesktop)"
+        type="button"
+        :disabled="desktopAdding"
+        @click="addEntriesToDesktop(contextMenu.entry)"
+      >
+        <Pin :size="15" />{{ contextHasMultipleEntries ? `添加 ${contextBatchEntries.filter(canAddToDesktop).length} 项到桌面` : '添加到桌面' }}
+      </button>
+      <button v-if="!contextMenu.entry" type="button" @click="openDialog('mkdir')">
         <Plus :size="15" />新建文件夹
       </button>
       <hr v-if="contextMenu.entry" />
