@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { Globe2 } from '@lucide/vue'
+import { Globe2, Pin } from '@lucide/vue'
 import type { DesktopEntry } from '@/lib/desktopEntries'
 
 /**
@@ -261,6 +261,13 @@ onBeforeUnmount(clearLongPress)
         <span class="desktop__site-fallback-badge"><Globe2 :size="10" :stroke-width="2.2" /></span>
       </span>
       <span v-else class="desktop__icon-monogram" aria-hidden="true">{{ monogram }}</span>
+      <span
+        v-if="entry?.kind === 'shortcut' && (entry.launch === 'file' || entry.launch === 'directory')"
+        class="desktop__shortcut-badge"
+        aria-hidden="true"
+      >
+        <Pin :size="10" :stroke-width="2.2" />
+      </span>
     </span>
     <span class="desktop__icon-label">{{ label }}</span>
   </button>

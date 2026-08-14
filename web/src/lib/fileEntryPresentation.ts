@@ -11,6 +11,7 @@ import {
   FileText,
   FileVideo,
   Folder,
+  FolderOpen,
   Package,
   Presentation,
 } from '@lucide/vue'
@@ -99,6 +100,7 @@ export function fileEntryIcon(entry: FilePresentationInput): Component {
 }
 
 export function shortcutFileIcon(name: string, kind: Extract<FileKind, 'file' | 'directory'>): Component {
+  if (kind === 'directory') return FolderOpen
   return fileEntryIcon({ name, kind, editable: false, previewable: false })
 }
 

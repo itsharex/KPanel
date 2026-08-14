@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { shortcutFileGradient } from '@/lib/fileEntryPresentation'
+import { FolderOpen } from '@lucide/vue'
+import { shortcutFileGradient, shortcutFileIcon } from '@/lib/fileEntryPresentation'
 
 describe('shortcutFileGradient', () => {
+  it('uses an open folder glyph for directory shortcuts', () => {
+    expect(shortcutFileIcon('nginx', 'directory')).toBe(FolderOpen)
+  })
+
   it('keeps directories visually distinct from regular files', () => {
     expect(shortcutFileGradient('nginx', 'directory')).toContain('#facc15')
     expect(shortcutFileGradient('README.md', 'file')).toContain('#94a3b8')

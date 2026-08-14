@@ -491,6 +491,11 @@ describe('DesktopView dynamic entries', () => {
     await flushPromises()
     const desktop = useDesktopMode()
 
+    expect(wrapper.get('button[title="网站目录"] svg').classes()).toContain('lucide-folder-open')
+    expect(wrapper.get('button[title="网站目录"]').find('.desktop__shortcut-badge').exists()).toBe(true)
+    expect(wrapper.get('button[title="nginx.conf"]').find('.desktop__shortcut-badge').exists()).toBe(true)
+    expect(wrapper.get('button[title="文件"]').find('.desktop__shortcut-badge').exists()).toBe(false)
+
     await wrapper.get('button[title="nginx.conf"]').trigger('dblclick')
     await wrapper.get('button[title="网站目录"]').trigger('dblclick')
     expect(desktop.windows.value.map((windowState) => windowState.path)).toEqual([
