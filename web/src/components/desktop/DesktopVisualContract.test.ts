@@ -49,6 +49,14 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/\.desktop__icon-slot--dragging\s*\{[^}]*transition:\s*none;/)
   })
 
+  it('gives shortcut fields a unified focusable control surface', () => {
+    expect(styles).toMatch(/\.desktop-shortcut-form__control\s*\{[^}]*border:\s*1px solid var\(--border\);[^}]*border-radius:\s*12px;/)
+    expect(styles).toMatch(/\.desktop-shortcut-form__control:focus-within\s*\{[^}]*border-color:[^;]*var\(--brand\)/)
+    expect(styles).toMatch(/\.desktop-shortcut-form__control :is\(input, textarea\)\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;/)
+    expect(styles).toMatch(/\.desktop-shortcut-form__icon-actions label:focus-within\s*\{[^}]*outline:/)
+    expect(styles).toMatch(/@media \(max-width: 760px\) \{[\s\S]*?\.desktop-shortcut-form__control :is\(input, textarea\)\s*\{[^}]*font-size:\s*16px;/)
+  })
+
   it('uses Windows-style desktop selection, controls and bottom taskbar', () => {
     expect(styles).toContain('.desktop__icon--selected')
     expect(styles).toContain('.desktop-window__action--close:hover')

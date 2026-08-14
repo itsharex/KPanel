@@ -255,6 +255,7 @@ export const zhCNMessages = {
   'desktop.shortcutUpdated': '快捷方式已更新',
   'desktop.shortcutDeleted': '快捷方式已删除',
   'desktop.shortcutName': '名称',
+  'desktop.shortcutNamePlaceholder': '例如：我的网站',
   'desktop.shortcutURL': '跳转地址',
   'desktop.shortcutDescription': '描述',
   'desktop.shortcutDescriptionPlaceholder': '可选，用一句话说明这个入口',

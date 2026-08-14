@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { ImagePlus, Link2, Trash2 } from '@lucide/vue'
+import { AlignLeft, ImagePlus, Link2, Trash2, Type } from '@lucide/vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useI18n } from '@/i18n'
 import type { DesktopShortcut } from '@/types/api'
@@ -199,33 +199,55 @@ onBeforeUnmount(clearPreview)
         </div>
       </div>
 
-      <label>
-        <span>{{ i18n.t('desktop.shortcutName') }}</span>
-        <input v-model="name" maxlength="48" autocomplete="off" :disabled="saving" required />
+      <label class="desktop-shortcut-form__field">
+        <span class="desktop-shortcut-form__field-heading">
+          <span>{{ i18n.t('desktop.shortcutName') }}</span>
+        </span>
+        <span class="desktop-shortcut-form__control">
+          <Type :size="16" :stroke-width="1.9" aria-hidden="true" />
+          <input
+            v-model="name"
+            maxlength="48"
+            autocomplete="off"
+            :placeholder="i18n.t('desktop.shortcutNamePlaceholder')"
+            :disabled="saving"
+            required
+          />
+        </span>
       </label>
-      <label>
-        <span>{{ i18n.t('desktop.shortcutURL') }}</span>
-        <input
-          v-model="url"
-          type="url"
-          maxlength="2048"
-          placeholder="https://example.com"
-          autocomplete="url"
-          spellcheck="false"
-          :disabled="saving"
-          required
-        />
+      <label class="desktop-shortcut-form__field">
+        <span class="desktop-shortcut-form__field-heading">
+          <span>{{ i18n.t('desktop.shortcutURL') }}</span>
+        </span>
+        <span class="desktop-shortcut-form__control">
+          <Link2 :size="16" :stroke-width="1.9" aria-hidden="true" />
+          <input
+            v-model="url"
+            type="url"
+            maxlength="2048"
+            placeholder="https://example.com"
+            autocomplete="url"
+            spellcheck="false"
+            :disabled="saving"
+            required
+          />
+        </span>
       </label>
-      <label>
-        <span>{{ i18n.t('desktop.shortcutDescription') }}</span>
-        <textarea
-          v-model="description"
-          rows="3"
-          maxlength="160"
-          :placeholder="i18n.t('desktop.shortcutDescriptionPlaceholder')"
-          :disabled="saving"
-        />
-        <small>{{ description.length }}/160</small>
+      <label class="desktop-shortcut-form__field">
+        <span class="desktop-shortcut-form__field-heading">
+          <span>{{ i18n.t('desktop.shortcutDescription') }}</span>
+          <small>{{ description.length }}/160</small>
+        </span>
+        <span class="desktop-shortcut-form__control desktop-shortcut-form__control--textarea">
+          <AlignLeft :size="16" :stroke-width="1.9" aria-hidden="true" />
+          <textarea
+            v-model="description"
+            rows="3"
+            maxlength="160"
+            :placeholder="i18n.t('desktop.shortcutDescriptionPlaceholder')"
+            :disabled="saving"
+          />
+        </span>
       </label>
       <p v-if="validationMessage || errorMessage" class="desktop-shortcut-form__error" role="alert">
         {{ validationMessage || errorMessage }}

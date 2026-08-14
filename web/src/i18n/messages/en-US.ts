@@ -257,6 +257,7 @@ export const enUSMessages = {
   'desktop.shortcutUpdated': 'Shortcut updated',
   'desktop.shortcutDeleted': 'Shortcut deleted',
   'desktop.shortcutName': 'Name',
+  'desktop.shortcutNamePlaceholder': 'e.g. My website',
   'desktop.shortcutURL': 'Destination URL',
   'desktop.shortcutDescription': 'Description',
   'desktop.shortcutDescriptionPlaceholder': 'Optional: describe this destination in one sentence',
