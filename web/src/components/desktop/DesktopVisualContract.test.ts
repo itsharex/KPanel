@@ -59,7 +59,7 @@ describe('desktop visual and interaction contract', () => {
 
   it('uses Windows-style desktop selection, controls and bottom taskbar', () => {
     expect(styles).toContain('.desktop__icon--selected')
-    expect(styles).toMatch(/\.desktop__selection-box\s*\{[^}]*z-index:\s*11;[^}]*background:\s*color-mix\(in srgb, var\(--accent\) 28%, transparent\);[^}]*border:\s*2px solid/)
+    expect(styles).toMatch(/\.desktop__selection-box\s*\{[^}]*z-index:\s*11;[^}]*background:\s*color-mix\(in srgb, var\(--brand\) 28%, transparent\);[^}]*border:\s*2px solid/)
     expect(styles).toContain(":root:not([data-theme='dark']) .desktop__selection-box")
     expect(styles).toContain('.desktop-window__action--close:hover')
     expect(styles).toContain('grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr);')
