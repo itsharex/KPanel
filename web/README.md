@@ -15,6 +15,14 @@ npm run dev
 VITE_DEV_API_TARGET=http://127.0.0.1:9000 npm run dev
 ```
 
+WSL 中的 KPanel 使用独立端口时，可在 PowerShell 中启用目标 Host 改写：
+
+```powershell
+$env:VITE_DEV_API_TARGET='http://127.0.0.1:8866'
+$env:VITE_DEV_API_CHANGE_ORIGIN='true'
+npm run dev
+```
+
 生产构建：
 
 ```bash
