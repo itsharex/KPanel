@@ -8,7 +8,7 @@ describe('shortcutFileGradient', () => {
   })
 
   it('keeps directories visually distinct from regular files', () => {
-    expect(shortcutFileGradient('nginx', 'directory')).toContain('#facc15')
+    expect(shortcutFileGradient('nginx', 'directory')).toContain('#f2c968')
     expect(shortcutFileGradient('README.md', 'file')).toContain('#94a3b8')
   })
 
