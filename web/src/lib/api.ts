@@ -1644,9 +1644,18 @@ export const api = {
       file: File,
       overwrite = false,
       onProgress?: (percent: number) => void,
+      signal?: AbortSignal,
     ): Promise<FileEntry> =>
       new Promise<FileEntry>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
+        let settled = false
+        const finish = (callback: () => void): void => {
+          if (settled) return
+          settled = true
+          signal?.removeEventListener('abort', abort)
+          callback()
+        }
+        const abort = (): void => xhr.abort()
         xhr.open('POST', buildUrl('/files/upload', { path, name: file.name, overwrite }))
         xhr.withCredentials = true
         xhr.responseType = 'json'
@@ -1655,15 +1664,16 @@ export const api = {
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100))
         }
-        xhr.onerror = () => reject(new ApiError('文件上传连接中断。', 0, 'network_error'))
+        xhr.onerror = () => finish(() => reject(new ApiError('文件上传连接中断。', 0, 'network_error')))
+        xhr.onabort = () => finish(() => reject(new DOMException('文件上传已取消。', 'AbortError')))
         xhr.onload = () => {
           const payload = xhr.response
           if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(payload as FileEntry)
+            finish(() => resolve(payload as FileEntry))
             return
           }
           const problem = payload && typeof payload === 'object' ? (payload as ProblemPayload) : undefined
-          reject(
+          finish(() => reject(
             new ApiError(
               problem?.detail || problem?.title || '文件上传失败。',
               xhr.status,
@@ -1671,8 +1681,13 @@ export const api = {
               payload,
               problem?.requestId,
             ),
-          )
+          ))
         }
+        if (signal?.aborted) {
+          finish(() => reject(new DOMException('文件上传已取消。', 'AbortError')))
+          return
+        }
+        signal?.addEventListener('abort', abort, { once: true })
         xhr.send(file)
       }),
     action: (input: FileActionInput, signal?: AbortSignal): Promise<FileActionResult> =>

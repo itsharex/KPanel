@@ -36,6 +36,12 @@ vi.mock('@/lib/api', async (importOriginal) => {
         uploadShortcutIcon: vi.fn(),
         removeShortcutIcon: vi.fn(),
       },
+      files: {
+        ...actual.api.files,
+        entry: vi.fn(),
+        action: vi.fn(),
+        upload: vi.fn(),
+      },
     },
   }
 })
@@ -45,6 +51,9 @@ const mockedAppearance = vi.mocked(api.sites.appearance)
 const mockedWorkspace = vi.mocked(api.desktop.workspace)
 const mockedWorkspaceUpdate = vi.mocked(api.desktop.updateWorkspace)
 const mockedUploadShortcutIcon = vi.mocked(api.desktop.uploadShortcutIcon)
+const mockedFileEntry = vi.mocked(api.files.entry)
+const mockedFileAction = vi.mocked(api.files.action)
+const mockedFileUpload = vi.mocked(api.files.upload)
 
 function makeWorkspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
   return {
@@ -111,6 +120,28 @@ describe('DesktopView dynamic entries', () => {
     mockedUploadShortcutIcon.mockResolvedValue({
       iconVersion: 'c'.repeat(64),
       iconURL: '/api/v1/desktop/shortcuts/icon',
+    })
+    mockedFileEntry.mockReset()
+    mockedFileEntry.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }))
+    mockedFileAction.mockReset()
+    mockedFileAction.mockImplementation(async (input) => ({
+      action: input.action,
+      succeeded: [{ path: `${input.target}/${input.name}` }],
+      failed: [],
+    }))
+    mockedFileUpload.mockReset()
+    mockedFileUpload.mockImplementation(async (path, file, _overwrite, onProgress) => {
+      onProgress?.(45)
+      onProgress?.(100)
+      return {
+        name: file.name,
+        path: `${path}/${file.name}`,
+        kind: 'file',
+        sizeBytes: file.size,
+        mode: '0644', owner: 'root', group: 'root',
+        modifiedAt: '2026-08-14T00:00:00Z', resourceVersion: 'sha256:file',
+        editable: true, previewable: true,
+      }
     })
   })
 
@@ -604,6 +635,71 @@ describe('DesktopView dynamic entries', () => {
     const shortcut = update?.shortcuts.find((item) => item.path === '/etc/nginx.conf')
     expect(shortcut && update?.positions[`shortcut:${shortcut.id}`]).toBeTruthy()
     expect(wrapper.find('.desktop__file-drop').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('uploads an external operating-system file and creates a real server-file desktop entry', async () => {
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const file = new File(['hello'], 'notes.txt', { type: 'text/plain' })
+    const dataTransfer = {
+      types: ['Files'],
+      items: [],
+      files: [file],
+      dropEffect: 'none',
+    }
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('dragover', dataTransfer))
+    await nextTick()
+    expect(wrapper.get('.desktop__file-drop').text()).toContain('上传到 KPanel 桌面')
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('drop', dataTransfer, 190, 160))
+    await flushPromises()
+
+    expect(mockedFileAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'mkdir', target: '/home', name: 'KPanel Desktop' }),
+      expect.any(AbortSignal),
+    )
+    expect(mockedFileUpload).toHaveBeenCalledWith(
+      '/home/KPanel Desktop', file, false, expect.any(Function), expect.any(AbortSignal),
+    )
+    const update = mockedWorkspaceUpdate.mock.calls.at(-1)?.[0]
+    expect(update?.shortcuts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'notes.txt', targetType: 'file', path: '/home/KPanel Desktop/notes.txt',
+      }),
+    ]))
+    expect(wrapper.get('.desktop-transfer').text()).toContain('已传到桌面')
+    wrapper.unmount()
+  })
+
+  it('uses a remembered existing host directory for later desktop uploads', async () => {
+    window.localStorage.setItem('kpanel:desktop-upload-location:v1', '/srv/uploads')
+    mockedFileEntry.mockImplementation(async (path) => {
+      if (path === '/srv/uploads') {
+        return {
+          name: 'uploads', path, kind: 'directory', sizeBytes: 0, mode: '0755',
+          owner: 'root', group: 'root', modifiedAt: '2026-08-14T00:00:00Z',
+          resourceVersion: 'sha256:directory', editable: false, previewable: false,
+        }
+      }
+      throw Object.assign(new Error('not found'), { status: 404 })
+    })
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const file = new File(['content'], 'custom.txt', { type: 'text/plain' })
+    const dataTransfer = { types: ['Files'], items: [], files: [file], dropEffect: 'none' }
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('drop', dataTransfer, 190, 160))
+    await flushPromises()
+
+    expect(mockedFileUpload).toHaveBeenCalledWith(
+      '/srv/uploads', file, false, expect.any(Function), expect.any(AbortSignal),
+    )
+    expect(mockedFileAction).not.toHaveBeenCalled()
+    expect(mockedWorkspaceUpdate.mock.calls.at(-1)?.[0].shortcuts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: '/srv/uploads/custom.txt', targetType: 'file' }),
+    ]))
     wrapper.unmount()
   })
 

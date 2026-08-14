@@ -1030,6 +1030,36 @@ describe('API client', () => {
     expect(requestURL).toContain('path=%2Fhome%2Fapp+config.json')
   })
 
+  it('aborts an in-flight binary file upload through the caller signal', async () => {
+    class UploadXHR {
+      static latest?: UploadXHR
+      upload: { onprogress?: (event: ProgressEvent) => void } = {}
+      withCredentials = false
+      responseType: XMLHttpRequestResponseType = ''
+      response: unknown
+      status = 0
+      onerror?: () => void
+      onabort?: () => void
+      onload?: () => void
+      abort = vi.fn(() => this.onabort?.())
+      open = vi.fn()
+      setRequestHeader = vi.fn()
+      send = vi.fn()
+
+      constructor() {
+        UploadXHR.latest = this
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', UploadXHR)
+    const controller = new AbortController()
+    const operation = api.files.upload('/home', new File(['hello'], 'notes.txt'), false, undefined, controller.signal)
+
+    controller.abort()
+
+    await expect(operation).rejects.toMatchObject({ name: 'AbortError' })
+    expect(UploadXHR.latest?.abort).toHaveBeenCalledTimes(1)
+  })
+
   it('normalizes kejilion.sh and legacy swap artifacts separately', async () => {
     const collectedAt = '2026-07-26T05:00:00Z'
     const system = {

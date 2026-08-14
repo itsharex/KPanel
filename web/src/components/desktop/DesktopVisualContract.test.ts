@@ -68,6 +68,14 @@ describe('desktop visual and interaction contract', () => {
     )
   })
 
+  it('keeps external-drop feedback above icons, below global dialogs, and motion-safe', () => {
+    expect(styles).toMatch(/\.desktop__file-drop\s*\{[^}]*z-index:\s*12;[^}]*pointer-events:\s*none;/)
+    expect(styles).toMatch(/\.desktop-transfer\s*\{[^}]*z-index:\s*24;[^}]*bottom:\s*78px;/)
+    expect(styles).toMatch(/\.desktop__drop-pulse\s*\{[^}]*position:\s*fixed;[^}]*pointer-events:\s*none;/)
+    expect(styles).toMatch(/@media \(max-width: 760px\) \{[\s\S]*?\.desktop-transfer\s*\{[^}]*width:\s*calc\(100vw - 16px\);/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?animation-duration:\s*\.01ms !important;/)
+  })
+
   it('keeps the snap preview lightweight and below interactive desktop chrome', () => {
     expect(styles).toMatch(/\.desktop-window-snap-preview\s*\{[^}]*z-index:\s*90;[^}]*pointer-events:\s*none;/)
     const previewRule = styles.match(/\.desktop-window-snap-preview\s*\{([^}]*)\}/)?.[1] ?? ''

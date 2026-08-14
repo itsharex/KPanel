@@ -20,6 +20,9 @@ import {
   EyeOff,
   File,
   FolderOpen,
+  HardDriveUpload,
+  LoaderCircle,
+  Check,
   X,
 } from '@lucide/vue'
 import DesktopWindow from '@/components/desktop/DesktopWindow.vue'
@@ -47,6 +50,14 @@ import {
   DesktopShortcutLimitError,
   hasDesktopFileDrag,
 } from '@/lib/desktopFileShortcuts'
+import {
+  collectExternalDrop,
+  DESKTOP_UPLOAD_DIRECTORY,
+  DesktopExternalDropError,
+  hasExternalFileDrop,
+  uploadExternalDrop,
+  type DesktopExternalTransferProgress,
+} from '@/lib/desktopExternalDrop'
 import { shortcutFileGradient, shortcutFileIcon } from '@/lib/fileEntryPresentation'
 import {
   autoArrangeDesktopIcons,
@@ -108,7 +119,28 @@ const agentStatus = computed(() => {
 // Dynamic entries: installed apps and configured sites surfaced as desktop
 // icons that open their external URL.
 const SITE_RENAMES_KEY = 'kpanel:desktop-site-names:v1'
+const DESKTOP_UPLOAD_LOCATION_KEY = 'kpanel:desktop-upload-location:v1'
 const MAX_SITE_NAME_LENGTH = 48
+
+function normalizedHostDirectory(value: string): string | undefined {
+  const candidate = value.trim()
+  if (
+    !candidate.startsWith('/')
+    || candidate.length > 4096
+    || /[\u0000-\u001f\\]/.test(candidate)
+    || (candidate !== '/' && candidate.slice(1).split('/').some((part) => !part || part === '.' || part === '..'))
+  ) return undefined
+  return candidate
+}
+
+function readDesktopUploadDirectory(): string {
+  try {
+    return normalizedHostDirectory(window.localStorage.getItem(DESKTOP_UPLOAD_LOCATION_KEY) || '')
+      || DESKTOP_UPLOAD_DIRECTORY
+  } catch {
+    return DESKTOP_UPLOAD_DIRECTORY
+  }
+}
 
 function readSiteNames(): Record<string, string> {
   try {
@@ -203,10 +235,39 @@ const batchRemovingEntries = ref<DesktopEntry[]>([])
 const shortcutSaving = ref(false)
 const shortcutError = ref('')
 const fileDropActive = ref(false)
+const fileDropMode = ref<'shortcut' | 'upload'>('shortcut')
+type DesktopTransferPhase = 'preparing' | 'uploading' | 'complete' | 'partial' | 'error' | 'cancelled'
+interface DesktopTransferState extends DesktopExternalTransferProgress {
+  phase: DesktopTransferPhase
+  roots: number
+  failed: number
+  detail: string
+}
+const desktopTransfer = ref<DesktopTransferState>()
+const dropPulse = ref<{ id: number; left: number; top: number }>()
+const desktopUploadDirectory = ref(readDesktopUploadDirectory())
+const uploadLocationOpen = ref(false)
+const uploadLocationDraft = ref('')
+const uploadLocationSaving = ref(false)
+const uploadLocationError = ref('')
+const desktopTransferPercent = computed(() => {
+  const transfer = desktopTransfer.value
+  if (!transfer) return 0
+  if (transfer.phase === 'complete') return 100
+  if (transfer.totalBytes > 0) return Math.min(100, Math.round(transfer.loadedBytes / transfer.totalBytes * 100))
+  if (transfer.totalFiles > 0) return Math.min(100, Math.round(transfer.completedFiles / transfer.totalFiles * 100))
+  return transfer.phase === 'preparing' ? 8 : 0
+})
+const desktopTransferActive = computed(() => Boolean(
+  desktopTransfer.value && ['preparing', 'uploading'].includes(desktopTransfer.value.phase),
+))
 const deletingFileShortcut = computed(() => deletingShortcut.value?.targetType === 'file' || deletingShortcut.value?.targetType === 'directory')
 let pendingShortcutID = ''
 let workspaceAbort: AbortController | undefined
 let iconsResizeObserver: ResizeObserver | undefined
+let desktopTransferController: AbortController | undefined
+let desktopTransferClearTimer: number | undefined
+let dropPulseTimer: number | undefined
 
 const allIconKeys = computed(() => [
   ...desktopApps.map((app) => `nav:${app.path}`),
@@ -1260,7 +1321,7 @@ function onDesktopPointerDown(event: PointerEvent): void {
 }
 
 function desktopFileDropAllowed(event: DragEvent): boolean {
-  if (!hasDesktopFileDrag(event)) return false
+  if (!hasDesktopFileDrag(event) && !hasExternalFileDrop(event)) return false
   const target = event.target as HTMLElement | null
   return !target?.closest('.desktop-window, .desktop__widgets, .desktop__taskbar')
 }
@@ -1271,7 +1332,14 @@ function onDesktopFileDragOver(event: DragEvent): void {
     return
   }
   event.preventDefault()
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'link'
+  const external = !hasDesktopFileDrag(event) && hasExternalFileDrop(event)
+  if (external && desktopTransfer.value && ['preparing', 'uploading'].includes(desktopTransfer.value.phase)) {
+    fileDropActive.value = false
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'
+    return
+  }
+  fileDropMode.value = external ? 'upload' : 'shortcut'
+  if (event.dataTransfer) event.dataTransfer.dropEffect = external ? 'copy' : 'link'
   fileDropActive.value = true
 }
 
@@ -1280,62 +1348,171 @@ function onDesktopFileDragLeave(event: DragEvent): void {
   if (!related || !(event.currentTarget as HTMLElement).contains(related)) fileDropActive.value = false
 }
 
-async function onDesktopFileDrop(event: DragEvent): Promise<void> {
-  if (!desktopFileDropAllowed(event)) return
-  event.preventDefault()
-  fileDropActive.value = false
-  const sourceEntries = desktopFileDragEntries(event)
-  clearDesktopFileDrag()
+function desktopDropPosition(event: DragEvent): DesktopIconPosition | undefined {
   const element = iconsElement.value
-  if (!sourceEntries.length || !element) return
+  if (!element) return undefined
   const rect = element.getBoundingClientRect()
-  const destination = desktopIconPixelsToPosition({
+  return desktopIconPixelsToPosition({
     left: event.clientX - rect.left,
     top: event.clientY - rect.top + element.scrollTop,
   }, iconBounds.value)
-  try {
-    const result = await addFileEntriesToDesktop(sourceEntries, (draft, added) => {
-      if (!added.length) return
-      const addedKeys = added.map((shortcut) => `shortcut:${shortcut.id}`)
-      const layout = deriveDesktopIconLayout(
-        [...allIconKeys.value, ...addedKeys],
-        Object.entries(draft.positions).map(([key, position]) => ({ key, position })),
-        iconBounds.value,
-        false,
-      )
-      const placeableKeys = addedKeys.filter((key) => layout.placements.some((placement) => placement.key === key))
-      if (!placeableKeys.length) return
-      const placeableKeySet = new Set(placeableKeys)
-      const initial = new Map(layout.placements.map((placement) => [placement.key, placement.position]))
-      const grid = desktopIconGrid(iconBounds.value)
-      const start = desktopIconGridSlotForPosition(destination, iconBounds.value)
-      const page = Math.floor(start.row / grid.rows)
-      const startIndex = page * grid.pageCapacity
-        + start.column * grid.rows
-        + (start.row % grid.rows)
-      let placements = layout.placements
-      placeableKeys.forEach((key, index) => {
-        const ordered = startIndex + index
-        const targetPage = Math.floor(ordered / grid.pageCapacity)
-        const withinPage = ordered % grid.pageCapacity
-        const slot = {
-          column: Math.floor(withinPage / grid.rows),
-          row: targetPage * grid.rows + (withinPage % grid.rows),
-        }
-        placements = dropDesktopIcon(
-          placements,
-          key,
-          desktopIconPositionForGridSlot(slot, iconBounds.value),
-          iconBounds.value,
-        )
-      })
-      for (const placement of placements) {
-        const previous = initial.get(placement.key)
-        if (placeableKeySet.has(placement.key) || !previous || previous.x !== placement.position.x || previous.y !== placement.position.y) {
-          draft.positions[placement.key] = placement.position
-        }
+}
+
+async function addDroppedFileEntries(
+  sourceEntries: Parameters<typeof addFileEntriesToDesktop>[0],
+  destination: DesktopIconPosition,
+): Promise<Awaited<ReturnType<typeof addFileEntriesToDesktop>>> {
+  return addFileEntriesToDesktop(sourceEntries, (draft, added) => {
+    if (!added.length) return
+    const addedKeys = added.map((shortcut) => `shortcut:${shortcut.id}`)
+    const layout = deriveDesktopIconLayout(
+      [...allIconKeys.value, ...addedKeys],
+      Object.entries(draft.positions).map(([key, position]) => ({ key, position })),
+      iconBounds.value,
+      false,
+    )
+    const placeableKeys = addedKeys.filter((key) => layout.placements.some((placement) => placement.key === key))
+    if (!placeableKeys.length) return
+    const placeableKeySet = new Set(placeableKeys)
+    const initial = new Map(layout.placements.map((placement) => [placement.key, placement.position]))
+    const grid = desktopIconGrid(iconBounds.value)
+    const start = desktopIconGridSlotForPosition(destination, iconBounds.value)
+    const page = Math.floor(start.row / grid.rows)
+    const startIndex = page * grid.pageCapacity
+      + start.column * grid.rows
+      + (start.row % grid.rows)
+    let placements = layout.placements
+    placeableKeys.forEach((key, index) => {
+      const ordered = startIndex + index
+      const targetPage = Math.floor(ordered / grid.pageCapacity)
+      const withinPage = ordered % grid.pageCapacity
+      const slot = {
+        column: Math.floor(withinPage / grid.rows),
+        row: targetPage * grid.rows + (withinPage % grid.rows),
       }
+      placements = dropDesktopIcon(
+        placements,
+        key,
+        desktopIconPositionForGridSlot(slot, iconBounds.value),
+        iconBounds.value,
+      )
     })
+    for (const placement of placements) {
+      const previous = initial.get(placement.key)
+      if (placeableKeySet.has(placement.key) || !previous || previous.x !== placement.position.x || previous.y !== placement.position.y) {
+        draft.positions[placement.key] = placement.position
+      }
+    }
+  })
+}
+
+function showDropPulse(event: DragEvent): void {
+  if (dropPulseTimer !== undefined) window.clearTimeout(dropPulseTimer)
+  dropPulse.value = { id: Date.now(), left: event.clientX, top: event.clientY }
+  dropPulseTimer = window.setTimeout(() => {
+    dropPulse.value = undefined
+    dropPulseTimer = undefined
+  }, motionDuration(720))
+}
+
+function scheduleDesktopTransferClear(delay = 5200): void {
+  if (desktopTransferClearTimer !== undefined) window.clearTimeout(desktopTransferClearTimer)
+  desktopTransferClearTimer = window.setTimeout(() => {
+    desktopTransfer.value = undefined
+    desktopTransferClearTimer = undefined
+  }, delay)
+}
+
+function cancelDesktopTransfer(): void {
+  desktopTransferController?.abort()
+}
+
+function dismissDesktopTransfer(): void {
+  if (desktopTransfer.value && ['preparing', 'uploading'].includes(desktopTransfer.value.phase)) return
+  desktopTransfer.value = undefined
+  if (desktopTransferClearTimer !== undefined) {
+    window.clearTimeout(desktopTransferClearTimer)
+    desktopTransferClearTimer = undefined
+  }
+}
+
+function openUploadLocationDialog(): void {
+  if (desktopTransferActive.value) return
+  uploadLocationDraft.value = desktopUploadDirectory.value
+  uploadLocationError.value = ''
+  uploadLocationOpen.value = true
+}
+
+function closeUploadLocationDialog(): void {
+  if (uploadLocationSaving.value) return
+  uploadLocationOpen.value = false
+  uploadLocationError.value = ''
+}
+
+async function saveUploadLocation(): Promise<void> {
+  const path = normalizedHostDirectory(uploadLocationDraft.value)
+  if (!path) {
+    uploadLocationError.value = i18n.t('desktop.transferLocationInvalid')
+    return
+  }
+  uploadLocationSaving.value = true
+  uploadLocationError.value = ''
+  try {
+    if (path !== DESKTOP_UPLOAD_DIRECTORY) {
+      const target = await api.files.entry(path)
+      if (target.kind !== 'directory') {
+        uploadLocationError.value = i18n.t('desktop.transferLocationNotDirectory')
+        return
+      }
+    }
+    desktopUploadDirectory.value = path
+    try {
+      window.localStorage.setItem(DESKTOP_UPLOAD_LOCATION_KEY, path)
+    } catch {
+      // The selected location still applies to this session when storage is unavailable.
+    }
+    uploadLocationOpen.value = false
+    toast.success(i18n.t('desktop.transferLocationSaved'), path)
+  } catch (error) {
+    uploadLocationError.value = error instanceof Error ? error.message : i18n.t('desktop.transferLocationUnavailable')
+  } finally {
+    uploadLocationSaving.value = false
+  }
+}
+
+function openDesktopTransferDirectory(): void {
+  const app = findDesktopApp('/files')
+  if (!app) return
+  const route = `/files?${new URLSearchParams({ path: desktopUploadDirectory.value }).toString()}`
+  const existing = openWindows.value.find(
+    (windowState) => fileWindowDirectory(windowState.path) === desktopUploadDirectory.value,
+  )
+  if (existing) {
+    desktop.restoreWindow(existing.id)
+    return
+  }
+  const windowId = desktop.openWindow(route, app.labelKey, true)
+  if (windowId === 0) {
+    toast.show(i18n.t('desktop.windowLimitTitle'), { message: i18n.t('desktop.windowLimitMessage') })
+  }
+}
+
+function externalDropErrorMessage(error: DesktopExternalDropError): string {
+  switch (error.code) {
+    case 'too_many': return i18n.t('desktop.externalDropErrorTooMany')
+    case 'too_large': return i18n.t('desktop.externalDropErrorTooLarge')
+    case 'too_deep': return i18n.t('desktop.externalDropErrorTooDeep')
+    case 'invalid': return i18n.t('desktop.externalDropErrorInvalid')
+    default: return i18n.t('desktop.externalDropErrorUnsupported')
+  }
+}
+
+async function addInternalFileDrop(event: DragEvent, destination: DesktopIconPosition): Promise<void> {
+  const sourceEntries = desktopFileDragEntries(event)
+  clearDesktopFileDrag()
+  if (!sourceEntries.length) return
+  try {
+    const result = await addDroppedFileEntries(sourceEntries, destination)
     if (result.added.length) {
       toast.success(
         result.added.length === 1 ? i18n.t('desktop.fileShortcutAdded') : i18n.t('desktop.fileShortcutsAdded', { count: result.added.length }),
@@ -1354,6 +1531,110 @@ async function onDesktopFileDrop(event: DragEvent): Promise<void> {
       toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
     }
   }
+}
+
+async function addExternalFileDrop(event: DragEvent, destination: DesktopIconPosition): Promise<void> {
+  const dataTransfer = event.dataTransfer
+  if (!dataTransfer) return
+  if (desktopTransfer.value && ['preparing', 'uploading'].includes(desktopTransfer.value.phase)) {
+    toast.show(i18n.t('desktop.transferBusyTitle'), { message: i18n.t('desktop.transferBusyMessage') })
+    return
+  }
+  if (desktopTransferClearTimer !== undefined) window.clearTimeout(desktopTransferClearTimer)
+  const controller = new AbortController()
+  desktopTransferController = controller
+  desktopTransfer.value = {
+    phase: 'preparing', roots: 0, failed: 0, detail: '', currentName: '',
+    completedFiles: 0, totalFiles: 0, loadedBytes: 0, totalBytes: 0,
+  }
+  showDropPulse(event)
+  try {
+    const manifest = await collectExternalDrop(dataTransfer, controller.signal)
+    desktopTransfer.value = {
+      phase: 'uploading', roots: manifest.roots.length, failed: 0, detail: '',
+      currentName: manifest.roots[0]?.name || '', completedFiles: 0,
+      totalFiles: manifest.files.length, loadedBytes: 0, totalBytes: manifest.totalBytes,
+    }
+    const result = await uploadExternalDrop(manifest, api.files, controller.signal, (progress) => {
+      if (desktopTransferController !== controller || controller.signal.aborted) return
+      desktopTransfer.value = {
+        ...progress,
+        phase: 'uploading', roots: manifest.roots.length, failed: 0, detail: '',
+      }
+    }, desktopUploadDirectory.value)
+    if (controller.signal.aborted) return
+    let addedCount = 0
+    let shortcutDetail = ''
+    let shortcutSaveFailed = false
+    try {
+      const shortcutResult = await addDroppedFileEntries(result.entries, destination)
+      addedCount = shortcutResult.added.length
+      if (shortcutResult.duplicates.length) shortcutDetail = i18n.t('desktop.fileShortcutDuplicate')
+    } catch (error) {
+      shortcutSaveFailed = true
+      shortcutDetail = error instanceof DesktopShortcutLimitError
+        ? i18n.t('desktop.transferShortcutLimit')
+        : workspaceErrorMessage(error)
+    }
+    const shortcutFailed = shortcutSaveFailed && addedCount < result.entries.length
+    const phase = result.failed.length || shortcutFailed ? 'partial' : 'complete'
+    desktopTransfer.value = {
+      phase,
+      roots: manifest.roots.length,
+      failed: result.failed.length + (shortcutFailed ? result.entries.length - addedCount : 0),
+      detail: shortcutDetail || (result.failed[0]?.detail ?? ''),
+      currentName: result.entries.at(-1)?.name || manifest.roots.at(-1)?.name || '',
+      completedFiles: manifest.files.length - result.failed.length,
+      totalFiles: manifest.files.length,
+      loadedBytes: manifest.totalBytes,
+      totalBytes: manifest.totalBytes,
+    }
+    if (phase === 'complete') {
+      toast.success(i18n.t('desktop.transferCompleteTitle'), i18n.t('desktop.transferCompleteMessage', {
+        count: addedCount,
+      }))
+      scheduleDesktopTransferClear()
+    } else {
+      toast.danger(i18n.t('desktop.transferPartialTitle'), shortcutDetail || result.failed[0]?.detail || '')
+    }
+  } catch (error) {
+    if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+      desktopTransfer.value = {
+        ...(desktopTransfer.value || {
+          roots: 0, failed: 0, detail: '', currentName: '', completedFiles: 0,
+          totalFiles: 0, loadedBytes: 0, totalBytes: 0,
+        }),
+        phase: 'cancelled', detail: i18n.t('desktop.transferCancelledMessage'),
+      }
+      scheduleDesktopTransferClear(2600)
+      return
+    }
+    const detail = error instanceof DesktopExternalDropError
+      ? externalDropErrorMessage(error)
+      : error instanceof Error
+        ? error.message
+        : i18n.t('desktop.transferFailedMessage')
+    desktopTransfer.value = {
+      ...(desktopTransfer.value || {
+        roots: 0, failed: 1, currentName: '', completedFiles: 0,
+        totalFiles: 0, loadedBytes: 0, totalBytes: 0,
+      }),
+      phase: 'error', failed: Math.max(1, desktopTransfer.value?.failed || 0), detail,
+    }
+    toast.danger(i18n.t('desktop.transferFailedTitle'), detail)
+  } finally {
+    if (desktopTransferController === controller) desktopTransferController = undefined
+  }
+}
+
+async function onDesktopFileDrop(event: DragEvent): Promise<void> {
+  if (!desktopFileDropAllowed(event)) return
+  event.preventDefault()
+  fileDropActive.value = false
+  const destination = desktopDropPosition(event)
+  if (!destination) return
+  if (hasDesktopFileDrag(event)) await addInternalFileDrop(event, destination)
+  else if (hasExternalFileDrop(event)) await addExternalFileDrop(event, destination)
 }
 
 function onContextMenuAction(
@@ -1773,6 +2054,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onViewportResize)
   entriesAbort?.abort()
   workspaceAbort?.abort()
+  desktopTransferController?.abort()
   iconsResizeObserver?.disconnect()
   cancelIconDrag()
   cancelSelectionFrame()
@@ -1780,6 +2062,8 @@ onBeforeUnmount(() => {
   fileDropActive.value = false
   suppressActivationAfterDrag.clear()
   if (bounceTimer !== undefined) window.clearTimeout(bounceTimer)
+  if (desktopTransferClearTimer !== undefined) window.clearTimeout(desktopTransferClearTimer)
+  if (dropPulseTimer !== undefined) window.clearTimeout(dropPulseTimer)
   if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
   if (resizePersistTimer !== undefined) {
     window.clearTimeout(resizePersistTimer)
@@ -1831,11 +2115,96 @@ function onViewportResize(): void {
       aria-hidden="true"
     />
 
-    <div v-if="fileDropActive" class="desktop__file-drop" role="status" aria-live="polite">
-      <span><Plus :size="19" aria-hidden="true" /></span>
-      <strong>{{ i18n.t('desktop.fileDropTitle') }}</strong>
-      <small>{{ i18n.t('desktop.fileDropHint') }}</small>
+    <div
+      v-if="fileDropActive"
+      class="desktop__file-drop"
+      :class="{ 'desktop__file-drop--upload': fileDropMode === 'upload' }"
+      role="status"
+      aria-live="polite"
+    >
+      <span>
+        <HardDriveUpload v-if="fileDropMode === 'upload'" :size="19" aria-hidden="true" />
+        <Plus v-else :size="19" aria-hidden="true" />
+      </span>
+      <strong>{{ i18n.t(fileDropMode === 'upload' ? 'desktop.externalDropTitle' : 'desktop.fileDropTitle') }}</strong>
+      <small>{{ i18n.t(fileDropMode === 'upload' ? 'desktop.externalDropHint' : 'desktop.fileDropHint') }}</small>
+      <code v-if="fileDropMode === 'upload'">{{ desktopUploadDirectory }}</code>
     </div>
+
+    <span
+      v-if="dropPulse"
+      :key="dropPulse.id"
+      class="desktop__drop-pulse"
+      :style="{ left: `${dropPulse.left}px`, top: `${dropPulse.top}px` }"
+      aria-hidden="true"
+    />
+
+    <section
+      v-if="desktopTransfer"
+      class="desktop-transfer"
+      :class="`desktop-transfer--${desktopTransfer.phase}`"
+      role="status"
+      aria-live="polite"
+      :aria-label="i18n.t('desktop.transferTitle')"
+    >
+      <div class="desktop-transfer__glyph" aria-hidden="true">
+        <LoaderCircle v-if="desktopTransferActive" :size="19" />
+        <Check v-else-if="desktopTransfer.phase === 'complete'" :size="19" />
+        <HardDriveUpload v-else :size="19" />
+      </div>
+      <div class="desktop-transfer__content">
+        <header>
+          <strong>
+            {{ desktopTransfer.phase === 'preparing'
+              ? i18n.t('desktop.transferPreparing')
+              : desktopTransfer.phase === 'uploading'
+                ? i18n.t('desktop.transferUploading', { count: desktopTransfer.roots })
+                : desktopTransfer.phase === 'complete'
+                  ? i18n.t('desktop.transferCompleteTitle')
+                  : desktopTransfer.phase === 'partial'
+                    ? i18n.t('desktop.transferPartialTitle')
+                    : desktopTransfer.phase === 'cancelled'
+                      ? i18n.t('desktop.transferCancelledTitle')
+                      : i18n.t('desktop.transferFailedTitle') }}
+          </strong>
+          <span v-if="desktopTransferActive">{{ desktopTransferPercent }}%</span>
+        </header>
+        <div class="desktop-transfer__destination-row">
+          <button
+            class="desktop-transfer__destination"
+            type="button"
+            :title="desktopUploadDirectory"
+            @click="openDesktopTransferDirectory"
+          >
+            {{ desktopUploadDirectory }}
+          </button>
+          <button
+            v-if="!desktopTransferActive"
+            class="desktop-transfer__change"
+            type="button"
+            @click="openUploadLocationDialog"
+          >
+            {{ i18n.t('desktop.transferLocationChange') }}
+          </button>
+        </div>
+        <div class="desktop-transfer__track" aria-hidden="true">
+          <span :style="{ width: `${desktopTransferPercent}%` }" />
+        </div>
+        <small>
+          {{ desktopTransfer.detail || (desktopTransfer.currentName
+            ? desktopTransfer.currentName
+            : i18n.t('desktop.transferReading')) }}
+        </small>
+      </div>
+      <button
+        class="desktop-transfer__action"
+        type="button"
+        :aria-label="i18n.t(desktopTransferActive ? 'desktop.transferCancel' : 'desktop.transferDismiss')"
+        @click="desktopTransferActive ? cancelDesktopTransfer() : dismissDesktopTransfer()"
+      >
+        <X :size="16" aria-hidden="true" />
+      </button>
+    </section>
 
     <aside class="desktop__widgets" :aria-label="i18n.t('desktop.toolbarLabel')" @contextmenu.stop>
       <DesktopClock
@@ -2391,6 +2760,38 @@ function onViewportResize(): void {
       @close="closeShortcutDialog"
       @save="saveShortcut"
     />
+
+    <ModalDialog
+      :open="uploadLocationOpen"
+      :title="i18n.t('desktop.transferLocationTitle')"
+      size="small"
+      @close="closeUploadLocationDialog"
+    >
+      <form class="desktop__upload-location-form" @submit.prevent="saveUploadLocation">
+        <label>
+          <span>{{ i18n.t('desktop.transferLocationLabel') }}</span>
+          <input
+            v-model="uploadLocationDraft"
+            type="text"
+            maxlength="4096"
+            autocomplete="off"
+            spellcheck="false"
+            :placeholder="DESKTOP_UPLOAD_DIRECTORY"
+            :aria-invalid="Boolean(uploadLocationError)"
+          />
+        </label>
+        <p>{{ i18n.t('desktop.transferLocationHint') }}</p>
+        <small v-if="uploadLocationError" role="alert">{{ uploadLocationError }}</small>
+      </form>
+      <template #footer>
+        <button class="button button--ghost" type="button" :disabled="uploadLocationSaving" @click="closeUploadLocationDialog">
+          {{ i18n.t('common.cancel') }}
+        </button>
+        <button class="button button--primary" type="button" :disabled="uploadLocationSaving" @click="saveUploadLocation">
+          {{ uploadLocationSaving ? i18n.t('common.saving') : i18n.t('desktop.transferLocationSave') }}
+        </button>
+      </template>
+    </ModalDialog>
 
     <ModalDialog
       :open="Boolean(removingEntry)"

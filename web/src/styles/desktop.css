@@ -815,6 +815,17 @@ body.desktop-mode-open::-webkit-scrollbar {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, white 20%, transparent);
   backdrop-filter: blur(5px);
   pointer-events: none;
+  animation: desktop-file-drop-in 180ms cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.desktop__file-drop--upload {
+  background:
+    radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 48%),
+    color-mix(in srgb, var(--accent) 9%, transparent);
+  border-style: solid;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 20%, transparent),
+    0 0 42px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .desktop__file-drop > span {
@@ -835,6 +846,272 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop__file-drop small {
   color: color-mix(in srgb, var(--desktop-label) 74%, transparent);
   font-size: 10px;
+}
+
+.desktop__file-drop code {
+  max-width: min(420px, 76%);
+  overflow: hidden;
+  margin-top: 3px;
+  padding: 3px 8px;
+  color: color-mix(in srgb, var(--desktop-label) 72%, transparent);
+  background: color-mix(in srgb, var(--desktop-label) 7%, transparent);
+  border-radius: 999px;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop__drop-pulse {
+  position: fixed;
+  z-index: 21;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border: 2px solid color-mix(in srgb, var(--accent) 88%, white 12%);
+  border-radius: 999px;
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 16%, transparent);
+  pointer-events: none;
+  animation: desktop-drop-pulse 700ms cubic-bezier(.15, .75, .15, 1) both;
+}
+
+.desktop-transfer {
+  position: absolute;
+  z-index: 24;
+  right: 18px;
+  bottom: 78px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 30px;
+  width: min(344px, calc(100vw - 36px));
+  min-height: 82px;
+  align-items: start;
+  gap: 10px;
+  padding: 13px;
+  color: var(--desktop-label);
+  background: color-mix(in srgb, var(--surface, #10231f) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border, #36514a));
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 6%);
+  backdrop-filter: blur(18px) saturate(1.1);
+  animation: desktop-transfer-in 240ms cubic-bezier(.2, .9, .2, 1) both;
+}
+
+.desktop-transfer__glyph {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  color: white;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 88%, white 12%), var(--accent));
+  border-radius: 12px;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.desktop-transfer--uploading .desktop-transfer__glyph svg,
+.desktop-transfer--preparing .desktop-transfer__glyph svg {
+  animation: desktop-transfer-spin 1.2s linear infinite;
+}
+
+.desktop-transfer--partial .desktop-transfer__glyph,
+.desktop-transfer--error .desktop-transfer__glyph {
+  background: linear-gradient(145deg, #fb7185, #be123c);
+  box-shadow: 0 8px 20px rgb(190 18 60 / 22%);
+}
+
+.desktop-transfer--cancelled .desktop-transfer__glyph {
+  color: color-mix(in srgb, var(--desktop-label) 72%, transparent);
+  background: color-mix(in srgb, var(--desktop-label) 14%, transparent);
+  box-shadow: none;
+}
+
+.desktop-transfer__content {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.desktop-transfer__content header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.desktop-transfer__content header strong {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-transfer__content header span {
+  color: color-mix(in srgb, var(--desktop-label) 70%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.desktop-transfer__destination-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.desktop-transfer__destination {
+  overflow: hidden;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  color: color-mix(in srgb, var(--desktop-label) 64%, transparent);
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.35;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.desktop-transfer__change {
+  flex: 0 0 auto;
+  padding: 0;
+  color: color-mix(in srgb, var(--accent) 72%, var(--desktop-label));
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.desktop-transfer__change:hover,
+.desktop-transfer__change:focus-visible {
+  color: var(--desktop-label);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.desktop-transfer__destination:hover,
+.desktop-transfer__destination:focus-visible {
+  color: var(--desktop-label);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.desktop-transfer__track {
+  position: relative;
+  overflow: hidden;
+  height: 3px;
+  margin-top: 2px;
+  background: color-mix(in srgb, var(--desktop-label) 12%, transparent);
+  border-radius: 999px;
+}
+
+.desktop-transfer__track span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 3px;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 70%, white 30%));
+  border-radius: inherit;
+  transition: width 160ms ease;
+}
+
+.desktop-transfer__content small {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--desktop-label) 68%, transparent);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-transfer__action {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  color: color-mix(in srgb, var(--desktop-label) 70%, transparent);
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.desktop-transfer__action:hover,
+.desktop-transfer__action:focus-visible {
+  color: var(--desktop-label);
+  background: color-mix(in srgb, var(--desktop-label) 9%, transparent);
+  outline: none;
+}
+
+.desktop__upload-location-form {
+  display: grid;
+  gap: 10px;
+}
+
+.desktop__upload-location-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.desktop__upload-location-form input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 13px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  font: 500 12px/1.4 var(--font-mono);
+  transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+}
+
+.desktop__upload-location-form input:focus {
+  background: var(--surface-strong);
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+  outline: none;
+}
+
+.desktop__upload-location-form input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.desktop__upload-location-form p,
+.desktop__upload-location-form small {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.desktop__upload-location-form small {
+  color: var(--danger);
+}
+
+@keyframes desktop-file-drop-in {
+  from { opacity: 0; transform: scale(.992); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes desktop-drop-pulse {
+  0% { opacity: .9; transform: scale(.45); }
+  100% { opacity: 0; transform: scale(5.5); }
+}
+
+@keyframes desktop-transfer-in {
+  from { opacity: 0; transform: translateY(12px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes desktop-transfer-spin {
+  to { transform: rotate(360deg); }
 }
 
 .desktop__icons {
@@ -2746,6 +3023,12 @@ body.desktop-mode-open::-webkit-scrollbar {
     display: none;
   }
 
+  .desktop-transfer {
+    right: 8px;
+    bottom: 68px;
+    width: calc(100vw - 16px);
+  }
+
   .desktop__icon {
     width: 82px;
     height: 89px;
@@ -2763,6 +3046,10 @@ body.desktop-mode-open::-webkit-scrollbar {
   }
 
   .desktop-shortcut-form__control :is(input, textarea) {
+    font-size: 16px;
+  }
+
+  .desktop__upload-location-form input {
     font-size: 16px;
   }
 
