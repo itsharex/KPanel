@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import {
   ArrowLeft,
@@ -14,12 +14,22 @@ import {
   ExternalLink,
   Globe2,
   ListTree,
+  Grid2X2,
+  MonitorCog,
+  Plus,
+  RotateCcw,
+  Trash2,
+  EyeOff,
   X,
 } from '@lucide/vue'
 import DesktopWindow from '@/components/desktop/DesktopWindow.vue'
 import DesktopEntryIcon from '@/components/desktop/DesktopEntryIcon.vue'
 import DesktopClock from '@/components/desktop/DesktopClock.vue'
 import DesktopMonitor from '@/components/desktop/DesktopMonitor.vue'
+import DesktopIconManagerDialog from '@/components/desktop/DesktopIconManagerDialog.vue'
+import DesktopShortcutDialog, {
+  type DesktopShortcutDraft,
+} from '@/components/desktop/DesktopShortcutDialog.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import LogoMark from '@/components/common/LogoMark.vue'
 import { DEFAULT_WINDOW_GRADIENT, desktopApps, findDesktopApp } from '@/lib/desktopApps'
@@ -29,17 +39,29 @@ import {
   type DesktopEntries,
   type DesktopEntry,
 } from '@/lib/desktopEntries'
-import { api, type SystemResourceSnapshot } from '@/lib/api'
+import { api, ApiError, type SystemResourceSnapshot } from '@/lib/api'
+import {
+  autoArrangeDesktopIcons,
+  deriveDesktopIconLayout,
+  desktopIconPixelsToPosition,
+  desktopIconPositionToPixels,
+  dropDesktopIcon,
+  MAX_DESKTOP_ICON_POSITIONS,
+  moveDesktopIconByKeyboard,
+  type DesktopIconBounds,
+  type DesktopIconPlacement,
+} from '@/lib/desktopIconLayout'
 import { prefetchNavigationRoute } from '@/lib/navigation'
 import {
   desktopCloseGuardCoordinator,
   desktopCloseGuardCoordinatorKey,
 } from '@/lib/desktopRouteKeys'
 import { useDesktopMode } from '@/stores/desktopMode'
+import { useDesktopIcons } from '@/stores/desktopIcons'
 import { useTheme } from '@/stores/theme'
 import { useToast } from '@/stores/toast'
 import { useI18n } from '@/i18n'
-import type { AgentStatus } from '@/types/api'
+import type { AgentStatus, DesktopIconPosition, DesktopShortcut } from '@/types/api'
 
 /**
  * Desktop overlay with Windows-style selection/open behavior, desktop-side
@@ -53,6 +75,7 @@ const props = defineProps<{
 }>()
 
 const desktop = useDesktopMode()
+const desktopIcons = useDesktopIcons()
 const theme = useTheme()
 const toast = useToast()
 const i18n = useI18n()
@@ -116,19 +139,111 @@ function applySiteNames(value?: DesktopEntries): DesktopEntries | undefined {
   }
 }
 
-function persistSiteNames(): void {
-  try {
-    window.localStorage.setItem(SITE_RENAMES_KEY, JSON.stringify(siteNames.value))
-  } catch {
-    // Browser storage is optional; the in-memory rename still works.
-  }
-}
-
 const entries = ref<DesktopEntries | undefined>(applySiteNames(getCachedDesktopEntries()))
 const systemResources = ref<SystemResourceSnapshot>()
 const entriesLoading = ref(!entries.value)
 let entriesAbort: AbortController | undefined
 let entriesSequence = 0
+
+const workspace = computed(() => desktopIcons.workspace.value)
+const hiddenEntryKeys = computed(() => new Set(workspace.value.hiddenEntryKeys))
+const visibleDynamicEntries = computed(() =>
+  (entries.value?.visible || []).filter((entry) => !hiddenEntryKeys.value.has(entry.key)),
+)
+const hiddenEntries = computed(() =>
+  (entries.value?.visible || []).filter((entry) => hiddenEntryKeys.value.has(entry.key)),
+)
+const shortcuts = computed<DesktopShortcut[]>(() => workspace.value.shortcuts.map((shortcut) => ({
+  ...shortcut,
+  iconURL: shortcut.iconURL
+    || (shortcut.iconVersion ? api.desktop.shortcutIconURL(shortcut.id, shortcut.iconVersion) : undefined),
+})))
+const shortcutEntries = computed<DesktopEntry[]>(() => shortcuts.value.map((shortcut) => ({
+  key: `shortcut:${shortcut.id}`,
+  kind: 'shortcut',
+  id: shortcut.id,
+  name: shortcut.name,
+  description: shortcut.description,
+  launch: 'external',
+  url: shortcut.url,
+  iconURL: shortcut.iconURL,
+  shortcut,
+})))
+
+const iconsElement = ref<HTMLElement>()
+const iconBounds = ref<DesktopIconBounds>({ width: 90, height: 96 })
+const compactIconLayout = ref(window.innerWidth <= 760)
+const localPositions = ref<Record<string, DesktopIconPosition>>({})
+const dragPreview = ref<{ key: string; left: number; top: number }>()
+const draggingIcon = ref('')
+const arrangingIcons = ref(false)
+const iconAnnouncement = ref('')
+const iconManagerOpen = ref(false)
+const shortcutDialogOpen = ref(false)
+const editingShortcut = ref<DesktopShortcut>()
+const deletingShortcut = ref<DesktopShortcut>()
+const removingEntry = ref<DesktopEntry>()
+const shortcutSaving = ref(false)
+const shortcutError = ref('')
+let pendingShortcutID = ''
+let workspaceAbort: AbortController | undefined
+let iconsResizeObserver: ResizeObserver | undefined
+
+const allIconKeys = computed(() => [
+  ...desktopApps.map((app) => `nav:${app.path}`),
+  ...visibleDynamicEntries.value.map((entry) => entry.key),
+  ...shortcutEntries.value.map((entry) => entry.key),
+])
+
+const savedPlacements = computed<DesktopIconPlacement[]>(() =>
+  Object.entries(localPositions.value).map(([key, position]) => ({ key, position })),
+)
+
+const renderedIconLayout = computed(() => deriveDesktopIconLayout(
+  allIconKeys.value,
+  savedPlacements.value,
+  iconBounds.value,
+  compactIconLayout.value,
+))
+
+const renderedPositionByKey = computed(() => new Map(
+  renderedIconLayout.value.placements.map((placement) => [placement.key, placement.position]),
+))
+const renderedOverflowIndexByKey = computed(() => new Map(
+  renderedIconLayout.value.overflowKeys.map((key, index) => [key, index]),
+))
+const iconOverflowStartTop = computed(() => (
+  renderedIconLayout.value.contentHeight
+  + (renderedIconLayout.value.overflowKeys.length ? 44 : 0)
+))
+const iconScrollHeight = computed(() => {
+  const layout = renderedIconLayout.value
+  const overflowCount = layout.overflowKeys.length
+  if (!overflowCount) return Math.ceil(layout.contentHeight)
+  const overflowRows = Math.ceil(overflowCount / layout.grid.columns)
+  return Math.ceil(
+    iconOverflowStartTop.value
+    + Math.max(0, overflowRows - 1) * layout.grid.stepY
+    + layout.grid.metrics.height,
+  )
+})
+
+watch(() => workspace.value.positions, (positions) => {
+  if (draggingIcon.value) return
+  localPositions.value = Object.fromEntries(
+    Object.entries(positions).map(([key, position]) => [key, { ...position }]),
+  )
+}, { deep: true, immediate: true })
+
+watch([() => workspace.value.labels, () => desktopIcons.loaded.value], ([labels, isLoaded]) => {
+  if (!isLoaded) return
+  siteNames.value = Object.fromEntries(
+    Object.entries(labels)
+      .filter(([key]) => key.startsWith('site:'))
+      .map(([key, name]) => [key.slice('site:'.length), name]),
+  )
+  entries.value = applySiteNames(entries.value)
+}, { deep: true })
 
 // Context menu: `targetEntry` set when the menu is for an entry icon; cleared
 // for the empty-desktop menu.
@@ -136,6 +251,7 @@ const contextMenu = ref<{ x: number; y: number; open: boolean }>({ x: 0, y: 0, o
 const contextMenuTarget = ref<'desktop' | 'taskbar' | 'taskbar-window'>('desktop')
 const contextMenuElement = ref<HTMLElement>()
 const menuEntry = ref<DesktopEntry>()
+const menuNavPath = ref('')
 const menuWindowId = ref<number>()
 const detailEntry = ref<DesktopEntry>()
 const externalOpenEntry = ref<DesktopEntry>()
@@ -202,6 +318,9 @@ function entryGradient(entry: DesktopEntry): string {
   if (entry.kind === 'site') {
     const [start, end] = SITE_GRADIENTS[stableSiteColorIndex(entry)] ?? ['#22d3ee', '#0e7490']
     return `linear-gradient(145deg, ${start} 0%, ${end} 100%)`
+  }
+  if (entry.kind === 'shortcut') {
+    return 'linear-gradient(145deg, #38bdf8 0%, #0369a1 100%)'
   }
   // App-market apps keep a neutral brand tile; the market icon image sits on it.
   return `linear-gradient(145deg, #5b7a72 0%, #243b36 100%)`
@@ -308,7 +427,7 @@ function openNavIcon(path: string): void {
 }
 
 function selectNavIcon(path: string): void {
-  selectedIcon.value = `app:${path}`
+  selectedIcon.value = `nav:${path}`
 }
 
 function selectEntry(entry: DesktopEntry): void {
@@ -346,6 +465,7 @@ async function showContextMenu(
   entry?: DesktopEntry,
   target: 'desktop' | 'taskbar' | 'taskbar-window' = 'desktop',
   windowId?: number,
+  navPath = '',
 ): Promise<void> {
   event.preventDefault()
   contextMenuOpener = event.currentTarget instanceof HTMLElement
@@ -356,6 +476,7 @@ async function showContextMenu(
   contextMenu.value = { x: event.clientX, y: event.clientY, open: true }
   contextMenuTarget.value = target
   menuEntry.value = entry
+  menuNavPath.value = navPath
   menuWindowId.value = windowId
   await nextTick()
 
@@ -382,7 +503,7 @@ function onEntryContext(event: MouseEvent, entry: DesktopEntry): void {
 
 function onNavContext(event: MouseEvent, path: string): void {
   selectNavIcon(path)
-  void showContextMenu(event)
+  void showContextMenu(event, undefined, 'desktop', undefined, path)
 }
 
 function onTaskbarContext(event: MouseEvent): void {
@@ -400,6 +521,7 @@ function onEntryOpen(_event: MouseEvent | KeyboardEvent, entry: DesktopEntry): v
 function closeContextMenu(restoreFocus = true): void {
   contextMenu.value.open = false
   menuEntry.value = undefined
+  menuNavPath.value = ''
   menuWindowId.value = undefined
   const opener = contextMenuOpener
   contextMenuOpener = undefined
@@ -408,7 +530,362 @@ function closeContextMenu(restoreFocus = true): void {
   }
 }
 
+function measureIconWorkArea(): void {
+  const rect = iconsElement.value?.getBoundingClientRect()
+  const fallbackRight = window.innerWidth > 900 ? 342 : 16
+  iconBounds.value = {
+    width: Math.max(90, rect?.width || window.innerWidth - fallbackRight),
+    height: Math.max(96, rect?.height || window.innerHeight - 88),
+  }
+  compactIconLayout.value = window.innerWidth <= 760
+}
+
+function iconSlotStyle(key: string): Record<string, string> {
+  if (dragPreview.value?.key === key) {
+    return { left: `${dragPreview.value.left}px`, top: `${dragPreview.value.top}px` }
+  }
+  const position = renderedPositionByKey.value.get(key)
+  if (position) {
+    const pixels = desktopIconPositionToPixels(position, iconBounds.value)
+    return { left: `${pixels.left}px`, top: `${pixels.top}px` }
+  }
+  const overflowIndex = renderedOverflowIndexByKey.value.get(key)
+  if (overflowIndex === undefined) return { display: 'none' }
+  const grid = renderedIconLayout.value.grid
+  return {
+    left: `${(overflowIndex % grid.columns) * grid.stepX}px`,
+    top: `${iconOverflowStartTop.value + Math.floor(overflowIndex / grid.columns) * grid.stepY}px`,
+  }
+}
+
+function workspaceErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 409) return i18n.t('desktop.workspaceConflict')
+  if (error instanceof ApiError) return error.message
+  return i18n.t('desktop.workspaceSaveFailed')
+}
+
+async function persistPositions(next: Record<string, DesktopIconPosition>): Promise<void> {
+  if (Object.keys(next).length > MAX_DESKTOP_ICON_POSITIONS) {
+    const message = i18n.t('desktop.iconLayoutLimitMessage', { count: MAX_DESKTOP_ICON_POSITIONS })
+    toast.danger(i18n.t('desktop.iconLayoutLimitTitle'), message)
+    throw new Error(message)
+  }
+  localPositions.value = next
+  try {
+    await desktopIcons.mutate((draft) => {
+      draft.positions = Object.fromEntries(
+        Object.entries(next).map(([key, position]) => [key, { ...position }]),
+      )
+    })
+  } catch (error) {
+    localPositions.value = Object.fromEntries(
+      Object.entries(workspace.value.positions).map(([key, position]) => [key, { ...position }]),
+    )
+    toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
+    throw error
+  }
+}
+
+function placementsToPositions(
+  placements: DesktopIconPlacement[],
+  base = localPositions.value,
+): Record<string, DesktopIconPosition> {
+  const next = Object.fromEntries(
+    Object.entries(base).map(([key, position]) => [key, { ...position }]),
+  )
+  for (const placement of placements) next[placement.key] = { ...placement.position }
+  return next
+}
+
+interface IconDragState {
+  key: string
+  pointerId: number
+  pointerType: string
+  captureTarget?: HTMLElement
+  pointerCaptured: boolean
+  startX: number
+  startY: number
+  lastX: number
+  lastY: number
+  startScrollTop: number
+  originLeft: number
+  originTop: number
+  moved: boolean
+}
+
+let iconDrag: IconDragState | undefined
+let iconAutoScrollFrame: number | undefined
+const suppressActivationAfterDrag = new Set<string>()
+
+function removeIconDragListeners(): void {
+  window.removeEventListener('pointermove', onIconDragMove)
+  window.removeEventListener('pointerup', onIconDragEnd)
+  window.removeEventListener('pointercancel', onIconDragCancel)
+  window.removeEventListener('blur', cancelIconDrag)
+  iconsElement.value?.removeEventListener('scroll', onIconDragScroll)
+}
+
+function stopIconAutoScroll(): void {
+  if (iconAutoScrollFrame === undefined) return
+  window.cancelAnimationFrame(iconAutoScrollFrame)
+  iconAutoScrollFrame = undefined
+}
+
+function updateIconDragPreview(drag: IconDragState): void {
+  const scrollDelta = (iconsElement.value?.scrollTop || 0) - drag.startScrollTop
+  const normalized = desktopIconPixelsToPosition(
+    {
+      left: drag.originLeft + drag.lastX - drag.startX,
+      top: drag.originTop + drag.lastY - drag.startY + scrollDelta,
+    },
+    iconBounds.value,
+  )
+  const pixels = desktopIconPositionToPixels(normalized, iconBounds.value)
+  dragPreview.value = { key: drag.key, ...pixels }
+}
+
+function iconAutoScrollVelocity(clientY: number): number {
+  const element = iconsElement.value
+  const rect = element?.getBoundingClientRect()
+  if (!element || !rect || rect.height <= 0 || element.scrollHeight <= element.clientHeight) return 0
+  const edge = Math.min(56, Math.max(32, rect.height * 0.12))
+  if (clientY < rect.top + edge) {
+    return -Math.ceil(Math.min(1, (rect.top + edge - clientY) / edge) * 18)
+  }
+  if (clientY > rect.bottom - edge) {
+    return Math.ceil(Math.min(1, (clientY - (rect.bottom - edge)) / edge) * 18)
+  }
+  return 0
+}
+
+function scheduleIconAutoScroll(): void {
+  if (iconAutoScrollFrame !== undefined) return
+  const drag = iconDrag
+  if (!drag?.moved || !iconAutoScrollVelocity(drag.lastY)) return
+  iconAutoScrollFrame = window.requestAnimationFrame(() => {
+    iconAutoScrollFrame = undefined
+    const active = iconDrag
+    const element = iconsElement.value
+    if (!active?.moved || !element) return
+    const velocity = iconAutoScrollVelocity(active.lastY)
+    if (!velocity) return
+    const before = element.scrollTop
+    element.scrollTop = Math.max(
+      0,
+      Math.min(element.scrollHeight - element.clientHeight, before + velocity),
+    )
+    if (element.scrollTop === before) return
+    updateIconDragPreview(active)
+    scheduleIconAutoScroll()
+  })
+}
+
+function onIconDragScroll(): void {
+  const drag = iconDrag
+  if (drag?.moved) updateIconDragPreview(drag)
+}
+
+function releaseIconDragPointer(drag: IconDragState): void {
+  const target = drag.captureTarget
+  if (!target || !drag.pointerCaptured) return
+  target.removeEventListener('lostpointercapture', onIconDragLostPointerCapture)
+  try {
+    if (
+      typeof target.releasePointerCapture === 'function'
+      && (typeof target.hasPointerCapture !== 'function' || target.hasPointerCapture(drag.pointerId))
+    ) {
+      target.releasePointerCapture(drag.pointerId)
+    }
+  } catch {
+    // Pointer capture may already have been released by the browser.
+  }
+  drag.pointerCaptured = false
+}
+
+function captureIconDragPointer(drag: IconDragState): void {
+  const target = drag.captureTarget
+  if (drag.pointerCaptured || !target || typeof target.setPointerCapture !== 'function') return
+  target.addEventListener('lostpointercapture', onIconDragLostPointerCapture)
+  try {
+    target.setPointerCapture(drag.pointerId)
+    drag.pointerCaptured = true
+  } catch {
+    target.removeEventListener('lostpointercapture', onIconDragLostPointerCapture)
+    // Window listeners keep dragging functional when capture is unavailable.
+  }
+}
+
+function beginIconDrag(event: PointerEvent, key: string): void {
+  if (event.button === 0 && event.isPrimary !== false) suppressActivationAfterDrag.delete(key)
+  if (compactIconLayout.value || event.button !== 0 || event.isPrimary === false || iconDrag) return
+  const pointerType = event.pointerType || 'mouse'
+  if ((pointerType === 'touch' || pointerType === 'pen') && !arrangingIcons.value) return
+  const position = renderedPositionByKey.value.get(key)
+  if (!position) return
+  const origin = desktopIconPositionToPixels(position, iconBounds.value)
+  iconDrag = {
+    key,
+    pointerId: event.pointerId,
+    pointerType,
+    captureTarget: event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined,
+    pointerCaptured: false,
+    startX: event.clientX,
+    startY: event.clientY,
+    lastX: event.clientX,
+    lastY: event.clientY,
+    startScrollTop: iconsElement.value?.scrollTop || 0,
+    originLeft: origin.left,
+    originTop: origin.top,
+    moved: false,
+  }
+  window.addEventListener('pointermove', onIconDragMove, { passive: false })
+  window.addEventListener('pointerup', onIconDragEnd)
+  window.addEventListener('pointercancel', onIconDragCancel)
+  window.addEventListener('blur', cancelIconDrag)
+  iconsElement.value?.addEventListener('scroll', onIconDragScroll, { passive: true })
+}
+
+function onIconDragMove(event: PointerEvent): void {
+  const drag = iconDrag
+  if (!drag || event.pointerId !== drag.pointerId) return
+  const deltaX = event.clientX - drag.startX
+  const deltaY = event.clientY - drag.startY
+  drag.lastX = event.clientX
+  drag.lastY = event.clientY
+  const threshold = drag.pointerType === 'mouse' ? 6 : 12
+  if (!drag.moved && Math.hypot(deltaX, deltaY) < threshold) return
+  if (!drag.moved) {
+    captureIconDragPointer(drag)
+    drag.moved = true
+    draggingIcon.value = drag.key
+    selectedIcon.value = drag.key
+    closeContextMenu(false)
+    document.body.classList.add('desktop-icon-dragging')
+  }
+  event.preventDefault()
+  updateIconDragPreview(drag)
+  scheduleIconAutoScroll()
+}
+
+function finishIconDrag(): IconDragState | undefined {
+  const drag = iconDrag
+  iconDrag = undefined
+  stopIconAutoScroll()
+  removeIconDragListeners()
+  if (drag) releaseIconDragPointer(drag)
+  document.body.classList.remove('desktop-icon-dragging')
+  draggingIcon.value = ''
+  return drag
+}
+
+function onIconDragEnd(event: PointerEvent): void {
+  const drag = iconDrag
+  if (!drag || event.pointerId !== drag.pointerId) return
+  const preview = dragPreview.value
+  finishIconDrag()
+  dragPreview.value = undefined
+  if (!drag.moved || !preview) return
+  suppressActivationAfterDrag.add(drag.key)
+  const destination = desktopIconPixelsToPosition(preview, iconBounds.value)
+  const placements = dropDesktopIcon(
+    renderedIconLayout.value.placements,
+    drag.key,
+    destination,
+    iconBounds.value,
+  )
+  const next = placementsToPositions(placements)
+  iconAnnouncement.value = i18n.t('desktop.iconMoved', {
+    name: iconLabel(drag.key),
+  })
+  void persistPositions(next).catch(() => undefined)
+}
+
+function cancelIconDrag(): void {
+  const drag = finishIconDrag()
+  dragPreview.value = undefined
+  if (drag?.moved) suppressActivationAfterDrag.add(drag.key)
+}
+
+function onIconDragCancel(event: PointerEvent): void {
+  if (iconDrag && event.pointerId === iconDrag.pointerId) cancelIconDrag()
+}
+
+function onIconDragLostPointerCapture(event: PointerEvent): void {
+  if (iconDrag && event.pointerId === iconDrag.pointerId) cancelIconDrag()
+}
+
+function suppressDraggedActivation(event: Event, key: string): void {
+  if (!suppressActivationAfterDrag.has(key)) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+}
+
+function clearDraggedActivationSuppression(key: string): void {
+  suppressActivationAfterDrag.delete(key)
+}
+
+function iconLabel(key: string): string {
+  if (key.startsWith('nav:')) {
+    const app = desktopApps.find((candidate) => `nav:${candidate.path}` === key)
+    return app ? i18n.t(app.labelKey) : key
+  }
+  return [...visibleDynamicEntries.value, ...shortcutEntries.value]
+    .find((entry) => entry.key === key)?.name || key
+}
+
+function nudgeIcon(key: string, deltaX: number, deltaY: number): void {
+  if (compactIconLayout.value) return
+  if (!renderedPositionByKey.value.has(key)) {
+    const message = i18n.t('desktop.iconLayoutLimitMessage', { count: MAX_DESKTOP_ICON_POSITIONS })
+    iconAnnouncement.value = message
+    toast.danger(i18n.t('desktop.iconLayoutLimitTitle'), message)
+    return
+  }
+  const direction = deltaX < 0 ? 'left' : deltaX > 0 ? 'right' : deltaY < 0 ? 'up' : 'down'
+  const placements = moveDesktopIconByKeyboard(
+    renderedIconLayout.value.placements,
+    key,
+    direction,
+    iconBounds.value,
+  )
+  selectedIcon.value = key
+  iconAnnouncement.value = i18n.t('desktop.iconMoved', { name: iconLabel(key) })
+  void persistPositions(placementsToPositions(placements)).catch(() => undefined)
+}
+
+async function autoArrangeIcons(): Promise<void> {
+  if (compactIconLayout.value) return
+  closeContextMenu()
+  const arranged = autoArrangeDesktopIcons(allIconKeys.value, iconBounds.value)
+  if (arranged.overflowKeys.length) {
+    const message = i18n.t('desktop.iconLayoutLimitMessage', { count: MAX_DESKTOP_ICON_POSITIONS })
+    iconAnnouncement.value = message
+    toast.danger(i18n.t('desktop.iconLayoutLimitTitle'), message)
+    return
+  }
+  try {
+    await persistPositions(placementsToPositions(arranged.placements))
+    iconAnnouncement.value = i18n.t('desktop.iconsArranged')
+    toast.success(i18n.t('desktop.iconsArranged'))
+  } catch {
+    // persistPositions already surfaced a specific failure.
+  }
+}
+
+async function resetIconPositions(): Promise<void> {
+  if (compactIconLayout.value) return
+  closeContextMenu()
+  try {
+    await persistPositions({})
+    iconAnnouncement.value = i18n.t('desktop.iconPositionsReset')
+    toast.success(i18n.t('desktop.iconPositionsReset'))
+  } catch {
+    // persistPositions already surfaced a specific failure.
+  }
+}
+
 function onGlobalPointerDown(event: PointerEvent): void {
+  if (iconDrag && event.pointerId !== iconDrag.pointerId) cancelIconDrag()
   if (!contextMenu.value.open) return
   // A right-button press may be followed by one or more contextmenu events
   // while the button is held. Keep the existing menu mounted and let the
@@ -422,7 +899,8 @@ function onGlobalPointerDown(event: PointerEvent): void {
 
 function onGlobalKeyDown(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
-  if (contextMenu.value.open) closeContextMenu()
+  if (iconDrag) cancelIconDrag()
+  else if (contextMenu.value.open) closeContextMenu()
   else selectedIcon.value = ''
 }
 
@@ -449,11 +927,14 @@ function onDesktopPointerDown(event: PointerEvent): void {
   ;(event.currentTarget as HTMLElement).focus({ preventScroll: true })
 }
 
-function onContextMenuAction(action: 'refresh' | 'theme' | 'classic' | 'about' | 'processes'): void {
+function onContextMenuAction(
+  action: 'refresh' | 'theme' | 'classic' | 'about' | 'processes' | 'add-shortcut'
+    | 'auto-arrange' | 'reset-icons' | 'manage-icons' | 'arrange-mode',
+): void {
   closeContextMenu()
   switch (action) {
     case 'refresh':
-      void loadEntries(true)
+      void refreshDesktop()
       break
     case 'theme':
       theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')
@@ -463,6 +944,24 @@ function onContextMenuAction(action: 'refresh' | 'theme' | 'classic' | 'about' |
       break
     case 'about':
       toast.success(i18n.t('desktop.aboutTitle'), i18n.t('desktop.aboutMessage'))
+      break
+    case 'add-shortcut':
+      openShortcutDialog()
+      break
+    case 'auto-arrange':
+      void autoArrangeIcons()
+      break
+    case 'reset-icons':
+      void resetIconPositions()
+      break
+    case 'manage-icons':
+      iconManagerOpen.value = true
+      break
+    case 'arrange-mode':
+      arrangingIcons.value = !arrangingIcons.value
+      toast.show(i18n.t(arrangingIcons.value
+        ? 'desktop.arrangeModeEnabled'
+        : 'desktop.arrangeModeDisabled'))
       break
     case 'processes': {
       const windowId = desktop.openWindow('/processes', 'route.processes', false)
@@ -474,6 +973,12 @@ function onContextMenuAction(action: 'refresh' | 'theme' | 'classic' | 'about' |
       break
     }
   }
+}
+
+function onNavMenuOpen(): void {
+  const path = menuNavPath.value
+  closeContextMenu()
+  if (path) openNavIcon(path)
 }
 
 async function enterClassicSafely(): Promise<void> {
@@ -516,29 +1021,151 @@ function closeRename(): void {
   renameValue.value = ''
 }
 
-function saveRename(): void {
+async function saveRename(): Promise<void> {
   const entry = renameEntry.value
   const name = renameValue.value.trim().slice(0, MAX_SITE_NAME_LENGTH)
   if (entry?.kind !== 'site' || !name) return
   const defaultName = defaultSiteName(entry)
-  const next = { ...siteNames.value }
-  if (name === defaultName) delete next[entry.id]
-  else next[entry.id] = name
-  siteNames.value = next
-  persistSiteNames()
-  entries.value = applySiteNames(entries.value)
-  closeRename()
+  try {
+    await desktopIcons.mutate((draft) => {
+      if (name === defaultName) delete draft.labels[entry.key]
+      else draft.labels[entry.key] = name
+    })
+    const next = { ...siteNames.value }
+    if (name === defaultName) delete next[entry.id]
+    else next[entry.id] = name
+    siteNames.value = next
+    window.localStorage.removeItem(SITE_RENAMES_KEY)
+    entries.value = applySiteNames(entries.value)
+    closeRename()
+  } catch (error) {
+    toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
+  }
 }
 
-function resetRename(): void {
+async function resetRename(): Promise<void> {
   const entry = renameEntry.value
   if (entry?.kind !== 'site') return
-  const next = { ...siteNames.value }
-  delete next[entry.id]
-  siteNames.value = next
-  persistSiteNames()
-  entries.value = applySiteNames(entries.value)
-  closeRename()
+  try {
+    await desktopIcons.mutate((draft) => {
+      delete draft.labels[entry.key]
+    })
+    const next = { ...siteNames.value }
+    delete next[entry.id]
+    siteNames.value = next
+    window.localStorage.removeItem(SITE_RENAMES_KEY)
+    entries.value = applySiteNames(entries.value)
+    closeRename()
+  } catch (error) {
+    toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
+  }
+}
+
+function requestRemoveEntry(): void {
+  const entry = menuEntry.value
+  closeContextMenu()
+  if (entry?.kind === 'app' || entry?.kind === 'site') removingEntry.value = entry
+}
+
+async function confirmRemoveEntry(): Promise<void> {
+  const entry = removingEntry.value
+  if (!entry || (entry.kind !== 'app' && entry.kind !== 'site')) return
+  try {
+    await desktopIcons.mutate((draft) => {
+      if (!draft.hiddenEntryKeys.includes(entry.key)) draft.hiddenEntryKeys.push(entry.key)
+    })
+    selectedIcon.value = ''
+    removingEntry.value = undefined
+    toast.success(i18n.t('desktop.removedFromDesktopTitle'), entry.name)
+  } catch (error) {
+    toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
+  }
+}
+
+async function restoreEntry(entry: DesktopEntry): Promise<void> {
+  try {
+    await desktopIcons.mutate((draft) => {
+      draft.hiddenEntryKeys = draft.hiddenEntryKeys.filter((key) => key !== entry.key)
+    })
+    toast.success(i18n.t('desktop.restoredToDesktopTitle'), entry.name)
+  } catch (error) {
+    toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
+  }
+}
+
+function openShortcutDialog(shortcut?: DesktopShortcut): void {
+  pendingShortcutID = ''
+  editingShortcut.value = shortcut
+  shortcutError.value = ''
+  shortcutDialogOpen.value = true
+  iconManagerOpen.value = false
+  closeContextMenu(false)
+}
+
+function closeShortcutDialog(): void {
+  if (shortcutSaving.value) return
+  shortcutDialogOpen.value = false
+  editingShortcut.value = undefined
+  shortcutError.value = ''
+  pendingShortcutID = ''
+}
+
+async function saveShortcut(
+  draft: DesktopShortcutDraft,
+  icon: File | undefined,
+  removeIcon: boolean,
+): Promise<void> {
+  shortcutSaving.value = true
+  shortcutError.value = ''
+  const id = draft.id || pendingShortcutID || desktopIcons.generateShortcutID()
+  try {
+    await desktopIcons.mutate((workspaceDraft) => {
+      const next = { id, name: draft.name, description: draft.description, url: draft.url }
+      const index = workspaceDraft.shortcuts.findIndex((shortcut) => shortcut.id === id)
+      if (index >= 0) workspaceDraft.shortcuts.splice(index, 1, next)
+      else workspaceDraft.shortcuts.push(next)
+    })
+    if (!draft.id) pendingShortcutID = id
+    if (removeIcon) await api.desktop.removeShortcutIcon(id)
+    if (icon) await api.desktop.uploadShortcutIcon(id, icon)
+    if (removeIcon || icon) await desktopIcons.load()
+    shortcutDialogOpen.value = false
+    editingShortcut.value = undefined
+    pendingShortcutID = ''
+    toast.success(i18n.t(draft.id ? 'desktop.shortcutUpdated' : 'desktop.shortcutCreated'), draft.name)
+  } catch (error) {
+    shortcutError.value = workspaceErrorMessage(error)
+  } finally {
+    shortcutSaving.value = false
+  }
+}
+
+function requestDeleteShortcut(shortcut?: DesktopShortcut): void {
+  const target = shortcut || menuEntry.value?.shortcut
+  closeContextMenu()
+  if (target) deletingShortcut.value = target
+}
+
+async function confirmDeleteShortcut(): Promise<void> {
+  const shortcut = deletingShortcut.value
+  if (!shortcut) return
+  try {
+    await desktopIcons.mutate((draft) => {
+      draft.shortcuts = draft.shortcuts.filter((item) => item.id !== shortcut.id)
+      delete draft.positions[`shortcut:${shortcut.id}`]
+    })
+    deletingShortcut.value = undefined
+    selectedIcon.value = ''
+    toast.success(i18n.t('desktop.shortcutDeleted'), shortcut.name)
+  } catch (error) {
+    toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
+  }
+}
+
+function editMenuShortcut(): void {
+  const shortcut = menuEntry.value?.shortcut
+  closeContextMenu()
+  if (shortcut) openShortcutDialog(shortcut)
 }
 
 function onTaskbarClick(windowId: number): void {
@@ -575,6 +1202,45 @@ async function loadEntries(force = false): Promise<void> {
   } finally {
     if (sequence === entriesSequence) entriesLoading.value = false
   }
+}
+
+async function loadWorkspace(): Promise<void> {
+  workspaceAbort?.abort()
+  workspaceAbort = new AbortController()
+  const legacyNames = readSiteNames()
+  try {
+    const value = await desktopIcons.load(workspaceAbort.signal)
+    const persistedNames = Object.fromEntries(
+      Object.entries(value.labels)
+        .filter(([key]) => key.startsWith('site:'))
+        .map(([key, name]) => [key.slice('site:'.length), name]),
+    )
+    siteNames.value = { ...legacyNames, ...persistedNames }
+    entries.value = applySiteNames(entries.value)
+    if (!value.available) {
+      toast.danger(
+        i18n.t('desktop.workspaceUnavailableTitle'),
+        i18n.t('desktop.workspaceUnavailableMessage'),
+      )
+      return
+    }
+
+    const legacyEntries = Object.entries(legacyNames)
+      .filter(([id]) => !Object.hasOwn(value.labels, `site:${id}`))
+    if (legacyEntries.length) {
+      await desktopIcons.mutate((draft) => {
+        for (const [id, name] of legacyEntries) draft.labels[`site:${id}`] = name
+      })
+      window.localStorage.removeItem(SITE_RENAMES_KEY)
+    }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return
+    toast.danger(i18n.t('desktop.workspaceLoadErrorTitle'), workspaceErrorMessage(error))
+  }
+}
+
+async function refreshDesktop(): Promise<void> {
+  await Promise.allSettled([loadEntries(true), loadWorkspace()])
 }
 
 function appearanceEntries(value: DesktopEntries): DesktopEntry[] {
@@ -622,6 +1288,14 @@ onMounted(() => {
   window.addEventListener('keydown', onGlobalKeyDown)
   window.addEventListener('resize', onViewportResize)
   void loadEntries()
+  void loadWorkspace()
+  void nextTick(() => {
+    measureIconWorkArea()
+    if (typeof ResizeObserver !== 'undefined' && iconsElement.value) {
+      iconsResizeObserver = new ResizeObserver(measureIconWorkArea)
+      iconsResizeObserver.observe(iconsElement.value)
+    }
+  })
 })
 
 onBeforeUnmount(() => {
@@ -632,6 +1306,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeyDown)
   window.removeEventListener('resize', onViewportResize)
   entriesAbort?.abort()
+  workspaceAbort?.abort()
+  iconsResizeObserver?.disconnect()
+  cancelIconDrag()
+  suppressActivationAfterDrag.clear()
   if (bounceTimer !== undefined) window.clearTimeout(bounceTimer)
   if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
   if (resizePersistTimer !== undefined) {
@@ -644,6 +1322,7 @@ function onViewportResize(): void {
   if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
   resizeFrame = window.requestAnimationFrame(() => {
     resizeFrame = undefined
+    measureIconWorkArea()
     desktop.resizeForViewport({ width: window.innerWidth, height: window.innerHeight }, false)
   })
   if (resizePersistTimer !== undefined) window.clearTimeout(resizePersistTimer)
@@ -671,44 +1350,117 @@ function onViewportResize(): void {
     </aside>
 
     <nav
+      ref="iconsElement"
       class="desktop__icons"
+      :class="{ 'desktop__icons--arranging': arrangingIcons }"
       :aria-label="i18n.t('desktop.gridLabel')"
       :aria-busy="entriesLoading"
     >
+      <div
+        class="desktop__icons-scroll-space"
+        :style="{ height: `${iconScrollHeight}px` }"
+        aria-hidden="true"
+      />
+      <p
+        v-if="renderedIconLayout.overflowKeys.length"
+        class="desktop__icons-overflow-note"
+        :style="{ top: `${renderedIconLayout.contentHeight + 8}px` }"
+        role="status"
+      >
+        {{ i18n.t('desktop.iconOverflowNotice', {
+          count: renderedIconLayout.overflowKeys.length,
+          limit: MAX_DESKTOP_ICON_POSITIONS,
+        }) }}
+      </p>
       <!-- Static navigation apps -->
-      <DesktopEntryIcon
+      <div
         v-for="(app, index) in desktopApps"
         :key="app.path"
-        :label="i18n.t(app.labelKey)"
-        :nav-icon="app.icon"
-        :gradient="gradientFor(app.path)"
-        :active="bouncingIcon === app.path"
-        :selected="selectedIcon === `app:${app.path}`"
-        :order="index"
-        @select="selectNavIcon(app.path)"
-        @open="openNavIcon(app.path)"
-        @context="(event) => onNavContext(event, app.path)"
-        @warm="warmNavIcon(app.path)"
-      />
+        class="desktop__icon-slot"
+        :class="{ 'desktop__icon-slot--dragging': draggingIcon === `nav:${app.path}` }"
+        :style="iconSlotStyle(`nav:${app.path}`)"
+        :data-icon-key="`nav:${app.path}`"
+        @pointerdown="beginIconDrag($event, `nav:${app.path}`)"
+        @keydown.capture="clearDraggedActivationSuppression(`nav:${app.path}`)"
+        @click.capture="suppressDraggedActivation($event, `nav:${app.path}`)"
+        @dblclick.capture="suppressDraggedActivation($event, `nav:${app.path}`)"
+      >
+        <DesktopEntryIcon
+          :label="i18n.t(app.labelKey)"
+          :nav-icon="app.icon"
+          :gradient="gradientFor(app.path)"
+          :active="bouncingIcon === app.path"
+          :selected="selectedIcon === `nav:${app.path}`"
+          :order="index"
+          :arranging="arrangingIcons"
+          :dragging="draggingIcon === `nav:${app.path}`"
+          @select="selectNavIcon(app.path)"
+          @open="openNavIcon(app.path)"
+          @context="(event) => onNavContext(event, app.path)"
+          @warm="warmNavIcon(app.path)"
+          @nudge="(x, y) => nudgeIcon(`nav:${app.path}`, x, y)"
+        />
+      </div>
 
       <!-- Dynamic entries: installed apps and sites -->
       <template v-if="entries">
-        <DesktopEntryIcon
-          v-for="(entry, index) in entries.visible"
+        <div
+          v-for="(entry, index) in visibleDynamicEntries"
           :key="entry.key"
+          class="desktop__icon-slot"
+          :class="{ 'desktop__icon-slot--dragging': draggingIcon === entry.key }"
+          :style="iconSlotStyle(entry.key)"
+          :data-icon-key="entry.key"
+          @pointerdown="beginIconDrag($event, entry.key)"
+          @keydown.capture="clearDraggedActivationSuppression(entry.key)"
+          @click.capture="suppressDraggedActivation($event, entry.key)"
+          @dblclick.capture="suppressDraggedActivation($event, entry.key)"
+        >
+          <DesktopEntryIcon
+            :label="entry.name"
+            :entry="entry"
+            :gradient="entryGradient(entry)"
+            :selected="selectedIcon === entry.key"
+            :order="desktopApps.length + index"
+            :arranging="arrangingIcons"
+            :dragging="draggingIcon === entry.key"
+            @select="selectEntry(entry)"
+            @open="(event) => onEntryOpen(event, entry)"
+            @context="(event) => onEntryContext(event, entry)"
+            @nudge="(x, y) => nudgeIcon(entry.key, x, y)"
+          />
+        </div>
+      </template>
+      <div
+        v-for="(entry, index) in shortcutEntries"
+        :key="entry.key"
+        class="desktop__icon-slot"
+        :class="{ 'desktop__icon-slot--dragging': draggingIcon === entry.key }"
+        :style="iconSlotStyle(entry.key)"
+        :data-icon-key="entry.key"
+        @pointerdown="beginIconDrag($event, entry.key)"
+        @keydown.capture="clearDraggedActivationSuppression(entry.key)"
+        @click.capture="suppressDraggedActivation($event, entry.key)"
+        @dblclick.capture="suppressDraggedActivation($event, entry.key)"
+      >
+        <DesktopEntryIcon
           :label="entry.name"
           :entry="entry"
           :gradient="entryGradient(entry)"
           :selected="selectedIcon === entry.key"
-          :order="desktopApps.length + index"
+          :order="desktopApps.length + visibleDynamicEntries.length + index"
+          :arranging="arrangingIcons"
+          :dragging="draggingIcon === entry.key"
           @select="selectEntry(entry)"
           @open="(event) => onEntryOpen(event, entry)"
           @context="(event) => onEntryContext(event, entry)"
+          @nudge="(x, y) => nudgeIcon(entry.key, x, y)"
         />
-      </template>
+      </div>
       <span v-if="entriesLoading" class="desktop__sr-only" aria-live="polite">
         {{ i18n.t('desktop.entriesLoading') }}
       </span>
+      <span class="desktop__sr-only" aria-live="polite">{{ iconAnnouncement }}</span>
     </nav>
 
     <DesktopWindow
@@ -726,7 +1478,7 @@ function onViewportResize(): void {
         v-if="contextMenu.open"
         ref="contextMenuElement"
         class="desktop__context-menu"
-        :class="{ 'desktop__context-menu--entry': menuEntry }"
+        :class="{ 'desktop__context-menu--entry': menuEntry || menuNavPath }"
         :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         role="menu"
         @contextmenu.prevent.stop
@@ -757,6 +1509,44 @@ function onViewportResize(): void {
             <Pencil :size="15" aria-hidden="true" />
             {{ i18n.t('desktop.entryRename') }}
           </button>
+          <button
+            v-if="menuEntry.kind === 'shortcut'"
+            type="button"
+            role="menuitem"
+            @click="editMenuShortcut"
+          >
+            <Pencil :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.shortcutEdit') }}
+          </button>
+          <div class="desktop__context-separator" role="separator" />
+          <button
+            v-if="menuEntry.kind === 'app' || menuEntry.kind === 'site'"
+            type="button"
+            role="menuitem"
+            class="desktop__context-danger"
+            :disabled="!workspace.available || desktopIcons.saving.value"
+            @click="requestRemoveEntry"
+          >
+            <EyeOff :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.removeFromDesktop') }}
+          </button>
+          <button
+            v-else
+            type="button"
+            role="menuitem"
+            class="desktop__context-danger"
+            :disabled="!workspace.available || desktopIcons.saving.value"
+            @click="requestDeleteShortcut()"
+          >
+            <Trash2 :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.shortcutDelete') }}
+          </button>
+        </template>
+        <template v-else-if="menuNavPath">
+          <button type="button" role="menuitem" @click="onNavMenuOpen">
+            <AppWindow :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.entryOpen') }}
+          </button>
         </template>
         <template v-else-if="contextMenuTarget === 'taskbar'">
           <button
@@ -781,6 +1571,54 @@ function onViewportResize(): void {
           </button>
         </template>
         <template v-else>
+          <button
+            type="button"
+            role="menuitem"
+            :disabled="!workspace.available || desktopIcons.saving.value"
+            @click="onContextMenuAction('add-shortcut')"
+          >
+            <Plus :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.shortcutAdd') }}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            :disabled="!workspace.available"
+            @click="onContextMenuAction('manage-icons')"
+          >
+            <MonitorCog :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.iconManagerTitle') }}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            :disabled="compactIconLayout || !workspace.available || desktopIcons.saving.value"
+            @click="onContextMenuAction('auto-arrange')"
+          >
+            <Grid2X2 :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.autoArrange') }}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            :disabled="compactIconLayout || !workspace.available || desktopIcons.saving.value"
+            @click="onContextMenuAction('reset-icons')"
+          >
+            <RotateCcw :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.resetIconPositions') }}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            :disabled="compactIconLayout"
+            @click="onContextMenuAction('arrange-mode')"
+          >
+            <Grid2X2 :size="15" aria-hidden="true" />
+            {{ arrangingIcons
+              ? i18n.t('desktop.exitArrangeMode')
+              : i18n.t('desktop.enterArrangeMode') }}
+          </button>
+          <div class="desktop__context-separator" role="separator" />
           <button type="button" role="menuitem" @click="onContextMenuAction('refresh')">
             <RefreshCw :size="15" aria-hidden="true" />
             {{ i18n.t('desktop.menuRefresh') }}
@@ -951,13 +1789,21 @@ function onViewportResize(): void {
           <dt>{{ i18n.t('desktop.detailURL') }}</dt>
           <dd class="desktop__detail-url">{{ detailEntry.url }}</dd>
         </template>
-        <template v-else>
+        <template v-else-if="detailEntry.kind === 'site'">
           <dt>{{ i18n.t('desktop.detailType') }}</dt>
           <dd>{{ i18n.t('desktop.detailSite') }}</dd>
           <dt>{{ i18n.t('desktop.detailDomain') }}</dt>
           <dd>{{ detailEntry.site?.primaryDomain }}</dd>
           <dt>{{ i18n.t('desktop.detailType2') }}</dt>
           <dd>{{ detailEntry.site?.type }}</dd>
+          <dt>{{ i18n.t('desktop.detailURL') }}</dt>
+          <dd class="desktop__detail-url">{{ detailEntry.url }}</dd>
+        </template>
+        <template v-else>
+          <dt>{{ i18n.t('desktop.detailType') }}</dt>
+          <dd>{{ i18n.t('desktop.detailShortcut') }}</dd>
+          <dt>{{ i18n.t('desktop.detailDescription') }}</dt>
+          <dd>{{ detailEntry.description || i18n.t('desktop.detailNoDescription') }}</dd>
           <dt>{{ i18n.t('desktop.detailURL') }}</dt>
           <dd class="desktop__detail-url">{{ detailEntry.url }}</dd>
         </template>
@@ -1005,6 +1851,79 @@ function onViewportResize(): void {
         </button>
         <button class="button button--primary" type="button" :disabled="!renameValue.trim()" @click="saveRename">
           {{ i18n.t('desktop.renameSave') }}
+        </button>
+      </template>
+    </ModalDialog>
+
+    <DesktopIconManagerDialog
+      :open="iconManagerOpen"
+      :hidden-entries="hiddenEntries"
+      :shortcuts="shortcuts"
+      :busy="desktopIcons.saving.value"
+      @close="iconManagerOpen = false"
+      @add="openShortcutDialog()"
+      @edit="openShortcutDialog"
+      @remove="requestDeleteShortcut"
+      @restore="restoreEntry"
+    />
+
+    <DesktopShortcutDialog
+      :open="shortcutDialogOpen"
+      :shortcut="editingShortcut"
+      :saving="shortcutSaving"
+      :error-message="shortcutError"
+      @close="closeShortcutDialog"
+      @save="saveShortcut"
+    />
+
+    <ModalDialog
+      :open="Boolean(removingEntry)"
+      :title="i18n.t('desktop.removeFromDesktopTitle')"
+      size="compact"
+      @close="removingEntry = undefined"
+    >
+      <div v-if="removingEntry" class="desktop__confirm-copy">
+        <strong>{{ removingEntry.name }}</strong>
+        <p>{{ removingEntry.kind === 'app'
+          ? i18n.t('desktop.removeAppFromDesktopMessage')
+          : i18n.t('desktop.removeSiteFromDesktopMessage') }}</p>
+      </div>
+      <template #footer>
+        <button class="button button--ghost" type="button" @click="removingEntry = undefined">
+          {{ i18n.t('common.cancel') }}
+        </button>
+        <button
+          class="button button--primary"
+          type="button"
+          :disabled="desktopIcons.saving.value"
+          @click="confirmRemoveEntry"
+        >
+          {{ i18n.t('desktop.removeFromDesktop') }}
+        </button>
+      </template>
+    </ModalDialog>
+
+    <ModalDialog
+      :open="Boolean(deletingShortcut)"
+      :title="i18n.t('desktop.shortcutDeleteTitle')"
+      size="compact"
+      @close="deletingShortcut = undefined"
+    >
+      <div v-if="deletingShortcut" class="desktop__confirm-copy">
+        <strong>{{ deletingShortcut.name }}</strong>
+        <p>{{ i18n.t('desktop.shortcutDeleteMessage') }}</p>
+      </div>
+      <template #footer>
+        <button class="button button--ghost" type="button" @click="deletingShortcut = undefined">
+          {{ i18n.t('common.cancel') }}
+        </button>
+        <button
+          class="button button--danger"
+          type="button"
+          :disabled="desktopIcons.saving.value"
+          @click="confirmDeleteShortcut"
+        >
+          {{ i18n.t('desktop.shortcutDelete') }}
         </button>
       </template>
     </ModalDialog>

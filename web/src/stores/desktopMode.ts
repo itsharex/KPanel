@@ -14,9 +14,10 @@ import { canonicalDesktopAppPath, desktopRoutePath, findDesktopApp } from '@/lib
 /**
  * Desktop (Windows-style) mode state.
  *
- * The desktop is a pure front-end overlay: it reuses the existing lazy-loaded
- * route views as window contents and keeps all state (mode, open windows and
- * their geometry) in browser storage. It introduces no backend surface.
+ * The desktop shell reuses the existing lazy-loaded route views as window
+ * contents. This store owns only mode/open-window state and browser-local
+ * window geometry; icon layout and shortcuts live in `desktopIcons.ts` and the
+ * authenticated Panel workspace API.
  */
 
 export type DesktopMode = 'classic' | 'desktop'

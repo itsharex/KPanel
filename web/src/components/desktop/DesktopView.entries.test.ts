@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import DesktopView from '@/components/desktop/DesktopView.vue'
+import DesktopShortcutDialog from '@/components/desktop/DesktopShortcutDialog.vue'
 import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
+import { resetDesktopIconsForTest } from '@/stores/desktopIcons'
 import type { DesktopEntries } from '@/lib/desktopEntries'
 import { api } from '@/lib/api'
+import type { DesktopWorkspace, DesktopWorkspaceUpdate } from '@/types/api'
 
 vi.mock('@/lib/desktopEntries', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/desktopEntries')>()
@@ -25,12 +28,35 @@ vi.mock('@/lib/api', async (importOriginal) => {
         ...actual.api.sites,
         appearance: vi.fn(),
       },
+      desktop: {
+        ...actual.api.desktop,
+        workspace: vi.fn(),
+        updateWorkspace: vi.fn(),
+        uploadShortcutIcon: vi.fn(),
+        removeShortcutIcon: vi.fn(),
+      },
     },
   }
 })
 
 const mockedLoad = vi.mocked((await import('@/lib/desktopEntries')).loadDesktopEntries)
 const mockedAppearance = vi.mocked(api.sites.appearance)
+const mockedWorkspace = vi.mocked(api.desktop.workspace)
+const mockedWorkspaceUpdate = vi.mocked(api.desktop.updateWorkspace)
+const mockedUploadShortcutIcon = vi.mocked(api.desktop.uploadShortcutIcon)
+
+function makeWorkspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
+  return {
+    schemaVersion: 1,
+    resourceVersion: `sha256:${'1'.repeat(64)}`,
+    available: true,
+    hiddenEntryKeys: [],
+    positions: {},
+    labels: {},
+    shortcuts: [],
+    ...overrides,
+  }
+}
 
 function makeEntries(): DesktopEntries {
   return {
@@ -48,12 +74,32 @@ function makeEntries(): DesktopEntries {
 describe('DesktopView dynamic entries', () => {
   beforeEach(() => {
     resetDesktopModeForTest()
+    resetDesktopIconsForTest()
     window.localStorage.clear()
     window.scrollTo = vi.fn()
     window.open = vi.fn()
     mockedLoad.mockResolvedValue(makeEntries())
     mockedAppearance.mockReset()
     mockedAppearance.mockResolvedValue({})
+    mockedWorkspace.mockReset()
+    mockedWorkspace.mockResolvedValue(makeWorkspace())
+    mockedWorkspaceUpdate.mockReset()
+    mockedWorkspaceUpdate.mockImplementation(async (body: DesktopWorkspaceUpdate) => makeWorkspace({
+      resourceVersion: `sha256:${'2'.repeat(64)}`,
+      hiddenEntryKeys: body.hiddenEntryKeys,
+      positions: body.positions,
+      labels: body.labels,
+      shortcuts: body.shortcuts.map((shortcut) => ({
+        ...shortcut,
+        createdAt: '2026-08-14T00:00:00Z',
+        updatedAt: '2026-08-14T00:00:00Z',
+      })),
+    }))
+    mockedUploadShortcutIcon.mockReset()
+    mockedUploadShortcutIcon.mockResolvedValue({
+      iconVersion: 'c'.repeat(64),
+      iconURL: '/api/v1/desktop/shortcuts/icon',
+    })
   })
 
   it('renders dynamic app and site icons alongside static nav icons', async () => {
@@ -228,7 +274,7 @@ describe('DesktopView dynamic entries', () => {
     await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
     await nextTick()
     const appItems = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-    expect(appItems).toHaveLength(2)
+    expect(appItems).toHaveLength(3)
     await appItems[1]?.trigger('click')
     expect(desktop.windows.value[0]?.path).toBe('/apps?app=nginx')
     wrapper.unmount()
@@ -257,12 +303,12 @@ describe('DesktopView dynamic entries', () => {
 
     await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
     await nextTick()
-    expect(wrapper.findAll('.desktop__context-menu [role="menuitem"]')).toHaveLength(2)
+    expect(wrapper.findAll('.desktop__context-menu [role="menuitem"]')).toHaveLength(3)
 
     await wrapper.find('button[title="blog.example.com"]').trigger('contextmenu', { clientX: 120, clientY: 80 })
     await nextTick()
     const siteItems = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-    expect(siteItems).toHaveLength(3)
+    expect(siteItems).toHaveLength(4)
     await siteItems[2]?.trigger('click')
     await nextTick()
 
@@ -273,10 +319,12 @@ describe('DesktopView dynamic entries', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }))
     await nextTick()
     document.body.querySelector<HTMLButtonElement>('.modal-panel__footer .button--primary')?.click()
-    await nextTick()
-    await nextTick()
+    await flushPromises()
 
-    expect(window.localStorage.getItem('kpanel:desktop-site-names:v1')).toContain('我的博客')
+    expect(mockedWorkspaceUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      labels: { 'site:blog': '我的博客' },
+    }))
+    expect(window.localStorage.getItem('kpanel:desktop-site-names:v1')).toBeNull()
     expect(wrapper.findAll('.desktop__icon-label').map((label) => label.text())).toContain('我的博客')
     wrapper.unmount()
   })
@@ -329,6 +377,112 @@ describe('DesktopView dynamic entries', () => {
     expect(wrapper.find('.desktop-window__title').text()).toContain('OpenClaw 的脚本终端')
     expect(wrapper.find('.desktop-window__app-glyph img').attributes('src')).toBe('/api/v1/apps/openclaw/icon')
     expect(wrapper.find('.app-script-page__header').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('removes an installed app only from the desktop and restores it from the manager', async () => {
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+
+    await wrapper.find('button[title="Nginx"]').trigger('contextmenu', { clientX: 80, clientY: 80 })
+    await nextTick()
+    const remove = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+      .find((item) => item.text().includes('从桌面移除'))
+    await remove?.trigger('click')
+    await nextTick()
+    expect(document.body.textContent).toContain('不会卸载应用')
+
+    document.body.querySelector<HTMLButtonElement>('.modal-panel--compact .button--primary')?.click()
+    await flushPromises()
+    expect(mockedWorkspaceUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      hiddenEntryKeys: ['app:nginx'],
+    }))
+    expect(wrapper.find('button[title="Nginx"]').exists()).toBe(false)
+
+    await wrapper.trigger('contextmenu', { clientX: 220, clientY: 160 })
+    await nextTick()
+    const manage = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+      .find((item) => item.text().includes('管理桌面图标'))
+    await manage?.trigger('click')
+    await nextTick()
+    const restore = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.desktop-icon-manager button'))
+      .find((button) => button.textContent?.includes('恢复'))
+    restore?.click()
+    await flushPromises()
+    expect(wrapper.find('button[title="Nginx"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('renders a persisted custom shortcut and deletes only that shortcut', async () => {
+    mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
+      shortcuts: [{
+        id: 'a'.repeat(32),
+        name: '内部文档',
+        description: '团队手册',
+        url: 'https://docs.example.com/',
+        iconVersion: 'b'.repeat(64),
+        iconURL: `/api/v1/desktop/shortcuts/${'a'.repeat(32)}/icon?v=${'b'.repeat(64)}`,
+        createdAt: '2026-08-14T00:00:00Z',
+        updatedAt: '2026-08-14T00:00:00Z',
+      }],
+    }))
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+
+    const shortcut = wrapper.find('button[title="内部文档"]')
+    expect(shortcut.find('.desktop__icon-img').attributes('src')).toContain('/api/v1/desktop/shortcuts/')
+    await shortcut.trigger('dblclick')
+    await nextTick()
+    expect(document.body.querySelector('.desktop__external-confirm')?.textContent).toContain('内部文档')
+    document.body.querySelector<HTMLButtonElement>('.modal-panel__close')?.click()
+    await nextTick()
+
+    await shortcut.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    await nextTick()
+    const remove = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+      .find((item) => item.text().includes('删除快捷方式'))
+    await remove?.trigger('click')
+    await nextTick()
+    expect(document.body.textContent).toContain('不会访问或删除目标网站')
+    const dialog = Array.from(document.body.querySelectorAll<HTMLElement>('.modal-panel'))
+      .find((panel) => panel.textContent?.includes('确认删除快捷方式'))
+    dialog?.querySelector<HTMLButtonElement>('.button--danger')?.click()
+    await flushPromises()
+    expect(mockedWorkspaceUpdate).toHaveBeenLastCalledWith(expect.objectContaining({ shortcuts: [] }))
+    expect(wrapper.find('button[title="内部文档"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('reuses the created shortcut id when an icon upload is retried', async () => {
+    mockedUploadShortcutIcon
+      .mockRejectedValueOnce(new Error('upload failed'))
+      .mockResolvedValueOnce({
+        iconVersion: 'd'.repeat(64),
+        iconURL: '/api/v1/desktop/shortcuts/retried/icon',
+      })
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const dialog = wrapper.findComponent(DesktopShortcutDialog)
+    const draft = {
+      id: '',
+      name: '内部入口',
+      description: '仅供测试',
+      url: 'https://internal.example.com/',
+    }
+    const icon = new File([new Uint8Array([1, 2, 3])], 'icon.png', { type: 'image/png' })
+
+    dialog.vm.$emit('save', draft, icon, false)
+    await flushPromises()
+    const firstID = mockedWorkspaceUpdate.mock.calls[0]?.[0].shortcuts[0]?.id
+    expect(firstID).toMatch(/^[a-f0-9]{32}$/)
+    expect(mockedUploadShortcutIcon).toHaveBeenLastCalledWith(firstID, icon)
+
+    dialog.vm.$emit('save', draft, icon, false)
+    await flushPromises()
+    const retriedShortcuts = mockedWorkspaceUpdate.mock.calls[1]?.[0].shortcuts
+    expect(retriedShortcuts).toHaveLength(1)
+    expect(retriedShortcuts?.[0]?.id).toBe(firstID)
+    expect(mockedUploadShortcutIcon.mock.calls.map(([id]) => id)).toEqual([firstID, firstID])
     wrapper.unmount()
   })
 })

@@ -1498,6 +1498,49 @@ export interface PanelSettings {
   telemetryEnabled?: boolean
 }
 
+export interface DesktopIconPosition {
+  /** Normalized horizontal coordinate in the current work area, from 0 to 1. */
+  x: number
+  /** Paged normalized vertical coordinate, from 0 to 512; values above 1 are below the first view. */
+  y: number
+}
+
+export interface DesktopShortcut {
+  id: string
+  name: string
+  description: string
+  url: string
+  iconVersion?: string
+  iconURL?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DesktopWorkspace {
+  schemaVersion: 1
+  resourceVersion: string
+  /** False means corrupt/unsupported persisted data was isolated read-only. */
+  available: boolean
+  warning?: string
+  hiddenEntryKeys: string[]
+  positions: Record<string, DesktopIconPosition>
+  labels: Record<string, string>
+  shortcuts: DesktopShortcut[]
+}
+
+export interface DesktopWorkspaceUpdate {
+  expectedResourceVersion: string
+  hiddenEntryKeys: string[]
+  positions: Record<string, DesktopIconPosition>
+  labels: Record<string, string>
+  shortcuts: Array<Pick<DesktopShortcut, 'id' | 'name' | 'description' | 'url'>>
+}
+
+export interface DesktopShortcutIconResult {
+  iconVersion: string
+  iconURL: string
+}
+
 export interface SecurityEntranceSettings {
   enabled: boolean
   path?: string

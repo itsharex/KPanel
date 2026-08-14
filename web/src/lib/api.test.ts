@@ -24,6 +24,38 @@ describe('API client', () => {
     )
   })
 
+  it('uses the authenticated desktop workspace contract and path-safe custom icon URL', async () => {
+    const current = {
+      schemaVersion: 1 as const,
+      resourceVersion: `sha256:${'1'.repeat(64)}`,
+      available: true,
+      hiddenEntryKeys: [],
+      positions: {},
+      labels: {},
+      shortcuts: [],
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(current))
+      .mockResolvedValueOnce(jsonResponse({ ...current, resourceVersion: `sha256:${'2'.repeat(64)}` }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.desktop.workspace()).resolves.toEqual(current)
+    await api.desktop.updateWorkspace({
+      expectedResourceVersion: current.resourceVersion,
+      hiddenEntryKeys: ['app:nginx'],
+      positions: {},
+      labels: {},
+      shortcuts: [],
+    })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/desktop/workspace')
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/desktop/workspace')
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ method: 'PUT' }))
+    expect(api.desktop.shortcutIconURL('id /?', 'a'.repeat(64))).toBe(
+      `/api/v1/desktop/shortcuts/id%20%2F%3F/icon?v=${'a'.repeat(64)}`,
+    )
+  })
+
   it('loads a site appearance only through the authenticated same-origin API', async () => {
     const id = 'a'.repeat(32)
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ name: '科技狮网站' }))

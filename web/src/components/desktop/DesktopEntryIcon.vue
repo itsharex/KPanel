@@ -20,6 +20,8 @@ const props = defineProps<{
   active?: boolean
   selected?: boolean
   order?: number
+  arranging?: boolean
+  dragging?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -27,6 +29,7 @@ const emit = defineEmits<{
   open: [event: MouseEvent | KeyboardEvent]
   context: [event: MouseEvent]
   warm: []
+  nudge: [deltaX: number, deltaY: number]
 }>()
 
 const LONG_PRESS_DURATION = 520
@@ -180,6 +183,14 @@ function onContext(event: MouseEvent): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
+  if ((event.ctrlKey || event.metaKey) && event.key.startsWith('Arrow')) {
+    event.preventDefault()
+    event.stopPropagation()
+    const deltaX = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
+    const deltaY = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
+    emit('nudge', deltaX, deltaY)
+    return
+  }
   if (event.key === 'Enter' || event.key === ' ') {
     suppressClickUntil = Date.now() + 120
     onOpen(event)
@@ -206,11 +217,14 @@ onBeforeUnmount(clearLongPress)
     :class="{
       'desktop__icon--launching': active,
       'desktop__icon--selected': selected,
+      'desktop__icon--arranging': arranging,
+      'desktop__icon--dragging': dragging,
     }"
     :style="{ '--desktop-entry-order': String(order ?? 0) }"
     type="button"
     :aria-label="accessibleLabel"
     :title="accessibleLabel"
+    aria-keyshortcuts="Control+ArrowUp Control+ArrowDown Control+ArrowLeft Control+ArrowRight"
     @pointerdown="onPointerDown"
     @click="onSelect"
     @dblclick="onOpen"

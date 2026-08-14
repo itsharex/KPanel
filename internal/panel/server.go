@@ -28,6 +28,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/auth"
 	"github.com/kejilion/kejilion-panel/internal/cluster"
 	"github.com/kejilion/kejilion-panel/internal/contract"
+	"github.com/kejilion/kejilion-panel/internal/desktopworkspace"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
 	"github.com/kejilion/kejilion-panel/internal/store"
 	"github.com/kejilion/kejilion-panel/internal/version"
@@ -63,6 +64,7 @@ type Server struct {
 	downloadTickets     map[[32]byte]fileDownloadTicket
 	ai                  *ai.Service
 	aiError             string
+	desktopWorkspace    *desktopworkspace.Store
 }
 
 type agentAPI interface {
@@ -103,6 +105,10 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 	if err != nil {
 		return nil, fmt.Errorf("initialize cluster service: %w", err)
 	}
+	desktopWorkspace, err := desktopworkspace.Open(filepath.Join(config.DataDir, "desktop-workspace"))
+	if err != nil {
+		return nil, fmt.Errorf("initialize desktop workspace: %w", err)
+	}
 	server := &Server{
 		config: config, auth: authService, store: storage, agent: agent,
 		cluster:             clusterService,
@@ -110,6 +116,7 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		terminalOpeningUser: make(map[string]int),
 		trustedProxies:      trustedProxies,
 		lastAuthAudit:       make(map[string]time.Time),
+		desktopWorkspace:    desktopWorkspace,
 	}
 	server.hostOps = newHostOperationService(server)
 	return server, nil
@@ -195,6 +202,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleTerminalSession(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs":
 		s.handleJobs(w, r)
+	case r.URL.Path == "/api/v1/desktop/workspace":
+		s.handleDesktopWorkspace(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/v1/desktop/shortcuts/"):
+		s.handleDesktopShortcutIcon(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/sites/") &&
 		strings.HasSuffix(r.URL.Path, "/icon"):
 		s.handleSiteIcon(w, r)

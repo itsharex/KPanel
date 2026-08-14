@@ -41,6 +41,14 @@ describe('desktop visual and interaction contract', () => {
     expect(windowSource).toContain("height: 'calc(100dvh - 82px)'")
   })
 
+  it('positions icon slots independently and disables motion and touch panning while arranging', () => {
+    expect(styles).toMatch(/\.desktop__icons\s*\{[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/)
+    expect(styles).toMatch(/\.desktop__icons-scroll-space\s*\{[^}]*pointer-events:\s*none;/)
+    expect(styles).toMatch(/\.desktop__icon-slot\s*\{[^}]*position:\s*absolute;[^}]*transition:\s*left [^;]+, top [^;]+;/)
+    expect(styles).toMatch(/\.desktop__icon-slot--dragging\s*\{[^}]*transition:\s*none;/)
+    expect(styles).toMatch(/\.desktop__icons--arranging \.desktop__icon\s*\{[^}]*touch-action:\s*none;/)
+  })
+
   it('uses Windows-style desktop selection, controls and bottom taskbar', () => {
     expect(styles).toContain('.desktop__icon--selected')
     expect(styles).toContain('.desktop-window__action--close:hover')

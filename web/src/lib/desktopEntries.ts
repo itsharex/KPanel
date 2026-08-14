@@ -1,7 +1,7 @@
 import { api } from '@/lib/api'
 import { appAccessURL, matchingAppProxySites } from '@/lib/appAccess'
 import { kpanelAppID, kpanelAppToken } from '@/lib/kpanelUpdate'
-import type { AppMarketItem, PublicNetworkSummary, Site } from '@/types/api'
+import type { AppMarketItem, DesktopShortcut, PublicNetworkSummary, Site } from '@/types/api'
 
 /**
  * Desktop dynamic entries: installed apps and configured sites surfaced as
@@ -10,7 +10,7 @@ import type { AppMarketItem, PublicNetworkSummary, Site } from '@/types/api'
  * desktop uncluttered.
  */
 
-export type DesktopEntryKind = 'app' | 'site'
+export type DesktopEntryKind = 'app' | 'site' | 'shortcut'
 export type DesktopEntryLaunch = 'external' | 'script'
 
 export interface DesktopEntry {
@@ -22,11 +22,14 @@ export interface DesktopEntry {
   launch: DesktopEntryLaunch
   /** External entry URL opened when the icon is activated. */
   url?: string
+  /** Optional user-authored description for a custom shortcut. */
+  description?: string
   /** App market icon URL (apps) or site favicon endpoint (sites). */
   iconURL?: string
   /** Source item for the detail dialog. */
   app?: AppMarketItem
   site?: Site
+  shortcut?: DesktopShortcut
 }
 
 export interface DesktopEntries {

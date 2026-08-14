@@ -27,6 +27,9 @@ import type {
   DockerEnvironment,
   DockerMaintenanceInput,
   DockerMaintenanceJob,
+  DesktopShortcutIconResult,
+  DesktopWorkspace,
+  DesktopWorkspaceUpdate,
   FileActionInput,
   FileActionResult,
   FileTrashDirectory,
@@ -988,6 +991,42 @@ export const api = {
       }
     },
     logout: () => request<void>('/auth/logout', { method: 'POST' }),
+  },
+  desktop: {
+    workspace: (signal?: AbortSignal): Promise<DesktopWorkspace> =>
+      request<DesktopWorkspace>('/desktop/workspace', { signal }),
+    updateWorkspace: (body: DesktopWorkspaceUpdate): Promise<DesktopWorkspace> =>
+      request<DesktopWorkspace>('/desktop/workspace', { method: 'PUT', body }),
+    shortcutIconURL: (id: string, version?: string): string =>
+      buildUrl(`/desktop/shortcuts/${encodeURIComponent(id)}/icon`, version ? { v: version } : undefined),
+    uploadShortcutIcon: (id: string, file: File): Promise<DesktopShortcutIconResult> =>
+      new Promise<DesktopShortcutIconResult>((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('PUT', buildUrl(`/desktop/shortcuts/${encodeURIComponent(id)}/icon`))
+        xhr.withCredentials = true
+        xhr.responseType = 'json'
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+        if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken)
+        xhr.onerror = () => reject(new ApiError('图标上传连接中断。', 0, 'network_error'))
+        xhr.onload = () => {
+          const payload = xhr.response
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(payload as DesktopShortcutIconResult)
+            return
+          }
+          const problem = payload && typeof payload === 'object' ? (payload as ProblemPayload) : undefined
+          reject(new ApiError(
+            problem?.detail || problem?.title || '图标上传失败。',
+            xhr.status,
+            problem?.code || 'desktop_icon_upload_failed',
+            payload,
+            problem?.requestId,
+          ))
+        }
+        xhr.send(file)
+      }),
+    removeShortcutIcon: (id: string): Promise<void> =>
+      request<void>(`/desktop/shortcuts/${encodeURIComponent(id)}/icon`, { method: 'DELETE' }),
   },
   agent: {
     health: async (signal?: AbortSignal) => normalizeAgent(await request<RawAgentHealth>('/agent/health', { signal })),

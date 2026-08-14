@@ -804,21 +804,73 @@ body.desktop-mode-open::-webkit-scrollbar {
   position: absolute;
   z-index: 10;
   inset: 16px 330px 72px 12px;
-  display: grid;
-  grid-auto-columns: 90px;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(auto-fill, 98px);
-  align-content: start;
-  justify-content: start;
-  gap: 4px 5px;
+  display: block;
   padding: 1px;
-  overflow: auto hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
 }
 
 .desktop__icons::-webkit-scrollbar {
   display: none;
+}
+
+.desktop__icons-scroll-space {
+  width: 1px;
+  pointer-events: none;
+}
+
+.desktop__icons-overflow-note {
+  position: absolute;
+  z-index: 11;
+  right: 8px;
+  left: 8px;
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  color: color-mix(in srgb, var(--desktop-label) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--desktop-label) 12%, transparent);
+  border-radius: 9px;
+  font-size: 10px;
+  line-height: 1.35;
+  pointer-events: none;
+  text-align: center;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.desktop__icon-slot {
+  position: absolute;
+  display: grid;
+  width: 90px;
+  height: 96px;
+  place-items: start center;
+  transition: left .2s cubic-bezier(.22, 1, .36, 1), top .2s cubic-bezier(.22, 1, .36, 1);
+}
+
+.desktop__icon-slot--dragging {
+  z-index: 12;
+  transition: none;
+}
+
+.desktop__icons--arranging .desktop__icon {
+  cursor: grab;
+  touch-action: none;
+}
+
+.desktop__icons--arranging .desktop__icon:active,
+.desktop__icon--dragging {
+  cursor: grabbing;
+}
+
+.desktop-icon-dragging,
+.desktop-icon-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
 }
 
 .desktop__icon {
@@ -1019,6 +1071,15 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop__icon--launching .desktop__icon-glyph {
   will-change: transform;
   animation: desktop-icon-launch .46s cubic-bezier(.18, .88, .25, 1.3);
+}
+
+.desktop__icon--dragging {
+  opacity: .92;
+}
+
+.desktop__icon--dragging .desktop__icon-glyph {
+  box-shadow: 0 18px 38px rgb(1 11 14 / 40%);
+  transform: translateY(-4px) scale(1.055);
 }
 
 @keyframes desktop-icon-arrive {
@@ -1649,6 +1710,15 @@ body.desktop-mode-open::-webkit-scrollbar {
   outline: 0;
 }
 
+.desktop__context-menu button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.desktop__context-menu .desktop__context-danger {
+  color: var(--danger, #ef7a7a);
+}
+
 .desktop__context-separator {
   height: 1px;
   margin: 5px 8px;
@@ -1762,6 +1832,225 @@ body.desktop-mode-open::-webkit-scrollbar {
   margin-top: 8px;
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.desktop__confirm-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.desktop__confirm-copy strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.desktop__confirm-copy p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.desktop-shortcut-form {
+  display: grid;
+  gap: 15px;
+}
+
+.desktop-shortcut-form > label {
+  display: grid;
+  gap: 7px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.desktop-shortcut-form :is(input, textarea) {
+  width: 100%;
+}
+
+.desktop-shortcut-form textarea {
+  min-height: 78px;
+  resize: vertical;
+}
+
+.desktop-shortcut-form > label > small {
+  justify-self: end;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.desktop-shortcut-form__identity {
+  display: grid;
+  grid-template-columns: 66px minmax(0, 1fr);
+  gap: 13px;
+  align-items: center;
+}
+
+.desktop-shortcut-form__preview,
+.desktop-icon-manager__glyph {
+  display: grid;
+  overflow: hidden;
+  place-items: center;
+  color: #0f766e;
+  background: #f7f9f8;
+  border: 1px solid var(--border);
+  border-radius: 17px;
+}
+
+.desktop-shortcut-form__preview {
+  width: 66px;
+  height: 66px;
+}
+
+.desktop-shortcut-form__preview img,
+.desktop-icon-manager__glyph img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.desktop-shortcut-form__icon-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.desktop-shortcut-form__icon-actions label {
+  cursor: pointer;
+}
+
+.desktop-shortcut-form__icon-actions input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.desktop-shortcut-form__icon-actions small {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.desktop-shortcut-form__error {
+  margin: 0;
+  padding: 9px 11px;
+  color: var(--danger, #ef7a7a);
+  background: color-mix(in srgb, var(--danger, #ef7a7a) 9%, transparent);
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.desktop-icon-manager {
+  display: grid;
+  gap: 17px;
+}
+
+.desktop-icon-manager__hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.desktop-icon-manager section {
+  display: grid;
+  gap: 9px;
+}
+
+.desktop-icon-manager section > header {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.desktop-icon-manager section > header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.desktop-icon-manager section > header strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.desktop-icon-manager section > header small,
+.desktop-icon-manager section > header > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.desktop-icon-manager__list {
+  display: grid;
+  max-height: 220px;
+  gap: 6px;
+  overflow: auto;
+}
+
+.desktop-icon-manager__list article {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 8px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+
+.desktop-icon-manager__glyph {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.desktop-icon-manager__list article > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.desktop-icon-manager__list article > div > :is(strong, small) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-icon-manager__list article > div > strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.desktop-icon-manager__list article > div > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.desktop-icon-manager__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.desktop-icon-manager__empty {
+  margin: 0;
+  padding: 16px;
+  color: var(--muted);
+  background: var(--surface-subtle);
+  border: 1px dashed var(--border);
+  border-radius: 11px;
+  font-size: 11px;
+  text-align: center;
 }
 
 /* Container-responsive application layouts ----------------------------- */
@@ -2188,6 +2477,25 @@ body.desktop-mode-open::-webkit-scrollbar {
   .desktop__icon {
     width: 82px;
     height: 89px;
+  }
+
+  .desktop-shortcut-form__identity {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .desktop-shortcut-form__preview {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+  }
+
+  .desktop-icon-manager__list article {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .desktop-icon-manager__list article > :is(button, .desktop-icon-manager__actions) {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .desktop__icon-glyph {
