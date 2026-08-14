@@ -52,6 +52,7 @@ type PHPVersion = NonNullable<SiteInput['phpVersion']>
 const sites = ref<Site[]>([])
 const publicNetwork = ref<PublicNetworkSummary>()
 const capabilities = ref<Array<{ id: string; enabled: boolean; reason?: string; methods?: string[] }>>([])
+const capabilitiesLoaded = ref(false)
 const loading = ref(true)
 const refreshing = ref(false)
 const siteIconRefreshKey = ref(0)
@@ -336,6 +337,9 @@ const canCreateAny = computed(
     canInstallRecipes.value ||
     canInstallTemplates.value,
 )
+const showSiteWriteUnavailable = computed(
+  () => capabilitiesLoaded.value && !loading.value && !canCreateAny.value,
+)
 const wordPressReason = computed(
   () => wordPressCapability.value?.reason?.trim() || 'WordPress 一键搭建依赖尚未就绪。',
 )
@@ -507,6 +511,7 @@ async function load(silent = false): Promise<void> {
     siteIconRefreshKey.value += 1
     loading.value = false
     capabilities.value = await capabilityPromise
+    capabilitiesLoaded.value = true
     publicNetwork.value = await publicNetworkPromise
     const installationJobs = await installationPromise
     const activeInstallation = installationJobs.find(
@@ -911,7 +916,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="!canCreateAny && !loading" class="inline-alert inline-alert--info" role="status">
+    <div v-if="showSiteWriteUnavailable" class="inline-alert inline-alert--info" role="status">
       <ShieldCheck :size="17" />
       <span><strong>网站写入当前不可用</strong><br />{{ siteWriteReason }}</span>
     </div>
