@@ -48,11 +48,25 @@ import {
   addFileEntriesToDesktop,
   beginDesktopFileDrag,
   clearDesktopFileDrag,
+  desktopFileDragEntries,
   DesktopShortcutLimitError,
   hasDesktopFileDrag,
+  peekDesktopFileDragEntries,
 } from '@/lib/desktopFileShortcuts'
+import {
+  changedFileDirectories,
+  fileTransferOperation,
+  fileTransferTargetError,
+  notifyFileDirectoriesChanged,
+  remapMovedFilePath,
+  subscribeFileDirectoryChanges,
+  successfulFileMoves,
+  syncMovedDesktopShortcuts,
+  useFileClipboard,
+  type FileTransferOperation,
+} from '@/lib/fileWindowTransfer'
 import { useToast } from '@/stores/toast'
-import type { FileActionInput, FileDirectory, FileEntry, FileTrashEntry } from '@/types/api'
+import type { FileActionInput, FileActionResult, FileDirectory, FileEntry, FileTrashEntry } from '@/types/api'
 
 const CodeEditor = defineAsyncComponent(() => import('@/components/files/CodeEditor.vue'))
 const route = useRoute()
@@ -81,14 +95,8 @@ function requestedFilePath(value: unknown): string | undefined {
   return candidate
 }
 type PreviewMode = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'metadata'
-type ClipboardMode = 'copy' | 'move'
 type ArchiveFormat = 'tar.gz' | 'zip' | 'tar'
 type FileViewMode = 'list' | 'grid'
-
-interface FileClipboard {
-  mode: ClipboardMode
-  entries: FileEntry[]
-}
 
 interface CodeEditorHandle {
   getValue: () => string
@@ -122,8 +130,18 @@ const dialogFormat = ref<ArchiveFormat>('tar.gz')
 const dialogBusy = ref(false)
 const dialogEntries = ref<FileEntry[]>([])
 const contextMenu = ref<{ entry?: FileEntry; x: number; y: number }>()
-const clipboard = ref<FileClipboard>()
+const fileClipboard = useFileClipboard()
+const clipboard = fileClipboard.clipboard
 const pasteBusy = ref(false)
+const internalDropTarget = ref('')
+const internalDropMode = ref<FileTransferOperation>('move')
+const internalDropCount = ref(0)
+const fileTransferState = ref<{
+  mode: FileTransferOperation
+  target: string
+  count: number
+  phase: 'running' | 'success' | 'partial' | 'cancelled' | 'error'
+}>()
 const desktopAdding = ref(false)
 const previewEntry = ref<FileEntry>()
 const previewContent = ref('')
@@ -144,12 +162,37 @@ const selectedTrash = ref(new Set<string>())
 const thumbnailFailures = ref(new Set<string>())
 let directoryController: AbortController | undefined
 let archiveController: AbortController | undefined
+let fileTransferController: AbortController | undefined
+let fileTransferClearTimer: number | undefined
+let unsubscribeFileDirectoryChanges: (() => void) | undefined
 let searchTimer: number | undefined
 let unmounted = false
 let openedRouteFile = ''
+const fileWindowChangeOrigin = Symbol('file-window')
 
 const fileViewStorageKey = 'kpanel:files:view:v1'
 const thumbnailSourceMaxBytes = 12 * 1024 * 1024
+
+const fileTransferTitle = computed(() => {
+  const state = fileTransferState.value
+  if (!state) return ''
+  if (state.mode === 'copy') {
+    if (state.phase === 'running') return `正在复制 ${state.count} 项`
+    if (state.phase === 'success') return `已复制 ${state.count} 项`
+    if (state.phase === 'cancelled') return '复制已取消'
+    if (state.phase === 'error') return '复制失败'
+    return '部分项目未复制'
+  }
+  if (state.phase === 'running') return `正在移动 ${state.count} 项`
+  if (state.phase === 'success') return `已移动 ${state.count} 项`
+  if (state.phase === 'cancelled') return '移动已取消'
+  if (state.phase === 'error') return '移动失败'
+  return '部分项目未移动'
+})
+
+const internalDropTitle = computed(() => internalDropMode.value === 'copy'
+  ? `复制 ${internalDropCount.value} 项到 ${internalDropTarget.value}`
+  : `移动 ${internalDropCount.value} 项到 ${internalDropTarget.value}`)
 
 const sortedEntries = computed(() => {
   const values = [...(directory.value?.entries || [])]
@@ -563,6 +606,132 @@ function finishEntryDrag(): void {
   clearDesktopFileDrag()
 }
 
+function clearInternalDropTarget(): void {
+  internalDropTarget.value = ''
+  internalDropCount.value = 0
+}
+
+function updateInternalDropTarget(event: DragEvent, target: string): boolean {
+  if (!hasDesktopFileDrag(event) || fileTransferState.value?.phase === 'running') return false
+  const entries = peekDesktopFileDragEntries(event)
+  const operation = fileTransferOperation(event)
+  const invalid = fileTransferTargetError(entries, target)
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = invalid ? 'none' : operation
+  internalDropMode.value = operation
+  internalDropCount.value = entries.length
+  internalDropTarget.value = invalid ? '' : target
+  return !invalid
+}
+
+function onFileBrowserDragOver(event: DragEvent): void {
+  if (hasDesktopFileDrag(event)) {
+    updateInternalDropTarget(event, currentPath.value)
+    return
+  }
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+}
+
+function onFileBrowserDragLeave(event: DragEvent): void {
+  const related = event.relatedTarget as Node | null
+  if (related && (event.currentTarget as HTMLElement).contains(related)) return
+  dragging.value = false
+  clearInternalDropTarget()
+}
+
+function onEntryDragOver(event: DragEvent, entry: FileEntry): void {
+  if (entry.kind !== 'directory' || !hasDesktopFileDrag(event)) return
+  event.stopPropagation()
+  updateInternalDropTarget(event, entry.path)
+}
+
+function onEntryDragLeave(event: DragEvent, entry: FileEntry): void {
+  if (internalDropTarget.value !== entry.path) return
+  const related = event.relatedTarget as Node | null
+  if (related && (event.currentTarget as HTMLElement).contains(related)) return
+  clearInternalDropTarget()
+}
+
+function scheduleFileTransferClear(): void {
+  if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
+  fileTransferClearTimer = window.setTimeout(() => {
+    fileTransferState.value = undefined
+    fileTransferClearTimer = undefined
+  }, 2200)
+}
+
+function cancelFileTransfer(): void {
+  fileTransferController?.abort()
+}
+
+async function transferInternalFileDrop(event: DragEvent, target: string): Promise<void> {
+  const entries = desktopFileDragEntries(event)
+  const operation = fileTransferOperation(event)
+  clearInternalDropTarget()
+  clearDesktopFileDrag()
+  if (!entries.length || fileTransferTargetError(entries, target)) return
+  if (fileTransferState.value?.phase === 'running') {
+    toast.show('已有文件操作正在进行')
+    return
+  }
+
+  if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
+  // Copies may be cancelled safely because they never change desktop shortcut
+  // targets. A move must run to a server result so successful path mappings can
+  // be applied to desktop shortcuts without leaving stale references behind.
+  const controller = operation === 'copy' ? new AbortController() : undefined
+  fileTransferController = controller
+  fileTransferState.value = { mode: operation, target, count: entries.length, phase: 'running' }
+  try {
+    const result = await api.files.action({
+      action: operation,
+      sources: entries.map((entry) => entry.path),
+      target,
+      expectedResourceVersions: Object.fromEntries(
+        entries.flatMap((entry) => entry.resourceVersion ? [[entry.path, entry.resourceVersion]] : []),
+      ),
+    }, controller?.signal)
+    const shortcutSyncFailed = await applySuccessfulFileChanges(result, target)
+    const partial = Boolean(result.failed.length || shortcutSyncFailed)
+    fileTransferState.value = {
+      mode: operation,
+      target,
+      count: result.succeeded.length,
+      phase: partial ? 'partial' : 'success',
+    }
+    if (partial) {
+      toast.danger(
+        operation === 'copy' ? '部分文件未复制' : '部分文件未移动',
+        shortcutSyncFailed
+          ? '真实文件已移动，但桌面快捷方式路径同步失败，请刷新后重试。'
+          : `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`,
+      )
+    } else {
+      toast.success(operation === 'copy' ? '复制完成' : '移动完成', `${result.succeeded.length} 项已传输到 ${target}`)
+    }
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      fileTransferState.value = { mode: operation, target, count: entries.length, phase: 'cancelled' }
+      toast.show('复制已取消', { message: '已经复制完成的项目会保留在目标目录。' })
+    } else {
+      fileTransferState.value = { mode: operation, target, count: entries.length, phase: 'error' }
+      toast.danger(operation === 'copy' ? '复制失败' : '移动失败', errorMessage(error))
+    }
+    if (!unmounted) await loadDirectory()
+  } finally {
+    if (fileTransferController === controller) fileTransferController = undefined
+    if (!unmounted) scheduleFileTransferClear()
+  }
+}
+
+function onEntryDrop(event: DragEvent, entry: FileEntry): void {
+  if (entry.kind !== 'directory' || !hasDesktopFileDrag(event)) return
+  event.preventDefault()
+  event.stopPropagation()
+  void transferInternalFileDrop(event, entry.path)
+}
+
 function showContext(event: MouseEvent, entry: FileEntry): void {
   event.preventDefault()
   selectForContext(entry)
@@ -627,11 +796,11 @@ function cancelArchive(): void {
   archiveController?.abort()
 }
 
-function setClipboard(mode: ClipboardMode, entry?: FileEntry): void {
+function setClipboard(mode: FileTransferOperation, entry?: FileEntry): void {
   contextMenu.value = undefined
   const entriesToStore = entriesForBatch(entry)
   if (!entriesToStore.length) return
-  clipboard.value = { mode, entries: entriesToStore }
+  fileClipboard.set(mode, entriesToStore)
   clearSelection()
   toast.success(
     mode === 'copy' ? '已复制到文件剪贴板' : '已剪切到文件剪贴板',
@@ -640,7 +809,25 @@ function setClipboard(mode: ClipboardMode, entry?: FileEntry): void {
 }
 
 function clearClipboard(): void {
-  clipboard.value = undefined
+  fileClipboard.clear()
+}
+
+async function applySuccessfulFileChanges(
+  result: FileActionResult,
+  target?: string,
+): Promise<boolean> {
+  let shortcutSyncFailed = false
+  if (result.succeeded.length && (result.action === 'move' || result.action === 'rename')) {
+    try {
+      await syncMovedDesktopShortcuts(result)
+    } catch {
+      shortcutSyncFailed = true
+    }
+  }
+  const changedDirectories = changedFileDirectories(result, target)
+  if (!unmounted) await loadDirectory()
+  notifyFileDirectoriesChanged(changedDirectories, fileWindowChangeOrigin, successfulFileMoves(result))
+  return shortcutSyncFailed
 }
 
 async function pasteClipboard(target = currentPath.value): Promise<void> {
@@ -653,16 +840,23 @@ async function pasteClipboard(target = currentPath.value): Promise<void> {
       action: stored.mode,
       sources: stored.entries.map((entry) => entry.path),
       target,
+      expectedResourceVersions: Object.fromEntries(
+        stored.entries.map((entry) => [entry.path, entry.resourceVersion]),
+      ),
     })
     if (stored.mode === 'move') {
       const failed = new Set(result.failed.map((item) => item.path))
       const remaining = stored.entries.filter((entry) => failed.has(entry.path))
-      clipboard.value = remaining.length ? { mode: 'move', entries: remaining } : undefined
+      if (remaining.length) fileClipboard.set('move', remaining)
+      else fileClipboard.clear()
     }
-    if (result.failed.length) {
+    const shortcutSyncFailed = await applySuccessfulFileChanges(result, target)
+    if (result.failed.length || shortcutSyncFailed) {
       toast.danger(
         result.succeeded.length ? '部分文件未粘贴' : '粘贴未完成',
-        `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`,
+        shortcutSyncFailed
+          ? '文件已移动，但桌面快捷方式路径同步失败，请刷新后重试。'
+          : `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`,
       )
     } else {
       toast.success(
@@ -670,7 +864,6 @@ async function pasteClipboard(target = currentPath.value): Promise<void> {
         `${result.succeeded.length} 项已粘贴到 ${target}`,
       )
     }
-    if (!unmounted) await loadDirectory()
   } catch (error) {
     toast.danger('粘贴失败', errorMessage(error))
     await loadDirectory()
@@ -747,10 +940,13 @@ async function submitDialog(): Promise<void> {
     const result = controller
       ? await api.files.action(input, controller.signal)
       : await api.files.action(input)
-    if (result.failed.length) {
+    const shortcutSyncFailed = await applySuccessfulFileChanges(result)
+    if (result.failed.length || shortcutSyncFailed) {
       toast.danger(
-        result.succeeded.length ? '部分文件未处理' : '文件操作未完成',
-        `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`,
+        shortcutSyncFailed ? '文件已处理，快捷方式未同步' : result.succeeded.length ? '部分文件未处理' : '文件操作未完成',
+        shortcutSyncFailed
+          ? '真实文件操作已完成，请刷新桌面后重试路径同步。'
+          : `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`,
       )
     } else {
       toast.success(
@@ -767,7 +963,6 @@ async function submitDialog(): Promise<void> {
     dialogAction.value = undefined
     dialogValue.value = ''
     dialogEntries.value = []
-    if (!unmounted) await loadDirectory()
   } catch (error) {
     if (controller?.signal.aborted) {
       if (!unmounted) toast.success('操作已停止', '未完成的临时文件已清理。')
@@ -927,7 +1122,11 @@ async function uploadFiles(files: FileList | File[]): Promise<void> {
 
 function onDrop(event: DragEvent): void {
   dragging.value = false
-  if (hasDesktopFileDrag(event)) return
+  if (hasDesktopFileDrag(event)) {
+    void transferInternalFileDrop(event, currentPath.value)
+    return
+  }
+  clearInternalDropTarget()
   if (event.dataTransfer?.files?.length) void uploadFiles(event.dataTransfer.files)
 }
 
@@ -1032,6 +1231,16 @@ onMounted(() => {
     : desktopCloseGuardCoordinator.register('classic-files', guard)
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleFileShortcut)
+  unsubscribeFileDirectoryChanges = subscribeFileDirectoryChanges((directories, origin, moves = []) => {
+    if (origin === fileWindowChangeOrigin) return
+    const relocatedPath = remapMovedFilePath(currentPath.value, moves)
+    if (relocatedPath !== currentPath.value) {
+      void navigateDirectory(relocatedPath)
+      return
+    }
+    if (!directories.has(currentPath.value)) return
+    void loadDirectory()
+  })
   restoreViewMode()
   void loadRequestedRoute()
 })
@@ -1060,10 +1269,13 @@ watch(search, () => {
 
 onBeforeUnmount(() => {
   unregisterWindowCloseGuard?.()
+  unsubscribeFileDirectoryChanges?.()
   clearDesktopFileDrag()
   unmounted = true
   directoryController?.abort()
   archiveController?.abort()
+  fileTransferController?.abort()
+  if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
   if (searchTimer !== undefined) window.clearTimeout(searchTimer)
   window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleFileShortcut)
@@ -1106,10 +1318,13 @@ onBeforeUnmount(() => {
 
     <section
       class="file-browser"
-      :class="{ 'file-browser--dragging': dragging }"
+      :class="{
+        'file-browser--dragging': dragging,
+        'file-browser--internal-drop': internalDropTarget === currentPath,
+      }"
       @dragenter.prevent="onUploadDragEnter"
-      @dragover.prevent
-      @dragleave.self="dragging = false"
+      @dragover="onFileBrowserDragOver"
+      @dragleave="onFileBrowserDragLeave"
       @drop.prevent="onDrop"
       @contextmenu="showDirectoryContext"
     >
@@ -1189,6 +1404,31 @@ onBeforeUnmount(() => {
         </div>
       </Transition>
 
+      <Transition name="slide">
+        <div
+          v-if="fileTransferState"
+          class="file-transfer-status"
+          :class="`file-transfer-status--${fileTransferState.phase}`"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="file-transfer-status__icon">
+            <RefreshCw v-if="fileTransferState.phase === 'running'" :size="17" class="spinning" />
+            <Copy v-else-if="fileTransferState.mode === 'copy'" :size="17" />
+            <Scissors v-else :size="17" />
+          </span>
+          <span>
+            <strong>{{ fileTransferTitle }}</strong>
+            <small>{{ fileTransferState.target }}</small>
+          </span>
+          <button
+            v-if="fileTransferState.phase === 'running' && fileTransferState.mode === 'copy'"
+            type="button"
+            @click="cancelFileTransfer"
+          >取消</button>
+        </div>
+      </Transition>
+
       <div v-if="Object.keys(uploadProgress).length" class="upload-strip">
         <div v-for="(progress, name) in uploadProgress" :key="name">
           <span>{{ name }}</span>
@@ -1220,7 +1460,10 @@ onBeforeUnmount(() => {
           v-for="entry in entries"
           :key="entry.path"
           class="file-row file-row--entry"
-          :class="{ 'file-row--selected': selected.has(entry.path) }"
+          :class="{
+            'file-row--selected': selected.has(entry.path),
+            'file-row--drop-target': internalDropTarget === entry.path,
+          }"
           role="row"
           tabindex="0"
           :draggable="canAddToDesktop(entry)"
@@ -1230,6 +1473,9 @@ onBeforeUnmount(() => {
           @contextmenu.stop="showContext($event, entry)"
           @dragstart="startEntryDrag($event, entry)"
           @dragend="finishEntryDrag"
+          @dragover="onEntryDragOver($event, entry)"
+          @dragleave="onEntryDragLeave($event, entry)"
+          @drop="onEntryDrop($event, entry)"
         >
           <span @click.stop="toggleEntry(entry.path)">
             <input
@@ -1280,7 +1526,10 @@ onBeforeUnmount(() => {
           v-for="entry in entries"
           :key="entry.path"
           class="file-grid-card"
-          :class="{ 'file-grid-card--selected': selected.has(entry.path) }"
+          :class="{
+            'file-grid-card--selected': selected.has(entry.path),
+            'file-grid-card--drop-target': internalDropTarget === entry.path,
+          }"
           role="listitem"
           tabindex="0"
           :draggable="canAddToDesktop(entry)"
@@ -1290,6 +1539,9 @@ onBeforeUnmount(() => {
           @contextmenu.stop="showContext($event, entry)"
           @dragstart="startEntryDrag($event, entry)"
           @dragend="finishEntryDrag"
+          @dragover="onEntryDragOver($event, entry)"
+          @dragleave="onEntryDragLeave($event, entry)"
+          @drop="onEntryDrop($event, entry)"
         >
           <input
             class="file-grid-card__check"
@@ -1356,6 +1608,14 @@ onBeforeUnmount(() => {
       <div v-if="dragging" class="drop-overlay">
         <Upload :size="34" />
         <strong>松开以上传到 {{ currentPath }}</strong>
+      </div>
+      <div v-if="internalDropTarget" class="file-internal-drop-hint" aria-hidden="true">
+        <Copy v-if="internalDropMode === 'copy'" :size="17" />
+        <Scissors v-else :size="17" />
+        <span>
+          <strong>{{ internalDropTitle }}</strong>
+          <small>{{ internalDropMode === 'copy' ? '松开以复制' : '按住 Ctrl/Option 可复制' }}</small>
+        </span>
       </div>
     </section>
 
@@ -1759,6 +2019,13 @@ onBeforeUnmount(() => {
   border-color: var(--brand);
 }
 
+.file-browser--internal-drop {
+  border-color: color-mix(in srgb, var(--brand) 76%, var(--border));
+  box-shadow:
+    inset 0 0 0 2px color-mix(in srgb, var(--brand) 32%, transparent),
+    var(--shadow-sm);
+}
+
 .file-toolbar {
   display: flex;
   align-items: center;
@@ -2023,6 +2290,74 @@ onBeforeUnmount(() => {
   cursor: wait;
 }
 
+.file-transfer-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 8px 15px;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border));
+  background: color-mix(in srgb, var(--brand) 7%, var(--surface));
+}
+
+.file-transfer-status--partial,
+.file-transfer-status--error,
+.file-transfer-status--cancelled {
+  border-bottom-color: color-mix(in srgb, var(--amber) 30%, var(--border));
+  background: color-mix(in srgb, var(--amber) 7%, var(--surface));
+}
+
+.file-transfer-status__icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 14%, var(--surface));
+}
+
+.file-transfer-status--partial .file-transfer-status__icon,
+.file-transfer-status--error .file-transfer-status__icon,
+.file-transfer-status--cancelled .file-transfer-status__icon {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 13%, var(--surface));
+}
+
+.file-transfer-status > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.file-transfer-status strong,
+.file-transfer-status small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-transfer-status strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.file-transfer-status small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.file-transfer-status button {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+}
+
 .danger-link {
   color: var(--danger) !important;
 }
@@ -2098,6 +2433,15 @@ onBeforeUnmount(() => {
   border-color: color-mix(in srgb, var(--brand) 48%, var(--border));
   background: color-mix(in srgb, var(--brand) 8%, var(--surface));
   box-shadow: 0 7px 20px color-mix(in srgb, var(--brand) 8%, transparent);
+}
+
+.file-grid-card--drop-target {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 13%, var(--surface));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--brand) 62%, transparent),
+    0 10px 24px color-mix(in srgb, var(--brand) 14%, transparent);
+  transform: translateY(-2px);
 }
 
 .file-grid-card__check,
@@ -2231,6 +2575,11 @@ onBeforeUnmount(() => {
 .file-row--entry:hover,
 .file-row--selected {
   background: color-mix(in srgb, var(--brand) 6%, var(--surface));
+}
+
+.file-row--drop-target {
+  background: color-mix(in srgb, var(--brand) 13%, var(--surface));
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--brand) 68%, transparent);
 }
 
 .file-row > span {
@@ -2383,6 +2732,48 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--surface) 90%, transparent);
   backdrop-filter: blur(5px);
   pointer-events: none;
+}
+
+.file-internal-drop-hint {
+  position: absolute;
+  z-index: 5;
+  bottom: 14px;
+  left: 50%;
+  display: flex;
+  max-width: calc(100% - 28px);
+  align-items: center;
+  gap: 9px;
+  padding: 9px 13px;
+  border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
+  border-radius: 12px;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--surface) 91%, transparent);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 20%);
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px) saturate(135%);
+  pointer-events: none;
+}
+
+.file-internal-drop-hint span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.file-internal-drop-hint strong,
+.file-internal-drop-hint small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-internal-drop-hint strong {
+  font-size: 11px;
+}
+
+.file-internal-drop-hint small {
+  color: var(--muted);
+  font-size: 9px;
 }
 
 .file-context-menu {

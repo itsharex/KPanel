@@ -5,7 +5,7 @@ import type { DesktopShortcut, DesktopWorkspaceUpdate, FileEntry } from '@/types
 export const DESKTOP_FILE_DRAG_TYPE = 'application/x-kpanel-desktop-file-shortcut'
 export const MAX_DESKTOP_SHORTCUTS = 64
 
-export type DesktopFileEntry = Pick<FileEntry, 'name' | 'path' | 'kind'>
+export type DesktopFileEntry = Pick<FileEntry, 'name' | 'path' | 'kind'> & Partial<Pick<FileEntry, 'resourceVersion'>>
 export type DesktopFileShortcutInput = DesktopWorkspaceUpdate['shortcuts'][number]
 
 export interface DesktopFileShortcutAddResult {
@@ -107,7 +107,7 @@ export function beginDesktopFileDrag(event: DragEvent, entries: readonly Desktop
   if (!dataTransfer || !supported.length) return false
   const token = randomToken()
   activeDrag = { token, entries: supported.map((entry) => ({ ...entry })) }
-  dataTransfer.effectAllowed = 'link'
+  dataTransfer.effectAllowed = 'all'
   dataTransfer.setData(DESKTOP_FILE_DRAG_TYPE, token)
   dataTransfer.setData('text/plain', supported.length === 1 ? supported[0]!.name : `${supported.length} 个项目`)
   return true
@@ -120,6 +120,12 @@ export function hasDesktopFileDrag(event: DragEvent): boolean {
 export function desktopFileDragEntries(event: DragEvent): DesktopFileEntry[] {
   const token = event.dataTransfer?.getData(DESKTOP_FILE_DRAG_TYPE)
   if (!activeDrag || !token || token !== activeDrag.token) return []
+  return activeDrag.entries.map((entry) => ({ ...entry }))
+}
+
+/** Drag data is protected before drop in some browsers, so hover uses only the active in-memory payload. */
+export function peekDesktopFileDragEntries(event: DragEvent): DesktopFileEntry[] {
+  if (!hasDesktopFileDrag(event) || !activeDrag) return []
   return activeDrag.entries.map((entry) => ({ ...entry }))
 }
 

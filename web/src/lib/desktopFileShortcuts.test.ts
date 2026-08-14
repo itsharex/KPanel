@@ -10,6 +10,7 @@ import {
   desktopFileDragEntries,
   DesktopShortcutLimitError,
   hasDesktopFileDrag,
+  peekDesktopFileDragEntries,
 } from './desktopFileShortcuts'
 
 function workspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
@@ -107,9 +108,17 @@ describe('desktop file shortcuts', () => {
 
   it('accepts only the active in-memory drag token', () => {
     const event = dragEvent()
-    expect(beginDesktopFileDrag(event, [{ name: 'etc', path: '/etc', kind: 'directory' }])).toBe(true)
+    expect(beginDesktopFileDrag(event, [{
+      name: 'etc', path: '/etc', kind: 'directory', resourceVersion: 'sha256:etc',
+    }])).toBe(true)
+    expect(event.dataTransfer?.effectAllowed).toBe('all')
     expect(hasDesktopFileDrag(event)).toBe(true)
-    expect(desktopFileDragEntries(event)).toEqual([{ name: 'etc', path: '/etc', kind: 'directory' }])
+    expect(peekDesktopFileDragEntries(event)).toEqual([{
+      name: 'etc', path: '/etc', kind: 'directory', resourceVersion: 'sha256:etc',
+    }])
+    expect(desktopFileDragEntries(event)).toEqual([{
+      name: 'etc', path: '/etc', kind: 'directory', resourceVersion: 'sha256:etc',
+    }])
     clearDesktopFileDrag()
     expect(desktopFileDragEntries(event)).toEqual([])
   })

@@ -3,6 +3,8 @@ import { createSSRApp, nextTick, reactive, ssrContextKey } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView.vue'
 import { resetDesktopIconsForTest } from '@/stores/desktopIcons'
+import { resetFileWindowTransferForTest } from '@/lib/fileWindowTransfer'
+import { beginDesktopFileDrag, clearDesktopFileDrag } from '@/lib/desktopFileShortcuts'
 import type { DesktopWorkspaceUpdate } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
@@ -92,6 +94,8 @@ interface FileBindings {
   toggleAllTrash: () => void
   runTrashAction: (action: 'trash_restore' | 'trash_delete' | 'trash_empty') => Promise<void>
   pasteClipboard: (target?: string) => Promise<void>
+  transferInternalFileDrop: (event: DragEvent, target: string) => Promise<void>
+  cancelFileTransfer: () => void
   addEntriesToDesktop: (entry?: TestFileEntry, currentDirectory?: boolean) => Promise<void>
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
   showContext: (event: MouseEvent, entry: TestFileEntry) => void
@@ -126,6 +130,14 @@ interface FileBindings {
     value?: {
       mode: 'copy' | 'move'
       entries: TestFileEntry[]
+    }
+  }
+  fileTransferState: {
+    value?: {
+      mode: 'copy' | 'move'
+      target: string
+      count: number
+      phase: 'running' | 'success' | 'partial' | 'cancelled' | 'error'
     }
   }
   contextMenu: { value?: { entry?: TestFileEntry; x: number; y: number } }
@@ -181,6 +193,29 @@ function testEntry(name: string): TestFileEntry {
   }
 }
 
+function internalDrag(entries: TestFileEntry[], modifiers: { ctrlKey?: boolean; altKey?: boolean } = {}): DragEvent {
+  const values = new Map<string, string>()
+  const types: string[] = []
+  const event = {
+    ctrlKey: Boolean(modifiers.ctrlKey),
+    altKey: Boolean(modifiers.altKey),
+    dataTransfer: {
+      types,
+      effectAllowed: 'none',
+      dropEffect: 'none',
+      setData(type: string, value: string) {
+        if (!types.includes(type)) types.push(type)
+        values.set(type, value)
+      },
+      getData(type: string) {
+        return values.get(type) || ''
+      },
+    },
+  } as unknown as DragEvent
+  beginDesktopFileDrag(event, entries)
+  return event
+}
+
 function setupView(): FileBindings {
   const component = FilesView as unknown as {
     setup: (props: Record<string, never>, context: { expose: () => void }) => FileBindings
@@ -198,6 +233,8 @@ function setupView(): FileBindings {
 beforeEach(() => {
   vi.clearAllMocks()
   resetDesktopIconsForTest()
+  resetFileWindowTransferForTest()
+  clearDesktopFileDrag()
   mocks.route = reactive({ query: {} as Record<string, unknown> })
   mocks.push.mockImplementation(async (location: { query?: Record<string, unknown> }) => {
     mocks.route.query = location.query || {}
@@ -1099,7 +1136,8 @@ describe('FilesView directory loading', () => {
     const view = setupView()
     const entry = testEntry('source.txt')
     view.currentPath.value = '/target'
-    view.clipboard.value = { mode: 'copy', entries: [entry] }
+    view.directory.value = { path: '/', entries: [entry] }
+    view.setClipboard('copy', entry)
     mocks.action.mockResolvedValueOnce({
       action: 'copy',
       succeeded: [{ path: entry.path, destination: '/target/source.txt' }],
@@ -1112,6 +1150,7 @@ describe('FilesView directory loading', () => {
       action: 'copy',
       sources: [entry.path],
       target: '/target',
+      expectedResourceVersions: { [entry.path]: entry.resourceVersion },
     })
     expect(view.clipboard.value?.entries).toEqual([entry])
     expect(mocks.list).toHaveBeenCalled()
@@ -1121,7 +1160,9 @@ describe('FilesView directory loading', () => {
     const view = setupView()
     const moved = testEntry('moved.txt')
     const failed = testEntry('failed.txt')
-    view.clipboard.value = { mode: 'move', entries: [moved, failed] }
+    view.directory.value = { path: '/', entries: [moved, failed] }
+    view.selected.value = new Set([moved.path, failed.path])
+    view.setClipboard('move', moved)
     mocks.action.mockResolvedValueOnce({
       action: 'move',
       succeeded: [{ path: moved.path, destination: `/target/${moved.name}` }],
@@ -1136,5 +1177,49 @@ describe('FilesView directory loading', () => {
       '部分文件未粘贴',
       '1 项成功，1 项失败：目标已存在',
     )
+  })
+
+  it('moves a native file-window drag with version protection and completion feedback', async () => {
+    const view = setupView()
+    const entry = { ...testEntry('project.txt'), path: '/source/project.txt' }
+    const event = internalDrag([entry])
+    view.currentPath.value = '/target'
+    mocks.action.mockResolvedValueOnce({
+      action: 'move',
+      succeeded: [{ path: entry.path, destination: '/target/project.txt' }],
+      failed: [],
+    })
+
+    await view.transferInternalFileDrop(event, '/target')
+
+    expect(mocks.action).toHaveBeenCalledWith({
+      action: 'move',
+      sources: [entry.path],
+      target: '/target',
+      expectedResourceVersions: { [entry.path]: entry.resourceVersion },
+    }, undefined)
+    expect(view.fileTransferState.value).toMatchObject({
+      mode: 'move', target: '/target', count: 1, phase: 'success',
+    })
+    expect(mocks.success).toHaveBeenCalledWith('移动完成', '1 项已传输到 /target')
+  })
+
+  it('allows a copy to be cancelled without claiming that completed copies were removed', async () => {
+    const view = setupView()
+    const entry = { ...testEntry('project.txt'), path: '/source/project.txt' }
+    const event = internalDrag([entry], { ctrlKey: true })
+    mocks.action.mockImplementationOnce((_input: unknown, signal?: AbortSignal) => new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    }))
+
+    const transfer = view.transferInternalFileDrop(event, '/target')
+    expect(view.fileTransferState.value?.phase).toBe('running')
+    view.cancelFileTransfer()
+    await transfer
+
+    expect(view.fileTransferState.value).toMatchObject({ mode: 'copy', phase: 'cancelled' })
+    expect(mocks.show).toHaveBeenCalledWith('复制已取消', {
+      message: '已经复制完成的项目会保留在目标目录。',
+    })
   })
 })
