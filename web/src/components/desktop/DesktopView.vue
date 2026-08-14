@@ -47,7 +47,7 @@ import {
   DesktopShortcutLimitError,
   hasDesktopFileDrag,
 } from '@/lib/desktopFileShortcuts'
-import { shortcutFileIcon } from '@/lib/fileEntryPresentation'
+import { shortcutFileGradient, shortcutFileIcon } from '@/lib/fileEntryPresentation'
 import {
   autoArrangeDesktopIcons,
   deriveDesktopIconLayout,
@@ -336,8 +336,9 @@ function entryGradient(entry: DesktopEntry): string {
     return `linear-gradient(145deg, ${start} 0%, ${end} 100%)`
   }
   if (entry.kind === 'shortcut') {
-    if (entry.launch === 'directory') return 'linear-gradient(145deg, #facc15 0%, #ca8a04 100%)'
-    if (entry.launch === 'file') return 'linear-gradient(145deg, #94a3b8 0%, #475569 100%)'
+    if (entry.launch === 'directory' || entry.launch === 'file') {
+      return shortcutFileGradient(entry.name, entry.launch)
+    }
     return 'linear-gradient(145deg, #38bdf8 0%, #0369a1 100%)'
   }
   // App-market apps keep a neutral brand tile; the market icon image sits on it.

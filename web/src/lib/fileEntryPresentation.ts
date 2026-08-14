@@ -32,6 +32,10 @@ export type FileIconKind =
 
 type FilePresentationInput = Pick<FileEntry, 'name' | 'kind' | 'mime' | 'editable' | 'previewable'>
 
+const imageExtensions = ['avif', 'bmp', 'gif', 'heic', 'ico', 'jpeg', 'jpg', 'png', 'svg', 'webp']
+const audioExtensions = ['aac', 'flac', 'm4a', 'mp3', 'ogg', 'opus', 'wav']
+const videoExtensions = ['avi', 'm4v', 'mkv', 'mov', 'mp4', 'webm']
+
 export function fileExtension(name: string): string {
   const normalized = name.toLocaleLowerCase()
   if (normalized.endsWith('.tar.gz')) return 'tar.gz'
@@ -44,8 +48,13 @@ export function fileEntryIconKind(entry: FilePresentationInput): FileIconKind {
   const mime = (entry.mime || '').toLocaleLowerCase()
   const extension = fileExtension(entry.name)
   const normalizedName = entry.name.toLocaleLowerCase()
-  if (mime.startsWith('image/')) return 'image'
-  if (mime.startsWith('audio/') || mime.startsWith('video/')) return 'media'
+  if (mime.startsWith('image/') || imageExtensions.includes(extension)) return 'image'
+  if (
+    mime.startsWith('audio/')
+    || mime.startsWith('video/')
+    || audioExtensions.includes(extension)
+    || videoExtensions.includes(extension)
+  ) return 'media'
   if (
     ['tar.gz', 'tgz', 'zip', 'tar', '7z', 'rar', 'gz', 'bz2', 'xz'].includes(extension)
     || ['application/gzip', 'application/zip', 'application/x-7z-compressed', 'application/x-rar-compressed'].includes(mime)
@@ -74,7 +83,9 @@ export function fileEntryIcon(entry: FilePresentationInput): Component {
   switch (fileEntryIconKind(entry)) {
     case 'folder': return Folder
     case 'image': return FileImage
-    case 'media': return entry.mime?.startsWith('audio/') ? FileAudio : FileVideo
+    case 'media': return entry.mime?.startsWith('audio/') || audioExtensions.includes(fileExtension(entry.name))
+      ? FileAudio
+      : FileVideo
     case 'archive': return FileArchive
     case 'spreadsheet': return FileSpreadsheet
     case 'database': return Database
@@ -89,4 +100,28 @@ export function fileEntryIcon(entry: FilePresentationInput): Component {
 
 export function shortcutFileIcon(name: string, kind: Extract<FileKind, 'file' | 'directory'>): Component {
   return fileEntryIcon({ name, kind, editable: false, previewable: false })
+}
+
+const shortcutFileGradients: Record<FileIconKind, readonly [string, string]> = {
+  folder: ['#facc15', '#ca8a04'],
+  image: ['#a78bfa', '#6d28d9'],
+  media: ['#c084fc', '#7e22ce'],
+  archive: ['#fb923c', '#c2410c'],
+  spreadsheet: ['#34d399', '#047857'],
+  database: ['#2dd4bf', '#0f766e'],
+  presentation: ['#fb7185', '#be123c'],
+  package: ['#f59e0b', '#b45309'],
+  secret: ['#f87171', '#b91c1c'],
+  code: ['#38bdf8', '#0369a1'],
+  document: ['#94a3b8', '#475569'],
+  generic: ['#94a3b8', '#475569'],
+}
+
+export function shortcutFileGradient(
+  name: string,
+  kind: Extract<FileKind, 'file' | 'directory'>,
+): string {
+  const iconKind = fileEntryIconKind({ name, kind, editable: false, previewable: false })
+  const [start, end] = shortcutFileGradients[iconKind]
+  return `linear-gradient(145deg, ${start} 0%, ${end} 100%)`
 }
