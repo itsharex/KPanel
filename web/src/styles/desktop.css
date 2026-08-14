@@ -857,12 +857,6 @@ body.desktop-mode-open::-webkit-scrollbar {
   transition: none;
 }
 
-.desktop__icons--arranging .desktop__icon {
-  cursor: grab;
-  touch-action: none;
-}
-
-.desktop__icons--arranging .desktop__icon:active,
 .desktop__icon--dragging {
   cursor: grabbing;
 }
@@ -892,7 +886,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   animation: desktop-icon-arrive .34s cubic-bezier(.22, 1, .36, 1) forwards;
   animation-delay: min(calc(var(--desktop-entry-order, 0) * 24ms), 280ms);
   transition: background-color .15s ease, border-color .15s ease, transform .15s ease;
-  touch-action: manipulation;
+  touch-action: none;
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
 }
@@ -2477,6 +2471,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   .desktop__icon {
     width: 82px;
     height: 89px;
+    touch-action: pan-y;
   }
 
   .desktop-shortcut-form__identity {

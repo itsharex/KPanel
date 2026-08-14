@@ -223,12 +223,6 @@ describe('DesktopView icon layout interaction', () => {
   it('cancels an active drag when a second pointer appears', async () => {
     const wrapper = mount(DesktopView, { attachTo: document.body })
     await flushPromises()
-    await wrapper.trigger('contextmenu', { clientX: 220, clientY: 160 })
-    await flushPromises()
-    const enterArrangeMode = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-      .find((item) => item.text().includes('进入整理模式'))
-    await enterArrangeMode?.trigger('click')
-    await flushPromises()
     const slot = wrapper.find('[data-icon-key="nav:/overview"]')
 
     slot.element.dispatchEvent(pointer('pointerdown', 30, 30, { pointerType: 'touch' }))
@@ -284,6 +278,7 @@ describe('DesktopView icon layout interaction', () => {
     const autoArrange = items.find((item) => item.text().includes('自动整理'))
     expect(autoArrange?.attributes('disabled')).toBeDefined()
     expect(items.some((item) => item.text().includes('恢复默认位置'))).toBe(false)
+    expect(items.some((item) => item.text().includes('整理模式'))).toBe(false)
 
     await autoArrange?.trigger('click')
     await flushPromises()

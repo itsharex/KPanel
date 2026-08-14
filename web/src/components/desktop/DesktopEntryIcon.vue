@@ -20,7 +20,6 @@ const props = defineProps<{
   active?: boolean
   selected?: boolean
   order?: number
-  arranging?: boolean
   dragging?: boolean
 }>()
 
@@ -217,7 +216,6 @@ onBeforeUnmount(clearLongPress)
     :class="{
       'desktop__icon--launching': active,
       'desktop__icon--selected': selected,
-      'desktop__icon--arranging': arranging,
       'desktop__icon--dragging': dragging,
     }"
     :style="{ '--desktop-entry-order': String(order ?? 0) }"

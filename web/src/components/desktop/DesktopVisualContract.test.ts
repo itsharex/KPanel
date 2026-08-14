@@ -34,19 +34,19 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toContain('env(safe-area-inset-bottom)')
   })
 
-  it('uses direct touch activation and native content scrolling without changing mouse semantics', () => {
-    expect(styles).toMatch(/\.desktop__icon\s*\{[^}]*touch-action:\s*manipulation;/)
+  it('supports direct touch dragging and native window-content scrolling without changing mouse semantics', () => {
+    expect(styles).toMatch(/\.desktop__icon\s*\{[^}]*touch-action:\s*none;/)
+    expect(styles).toMatch(/@media \(max-width: 760px\) \{[\s\S]*?\.desktop__icon\s*\{[^}]*touch-action:\s*pan-y;/)
     expect(styles).toMatch(/\.desktop-window__body\s*\{[^}]*touch-action:\s*pan-x pan-y;/)
     expect(windowSource).toContain('if (isCompactLayout()) return')
     expect(windowSource).toContain("height: 'calc(100dvh - 82px)'")
   })
 
-  it('positions icon slots independently and disables motion and touch panning while arranging', () => {
+  it('positions icon slots independently and disables slot motion while dragging', () => {
     expect(styles).toMatch(/\.desktop__icons\s*\{[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/)
     expect(styles).toMatch(/\.desktop__icons-scroll-space\s*\{[^}]*pointer-events:\s*none;/)
     expect(styles).toMatch(/\.desktop__icon-slot\s*\{[^}]*position:\s*absolute;[^}]*transition:\s*left [^;]+, top [^;]+;/)
     expect(styles).toMatch(/\.desktop__icon-slot--dragging\s*\{[^}]*transition:\s*none;/)
-    expect(styles).toMatch(/\.desktop__icons--arranging \.desktop__icon\s*\{[^}]*touch-action:\s*none;/)
   })
 
   it('uses Windows-style desktop selection, controls and bottom taskbar', () => {

@@ -175,7 +175,6 @@ const compactIconLayout = ref(window.innerWidth <= 760)
 const localPositions = ref<Record<string, DesktopIconPosition>>({})
 const dragPreview = ref<{ key: string; left: number; top: number }>()
 const draggingIcon = ref('')
-const arrangingIcons = ref(false)
 const iconAnnouncement = ref('')
 const iconManagerOpen = ref(false)
 const shortcutDialogOpen = ref(false)
@@ -718,7 +717,6 @@ function beginIconDrag(event: PointerEvent, key: string): void {
   if (event.button === 0 && event.isPrimary !== false) suppressActivationAfterDrag.delete(key)
   if (compactIconLayout.value || event.button !== 0 || event.isPrimary === false || iconDrag) return
   const pointerType = event.pointerType || 'mouse'
-  if ((pointerType === 'touch' || pointerType === 'pen') && !arrangingIcons.value) return
   const position = renderedPositionByKey.value.get(key)
   if (!position) return
   const origin = desktopIconPositionToPixels(position, iconBounds.value)
@@ -916,7 +914,7 @@ function onDesktopPointerDown(event: PointerEvent): void {
 
 function onContextMenuAction(
   action: 'refresh' | 'theme' | 'classic' | 'about' | 'processes' | 'add-shortcut'
-    | 'auto-arrange' | 'manage-icons' | 'arrange-mode',
+    | 'auto-arrange' | 'manage-icons',
 ): void {
   closeContextMenu()
   switch (action) {
@@ -940,12 +938,6 @@ function onContextMenuAction(
       break
     case 'manage-icons':
       iconManagerOpen.value = true
-      break
-    case 'arrange-mode':
-      arrangingIcons.value = !arrangingIcons.value
-      toast.show(i18n.t(arrangingIcons.value
-        ? 'desktop.arrangeModeEnabled'
-        : 'desktop.arrangeModeDisabled'))
       break
     case 'processes': {
       const windowId = desktop.openWindow('/processes', 'route.processes', false)
@@ -1336,7 +1328,6 @@ function onViewportResize(): void {
     <nav
       ref="iconsElement"
       class="desktop__icons"
-      :class="{ 'desktop__icons--arranging': arrangingIcons }"
       :aria-label="i18n.t('desktop.gridLabel')"
       :aria-busy="entriesLoading"
     >
@@ -1376,7 +1367,6 @@ function onViewportResize(): void {
           :active="bouncingIcon === app.path"
           :selected="selectedIcon === `nav:${app.path}`"
           :order="index"
-          :arranging="arrangingIcons"
           :dragging="draggingIcon === `nav:${app.path}`"
           @select="selectNavIcon(app.path)"
           @open="openNavIcon(app.path)"
@@ -1406,7 +1396,6 @@ function onViewportResize(): void {
             :gradient="entryGradient(entry)"
             :selected="selectedIcon === entry.key"
             :order="desktopApps.length + index"
-            :arranging="arrangingIcons"
             :dragging="draggingIcon === entry.key"
             @select="selectEntry(entry)"
             @open="(event) => onEntryOpen(event, entry)"
@@ -1433,7 +1422,6 @@ function onViewportResize(): void {
           :gradient="entryGradient(entry)"
           :selected="selectedIcon === entry.key"
           :order="desktopApps.length + visibleDynamicEntries.length + index"
-          :arranging="arrangingIcons"
           :dragging="draggingIcon === entry.key"
           @select="selectEntry(entry)"
           @open="(event) => onEntryOpen(event, entry)"
@@ -1581,17 +1569,6 @@ function onViewportResize(): void {
           >
             <Grid2X2 :size="15" aria-hidden="true" />
             {{ i18n.t('desktop.autoArrange') }}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            :disabled="compactIconLayout"
-            @click="onContextMenuAction('arrange-mode')"
-          >
-            <Grid2X2 :size="15" aria-hidden="true" />
-            {{ arrangingIcons
-              ? i18n.t('desktop.exitArrangeMode')
-              : i18n.t('desktop.enterArrangeMode') }}
           </button>
           <div class="desktop__context-separator" role="separator" />
           <button type="button" role="menuitem" @click="onContextMenuAction('refresh')">
