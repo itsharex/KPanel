@@ -1,0 +1,268 @@
+---
+name: normalize-kpanel-app-icons
+description: "以现有应用图标为参考，使用 ImageGen 生成统一风格候选，完成透明背景、尺寸居中、小尺寸复核和单图定向返工"
+version: "1.0"
+author: "Codex"
+tags: [kpanel, app-market, icons, imagegen, visual-review, normalization]
+params: [project_dir, mode, asset_selector, output_dir, subject_box, display_size, max_bytes, revision_note, adoption]
+created: "2026-08-14T02:25:41Z"
+updated: "2026-08-14T02:25:41Z"
+---
+
+# KPanel 应用市场图标重构与规范化
+
+## Purpose
+
+把 `web/public/app-icons` 中现有 WebP 作为身份参考，生成风格统一、透明背景、视觉居中且在桌面
+小尺寸下仍清晰的候选图标。流程支持单图试做、分批重构和针对失败项的单点返工。
+
+默认只在 Git 忽略目录生成候选和证据，不覆盖仓库图标、不运行应用市场同步、不提交、不推送、
+不发布。应用市场图标的上游事实来源仍是 `https://app.kejilion.sh/`；候选被接受后先输出上游更新包，
+不得把 KPanel 本地快照悄悄变成第二套长期图标源。
+
+## Prerequisites
+
+- 完整读取项目 `AGENTS.md`、`PROJECT_RULES.md`、`docs/project-management.md`、
+  `docs/application-market.md` 和本工作流；遵守项目的 worktree、权限和验证等级。
+- 完整读取当前环境的 `imagegen` skill。默认使用内置 `image_gen`；每个图标单独调用一次。
+- 本地图片作为参考前先检查其内容；调用时将原图明确标记为“reference image”，不是无约束编辑目标。
+- `${{project_dir}}` 必须是当前 KPanel 工作树绝对路径。
+- `${{output_dir}}` 必须位于 `${{project_dir}}/.codex-tmp/` 或其他已确认的 Git 忽略目录。
+- 需要 Pillow 做尺寸、Alpha 和 WebP 校验。若系统 `python` 是占位符，使用
+  `codex_app__load_workspace_dependencies` 返回的 Python，不修改项目依赖。
+- `thirdparty-default.svg` 是代码原生矢量回退图标，不进入 ImageGen 批次；如需调整应单独走 SVG 修改流程。
+
+## Steps
+
+### 1. 锁定范围、权限和回滚点
+
+先验证参数，不做任何图片生成：
+
+- `${{mode}}`：仅允许 `single`、`batch`、`refine`。
+- `${{asset_selector}}`：单个 slug、逗号分隔 slug，或用户明确要求全量时使用 `all`。
+- `${{subject_box}}`：建议 `96`，允许 `88-100`，表示规范化后主体最长边像素。
+- `${{display_size}}`：默认 `56`，必须等于实际桌面验收尺寸。
+- `${{max_bytes}}`：默认 `32768`；这是候选体积上限，不替代同步脚本的安全上限。
+- `${{revision_note}}`：`refine` 模式必须是一个明确问题，例如 `图形视觉偏左`、`细节过多`；
+  其他模式可用 `none`。
+- `${{adoption}}`：仅允许 `preview` 或 `upstream-package`。
+
+记录以下任务契约：允许写 `${{output_dir}}/**`；只有在创建或更新本工作流的任务中才允许写
+`.codex-workflows/**`；禁止写 `web/public/app-icons/**`、`internal/appmarket/catalog.json`、
+`VERSION`、`CHANGELOG.md` 和发布配置。记录当前分支、精确 `HEAD`、工作树状态和回滚点。
+
+```powershell
+git -C "${{project_dir}}" status --short --branch
+git -C "${{project_dir}}" rev-parse HEAD
+git -C "${{project_dir}}" check-ignore --quiet -- "${{output_dir}}"
+if ($LASTEXITCODE -ne 0) { throw "output_dir must be Git-ignored" }
+New-Item -ItemType Directory -Force -Path "${{output_dir}}" | Out-Null
+```
+
+**Expected output:** 精确输入清单、权限边界和回滚点已记录，候选目录不进入 Git。
+
+### 2. 建立源图清单，不用肉眼猜路径
+
+从 `internal/appmarket/catalog.json` 读取 slug、名称、图标路径和 `iconSha256`，再解析
+`${{asset_selector}}`。`all` 只选择目录中 147 个 WebP，不包含 SVG 回退图标。拒绝不存在、重复、
+越界或不在目录快照中的路径。
+
+为每个输入记录：
+
+- `slug`、中英文名称、原文件路径和 SHA-256；
+- 宽高、格式、颜色模式、文件字节数；
+- Alpha 包围盒、透明角点、主体占画布比例；
+- 是否已有明显偏心、透明留白、白边、阴影、渐变或小尺寸不可读问题。
+
+用 Pillow 校验 WebP；不要仅按扩展名判断。生成 `${{output_dir}}/manifest.json`，状态初始为
+`pending`。`batch` 或 `all` 每批最多 10 个，按清单顺序处理，在批次边界停下来复核。
+
+**Expected output:** 每个输入都有可追溯原始哈希和客观几何基线；没有模糊 glob 或未登记文件。
+
+### 3. 选择“重构”还是“只规范几何”
+
+先分类，减少品牌漂移和不必要生成：
+
+- `geometry-only`：图形本身清晰，只存在透明留白、缩放或居中问题；直接执行步骤 5，不调用 ImageGen。
+- `reconstruct`：原图风格复杂、像素质量差、背景/阴影杂乱，或用户明确要求 AI 重构；执行步骤 4。
+- `manual-review`：高度依赖精确文字、复杂商标或细节，生成后很可能失真；仍可试做，但不能自动采纳。
+
+若用户明确要求“所有选中图标都用 GPT Image 2 重构”，全部选为 `reconstruct`，但仍保留分批复核，
+不得把 147 个结果无人检查地一次性覆盖。
+
+**Expected output:** `manifest.json` 为每个图标记录处理路线和理由。
+
+### 4. 每个图标单独生成统一风格候选
+
+查看原图后，将它作为唯一身份参考；一项资产调用一次内置 `image_gen`。绿色/青色主体默认使用
+纯色 `#ff00ff` 背景，其他主体默认使用 `#00ff00`，且背景色不得出现在主体中。
+
+基础提示词模板：
+
+```text
+Use case: logo-brand
+Asset type: 128x128 KPanel app-market and desktop icon
+Input images: Image 1 is the original application icon used only as the identity reference.
+Primary request: Reconstruct the same application's recognizable core symbol in one coherent icon system.
+Preserve: the original identity, core silhouette, primary brand color, and essential lettermark only when it is indispensable.
+Style/medium: crisp flat vector-like bitmap; minimal geometry; 1-3 solid colors; strong silhouette; readable at 56x56.
+Composition/framing: one mark, optically centered, balanced padding on all sides, no cropping; subject should occupy about 72-76% of the square canvas.
+Scene/backdrop: a perfectly flat solid <KEY_COLOR> chroma-key background for local background removal.
+Constraints: one uniform background color; no shadows, no gradients, no glow, no texture, no reflections, no floor plane, no 3D, no glossy finish, no mockup, no watermark, no border, no background plate, no extra objects, no tiny decorative details.
+Text: no text unless the original icon's single letter or short wordmark is essential; if retained, reproduce it exactly and do not add any other characters.
+Avoid: redesigning the brand, changing the motif, inventing symbols, asymmetrical accidental padding, chroma color inside the subject.
+```
+
+保存原始生成图为 `${{output_dir}}/<slug>/source-v<N>.png`，同时把最终提示词写入
+`${{output_dir}}/<slug>/prompt-v<N>.txt`。不得把项目要引用的最终资产只留在 Codex 默认生成目录。
+
+**Expected output:** 每个 `reconstruct` 图标都有独立、可复现的原始生成图和提示词。
+
+### 5. 去除色键并确定性规范化画布
+
+先使用 `imagegen` skill 安装的 `remove_chroma_key.py`，启用边缘柔化和去色溢。示例：
+
+```powershell
+$codexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
+$removeKey = Join-Path $codexRoot "skills/.system/imagegen/scripts/remove_chroma_key.py"
+& <PYTHON_EXE> $removeKey `
+  --input "${{output_dir}}/<slug>/source-v<N>.png" `
+  --out "${{output_dir}}/<slug>/alpha-v<N>.png" `
+  --auto-key border `
+  --soft-matte `
+  --transparent-threshold 12 `
+  --opaque-threshold 220 `
+  --despill
+```
+
+随后用 Pillow 确定性处理：
+
+1. 转换为 RGBA，按 Alpha `> 12` 计算主体包围盒；空包围盒直接失败。
+2. 裁出主体，保持比例，将最长边缩放到 `${{subject_box}}`。
+3. 粘贴到 `128x128` 完全透明画布的几何中心；默认不加阴影、描边或图标内部白底。
+4. 只有视觉重心明确偏移时允许 `x/y` 各最多 `4px` 的光学修正，并写入 manifest；不得靠反复随机生成修正纯几何问题。
+5. 输出透明无损 WebP：`${{output_dir}}/<slug>/<slug>-v<N>-128.webp`。
+6. 验证四角 Alpha 为 `0`、尺寸精确 `128x128`、主体不触边、无明显色键边缘，文件不超过 `${{max_bytes}}`。
+
+若仅残留 1px 色边，先用 `--edge-contract 1` 重做去背；不要立刻重新生成。只有主体颜色与色键冲突
+或边缘无法干净分离时，才换色键并重新生成。
+
+**Expected output:** 候选透明、居中、尺寸与体积可预测，生成随机性不会影响最终画布几何。
+
+### 6. 生成接触表并按真实桌面尺寸验收
+
+每个图标生成同一布局的对比图：
+
+1. 原图 `128x128`；
+2. 原图按 `${{display_size}}x${{display_size}}` 显示在 KPanel 白色图标底板上；
+3. 候选 `128x128`；
+4. 候选按 `${{display_size}}x${{display_size}}` 分别显示在明/暗桌面背景和相同白色底板上。
+
+逐项判定 `pass` 或 `refine`：
+
+- 一眼仍能认出原应用，核心符号和主色没有漂移；
+- 视觉中心稳定，四边留白均衡，不因源图透明图层显得偏移；
+- `56x56` 下轮廓清楚，没有糊成色块或出现不可读小字；
+- 没有阴影、渐变、3D、杂点、色键边缘、意外白框或多余字符；
+- 同批图标的主体尺度、圆角语言、细节密度和颜色饱和度接近；
+- 候选大小不超过 `${{max_bytes}}`，且不明显高于原图而没有视觉收益。
+
+把接触表保存为 `${{output_dir}}/reviews/batch-<N>.png`，把结论和失败原因写入 manifest。
+
+**Expected output:** 结论基于真实小尺寸并可被其他会话复核，不以 1024px 生成图“看起来不错”代替验收。
+
+### 7. 对不合适图标做单问题返工
+
+`${{mode}}=refine` 时只处理 `revision_note` 指出的一个问题，并重复原提示中的身份与不变量。保留旧候选，
+新文件递增版本号。优先采用以下定向动作：
+
+| 问题 | 只改什么 | 必须保持 |
+| --- | --- | --- |
+| 视觉偏左/右/上/下 | 优先只调整步骤 5 的光学偏移 | 图形、颜色、细节、比例 |
+| 主体太小/太大 | 只调整 `subject_box`，每次不超过 4px | 中心、风格、品牌身份 |
+| 细节过多 | 只要求减少内部线条和小装饰 | 核心轮廓、主色、字母标记 |
+| 身份漂移 | 强化原图核心符号与配色约束 | 统一风格和画布规范 |
+| 字母错误 | 删除非必要文字；必要字母要求逐字准确 | 其他视觉元素 |
+| 阴影/渐变/杂点 | 明确只移除该效果 | 构图、符号、颜色 |
+| 色边/白边 | 先重新去背和收边 | 生成内容不变 |
+
+每次返工只改变一个变量并重新做步骤 5-6。连续两次仍不合格时标记 `manual-review`，不要无界生成。
+
+**Expected output:** 可明确比较“改了什么”，不因整段重写提示词造成新的风格漂移。
+
+### 8. 分批交付和上游采用边界
+
+`${{adoption}}=preview` 时只交付候选、接触表、manifest 和最终提示词，仓库源图必须保持未修改。
+
+`${{adoption}}=upstream-package` 时，仅把已通过人工确认的候选复制到
+`${{output_dir}}/upstream-package/`，生成包含 `slug`、文件名、SHA-256、尺寸、字节数、原图 SHA、
+提示词版本和复核状态的 `manifest.json`。该目录用于更新 `https://app.kejilion.sh/` 的图标来源。
+
+上游图标更新并经过独立审核后，另开有明确修改/提交权限的 KPanel 任务运行：
+
+```powershell
+node "${{project_dir}}/scripts/sync-app-market.mjs"
+```
+
+同步任务必须复核 `internal/appmarket/catalog.json` 中的哈希和 `web/public/app-icons` 的实际文件。
+未经上游更新，禁止仅替换 KPanel 本地图标后宣称完成，因为下一次同步会覆盖这些文件。
+
+**Expected output:** 预览与正式采用清晰分离；KPanel 与应用市场上游不会形成双真源。
+
+## Parameters
+
+- `${{project_dir}}`：KPanel 当前专用工作树绝对路径。
+- `${{mode}}`：`single`、`batch` 或 `refine`。
+- `${{asset_selector}}`：单个 slug、逗号分隔 slug，或明确授权后的 `all`。
+- `${{output_dir}}`：Git 忽略的候选与证据目录，建议 `${{project_dir}}/.codex-tmp/icon-normalization/<run-id>`。
+- `${{subject_box}}`：规范化后主体最长边，默认 `96`。
+- `${{display_size}}`：实际桌面验收尺寸，默认 `56`。
+- `${{max_bytes}}`：候选 WebP 最大字节数，默认 `32768`。
+- `${{revision_note}}`：`refine` 的单一失败原因；非返工模式使用 `none`。
+- `${{adoption}}`：`preview` 或 `upstream-package`，默认 `preview`。
+
+常用调用意图：
+
+```text
+运行 normalize-kpanel-app-icons：
+project_dir=<当前 KPanel worktree>
+mode=single
+asset_selector=qinglong
+output_dir=<project_dir>/.codex-tmp/icon-normalization/qinglong-trial
+subject_box=96
+display_size=56
+max_bytes=32768
+revision_note=none
+adoption=preview
+```
+
+针对性返工只需把 `mode` 改为 `refine`，并把 `revision_note` 写成一个可观察问题，例如
+`图形视觉偏左约 3px，其他内容保持不变`。
+
+## Verification
+
+执行完成至少确认：
+
+1. `git status --short` 中没有候选图片、临时提示词或 manifest；`preview` 模式下仓库图标没有变化。
+2. 每个候选是可解码的 `128x128` WebP，含 Alpha，四角透明，主体最长边符合 `${{subject_box}}`。
+3. 每个候选大小 `<= ${{max_bytes}}`，SHA-256、提示词版本、处理路线和人工结论均写入 manifest。
+4. 每个候选都有 `${{display_size}}` 明/暗背景接触表；失败项没有混入通过清单。
+5. `refine` 只改变一个声明问题，旧版本仍可比较和回滚。
+6. `upstream-package` 只包含人工确认通过的文件；未更新上游时不改 KPanel 本地快照。
+7. 若本任务修改了工作流文件，运行：
+
+```powershell
+<PYTHON_EXE> <CODEX_WORKFLOWS_CLI> validate normalize-kpanel-app-icons --project-dir "${{project_dir}}"
+git -C "${{project_dir}}" diff --check
+node "${{project_dir}}/scripts/check-governance-consistency.mjs"
+```
+
+## Notes
+
+- 内置 `image_gen` 是默认路径。只有用户明确要求 CLI/API/模型参数控制时，才按 `imagegen` skill 的
+  CLI 路径执行；需要真实原生透明时必须先说明 `gpt-image-2` 不支持该透明参数，再征得同意使用对应回退。
+- 生成图标是第三方品牌标识的衍生视觉资产。要求品牌字样、比例或商标几何精确时，优先保留官方图形，
+  只做确定性的透明留白、缩放和居中；AI 候选必须人工确认，不能自动成为正式商标资产。
+- 白色桌面底板属于 KPanel 展示层；候选图标本身保持透明，避免同时存在“图标内白底”和“桌面白底”。
+- 批量处理按 5-10 个一组更容易发现风格漂移，也便于控制生成成本和返工范围。
+- 任何提交、推送、上游修改、同步、发布或部署都需要任务契约中的独立明确授权。

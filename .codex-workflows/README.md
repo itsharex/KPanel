@@ -19,6 +19,8 @@
   基线继续见 `docs/quality-audit-2026-08-02.md`，后续审计按用途引用，不把旧产品形态当作当前事实。
 - `kpanel-real-machine-app-lifecycle.workflow.yaml`：用隔离候选实例和真实 Chrome 验证应用
   在运行、停止、重启、暂停状态下均可打开详情，并恢复真机现场。
+- `normalize-kpanel-app-icons.workflow.yaml`：以现有应用图标为身份参考，生成统一风格候选，完成透明背景、
+  视觉居中、真实桌面尺寸复核和单问题定向返工；默认只输出预览，上游采用与 KPanel 同步分开授权。
 - 新版本发布后使用 `docs/release-acceptance-template.md` 记录多维质量状态、证据层级、生产部署安全核对、
   交付节奏和回滚点；不批量改写历史验收记录。
 - 重复缺陷、指标恶化或门禁缺口使用 `docs/quality-improvement-proposal-template.md` 建立提案，并通过
