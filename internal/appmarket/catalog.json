@@ -230,7 +230,7 @@
       "url": "https://github.com/whyour/qinglong",
       "icon": "/app-icons/qinglong.webp",
       "slug": "qinglong",
-      "iconSha256": "e377c0478d7df4d56b2416fd510dd090bb1d928167dd593d7456919ec0615379"
+      "iconSha256": "5929f8db8a7261f1fdfb8971c4eef3846843b69c02075c78e629f654f104d373"
     },
     {
       "id": "builtin-13",
@@ -1702,7 +1702,7 @@
       "url": "",
       "icon": "/app-icons/nginx-stream.webp",
       "slug": "nginx-stream",
-      "iconSha256": "11bfe5c1dede64e16b61dfcc6e04de3056357d9d7ff794a5ba663830b46bd799"
+      "iconSha256": "26c9384b9a09181cdfe06f14c576bd5ba6245b4c744e6717159f0afcbc163414"
     },
     {
       "id": "builtin-105",
