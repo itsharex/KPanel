@@ -282,12 +282,10 @@ describe('DesktopView icon layout interaction', () => {
     await flushPromises()
     const items = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
     const autoArrange = items.find((item) => item.text().includes('自动整理'))
-    const reset = items.find((item) => item.text().includes('恢复默认位置'))
     expect(autoArrange?.attributes('disabled')).toBeDefined()
-    expect(reset?.attributes('disabled')).toBeDefined()
+    expect(items.some((item) => item.text().includes('恢复默认位置'))).toBe(false)
 
     await autoArrange?.trigger('click')
-    await reset?.trigger('click')
     await flushPromises()
     expect(updateWorkspace).not.toHaveBeenCalled()
     wrapper.unmount()

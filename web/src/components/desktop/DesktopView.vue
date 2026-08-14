@@ -17,7 +17,6 @@ import {
   Grid2X2,
   MonitorCog,
   Plus,
-  RotateCcw,
   Trash2,
   EyeOff,
   X,
@@ -872,18 +871,6 @@ async function autoArrangeIcons(): Promise<void> {
   }
 }
 
-async function resetIconPositions(): Promise<void> {
-  if (compactIconLayout.value) return
-  closeContextMenu()
-  try {
-    await persistPositions({})
-    iconAnnouncement.value = i18n.t('desktop.iconPositionsReset')
-    toast.success(i18n.t('desktop.iconPositionsReset'))
-  } catch {
-    // persistPositions already surfaced a specific failure.
-  }
-}
-
 function onGlobalPointerDown(event: PointerEvent): void {
   if (iconDrag && event.pointerId !== iconDrag.pointerId) cancelIconDrag()
   if (!contextMenu.value.open) return
@@ -929,7 +916,7 @@ function onDesktopPointerDown(event: PointerEvent): void {
 
 function onContextMenuAction(
   action: 'refresh' | 'theme' | 'classic' | 'about' | 'processes' | 'add-shortcut'
-    | 'auto-arrange' | 'reset-icons' | 'manage-icons' | 'arrange-mode',
+    | 'auto-arrange' | 'manage-icons' | 'arrange-mode',
 ): void {
   closeContextMenu()
   switch (action) {
@@ -950,9 +937,6 @@ function onContextMenuAction(
       break
     case 'auto-arrange':
       void autoArrangeIcons()
-      break
-    case 'reset-icons':
-      void resetIconPositions()
       break
     case 'manage-icons':
       iconManagerOpen.value = true
@@ -1597,15 +1581,6 @@ function onViewportResize(): void {
           >
             <Grid2X2 :size="15" aria-hidden="true" />
             {{ i18n.t('desktop.autoArrange') }}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            :disabled="compactIconLayout || !workspace.available || desktopIcons.saving.value"
-            @click="onContextMenuAction('reset-icons')"
-          >
-            <RotateCcw :size="15" aria-hidden="true" />
-            {{ i18n.t('desktop.resetIconPositions') }}
           </button>
           <button
             type="button"
