@@ -3032,6 +3032,21 @@ textarea:focus-visible,
     background 160ms ease;
 }
 
+.resource-summary__item--stacked {
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 11px;
+  row-gap: 2px;
+}
+
+.resource-summary__item--stacked > .resource-summary__icon {
+  grid-row: 1 / span 2;
+}
+
+.resource-summary__item--stacked > em {
+  grid-column: 2;
+  word-break: keep-all;
+}
+
 .resource-summary__item:hover {
   background: var(--surface-subtle);
   border-color: var(--border);

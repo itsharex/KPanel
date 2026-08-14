@@ -1303,7 +1303,7 @@ onBeforeUnmount(() => {
             </span>
             <em v-if="data.containers">{{ data.containers.running }} 个运行中</em>
           </RouterLink>
-          <RouterLink to="/apps" class="resource-summary__item">
+          <RouterLink to="/apps" class="resource-summary__item resource-summary__item--stacked">
             <span class="resource-summary__icon resource-summary__icon--amber"><Boxes :size="20" /></span>
             <span>
               <strong>{{ data.apps?.installed ?? '—' }}</strong>
