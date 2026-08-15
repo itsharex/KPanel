@@ -11,7 +11,9 @@ import { aiApi,runEventURL } from '@/lib/aiApi'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import type { AIApprovalMode,AIMessage,AIModel,AIProvider,AIRun,AIRunSnapshot,AISession,AIToolCall,AIThinkingLevel,AIUploadAttachment } from '@/types/ai'
 
-usePhraseCatalog(() => import('@/i18n/pages/AiView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/AiView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/AiView/zh-TW').then((module) => module.default))
 
 const route=useRoute();const router=useRouter()
 const desktopWindowActive=inject(desktopWindowActiveKey,computed(()=>true))

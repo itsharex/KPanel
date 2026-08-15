@@ -3,7 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Filter, LoaderCircle, RefreshCw, Search, ShieldCheck } from '@lucide/vue'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
-usePhraseCatalog(() => import('@/i18n/pages/AuditView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/AuditView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/AuditView/zh-TW').then((module) => module.default))
 import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'

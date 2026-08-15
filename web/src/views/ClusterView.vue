@@ -2,7 +2,9 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
-usePhraseCatalog(() => import('@/i18n/pages/ClusterView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/ClusterView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/ClusterView/zh-TW').then((module) => module.default))
 import {
   ArrowUpRight,
   Check,

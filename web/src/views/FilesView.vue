@@ -3,7 +3,9 @@ import { computed, defineAsyncComponent, inject, onBeforeUnmount, onMounted, ref
 import { useRoute, useRouter } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
-usePhraseCatalog(() => import('@/i18n/pages/FilesView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/FilesView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/FilesView/zh-TW').then((module) => module.default))
 import {
   Archive,
   ChevronRight,

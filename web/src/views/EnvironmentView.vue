@@ -2,7 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
-usePhraseCatalog(() => import('@/i18n/pages/EnvironmentView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/EnvironmentView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/EnvironmentView/zh-TW').then((module) => module.default))
 import {
   Archive,
   Box,

@@ -4,7 +4,9 @@ import { RouterLink } from 'vue-router'
 import { rememberOverviewViewport, restoreOverviewViewport } from '@/lib/overviewViewport'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
-usePhraseCatalog(() => import('@/i18n/pages/OverviewView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/OverviewView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/OverviewView/zh-TW').then((module) => module.default))
 import {
   Activity,
   ArrowLeftRight,

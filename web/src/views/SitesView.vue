@@ -3,7 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { RouterLink } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
-usePhraseCatalog(() => import('@/i18n/pages/SitesView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/SitesView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/SitesView/zh-TW').then((module) => module.default))
 import {
   ArrowRight,
   Braces,

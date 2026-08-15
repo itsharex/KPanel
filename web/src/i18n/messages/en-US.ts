@@ -15,6 +15,7 @@ export const enUSMessages = {
   'common.language': 'Language',
   'common.languageDescription': 'Stored only in this browser and never uploaded',
   'common.locale.zhCN': '简体中文',
+  'common.locale.zhTW': '繁体中文',
   'common.locale.enUS': 'English',
   'common.admin': 'Administrator',
 

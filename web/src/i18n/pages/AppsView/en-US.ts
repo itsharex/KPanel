@@ -162,4 +162,11 @@ export default [
   ['动态同步', 'Live sync'],
   ['安全缓存', 'Safe cache'],
   ['内置快照', 'Built-in snapshot'],
+  ['面板運維', 'Panel operations'],
+  ['AI 大模型', 'AI models'],
+  ['儲存 / 檔案', 'Storage / files'],
+  ['影音媒體', 'Audio / video'],
+  ['網路 / 安全', 'Network / security'],
+  ['開發 / 效率', 'Development / productivity'],
+  ['通訊 / 工具', 'Communication / tools'],
 ] as const satisfies PhraseCatalog

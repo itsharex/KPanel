@@ -11,7 +11,9 @@ import { usePhraseCatalog } from '@/i18n/phrase'
 import { useI18n } from '@/i18n'
 import { desktopCloseGuardCoordinator, desktopWindowCloseGuardKey } from '@/lib/desktopRouteKeys'
 
-usePhraseCatalog(() => import('@/i18n/pages/TerminalView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/TerminalView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/TerminalView/zh-TW').then((module) => module.default))
 const { t } = useI18n()
 const desktopWindowCloseGuards = inject(desktopWindowCloseGuardKey, undefined)
 let unregisterWindowCloseGuard: (() => void) | undefined

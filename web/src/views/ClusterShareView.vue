@@ -26,7 +26,9 @@ import {
 } from '@/lib/format'
 import type { PublicClusterShareHost, PublicClusterShareSnapshot } from '@/types/api'
 
-usePhraseCatalog(() => import('@/i18n/pages/ClusterShareView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/ClusterShareView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/ClusterShareView/zh-TW').then((module) => module.default))
 
 const route = useRoute()
 const snapshot = ref<PublicClusterShareSnapshot>()

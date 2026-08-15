@@ -2,7 +2,9 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
-usePhraseCatalog(() => import('@/i18n/pages/DockerView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/DockerView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/DockerView/zh-TW').then((module) => module.default))
 import {
   Box,
   Boxes,

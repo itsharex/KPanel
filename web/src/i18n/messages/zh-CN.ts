@@ -13,6 +13,7 @@ export const zhCNMessages = {
   'common.language': '界面语言',
   'common.languageDescription': '仅保存在当前浏览器，不上传服务器',
   'common.locale.zhCN': '简体中文',
+  'common.locale.zhTW': '繁体中文',
   'common.locale.enUS': 'English',
   'common.admin': '管理员',
 

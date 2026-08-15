@@ -3,7 +3,9 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from '@/i18n'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
-usePhraseCatalog(() => import('@/i18n/pages/DiagnosticsView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/DiagnosticsView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/DiagnosticsView/zh-TW').then((module) => module.default))
 import {
   Activity,
   Cpu,
