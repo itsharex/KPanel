@@ -107,31 +107,39 @@ function backtickRunLength(value, index) {
   return end - index;
 }
 
-function hasClosingBacktickRun(source, start, length) {
-  let index = source.indexOf('`', start);
-  while (index >= 0) {
-    const runLength = backtickRunLength(source, index);
-    if (runLength === length) return true;
-    index = source.indexOf('`', index + runLength);
+function isParagraphBoundary(line) {
+  return /^\s*$/.test(line) ||
+    /^ {0,3}(?:`{3,}|~{3,}|<!--|#{1,6}(?:\s|$)|>|(?:[-+*]|\d{1,9}[.)])[ \t]+)/.test(line) ||
+    /^(?: {4}|\t)/.test(line);
+}
+
+function hasClosingBacktickRun(lines, lineIndex, start, length) {
+  for (let index = lineIndex; index < lines.length; index += 1) {
+    if (index > lineIndex && isParagraphBoundary(lines[index])) return false;
+    const line = lines[index];
+    let cursor = index === lineIndex ? start : 0;
+    while ((cursor = line.indexOf('`', cursor)) >= 0) {
+      const runLength = backtickRunLength(line, cursor);
+      if (runLength === length) return true;
+      cursor += runLength;
+    }
   }
   return false;
 }
 
 function visibleMarkdownLines(markdown) {
-  const source = markdown.replace(/\r\n/g, '\n');
-  const lines = source.split('\n');
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
   const visibleLines = [];
-  let sourceOffset = 0;
   let fence = null;
   let insideHtmlComment = false;
   let inlineCodeLength = null;
 
-  for (const rawLine of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex];
     if (fence !== null) {
       const closingFence = rawLine.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/)?.[1];
       if (closingFence?.[0] === fence.character && closingFence.length >= fence.length) fence = null;
       visibleLines.push('');
-      sourceOffset += rawLine.length + 1;
       continue;
     }
 
@@ -140,7 +148,6 @@ function visibleMarkdownLines(markdown) {
       if (openingFence && !(openingFence[1][0] === '`' && openingFence[2].includes('`'))) {
         fence = { character: openingFence[1][0], length: openingFence[1].length };
         visibleLines.push('');
-        sourceOffset += rawLine.length + 1;
         continue;
       }
     }
@@ -178,7 +185,7 @@ function visibleMarkdownLines(markdown) {
 
       if (rawLine[index] === '`') {
         const runLength = backtickRunLength(rawLine, index);
-        if (hasClosingBacktickRun(source, sourceOffset + index + runLength, runLength)) {
+        if (hasClosingBacktickRun(lines, lineIndex, index + runLength, runLength)) {
           inlineCodeLength = runLength;
         } else {
           visible += '`'.repeat(runLength);
@@ -191,7 +198,6 @@ function visibleMarkdownLines(markdown) {
       index += 1;
     }
     visibleLines.push(visible);
-    sourceOffset += rawLine.length + 1;
   }
   return visibleLines;
 }

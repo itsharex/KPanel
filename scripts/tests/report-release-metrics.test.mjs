@@ -200,6 +200,14 @@ test('acceptance validation requires machine-readable delivery evidence', () => 
   const backticksInsideRealComment = '<!-- `-->`\n' + valid;
   assert.deepEqual(validateAcceptanceMetrics(backticksInsideRealComment), []);
 
+  const closerInsideHtmlBlockDoesNotClosePriorSpan = '`unclosed\n<!-- `\n' + valid + '\n-->';
+  assert.equal(validateAcceptanceMetrics(closerInsideHtmlBlockDoesNotClosePriorSpan).filter(
+    (error) => error.includes('missing structured field'),
+  ).length, 6);
+
+  const codeSpanDoesNotCrossBlankParagraph = '`unclosed\n\n' + valid + '\n`';
+  assert.deepEqual(validateAcceptanceMetrics(codeSpanDoesNotCrossBlankParagraph), []);
+
   const fenceInfoIsNotAClosingFence = '```text\n```not-a-close\n' + valid + '\n```';
   assert.equal(validateAcceptanceMetrics(fenceInfoIsNotAClosingFence).filter(
     (error) => error.includes('missing structured field'),
