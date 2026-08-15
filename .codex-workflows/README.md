@@ -15,7 +15,7 @@
 - `maintain-kpanel-dependencies.workflow.yaml`：读取全技术栈新鲜度报告，按安全、兼容、维护和资源风险
   决定采用、暂缓或拒绝，在独立 worktree 完成升级与分级验收；检测不自动等于合入或发布。
 - 当前产品性质、业务规模和流程效率入口见
-  [`docs/product-quality-review-2026-08-13.md`](../docs/product-quality-review-2026-08-13.md)；历史性能与安全原始
+  [`docs/product-quality-review-current.md`](../docs/product-quality-review-current.md)；历史性能与安全原始
   基线继续见 `docs/quality-audit-2026-08-02.md`，后续审计按用途引用，不把旧产品形态当作当前事实。
 - `kpanel-real-machine-app-lifecycle.workflow.yaml`：用隔离候选实例和真实 Chrome 验证应用
   在运行、停止、重启、暂停状态下均可打开详情，并恢复真机现场。

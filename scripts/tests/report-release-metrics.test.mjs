@@ -9,6 +9,7 @@ import {
   productionLeadHours,
   renderMarkdown,
   summarizeReleaseMetrics,
+  validateAcceptanceMetrics,
 } from '../report-release-metrics.mjs';
 
 function release(tag, createdAt, acceptance = {}) {
@@ -121,4 +122,71 @@ test('argument parser rejects invalid windows', () => {
   assert.equal(classifyChangeFailure('否（未发生）'), 'no');
   assert.equal(classifyChangeFailure('是（已回滚）'), 'yes');
   assert.equal(classifyChangeFailure(null), 'unreported');
+});
+
+test('acceptance validation requires machine-readable delivery evidence', () => {
+  const valid = [
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：2026-08-15T11:21:11+08:00',
+    '- 候选冻结时间：2026-08-15T11:26:43+08:00',
+    '- 生产完成时间：2026-08-15T12:00:39+08:00',
+    '- 提交到生产用时：0.66 小时',
+    '- 是否回滚、紧急热修复或重复发布：否',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：不适用',
+  ].join('\n');
+  assert.deepEqual(validateAcceptanceMetrics(valid), []);
+
+  const missing = validateAcceptanceMetrics('## 交付节奏数据');
+  assert.equal(missing.length, 6);
+
+  const inconsistent = validateAcceptanceMetrics(valid.replace('0.66 小时', '2.00 小时'));
+  assert.match(inconsistent.join('\n'), /does not match/);
+});
+
+test('acceptance validation permits explicit non-production evidence without inventing success', () => {
+  const errors = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：2026-08-15T11:21:11+08:00',
+    '- 候选冻结时间：2026-08-15T11:26:43+08:00',
+    '- 生产完成时间：未验证',
+    '- 提交到生产用时：未验证',
+    '- 是否回滚、紧急热修复或重复发布：未验证',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：未验证',
+  ].join('\n'));
+  assert.deepEqual(errors, []);
+
+  const historicalUnknown = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：未记录',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：未记录',
+  ].join('\n'));
+  assert.deepEqual(historicalUnknown, []);
+});
+
+test('acceptance validation keeps known failure state when historical completion time is missing', () => {
+  const knownSuccess = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：2026-08-15T14:04:08+08:00',
+    '- 候选冻结时间：2026-08-15T14:37:23+08:00',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：否',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：不适用',
+  ].join('\n'));
+  assert.deepEqual(knownSuccess, []);
+
+  const failedWithoutRecovery = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：是',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：未记录',
+  ].join('\n'));
+  assert.match(failedWithoutRecovery.join('\n'), /requires discovery, recovery/);
 });

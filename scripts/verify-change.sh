@@ -50,6 +50,23 @@ fi
 ECOSYSTEM_POLICY_BASE_REF="$base_ref" bash scripts/check-ecosystem-policy.sh
 bash scripts/check-version-consistency.sh
 bash scripts/check-managed-script-contract.sh
+node scripts/check-business-context-freshness.mjs
+
+acceptance_files=()
+for path in "${changed_files[@]}"; do
+  case "$path" in
+    docs/release-v*-acceptance.md)
+      acceptance_files+=("$path")
+      ;;
+  esac
+done
+if [[ ${#acceptance_files[@]} -gt 0 ]]; then
+  acceptance_args=()
+  for path in "${acceptance_files[@]}"; do
+    acceptance_args+=(--validate-acceptance "$path")
+  done
+  node scripts/report-release-metrics.mjs "${acceptance_args[@]}"
+fi
 
 needs_governance=false
 for path in "${changed_files[@]}"; do
@@ -59,10 +76,10 @@ for path in "${changed_files[@]}"; do
     docs/development-quality-standard.md|docs/release-acceptance-template.md|\
     docs/quality-improvement-proposal-template.md|docs/product-quality-review-*.md|\
     scripts/check-governance-consistency.mjs|scripts/check-environment-policy.mjs|\
-    scripts/background-browser-test.mjs|scripts/report-release-metrics.mjs|\
+    scripts/background-browser-test.mjs|scripts/report-release-metrics.mjs|scripts/check-business-context-freshness.mjs|\
     scripts/report-dependency-freshness.mjs|scripts/verify-governance.sh|scripts/verify-change.sh|\
     scripts/tests/check-environment-policy.test.mjs|scripts/tests/background-browser-test.test.mjs|\
-    scripts/tests/verify-change-forced-level.test.mjs|\
+    scripts/tests/verify-change-forced-level.test.mjs|scripts/tests/business-context-freshness.test.mjs|\
     scripts/tests/report-release-metrics.test.mjs|scripts/tests/report-dependency-freshness.test.mjs|\
     .github/workflows/dependency-freshness.yml)
       needs_governance=true

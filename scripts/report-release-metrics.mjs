@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,11 +16,18 @@ export function parseArguments(argv) {
     repo: process.cwd(),
     ref: null,
     now: new Date(),
+    acceptanceFiles: [],
   };
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     const value = argv[index + 1];
+    if (argument === '--validate-acceptance') {
+      if (value === undefined) throw new Error('Missing value for ' + argument);
+      options.acceptanceFiles.push(value);
+      index += 1;
+      continue;
+    }
     if (argument === '--days' || argument === '--releases' || argument === '--format' || argument === '--repo' || argument === '--ref' || argument === '--now') {
       if (value === undefined) {
         throw new Error('Missing value for ' + argument);
@@ -45,6 +53,7 @@ export function parseArguments(argv) {
   if (!['markdown', 'json'].includes(options.format)) throw new Error('--format must be markdown or json');
   if (Number.isNaN(options.now.getTime())) throw new Error('--now must be a valid date');
   options.repo = resolve(options.repo);
+  options.acceptanceFiles = options.acceptanceFiles.map((path) => resolve(options.repo, path));
   return options;
 }
 
@@ -68,21 +77,100 @@ function validValue(value) {
   return EMPTY_VALUE.test(normalized) ? null : normalized;
 }
 
-export function extractAcceptanceMetrics(markdown) {
+function acceptanceFields(markdown) {
   const fields = new Map();
   for (const line of markdown.split(/\r?\n/)) {
     const match = line.match(/^-\s*([^：:]+)[：:]\s*(.*)$/);
-    if (match) fields.set(match[1].trim(), validValue(match[2]));
+    if (match) fields.set(match[1].trim(), match[2].trim());
   }
+  return fields;
+}
+
+export function extractAcceptanceMetrics(markdown) {
+  const fields = acceptanceFields(markdown);
 
   return {
-    firstIncludedCommitAt: fields.get('首个纳入提交时间') ?? null,
-    candidateFrozenAt: fields.get('候选冻结时间') ?? null,
-    productionCompletedAt: fields.get('生产完成时间') ?? null,
-    commitToProduction: fields.get('提交到生产用时') ?? null,
-    changeFailure: fields.get('是否回滚、紧急热修复或重复发布') ?? null,
-    recovery: fields.get('若发生失败，发现时间、恢复时间和逃逸门禁') ?? null,
+    firstIncludedCommitAt: validValue(fields.get('首个纳入提交时间')),
+    candidateFrozenAt: validValue(fields.get('候选冻结时间')),
+    productionCompletedAt: validValue(fields.get('生产完成时间')),
+    commitToProduction: validValue(fields.get('提交到生产用时')),
+    changeFailure: validValue(fields.get('是否回滚、紧急热修复或重复发布')),
+    recovery: validValue(fields.get('若发生失败，发现时间、恢复时间和逃逸门禁')),
   };
+}
+
+const ACCEPTANCE_FIELDS = [
+  '首个纳入提交时间',
+  '候选冻结时间',
+  '生产完成时间',
+  '提交到生产用时',
+  '是否回滚、紧急热修复或重复发布',
+  '若发生失败，发现时间、恢复时间和逃逸门禁',
+];
+
+function validDate(value) {
+  return value !== null && !Number.isNaN(new Date(value).getTime());
+}
+
+export function validateAcceptanceMetrics(markdown, label = 'acceptance record') {
+  const errors = [];
+  const fields = acceptanceFields(markdown);
+  for (const field of ACCEPTANCE_FIELDS) {
+    if (!fields.has(field)) errors.push(label + ': missing structured field "' + field + '"');
+  }
+  if (errors.length > 0) return errors;
+
+  const metrics = extractAcceptanceMetrics(markdown);
+  if (metrics.firstIncludedCommitAt !== null && !validDate(metrics.firstIncludedCommitAt)) {
+    errors.push(label + ': 首个纳入提交时间 must be an ISO timestamp or an explicit unverified marker');
+  }
+  if (metrics.candidateFrozenAt !== null && !validDate(metrics.candidateFrozenAt)) {
+    errors.push(label + ': 候选冻结时间 must be an ISO timestamp or an explicit unverified marker');
+  }
+  if (metrics.productionCompletedAt !== null && !validDate(metrics.productionCompletedAt)) {
+    errors.push(label + ': 生产完成时间 must be an ISO timestamp or an explicit unverified marker');
+  }
+
+  if (validDate(metrics.firstIncludedCommitAt) && validDate(metrics.candidateFrozenAt) &&
+      new Date(metrics.candidateFrozenAt) < new Date(metrics.firstIncludedCommitAt)) {
+    errors.push(label + ': 候选冻结时间 cannot precede 首个纳入提交时间');
+  }
+
+  if (metrics.productionCompletedAt === null) {
+    if (metrics.commitToProduction !== null) {
+      errors.push(label + ': 提交到生产用时 must stay unreported when production completion is unverified');
+    }
+    if (classifyChangeFailure(metrics.changeFailure) === 'yes' && metrics.recovery === null) {
+      errors.push(label + ': a failed change requires discovery, recovery, and escaped-gate details');
+    }
+    return errors;
+  }
+
+  if (!validDate(metrics.firstIncludedCommitAt) || !validDate(metrics.candidateFrozenAt)) {
+    errors.push(label + ': a completed production deployment requires explicit included-commit and candidate-freeze timestamps');
+  }
+
+  if (validDate(metrics.candidateFrozenAt) &&
+      new Date(metrics.productionCompletedAt) < new Date(metrics.candidateFrozenAt)) {
+    errors.push(label + ': 生产完成时间 cannot precede 候选冻结时间');
+  }
+
+  const derivedHours = durationHours(metrics.firstIncludedCommitAt, metrics.productionCompletedAt);
+  const reportedHours = metrics.commitToProduction?.match(/^(\d+(?:\.\d+)?)\s*(?:小时|h(?:ours?)?)?$/i);
+  if (derivedHours === null || !reportedHours) {
+    errors.push(label + ': 提交到生产用时 must be a decimal hour value when production completed');
+  } else if (Math.abs(derivedHours - Number(reportedHours[1])) > 0.02) {
+    errors.push(label + ': 提交到生产用时 does not match the structured timestamps');
+  }
+
+  const failure = classifyChangeFailure(metrics.changeFailure);
+  if (failure === 'unreported') {
+    errors.push(label + ': production completion requires an explicit 是/否 change failure state');
+  }
+  if (failure === 'yes' && metrics.recovery === null) {
+    errors.push(label + ': a failed change requires discovery, recovery, and escaped-gate details');
+  }
+  return errors;
 }
 
 export function classifyChangeFailure(value) {
@@ -262,6 +350,7 @@ function help() {
     '  --repo <path>    Repository root (default: current directory)',
     '  --ref <ref>      Evidence ref (default: origin/main, fallback: HEAD)',
     '  --now <date>     Override current time for reproducible checks',
+    '  --validate-acceptance <path>  Validate one release record; repeat for multiple files',
   ].join('\n');
 }
 
@@ -269,6 +358,13 @@ export function main(argv) {
   const options = parseArguments(argv);
   if (options.help) {
     process.stdout.write(help() + '\n');
+    return;
+  }
+  if (options.acceptanceFiles.length > 0) {
+    const errors = options.acceptanceFiles.flatMap((path) =>
+      validateAcceptanceMetrics(readFileSync(path, 'utf8'), path));
+    if (errors.length > 0) throw new Error('\n- ' + errors.join('\n- '));
+    process.stdout.write('Release acceptance metrics validation passed (' + options.acceptanceFiles.length + ' file(s)).\n');
     return;
   }
   runGit(options.repo, ['rev-parse', '--is-inside-work-tree']);

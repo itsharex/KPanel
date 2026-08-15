@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
 description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产部署安全核对和回滚记录"
-version: "2.2"
+version: "2.3"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, apps_repo, validation_environment, production_environment]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-15T09:20:00+08:00"
+updated: "2026-08-15T14:55:00+08:00"
 ---
 
 # Release KPanel
@@ -293,6 +293,14 @@ node scripts/check-environment-policy.mjs \
 14 天和最近 20 个版本的发布节奏复核。验收记录在获得相应提交/推送授权后形成独立聚焦提交；
 未获授权时保留工作树差异并回传，不得擅自更新 `main`。
 
+提交验收记录前执行机器校验；同一命令既校验六个固定字段，也核对时间顺序、十进制用时和失败恢复
+语义，禁止使用语义相近的自由文本代替字段。没有生产授权时按模板明确写“未验证”，不得虚构时间或成功：
+
+```bash
+node scripts/report-release-metrics.mjs \
+  --validate-acceptance "docs/release-v${{version}}-acceptance.md"
+```
+
 最终回传必须包含：
 
 - 主仓库提交和 tag；
@@ -307,8 +315,8 @@ node scripts/check-environment-policy.mjs \
 - 保留的无关本地改动；
 - `${{previous_version}}` 回滚点及任何未验证风险。
 
-**Expected output:** 验收文档结构完整，用户无需查看其他会话即可区分已验证、不适用和未验证风险，
-并获得完整、可追溯的发布结论。
+**Expected output:** 验收文档结构完整且机器校验通过，用户无需查看其他会话即可区分已验证、不适用和
+未验证风险；后续 `make release-metrics` 能读取实际记录，而不是把已有生产事实显示为“未报告”。
 
 ## Parameters
 

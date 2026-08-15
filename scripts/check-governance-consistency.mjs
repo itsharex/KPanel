@@ -15,7 +15,7 @@ const requiredFiles = [
   'docs/project-management.md',
   'docs/multi-agent-collaboration.md',
   'docs/development-quality-standard.md',
-  'docs/product-quality-review-2026-08-13.md',
+  'docs/product-quality-review-current.md',
   'docs/release-acceptance-template.md',
   'docs/quality-improvement-proposal-template.md',
   'dependency-policy.json',
@@ -27,6 +27,8 @@ const requiredFiles = [
   'scripts/tests/background-browser-test.test.mjs',
   'scripts/report-release-metrics.mjs',
   'scripts/tests/report-release-metrics.test.mjs',
+  'scripts/check-business-context-freshness.mjs',
+  'scripts/tests/business-context-freshness.test.mjs',
   'scripts/report-dependency-freshness.mjs',
   'scripts/tests/report-dependency-freshness.test.mjs',
   '.codex-workflows/README.md',
@@ -120,7 +122,7 @@ const adapterTokens = [
   'Definition of Done',
   'make verify-change',
   'make verify-release',
-  'docs/product-quality-review-2026-08-13.md',
+  'docs/product-quality-review-current.md',
 ];
 requireText('AGENTS.md', adapterTokens);
 requireText('CLAUDE.md', adapterTokens);
@@ -143,10 +145,11 @@ requireText('docs/development-quality-standard.md', [
   '`kejilion.sh` 原生交互',
   '目标容器内控制台',
 ]);
-requireText('docs/product-quality-review-2026-08-13.md', [
-  'KPanel 业务默契度与流程效率复核',
-  'scripts/verify-governance.sh',
-  '三种信任边界',
+requireText('docs/product-quality-review-current.md', [
+  'KPanel 当前业务事实与规范适配基线',
+  '基线提交',
+  'scripts/check-business-context-freshness.mjs',
+  '目标容器内有界控制台',
 ]);
 requireText('docs/project-management.md', [
   'Definition of Ready',
@@ -168,7 +171,7 @@ requireText('.codex-workflows/README.md', [
   'make dependency-report',
   'background-browser-validation.workflow.yaml',
   'environment-policy.json',
-  'docs/product-quality-review-2026-08-13.md',
+  'docs/product-quality-review-current.md',
 ]);
 requireText('Makefile', [
   'governance-check:',
@@ -178,11 +181,18 @@ requireText('scripts/verify-change.sh', [
   'needs_governance=false',
   'bash scripts/verify-governance.sh',
   'node scripts/check-governance-consistency.mjs',
+  'node scripts/check-business-context-freshness.mjs',
+  '--validate-acceptance',
 ]);
 requireText('.codex-workflows/release-kpanel.workflow.yaml', [
   'evidence_dir=<本次唯一持久化证据目录>',
   'timeout_seconds=<风险窗口加清理余量>',
   'command_spec=<无秘密、已哈希的仓库测试命令规格>',
+  '--validate-acceptance',
+]);
+requireText('.codex-workflows/quality-audit-kpanel.workflow.yaml', [
+  'docs/product-quality-review-current.md',
+  'node scripts/check-business-context-freshness.mjs',
 ]);
 
 requireText('docs/release-acceptance-template.md', [
