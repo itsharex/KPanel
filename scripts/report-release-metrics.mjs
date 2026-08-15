@@ -61,10 +61,22 @@ export function parseArguments(argv) {
   return options;
 }
 
+export function gitEnvironment(repo, environment = process.env) {
+  const env = { ...environment };
+  const explicitWorkTree = env.GIT_WORK_TREE ? resolve(env.GIT_WORK_TREE) : null;
+  if (explicitWorkTree !== resolve(repo)) {
+    delete env.GIT_DIR;
+    delete env.GIT_WORK_TREE;
+    delete env.GIT_INDEX_FILE;
+  }
+  return env;
+}
+
 function runGit(repo, arguments_) {
   return execFileSync('git', ['-C', repo, ...arguments_], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: gitEnvironment(repo),
   }).trim();
 }
 
@@ -116,13 +128,17 @@ function acceptanceFields(markdown) {
   }
   for (const [index, line] of rows.entries()) {
     if (DEFAULT_IGNORABLE.test(line)) defaultIgnorables = true;
-    if (/`|<!--|-->/.test(line)) {
+    const normalizedLine = line.normalize('NFKC');
+    if (/`|<!--|-->/.test(normalizedLine)) {
       structureErrors.push('release-metrics rows must be plain text without Markdown code or HTML comment controls');
     }
     const match = line.match(/^- ([^：:]+)[：:]\s*(.*)$/);
     if (!match) {
       structureErrors.push('release-metrics rows must use "- 字段：值" syntax');
       continue;
+    }
+    if (match[2].trim() === '') {
+      structureErrors.push('release-metrics values must be explicit and non-blank');
     }
     const field = normalizedFieldName(match[1]);
     if (!ACCEPTANCE_FIELDS.some((expected) => normalizedFieldName(expected) === field)) {
@@ -133,7 +149,7 @@ function acceptanceFields(markdown) {
       structureErrors.push('release-metrics fields must keep the canonical order');
     }
     if (fields.has(field)) duplicates.add(field);
-    fields.set(field, match[2].trim());
+    fields.set(field, match[2].trim().normalize('NFKC'));
   }
   return { fields, duplicates, structureErrors, defaultIgnorables };
 }

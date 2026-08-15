@@ -5,6 +5,7 @@ import {
   classifyChangeFailure,
   durationHours,
   extractAcceptanceMetrics as extractAcceptanceMetricsRaw,
+  gitEnvironment,
   isStableReleaseTag,
   parseArguments,
   productionLeadHours,
@@ -158,6 +159,24 @@ test('argument parser rejects invalid windows', () => {
   for (const tag of ['v1.2.3-rc.1', 'v1.2.3+build.1', 'v1.2.3-nightly', 'vfoo', 'v1', 'v1.2']) {
     assert.equal(isStableReleaseTag(tag), false, tag);
   }
+
+  const isolated = gitEnvironment('/candidate/repo', {
+    GIT_DIR: '/foreign/repo/.git',
+    GIT_WORK_TREE: '/foreign/repo',
+    GIT_INDEX_FILE: '/foreign/repo/.git/index',
+    PATH: 'kept',
+  });
+  assert.equal(isolated.GIT_DIR, undefined);
+  assert.equal(isolated.GIT_WORK_TREE, undefined);
+  assert.equal(isolated.GIT_INDEX_FILE, undefined);
+  assert.equal(isolated.PATH, 'kept');
+
+  const sameWorkTree = gitEnvironment('/candidate/repo', {
+    GIT_DIR: '/candidate/repo/.git',
+    GIT_WORK_TREE: '/candidate/repo',
+    GIT_INDEX_FILE: '/candidate/repo/.git/index',
+  });
+  assert.equal(sameWorkTree.GIT_DIR, '/candidate/repo/.git');
 });
 
 test('acceptance validation requires one closed machine evidence block', () => {
@@ -191,6 +210,13 @@ test('acceptance validation requires one closed machine evidence block', () => {
   ));
   assert.match(extraRow.join('\n'), /exactly six rows|unknown field/);
 
+  const blankValues = validateAcceptanceMetricsRaw([
+    ACCEPTANCE_BLOCK_START,
+    ...ACCEPTANCE_FIELD_NAMES.map((field) => '- ' + field + '：   '),
+    ACCEPTANCE_BLOCK_END,
+  ].join('\n'));
+  assert.match(blankValues.join('\n'), /values must be explicit and non-blank/);
+
   const duplicateField = validateAcceptanceMetricsRaw(valid.replace(
     rows[4],
     rows[4] + '\n- 是否回滚、紧急热修复或重复发布：是（已回滚）',
@@ -210,6 +236,11 @@ test('acceptance validation requires one closed machine evidence block', () => {
 
   const hiddenMarkdownControl = validateAcceptanceMetricsRaw(valid.replace(rows[4], rows[4] + ' <!-- 示例 -->'));
   assert.match(hiddenMarkdownControl.join('\n'), /plain text without Markdown code or HTML comment controls/);
+
+  for (const control of ['否（｀control｀）', '否（＜！－－ forged －－＞）']) {
+    const normalizedControl = validateAcceptanceMetricsRaw(valid.replace('：否', '：' + control));
+    assert.match(normalizedControl.join('\n'), /plain text without Markdown code or HTML comment controls/, control);
+  }
 
   const invisibleField = validateAcceptanceMetricsRaw(valid.replace('重复发布', '重复\u200b发布'));
   assert.match(invisibleField.join('\n'), /default-ignorable characters/);
