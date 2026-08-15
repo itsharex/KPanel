@@ -94,7 +94,11 @@
   info 中含反引号的无效 backtick fence 又被错误当成边界。
 - 第十三轮问题已进入修复：补齐 Setext/thematic break，并让闭合搜索与围栏解析共用同一个有效
   fence 判定，backtick info 含 backtick 时不再视为围栏。
-- 待第十四轮独立复核：重放前十三轮全部反例，并重点检查块边界与 fence 有效性一致性。
+- 第十四轮独立复核 `2cafb4b`：再次拒绝准入。继续手写 CommonMark 已暴露更多 HTML block、列表
+  中断和 ASCII/Unicode 空白边界差异，证明方向本身不够简单可靠。
+- 方案已科学收敛：不再解析整份 Markdown；由唯一的 `kpanel-release-metrics:start/end` 标记定义
+  封闭机器区块，区块内必须恰好六行、使用固定 `- 字段：值` 语法，外部 Markdown 仅作人类说明。
+- 待第十五轮独立复核：验证封闭协议本身的唯一性、顺序、行数、字段、Unicode 与历史记录兼容性。
 - v0.74.0 已发布并形成验收提交，本实现已在其最新主线基线上重放；独立复核完成前继续保留于
   `fix/governance-feedback-loop` 专用分支，不更新 `main`。
 

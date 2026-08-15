@@ -85,163 +85,57 @@ function normalizedFieldName(value) {
   return value.trim().normalize('NFKC');
 }
 
-function comparableFieldText(value) {
-  return value.replace(DEFAULT_IGNORABLE_GLOBAL, '').normalize('NFKC').replace(/\p{White_Space}/gu, '');
-}
-
-function suspiciousFieldName(line) {
-  const comparableLine = comparableFieldText(line);
-  return ACCEPTANCE_FIELDS.find((field) => {
-    const fieldName = comparableFieldText(field);
-    const index = comparableLine.indexOf(fieldName);
-    return index >= 0 && /^[:=﹕∶]/u.test(comparableLine.slice(index + fieldName.length));
-  });
-}
-
 const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
-const DEFAULT_IGNORABLE_GLOBAL = /\p{Default_Ignorable_Code_Point}/gu;
-
-function backtickRunLength(value, index) {
-  let end = index;
-  while (value[end] === '`') end += 1;
-  return end - index;
-}
-
-function openingFenceMarker(line) {
-  const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-  if (!match || (match[1][0] === '`' && match[2].includes('`'))) return null;
-  return match[1];
-}
-
-function isParagraphBoundary(line) {
-  return /^\s*$/.test(line) ||
-    openingFenceMarker(line) !== null ||
-    /^ {0,3}(?:<!--|#{1,6}(?:\s|$)|>|(?:[-+*]|\d{1,9}[.)])[ \t]+)/.test(line) ||
-    /^ {0,3}(?:=+|-+)[ \t]*$/.test(line) ||
-    /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(line) ||
-    /^(?: {4}|\t)/.test(line);
-}
-
-function hasClosingBacktickRun(lines, lineIndex, start, length) {
-  for (let index = lineIndex; index < lines.length; index += 1) {
-    if (index > lineIndex && isParagraphBoundary(lines[index])) return false;
-    const line = lines[index];
-    let cursor = index === lineIndex ? start : 0;
-    while ((cursor = line.indexOf('`', cursor)) >= 0) {
-      const runLength = backtickRunLength(line, cursor);
-      if (runLength === length) return true;
-      cursor += runLength;
-    }
-  }
-  return false;
-}
-
-function visibleMarkdownLines(markdown) {
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
-  const visibleLines = [];
-  let fence = null;
-  let insideHtmlComment = false;
-  let inlineCodeLength = null;
-
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const rawLine = lines[lineIndex];
-    if (fence !== null) {
-      const closingFence = rawLine.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/)?.[1];
-      if (closingFence?.[0] === fence.character && closingFence.length >= fence.length) fence = null;
-      visibleLines.push('');
-      continue;
-    }
-
-    if (!insideHtmlComment && inlineCodeLength === null) {
-      const openingFence = openingFenceMarker(rawLine);
-      if (openingFence !== null) {
-        fence = { character: openingFence[0], length: openingFence.length };
-        visibleLines.push('');
-        continue;
-      }
-    }
-
-    let visible = '';
-    let index = 0;
-    while (index < rawLine.length) {
-      if (insideHtmlComment) {
-        const end = rawLine.indexOf('-->', index);
-        if (end < 0) {
-          index = rawLine.length;
-        } else {
-          insideHtmlComment = false;
-          index = end + 3;
-        }
-        continue;
-      }
-
-      if (inlineCodeLength !== null) {
-        if (rawLine[index] === '`') {
-          const runLength = backtickRunLength(rawLine, index);
-          if (runLength === inlineCodeLength) inlineCodeLength = null;
-          index += runLength;
-        } else {
-          index += 1;
-        }
-        continue;
-      }
-
-      if (rawLine.startsWith('<!--', index)) {
-        insideHtmlComment = true;
-        index += 4;
-        continue;
-      }
-
-      if (rawLine[index] === '`') {
-        const runLength = backtickRunLength(rawLine, index);
-        if (hasClosingBacktickRun(lines, lineIndex, index + runLength, runLength)) {
-          inlineCodeLength = runLength;
-        } else {
-          visible += '`'.repeat(runLength);
-        }
-        index += runLength;
-        continue;
-      }
-
-      visible += rawLine[index];
-      index += 1;
-    }
-    visibleLines.push(visible);
-  }
-  return visibleLines;
-}
+const ACCEPTANCE_BLOCK_START = '<!-- kpanel-release-metrics:start -->';
+const ACCEPTANCE_BLOCK_END = '<!-- kpanel-release-metrics:end -->';
+const ACCEPTANCE_FIELDS = [
+  '首个纳入提交时间',
+  '候选冻结时间',
+  '生产完成时间',
+  '提交到生产用时',
+  '是否回滚、紧急热修复或重复发布',
+  '若发生失败，发现时间、恢复时间和逃逸门禁',
+];
 
 function acceptanceFields(markdown) {
   const fields = new Map();
   const duplicates = new Set();
-  const malformed = new Set();
+  const structureErrors = [];
   let defaultIgnorables = false;
-  for (const line of visibleMarkdownLines(markdown)) {
-    const visibleBullet = line.match(/^ {0,3}-(?: {1,4}|\t)(\S.*|)$/)?.[1];
-    const suspiciousField = suspiciousFieldName(line);
-    if (suspiciousField && DEFAULT_IGNORABLE.test(line)) defaultIgnorables = true;
-    if (visibleBullet === undefined) {
-      if (suspiciousField) malformed.add(normalizedFieldName(suspiciousField));
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const starts = lines.flatMap((line, index) => line === ACCEPTANCE_BLOCK_START ? [index] : []);
+  const ends = lines.flatMap((line, index) => line === ACCEPTANCE_BLOCK_END ? [index] : []);
+  if (starts.length !== 1 || ends.length !== 1 || ends[0] <= starts[0]) {
+    structureErrors.push('requires exactly one ordered release-metrics marker pair');
+    return { fields, duplicates, structureErrors, defaultIgnorables };
+  }
+
+  const rows = lines.slice(starts[0] + 1, ends[0]);
+  if (rows.length !== ACCEPTANCE_FIELDS.length) {
+    structureErrors.push('release-metrics block must contain exactly six rows');
+  }
+  for (const [index, line] of rows.entries()) {
+    if (DEFAULT_IGNORABLE.test(line)) defaultIgnorables = true;
+    if (/`|<!--|-->/.test(line)) {
+      structureErrors.push('release-metrics rows must be plain text without Markdown code or HTML comment controls');
+    }
+    const match = line.match(/^- ([^：:]+)[：:]\s*(.*)$/);
+    if (!match) {
+      structureErrors.push('release-metrics rows must use "- 字段：值" syntax');
       continue;
     }
-
-    const bullet = visibleBullet;
-    const canonicalBullet = comparableFieldText(bullet);
-    const expectedField = ACCEPTANCE_FIELDS.find((field) =>
-      canonicalBullet.startsWith(comparableFieldText(field)));
-    const match = bullet.match(/^([^：:]+)[：:]\s*(.*)$/);
-    if (match) {
-      const field = normalizedFieldName(match[1]);
-      if (fields.has(field)) duplicates.add(field);
-      fields.set(field, match[2].trim());
-      if (expectedField && field !== normalizedFieldName(expectedField)) {
-        malformed.add(normalizedFieldName(expectedField));
-      }
-    } else if (expectedField) {
-      malformed.add(normalizedFieldName(expectedField));
+    const field = normalizedFieldName(match[1]);
+    if (!ACCEPTANCE_FIELDS.some((expected) => normalizedFieldName(expected) === field)) {
+      structureErrors.push('release-metrics block contains an unknown field');
+      continue;
     }
+    if (normalizedFieldName(ACCEPTANCE_FIELDS[index] ?? '') !== field) {
+      structureErrors.push('release-metrics fields must keep the canonical order');
+    }
+    if (fields.has(field)) duplicates.add(field);
+    fields.set(field, match[2].trim());
   }
-  return { fields, duplicates, malformed, defaultIgnorables };
+  return { fields, duplicates, structureErrors, defaultIgnorables };
 }
 
 export function extractAcceptanceMetrics(markdown) {
@@ -257,15 +151,6 @@ export function extractAcceptanceMetrics(markdown) {
     recovery: validValue(field('若发生失败，发现时间、恢复时间和逃逸门禁')),
   };
 }
-
-const ACCEPTANCE_FIELDS = [
-  '首个纳入提交时间',
-  '候选冻结时间',
-  '生产完成时间',
-  '提交到生产用时',
-  '是否回滚、紧急热修复或重复发布',
-  '若发生失败，发现时间、恢复时间和逃逸门禁',
-];
 
 const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
@@ -307,7 +192,8 @@ function hasFailureRecoveryDetails(value) {
 
 export function validateAcceptanceMetrics(markdown, label = 'acceptance record') {
   const errors = [];
-  const { fields, duplicates, malformed, defaultIgnorables } = acceptanceFields(markdown);
+  const { fields, duplicates, structureErrors, defaultIgnorables } = acceptanceFields(markdown);
+  for (const error of structureErrors) errors.push(label + ': ' + error);
   if (defaultIgnorables) {
     errors.push(label + ': structured acceptance evidence must not contain default-ignorable characters');
   }
@@ -315,7 +201,6 @@ export function validateAcceptanceMetrics(markdown, label = 'acceptance record')
     const normalizedField = normalizedFieldName(field);
     if (!fields.has(normalizedField)) errors.push(label + ': missing structured field "' + field + '"');
     if (duplicates.has(normalizedField)) errors.push(label + ': duplicate structured field "' + field + '"');
-    if (malformed.has(normalizedField)) errors.push(label + ': malformed structured field "' + field + '"');
   }
   if (errors.length > 0) return errors;
 

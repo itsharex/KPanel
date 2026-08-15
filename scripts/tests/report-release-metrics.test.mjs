@@ -4,14 +4,45 @@ import assert from 'node:assert/strict';
 import {
   classifyChangeFailure,
   durationHours,
-  extractAcceptanceMetrics,
+  extractAcceptanceMetrics as extractAcceptanceMetricsRaw,
   isStableReleaseTag,
   parseArguments,
   productionLeadHours,
   renderMarkdown,
   summarizeReleaseMetrics,
-  validateAcceptanceMetrics,
+  validateAcceptanceMetrics as validateAcceptanceMetricsRaw,
 } from '../report-release-metrics.mjs';
+
+const ACCEPTANCE_BLOCK_START = '<!-- kpanel-release-metrics:start -->';
+const ACCEPTANCE_BLOCK_END = '<!-- kpanel-release-metrics:end -->';
+const ACCEPTANCE_FIELD_NAMES = [
+  '首个纳入提交时间',
+  '候选冻结时间',
+  '生产完成时间',
+  '提交到生产用时',
+  '是否回滚、紧急热修复或重复发布',
+  '若发生失败，发现时间、恢复时间和逃逸门禁',
+];
+
+function withAcceptanceBlock(markdown) {
+  if (markdown.includes(ACCEPTANCE_BLOCK_START) || markdown.includes(ACCEPTANCE_BLOCK_END)) return markdown;
+  const lines = markdown.split('\n');
+  const indexes = lines.flatMap((line, index) =>
+    ACCEPTANCE_FIELD_NAMES.some((field) => line.includes(field)) ? [index] : []);
+  if (indexes.length === 0) return markdown + '\n' + ACCEPTANCE_BLOCK_START + '\n' + ACCEPTANCE_BLOCK_END;
+  const first = Math.min(...indexes);
+  const last = Math.max(...indexes);
+  return [...lines.slice(0, first), ACCEPTANCE_BLOCK_START, ...lines.slice(first, last + 1),
+    ACCEPTANCE_BLOCK_END, ...lines.slice(last + 1)].join('\n');
+}
+
+function extractAcceptanceMetrics(markdown) {
+  return extractAcceptanceMetricsRaw(withAcceptanceBlock(markdown));
+}
+
+function validateAcceptanceMetrics(markdown, label) {
+  return validateAcceptanceMetricsRaw(withAcceptanceBlock(markdown), label);
+}
 
 function release(tag, createdAt, acceptance = {}) {
   return {
@@ -129,124 +160,86 @@ test('argument parser rejects invalid windows', () => {
   }
 });
 
-test('acceptance validation requires machine-readable delivery evidence', () => {
-  const valid = [
-    '## 交付节奏数据',
+test('acceptance validation requires one closed machine evidence block', () => {
+  const rows = [
     '- 首个纳入提交时间：2026-08-15T11:21:11+08:00',
     '- 候选冻结时间：2026-08-15T11:26:43+08:00',
     '- 生产完成时间：2026-08-15T12:00:39+08:00',
     '- 提交到生产用时：0.66 小时',
     '- 是否回滚、紧急热修复或重复发布：否',
     '- 若发生失败，发现时间、恢复时间和逃逸门禁：不适用',
+  ];
+  const valid = ['## 交付节奏数据', ACCEPTANCE_BLOCK_START, ...rows, ACCEPTANCE_BLOCK_END].join('\n');
+  assert.deepEqual(validateAcceptanceMetricsRaw(valid), []);
+
+  const missingMarkers = validateAcceptanceMetricsRaw(['## 交付节奏数据', ...rows].join('\n'));
+  assert.match(missingMarkers.join('\n'), /exactly one ordered release-metrics marker pair/);
+
+  const reversedMarkers = validateAcceptanceMetricsRaw([
+    ACCEPTANCE_BLOCK_END, ...rows, ACCEPTANCE_BLOCK_START,
+  ].join('\n'));
+  assert.match(reversedMarkers.join('\n'), /exactly one ordered release-metrics marker pair/);
+
+  const duplicateMarkers = validateAcceptanceMetricsRaw([
+    ACCEPTANCE_BLOCK_START, ...rows, ACCEPTANCE_BLOCK_END, ACCEPTANCE_BLOCK_START,
+  ].join('\n'));
+  assert.match(duplicateMarkers.join('\n'), /exactly one ordered release-metrics marker pair/);
+
+  const extraRow = validateAcceptanceMetricsRaw(valid.replace(
+    ACCEPTANCE_BLOCK_END,
+    '- 额外字段：不得进入机器区块\n' + ACCEPTANCE_BLOCK_END,
+  ));
+  assert.match(extraRow.join('\n'), /exactly six rows|unknown field/);
+
+  const duplicateField = validateAcceptanceMetricsRaw(valid.replace(
+    rows[4],
+    rows[4] + '\n- 是否回滚、紧急热修复或重复发布：是（已回滚）',
+  ));
+  assert.match(duplicateField.join('\n'), /duplicate structured field/);
+
+  const reorderedRows = validateAcceptanceMetricsRaw([
+    ACCEPTANCE_BLOCK_START, rows[1], rows[0], ...rows.slice(2), ACCEPTANCE_BLOCK_END,
+  ].join('\n'));
+  assert.match(reorderedRows.join('\n'), /canonical order/);
+
+  const malformedRow = validateAcceptanceMetricsRaw(valid.replace(rows[4], '* 是否回滚、紧急热修复或重复发布：否'));
+  assert.match(malformedRow.join('\n'), /must use "- 字段：值" syntax/);
+
+  const equalsSeparator = validateAcceptanceMetricsRaw(valid.replace(rows[4], '- 是否回滚、紧急热修复或重复发布=否'));
+  assert.match(equalsSeparator.join('\n'), /must use "- 字段：值" syntax/);
+
+  const hiddenMarkdownControl = validateAcceptanceMetricsRaw(valid.replace(rows[4], rows[4] + ' <!-- 示例 -->'));
+  assert.match(hiddenMarkdownControl.join('\n'), /plain text without Markdown code or HTML comment controls/);
+
+  const invisibleField = validateAcceptanceMetricsRaw(valid.replace('重复发布', '重复\u200b发布'));
+  assert.match(invisibleField.join('\n'), /default-ignorable characters/);
+
+  const outsideMarkdownIsNonAuthoritative = [
+    '`unclosed',
+    '<script>const sample = "是否回滚、紧急热修复或重复发布：是";</script>',
+    '***',
+    valid,
+    '```text',
+    '- 是否回滚、紧急热修复或重复发布：是（示例）',
+    '```',
   ].join('\n');
-  assert.deepEqual(validateAcceptanceMetrics(valid), []);
+  assert.deepEqual(validateAcceptanceMetricsRaw(outsideMarkdownIsNonAuthoritative), []);
 
-  const missing = validateAcceptanceMetrics('## 交付节奏数据');
-  assert.equal(missing.length, 6);
-
-  const inconsistent = validateAcceptanceMetrics(valid.replace('0.66 小时', '2.00 小时'));
+  const inconsistent = validateAcceptanceMetricsRaw(valid.replace('0.66 小时', '2.00 小时'));
   assert.match(inconsistent.join('\n'), /does not match/);
 
-  const duplicateFailure = validateAcceptanceMetrics(valid.replace(
-    '- 是否回滚、紧急热修复或重复发布：否',
-    '- 是否回滚、紧急热修复或重复发布：是（已回滚）\n- 是否回滚、紧急热修复或重复发布：否',
-  ));
-  assert.match(duplicateFailure.join('\n'), /duplicate structured field/);
-
-  for (const prefix of ['  ', '\u200b']) {
-    const prefixedDuplicate = validateAcceptanceMetrics(valid.replace(
-      '- 是否回滚、紧急热修复或重复发布：否',
-      '- 是否回滚、紧急热修复或重复发布：否\n' + prefix + '- 是否回滚、紧急热修复或重复发布：是（已回滚）',
-    ));
-    assert.match(prefixedDuplicate.join('\n'), /duplicate structured field|default-ignorable characters/, JSON.stringify(prefix));
-  }
-
-  for (const prefix of ['    ', '\t', '\u00a0', '\u3000']) {
-    const hiddenAsCodeOrText = valid.replace(/^- /gm, prefix + '- ');
-    assert.equal(validateAcceptanceMetrics(hiddenAsCodeOrText).filter((error) => error.includes('missing structured field')).length, 6);
-    const invalidPrefixedDuplicate = valid.replace(
-      '- 是否回滚、紧急热修复或重复发布：否',
-      '- 是否回滚、紧急热修复或重复发布：否\n' + prefix + '- 是否回滚、紧急热修复或重复发布：是（已回滚）',
-    );
-    assert.match(validateAcceptanceMetrics(invalidPrefixedDuplicate).join('\n'), /malformed structured field/);
-  }
-
-  for (const hidden of ['```text\n' + valid + '\n```', '<!--\n' + valid + '\n-->']) {
-    assert.equal(validateAcceptanceMetrics(hidden).filter((error) => error.includes('missing structured field')).length, 6);
-  }
-
-  const examplesDoNotOverrideVisibleEvidence = valid + '\n```text\n- 是否回滚、紧急热修复或重复发布：是（已回滚）\n```' +
-    '\n<!-- - 若发生失败，发现时间、恢复时间和逃逸门禁：伪造值 -->';
-  assert.deepEqual(validateAcceptanceMetrics(examplesDoNotOverrideVisibleEvidence), []);
-
-  const inlineCodeDoesNotOverrideVisibleEvidence = valid +
-    '\n示例：`- 是否回滚、紧急热修复或重复发布：是（示例）`';
-  assert.deepEqual(validateAcceptanceMetrics(inlineCodeDoesNotOverrideVisibleEvidence), []);
-
-  const literalCommentInsideInlineCode = '示例：`<!-- literal, not an HTML comment`\n' + valid;
-  assert.deepEqual(validateAcceptanceMetrics(literalCommentInsideInlineCode), []);
-
-  const inlineCommentClosedAfterEvidence = '示例：`<!-- literal`\n' + valid + '\n-->';
-  assert.deepEqual(validateAcceptanceMetrics(inlineCommentClosedAfterEvidence), []);
-
-  const crossLineInlineComment = '示例：`<!-- literal\ncontinued`\n' + valid;
-  assert.deepEqual(validateAcceptanceMetrics(crossLineInlineComment), []);
-
-  const mismatchedInlineDelimiter = '`unclosed ``\n<!--\n' + valid + '\n-->';
-  assert.equal(validateAcceptanceMetrics(mismatchedInlineDelimiter).filter(
-    (error) => error.includes('missing structured field'),
-  ).length, 6);
-
-  const backticksInsideRealComment = '<!-- `-->`\n' + valid;
-  assert.deepEqual(validateAcceptanceMetrics(backticksInsideRealComment), []);
-
-  const closerInsideHtmlBlockDoesNotClosePriorSpan = '`unclosed\n<!-- `\n' + valid + '\n-->';
-  assert.equal(validateAcceptanceMetrics(closerInsideHtmlBlockDoesNotClosePriorSpan).filter(
-    (error) => error.includes('missing structured field'),
-  ).length, 6);
-
-  const codeSpanDoesNotCrossBlankParagraph = '`unclosed\n\n' + valid + '\n`';
-  assert.deepEqual(validateAcceptanceMetrics(codeSpanDoesNotCrossBlankParagraph), []);
-
-  for (const boundary of ['===', '---', '***', '___']) {
-    const codeSpanDoesNotCrossBlockBoundary = valid + '\n`unclosed\n' + boundary +
-      '\n普通文本 是否回滚、紧急热修复或重复发布：是（冲突）\n`';
-    assert.match(validateAcceptanceMetrics(codeSpanDoesNotCrossBlockBoundary).join('\n'), /malformed structured field/, boundary);
-  }
-
-  const invalidFenceInfoDoesNotCreateABoundary = valid +
-    '\n`open\n```foo`bar\n普通文本 是否回滚、紧急热修复或重复发布：是（冲突）\nclose`';
-  assert.match(validateAcceptanceMetrics(invalidFenceInfoDoesNotCreateABoundary).join('\n'), /malformed structured field/);
-
-  const fenceInfoIsNotAClosingFence = '```text\n```not-a-close\n' + valid + '\n```';
-  assert.equal(validateAcceptanceMetrics(fenceInfoIsNotAClosingFence).filter(
-    (error) => error.includes('missing structured field'),
-  ).length, 6);
-
-  const literalCommentInsideFence = '```text\n<!-- literal, not an HTML comment\n```\n' + valid;
-  assert.deepEqual(validateAcceptanceMetrics(literalCommentInsideFence), []);
-
-  const commentClosedAfterFence = '```text\n<!-- literal\n```\n' + valid + '\n-->';
-  assert.deepEqual(validateAcceptanceMetrics(commentClosedAfterFence), []);
-
-  const fiveSpacesAfterMarker = valid.replace(/^- /gm, '-     ');
-  assert.equal(validateAcceptanceMetrics(fiveSpacesAfterMarker).filter(
-    (error) => error.includes('missing structured field'),
-  ).length, 6);
-
-  const looseDate = validateAcceptanceMetrics(valid.replace(
+  const looseDate = validateAcceptanceMetricsRaw(valid.replace(
     '2026-08-15T11:21:11+08:00',
     'August 15, 2026 11:21:11 GMT+0800',
   ));
   assert.match(looseDate.join('\n'), /must be an ISO timestamp/);
 
-  const impossibleDate = validateAcceptanceMetrics(valid.replace(
+  const impossibleDate = validateAcceptanceMetricsRaw(valid.replace(
     '2026-08-15T11:21:11+08:00',
     '2026-02-30T11:21:11+08:00',
   ));
   assert.match(impossibleDate.join('\n'), /must be an ISO timestamp/);
 });
-
 test('acceptance validation permits explicit non-production evidence without inventing success', () => {
   const errors = validateAcceptanceMetrics([
     '## 交付节奏数据',
@@ -451,7 +444,7 @@ test('acceptance validation keeps known failure state when historical completion
       '- 是否回滚、紧急热修复或重复发布' + separator + '是（已回滚）',
       '- 若发生失败，发现时间、恢复时间和逃逸门禁：不适用',
     ].join('\n'));
-    assert.match(hiddenConflictingField.join('\n'), /malformed structured field/, separator);
+    assert.match(hiddenConflictingField.join('\n'), /must use "- 字段：值" syntax/, separator);
   }
 
   const keywordsWithoutStructure = validateAcceptanceMetrics([

@@ -349,6 +349,8 @@ KPanel 允许智能体持续优化规范、自动门禁和协作流程，但“�
 状态真源仍是 Git 提案、精确提交、CI 和验收记录；会话记忆、模型信心和内部评分不构成采纳证据。
 该循环不能自动降低安全/质量门禁，不能自动提交、推送、发布或操作生产。可复用执行步骤见
 `.codex-workflows/evolve-kpanel.workflow.yaml`，滚动指标统一由 `make release-metrics` 生成。
+验收指标只读取 `kpanel-release-metrics:start/end` 唯一 marker 之间的六行固定字段；区块外 Markdown
+只服务人工说明，不能提供、覆盖或隐藏机器指标证据。
 
 ### 14.1 依赖与底层技术栈维护循环
 
