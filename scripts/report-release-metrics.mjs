@@ -92,6 +92,11 @@ export function gitEnvironment(repo, environment = process.env) {
     // A normal clone has a .git directory rather than a linked-worktree pointer file.
   }
   const expectedIndex = expectedGitDir.replace(/[\\/]$/, '') + '/index';
+  const absoluteEnvironmentPath = (value) => {
+    const normalized = String(value).trim().replaceAll('\\', '/');
+    if (/^(?:[A-Za-z]:\/|\/)/.test(normalized)) return normalized;
+    return resolve(process.cwd(), normalized);
+  };
   const explicitLocationMatches =
     comparablePath(env.GIT_WORK_TREE) === comparablePath(repo) &&
     comparablePath(env.GIT_DIR) === comparablePath(expectedGitDir) &&
@@ -100,6 +105,10 @@ export function gitEnvironment(repo, environment = process.env) {
     delete env.GIT_DIR;
     delete env.GIT_WORK_TREE;
     delete env.GIT_INDEX_FILE;
+  } else {
+    env.GIT_DIR = absoluteEnvironmentPath(env.GIT_DIR);
+    env.GIT_WORK_TREE = absoluteEnvironmentPath(env.GIT_WORK_TREE);
+    if (env.GIT_INDEX_FILE) env.GIT_INDEX_FILE = absoluteEnvironmentPath(env.GIT_INDEX_FILE);
   }
   delete env.GIT_COMMON_DIR;
   delete env.GIT_OBJECT_DIRECTORY;

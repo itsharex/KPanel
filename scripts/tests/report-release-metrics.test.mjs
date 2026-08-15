@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
 
 import {
   classifyChangeFailure,
@@ -190,6 +191,15 @@ test('argument parser rejects invalid windows', () => {
   assert.equal(mixedMetadata.GIT_INDEX_FILE, undefined);
   assert.equal(mixedMetadata.GIT_COMMON_DIR, undefined);
   assert.equal(mixedMetadata.PATH, 'kept');
+
+  const relativeMetadata = gitEnvironment(resolve('candidate/repo'), {
+    GIT_DIR: 'candidate/repo/.git',
+    GIT_WORK_TREE: 'candidate/repo',
+    GIT_INDEX_FILE: 'candidate/repo/.git/index',
+  });
+  assert.equal(relativeMetadata.GIT_DIR, resolve('candidate/repo/.git'));
+  assert.equal(relativeMetadata.GIT_WORK_TREE, resolve('candidate/repo'));
+  assert.equal(relativeMetadata.GIT_INDEX_FILE, resolve('candidate/repo/.git/index'));
 });
 
 test('acceptance validation requires one closed machine evidence block', () => {
