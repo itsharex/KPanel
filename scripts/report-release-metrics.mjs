@@ -89,12 +89,8 @@ function comparableFieldText(value) {
   return value.replace(DEFAULT_IGNORABLE_GLOBAL, '').normalize('NFKC').replace(/\p{White_Space}/gu, '');
 }
 
-function withoutInlineCodeSpans(line) {
-  return line.replace(/(`+).*?\1/g, (span) => ' '.repeat(span.length));
-}
-
 function suspiciousFieldName(line) {
-  const comparableLine = comparableFieldText(withoutInlineCodeSpans(line));
+  const comparableLine = comparableFieldText(line);
   return ACCEPTANCE_FIELDS.find((field) => {
     const fieldName = comparableFieldText(field);
     const index = comparableLine.indexOf(fieldName);
@@ -105,28 +101,99 @@ function suspiciousFieldName(line) {
 const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
 const DEFAULT_IGNORABLE_GLOBAL = /\p{Default_Ignorable_Code_Point}/gu;
 
-function withoutHtmlCommentsOnLine(line, startsInsideComment) {
-  let insideComment = startsInsideComment;
-  let visible = '';
-  let cursor = 0;
-  while (cursor < line.length) {
-    if (insideComment) {
-      const end = line.indexOf('-->', cursor);
-      if (end < 0) return { visible, insideComment: true };
-      insideComment = false;
-      cursor = end + 3;
+function backtickRunLength(value, index) {
+  let end = index;
+  while (value[end] === '`') end += 1;
+  return end - index;
+}
+
+function hasClosingBacktickRun(source, start, length) {
+  let index = source.indexOf('`', start);
+  while (index >= 0) {
+    const runLength = backtickRunLength(source, index);
+    if (runLength === length) return true;
+    index = source.indexOf('`', index + runLength);
+  }
+  return false;
+}
+
+function visibleMarkdownLines(markdown) {
+  const source = markdown.replace(/\r\n/g, '\n');
+  const lines = source.split('\n');
+  const visibleLines = [];
+  let sourceOffset = 0;
+  let fence = null;
+  let insideHtmlComment = false;
+  let inlineCodeLength = null;
+
+  for (const rawLine of lines) {
+    if (fence !== null) {
+      const closingFence = rawLine.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/)?.[1];
+      if (closingFence?.[0] === fence.character && closingFence.length >= fence.length) fence = null;
+      visibleLines.push('');
+      sourceOffset += rawLine.length + 1;
       continue;
     }
-    const start = line.indexOf('<!--', cursor);
-    if (start < 0) {
-      visible += line.slice(cursor);
-      break;
+
+    if (!insideHtmlComment && inlineCodeLength === null) {
+      const openingFence = rawLine.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (openingFence && !(openingFence[1][0] === '`' && openingFence[2].includes('`'))) {
+        fence = { character: openingFence[1][0], length: openingFence[1].length };
+        visibleLines.push('');
+        sourceOffset += rawLine.length + 1;
+        continue;
+      }
     }
-    visible += line.slice(cursor, start);
-    insideComment = true;
-    cursor = start + 4;
+
+    let visible = '';
+    let index = 0;
+    while (index < rawLine.length) {
+      if (insideHtmlComment) {
+        const end = rawLine.indexOf('-->', index);
+        if (end < 0) {
+          index = rawLine.length;
+        } else {
+          insideHtmlComment = false;
+          index = end + 3;
+        }
+        continue;
+      }
+
+      if (inlineCodeLength !== null) {
+        if (rawLine[index] === '`') {
+          const runLength = backtickRunLength(rawLine, index);
+          if (runLength === inlineCodeLength) inlineCodeLength = null;
+          index += runLength;
+        } else {
+          index += 1;
+        }
+        continue;
+      }
+
+      if (rawLine.startsWith('<!--', index)) {
+        insideHtmlComment = true;
+        index += 4;
+        continue;
+      }
+
+      if (rawLine[index] === '`') {
+        const runLength = backtickRunLength(rawLine, index);
+        if (hasClosingBacktickRun(source, sourceOffset + index + runLength, runLength)) {
+          inlineCodeLength = runLength;
+        } else {
+          visible += '`'.repeat(runLength);
+        }
+        index += runLength;
+        continue;
+      }
+
+      visible += rawLine[index];
+      index += 1;
+    }
+    visibleLines.push(visible);
+    sourceOffset += rawLine.length + 1;
   }
-  return { visible, insideComment };
+  return visibleLines;
 }
 
 function acceptanceFields(markdown) {
@@ -134,29 +201,7 @@ function acceptanceFields(markdown) {
   const duplicates = new Set();
   const malformed = new Set();
   let defaultIgnorables = false;
-  let fence = null;
-  let insideHtmlComment = false;
-  for (const rawLine of markdown.split(/\r?\n/)) {
-    if (fence !== null) {
-      const closingFence = rawLine.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/)?.[1];
-      if (closingFence?.[0] === fence.character && closingFence.length >= fence.length) fence = null;
-      continue;
-    }
-    const rawOpeningFence = !insideHtmlComment && rawLine.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (rawOpeningFence && !(rawOpeningFence[1][0] === '`' && rawOpeningFence[2].includes('`'))) {
-      fence = { character: rawOpeningFence[1][0], length: rawOpeningFence[1].length };
-      continue;
-    }
-
-    const commentResult = withoutHtmlCommentsOnLine(withoutInlineCodeSpans(rawLine), insideHtmlComment);
-    insideHtmlComment = commentResult.insideComment;
-    const line = commentResult.visible;
-    const openingFence = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (openingFence && !(openingFence[1][0] === '`' && openingFence[2].includes('`'))) {
-      fence = { character: openingFence[1][0], length: openingFence[1].length };
-      continue;
-    }
-
+  for (const line of visibleMarkdownLines(markdown)) {
     const visibleBullet = line.match(/^ {0,3}-(?: {1,4}|\t)(\S.*|)$/)?.[1];
     const suspiciousField = suspiciousFieldName(line);
     if (suspiciousField && DEFAULT_IGNORABLE.test(line)) defaultIgnorables = true;

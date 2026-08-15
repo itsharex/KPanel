@@ -189,6 +189,17 @@ test('acceptance validation requires machine-readable delivery evidence', () => 
   const inlineCommentClosedAfterEvidence = '示例：`<!-- literal`\n' + valid + '\n-->';
   assert.deepEqual(validateAcceptanceMetrics(inlineCommentClosedAfterEvidence), []);
 
+  const crossLineInlineComment = '示例：`<!-- literal\ncontinued`\n' + valid;
+  assert.deepEqual(validateAcceptanceMetrics(crossLineInlineComment), []);
+
+  const mismatchedInlineDelimiter = '`unclosed ``\n<!--\n' + valid + '\n-->';
+  assert.equal(validateAcceptanceMetrics(mismatchedInlineDelimiter).filter(
+    (error) => error.includes('missing structured field'),
+  ).length, 6);
+
+  const backticksInsideRealComment = '<!-- `-->`\n' + valid;
+  assert.deepEqual(validateAcceptanceMetrics(backticksInsideRealComment), []);
+
   const fenceInfoIsNotAClosingFence = '```text\n```not-a-close\n' + valid + '\n```';
   assert.equal(validateAcceptanceMetrics(fenceInfoIsNotAClosingFence).filter(
     (error) => error.includes('missing structured field'),
