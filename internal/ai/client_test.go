@@ -59,7 +59,7 @@ func TestOpenAICompatibleStream(t *testing.T) {
 }
 
 func TestOpenAIChatPreservesProviderReasoningAcrossToolCalls(t *testing.T) {
-	for _, field := range []string{"reasoning_content", "reasoning_text"} {
+	for _, field := range []string{"reasoning_content", "reasoning_text", "reasoning"} {
 		t.Run(field, func(t *testing.T) {
 			requestNumber := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,8 +70,8 @@ func TestOpenAIChatPreservesProviderReasoningAcrossToolCalls(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 					t.Fatal(err)
 				}
-				w.Header().Set("Content-Type", "text/event-stream")
 				if requestNumber == 1 {
+					w.Header().Set("Content-Type", "text/event-stream")
 					fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{%q:\"plan \"}}]}\n\n", field)
 					fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{%q:\"next\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"host_read\",\"arguments\":\"{}\"}}]}}]}\n\n", field)
 					fmt.Fprint(w, "data: [DONE]\n\n")
@@ -84,9 +84,19 @@ func TestOpenAIChatPreservesProviderReasoningAcrossToolCalls(t *testing.T) {
 						break
 					}
 				}
+				if requestNumber == 2 {
+					if _, exists := assistant[field]; exists {
+						t.Fatalf("standard continuation guessed a provider field: %#v", assistant)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					fmt.Fprintf(w, `{"error":{"type":"invalid_request_error","message":"The %s in the thinking mode must be passed back to the API."}}`, field)
+					return
+				}
 				if assistant == nil || assistant[field] != "plan next" {
 					t.Fatalf("reasoning was not replayed with its provider field: %#v", payload.Messages)
 				}
+				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, "data: [DONE]\n\n")
 			}))
 			defer server.Close()
@@ -111,7 +121,7 @@ func TestOpenAIChatPreservesProviderReasoningAcrossToolCalls(t *testing.T) {
 				{Role: "assistant", ToolCalls: calls},
 				{Role: "tool", ToolCallID: calls[0].ID, Content: `{"ok":true}`},
 			}}, func(CompletionEvent) error { return nil })
-			if err != nil || requestNumber != 2 {
+			if err != nil || requestNumber != 3 {
 				t.Fatalf("reasoning continuation requests=%d err=%v", requestNumber, err)
 			}
 		})

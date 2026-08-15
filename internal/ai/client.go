@@ -720,20 +720,18 @@ func attachOpenAIChatReasoning(providerID string, calls []ToolCall, field, reaso
 }
 
 func applyOpenAIChatReasoning(item map[string]any, providerID string, calls []ToolCall, requiredField string) {
-	field, text, found := "", "", false
+	if !validOpenAIChatReasoningField(requiredField) {
+		return
+	}
+	text := ""
 	for _, call := range calls {
 		var native openAIChatNativeContext
 		if json.Unmarshal(call.ProviderData, &native) == nil && native.Type == "openai_chat_reasoning" && native.ProviderID == providerID && validOpenAIChatReasoningField(native.Field) {
-			field, text, found = native.Field, native.Text, true
+			text = native.Text
 			break
 		}
 	}
-	if found {
-		item[field] = text
-	}
-	if validOpenAIChatReasoningField(requiredField) {
-		item[requiredField] = text
-	}
+	item[requiredField] = text
 }
 
 func openAIChatReasoningDelta(content, text, reasoning *string) (string, *string) {
