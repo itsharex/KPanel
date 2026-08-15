@@ -90,7 +90,11 @@
   HTML block 和列表等 CommonMark 段落边界约束，造成跨块错误成功和错误拒绝。
 - 第十二轮问题已进入修复：闭合 run 只在当前段落内搜索，遇到空行、HTML block、围栏、标题、
   引用、列表或缩进代码即停止。
-- 待第十三轮独立复核：重放前十二轮全部反例，并重点检查段落边界与跨行 code span。
+- 第十三轮独立复核 `013c91e`：再次拒绝准入。段落边界漏掉 Setext underline 与部分 thematic break；
+  info 中含反引号的无效 backtick fence 又被错误当成边界。
+- 第十三轮问题已进入修复：补齐 Setext/thematic break，并让闭合搜索与围栏解析共用同一个有效
+  fence 判定，backtick info 含 backtick 时不再视为围栏。
+- 待第十四轮独立复核：重放前十三轮全部反例，并重点检查块边界与 fence 有效性一致性。
 - v0.74.0 已发布并形成验收提交，本实现已在其最新主线基线上重放；独立复核完成前继续保留于
   `fix/governance-feedback-loop` 专用分支，不更新 `main`。
 

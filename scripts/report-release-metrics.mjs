@@ -107,9 +107,18 @@ function backtickRunLength(value, index) {
   return end - index;
 }
 
+function openingFenceMarker(line) {
+  const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+  if (!match || (match[1][0] === '`' && match[2].includes('`'))) return null;
+  return match[1];
+}
+
 function isParagraphBoundary(line) {
   return /^\s*$/.test(line) ||
-    /^ {0,3}(?:`{3,}|~{3,}|<!--|#{1,6}(?:\s|$)|>|(?:[-+*]|\d{1,9}[.)])[ \t]+)/.test(line) ||
+    openingFenceMarker(line) !== null ||
+    /^ {0,3}(?:<!--|#{1,6}(?:\s|$)|>|(?:[-+*]|\d{1,9}[.)])[ \t]+)/.test(line) ||
+    /^ {0,3}(?:=+|-+)[ \t]*$/.test(line) ||
+    /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(line) ||
     /^(?: {4}|\t)/.test(line);
 }
 
@@ -144,9 +153,9 @@ function visibleMarkdownLines(markdown) {
     }
 
     if (!insideHtmlComment && inlineCodeLength === null) {
-      const openingFence = rawLine.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-      if (openingFence && !(openingFence[1][0] === '`' && openingFence[2].includes('`'))) {
-        fence = { character: openingFence[1][0], length: openingFence[1].length };
+      const openingFence = openingFenceMarker(rawLine);
+      if (openingFence !== null) {
+        fence = { character: openingFence[0], length: openingFence.length };
         visibleLines.push('');
         continue;
       }

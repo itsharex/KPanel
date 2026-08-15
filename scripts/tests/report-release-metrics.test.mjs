@@ -208,6 +208,16 @@ test('acceptance validation requires machine-readable delivery evidence', () => 
   const codeSpanDoesNotCrossBlankParagraph = '`unclosed\n\n' + valid + '\n`';
   assert.deepEqual(validateAcceptanceMetrics(codeSpanDoesNotCrossBlankParagraph), []);
 
+  for (const boundary of ['===', '---', '***', '___']) {
+    const codeSpanDoesNotCrossBlockBoundary = valid + '\n`unclosed\n' + boundary +
+      '\n普通文本 是否回滚、紧急热修复或重复发布：是（冲突）\n`';
+    assert.match(validateAcceptanceMetrics(codeSpanDoesNotCrossBlockBoundary).join('\n'), /malformed structured field/, boundary);
+  }
+
+  const invalidFenceInfoDoesNotCreateABoundary = valid +
+    '\n`open\n```foo`bar\n普通文本 是否回滚、紧急热修复或重复发布：是（冲突）\nclose`';
+  assert.match(validateAcceptanceMetrics(invalidFenceInfoDoesNotCreateABoundary).join('\n'), /malformed structured field/);
+
   const fenceInfoIsNotAClosingFence = '```text\n```not-a-close\n' + valid + '\n```';
   assert.equal(validateAcceptanceMetrics(fenceInfoIsNotAClosingFence).filter(
     (error) => error.includes('missing structured field'),
