@@ -179,8 +179,23 @@ test('acceptance validation requires machine-readable delivery evidence', () => 
     '\n<!-- - 若发生失败，发现时间、恢复时间和逃逸门禁：伪造值 -->';
   assert.deepEqual(validateAcceptanceMetrics(examplesDoNotOverrideVisibleEvidence), []);
 
+  const inlineCodeDoesNotOverrideVisibleEvidence = valid +
+    '\n示例：`- 是否回滚、紧急热修复或重复发布：是（示例）`';
+  assert.deepEqual(validateAcceptanceMetrics(inlineCodeDoesNotOverrideVisibleEvidence), []);
+
   const fenceInfoIsNotAClosingFence = '```text\n```not-a-close\n' + valid + '\n```';
   assert.equal(validateAcceptanceMetrics(fenceInfoIsNotAClosingFence).filter(
+    (error) => error.includes('missing structured field'),
+  ).length, 6);
+
+  const literalCommentInsideFence = '```text\n<!-- literal, not an HTML comment\n```\n' + valid;
+  assert.deepEqual(validateAcceptanceMetrics(literalCommentInsideFence), []);
+
+  const commentClosedAfterFence = '```text\n<!-- literal\n```\n' + valid + '\n-->';
+  assert.deepEqual(validateAcceptanceMetrics(commentClosedAfterFence), []);
+
+  const fiveSpacesAfterMarker = valid.replace(/^- /gm, '-     ');
+  assert.equal(validateAcceptanceMetrics(fiveSpacesAfterMarker).filter(
     (error) => error.includes('missing structured field'),
   ).length, 6);
 
