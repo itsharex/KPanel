@@ -10,13 +10,16 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
 	OfficialCatalogURL    = "https://app.kejilion.sh/"
+	officialCatalogSource = "https://github.com/kejilion/sh"
 	maxRemoteCatalogBytes = 2 << 20
+	maxRemoteCatalogApps  = 500
 	remoteCatalogTTL      = 5 * time.Minute
 	genericThirdPartyIcon = "/app-icons/thirdparty-default.svg"
 )
@@ -121,8 +124,14 @@ func decodeRemoteCatalog(content []byte) (Catalog, error) {
 }
 
 func validateRemoteCatalog(catalog Catalog, meta remoteCatalogMeta) error {
-	if meta.Builtin != 115 || len(catalog.Apps) < 115 || len(catalog.Apps) > 500 {
-		return errors.New("application catalog count is outside the audited boundary")
+	if meta.Source != officialCatalogSource {
+		return errors.New("application catalog source changed")
+	}
+	if meta.Builtin < 1 || meta.Builtin > maxRemoteCatalogApps ||
+		meta.ThirdParty < 0 || meta.ThirdParty > maxRemoteCatalogApps ||
+		len(catalog.Apps) > maxRemoteCatalogApps ||
+		meta.Builtin+meta.ThirdParty != len(catalog.Apps) {
+		return errors.New("application catalog count is outside the bounded contract")
 	}
 	if len(catalog.Categories) != 7 {
 		return errors.New("application catalog category count changed")
@@ -138,6 +147,7 @@ func validateRemoteCatalog(catalog Catalog, meta remoteCatalogMeta) error {
 	ids := make(map[string]bool, len(catalog.Apps))
 	tokens := make(map[string]bool, len(catalog.Apps))
 	slugs := make(map[string]bool, len(catalog.Apps))
+	builtinNumbers := make(map[int]bool, meta.Builtin)
 	builtin := 0
 	thirdParty := 0
 	for _, app := range catalog.Apps {
@@ -151,10 +161,6 @@ func validateRemoteCatalog(catalog Catalog, meta remoteCatalogMeta) error {
 		if app.Source != "builtin" && app.Source != "thirdparty" {
 			return fmt.Errorf("application catalog entry %q has an invalid source", app.ID)
 		}
-		if (app.Source == "builtin" && !strings.HasPrefix(app.ID, "builtin-")) ||
-			(app.Source == "thirdparty" && !strings.HasPrefix(app.ID, "thirdparty-")) {
-			return fmt.Errorf("application catalog entry %q has an inconsistent ID", app.ID)
-		}
 		if app.Website != "" {
 			website, err := url.Parse(app.Website)
 			if err != nil || website.Host == "" || website.User != nil ||
@@ -163,42 +169,48 @@ func validateRemoteCatalog(catalog Catalog, meta remoteCatalogMeta) error {
 			}
 		}
 		if app.Source == "builtin" {
+			if app.Num < 1 || app.Num > maxRemoteCatalogApps ||
+				app.ID != "builtin-"+strconv.Itoa(app.Num) || builtinNumbers[app.Num] {
+				return fmt.Errorf("application catalog entry %q has an inconsistent builtin number", app.ID)
+			}
+			builtinNumbers[app.Num] = true
 			builtin++
 		} else {
+			if app.Num != 0 || !strings.HasPrefix(app.ID, "thirdparty-") {
+				return fmt.Errorf("application catalog entry %q has an inconsistent ID", app.ID)
+			}
 			thirdParty++
 		}
 		ids[app.ID] = true
 		tokens[app.Token] = true
 		slugs[app.Slug] = true
 	}
-	if builtin != 115 || thirdParty != meta.ThirdParty || builtin+thirdParty != len(catalog.Apps) {
+	if builtin != meta.Builtin || thirdParty != meta.ThirdParty {
 		return errors.New("application catalog source counts are inconsistent")
 	}
 	return nil
 }
 
-func mergeRemoteThirdParty(embedded, remote Catalog) Catalog {
-	localThirdParty := make(map[string]App)
+func mergeRemoteCatalog(embedded, remote Catalog) Catalog {
+	localByID := make(map[string]App, len(embedded.Apps))
+	localByToken := make(map[string]App, len(embedded.Apps))
 	result := Catalog{
-		SchemaVersion: embedded.SchemaVersion,
+		SchemaVersion: remote.SchemaVersion,
 		Source:        remote.Source,
 		Upstream:      remote.Upstream,
-		Categories:    append([]Category(nil), embedded.Categories...),
+		Categories:    append([]Category(nil), remote.Categories...),
 		Apps:          make([]App, 0, len(remote.Apps)),
 	}
 	for _, app := range embedded.Apps {
-		if app.Source == "builtin" {
-			result.Apps = append(result.Apps, app)
-		} else {
-			localThirdParty[app.Token] = app
-		}
+		localByID[app.ID] = app
+		localByToken[app.Token] = app
 	}
 	for _, app := range remote.Apps {
-		if app.Source != "thirdparty" {
-			continue
+		local, ok := localByID[app.ID]
+		if !ok {
+			local, ok = localByToken[app.Token]
 		}
-		app.Num = 0
-		if local, ok := localThirdParty[app.Token]; ok {
+		if ok {
 			app.Icon = local.Icon
 			app.IconSHA256 = local.IconSHA256
 		} else {

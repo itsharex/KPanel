@@ -215,21 +215,32 @@ func TestRuntimeFromStoppedContainerSerializesPortsAsArray(t *testing.T) {
 	}
 }
 
-func TestRemoteCatalogDynamicallyReplacesThirdPartyEntries(t *testing.T) {
+func TestRemoteCatalogDynamicallyReplacesBuiltinAndThirdPartyEntries(t *testing.T) {
 	embedded, _, _, err := LoadCatalog()
 	if err != nil {
 		t.Fatal(err)
 	}
 	payload := remotePayloadFromCatalog(embedded)
-	removed := ""
+	removedThirdParty := ""
+	updatedBuiltin := ""
 	apps := make([]App, 0, len(payload.Apps))
 	for _, app := range payload.Apps {
-		if app.Source == "thirdparty" && removed == "" {
-			removed = app.Token
+		if app.Source == "thirdparty" && removedThirdParty == "" {
+			removedThirdParty = app.Token
 			continue
+		}
+		if app.Source == "builtin" && updatedBuiltin == "" {
+			updatedBuiltin = app.Token
+			app.NameZH = "动态更新的内置应用"
 		}
 		apps = append(apps, app)
 	}
+	apps = append(apps, App{
+		ID: "builtin-116", Num: 116, Source: "builtin", Token: "new-builtin-app",
+		NameZH: "新内置应用", NameEN: "New Builtin App", Description: "动态内置目录测试",
+		DescriptionEN: "Dynamic builtin catalog test", Category: "ai",
+		Icon: "icons/new-builtin-app.webp", Slug: "new-builtin-app",
+	})
 	apps = append(apps, App{
 		ID: "thirdparty-new-safe-app", Source: "thirdparty", Token: "new-safe-app",
 		NameZH: "新入驻应用", NameEN: "New Safe App", Description: "动态目录测试",
@@ -237,7 +248,7 @@ func TestRemoteCatalogDynamicallyReplacesThirdPartyEntries(t *testing.T) {
 		Website: "https://example.com", Icon: "icons/new-safe-app.webp", Slug: "new-safe-app",
 	})
 	payload.Apps = apps
-	payload.Meta.ThirdParty = len(apps) - payload.Meta.Builtin
+	payload.Meta.Builtin++
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -248,22 +259,132 @@ func TestRemoteCatalogDynamicallyReplacesThirdPartyEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	merged := mergeRemoteThirdParty(embedded, remote)
-	foundNew := false
-	foundRemoved := false
+	merged := mergeRemoteCatalog(embedded, remote)
+	foundNewThirdParty := false
+	foundNewBuiltin := false
+	foundUpdatedBuiltin := false
+	foundRemovedThirdParty := false
 	for _, app := range merged.Apps {
 		if app.Token == "new-safe-app" {
-			foundNew = app.Icon == genericThirdPartyIcon && app.IconSHA256 == ""
+			foundNewThirdParty = app.Icon == genericThirdPartyIcon && app.IconSHA256 == ""
 		}
-		if app.Token == removed {
-			foundRemoved = true
+		if app.Token == "new-builtin-app" {
+			foundNewBuiltin = app.Num == 116 && app.Icon == genericThirdPartyIcon &&
+				app.IconSHA256 == ""
+		}
+		if app.Token == updatedBuiltin {
+			local := embeddedAppByToken(t, embedded, updatedBuiltin)
+			foundUpdatedBuiltin = app.NameZH == "动态更新的内置应用" &&
+				app.Icon == local.Icon && app.IconSHA256 == local.IconSHA256
+		}
+		if app.Token == removedThirdParty {
+			foundRemovedThirdParty = true
 		}
 	}
-	if !foundNew || foundRemoved || len(merged.Apps) != len(embedded.Apps) {
+	if !foundNewThirdParty || !foundNewBuiltin || !foundUpdatedBuiltin ||
+		foundRemovedThirdParty || len(merged.Apps) != len(embedded.Apps)+1 {
 		t.Fatalf(
-			"dynamic merge failed: new=%v removedStillPresent=%v count=%d",
-			foundNew, foundRemoved, len(merged.Apps),
+			"dynamic merge failed: thirdParty=%v builtin=%v updated=%v removedStillPresent=%v count=%d",
+			foundNewThirdParty, foundNewBuiltin, foundUpdatedBuiltin,
+			foundRemovedThirdParty, len(merged.Apps),
 		)
+	}
+}
+
+func TestRemoteCatalogRejectsUntrustedDynamicBuiltinMetadata(t *testing.T) {
+	embedded, _, _, err := LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*remoteCatalogPayload)
+	}{
+		{
+			name: "source",
+			mutate: func(payload *remoteCatalogPayload) {
+				payload.Meta.Source = "https://example.com/untrusted"
+			},
+		},
+		{
+			name: "number",
+			mutate: func(payload *remoteCatalogPayload) {
+				for index := range payload.Apps {
+					if payload.Apps[index].Source == "builtin" {
+						payload.Apps[index].Num = 499
+						return
+					}
+				}
+			},
+		},
+		{
+			name: "count",
+			mutate: func(payload *remoteCatalogPayload) {
+				payload.Meta.Builtin++
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := remotePayloadFromCatalog(embedded)
+			test.mutate(&payload)
+			encoded, marshalErr := json.Marshal(payload)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			if _, decodeErr := decodeRemoteCatalog(
+				[]byte("<script>window.__APPS__ = " + string(encoded) + ";</script>"),
+			); decodeErr == nil {
+				t.Fatal("unsafe remote catalog was accepted")
+			}
+		})
+	}
+}
+
+func TestDynamicBuiltinUsesTheExistingKejilionSelectorPipeline(t *testing.T) {
+	app := App{ID: "builtin-116", Num: 116, Source: "builtin", Token: "new-builtin-app"}
+	service := &Service{}
+	selector, scriptBacked := service.scriptSelectorFor(Summary{App: app})
+	capabilities := defaultCapabilities(app, LegacyApp{}, true)
+	if !scriptBacked || selector != "116" || !capabilities["install"].Enabled ||
+		installerKind(app, LegacyApp{}, true) != "kejilion" {
+		t.Fatalf(
+			"dynamic builtin did not reuse the kejilion selector pipeline: selector=%q backed=%v capabilities=%#v",
+			selector, scriptBacked, capabilities,
+		)
+	}
+}
+
+func TestManagedScriptRemainsDefaultAndHostScriptIsFallback(t *testing.T) {
+	candidates := preferredKejilionScriptCandidates()
+	if len(candidates) < 4 {
+		t.Fatalf("script candidate list is incomplete: %#v", candidates)
+	}
+	if candidates[0] != "/home/docker/kpanel/bin/kejilion.sh" ||
+		candidates[1] != "/usr/local/bin/k" {
+		t.Fatalf("managed script must remain the default with the host script as fallback: %#v", candidates)
+	}
+}
+
+func TestBuiltinSelectorRequiresExplicitScriptSupport(t *testing.T) {
+	base := []byte("permission_granted=\"true\"\nKJ_APP_NONINTERACTIVE\nkpanel_run_docker_app_install\n")
+	compatible := appScriptCompatible(isKPanelCompatibleScript, "builtin-116", "116")
+	if compatible(append(base, []byte("\t115|old-app)\n")...)) {
+		t.Fatal("a compatible but stale managed script accepted an unknown builtin selector")
+	}
+	if compatible(append(base, []byte("\t116|documented-but-not-a-case-branch\n")...)) {
+		t.Fatal("a non-case script line was accepted as builtin selector support")
+	}
+	if !compatible(append(base, []byte("\t116|new-app|new-app-alias)\n")...)) {
+		t.Fatal("an updated compatible host script rejected its builtin selector")
+	}
+	if appScriptCompatible(isKPanelCompatibleScript, "builtin-116", "115")(
+		append(base, []byte("\t115|old-app)\n")...),
+	) {
+		t.Fatal("a builtin app identity accepted a different selector")
+	}
+	if !appScriptCompatible(isKPanelCompatibleScript, "thirdparty-example", "example")(base) {
+		t.Fatal("third-party apps must keep the existing dynamic configuration mechanism")
 	}
 }
 
@@ -403,7 +524,7 @@ func waitForCatalogState(t *testing.T, service *Service, mode, warning string) c
 
 func remotePayloadFromCatalog(catalog Catalog) remoteCatalogPayload {
 	payload := remoteCatalogPayload{
-		Meta:       remoteCatalogMeta{Builtin: 115, Source: catalog.Upstream},
+		Meta:       remoteCatalogMeta{Source: officialCatalogSource},
 		Categories: append([]Category(nil), catalog.Categories...),
 		Apps:       append([]App(nil), catalog.Apps...),
 	}
@@ -411,9 +532,22 @@ func remotePayloadFromCatalog(catalog Catalog) remoteCatalogPayload {
 		app := &payload.Apps[index]
 		app.Icon = "icons/" + app.Slug + ".webp"
 		app.IconSHA256 = ""
-		if app.Source == "thirdparty" {
+		if app.Source == "builtin" {
+			payload.Meta.Builtin++
+		} else {
 			payload.Meta.ThirdParty++
 		}
 	}
 	return payload
+}
+
+func embeddedAppByToken(t *testing.T, catalog Catalog, token string) App {
+	t.Helper()
+	for _, app := range catalog.Apps {
+		if app.Token == token {
+			return app
+		}
+	}
+	t.Fatalf("embedded application %q was not found", token)
+	return App{}
 }

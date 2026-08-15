@@ -347,11 +347,11 @@ func appContainerMatchScore(
 	return 0, ""
 }
 
-func installerKind(app App, legacy LegacyApp, scriptInstallAvailable bool) string {
+func installerKind(app App, _ LegacyApp, scriptInstallAvailable bool) string {
 	if _, ok := declarativeSpecs[app.Token]; ok {
 		return "declarative"
 	}
-	if scriptInstallAvailable && (app.Source == "thirdparty" || legacy.Num > 0) {
+	if scriptInstallAvailable && (app.Source == "builtin" || app.Source == "thirdparty") {
 		return "kejilion"
 	}
 	return "guided"
@@ -404,7 +404,7 @@ func (s *Service) refreshCatalog() {
 	defer s.catalogMu.Unlock()
 	s.catalogLoading = false
 	if err == nil {
-		merged := mergeRemoteThirdParty(s.catalog, remote)
+		merged := mergeRemoteCatalog(s.catalog, remote)
 		s.liveCatalog = &merged
 		s.catalogExpiry = now.Add(remoteCatalogTTL)
 		s.catalogRefreshedAt = now
@@ -441,7 +441,7 @@ func runtimeFromContainer(container contract.ContainerSummary) Runtime {
 
 func defaultCapabilities(
 	app App,
-	legacy LegacyApp,
+	_ LegacyApp,
 	scriptInstallAvailable bool,
 ) map[string]Capability {
 	reason := "该应用需要专属配置向导，暂不能无人值守安装"
@@ -449,9 +449,9 @@ func defaultCapabilities(
 	if _, ok := declarativeSpecs[app.Token]; ok {
 		install = Capability{Enabled: true}
 	} else if scriptInstallAvailable &&
-		(app.Source == "thirdparty" || legacy.Num > 0) {
+		(app.Source == "builtin" || app.Source == "thirdparty") {
 		install = Capability{Enabled: true}
-	} else if app.Source == "thirdparty" || legacy.Num > 0 {
+	} else if app.Source == "builtin" || app.Source == "thirdparty" {
 		install = Capability{Reason: "请先更新 kejilion.sh，并在终端运行一次 k 接受许可协议"}
 	}
 	return map[string]Capability{
