@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
 description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产部署安全核对和回滚记录"
-version: "2.1"
+version: "2.2"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, apps_repo, validation_environment, production_environment]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-13T00:00:00+08:00"
+updated: "2026-08-15T09:20:00+08:00"
 ---
 
 # Release KPanel
@@ -37,7 +37,7 @@ updated: "2026-08-13T00:00:00+08:00"
   拉取和推送清单的权限。
 - 保留所有无关未提交改动；只提交本次发布范围内的文件。
 - `${{validation_environment}}` 和 `${{production_environment}}` 必须登记在 `environment-policy.json`；
-  默认分别为 `arena-154` 与 `prod-108`，用途检查失败时不得连接目标。
+  两者默认均为 `arena-154`。`prod-108`/`108` 已禁用全部 KPanel 操作，任何步骤都不得连接该目标。
 
 ## Steps
 
@@ -264,14 +264,10 @@ node scripts/check-environment-policy.mjs \
 部署前记录当前版本、Panel/Agent 健康、镜像摘要、数据/配置位置和可恢复备份；使用 KPanel 标准
 应用市场更新入口，不直接改正式数据或绕过安装事务。
 
-固定环境边界：`prod-108`（含别名 `108`）只用于正常生产运行，不得作为线上测试、候选/功能验收、
-浏览器 E2E、灰度、canary、兼容性矩阵、失败注入、性能/压力、测试账号/数据或持续观察目标，也不存在
-“只读测试”例外。发布测试使用 `${{validation_environment}}`。
-
-108 部署后只执行防止盲目交付所必需的安全核对：版本与不可变 digest、Panel/Agent 单次健康状态、
-数据/配置可解析、备份与回滚入口就绪。不得在 108 登录测试账号、运行功能旅程、浏览器用例、连续采样、
-soak、压力或失败注入；这些结论必须在部署前由隔离环境提供。部署安全核对失败立即回滚，但不能将
-核对成功回填为候选、功能或生产质量验证证据。未经该次部署授权，不连接、不修改 108。
+固定环境边界：`prod-108`（含别名 `108`）已禁用全部 KPanel 操作。不得连接该主机执行测试、只读检查、
+备份、部署、升级、回滚演练、健康采样、日志读取或清理，也不存在临时授权或稳定版本部署例外。
+发布验证和唯一正式部署默认都使用 `${{production_environment}}=arena-154`；需要迁移到其他主机时，
+必须先由用户明确指定并登记新的环境，不能回退到 108。
 
 若用户只授权发布正式产物而未授权生产部署，停止在此步骤并明确记录“正式产物已发布，生产未部署”，
 不得复用上一版本现场结果或把公开镜像 E2E 写成生产成功。
@@ -281,8 +277,8 @@ soak、压力或失败注入；这些结论必须在部署前由隔离环境提�
 删除或改写，但失败版本不得无提示继续作为公共默认更新；应恢复上一稳定默认版本，或在 Release 与
 验收记录中明确已知问题、影响范围、负责人和修复期限后短期保留。该事件按变更失败计入交付节奏数据。
 
-**Expected output:** 已授权时生产运行版本与正式 digest/commit 一致、备份和回滚可执行；未授权时没有
-生产状态变化；108 只产生部署安全核对记录且未被用于任何验证/持续观察；发生回滚时，生产实例和公共
+**Expected output:** 已授权时 154（或用户新指定并登记的非 108 目标）运行版本与正式 digest/commit 一致、
+备份和回滚可执行；未授权时没有生产状态变化；108 没有连接或操作记录；发生回滚时，生产实例和公共
 默认更新通道均有明确、可复核状态。
 
 ### 10. 形成统一验收记录并交付
@@ -290,8 +286,8 @@ soak、压力或失败注入；这些结论必须在部署前由隔离环境提�
 从 `docs/release-acceptance-template.md` 创建 `docs/release-v${{version}}-acceptance.md`，记录精确提交、
 发布画像、多维质量状态、候选/主线/Release、公开产物、隔离真机、生产部署安全核对、回滚和遗留风险。
 自动测试、隔离真机、公开产物和生产部署安全核对必须分层填写；生产未执行的管理员写操作不得写成
-已验证。108 固定排除在验证、灰度和持续观察之外，应记录为“不参与验证；仅完成/未执行部署安全核对”，
-不得把它写成测试覆盖，也不得误报为发布门禁缺失。
+已验证。108 固定记录为“禁用全部 KPanel 操作，本次未连接、未部署、未核对”，不得把它写成测试覆盖、
+部署目标或发布门禁缺失。
 
 记录候选冻结和生产完成时间、提交到生产用时、是否发生回滚/紧急热修复/重复发布及原因，供滚动
 14 天和最近 20 个版本的发布节奏复核。验收记录在获得相应提交/推送授权后形成独立聚焦提交；
@@ -322,7 +318,7 @@ soak、压力或失败注入；这些结论必须在部署前由隔离环境提�
 - `${{image}}`：完整镜像仓库，默认 `docker.io/kjlion/kejilion-panel`。
 - `${{apps_repo}}`：`kejilion/apps` 本地路径，默认 `C:\GitHub\kejilion\apps`。
 - `${{validation_environment}}`：登记的隔离验收环境，默认 `arena-154`。
-- `${{production_environment}}`：登记的稳定生产部署环境，默认 `prod-108`。
+- `${{production_environment}}`：登记的稳定生产部署环境，默认 `arena-154`；禁止填写 `prod-108`/`108`。
 - 浏览器验收的证据目录、硬超时和命令规格仅在发布画像要求真实浏览器时固定，并完整传给
   `background-browser-validation`；无浏览器影响时标记不适用，不创建空作业。
 
@@ -339,7 +335,7 @@ py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workfl
   --param image=docker.io/example/kpanel \
   --param apps_repo=C:/tmp/apps \
   --param validation_environment=arena-154 \
-  --param production_environment=prod-108
+  --param production_environment=arena-154
 ```
 
 确认渲染结果中不存在未替换参数，并执行 `git diff --check`。
@@ -357,3 +353,4 @@ py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workfl
   专用候选 worktree 并重新执行受影响门禁。
 - 浏览器后台作业可以跨会话继续，但候选 `HEAD`、命令规格、环境或资源参数变化时证据作废；禁止用
   旧 job 的通过结果覆盖新候选。
+- `prod-108`/`108` 是 KPanel 永久 no-touch 目标；发布、部署、安全核对和故障恢复都不得连接。

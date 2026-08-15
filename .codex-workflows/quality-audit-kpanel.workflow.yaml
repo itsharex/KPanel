@@ -1,12 +1,12 @@
 ---
 name: quality-audit-kpanel
 description: "审计快速迭代后的 KPanel 业务正确性、体验、性能、稳定、安全、交付节奏和发布门禁"
-version: "1.4"
+version: "1.5"
 author: "Codex"
 tags: [quality, security, performance, stability, ux, delivery, review, regression]
 params: [project_dir, baseline_ref, candidate_image, test_host]
 created: "2026-08-02T13:02:08Z"
-updated: "2026-08-13T00:00:00+08:00"
+updated: "2026-08-15T09:20:00+08:00"
 ---
 
 # KPanel Quality Audit
@@ -23,7 +23,7 @@ updated: "2026-08-13T00:00:00+08:00"
   `docs/product-quality-review-2026-08-13.md`；历史审计只用于对应时点比较。
 - `${{project_dir}}` 是独立或无并发写入的 KPanel worktree。
 - 未经用户明确授权，不提交、推送、发布或修改正式服务器状态。
-- `${{test_host}}` 必须登记在 `environment-policy.json` 且允许候选/性能/浏览器验证；`prod-108` 不适用。
+- `${{test_host}}` 必须登记在 `environment-policy.json` 且允许候选/性能/浏览器验证；`prod-108` 禁用全部 KPanel 操作。
 
 ## Steps
 
@@ -142,7 +142,7 @@ make release-metrics
 - `${{project_dir}}`：待审计 KPanel worktree 绝对路径。
 - `${{baseline_ref}}`：最近稳定 tag 或审计开始时的 `origin/main`。
 - `${{candidate_image}}`：候选或公开版本镜像完整引用。
-- `${{test_host}}`：登记的隔离性能与运行时验收主机；为空时明确列出未验证项，不得回退到 108。
+- `${{test_host}}`：登记的隔离性能与运行时验收主机；为空时明确列出未验证项，不得连接 108。
 
 ## Verification
 

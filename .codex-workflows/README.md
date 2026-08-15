@@ -29,8 +29,8 @@
   `make dependency-report` 联网生成版本通道稳定候选；检测源失败保持“未报告”，不得推断为全部最新。
   GitHub Actions 每周生成候选、每日复核当前依赖图安全通告，并在例外或 EOL 复核到期时失败告警；采用
   资格仍由风险分级任务补齐。
-- 验证主机必须登记在 `environment-policy.json`。`prod-108` 只允许稳定版本生产部署和部署安全核对，
-  浏览器、候选、性能、压力、失败注入和灰度用途由机器门禁拒绝；默认隔离验收环境为 `arena-154`。
+- 主机必须登记在 `environment-policy.json`。`prod-108`/`108` 已禁用全部 KPanel 操作，测试、只读检查、
+  备份、发布、部署和安全核对均由机器门禁拒绝；默认隔离验收与唯一正式部署环境均为 `arena-154`。
 
 工作流由 `codex-workflows` 技能管理。使用前运行 `workflow.py list`，执行前使用
 `workflow.py run <name> --param key=value` 渲染参数，修改后必须运行

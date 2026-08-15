@@ -1,12 +1,12 @@
 ---
 name: session-collaboration
 description: "Route KPanel work through isolated worktrees and SSH-backed remote branches."
-version: "4.2"
+version: "4.3"
 author: "Codex"
 tags: [kpanel, collaboration, multi-agent, worktree, review]
 params: [role, scope, agent_provider, base_ref, verification_level]
 created: "2026-07-27T08:45:12Z"
-updated: "2026-08-13T00:00:00+08:00"
+updated: "2026-08-15T09:20:00+08:00"
 ---
 
 # KPanel Session Collaboration
@@ -76,7 +76,7 @@ affected business, browser, real-machine, performance, or production evidence ra
 
 Long-running browser E2E or soak uses `background-browser-validation`: record its job ID and evidence directory, release
 the foreground task, and let a monitor/read-only task consume the terminal state. Validate remote purposes through
-`environment-policy.json`; never select `prod-108` for validation.
+`environment-policy.json`; never connect to `prod-108` for any KPanel operation.
 
 Expected: the diff matches the requested scope, quality dimensions and user journeys are classified, and the reported
 tests and evidence are reproducible.
