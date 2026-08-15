@@ -922,11 +922,11 @@ onBeforeUnmount(() => {
         >
           <RefreshCw :size="15" :class="{ spin: refreshing }" />
         </button>
-        <button class="button button--secondary button--small" type="button" @click="openAccess">
-          <KeyRound :size="15" /> 接入授权
-        </button>
         <button class="button button--secondary button--small" type="button" @click="openShare">
           <Share2 :size="15" /> 公开分享
+        </button>
+        <button class="button button--secondary button--small" type="button" @click="openAccess">
+          <KeyRound :size="15" /> 接入授权
         </button>
         <button class="button button--primary button--small" type="button" @click="openAdd">
           <Plus :size="15" /> 添加主机
