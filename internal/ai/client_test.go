@@ -73,28 +73,34 @@ func TestOpenAIChatPreservesProviderReasoningAcrossToolCalls(t *testing.T) {
 				if requestNumber == 1 {
 					w.Header().Set("Content-Type", "text/event-stream")
 					fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{%q:\"plan \"}}]}\n\n", field)
-					fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{%q:\"next\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"host_read\",\"arguments\":\"{}\"}}]}}]}\n\n", field)
+					fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{%q:\"next\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"docker_containers\",\"arguments\":\"{}\"}},{\"index\":1,\"id\":\"call_2\",\"function\":{\"name\":\"apps_list\",\"arguments\":\"{}\"}}]}}]}\n\n", field)
 					fmt.Fprint(w, "data: [DONE]\n\n")
 					return
 				}
-				var assistant map[string]any
+				var assistants []map[string]any
 				for _, message := range payload.Messages {
 					if message["role"] == "assistant" && message["tool_calls"] != nil {
-						assistant = message
-						break
+						assistants = append(assistants, message)
 					}
 				}
+				if len(assistants) != 2 {
+					t.Fatalf("tool batch was not reconstructed: %#v", payload.Messages)
+				}
 				if requestNumber == 2 {
-					if _, exists := assistant[field]; exists {
-						t.Fatalf("standard continuation guessed a provider field: %#v", assistant)
+					for _, assistant := range assistants {
+						if _, exists := assistant[field]; exists {
+							t.Fatalf("standard continuation guessed a provider field: %#v", assistant)
+						}
 					}
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
 					fmt.Fprintf(w, `{"error":{"type":"invalid_request_error","message":"The %s in the thinking mode must be passed back to the API."}}`, field)
 					return
 				}
-				if assistant == nil || assistant[field] != "plan next" {
-					t.Fatalf("reasoning was not replayed with its provider field: %#v", payload.Messages)
+				for _, assistant := range assistants {
+					if assistant[field] != "plan next" {
+						t.Fatalf("reasoning was not replayed across the tool batch: %#v", payload.Messages)
+					}
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, "data: [DONE]\n\n")
@@ -110,7 +116,7 @@ func TestOpenAIChatPreservesProviderReasoningAcrossToolCalls(t *testing.T) {
 				}
 				return nil
 			})
-			if err != nil || len(calls) != 1 || len(calls[0].ProviderData) == 0 {
+			if err != nil || len(calls) != 2 || len(calls[0].ProviderData) == 0 || len(calls[1].ProviderData) != 0 {
 				t.Fatalf("calls=%#v err=%v", calls, err)
 			}
 			publicCall, _ := json.Marshal(calls[0])
@@ -118,8 +124,10 @@ func TestOpenAIChatPreservesProviderReasoningAcrossToolCalls(t *testing.T) {
 				t.Fatalf("hidden reasoning leaked through public tool JSON: %s", publicCall)
 			}
 			err = client.Stream(context.Background(), provider, "key", CompletionRequest{Model: "model", Messages: []ChatMessage{
-				{Role: "assistant", ToolCalls: calls},
+				{Role: "assistant", ToolCalls: calls[:1]},
 				{Role: "tool", ToolCallID: calls[0].ID, Content: `{"ok":true}`},
+				{Role: "assistant", ToolCalls: calls[1:]},
+				{Role: "tool", ToolCallID: calls[1].ID, Content: `{"ok":true}`},
 			}}, func(CompletionEvent) error { return nil })
 			if err != nil || requestNumber != 3 {
 				t.Fatalf("reasoning continuation requests=%d err=%v", requestNumber, err)

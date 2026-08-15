@@ -601,6 +601,7 @@ func (c *HTTPModelClient) streamOpenAI(ctx context.Context, provider Provider, a
 
 func (c *HTTPModelClient) streamOpenAIAttempt(ctx context.Context, provider Provider, apiKey string, request CompletionRequest, includeImages bool, requiredReasoningField string, emit func(CompletionEvent) error) error {
 	messages := []map[string]any{{"role": "system", "content": request.System}}
+	batchReasoning := ""
 	for _, message := range request.Messages {
 		item := map[string]any{"role": message.Role, "content": openAIContentWithImages(message, false, includeImages)}
 		if message.ToolCallID != "" {
@@ -612,7 +613,9 @@ func (c *HTTPModelClient) streamOpenAIAttempt(ctx context.Context, provider Prov
 				calls = append(calls, map[string]any{"id": call.ID, "type": "function", "function": map[string]any{"name": call.Name, "arguments": string(call.Arguments)}})
 			}
 			item["tool_calls"] = calls
-			applyOpenAIChatReasoning(item, provider.ID, message.ToolCalls, requiredReasoningField)
+			batchReasoning = applyOpenAIChatReasoning(item, provider.ID, message.ToolCalls, requiredReasoningField, batchReasoning)
+		} else if message.Role != "tool" {
+			batchReasoning = ""
 		}
 		messages = append(messages, item)
 	}
@@ -719,11 +722,8 @@ func attachOpenAIChatReasoning(providerID string, calls []ToolCall, field, reaso
 	}
 }
 
-func applyOpenAIChatReasoning(item map[string]any, providerID string, calls []ToolCall, requiredField string) {
-	if !validOpenAIChatReasoningField(requiredField) {
-		return
-	}
-	text := ""
+func applyOpenAIChatReasoning(item map[string]any, providerID string, calls []ToolCall, requiredField, fallbackText string) string {
+	text := fallbackText
 	for _, call := range calls {
 		var native openAIChatNativeContext
 		if json.Unmarshal(call.ProviderData, &native) == nil && native.Type == "openai_chat_reasoning" && native.ProviderID == providerID && validOpenAIChatReasoningField(native.Field) {
@@ -731,7 +731,10 @@ func applyOpenAIChatReasoning(item map[string]any, providerID string, calls []To
 			break
 		}
 	}
-	item[requiredField] = text
+	if validOpenAIChatReasoningField(requiredField) {
+		item[requiredField] = text
+	}
+	return text
 }
 
 func openAIChatReasoningDelta(content, text, reasoning *string) (string, *string) {
