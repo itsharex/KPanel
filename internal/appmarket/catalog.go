@@ -23,6 +23,7 @@ var (
 type Category struct {
 	Key string `json:"key"`
 	ZH  string `json:"zh"`
+	ZHTW string `json:"zh_tw,omitempty"`
 	EN  string `json:"en"`
 }
 
@@ -31,10 +32,12 @@ type App struct {
 	Num           int    `json:"num,omitempty"`
 	Source        string `json:"source"`
 	Token         string `json:"token"`
-	NameZH        string `json:"name_zh"`
-	NameEN        string `json:"name_en"`
-	Description   string `json:"desc_zh"`
-	DescriptionEN string `json:"desc_en"`
+	NameZH          string `json:"name_zh"`
+	NameZHTW        string `json:"name_zh_tw,omitempty"`
+	NameEN          string `json:"name_en"`
+	Description     string `json:"desc_zh"`
+	DescriptionZHTW string `json:"desc_zh_tw,omitempty"`
+	DescriptionEN   string `json:"desc_en"`
 	Category      string `json:"cat"`
 	Website       string `json:"url,omitempty"`
 	Icon          string `json:"icon"`

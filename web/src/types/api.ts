@@ -829,6 +829,7 @@ export interface SSHDefenseActionResult {
 export interface AppMarketCategory {
   key: string
   zh: string
+  zh_tw?: string
   en: string
 }
 
@@ -863,8 +864,10 @@ export interface AppMarketItem {
   source: 'builtin' | 'thirdparty'
   token: string
   name_zh: string
+  name_zh_tw?: string
   name_en: string
   desc_zh: string
+  desc_zh_tw?: string
   desc_en: string
   cat: string
   url?: string

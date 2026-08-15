@@ -207,6 +207,15 @@ func mergeRemoteCatalogWithDynamicIcons(embedded, remote Catalog, enabled bool) 
 		Categories:    append([]Category(nil), remote.Categories...),
 		Apps:          make([]App, 0, len(remote.Apps)),
 	}
+	localCategories := make(map[string]Category, len(embedded.Categories))
+	for _, category := range embedded.Categories {
+		localCategories[category.Key] = category
+	}
+	for index, category := range result.Categories {
+		if local, ok := localCategories[category.Key]; ok && local.ZHTW != "" {
+			result.Categories[index].ZHTW = local.ZHTW
+		}
+	}
 	for _, app := range embedded.Apps {
 		localByID[app.ID] = app
 		localByToken[app.Token] = app
@@ -219,6 +228,8 @@ func mergeRemoteCatalogWithDynamicIcons(embedded, remote Catalog, enabled bool) 
 		if ok {
 			app.Icon = local.Icon
 			app.IconSHA256 = local.IconSHA256
+			app.NameZHTW = local.NameZHTW
+			app.DescriptionZHTW = local.DescriptionZHTW
 		} else if enabled {
 			app.Icon = dynamicAppIconPrefix + app.Slug + ".webp"
 			app.IconSHA256 = ""

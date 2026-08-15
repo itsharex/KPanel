@@ -4,7 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/i18n'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
-usePhraseCatalog(() => import('@/i18n/pages/AppsView/en-US').then((module) => module.default))
+usePhraseCatalog((locale) => locale === 'en-US'
+  ? import('@/i18n/pages/AppsView/en-US').then((module) => module.default)
+  : import('@/i18n/pages/AppsView/zh-TW').then((module) => module.default))
 import {
   ArrowUpRight,
   Activity,
@@ -157,21 +159,35 @@ const categoryCounts = computed(() => {
   return counts
 })
 
+const traditionalCategoryLabels: Record<string, string> = {
+  ops: '面板運維',
+  ai: 'AI 大模型',
+  storage: '儲存 / 檔案',
+  media: '影音媒體',
+  netsec: '網路 / 安全',
+  devprod: '開發 / 效率',
+  commtools: '通訊 / 工具',
+}
+
 function capability(item: AppMarketItem, action: string): boolean {
   return item.capabilities[action]?.enabled === true
 }
 
 function categoryName(key: string): string {
   const item = inventory.value?.categories.find((candidate) => candidate.key === key)
-  return (i18n.locale.value === 'en-US' ? item?.en : item?.zh) || key
+  return (i18n.locale.value === 'en-US'
+    ? item?.en
+    : i18n.locale.value === 'zh-TW'
+      ? item?.zh_tw || traditionalCategoryLabels[key] || item?.zh
+      : item?.zh) || key
 }
 
 function appName(item: AppMarketItem): string {
-  return (i18n.locale.value === 'en-US' ? item.name_en : item.name_zh) || item.name_zh || item.name_en
+  return (i18n.locale.value === 'en-US' ? item.name_en : i18n.locale.value === 'zh-TW' ? item.name_zh_tw || item.name_zh : item.name_zh) || item.name_zh || item.name_en
 }
 
 function appDescription(item: AppMarketItem): string {
-  return (i18n.locale.value === 'en-US' ? item.desc_en : item.desc_zh) || item.desc_zh || item.desc_en
+  return (i18n.locale.value === 'en-US' ? item.desc_en : i18n.locale.value === 'zh-TW' ? item.desc_zh_tw || item.desc_zh : item.desc_zh) || item.desc_zh || item.desc_en
 }
 
 function appIconAlt(item: AppMarketItem): string {

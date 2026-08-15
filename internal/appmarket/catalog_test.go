@@ -108,6 +108,16 @@ func TestEmbeddedCatalogMatchesAuditedApplicationMarket(t *testing.T) {
 	if !foundKPanel {
 		t.Fatal("KPanel local application icon is missing or has an unexpected digest")
 	}
+	for _, category := range catalog.Categories {
+		if category.ZHTW == "" {
+			t.Fatalf("Traditional Chinese category label is missing for %s", category.Key)
+		}
+	}
+	for _, app := range catalog.Apps {
+		if app.NameZHTW == "" || app.DescriptionZHTW == "" {
+			t.Fatalf("Traditional Chinese app metadata is missing for %s", app.ID)
+		}
+	}
 }
 
 func TestInventoryCombinesDockerTruthAndScriptMarker(t *testing.T) {
