@@ -257,6 +257,9 @@ test('acceptance validation requires one closed machine evidence block', () => {
   const equalsSeparator = validateAcceptanceMetricsRaw(valid.replace(rows[4], '- 是否回滚、紧急热修复或重复发布=否'));
   assert.match(equalsSeparator.join('\n'), /must use "- 字段：值" syntax/);
 
+  const asciiColon = validateAcceptanceMetricsRaw(valid.replace(rows[4], '- 是否回滚、紧急热修复或重复发布:否'));
+  assert.match(asciiColon.join('\n'), /must use "- 字段：值" syntax/);
+
   const hiddenMarkdownControl = validateAcceptanceMetricsRaw(valid.replace(rows[4], rows[4] + ' <!-- 示例 -->'));
   assert.match(hiddenMarkdownControl.join('\n'), /plain text without Markdown code or HTML comment controls/);
 

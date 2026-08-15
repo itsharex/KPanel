@@ -176,7 +176,7 @@ function acceptanceFields(markdown) {
     if (/`|<!--|-->/.test(normalizedLine)) {
       structureErrors.push('release-metrics rows must be plain text without Markdown code or HTML comment controls');
     }
-    const match = line.match(/^- ([^：:]+)[：:]\s*(.*)$/);
+    const match = line.match(/^- ([^：]+)：\s*(.*)$/);
     if (!match) {
       structureErrors.push('release-metrics rows must use "- 字段：值" syntax');
       continue;
