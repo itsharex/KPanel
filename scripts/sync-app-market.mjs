@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -111,20 +111,47 @@ async function syncIcon(app) {
   }
 }
 
+async function readTraditionalMetadata() {
+  try {
+    const snapshot = JSON.parse(await readFile(catalogPath, 'utf8'))
+    const categories = new Map((snapshot.categories || []).map((category) => [category.key, category]))
+    const apps = new Map()
+    for (const app of snapshot.apps || []) {
+      if (app.id) apps.set(app.id, app)
+      if (app.token) apps.set(app.token, app)
+    }
+    return { categories, apps }
+  } catch {
+    return { categories: new Map(), apps: new Map() }
+  }
+}
+
 const html = await (await fetchChecked(sourceURL, 'text/html')).text()
 const raw = extractCatalog(html)
 validateCatalog(raw)
+const existingTraditional = await readTraditionalMetadata()
 
 await mkdir(dirname(catalogPath), { recursive: true })
 await mkdir(iconRoot, { recursive: true })
 const apps = []
-for (const app of raw.apps) apps.push(await syncIcon(app))
+for (const app of raw.apps) {
+  const synced = await syncIcon(app)
+  const existing = existingTraditional.apps.get(app.id) || existingTraditional.apps.get(app.token)
+  apps.push({
+    ...synced,
+    ...(app.name_zh_tw || existing?.name_zh_tw ? { name_zh_tw: app.name_zh_tw || existing.name_zh_tw } : {}),
+    ...(app.desc_zh_tw || existing?.desc_zh_tw ? { desc_zh_tw: app.desc_zh_tw || existing.desc_zh_tw } : {}),
+  })
+}
 
 const snapshot = {
   schemaVersion: 1,
   source: sourceURL,
   upstream: raw.meta?.source || 'https://github.com/kejilion/sh',
-  categories: raw.categories,
+  categories: raw.categories.map((category) => {
+    const existing = existingTraditional.categories.get(category.key)
+    return existing?.zh_tw && !category.zh_tw ? { ...category, zh_tw: existing.zh_tw } : category
+  }),
   apps,
 }
 await writeFile(catalogPath, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: 'utf8', mode: 0o644 })
