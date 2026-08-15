@@ -89,9 +89,12 @@ function comparableFieldText(value) {
   return value.replace(DEFAULT_IGNORABLE_GLOBAL, '').normalize('NFKC').replace(/\p{White_Space}/gu, '');
 }
 
+function withoutInlineCodeSpans(line) {
+  return line.replace(/(`+).*?\1/g, (span) => ' '.repeat(span.length));
+}
+
 function suspiciousFieldName(line) {
-  const withoutInlineCode = line.replace(/(`+).*?\1/g, '');
-  const comparableLine = comparableFieldText(withoutInlineCode);
+  const comparableLine = comparableFieldText(withoutInlineCodeSpans(line));
   return ACCEPTANCE_FIELDS.find((field) => {
     const fieldName = comparableFieldText(field);
     const index = comparableLine.indexOf(fieldName);
@@ -145,7 +148,7 @@ function acceptanceFields(markdown) {
       continue;
     }
 
-    const commentResult = withoutHtmlCommentsOnLine(rawLine, insideHtmlComment);
+    const commentResult = withoutHtmlCommentsOnLine(withoutInlineCodeSpans(rawLine), insideHtmlComment);
     insideHtmlComment = commentResult.insideComment;
     const line = commentResult.visible;
     const openingFence = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);

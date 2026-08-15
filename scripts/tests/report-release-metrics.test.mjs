@@ -183,6 +183,12 @@ test('acceptance validation requires machine-readable delivery evidence', () => 
     '\n示例：`- 是否回滚、紧急热修复或重复发布：是（示例）`';
   assert.deepEqual(validateAcceptanceMetrics(inlineCodeDoesNotOverrideVisibleEvidence), []);
 
+  const literalCommentInsideInlineCode = '示例：`<!-- literal, not an HTML comment`\n' + valid;
+  assert.deepEqual(validateAcceptanceMetrics(literalCommentInsideInlineCode), []);
+
+  const inlineCommentClosedAfterEvidence = '示例：`<!-- literal`\n' + valid + '\n-->';
+  assert.deepEqual(validateAcceptanceMetrics(inlineCommentClosedAfterEvidence), []);
+
   const fenceInfoIsNotAClosingFence = '```text\n```not-a-close\n' + valid + '\n```';
   assert.equal(validateAcceptanceMetrics(fenceInfoIsNotAClosingFence).filter(
     (error) => error.includes('missing structured field'),
