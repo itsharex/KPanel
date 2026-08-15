@@ -295,6 +295,12 @@ export function peekDesktopFileDragEntries(event: DragEvent): DesktopFileEntry[]
   return activeDrag.entries.map((entry) => ({ ...entry }))
 }
 
+/** Keep same-page hover behavior stable while the browser protects drag data. */
+export function peekDesktopFileDragOrigin(event: DragEvent): DesktopFileDragOrigin | undefined {
+  if (!hasDesktopFileDrag(event) || !activeDrag) return undefined
+  return activeDrag.origin
+}
+
 export function clearDesktopFileDrag(): void {
   activeDrag = undefined
 }

@@ -15,6 +15,7 @@ import {
   hasCrossPanelFileDrag,
   hasDesktopFileDrag,
   peekDesktopFileDragEntries,
+  peekDesktopFileDragOrigin,
 } from './desktopFileShortcuts'
 
 function workspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
@@ -134,6 +135,14 @@ describe('desktop file shortcuts', () => {
       name: 'app', path: '/app', kind: 'directory', resourceVersion: 'sha256:app',
     }], 'd'.repeat(32), 'desktop-shortcut')).toBe(true)
     expect(desktopFileDragOrigin(event)).toBe('desktop-shortcut')
+    const protectedHover = {
+      dataTransfer: {
+        types: event.dataTransfer!.types,
+        getData: () => '',
+      },
+    } as unknown as DragEvent
+    expect(desktopFileDragOrigin(protectedHover)).toBeUndefined()
+    expect(peekDesktopFileDragOrigin(protectedHover)).toBe('desktop-shortcut')
   })
 
   it('serializes one versioned cross-panel descriptor without an authorization secret', () => {

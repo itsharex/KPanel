@@ -56,6 +56,7 @@ import {
   DesktopShortcutLimitError,
   hasCrossPanelFileDrag,
   hasDesktopFileDrag,
+  peekDesktopFileDragOrigin,
 } from '@/lib/desktopFileShortcuts'
 import {
   collectExternalDrop,
@@ -1535,7 +1536,7 @@ function onDesktopFileDragOver(event: DragEvent): void {
   const internal = hasDesktopFileDrag(event)
   const localShortcutMove = internal
     && desktopShortcutNativeDrag
-    && desktopFileDragOrigin(event) === 'desktop-shortcut'
+    && peekDesktopFileDragOrigin(event) === 'desktop-shortcut'
   if (localShortcutMove) {
     fileDropActive.value = false
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'

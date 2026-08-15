@@ -713,7 +713,14 @@ describe('DesktopView dynamic entries', () => {
       ],
     })
 
-    wrapper.element.dispatchEvent(internalFileDragEvent('dragover', dataTransfer, 360, 260))
+    const protectedHoverDataTransfer = {
+      ...dataTransfer,
+      getData: () => '',
+    }
+    wrapper.element.dispatchEvent(internalFileDragEvent('dragover', protectedHoverDataTransfer, 360, 260))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.desktop__file-drop').exists()).toBe(false)
+    expect(protectedHoverDataTransfer.dropEffect).toBe('move')
     wrapper.element.dispatchEvent(internalFileDragEvent('drop', dataTransfer, 360, 260))
     first.element.dispatchEvent(internalFileDragEvent('dragend', dataTransfer, 360, 260))
     await flushPromises()
