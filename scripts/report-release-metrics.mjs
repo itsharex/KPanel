@@ -63,12 +63,47 @@ export function parseArguments(argv) {
 
 export function gitEnvironment(repo, environment = process.env) {
   const env = { ...environment };
-  const explicitWorkTree = env.GIT_WORK_TREE ? resolve(env.GIT_WORK_TREE) : null;
-  if (explicitWorkTree !== resolve(repo)) {
+  const comparablePath = (value, base = process.cwd()) => {
+    if (!value) return null;
+    let normalized = String(value).trim().replaceAll('\\', '/');
+    if (process.platform === 'win32' && normalized.startsWith('/')) {
+      normalized = resolve(normalized).replaceAll('\\', '/');
+    }
+    if (!/^(?:[A-Za-z]:\/|\/)/.test(normalized)) {
+      normalized = resolve(base, normalized).replaceAll('\\', '/');
+    }
+    const wslPath = normalized.match(/^\/mnt\/([A-Za-z])\/(.*)$/);
+    const windowsPath = normalized.match(/^([A-Za-z]):\/(.*)$/);
+    if (wslPath) normalized = wslPath[1].toLowerCase() + ':/' + wslPath[2].toLowerCase();
+    if (windowsPath) normalized = windowsPath[1].toLowerCase() + ':/' + windowsPath[2].toLowerCase();
+    return normalized.replace(/\/$/, '');
+  };
+  const dotGit = resolve(repo, '.git');
+  let expectedGitDir = dotGit;
+  try {
+    const match = readFileSync(dotGit, 'utf8').trim().match(/^gitdir:\s*(.+)$/i);
+    if (match) {
+      const configured = match[1].trim();
+      expectedGitDir = /^(?:[A-Za-z]:[\\/]|\/)/.test(configured)
+        ? configured
+        : resolve(repo, configured);
+    }
+  } catch {
+    // A normal clone has a .git directory rather than a linked-worktree pointer file.
+  }
+  const expectedIndex = expectedGitDir.replace(/[\\/]$/, '') + '/index';
+  const explicitLocationMatches =
+    comparablePath(env.GIT_WORK_TREE) === comparablePath(repo) &&
+    comparablePath(env.GIT_DIR) === comparablePath(expectedGitDir) &&
+    (!env.GIT_INDEX_FILE || comparablePath(env.GIT_INDEX_FILE) === comparablePath(expectedIndex));
+  if (!explicitLocationMatches) {
     delete env.GIT_DIR;
     delete env.GIT_WORK_TREE;
     delete env.GIT_INDEX_FILE;
   }
+  delete env.GIT_COMMON_DIR;
+  delete env.GIT_OBJECT_DIRECTORY;
+  delete env.GIT_ALTERNATE_OBJECT_DIRECTORIES;
   return env;
 }
 

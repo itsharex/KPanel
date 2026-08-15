@@ -177,6 +177,19 @@ test('argument parser rejects invalid windows', () => {
     GIT_INDEX_FILE: '/candidate/repo/.git/index',
   });
   assert.equal(sameWorkTree.GIT_DIR, '/candidate/repo/.git');
+
+  const mixedMetadata = gitEnvironment('/candidate/repo', {
+    GIT_DIR: '/foreign/repo/.git',
+    GIT_WORK_TREE: '/candidate/repo',
+    GIT_INDEX_FILE: '/foreign/repo/.git/index',
+    GIT_COMMON_DIR: '/foreign/repo/.git',
+    PATH: 'kept',
+  });
+  assert.equal(mixedMetadata.GIT_DIR, undefined);
+  assert.equal(mixedMetadata.GIT_WORK_TREE, undefined);
+  assert.equal(mixedMetadata.GIT_INDEX_FILE, undefined);
+  assert.equal(mixedMetadata.GIT_COMMON_DIR, undefined);
+  assert.equal(mixedMetadata.PATH, 'kept');
 });
 
 test('acceptance validation requires one closed machine evidence block', () => {

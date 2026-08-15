@@ -102,7 +102,11 @@
   可把另一个仓库误报为证据源；全角 Markdown/HTML 控制符在 NFKC 后也可绕过纯文本约束。
 - 第十五轮问题已进入修复：复用业务新鲜度脚本的 Git 环境隔离；机器行先做 NFKC，再检查 backtick
   与 HTML comment 控制符。
-- 待第十六轮独立复核：重放 Git 证据源隔离、NFKC 控制符与完整封闭协议矩阵。
+- 第十六轮独立复核 `7cc7f88`：第十五轮三项反例均已通过，但仍拒绝准入；当 `GIT_WORK_TREE`
+  指向候选、`GIT_DIR/GIT_INDEX_FILE` 指向外部仓库时，滚动指标仍会读取外部提交和版本。
+- 第十六轮问题已进入修复：只有工作树、Git 元数据目录和可选 index 同时匹配候选时才保留显式
+  Git 定位变量；同时清除外部 common dir/object directory，Windows 与 WSL 路径按同一工作树等价比较。
+- 待第十七轮独立复核：重放混合 Git 元数据反例、Windows/WSL linked worktree 和完整封闭协议矩阵。
 - v0.74.0 已发布并形成验收提交，本实现已在其最新主线基线上重放；独立复核完成前继续保留于
   `fix/governance-feedback-loop` 专用分支，不更新 `main`。
 
