@@ -696,6 +696,7 @@ describe('DesktopView dynamic entries', () => {
     const types: string[] = []
     const dataTransfer = {
       types, effectAllowed: 'none', dropEffect: 'none',
+      setDragImage: vi.fn(),
       setData(type: string, value: string) {
         if (!types.includes(type)) types.push(type)
         values.set(type, value)
@@ -703,6 +704,7 @@ describe('DesktopView dynamic entries', () => {
       getData(type: string) { return values.get(type) || '' },
     }
     first.element.dispatchEvent(internalFileDragEvent('dragstart', dataTransfer, 40, 40))
+    expect(dataTransfer.setDragImage).toHaveBeenCalledWith(first.element, 40, 40)
     const payload = JSON.parse(values.get('application/x-kpanel-cross-panel-files-v2') || '{}')
     expect(payload).toMatchObject({
       version: 2,
@@ -721,6 +723,9 @@ describe('DesktopView dynamic entries', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.desktop__file-drop').exists()).toBe(false)
     expect(protectedHoverDataTransfer.dropEffect).toBe('move')
+    expect(first.attributes('style')).toContain('left: 320px')
+    expect(first.attributes('style')).toContain('top: 220px')
+    expect(second.classes()).toContain('desktop__icon-slot--dragging')
     wrapper.element.dispatchEvent(internalFileDragEvent('drop', dataTransfer, 360, 260))
     first.element.dispatchEvent(internalFileDragEvent('dragend', dataTransfer, 360, 260))
     await flushPromises()

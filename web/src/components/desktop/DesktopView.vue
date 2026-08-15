@@ -882,6 +882,11 @@ interface DesktopShortcutNativeDrag {
   anchorKey: string
   keys: string[]
   paths: string[]
+  origins: Record<string, { left: number; top: number }>
+  grabOffset: { left: number; top: number }
+  lastX: number
+  lastY: number
+  localPreviewActive: boolean
 }
 
 let desktopShortcutNativeDrag: DesktopShortcutNativeDrag | undefined
@@ -950,10 +955,33 @@ function startDesktopShortcutDrag(event: DragEvent, entry: DesktopEntry): void {
     event.preventDefault()
     return
   }
+  const grid = desktopIconGrid(iconBounds.value)
+  const origins = Object.fromEntries(keys.map((key) => [
+    key,
+    desktopIconPositionToPixels(renderedPositionByKey.value.get(key)!, iconBounds.value),
+  ]))
+  const anchorElement = event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
+  const anchorRect = anchorElement?.getBoundingClientRect()
+  const grabOffset = {
+    left: Math.min(grid.metrics.width, Math.max(0, event.clientX - (anchorRect?.left ?? 0))),
+    top: Math.min(grid.metrics.height, Math.max(0, event.clientY - (anchorRect?.top ?? 0))),
+  }
+  if (anchorElement && typeof event.dataTransfer.setDragImage === 'function') {
+    try {
+      event.dataTransfer.setDragImage(anchorElement, grabOffset.left, grabOffset.top)
+    } catch {
+      // Some embedded browsers reject a custom drag image; native dragging still works.
+    }
+  }
   desktopShortcutNativeDrag = {
     anchorKey: entry.key,
     keys,
     paths: transferable.map((item) => item.path),
+    origins,
+    grabOffset,
+    lastX: event.clientX,
+    lastY: event.clientY,
+    localPreviewActive: false,
   }
   draggingIcons.value = new Set(keys)
   closeContextMenu(false)
@@ -971,10 +999,52 @@ function startDesktopShortcutDrag(event: DragEvent, entry: DesktopEntry): void {
 
 function finishDesktopShortcutDrag(): void {
   const drag = desktopShortcutNativeDrag
+  clearDesktopShortcutNativeDragPreview()
   desktopShortcutNativeDrag = undefined
   draggingIcons.value = new Set()
   clearDesktopFileDrag()
   if (drag?.paths.length) void refreshDesktopFileMetadata(drag.paths)
+}
+
+function clearDesktopShortcutNativeDragPreview(): void {
+  const drag = desktopShortcutNativeDrag
+  if (!drag?.localPreviewActive) return
+  drag.localPreviewActive = false
+  dragPreviews.value = {}
+  stopIconAutoScroll()
+}
+
+function updateDesktopShortcutNativeDragPreview(clientX: number, clientY: number): void {
+  const drag = desktopShortcutNativeDrag
+  const element = iconsElement.value
+  const anchorOrigin = drag?.origins[drag.anchorKey]
+  if (!drag || !element || !anchorOrigin) return
+  const rect = element.getBoundingClientRect()
+  drag.lastX = clientX
+  drag.lastY = clientY
+  drag.localPreviewActive = true
+  const desiredLeft = clientX - rect.left - drag.grabOffset.left
+  const desiredTop = clientY - rect.top + element.scrollTop - drag.grabOffset.top
+  dragPreviews.value = clampedIconDragPreviews(
+    drag.origins,
+    desiredLeft - anchorOrigin.left,
+    desiredTop - anchorOrigin.top,
+  )
+  scheduleIconAutoScroll()
+}
+
+function desktopShortcutDropPosition(event: DragEvent): DesktopIconPosition | undefined {
+  const drag = desktopShortcutNativeDrag
+  if (!drag) return undefined
+  const preview = dragPreviews.value[drag.anchorKey]
+  if (preview) return desktopIconPixelsToPosition(preview, iconBounds.value)
+  const element = iconsElement.value
+  if (!element) return undefined
+  const rect = element.getBoundingClientRect()
+  return desktopIconPixelsToPosition({
+    left: event.clientX - rect.left - drag.grabOffset.left,
+    top: event.clientY - rect.top + element.scrollTop - drag.grabOffset.top,
+  }, iconBounds.value)
 }
 
 async function moveDesktopShortcutDrop(
@@ -1001,6 +1071,7 @@ async function moveDesktopShortcutDrop(
   iconAnnouncement.value = drag.keys.length > 1
     ? i18n.t('desktop.iconsMoved', { count: drag.keys.length })
     : i18n.t('desktop.iconMoved', { name: iconLabel(drag.anchorKey) })
+  clearDesktopShortcutNativeDragPreview()
   await persistPositions(next).catch(() => undefined)
 }
 
@@ -1038,27 +1109,39 @@ function stopIconAutoScroll(): void {
   iconAutoScrollFrame = undefined
 }
 
-function updateIconDragPreview(drag: IconDragState): void {
-  const scrollDelta = (iconsElement.value?.scrollTop || 0) - drag.startScrollTop
+function clampedIconDragPreviews(
+  originsByKey: Record<string, { left: number; top: number }>,
+  requestedDeltaX: number,
+  requestedDeltaY: number,
+): Record<string, { left: number; top: number }> {
   const grid = desktopIconGrid(iconBounds.value)
-  const origins = Object.values(drag.origins)
+  const origins = Object.values(originsByKey)
   const minimumLeft = Math.min(...origins.map((origin) => origin.left))
   const maximumLeft = Math.max(...origins.map((origin) => origin.left))
   const minimumTop = Math.min(...origins.map((origin) => origin.top))
   const maximumTop = Math.max(...origins.map((origin) => origin.top))
   const deltaX = Math.min(
     grid.maxLeft - maximumLeft,
-    Math.max(-minimumLeft, drag.lastX - drag.startX),
+    Math.max(-minimumLeft, requestedDeltaX),
   )
   const deltaY = Math.min(
     grid.maxRow * grid.stepY - maximumTop,
-    Math.max(-minimumTop, drag.lastY - drag.startY + scrollDelta),
+    Math.max(-minimumTop, requestedDeltaY),
   )
-  dragPreviews.value = Object.fromEntries(
-    Object.entries(drag.origins).map(([key, origin]) => [key, {
+  return Object.fromEntries(
+    Object.entries(originsByKey).map(([key, origin]) => [key, {
       left: origin.left + deltaX,
       top: origin.top + deltaY,
     }]),
+  )
+}
+
+function updateIconDragPreview(drag: IconDragState): void {
+  const scrollDelta = (iconsElement.value?.scrollTop || 0) - drag.startScrollTop
+  dragPreviews.value = clampedIconDragPreviews(
+    drag.origins,
+    drag.lastX - drag.startX,
+    drag.lastY - drag.startY + scrollDelta,
   )
 }
 
@@ -1078,14 +1161,22 @@ function iconAutoScrollVelocity(clientY: number): number {
 
 function scheduleIconAutoScroll(): void {
   if (iconAutoScrollFrame !== undefined) return
-  const drag = iconDrag
-  if (!drag?.moved || !iconAutoScrollVelocity(drag.lastY)) return
+  const pointerDrag = iconDrag?.moved ? iconDrag : undefined
+  const nativeDrag = desktopShortcutNativeDrag?.localPreviewActive
+    ? desktopShortcutNativeDrag
+    : undefined
+  const clientY = pointerDrag?.lastY ?? nativeDrag?.lastY
+  if (clientY === undefined || !iconAutoScrollVelocity(clientY)) return
   iconAutoScrollFrame = window.requestAnimationFrame(() => {
     iconAutoScrollFrame = undefined
-    const active = iconDrag
+    const activePointer = iconDrag?.moved ? iconDrag : undefined
+    const activeNative = desktopShortcutNativeDrag?.localPreviewActive
+      ? desktopShortcutNativeDrag
+      : undefined
     const element = iconsElement.value
-    if (!active?.moved || !element) return
-    const velocity = iconAutoScrollVelocity(active.lastY)
+    const activeClientY = activePointer?.lastY ?? activeNative?.lastY
+    if (activeClientY === undefined || !element) return
+    const velocity = iconAutoScrollVelocity(activeClientY)
     if (!velocity) return
     const before = element.scrollTop
     element.scrollTop = Math.max(
@@ -1093,7 +1184,8 @@ function scheduleIconAutoScroll(): void {
       Math.min(element.scrollHeight - element.clientHeight, before + velocity),
     )
     if (element.scrollTop === before) return
-    updateIconDragPreview(active)
+    if (activePointer) updateIconDragPreview(activePointer)
+    else if (activeNative) updateDesktopShortcutNativeDragPreview(activeNative.lastX, activeNative.lastY)
     scheduleIconAutoScroll()
   })
 }
@@ -1530,6 +1622,7 @@ function desktopFileDropAllowed(event: DragEvent): boolean {
 function onDesktopFileDragOver(event: DragEvent): void {
   if (!desktopFileDropAllowed(event)) {
     fileDropActive.value = false
+    clearDesktopShortcutNativeDragPreview()
     return
   }
   event.preventDefault()
@@ -1539,6 +1632,7 @@ function onDesktopFileDragOver(event: DragEvent): void {
     && peekDesktopFileDragOrigin(event) === 'desktop-shortcut'
   if (localShortcutMove) {
     fileDropActive.value = false
+    updateDesktopShortcutNativeDragPreview(event.clientX, event.clientY)
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
     return
   }
@@ -1556,7 +1650,10 @@ function onDesktopFileDragOver(event: DragEvent): void {
 
 function onDesktopFileDragLeave(event: DragEvent): void {
   const related = event.relatedTarget as Node | null
-  if (!related || !(event.currentTarget as HTMLElement).contains(related)) fileDropActive.value = false
+  if (!related || !(event.currentTarget as HTMLElement).contains(related)) {
+    fileDropActive.value = false
+    clearDesktopShortcutNativeDragPreview()
+  }
 }
 
 function desktopDropPosition(event: DragEvent): DesktopIconPosition | undefined {
@@ -1962,13 +2059,16 @@ async function onDesktopFileDrop(event: DragEvent): Promise<void> {
   if (!desktopFileDropAllowed(event)) return
   event.preventDefault()
   fileDropActive.value = false
-  const destination = desktopDropPosition(event)
-  if (!destination) return
-  if (
+  const localShortcutMove = Boolean(
     desktopShortcutNativeDrag
     && hasDesktopFileDrag(event)
-    && desktopFileDragOrigin(event) === 'desktop-shortcut'
-  ) await moveDesktopShortcutDrop(destination)
+    && desktopFileDragOrigin(event) === 'desktop-shortcut',
+  )
+  const destination = localShortcutMove
+    ? desktopShortcutDropPosition(event)
+    : desktopDropPosition(event)
+  if (!destination) return
+  if (localShortcutMove) await moveDesktopShortcutDrop(destination)
   else if (hasDesktopFileDrag(event)) await addInternalFileDrop(event, destination)
   else if (hasCrossPanelFileDrag(event)) await addCrossPanelFileDrop(event, destination)
   else if (hasExternalFileDrop(event)) await addExternalFileDrop(event, destination)
