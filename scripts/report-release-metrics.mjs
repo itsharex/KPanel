@@ -81,25 +81,37 @@ function validValue(value) {
   return EMPTY_VALUE.test(normalized) ? null : normalized;
 }
 
+function normalizedFieldName(value) {
+  return value.trim().normalize('NFKC');
+}
+
 function acceptanceFields(markdown) {
   const fields = new Map();
+  const duplicates = new Set();
+  let formatControls = false;
   for (const line of markdown.split(/\r?\n/)) {
     const match = line.match(/^-\s*([^：:]+)[：:]\s*(.*)$/);
-    if (match) fields.set(match[1].trim(), match[2].trim());
+    if (match) {
+      if (/\p{Cf}/u.test(line)) formatControls = true;
+      const field = normalizedFieldName(match[1]);
+      if (fields.has(field)) duplicates.add(field);
+      fields.set(field, match[2].trim());
+    }
   }
-  return fields;
+  return { fields, duplicates, formatControls };
 }
 
 export function extractAcceptanceMetrics(markdown) {
-  const fields = acceptanceFields(markdown);
+  const { fields } = acceptanceFields(markdown);
+  const field = (name) => fields.get(normalizedFieldName(name));
 
   return {
-    firstIncludedCommitAt: validValue(fields.get('首个纳入提交时间')),
-    candidateFrozenAt: validValue(fields.get('候选冻结时间')),
-    productionCompletedAt: validValue(fields.get('生产完成时间')),
-    commitToProduction: validValue(fields.get('提交到生产用时')),
-    changeFailure: validValue(fields.get('是否回滚、紧急热修复或重复发布')),
-    recovery: validValue(fields.get('若发生失败，发现时间、恢复时间和逃逸门禁')),
+    firstIncludedCommitAt: validValue(field('首个纳入提交时间')),
+    candidateFrozenAt: validValue(field('候选冻结时间')),
+    productionCompletedAt: validValue(field('生产完成时间')),
+    commitToProduction: validValue(field('提交到生产用时')),
+    changeFailure: validValue(field('是否回滚、紧急热修复或重复发布')),
+    recovery: validValue(field('若发生失败，发现时间、恢复时间和逃逸门禁')),
   };
 }
 
@@ -129,18 +141,19 @@ function validDate(value) {
 }
 
 function hasFailureRecoveryDetails(value) {
-  if (value === null) return false;
-  const segments = value.split(/[；;]/).map((segment) => segment.trim());
+  if (value === null || /\p{Cf}/u.test(value)) return false;
+  const normalizedValue = value.normalize('NFKC');
+  const segments = normalizedValue.split(';').map((segment) => segment.trim());
   if (segments.length !== 3) return false;
   const detail = (segment, label) => validValue(segment.match(
-    new RegExp('^' + label + '\\s*[：:=]\\s*(.+)$'),
+    new RegExp('^' + label + '\\s*:\\s*(.+)$'),
   )?.[1]);
   const discoveredAt = detail(segments[0], '发现时间');
   const recoveredAt = detail(segments[1], '恢复时间');
   const escapedGate = detail(segments[2], '逃逸门禁');
-  const escapedGateMatch = escapedGate?.match(/^(?:已逃逸|未逃逸)\s*[：:]\s*(.+)$/);
+  const escapedGateMatch = escapedGate?.match(/^(?:已逃逸|未逃逸)\s*:\s*(.+)$/);
   const escapedGateDetail = validValue(escapedGateMatch?.[1]);
-  const compactGateDetail = escapedGateDetail?.toLowerCase().replace(/[\s\/._-]+/g, '') ?? '';
+  const compactGateDetail = escapedGateDetail?.toLowerCase().replace(/[\p{White_Space}\p{P}\p{S}]+/gu, '') ?? '';
   const escapedGatePlaceholder = /^(?:无|无(?:缺口|门禁|异常|问题)|待.*|tbd|todo|none|null|unknown|na|notapplicable|具体(?:缺口|原因))$/i;
   const concreteEscapedGate = escapedGateDetail !== null && escapedGateDetail.length >= 4 &&
     !escapedGatePlaceholder.test(compactGateDetail) &&
@@ -151,9 +164,14 @@ function hasFailureRecoveryDetails(value) {
 
 export function validateAcceptanceMetrics(markdown, label = 'acceptance record') {
   const errors = [];
-  const fields = acceptanceFields(markdown);
+  const { fields, duplicates, formatControls } = acceptanceFields(markdown);
+  if (formatControls) {
+    errors.push(label + ': structured acceptance evidence must not contain format-control characters');
+  }
   for (const field of ACCEPTANCE_FIELDS) {
-    if (!fields.has(field)) errors.push(label + ': missing structured field "' + field + '"');
+    const normalizedField = normalizedFieldName(field);
+    if (!fields.has(normalizedField)) errors.push(label + ': missing structured field "' + field + '"');
+    if (duplicates.has(normalizedField)) errors.push(label + ': duplicate structured field "' + field + '"');
   }
   if (errors.length > 0) return errors;
 

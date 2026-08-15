@@ -147,6 +147,12 @@ test('acceptance validation requires machine-readable delivery evidence', () => 
   const inconsistent = validateAcceptanceMetrics(valid.replace('0.66 小时', '2.00 小时'));
   assert.match(inconsistent.join('\n'), /does not match/);
 
+  const duplicateFailure = validateAcceptanceMetrics(valid.replace(
+    '- 是否回滚、紧急热修复或重复发布：否',
+    '- 是否回滚、紧急热修复或重复发布：是（已回滚）\n- 是否回滚、紧急热修复或重复发布：否',
+  ));
+  assert.match(duplicateFailure.join('\n'), /duplicate structured field/);
+
   const looseDate = validateAcceptanceMetrics(valid.replace(
     '2026-08-15T11:21:11+08:00',
     'August 15, 2026 11:21:11 GMT+0800',
@@ -295,6 +301,11 @@ test('acceptance validation keeps known failure state when historical completion
     '未逃逸：N / A',
     '已逃逸：仍待确认',
     '已逃逸：<请填写具体缺口>',
+    '已逃逸：Ｔ Ｂ Ｄ',
+    '未逃逸：Ｎ ／ Ａ',
+    '已逃逸：T\u200bB\u200bD',
+    '已逃逸：仍待\u200b确认',
+    '已逃逸：〈具体缺口〉',
   ];
   for (const gate of adversarialGateValues) {
     const adversarial = validateAcceptanceMetrics([
@@ -306,8 +317,43 @@ test('acceptance validation keeps known failure state when historical completion
       '- 是否回滚、紧急热修复或重复发布：是',
       '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：' + gate,
     ].join('\n'));
-    assert.match(adversarial.join('\n'), /requires discovery, recovery/, gate);
+    assert.match(adversarial.join('\n'), /requires discovery, recovery|format-control characters/, gate);
   }
+
+  const equalsSeparators = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：是',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间=2026-08-15T10:05:00+08:00；恢复时间=2026-08-15T10:20:00+08:00；逃逸门禁=已逃逸：候选冻结后缺少回归',
+  ].join('\n'));
+  assert.match(equalsSeparators.join('\n'), /requires discovery, recovery/);
+
+  const duplicateRecovery = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：是',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：已回滚',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：已逃逸：候选冻结后缺少回归',
+  ].join('\n'));
+  assert.match(duplicateRecovery.join('\n'), /duplicate structured field/);
+
+  const hiddenDuplicateKey = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：是',
+    '- 是否回滚、紧急热修复或重复\u200b发布：否',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：已逃逸：候选冻结后缺少回归',
+  ].join('\n'));
+  assert.match(hiddenDuplicateKey.join('\n'), /format-control characters/);
 
   const keywordsWithoutStructure = validateAcceptanceMetrics([
     '## 交付节奏数据',
