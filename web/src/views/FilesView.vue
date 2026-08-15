@@ -43,13 +43,16 @@ import {
   desktopWindowCloseGuardKey,
 } from '@/lib/desktopRouteKeys'
 import type { CodeLanguage } from '@/lib/code-editor-language'
+import { transferCrossPanelFileBatch } from '@/lib/crossPanelFileTransfer'
 import { fileEntryIcon as entryIcon, fileEntryIconKind as entryIconKind } from '@/lib/fileEntryPresentation'
 import {
   addFileEntriesToDesktop,
   beginDesktopFileDrag,
   clearDesktopFileDrag,
+  crossPanelFileDragEntries,
   desktopFileDragEntries,
   DesktopShortcutLimitError,
+  hasCrossPanelFileDrag,
   hasDesktopFileDrag,
   peekDesktopFileDragEntries,
 } from '@/lib/desktopFileShortcuts'
@@ -74,6 +77,7 @@ const router = useRouter()
 const desktopWindowActive = inject(desktopWindowActiveKey, computed(() => true))
 const desktopWindowCloseGuards = inject(desktopWindowCloseGuardKey, undefined)
 const filesPage = ref<HTMLElement>()
+const localClusterNodeId = ref('')
 let unregisterWindowCloseGuard: (() => void) | undefined
 
 type DialogAction = 'mkdir' | 'rename' | 'chmod' | 'compress' | 'extract' | 'trash'
@@ -136,11 +140,15 @@ const pasteBusy = ref(false)
 const internalDropTarget = ref('')
 const internalDropMode = ref<FileTransferOperation>('move')
 const internalDropCount = ref(0)
+const crossPanelDropActive = ref(false)
 const fileTransferState = ref<{
   mode: FileTransferOperation
   target: string
   count: number
   phase: 'running' | 'success' | 'partial' | 'cancelled' | 'error'
+  remote?: boolean
+  completed?: number
+  currentName?: string
 }>()
 const desktopAdding = ref(false)
 const previewEntry = ref<FileEntry>()
@@ -176,6 +184,13 @@ const thumbnailSourceMaxBytes = 12 * 1024 * 1024
 const fileTransferTitle = computed(() => {
   const state = fileTransferState.value
   if (!state) return ''
+  if (state.remote) {
+    if (state.phase === 'running') return `正在从另一台 KPanel 复制 ${state.completed || 0}/${state.count} 项`
+    if (state.phase === 'success') return `跨面板复制完成（${state.count} 项）`
+    if (state.phase === 'cancelled') return '跨面板复制已取消'
+    if (state.phase === 'error') return '跨面板复制失败'
+    return `跨面板复制部分完成（${state.count} 项）`
+  }
   if (state.mode === 'copy') {
     if (state.phase === 'running') return `正在复制 ${state.count} 项`
     if (state.phase === 'success') return `已复制 ${state.count} 项`
@@ -190,7 +205,9 @@ const fileTransferTitle = computed(() => {
   return '部分项目未移动'
 })
 
-const internalDropTitle = computed(() => internalDropMode.value === 'copy'
+const internalDropTitle = computed(() => crossPanelDropActive.value
+  ? `从另一台 KPanel 复制到 ${internalDropTarget.value}`
+  : internalDropMode.value === 'copy'
   ? `复制 ${internalDropCount.value} 项到 ${internalDropTarget.value}`
   : `移动 ${internalDropCount.value} 项到 ${internalDropTarget.value}`)
 
@@ -599,7 +616,7 @@ async function addEntriesToDesktop(entry?: FileEntry, currentDirectory = false):
 
 function startEntryDrag(event: DragEvent, entry: FileEntry): void {
   const targets = (selected.value.has(entry.path) ? entriesForBatch(entry) : [entry]).filter(canAddToDesktop)
-  if (!beginDesktopFileDrag(event, targets)) event.preventDefault()
+  if (!beginDesktopFileDrag(event, targets, localClusterNodeId.value)) event.preventDefault()
 }
 
 function finishEntryDrag(): void {
@@ -609,10 +626,21 @@ function finishEntryDrag(): void {
 function clearInternalDropTarget(): void {
   internalDropTarget.value = ''
   internalDropCount.value = 0
+  crossPanelDropActive.value = false
 }
 
 function updateInternalDropTarget(event: DragEvent, target: string): boolean {
-  if (!hasDesktopFileDrag(event) || fileTransferState.value?.phase === 'running') return false
+  if (fileTransferState.value?.phase === 'running') return false
+  if (!hasDesktopFileDrag(event) && hasCrossPanelFileDrag(event)) {
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+    internalDropMode.value = 'copy'
+    internalDropCount.value = 0
+    internalDropTarget.value = target
+    crossPanelDropActive.value = true
+    return true
+  }
+  if (!hasDesktopFileDrag(event)) return false
   const entries = peekDesktopFileDragEntries(event)
   const operation = fileTransferOperation(event)
   const invalid = fileTransferTargetError(entries, target)
@@ -621,11 +649,12 @@ function updateInternalDropTarget(event: DragEvent, target: string): boolean {
   internalDropMode.value = operation
   internalDropCount.value = entries.length
   internalDropTarget.value = invalid ? '' : target
+  crossPanelDropActive.value = false
   return !invalid
 }
 
 function onFileBrowserDragOver(event: DragEvent): void {
-  if (hasDesktopFileDrag(event)) {
+  if (hasDesktopFileDrag(event) || hasCrossPanelFileDrag(event)) {
     updateInternalDropTarget(event, currentPath.value)
     return
   }
@@ -641,7 +670,7 @@ function onFileBrowserDragLeave(event: DragEvent): void {
 }
 
 function onEntryDragOver(event: DragEvent, entry: FileEntry): void {
-  if (entry.kind !== 'directory' || !hasDesktopFileDrag(event)) return
+  if (entry.kind !== 'directory' || (!hasDesktopFileDrag(event) && !hasCrossPanelFileDrag(event))) return
   event.stopPropagation()
   updateInternalDropTarget(event, entry.path)
 }
@@ -725,11 +754,76 @@ async function transferInternalFileDrop(event: DragEvent, target: string): Promi
   }
 }
 
+async function transferCrossPanelFileDrop(event: DragEvent, target: string): Promise<void> {
+  const payload = crossPanelFileDragEntries(event)
+  clearInternalDropTarget()
+  if (!payload) {
+    toast.danger('跨面板复制失败', '拖拽数据无效或超过 64 项，请从来源 KPanel 重新拖动。')
+    return
+  }
+  if (fileTransferState.value?.phase === 'running') {
+    toast.show('已有文件操作正在进行')
+    return
+  }
+  if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
+  const controller = new AbortController()
+  fileTransferController = controller
+  const total = payload.entries.length
+  fileTransferState.value = {
+    mode: 'copy', target, count: total, phase: 'running', remote: true,
+    completed: 0, currentName: payload.entries[0]?.name,
+  }
+  try {
+    const result = await transferCrossPanelFileBatch(
+      payload,
+      target,
+      api.files.transferFromPanel,
+      ({ source, completed }) => {
+        if (fileTransferController !== controller || controller.signal.aborted) return
+        fileTransferState.value = {
+          mode: 'copy', target, count: total, phase: 'running', remote: true,
+          completed, currentName: source.name,
+        }
+      },
+      controller.signal,
+    )
+    const completed = result.succeeded.length + result.failed.length
+    const phase = result.cancelled
+      ? result.succeeded.length ? 'partial' : 'cancelled'
+      : result.succeeded.length === 0 ? 'error'
+        : result.failed.length ? 'partial' : 'success'
+    fileTransferState.value = {
+      mode: 'copy', target, count: total, phase, remote: true,
+      completed, currentName: result.succeeded.at(-1)?.entry.name,
+    }
+    if (result.succeeded.length) {
+      if (!unmounted) await loadDirectory()
+      notifyFileDirectoriesChanged([target, currentPath.value], fileWindowChangeOrigin)
+    }
+    if (result.cancelled) {
+      toast.show('跨面板复制已取消', {
+        message: `已完成的 ${result.succeeded.length} 项会保留在目标目录。`,
+      })
+    } else if (phase === 'success') {
+      toast.success('跨面板复制完成', `${result.succeeded.length} 项已复制到 ${target}`)
+    } else {
+      toast.danger(
+        phase === 'error' ? '跨面板复制失败' : '跨面板复制部分完成',
+        `${result.succeeded.length} 项成功，${result.failed.length} 项失败${result.failed[0]?.detail ? `：${result.failed[0].detail}` : ''}`,
+      )
+    }
+  } finally {
+    if (fileTransferController === controller) fileTransferController = undefined
+    if (!unmounted) scheduleFileTransferClear()
+  }
+}
+
 function onEntryDrop(event: DragEvent, entry: FileEntry): void {
-  if (entry.kind !== 'directory' || !hasDesktopFileDrag(event)) return
+  if (entry.kind !== 'directory' || (!hasDesktopFileDrag(event) && !hasCrossPanelFileDrag(event))) return
   event.preventDefault()
   event.stopPropagation()
-  void transferInternalFileDrop(event, entry.path)
+  if (hasDesktopFileDrag(event)) void transferInternalFileDrop(event, entry.path)
+  else void transferCrossPanelFileDrop(event, entry.path)
 }
 
 function showContext(event: MouseEvent, entry: FileEntry): void {
@@ -1126,12 +1220,16 @@ function onDrop(event: DragEvent): void {
     void transferInternalFileDrop(event, currentPath.value)
     return
   }
+  if (hasCrossPanelFileDrag(event)) {
+    void transferCrossPanelFileDrop(event, currentPath.value)
+    return
+  }
   clearInternalDropTarget()
   if (event.dataTransfer?.files?.length) void uploadFiles(event.dataTransfer.files)
 }
 
 function onUploadDragEnter(event: DragEvent): void {
-  if (hasDesktopFileDrag(event)) return
+  if (hasDesktopFileDrag(event) || hasCrossPanelFileDrag(event)) return
   if (event.dataTransfer?.files?.length || Array.from(event.dataTransfer?.types || []).includes('Files')) {
     dragging.value = true
   }
@@ -1242,6 +1340,9 @@ onMounted(() => {
     void loadDirectory()
   })
   restoreViewMode()
+  void api.cluster.hosts()
+    .then((hosts) => { localClusterNodeId.value = hosts.nodeId })
+    .catch(() => { localClusterNodeId.value = '' })
   void loadRequestedRoute()
 })
 
@@ -1419,7 +1520,9 @@ onBeforeUnmount(() => {
           </span>
           <span>
             <strong>{{ fileTransferTitle }}</strong>
-            <small>{{ fileTransferState.target }}</small>
+            <small>{{ fileTransferState.currentName
+              ? `${fileTransferState.currentName} → ${fileTransferState.target}`
+              : fileTransferState.target }}</small>
           </span>
           <button
             v-if="fileTransferState.phase === 'running' && fileTransferState.mode === 'copy'"
@@ -1614,7 +1717,7 @@ onBeforeUnmount(() => {
         <Scissors v-else :size="17" />
         <span>
           <strong>{{ internalDropTitle }}</strong>
-          <small>{{ internalDropMode === 'copy' ? '松开以复制' : '按住 Ctrl/Option 可复制' }}</small>
+          <small>{{ crossPanelDropActive || internalDropMode === 'copy' ? '松开以复制' : '按住 Ctrl/Option 可复制' }}</small>
         </span>
       </div>
     </section>

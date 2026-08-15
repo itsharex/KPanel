@@ -866,7 +866,7 @@ func validateHostRecordV2(record hostRecordV2) error {
 		err != nil || normalizedOrigin != record.Origin ||
 		record.TransportSecurity != v2TransportSecurity(record.Origin) ||
 		record.FederationProtocol != FederationProtocolV2 ||
-		(record.Scope != "" && record.Scope != SummaryScope && record.Scope != SummaryTerminalScope) ||
+		(record.Scope != "" && record.Scope != SummaryScope && record.Scope != SummaryTerminalScope && record.Scope != SummaryTerminalFilesScope) ||
 		keyErr != nil || len(targetPublicKey) != 32 ||
 		record.PeerFingerprint != fingerprintV2(targetPublicKey) ||
 		record.CreatedAt.IsZero() || record.UpdatedAt.IsZero() ||
@@ -904,7 +904,7 @@ func validateControllerRecordV2(record controllerRecordV2) error {
 	if !validID(record.ID) || !validID(record.TransactionID) ||
 		err != nil || len(publicKey) != 32 ||
 		record.Fingerprint != fingerprintV2(publicKey) ||
-		(record.Scope != SummaryScope && record.Scope != SummaryTerminalScope) ||
+		(record.Scope != SummaryScope && record.Scope != SummaryTerminalScope && record.Scope != SummaryTerminalFilesScope) ||
 		record.CreatedAt.IsZero() || record.UpdatedAt.IsZero() ||
 		len(record.Name) > 80 {
 		return errors.New("cluster v2 store contains an invalid controller record")
@@ -965,10 +965,13 @@ func hostResourceVersionV2(record hostRecordV2) string {
 		record.TargetPublicKey,
 		record.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
-	// Preserve resource versions for existing summary-only v2 pairings. The
-	// additional terminal grant becomes part of the version only when present.
-	if ScopeAllowsTerminal(record.Scope) {
+	// Preserve resource versions for existing summary-only and terminal v2
+	// pairings. A new files grant is versioned separately and never upgrades an
+	// old credential implicitly.
+	if record.Scope == SummaryTerminalScope {
 		fields = append(fields, "scope:"+SummaryTerminalScope)
+	} else if record.Scope == SummaryTerminalFilesScope {
+		fields = append(fields, "scope:"+SummaryTerminalFilesScope)
 	}
 	sum := sha256.Sum256([]byte(strings.Join(fields, "\n")))
 	return "sha256:" + hex.EncodeToString(sum[:])

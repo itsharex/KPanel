@@ -19,6 +19,8 @@ import type {
   ClusterHostList,
   ClusterLightEnrollment,
   ClusterPairingCode,
+  CrossPanelFileTransferEvent,
+  CrossPanelFileTransferInput,
   DockerInventory,
   DockerActionResult,
   DockerBackup,
@@ -1625,6 +1627,65 @@ export const api = {
         method: 'POST',
         body: { path },
       }),
+    transferFromPanel: async (
+      input: CrossPanelFileTransferInput,
+      onEvent: (event: CrossPanelFileTransferEvent) => void,
+      signal?: AbortSignal,
+    ): Promise<FileEntry> => {
+      const headers = new Headers({ Accept: 'application/x-ndjson', 'Content-Type': 'application/json' })
+      if (csrfToken) headers.set('X-CSRF-Token', csrfToken)
+      let response: Response
+      try {
+        response = await fetch(buildUrl('/files/transfers'), {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store', headers,
+          body: JSON.stringify(input), signal,
+        })
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') throw error
+        throw new ApiError('无法连接到面板服务，请检查服务状态后重试。', 0, 'network_error', error)
+      }
+      if (!response.ok) {
+        const payload = await parsePayload(response)
+        const problem = payload && typeof payload === 'object' ? payload as ProblemPayload : undefined
+        throw new ApiError(
+          problem?.detail || problem?.title || '跨面板复制失败。',
+          response.status, problem?.code || 'file_transfer_failed', payload, problem?.requestId,
+        )
+      }
+      if (!response.body) throw new ApiError('浏览器不支持流式传输状态。', 0, 'stream_unavailable')
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffered = ''
+      let completed: FileEntry | undefined
+      const consume = (line: string): void => {
+        if (!line.trim()) return
+        let event: CrossPanelFileTransferEvent
+        try {
+          event = JSON.parse(line) as CrossPanelFileTransferEvent
+        } catch {
+          throw new ApiError('面板返回了无效的传输状态。', 0, 'file_transfer_response_invalid')
+        }
+        onEvent(event)
+        if (event.state === 'error') throw new ApiError(event.detail || '跨面板复制失败。', 0, 'file_transfer_failed')
+        if (event.state === 'complete' && event.entry) completed = event.entry
+      }
+      try {
+        while (true) {
+          const { value, done } = await reader.read()
+          buffered += decoder.decode(value, { stream: !done })
+          const lines = buffered.split('\n')
+          buffered = lines.pop() || ''
+          for (const line of lines) consume(line)
+          if (done) break
+        }
+        consume(buffered)
+      } catch (error) {
+        await reader.cancel().catch(() => undefined)
+        throw error
+      }
+      if (!completed) throw new ApiError('跨面板复制未正常结束。', 0, 'file_transfer_incomplete')
+      return completed
+    },
     thumbnailUrl: (path: string, version: string): string =>
       buildUrl('/files/content', { path, disposition: 'inline', mode: 'thumbnail', version }),
     text: async (path: string): Promise<string> =>

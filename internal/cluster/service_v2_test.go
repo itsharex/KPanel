@@ -332,7 +332,7 @@ func TestServiceV2TerminalLifecycleUsesAuthenticatedEncryptedChannel(t *testing.
 	if err != nil {
 		t.Fatalf("AddHost() error = %v", err)
 	}
-	if !host.TerminalAvailable || host.Scope != SummaryTerminalScope {
+	if !host.TerminalAvailable || !host.FileTransferAvailable || host.Scope != SummaryTerminalFilesScope {
 		t.Fatalf("terminal capability missing after v2 pairing: %#v", host)
 	}
 

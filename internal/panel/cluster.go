@@ -3,11 +3,13 @@ package panel
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/kejilion/kejilion-panel/internal/auth"
@@ -401,6 +403,10 @@ func (s *Server) handleFederationV2(w http.ResponseWriter, r *http.Request) {
 	); err != nil {
 		return
 	}
+	if r.URL.Path == "/api/v2/federation/files/open" {
+		s.handleFederationFileOpenV2(w, r, envelope)
+		return
+	}
 	response, err := s.cluster.HandleFederationV2(
 		r.Context(),
 		s.remoteIP(r),
@@ -439,6 +445,86 @@ func (s *Server) handleFederationV2(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	s.writeJSON(w, status, response)
+}
+
+func (s *Server) handleFederationFileOpenV2(
+	w http.ResponseWriter,
+	r *http.Request,
+	envelope cluster.FederationEnvelopeV2,
+) {
+	input, authorization, err := s.cluster.AuthorizeFederationFileV2(s.remoteIP(r), envelope)
+	if err != nil {
+		s.auditAuthFailure(r, "cluster.federation.v2.files.open")
+		s.writeClusterError(w, r, err)
+		return
+	}
+	streamer, ok := s.agent.(agentStreamAPI)
+	if !ok {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_stream_unavailable", "Agent 文件流不可用", "")
+		return
+	}
+	query := url.Values{
+		"path":            []string{input.Path},
+		"resourceVersion": []string{input.ResourceVersion},
+	}
+	response, err := streamer.OpenStream(
+		r.Context(), http.MethodGet, "/v1/files/transfer/export", query.Encode(),
+		requestID(r), http.NoBody, nil, 0,
+	)
+	if err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		s.writeAgentResponse(w, r, AgentResponse{
+			StatusCode:  response.StatusCode,
+			ContentType: response.Header.Get("Content-Type"),
+			Body:        mustReadLimited(response.Body, 1<<20),
+		})
+		return
+	}
+	rawMetadata, err := base64.RawURLEncoding.DecodeString(response.Header.Get("X-KPanel-File-Metadata"))
+	if err != nil || len(rawMetadata) == 0 || len(rawMetadata) > cluster.MaxSummaryBytes {
+		s.writeProblem(w, r, http.StatusBadGateway, "agent_response_invalid", "Agent 文件元数据无效", "")
+		return
+	}
+	var metadata contract.FileTransferMetadata
+	decoder := json.NewDecoder(bytes.NewReader(rawMetadata))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&metadata); err != nil {
+		s.writeProblem(w, r, http.StatusBadGateway, "agent_response_invalid", "Agent 文件元数据无效", "")
+		return
+	}
+	sealed, cipher, err := authorization.SealMetadata(metadata)
+	if err != nil {
+		s.writeClusterError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-kpanel-noise-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	if err := cluster.WriteFederationFileHeader(w, sealed); err != nil {
+		return
+	}
+	writer := cluster.NewFederationFileWriter(w, cipher)
+	_, copyErr := io.CopyBuffer(writer, response.Body, make([]byte, 60<<10))
+	if copyErr == nil && response.Trailer.Get("X-KPanel-Transfer-Result") != "ok" {
+		copyErr = errors.New("Agent transfer failed")
+	}
+	_ = writer.Finish(copyErr)
+	result := "success"
+	if copyErr != nil {
+		result = "failure"
+	}
+	_ = s.audit(r, "", "cluster.federation.v2.files.open", "cluster-controller", envelope.ControllerID, result, map[string]any{
+		"kind": metadata.Kind, "bytes": metadata.SizeBytes,
+	})
+}
+
+func mustReadLimited(input io.Reader, limit int64) []byte {
+	content, _ := io.ReadAll(io.LimitReader(input, limit))
+	return content
 }
 
 func isLightNodeRequest(r *http.Request) bool {

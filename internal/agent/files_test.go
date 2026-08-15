@@ -2,12 +2,14 @@ package agent
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -70,6 +72,87 @@ func TestFileThumbnailIsBoundedAndVersionProtected(t *testing.T) {
 	)
 	if stale.Code != http.StatusConflict {
 		t.Fatalf("stale thumbnail status=%d body=%s", stale.Code, stale.Body.String())
+	}
+}
+
+func TestFileTransferExportAndImportDirectory(t *testing.T) {
+	server := testServer(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "app", "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "desktop"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app", "config", "site.conf"), []byte("enabled"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := filemanager.New(filemanager.Config{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server.files = manager
+	source, err := manager.Stat("/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported := fileRequest(
+		server, http.MethodGet,
+		"/v1/files/transfer/export?path=%2Fapp&resourceVersion="+url.QueryEscape(source.ResourceVersion), "",
+	)
+	if exported.Code != http.StatusOK || exported.Header().Get(fileTransferResultTrailer) != "ok" {
+		t.Fatalf("export status=%d trailer=%q body=%s", exported.Code, exported.Header().Get(fileTransferResultTrailer), exported.Body.String())
+	}
+	rawMetadata, err := base64.RawURLEncoding.DecodeString(exported.Header().Get(fileTransferMetadataHeader))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata contract.FileTransferMetadata
+	if err := json.Unmarshal(rawMetadata, &metadata); err != nil || metadata.Name != "app" || metadata.Kind != "directory" {
+		t.Fatalf("metadata=%#v err=%v", metadata, err)
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/files/transfer/import?path=%2Fdesktop&name=app&kind=directory&size=0",
+		bytes.NewReader(exported.Body.Bytes()),
+	)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	request.Header.Set("Content-Type", "application/octet-stream")
+	imported := httptest.NewRecorder()
+	server.ServeHTTP(imported, request)
+	if imported.Code != http.StatusCreated {
+		t.Fatalf("import status=%d body=%s", imported.Code, imported.Body.String())
+	}
+	content, err := os.ReadFile(filepath.Join(root, "desktop", "app", "config", "site.conf"))
+	if err != nil || string(content) != "enabled" {
+		t.Fatalf("imported content=%q err=%v", content, err)
+	}
+}
+
+type transferErrorReader struct {
+	content []byte
+	err     error
+}
+
+func (r *transferErrorReader) Read(output []byte) (int, error) {
+	if len(r.content) > 0 {
+		count := copy(output, r.content)
+		r.content = r.content[count:]
+		return count, nil
+	}
+	return 0, r.err
+}
+
+func TestExactTransferReaderRequiresAuthenticatedEndAfterExpectedBytes(t *testing.T) {
+	endError := errors.New("missing authenticated transfer end")
+	reader := &exactTransferReader{
+		source:    &transferErrorReader{content: []byte("data"), err: endError},
+		remaining: 4,
+	}
+	content, err := io.ReadAll(reader)
+	if string(content) != "data" || !errors.Is(err, endError) {
+		t.Fatalf("content=%q err=%v", content, err)
 	}
 }
 

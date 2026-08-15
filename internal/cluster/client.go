@@ -50,6 +50,7 @@ type RemoteClient struct {
 	resolver       resolver
 	dialer         func(context.Context, string, string) (net.Conn, error)
 	client         *http.Client
+	streamClient   *http.Client
 }
 
 type RemoteError struct {
@@ -111,6 +112,12 @@ func NewRemoteClient(config RemoteClientConfig) (*RemoteClient, error) {
 	remote.client = &http.Client{
 		Transport: transport,
 		Timeout:   config.Timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("cluster redirect rejected")
+		},
+	}
+	remote.streamClient = &http.Client{
+		Transport: transport,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("cluster redirect rejected")
 		},

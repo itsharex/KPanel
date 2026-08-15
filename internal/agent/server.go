@@ -329,6 +329,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.fileTail)
 	case r.URL.Path == "/v1/files/upload":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.fileUpload)
+	case r.URL.Path == "/v1/files/transfer/export":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.fileTransferExport)
+	case r.URL.Path == "/v1/files/transfer/import":
+		s.requireMethod(w, r, requestID, http.MethodPost, s.fileTransferImport)
 	case r.URL.Path == "/v1/files/actions":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.fileAction)
 	case r.URL.Path == "/v1/docker/summary":

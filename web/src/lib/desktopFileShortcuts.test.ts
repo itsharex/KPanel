@@ -7,8 +7,11 @@ import {
   addFileEntriesToDesktop,
   beginDesktopFileDrag,
   clearDesktopFileDrag,
+  crossPanelFileDragEntries,
+  crossPanelFileDragEntry,
   desktopFileDragEntries,
   DesktopShortcutLimitError,
+  hasCrossPanelFileDrag,
   hasDesktopFileDrag,
   peekDesktopFileDragEntries,
 } from './desktopFileShortcuts'
@@ -121,5 +124,56 @@ describe('desktop file shortcuts', () => {
     }])
     clearDesktopFileDrag()
     expect(desktopFileDragEntries(event)).toEqual([])
+  })
+
+  it('serializes one versioned cross-panel descriptor without an authorization secret', () => {
+    const event = dragEvent()
+    expect(beginDesktopFileDrag(event, [{
+      name: 'app', path: '/app', kind: 'directory', resourceVersion: 'sha256:app-version',
+    }], 'a'.repeat(32))).toBe(true)
+    clearDesktopFileDrag()
+
+    expect(hasDesktopFileDrag(event)).toBe(false)
+    expect(hasCrossPanelFileDrag(event)).toBe(true)
+    expect(crossPanelFileDragEntry(event)).toEqual({
+      version: 1,
+      sourceNodeId: 'a'.repeat(32),
+      name: 'app',
+      path: '/app',
+      kind: 'directory',
+      resourceVersion: 'sha256:app-version',
+    })
+    expect(event.dataTransfer?.getData('application/x-kpanel-cross-panel-file-v1')).not.toContain('token')
+  })
+
+  it('serializes a bounded multi-item cross-panel descriptor without partial selection', () => {
+    const event = dragEvent()
+    beginDesktopFileDrag(event, [
+      { name: 'a', path: '/a', kind: 'file', resourceVersion: 'sha256:a' },
+      { name: 'b', path: '/b', kind: 'file', resourceVersion: 'sha256:b' },
+    ], 'b'.repeat(32))
+    clearDesktopFileDrag()
+    expect(hasCrossPanelFileDrag(event)).toBe(true)
+    expect(crossPanelFileDragEntry(event)).toBeUndefined()
+    expect(crossPanelFileDragEntries(event)).toEqual({
+      sourceNodeId: 'b'.repeat(32),
+      entries: [
+        { name: 'a', path: '/a', kind: 'file', resourceVersion: 'sha256:a' },
+        { name: 'b', path: '/b', kind: 'file', resourceVersion: 'sha256:b' },
+      ],
+    })
+    expect(event.dataTransfer?.getData('application/x-kpanel-cross-panel-file-v1')).toBe('')
+  })
+
+  it('advertises an over-limit drag so the target can reject it explicitly', () => {
+    const event = dragEvent()
+    beginDesktopFileDrag(event, Array.from({ length: 65 }, (_, index) => ({
+      name: `${index}.txt`, path: `/${index}.txt`, kind: 'file' as const,
+      resourceVersion: `sha256:${index}`,
+    })), 'c'.repeat(32))
+    clearDesktopFileDrag()
+
+    expect(hasCrossPanelFileDrag(event)).toBe(true)
+    expect(crossPanelFileDragEntries(event)).toBeUndefined()
   })
 })

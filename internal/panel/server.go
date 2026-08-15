@@ -254,6 +254,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleFileDownloadTicket(w, r)
 	case r.URL.Path == "/api/v1/files/upload":
 		s.handleFileUpload(w, r)
+	case r.URL.Path == "/api/v1/files/transfers":
+		s.handleFileTransfer(w, r)
 	case r.URL.Path == "/api/v1/files/actions":
 		s.handleFileAction(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/") &&
@@ -295,7 +297,8 @@ func isFederationV2Request(r *http.Request) bool {
 		"/api/v2/federation/terminal/output",
 		"/api/v2/federation/terminal/input",
 		"/api/v2/federation/terminal/resize",
-		"/api/v2/federation/terminal/close":
+		"/api/v2/federation/terminal/close",
+		"/api/v2/federation/files/open":
 		return true
 	default:
 		return false

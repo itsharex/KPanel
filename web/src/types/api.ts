@@ -190,6 +190,7 @@ export interface ClusterHost {
   federationProtocol: string
   scope: string
   terminalAvailable: boolean
+  fileTransferAvailable?: boolean
   panelVersion?: string
   state: ClusterHostState
   lastSnapshot?: ClusterHostSnapshot
@@ -216,7 +217,10 @@ export interface ClusterHostList {
 
 export interface ClusterPairingCode {
   code: string
-  scope: 'cluster.summary.read' | 'cluster.summary.read cluster.terminal.open'
+  scope:
+    | 'cluster.summary.read'
+    | 'cluster.summary.read cluster.terminal.open'
+    | 'cluster.summary.read cluster.terminal.open cluster.files.read'
   expiresAt: string
 }
 
@@ -1581,6 +1585,28 @@ export interface FileDirectory {
 export interface FileDownloadTicket {
   downloadUrl: string
   expiresAt: string
+}
+
+export interface CrossPanelFileTransferInput {
+  sourceNodeId: string
+  path: string
+  resourceVersion: string
+  targetDirectory: string
+}
+
+export type CrossPanelFileTransferState =
+  | 'connecting'
+  | 'transferring'
+  | 'committing'
+  | 'complete'
+  | 'error'
+
+export interface CrossPanelFileTransferEvent {
+  state: CrossPanelFileTransferState
+  loadedBytes?: number
+  totalBytes?: number
+  entry?: FileEntry
+  detail?: string
 }
 
 export type FileAction =

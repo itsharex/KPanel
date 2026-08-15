@@ -41,6 +41,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         entry: vi.fn(),
         action: vi.fn(),
         upload: vi.fn(),
+        transferFromPanel: vi.fn(),
       },
     },
   }
@@ -54,6 +55,7 @@ const mockedUploadShortcutIcon = vi.mocked(api.desktop.uploadShortcutIcon)
 const mockedFileEntry = vi.mocked(api.files.entry)
 const mockedFileAction = vi.mocked(api.files.action)
 const mockedFileUpload = vi.mocked(api.files.upload)
+const mockedPanelTransfer = vi.mocked(api.files.transferFromPanel)
 
 function makeWorkspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
   return {
@@ -121,6 +123,7 @@ describe('DesktopView dynamic entries', () => {
       iconVersion: 'c'.repeat(64),
       iconURL: '/api/v1/desktop/shortcuts/icon',
     })
+    mockedPanelTransfer.mockReset()
     mockedFileEntry.mockReset()
     mockedFileEntry.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }))
     mockedFileAction.mockReset()
@@ -670,6 +673,89 @@ describe('DesktopView dynamic entries', () => {
       }),
     ]))
     expect(wrapper.get('.desktop-transfer').text()).toContain('已传到桌面')
+    wrapper.unmount()
+  })
+
+  it('copies a cross-panel directory and creates its desktop entry after commit', async () => {
+    const copied = {
+      name: 'app', path: '/home/KPanel Desktop/app', kind: 'directory' as const,
+      sizeBytes: 0, mode: '0755', owner: 'root', group: 'root',
+      modifiedAt: '2026-08-15T00:00:00Z', resourceVersion: 'sha256:target',
+      editable: false, previewable: false,
+    }
+    mockedPanelTransfer.mockImplementation(async (_input, onEvent) => {
+      onEvent({ state: 'connecting' })
+      onEvent({ state: 'transferring', loadedBytes: 1024, totalBytes: 2048 })
+      onEvent({ state: 'committing', loadedBytes: 2048, totalBytes: 2048 })
+      onEvent({ state: 'complete', loadedBytes: 2048, totalBytes: 2048, entry: copied })
+      return copied
+    })
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const payload = JSON.stringify({
+      version: 1, sourceNodeId: 'a'.repeat(32), name: 'app', path: '/app',
+      kind: 'directory', resourceVersion: 'sha256:source',
+    })
+    const dataTransfer = {
+      types: ['application/x-kpanel-cross-panel-file-v1'], dropEffect: 'none',
+      getData: (type: string) => type === 'application/x-kpanel-cross-panel-file-v1' ? payload : '',
+    }
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('dragover', dataTransfer))
+    await nextTick()
+    expect(wrapper.get('.desktop__file-drop').text()).toContain('从另一个 KPanel 复制')
+    expect(wrapper.get('.desktop__file-drop').text()).toContain('/home/KPanel Desktop')
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('drop', dataTransfer, 190, 160))
+    await flushPromises()
+    expect(mockedPanelTransfer).toHaveBeenCalledWith({
+      sourceNodeId: 'a'.repeat(32), path: '/app', resourceVersion: 'sha256:source',
+      targetDirectory: '/home/KPanel Desktop',
+    }, expect.any(Function), expect.any(AbortSignal))
+    expect(mockedWorkspaceUpdate.mock.calls.at(-1)?.[0].shortcuts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'app', targetType: 'directory', path: '/home/KPanel Desktop/app' }),
+    ]))
+    expect(wrapper.get('.desktop-transfer').text()).toContain('跨面板复制完成')
+    wrapper.unmount()
+  })
+
+  it('copies a cross-panel multi-selection and creates all committed desktop entries together', async () => {
+    mockedPanelTransfer.mockImplementation(async (input, onEvent) => {
+      onEvent({ state: 'connecting' })
+      onEvent({ state: 'complete' })
+      const name = input.path.slice(input.path.lastIndexOf('/') + 1)
+      return {
+        name, path: `/home/KPanel Desktop/${name}`, kind: 'file' as const,
+        sizeBytes: 4, mode: '0644', owner: 'root', group: 'root',
+        modifiedAt: '2026-08-15T00:00:00Z', resourceVersion: `sha256:target-${name}`,
+        editable: true, previewable: true,
+      }
+    })
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const payload = JSON.stringify({
+      version: 2,
+      sourceNodeId: 'b'.repeat(32),
+      entries: [
+        { name: 'one.txt', path: '/one.txt', kind: 'file', resourceVersion: 'sha256:one' },
+        { name: 'two.txt', path: '/two.txt', kind: 'file', resourceVersion: 'sha256:two' },
+      ],
+    })
+    const dataTransfer = {
+      types: ['application/x-kpanel-cross-panel-files-v2'], dropEffect: 'none',
+      getData: (type: string) => type === 'application/x-kpanel-cross-panel-files-v2' ? payload : '',
+    }
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('drop', dataTransfer, 190, 160))
+    await flushPromises()
+
+    expect(mockedPanelTransfer).toHaveBeenCalledTimes(2)
+    expect(mockedWorkspaceUpdate.mock.calls.at(-1)?.[0].shortcuts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'one.txt', path: '/home/KPanel Desktop/one.txt' }),
+      expect.objectContaining({ name: 'two.txt', path: '/home/KPanel Desktop/two.txt' }),
+    ]))
+    expect(wrapper.get('.desktop-transfer').text()).toContain('跨面板复制完成')
+    expect(wrapper.get('.desktop-transfer').text()).toContain('2 个项目')
     wrapper.unmount()
   })
 

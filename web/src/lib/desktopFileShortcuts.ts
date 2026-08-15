@@ -3,9 +3,29 @@ import { useDesktopIcons } from '@/stores/desktopIcons'
 import type { DesktopShortcut, DesktopWorkspaceUpdate, FileEntry } from '@/types/api'
 
 export const DESKTOP_FILE_DRAG_TYPE = 'application/x-kpanel-desktop-file-shortcut'
+export const CROSS_PANEL_FILE_DRAG_TYPE = 'application/x-kpanel-cross-panel-file-v1'
+export const CROSS_PANEL_FILES_DRAG_TYPE = 'application/x-kpanel-cross-panel-files-v2'
 export const MAX_DESKTOP_SHORTCUTS = 64
+export const MAX_CROSS_PANEL_DRAG_ENTRIES = 64
 
 export type DesktopFileEntry = Pick<FileEntry, 'name' | 'path' | 'kind'> & Partial<Pick<FileEntry, 'resourceVersion'>>
+
+export interface CrossPanelFileDragEntry extends DesktopFileEntry {
+  kind: 'file' | 'directory'
+  resourceVersion: string
+  sourceNodeId: string
+  version: 1
+}
+
+export interface CrossPanelFileDragItem extends DesktopFileEntry {
+  kind: 'file' | 'directory'
+  resourceVersion: string
+}
+
+export interface CrossPanelFileDragPayload {
+  sourceNodeId: string
+  entries: CrossPanelFileDragItem[]
+}
 export type DesktopFileShortcutInput = DesktopWorkspaceUpdate['shortcuts'][number]
 
 export interface DesktopFileShortcutAddResult {
@@ -34,7 +54,7 @@ function randomToken(): string {
   return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`
 }
 
-function supportedEntry(entry: DesktopFileEntry): boolean {
+function supportedEntry(entry: DesktopFileEntry): entry is DesktopFileEntry & { kind: 'file' | 'directory' } {
   return entry.kind === 'file' || entry.kind === 'directory'
 }
 
@@ -101,7 +121,11 @@ export async function addFileEntriesToDesktop(
   return result
 }
 
-export function beginDesktopFileDrag(event: DragEvent, entries: readonly DesktopFileEntry[]): boolean {
+export function beginDesktopFileDrag(
+  event: DragEvent,
+  entries: readonly DesktopFileEntry[],
+  sourceNodeId?: string,
+): boolean {
   const dataTransfer = event.dataTransfer
   const supported = entries.filter(supportedEntry)
   if (!dataTransfer || !supported.length) return false
@@ -109,8 +133,124 @@ export function beginDesktopFileDrag(event: DragEvent, entries: readonly Desktop
   activeDrag = { token, entries: supported.map((entry) => ({ ...entry })) }
   dataTransfer.effectAllowed = 'all'
   dataTransfer.setData(DESKTOP_FILE_DRAG_TYPE, token)
+  const crossPanelEntries = supported.filter(
+    (entry): entry is CrossPanelFileDragItem => Boolean(entry.resourceVersion),
+  )
+  if (
+    crossPanelEntries.length === supported.length
+    && sourceNodeId
+    && /^[a-f0-9]{32}$/.test(sourceNodeId)
+  ) {
+    if (crossPanelEntries.length > MAX_CROSS_PANEL_DRAG_ENTRIES) {
+      dataTransfer.setData(CROSS_PANEL_FILES_DRAG_TYPE, JSON.stringify({
+        version: 2, sourceNodeId, entries: [], rejectedCount: crossPanelEntries.length,
+      }))
+    } else {
+      dataTransfer.setData(CROSS_PANEL_FILES_DRAG_TYPE, JSON.stringify({
+        version: 2,
+        sourceNodeId,
+        entries: crossPanelEntries.map((entry) => ({
+          name: entry.name,
+          path: entry.path,
+          kind: entry.kind,
+          resourceVersion: entry.resourceVersion,
+        })),
+      }))
+    }
+    if (crossPanelEntries.length === 1) {
+      const crossPanelEntry = crossPanelEntries[0]!
+      dataTransfer.setData(CROSS_PANEL_FILE_DRAG_TYPE, JSON.stringify({
+        version: 1,
+        sourceNodeId,
+        name: crossPanelEntry.name,
+        path: crossPanelEntry.path,
+        kind: crossPanelEntry.kind,
+        resourceVersion: crossPanelEntry.resourceVersion,
+      } satisfies CrossPanelFileDragEntry))
+    }
+  }
   dataTransfer.setData('text/plain', supported.length === 1 ? supported[0]!.name : `${supported.length} 个项目`)
   return true
+}
+
+export function hasCrossPanelFileDrag(event: DragEvent): boolean {
+  const types = Array.from(event.dataTransfer?.types || [])
+  return types.includes(CROSS_PANEL_FILES_DRAG_TYPE) || types.includes(CROSS_PANEL_FILE_DRAG_TYPE)
+}
+
+function validCrossPanelDragItem(value: unknown): value is CrossPanelFileDragItem {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const entry = value as Partial<CrossPanelFileDragItem>
+  return (entry.kind === 'file' || entry.kind === 'directory')
+    && Boolean(entry.name)
+    && entry.name!.length <= 255
+    && !/[\u0000-\u001f/\\]/.test(entry.name!)
+    && Boolean(entry.path)
+    && entry.path!.startsWith('/')
+    && entry.path!.length <= 4096
+    && !/[\u0000-\u001f\\]/.test(entry.path!)
+    && !entry.path!.split('/').some((part, index) => index > 0 && (!part || part === '.' || part === '..'))
+    && Boolean(entry.resourceVersion)
+    && entry.resourceVersion!.length <= 256
+}
+
+export function crossPanelFileDragEntries(event: DragEvent): CrossPanelFileDragPayload | undefined {
+  const rawBatch = event.dataTransfer?.getData(CROSS_PANEL_FILES_DRAG_TYPE)
+  if (rawBatch && rawBatch.length <= 512 * 1024) {
+    try {
+      const value: unknown = JSON.parse(rawBatch)
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const payload = value as { version?: unknown; sourceNodeId?: unknown; entries?: unknown }
+        if (
+          payload.version === 2
+          && typeof payload.sourceNodeId === 'string'
+          && /^[a-f0-9]{32}$/.test(payload.sourceNodeId)
+          && Array.isArray(payload.entries)
+          && payload.entries.length > 0
+          && payload.entries.length <= MAX_CROSS_PANEL_DRAG_ENTRIES
+          && payload.entries.every(validCrossPanelDragItem)
+        ) {
+          return {
+            sourceNodeId: payload.sourceNodeId,
+            entries: payload.entries.map((entry) => ({ ...(entry as CrossPanelFileDragItem) })),
+          }
+        }
+      }
+    } catch {
+      // A single-item source also publishes the v1 descriptor, so fall back
+      // instead of turning a damaged v2 value into a false negative.
+    }
+  }
+
+  const raw = event.dataTransfer?.getData(CROSS_PANEL_FILE_DRAG_TYPE)
+  if (!raw || raw.length > 8_192) return undefined
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const entry = value as Partial<CrossPanelFileDragEntry>
+    const sourceNodeId = entry.sourceNodeId
+    if (
+      entry.version !== 1
+      || !sourceNodeId
+      || !/^[a-f0-9]{32}$/.test(sourceNodeId)
+      || !validCrossPanelDragItem(entry)
+    ) return undefined
+    return {
+      sourceNodeId,
+      entries: [{
+        name: entry.name!, path: entry.path!, kind: entry.kind!,
+        resourceVersion: entry.resourceVersion!,
+      }],
+    }
+  } catch {
+    return undefined
+  }
+}
+
+export function crossPanelFileDragEntry(event: DragEvent): CrossPanelFileDragEntry | undefined {
+  const payload = crossPanelFileDragEntries(event)
+  if (!payload || payload.entries.length !== 1) return undefined
+  return { version: 1, sourceNodeId: payload.sourceNodeId, ...payload.entries[0]! }
 }
 
 export function hasDesktopFileDrag(event: DragEvent): boolean {

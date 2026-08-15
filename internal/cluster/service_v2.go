@@ -129,7 +129,7 @@ func (s *Service) createPairingCodeV2() (PairingCode, error) {
 	}
 	_ = s.secretsV2.RemoveOrphans(s.storeV2.CredentialReferences())
 	return PairingCode{
-		Code: code, Scope: SummaryTerminalScope, ExpiresAt: expiresAt,
+		Code: code, Scope: SummaryTerminalFilesScope, ExpiresAt: expiresAt,
 	}, nil
 }
 
@@ -609,14 +609,15 @@ func publicHostV2(
 	}
 	return Host{
 		ID: record.ID, Name: name, Origin: record.Origin,
-		Kind:               HostKindPanel,
-		TransportSecurity:  record.TransportSecurity,
-		PeerFingerprint:    record.PeerFingerprint,
-		RemoteNodeID:       record.RemoteNodeID,
-		FederationProtocol: FederationProtocolV2,
-		Scope:              normalizedV2Scope(record.Scope),
-		TerminalAvailable:  ScopeAllowsTerminal(normalizedV2Scope(record.Scope)),
-		PanelVersion:       panelVersion, State: state,
+		Kind:                  HostKindPanel,
+		TransportSecurity:     record.TransportSecurity,
+		PeerFingerprint:       record.PeerFingerprint,
+		RemoteNodeID:          record.RemoteNodeID,
+		FederationProtocol:    FederationProtocolV2,
+		Scope:                 normalizedV2Scope(record.Scope),
+		TerminalAvailable:     ScopeAllowsTerminal(normalizedV2Scope(record.Scope)),
+		FileTransferAvailable: ScopeAllowsFiles(normalizedV2Scope(record.Scope)),
+		PanelVersion:          panelVersion, State: state,
 		LastSnapshot:        cloneSnapshot(current.snapshot),
 		LastAttemptAt:       cloneTime(current.lastAttemptAt),
 		LastSuccessAt:       cloneTime(current.lastSuccessAt),
@@ -716,7 +717,7 @@ func (s *Service) handlePairV2(
 	controller := controllerRecordV2{
 		ID: envelope.ControllerID, Name: name,
 		PublicKey:   base64.RawURLEncoding.EncodeToString(peerStatic),
-		Fingerprint: fingerprintV2(peerStatic), Scope: SummaryTerminalScope,
+		Fingerprint: fingerprintV2(peerStatic), Scope: SummaryTerminalFilesScope,
 		State:         controllerStateV2Provisional,
 		TransactionID: input.TransactionID,
 		CreatedAt:     now, UpdatedAt: now,
@@ -731,7 +732,7 @@ func (s *Service) handlePairV2(
 		NodeID:        s.store.NodeID(), Hostname: s.hostname,
 		PanelVersion:       s.panelVersion,
 		FederationProtocol: FederationProtocolV2,
-		Scope:              SummaryTerminalScope,
+		Scope:              SummaryTerminalFilesScope,
 	})
 }
 
@@ -911,7 +912,7 @@ func validateV2PairResult(
 		response.TransactionID != expectedTransactionID {
 		return ErrProtocolMismatch
 	}
-	if response.Scope != "" && response.Scope != SummaryScope && response.Scope != SummaryTerminalScope {
+	if response.Scope != "" && response.Scope != SummaryScope && response.Scope != SummaryTerminalScope && response.Scope != SummaryTerminalFilesScope {
 		return ErrProtocolMismatch
 	}
 	if cleanDisplayText(response.Hostname, 253) != response.Hostname ||
@@ -922,7 +923,7 @@ func validateV2PairResult(
 }
 
 func normalizedV2Scope(scope string) string {
-	if scope == SummaryTerminalScope {
+	if scope == SummaryTerminalScope || scope == SummaryTerminalFilesScope {
 		return scope
 	}
 	return SummaryScope

@@ -8,16 +8,17 @@ import (
 )
 
 const (
-	FederationProtocol   = "v1"
-	FederationProtocolV2 = "v2"
-	LightNodeProtocol    = "light-v1"
-	SummaryScope         = "cluster.summary.read"
-	SummaryTerminalScope = "cluster.summary.read cluster.terminal.open"
-	LocalHostID          = "local"
-	MaxHosts             = 100
-	MaxSummaryBytes      = 64 << 10
-	MaxPairBytes         = 16 << 10
-	MaxFederationV2Bytes = 96 << 10
+	FederationProtocol        = "v1"
+	FederationProtocolV2      = "v2"
+	LightNodeProtocol         = "light-v1"
+	SummaryScope              = "cluster.summary.read"
+	SummaryTerminalScope      = "cluster.summary.read cluster.terminal.open"
+	SummaryTerminalFilesScope = "cluster.summary.read cluster.terminal.open cluster.files.read"
+	LocalHostID               = "local"
+	MaxHosts                  = 100
+	MaxSummaryBytes           = 64 << 10
+	MaxPairBytes              = 16 << 10
+	MaxFederationV2Bytes      = 96 << 10
 )
 
 type HostKind string
@@ -75,34 +76,39 @@ type HostSnapshot struct {
 }
 
 type Host struct {
-	ID                  string            `json:"id"`
-	IsLocal             bool              `json:"isLocal"`
-	Name                string            `json:"name"`
-	Kind                HostKind          `json:"kind"`
-	Origin              string            `json:"origin"`
-	TransportSecurity   TransportSecurity `json:"transportSecurity"`
-	PeerFingerprint     string            `json:"peerFingerprint,omitempty"`
-	RemoteNodeID        string            `json:"remoteNodeId"`
-	FederationProtocol  string            `json:"federationProtocol"`
-	Scope               string            `json:"scope"`
-	TerminalAvailable   bool              `json:"terminalAvailable"`
-	PanelVersion        string            `json:"panelVersion,omitempty"`
-	State               HostState         `json:"state"`
-	LastSnapshot        *HostSnapshot     `json:"lastSnapshot,omitempty"`
-	LastAttemptAt       *time.Time        `json:"lastAttemptAt,omitempty"`
-	LastSuccessAt       *time.Time        `json:"lastSuccessAt,omitempty"`
-	ConsecutiveFailures int               `json:"consecutiveFailures"`
-	LastErrorCode       string            `json:"lastErrorCode,omitempty"`
-	LastError           string            `json:"lastError,omitempty"`
-	Polling             bool              `json:"polling"`
-	NextPollAt          *time.Time        `json:"nextPollAt,omitempty"`
-	ResourceVersion     string            `json:"resourceVersion"`
-	CreatedAt           time.Time         `json:"createdAt"`
-	UpdatedAt           time.Time         `json:"updatedAt"`
+	ID                    string            `json:"id"`
+	IsLocal               bool              `json:"isLocal"`
+	Name                  string            `json:"name"`
+	Kind                  HostKind          `json:"kind"`
+	Origin                string            `json:"origin"`
+	TransportSecurity     TransportSecurity `json:"transportSecurity"`
+	PeerFingerprint       string            `json:"peerFingerprint,omitempty"`
+	RemoteNodeID          string            `json:"remoteNodeId"`
+	FederationProtocol    string            `json:"federationProtocol"`
+	Scope                 string            `json:"scope"`
+	TerminalAvailable     bool              `json:"terminalAvailable"`
+	FileTransferAvailable bool              `json:"fileTransferAvailable"`
+	PanelVersion          string            `json:"panelVersion,omitempty"`
+	State                 HostState         `json:"state"`
+	LastSnapshot          *HostSnapshot     `json:"lastSnapshot,omitempty"`
+	LastAttemptAt         *time.Time        `json:"lastAttemptAt,omitempty"`
+	LastSuccessAt         *time.Time        `json:"lastSuccessAt,omitempty"`
+	ConsecutiveFailures   int               `json:"consecutiveFailures"`
+	LastErrorCode         string            `json:"lastErrorCode,omitempty"`
+	LastError             string            `json:"lastError,omitempty"`
+	Polling               bool              `json:"polling"`
+	NextPollAt            *time.Time        `json:"nextPollAt,omitempty"`
+	ResourceVersion       string            `json:"resourceVersion"`
+	CreatedAt             time.Time         `json:"createdAt"`
+	UpdatedAt             time.Time         `json:"updatedAt"`
 }
 
 func ScopeAllowsTerminal(scope string) bool {
-	return scope == SummaryTerminalScope
+	return scope == SummaryTerminalScope || scope == SummaryTerminalFilesScope
+}
+
+func ScopeAllowsFiles(scope string) bool {
+	return scope == SummaryTerminalFilesScope
 }
 
 type LightEnrollment struct {

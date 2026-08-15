@@ -68,6 +68,19 @@ func (agent *fileStubAgent) snapshotStreamCalls() []streamAgentCall {
 	return append([]streamAgentCall(nil), agent.streamCalls...)
 }
 
+func TestSuffixedFileTransferNamePreservesExtensionAndByteLimit(t *testing.T) {
+	if got := suffixedFileTransferName("app", 1); got != "app (1)" {
+		t.Fatalf("directory suffix=%q", got)
+	}
+	if got := suffixedFileTransferName("archive.tar.gz", 2); got != "archive.tar (2).gz" {
+		t.Fatalf("file suffix=%q", got)
+	}
+	got := suffixedFileTransferName(strings.Repeat("界", 100)+".txt", 999)
+	if len(got) > 255 || !strings.HasSuffix(got, " (999).txt") {
+		t.Fatalf("bounded unicode suffix bytes=%d value=%q", len(got), got)
+	}
+}
+
 func TestFileListRequiresSessionAndForwardsStrictQuery(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)

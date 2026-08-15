@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   entry: vi.fn(),
   action: vi.fn(),
+  transferFromPanel: vi.fn(),
   trash: vi.fn(),
   write: vi.fn(),
   createDownloadTicket: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock('@/lib/api', () => ({
       entry: mocks.entry,
       list: mocks.list,
       action: mocks.action,
+      transferFromPanel: mocks.transferFromPanel,
       trash: mocks.trash,
       contentUrl: vi.fn(),
       createDownloadTicket: mocks.createDownloadTicket,
@@ -95,6 +97,7 @@ interface FileBindings {
   runTrashAction: (action: 'trash_restore' | 'trash_delete' | 'trash_empty') => Promise<void>
   pasteClipboard: (target?: string) => Promise<void>
   transferInternalFileDrop: (event: DragEvent, target: string) => Promise<void>
+  transferCrossPanelFileDrop: (event: DragEvent, target: string) => Promise<void>
   cancelFileTransfer: () => void
   addEntriesToDesktop: (entry?: TestFileEntry, currentDirectory?: boolean) => Promise<void>
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
@@ -216,6 +219,13 @@ function internalDrag(entries: TestFileEntry[], modifiers: { ctrlKey?: boolean; 
   return event
 }
 
+function crossPanelDrag(entries: TestFileEntry[]): DragEvent {
+  const event = internalDrag(entries)
+  beginDesktopFileDrag(event, entries, 'a'.repeat(32))
+  clearDesktopFileDrag()
+  return event
+}
+
 function setupView(): FileBindings {
   const component = FilesView as unknown as {
     setup: (props: Record<string, never>, context: { expose: () => void }) => FileBindings
@@ -253,6 +263,11 @@ beforeEach(() => {
   vi.stubGlobal('document', { activeElement: null })
   mocks.list.mockResolvedValue(testDirectory('/web'))
   mocks.action.mockResolvedValue({ action: 'trash', succeeded: [], failed: [] })
+  mocks.transferFromPanel.mockImplementation(async (input: { path: string; targetDirectory: string }, onEvent: (event: unknown) => void) => {
+    onEvent({ state: 'complete' })
+    const source = input.path.slice(input.path.lastIndexOf('/') + 1)
+    return { ...testEntry(source), path: `${input.targetDirectory}/${source}` }
+  })
   mocks.trash.mockResolvedValue({ entries: [], total: 0, readAt: '2026-07-30T00:00:00Z' })
   mocks.write.mockImplementation(async (_path: string, _content: string, _version: string) => ({
     entry: testEntry('saved.txt'),
@@ -1221,5 +1236,31 @@ describe('FilesView directory loading', () => {
     expect(mocks.show).toHaveBeenCalledWith('复制已取消', {
       message: '已经复制完成的项目会保留在目标目录。',
     })
+  })
+
+  it('copies a multi-selection from another KPanel into the dropped directory', async () => {
+    const view = setupView()
+    const first = { ...testEntry('one.txt'), path: '/source/one.txt' }
+    const second = { ...testEntry('two.txt'), path: '/source/two.txt' }
+    const event = crossPanelDrag([first, second])
+    mocks.transferFromPanel
+      .mockResolvedValueOnce({ ...first, path: '/target/one.txt' })
+      .mockRejectedValueOnce(new Error('source changed'))
+
+    await view.transferCrossPanelFileDrop(event, '/target')
+
+    expect(mocks.transferFromPanel).toHaveBeenCalledTimes(2)
+    expect(mocks.transferFromPanel.mock.calls[0]?.[0]).toEqual({
+      sourceNodeId: 'a'.repeat(32), path: '/source/one.txt',
+      resourceVersion: first.resourceVersion, targetDirectory: '/target',
+    })
+    expect(view.fileTransferState.value).toMatchObject({
+      mode: 'copy', target: '/target', count: 2, completed: 2, phase: 'partial', remote: true,
+    })
+    expect(mocks.danger).toHaveBeenCalledWith(
+      '跨面板复制部分完成',
+      '1 项成功，1 项失败：source changed',
+    )
+    expect(mocks.list).toHaveBeenCalled()
   })
 })

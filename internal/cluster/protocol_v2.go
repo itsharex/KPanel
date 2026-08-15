@@ -27,6 +27,7 @@ const (
 	v2TerminalInputPath  = "/api/v2/federation/terminal/input"
 	v2TerminalResizePath = "/api/v2/federation/terminal/resize"
 	v2TerminalClosePath  = "/api/v2/federation/terminal/close"
+	v2FileOpenPath       = "/api/v2/federation/files/open"
 	maxV2PairingCode     = 1024
 	maxV2EnvelopeBytes   = MaxFederationV2Bytes
 )
@@ -469,7 +470,7 @@ func v2PathAllowed(method, path string) bool {
 	switch path {
 	case v2PairPath, v2CommitPath, v2SummaryPath, v2RevokePath,
 		v2TerminalOpenPath, v2TerminalOutputPath, v2TerminalInputPath,
-		v2TerminalResizePath, v2TerminalClosePath:
+		v2TerminalResizePath, v2TerminalClosePath, v2FileOpenPath:
 		return true
 	default:
 		return false

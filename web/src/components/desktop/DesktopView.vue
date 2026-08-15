@@ -45,11 +45,14 @@ import {
   type DesktopEntry,
 } from '@/lib/desktopEntries'
 import { api, ApiError, type SystemResourceSnapshot } from '@/lib/api'
+import { transferCrossPanelFileBatch } from '@/lib/crossPanelFileTransfer'
 import {
   addFileEntriesToDesktop,
   clearDesktopFileDrag,
+  crossPanelFileDragEntries,
   desktopFileDragEntries,
   DesktopShortcutLimitError,
+  hasCrossPanelFileDrag,
   hasDesktopFileDrag,
 } from '@/lib/desktopFileShortcuts'
 import {
@@ -239,10 +242,11 @@ const batchRemovingEntries = ref<DesktopEntry[]>([])
 const shortcutSaving = ref(false)
 const shortcutError = ref('')
 const fileDropActive = ref(false)
-const fileDropMode = ref<'shortcut' | 'upload'>('shortcut')
+const fileDropMode = ref<'shortcut' | 'upload' | 'panel-copy'>('shortcut')
 type DesktopTransferPhase = 'preparing' | 'uploading' | 'complete' | 'partial' | 'error' | 'cancelled'
 interface DesktopTransferState extends DesktopExternalTransferProgress {
   phase: DesktopTransferPhase
+  operation?: 'upload' | 'panel-copy'
   roots: number
   failed: number
   detail: string
@@ -258,7 +262,14 @@ const desktopTransferPercent = computed(() => {
   const transfer = desktopTransfer.value
   if (!transfer) return 0
   if (transfer.phase === 'complete') return 100
+  if (transfer.operation === 'panel-copy' && transfer.totalFiles > 1) {
+    const current = transfer.totalBytes > 0
+      ? Math.min(1, transfer.loadedBytes / transfer.totalBytes)
+      : transfer.phase === 'preparing' ? 0.1 : 0.5
+    return Math.min(100, Math.round((transfer.completedFiles + current) / transfer.totalFiles * 100))
+  }
   if (transfer.totalBytes > 0) return Math.min(100, Math.round(transfer.loadedBytes / transfer.totalBytes * 100))
+  if (transfer.operation === 'panel-copy') return transfer.phase === 'preparing' ? 12 : 55
   if (transfer.totalFiles > 0) return Math.min(100, Math.round(transfer.completedFiles / transfer.totalFiles * 100))
   return transfer.phase === 'preparing' ? 8 : 0
 })
@@ -1325,7 +1336,7 @@ function onDesktopPointerDown(event: PointerEvent): void {
 }
 
 function desktopFileDropAllowed(event: DragEvent): boolean {
-  if (!hasDesktopFileDrag(event) && !hasExternalFileDrop(event)) return false
+  if (!hasDesktopFileDrag(event) && !hasCrossPanelFileDrag(event) && !hasExternalFileDrop(event)) return false
   const target = event.target as HTMLElement | null
   return !target?.closest('.desktop-window, .desktop__widgets, .desktop__taskbar')
 }
@@ -1336,14 +1347,16 @@ function onDesktopFileDragOver(event: DragEvent): void {
     return
   }
   event.preventDefault()
-  const external = !hasDesktopFileDrag(event) && hasExternalFileDrop(event)
-  if (external && desktopTransfer.value && ['preparing', 'uploading'].includes(desktopTransfer.value.phase)) {
+  const internal = hasDesktopFileDrag(event)
+  const crossPanel = !internal && hasCrossPanelFileDrag(event)
+  const external = !internal && !crossPanel && hasExternalFileDrop(event)
+  if ((external || crossPanel) && desktopTransfer.value && ['preparing', 'uploading'].includes(desktopTransfer.value.phase)) {
     fileDropActive.value = false
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'
     return
   }
-  fileDropMode.value = external ? 'upload' : 'shortcut'
-  if (event.dataTransfer) event.dataTransfer.dropEffect = external ? 'copy' : 'link'
+  fileDropMode.value = external ? 'upload' : crossPanel ? 'panel-copy' : 'shortcut'
+  if (event.dataTransfer) event.dataTransfer.dropEffect = external || crossPanel ? 'copy' : 'link'
   fileDropActive.value = true
 }
 
@@ -1631,6 +1644,122 @@ async function addExternalFileDrop(event: DragEvent, destination: DesktopIconPos
   }
 }
 
+async function addCrossPanelFileDrop(event: DragEvent, destination: DesktopIconPosition): Promise<void> {
+  const payload = crossPanelFileDragEntries(event)
+  if (!payload) {
+    toast.danger(i18n.t('desktop.transferFailedTitle'), i18n.t('desktop.panelCopyInvalid'))
+    return
+  }
+  if (desktopTransferActive.value) {
+    toast.show(i18n.t('desktop.transferBusyTitle'), { message: i18n.t('desktop.transferBusyMessage') })
+    return
+  }
+  if (desktopTransferClearTimer !== undefined) window.clearTimeout(desktopTransferClearTimer)
+  const controller = new AbortController()
+  desktopTransferController = controller
+  const total = payload.entries.length
+  desktopTransfer.value = {
+    phase: 'preparing', operation: 'panel-copy', roots: total, failed: 0, detail: i18n.t('desktop.panelCopyConnecting'),
+    currentName: payload.entries[0]?.name || '', completedFiles: 0, totalFiles: total, loadedBytes: 0, totalBytes: 0,
+  }
+  showDropPulse(event)
+  try {
+    const result = await transferCrossPanelFileBatch(
+      payload,
+      desktopUploadDirectory.value,
+      api.files.transferFromPanel,
+      ({ source, event: progress, completed }) => {
+        if (desktopTransferController !== controller || controller.signal.aborted) return
+        const loadedBytes = progress.loadedBytes || 0
+        const totalBytes = progress.totalBytes || 0
+        desktopTransfer.value = {
+          phase: progress.state === 'connecting' ? 'preparing' : 'uploading', operation: 'panel-copy',
+          roots: total, failed: 0,
+          detail: progress.state === 'committing'
+            ? i18n.t('desktop.panelCopyCommitting')
+            : progress.state === 'connecting'
+              ? i18n.t('desktop.panelCopyConnecting')
+              : i18n.t('desktop.panelCopyTransferring'),
+          currentName: source.name, completedFiles: completed, totalFiles: total, loadedBytes, totalBytes,
+        }
+      }, controller.signal)
+    const copiedEntries = result.succeeded.map(({ entry }) => entry)
+    let shortcutCount = 0
+    let shortcutDetail = ''
+    if (copiedEntries.length) {
+      try {
+        const shortcuts = await addDroppedFileEntries(copiedEntries, destination)
+        shortcutCount = shortcuts.added.length + shortcuts.duplicates.length
+        if (shortcuts.duplicates.length) shortcutDetail = i18n.t('desktop.fileShortcutDuplicate')
+      } catch (error) {
+        shortcutDetail = error instanceof DesktopShortcutLimitError
+          ? i18n.t('desktop.transferShortcutLimit')
+          : workspaceErrorMessage(error)
+      }
+    }
+    const shortcutFailures = Math.max(0, copiedEntries.length - shortcutCount)
+    const failures = result.failed.length + shortcutFailures
+    const attempted = result.succeeded.length + result.failed.length
+    const failureDetail = result.failed[0]?.detail || shortcutDetail
+    const phase: DesktopTransferPhase = result.cancelled
+      ? copiedEntries.length ? 'partial' : 'cancelled'
+      : copiedEntries.length === 0 ? 'error'
+        : failures > 0 ? 'partial' : 'complete'
+    const detail = result.cancelled
+      ? i18n.t('desktop.panelCopyCancelledPartial', { count: copiedEntries.length })
+      : failures > 0
+        ? `${i18n.t('desktop.panelCopyBatchPartial', { success: shortcutCount, failed: failures })}${failureDetail ? ` ${failureDetail}` : ''}`
+        : total > 1
+          ? i18n.t('desktop.panelCopyBatchCompleteMessage', { count: total })
+          : shortcutDetail
+    desktopTransfer.value = {
+      phase, operation: 'panel-copy', roots: total, failed: failures, detail,
+      currentName: copiedEntries.at(-1)?.name || payload.entries[Math.min(attempted, total - 1)]?.name || '',
+      completedFiles: attempted, totalFiles: total, loadedBytes: 0, totalBytes: 0,
+    }
+    if (result.cancelled) {
+      toast.show(i18n.t('desktop.transferCancelledTitle'), { message: detail })
+      scheduleDesktopTransferClear(2600)
+    } else if (phase === 'complete') {
+      toast.success(
+        i18n.t('desktop.panelCopyCompleteTitle'),
+        total === 1
+          ? i18n.t('desktop.panelCopyCompleteMessage', { name: copiedEntries[0]!.name })
+          : i18n.t('desktop.panelCopyBatchCompleteMessage', { count: total }),
+      )
+      scheduleDesktopTransferClear()
+    } else {
+      toast.danger(
+        phase === 'error' ? i18n.t('desktop.transferFailedTitle') : i18n.t('desktop.transferPartialTitle'),
+        detail || result.failed[0]?.detail || i18n.t('desktop.transferFailedMessage'),
+      )
+    }
+  } catch (error) {
+    if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+      desktopTransfer.value = {
+        ...(desktopTransfer.value || {
+          roots: total, failed: 0, detail: '', currentName: payload.entries[0]?.name || '',
+          completedFiles: 0, totalFiles: total, loadedBytes: 0, totalBytes: 0,
+        }),
+        phase: 'cancelled', detail: i18n.t('desktop.transferCancelledMessage'),
+      }
+      scheduleDesktopTransferClear(2600)
+      return
+    }
+    const detail = error instanceof Error ? error.message : i18n.t('desktop.transferFailedMessage')
+    desktopTransfer.value = {
+      ...(desktopTransfer.value || {
+        roots: total, failed: 1, currentName: payload.entries[0]?.name || '',
+        completedFiles: 0, totalFiles: total, loadedBytes: 0, totalBytes: 0,
+      }),
+      phase: 'error', failed: 1, detail,
+    }
+    toast.danger(i18n.t('desktop.transferFailedTitle'), detail)
+  } finally {
+    if (desktopTransferController === controller) desktopTransferController = undefined
+  }
+}
+
 async function onDesktopFileDrop(event: DragEvent): Promise<void> {
   if (!desktopFileDropAllowed(event)) return
   event.preventDefault()
@@ -1638,6 +1767,7 @@ async function onDesktopFileDrop(event: DragEvent): Promise<void> {
   const destination = desktopDropPosition(event)
   if (!destination) return
   if (hasDesktopFileDrag(event)) await addInternalFileDrop(event, destination)
+  else if (hasCrossPanelFileDrag(event)) await addCrossPanelFileDrop(event, destination)
   else if (hasExternalFileDrop(event)) await addExternalFileDrop(event, destination)
 }
 
@@ -2132,17 +2262,25 @@ function onViewportResize(): void {
     <div
       v-if="fileDropActive"
       class="desktop__file-drop"
-      :class="{ 'desktop__file-drop--upload': fileDropMode === 'upload' }"
+      :class="{ 'desktop__file-drop--upload': fileDropMode !== 'shortcut' }"
       role="status"
       aria-live="polite"
     >
       <span>
-        <HardDriveUpload v-if="fileDropMode === 'upload'" :size="19" aria-hidden="true" />
+        <HardDriveUpload v-if="fileDropMode !== 'shortcut'" :size="19" aria-hidden="true" />
         <Plus v-else :size="19" aria-hidden="true" />
       </span>
-      <strong>{{ i18n.t(fileDropMode === 'upload' ? 'desktop.externalDropTitle' : 'desktop.fileDropTitle') }}</strong>
-      <small>{{ i18n.t(fileDropMode === 'upload' ? 'desktop.externalDropHint' : 'desktop.fileDropHint') }}</small>
-      <code v-if="fileDropMode === 'upload'">{{ desktopUploadDirectory }}</code>
+      <strong>{{ i18n.t(fileDropMode === 'upload'
+        ? 'desktop.externalDropTitle'
+        : fileDropMode === 'panel-copy'
+          ? 'desktop.panelCopyDropTitle'
+          : 'desktop.fileDropTitle') }}</strong>
+      <small>{{ i18n.t(fileDropMode === 'upload'
+        ? 'desktop.externalDropHint'
+        : fileDropMode === 'panel-copy'
+          ? 'desktop.panelCopyDropHint'
+          : 'desktop.fileDropHint') }}</small>
+      <code v-if="fileDropMode !== 'shortcut'">{{ desktopUploadDirectory }}</code>
     </div>
 
     <span
@@ -2170,11 +2308,11 @@ function onViewportResize(): void {
         <header>
           <strong>
             {{ desktopTransfer.phase === 'preparing'
-              ? i18n.t('desktop.transferPreparing')
+              ? i18n.t(desktopTransfer.operation === 'panel-copy' ? 'desktop.panelCopyConnecting' : 'desktop.transferPreparing')
               : desktopTransfer.phase === 'uploading'
-                ? i18n.t('desktop.transferUploading', { count: desktopTransfer.roots })
+                ? i18n.t(desktopTransfer.operation === 'panel-copy' ? 'desktop.panelCopyTransferring' : 'desktop.transferUploading', { count: desktopTransfer.roots })
                 : desktopTransfer.phase === 'complete'
-                  ? i18n.t('desktop.transferCompleteTitle')
+                  ? i18n.t(desktopTransfer.operation === 'panel-copy' ? 'desktop.panelCopyCompleteTitle' : 'desktop.transferCompleteTitle')
                   : desktopTransfer.phase === 'partial'
                     ? i18n.t('desktop.transferPartialTitle')
                     : desktopTransfer.phase === 'cancelled'

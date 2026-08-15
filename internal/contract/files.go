@@ -87,3 +87,25 @@ type FileWriteRequest struct {
 type FileWriteResult struct {
 	Entry FileEntry `json:"entry"`
 }
+
+type FileTransferMetadata struct {
+	Name            string `json:"name"`
+	Kind            string `json:"kind"`
+	SizeBytes       int64  `json:"sizeBytes"`
+	ResourceVersion string `json:"resourceVersion"`
+}
+
+type FileTransferRequest struct {
+	SourceNodeID    string `json:"sourceNodeId"`
+	Path            string `json:"path"`
+	ResourceVersion string `json:"resourceVersion"`
+	TargetDirectory string `json:"targetDirectory"`
+}
+
+type FileTransferEvent struct {
+	State       string     `json:"state"`
+	LoadedBytes int64      `json:"loadedBytes,omitempty"`
+	TotalBytes  int64      `json:"totalBytes,omitempty"`
+	Entry       *FileEntry `json:"entry,omitempty"`
+	Detail      string     `json:"detail,omitempty"`
+}

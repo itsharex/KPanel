@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"image"
@@ -22,6 +23,11 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/filemanager"
 	"github.com/kejilion/kejilion-panel/internal/httpstream"
+)
+
+const (
+	fileTransferMetadataHeader = "X-KPanel-File-Metadata"
+	fileTransferResultTrailer  = "X-KPanel-Transfer-Result"
 )
 
 const (
@@ -518,6 +524,147 @@ func (s *Server) fileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, entry)
+}
+
+func (s *Server) fileTransferExport(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "path", "resourceVersion") {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "传输参数无效", "")
+		return
+	}
+	entry, err := s.files.Stat(r.URL.Query().Get("path"))
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	if entry.Kind != "file" && entry.Kind != "directory" {
+		writeFileProblem(w, requestID, filemanager.ErrNotRegular)
+		return
+	}
+	if expected := r.URL.Query().Get("resourceVersion"); expected == "" || expected != entry.ResourceVersion {
+		writeFileProblem(w, requestID, filemanager.ErrConflict)
+		return
+	}
+	metadata, err := json.Marshal(contract.FileTransferMetadata{
+		Name: entry.Name, Kind: entry.Kind, SizeBytes: entry.SizeBytes,
+		ResourceVersion: entry.ResourceVersion,
+	})
+	if err != nil {
+		writeProblem(w, requestID, http.StatusInternalServerError, "transfer_metadata_failed", "无法准备文件传输", "")
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set(fileTransferMetadataHeader, base64.RawURLEncoding.EncodeToString(metadata))
+	w.Header().Set("Trailer", fileTransferResultTrailer)
+	transferContext, cancel := context.WithTimeout(r.Context(), fileTransferMaxDuration)
+	defer cancel()
+	output := httpstream.NewIdleResponseWriter(transferContext, w, fileTransferIdleTimeout)
+	w.WriteHeader(http.StatusOK)
+	var transferErr error
+	if entry.Kind == "file" {
+		var file io.ReadSeekCloser
+		file, entry, transferErr = s.files.Open(transferContext, entry.Path)
+		if transferErr == nil && entry.ResourceVersion != r.URL.Query().Get("resourceVersion") {
+			transferErr = filemanager.ErrConflict
+		}
+		if file != nil {
+			defer file.Close()
+		}
+		if transferErr == nil {
+			_, transferErr = io.CopyBuffer(output, file, make([]byte, 64<<10))
+		}
+		if transferErr == nil {
+			current, statErr := s.files.Stat(entry.Path)
+			if statErr != nil || current.ResourceVersion != entry.ResourceVersion {
+				transferErr = filemanager.ErrConflict
+			}
+		}
+	} else {
+		_, transferErr = s.files.ExportDirectory(
+			transferContext, entry.Path, entry.ResourceVersion, output,
+		)
+	}
+	if transferErr == nil {
+		w.Header().Set(fileTransferResultTrailer, "ok")
+	} else {
+		w.Header().Set(fileTransferResultTrailer, "error")
+	}
+}
+
+func (s *Server) fileTransferImport(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "path", "name", "kind", "size") {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "传输参数无效", "")
+		return
+	}
+	if strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]) != "application/octet-stream" {
+		writeProblem(w, requestID, http.StatusUnsupportedMediaType, "binary_required", "传输必须使用二进制内容", "")
+		return
+	}
+	size, err := strconv.ParseInt(r.URL.Query().Get("size"), 10, 64)
+	if err != nil || size < 0 {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_size", "传输大小无效", "")
+		return
+	}
+	transferContext, cancel := context.WithTimeout(r.Context(), fileTransferMaxDuration)
+	defer cancel()
+	content := httpstream.NewIdleReader(transferContext, w, r.Body, fileTransferIdleTimeout)
+	var entry contract.FileEntry
+	switch r.URL.Query().Get("kind") {
+	case "file":
+		if size > filemanager.MaxUploadBytes {
+			writeFileProblem(w, requestID, filemanager.ErrTooLarge)
+			return
+		}
+		entry, err = s.files.Upload(
+			transferContext, r.URL.Query().Get("path"), r.URL.Query().Get("name"),
+			&exactTransferReader{source: content, remaining: size}, size, false,
+		)
+	case "directory":
+		entry, err = s.files.ImportDirectory(
+			transferContext, r.URL.Query().Get("path"), r.URL.Query().Get("name"), content,
+		)
+	default:
+		err = filemanager.ErrNotRegular
+	}
+	if err != nil {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
+}
+
+type exactTransferReader struct {
+	source    io.Reader
+	remaining int64
+	checked   bool
+}
+
+func (r *exactTransferReader) Read(output []byte) (int, error) {
+	if r.remaining > 0 {
+		if int64(len(output)) > r.remaining {
+			output = output[:r.remaining]
+		}
+		count, err := r.source.Read(output)
+		r.remaining -= int64(count)
+		if err == io.EOF && r.remaining > 0 {
+			return count, io.ErrUnexpectedEOF
+		}
+		return count, err
+	}
+	if r.checked {
+		return 0, io.EOF
+	}
+	r.checked = true
+	var probe [1]byte
+	count, err := r.source.Read(probe[:])
+	if count > 0 {
+		return 0, filemanager.ErrTooLarge
+	}
+	if err == nil {
+		return 0, io.ErrNoProgress
+	}
+	return 0, err
 }
 
 func (s *Server) fileAction(w http.ResponseWriter, r *http.Request) {

@@ -15,6 +15,36 @@ afterEach(() => {
 })
 
 describe('API client', () => {
+  it('streams cross-panel file progress and returns the committed entry', async () => {
+    const entry = {
+      name: 'app', path: '/home/KPanel Desktop/app', kind: 'directory' as const,
+      sizeBytes: 0, mode: 'drwxr-xr-x', owner: 'root', group: 'root',
+      modifiedAt: '2026-08-15T00:00:00Z', resourceVersion: `sha256:${'a'.repeat(64)}`,
+      editable: false, previewable: false,
+    }
+    const stream = [
+      { state: 'connecting' },
+      { state: 'transferring', loadedBytes: 1024, totalBytes: 2048 },
+      { state: 'complete', loadedBytes: 2048, totalBytes: 2048, entry },
+    ].map((event) => JSON.stringify(event)).join('\n') + '\n'
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'application/x-ndjson' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const events: string[] = []
+
+    await expect(api.files.transferFromPanel({
+      sourceNodeId: 'a'.repeat(32), path: '/app', resourceVersion: 'sha256:source',
+      targetDirectory: '/home/KPanel Desktop',
+    }, (event) => events.push(event.state))).resolves.toEqual(entry)
+    expect(events).toEqual(['connecting', 'transferring', 'complete'])
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/files/transfers')
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    }))
+  })
+
   it('builds a same-origin, path-safe site icon URL', () => {
     expect(api.sites.iconURL('a'.repeat(32))).toBe(
       `/api/v1/sites/${'a'.repeat(32)}/icon`,
