@@ -5,8 +5,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const RELEASE_TAG = /^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
-const EMPTY_VALUE = /^(?:|[-—]|待填写|未记录|未验证|不适用|N\/A)$/i;
+const RELEASE_TAG = /^v\d+\.\d+\.\d+$/;
+const EMPTY_VALUE = /^(?:|[-—]|待填写|未记录|未验证|未知|不知道|稍后|不适用|N\/A)$/i;
+
+export function isStableReleaseTag(value) {
+  return RELEASE_TAG.test(value);
+}
 
 export function parseArguments(argv) {
   const options = {
@@ -129,7 +133,11 @@ function hasFailureRecoveryDetails(value) {
   const detail = (label) => validValue(value.match(
     new RegExp('(?:^|[；;])\\s*' + label + '\\s*[：:=]\\s*([^；;]+)'),
   )?.[1]);
-  return detail('发现时间') !== null && detail('恢复时间') !== null && detail('逃逸门禁') !== null;
+  const discoveredAt = detail('发现时间');
+  const recoveredAt = detail('恢复时间');
+  const escapedGate = detail('逃逸门禁');
+  return validDate(discoveredAt) && validDate(recoveredAt) && escapedGate !== null &&
+    Date.parse(recoveredAt) >= Date.parse(discoveredAt);
 }
 
 export function validateAcceptanceMetrics(markdown, label = 'acceptance record') {
@@ -288,7 +296,7 @@ function collectReleases(repo, evidenceCommit, acceptanceLimit) {
       const [tag, created] = line.split('\t');
       return { tag, createdAt: new Date(created) };
     })
-    .filter((release) => mergedTags.has(release.tag) && RELEASE_TAG.test(release.tag) && !Number.isNaN(release.createdAt.getTime()))
+    .filter((release) => mergedTags.has(release.tag) && isStableReleaseTag(release.tag) && !Number.isNaN(release.createdAt.getTime()))
     .map((release, index) => {
       const acceptancePath = 'docs/release-' + release.tag + '-acceptance.md';
       const markdown = index < acceptanceLimit ? tryGit(repo, ['show', evidenceCommit + ':' + acceptancePath]) : null;

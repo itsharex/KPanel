@@ -5,6 +5,7 @@ import {
   classifyChangeFailure,
   durationHours,
   extractAcceptanceMetrics,
+  isStableReleaseTag,
   parseArguments,
   productionLeadHours,
   renderMarkdown,
@@ -122,6 +123,10 @@ test('argument parser rejects invalid windows', () => {
   assert.equal(classifyChangeFailure('否（未发生）'), 'no');
   assert.equal(classifyChangeFailure('是（已回滚）'), 'yes');
   assert.equal(classifyChangeFailure(null), 'unreported');
+  assert.equal(isStableReleaseTag('v1.2.3'), true);
+  for (const tag of ['v1.2.3-rc.1', 'v1.2.3+build.1', 'v1.2.3-nightly', 'vfoo', 'v1', 'v1.2']) {
+    assert.equal(isStableReleaseTag(tag), false, tag);
+  }
 });
 
 test('acceptance validation requires machine-readable delivery evidence', () => {
@@ -209,9 +214,31 @@ test('acceptance validation keeps known failure state when historical completion
     '- 生产完成时间：未记录',
     '- 提交到生产用时：未记录',
     '- 是否回滚、紧急热修复或重复发布：是',
-    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：10:05；恢复时间：10:20；逃逸门禁：候选冻结后缺少回归',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：候选冻结后缺少回归',
   ].join('\n'));
   assert.deepEqual(failedWithDetails, []);
+
+  const unknownDetails = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：是',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：不知道；恢复时间：稍后；逃逸门禁：未知',
+  ].join('\n'));
+  assert.match(unknownDetails.join('\n'), /requires discovery, recovery/);
+
+  const reversedRecovery = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：是',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T13:00:00+08:00；恢复时间：2026-08-15T12:30:00+08:00；逃逸门禁：候选冻结后缺少回归',
+  ].join('\n'));
+  assert.match(reversedRecovery.join('\n'), /requires discovery, recovery/);
 
   const keywordsWithoutStructure = validateAcceptanceMetrics([
     '## 交付节奏数据',
