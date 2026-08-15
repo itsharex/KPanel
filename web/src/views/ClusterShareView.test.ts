@@ -28,7 +28,9 @@ interface ShareBindings {
   snapshot: Ref<PublicClusterShareSnapshot | undefined>
   errorMessage: Ref<string>
   tokenIsValid: ComputedRef<boolean>
+  viewMode: Ref<'list' | 'card'>
   load: (silent?: boolean) => Promise<void>
+  setViewMode: (mode: 'list' | 'card') => void
 }
 
 function setupView(): ShareBindings {
@@ -103,12 +105,25 @@ describe('ClusterShareView anonymous snapshot', () => {
     expect(view.errorMessage.value).toBe('分享链接格式无效。')
   })
 
+  it('defaults to the compact list and can switch to cards', () => {
+    const view = setupView()
+
+    expect(view.viewMode.value).toBe('list')
+    view.setViewMode('card')
+    expect(view.viewMode.value).toBe('card')
+  })
+
   it('keeps management and identity fields out of the public page template', () => {
     const source = readFileSync(new URL('./ClusterShareView.vue', import.meta.url), 'utf8')
     expect(source).toContain('公开页不包含 IP、管理入口或访问凭据')
     for (const privateField of ['origin', 'peerFingerprint', 'remoteNodeId', 'resourceVersion']) {
       expect(source).not.toContain(`host.${privateField}`)
     }
+    expect(source).toContain('<OperatingSystemIcon')
+    expect(source).toContain('<CountryFlagIcon')
+    expect(source).toContain("const viewMode = ref<'list' | 'card'>('list')")
+    expect(source).toContain('const { resolved: resolvedTheme, setTheme } = useTheme()')
+    expect(source).toContain(':class="`is-${viewMode}`"')
     expect(source).toMatch(/@media \(max-width: 650px\)[\s\S]*?\.share-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/)
 
     const routerSource = readFileSync(new URL('../router.ts', import.meta.url), 'utf8')
