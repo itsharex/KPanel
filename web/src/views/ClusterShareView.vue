@@ -276,16 +276,16 @@ onBeforeUnmount(() => {
 
           <dl class="share-details">
             <div>
-              <dt><Clock3 :size="13" /> 运行时间</dt>
-              <dd>{{ host.uptimeSeconds ? formatDuration(host.uptimeSeconds) : '—' }}</dd>
-            </div>
-            <div>
               <dt><ArrowDown :size="13" /> 下行</dt>
               <dd>{{ formatRate(host.network.receiveBytesPerSecond || 0) }}</dd>
             </div>
             <div>
               <dt><ArrowUp :size="13" /> 上行</dt>
               <dd>{{ formatRate(host.network.transmitBytesPerSecond || 0) }}</dd>
+            </div>
+            <div>
+              <dt><Clock3 :size="13" /> 运行时间</dt>
+              <dd>{{ host.uptimeSeconds ? formatDuration(host.uptimeSeconds) : '—' }}</dd>
             </div>
           </dl>
         </article>
@@ -467,19 +467,19 @@ onBeforeUnmount(() => {
 .share-card__header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 14px; }
 .share-card__header :deep(.os-identity__mark) { width: 40px; height: 40px; border-radius: 11px; }
 .share-card__header :deep(.os-identity__mark svg) { width: 23px; height: 23px; }
-.share-card h2 { overflow: hidden; margin: 0 0 2px; font-size: 14px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.share-card h2 { overflow: hidden; margin: 0 0 2px; font-size: 15px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .share-card__identity { min-width: 0; }
-.share-card__system { display: flex; min-width: 0; align-items: center; gap: 6px; margin: 0 0 5px; color: var(--text-soft); font-size: 10px; }
+.share-card__system { display: flex; min-width: 0; align-items: center; gap: 6px; margin: 0 0 5px; color: var(--text-soft); font-size: 11px; }
 .share-card__system span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.share-card__system small { flex: 0 0 auto; padding: 1px 4px; color: var(--muted); background: var(--neutral-soft); border-radius: 4px; font-size: 8px; }
-.share-card__location { display: flex; align-items: center; gap: 5px; overflow: hidden; margin: 0; color: var(--muted); font-size: 9px; white-space: nowrap; }
+.share-card__system small { flex: 0 0 auto; padding: 1px 4px; color: var(--muted); background: var(--neutral-soft); border-radius: 4px; font-size: 9px; }
+.share-card__location { display: flex; align-items: center; gap: 5px; overflow: hidden; margin: 0; color: var(--muted); font-size: 10px; white-space: nowrap; }
 .share-card__location > span { overflow: hidden; text-overflow: ellipsis; }
-.share-card__location em { overflow: hidden; color: color-mix(in srgb, var(--muted) 78%, transparent); font-size: 8px; font-style: normal; text-overflow: ellipsis; }
+.share-card__location em { overflow: hidden; color: color-mix(in srgb, var(--muted) 78%, transparent); font-size: 9px; font-style: normal; text-overflow: ellipsis; }
 .share-card__location em::before { margin-right: 5px; content: "·"; }
 .share-card__location :deep(.country-flag) { width: 16px; height: 16px; }
 .share-card__aside { display: grid; min-width: 58px; justify-items: end; align-content: center; gap: 6px; }
-.share-card__aside > small { color: var(--muted); font-size: 8px; white-space: nowrap; }
-.share-status { gap: 5px; color: var(--muted); font-size: 10px; }
+.share-card__aside > small { color: var(--muted); font-size: 9px; white-space: nowrap; }
+.share-status { gap: 5px; color: var(--muted); font-size: 11px; }
 .share-status i { width: 7px; height: 7px; background: currentColor; border-radius: 50%; box-shadow: 0 0 10px currentColor; }
 .share-status.is-online { color: var(--brand); }
 .share-status.is-degraded { color: var(--amber); }
@@ -488,17 +488,17 @@ onBeforeUnmount(() => {
 .share-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--border); }
 .share-metrics > div { display: grid; align-content: center; gap: 5px; padding: 11px 13px; border-left: 1px solid var(--border); }
 .share-metrics > div:first-child { border-left: 0; }
-.share-metrics span { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; }
-.share-metrics strong { font-size: 15px; }
+.share-metrics span { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+.share-metrics strong { font-size: 16px; }
 .share-metrics > div > i { height: 4px; overflow: hidden; background: var(--neutral-soft); border-radius: 10px; }
 .share-metrics b { display: block; height: 100%; background: linear-gradient(90deg, var(--blue), var(--brand)); border-radius: inherit; }
-.share-metrics small { color: var(--muted); font-size: 9px; }
+.share-metrics small { color: var(--muted); font-size: 10px; }
 .share-card__empty { padding: 29px; color: var(--muted); text-align: center; border-block: 1px solid var(--border); }
 
 .share-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; gap: 10px; padding: 12px 14px; margin: 0; }
 .share-details div { min-width: 0; }
-.share-details dt { gap: 4px; margin-bottom: 4px; color: var(--muted); font-size: 9px; }
-.share-details dd { overflow: hidden; margin: 0; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.share-details dt { gap: 4px; margin-bottom: 4px; color: var(--muted); font-size: 10px; }
+.share-details dd { overflow: hidden; margin: 0; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 
 .share-state { display: grid; min-height: 280px; place-items: center; align-content: center; gap: 12px; color: var(--muted); text-align: center; }
 .share-state p { margin: 0; }
