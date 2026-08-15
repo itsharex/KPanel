@@ -15,8 +15,11 @@
 - 随镜像发布的离线回退目录包含 147 个应用；在线目录校验成功后动态替换内置与第三方展示项。
 - 上游不可用或来源、字段、分类、数量、URL、ID、内置编号、重复项校验失败时，使用最近一次已校验目录；
   Agent 重启后仍可回退随版本发布的内置快照，应用市场不会因断网不可用。
-- 已随版本发布的图标位于 `web/public/app-icons`，运行时不远程热链；动态新增但尚未随
-  KPanel 版本发布图标的内置或第三方应用使用本地通用图标。
+- 已随版本发布的图标继续使用 `web/public/app-icons`。动态新增且本地快照不存在的内置或第三方
+  应用复用同一机制：Agent 只从固定的 `https://app.kejilion.sh/icons/<slug>.webp` 首次抓取图标，
+  校验同域 HTTPS、重定向、WebP 类型、128 KiB 体积和图片尺寸后原子缓存到
+  `/var/lib/kejilion-panel/app-icons`，Panel 通过登录保护的同源接口返回；抓取或校验失败时使用
+  本地通用图标。缓存每 24 小时最多刷新一次，目录最多包含动态目录允许的 500 个受限 slug。
 - `scripts/audit-kejilion-apps.mjs` 从指定的 `kejilion.sh` 提取 115 个内置应用的主容器、镜像、
   默认端口和管理类型，生成 `internal/appmarket/legacy-apps.json`。
 - Docker Engine 是安装与运行状态的事实来源；`/home/docker/appno.txt` 只作为脚本兼容标记。

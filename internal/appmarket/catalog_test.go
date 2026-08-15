@@ -259,18 +259,29 @@ func TestRemoteCatalogDynamicallyReplacesBuiltinAndThirdPartyEntries(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	merged := mergeRemoteCatalog(embedded, remote)
+	merged := mergeRemoteCatalogWithDynamicIcons(embedded, remote, true)
+	dynamicSources := dynamicRemoteIconSources(embedded, remote)
+	fallback := mergeRemoteCatalog(embedded, remote)
+	for _, slug := range []string{"new-builtin-app", "new-safe-app"} {
+		app := appBySlug(t, fallback, slug)
+		if app.Icon != genericThirdPartyIcon || app.IconSHA256 != "" {
+			t.Fatalf("dynamic app %q did not retain the local fallback: %#v", slug, app)
+		}
+	}
 	foundNewThirdParty := false
 	foundNewBuiltin := false
 	foundUpdatedBuiltin := false
 	foundRemovedThirdParty := false
 	for _, app := range merged.Apps {
 		if app.Token == "new-safe-app" {
-			foundNewThirdParty = app.Icon == genericThirdPartyIcon && app.IconSHA256 == ""
+			foundNewThirdParty = app.Icon == dynamicAppIconPrefix+"new-safe-app.webp" &&
+				app.IconSHA256 == "" && dynamicSources[app.Slug] == "icons/new-safe-app.webp"
 		}
 		if app.Token == "new-builtin-app" {
-			foundNewBuiltin = app.Num == 116 && app.Icon == genericThirdPartyIcon &&
-				app.IconSHA256 == ""
+			foundNewBuiltin = app.Num == 116 &&
+				app.Icon == dynamicAppIconPrefix+"new-builtin-app.webp" &&
+				app.IconSHA256 == "" &&
+				dynamicSources[app.Slug] == "icons/new-builtin-app.webp"
 		}
 		if app.Token == updatedBuiltin {
 			local := embeddedAppByToken(t, embedded, updatedBuiltin)
@@ -321,6 +332,12 @@ func TestRemoteCatalogRejectsUntrustedDynamicBuiltinMetadata(t *testing.T) {
 			name: "count",
 			mutate: func(payload *remoteCatalogPayload) {
 				payload.Meta.Builtin++
+			},
+		},
+		{
+			name: "icon identity",
+			mutate: func(payload *remoteCatalogPayload) {
+				payload.Apps[0].Icon = "icons/another-app.webp"
 			},
 		},
 	}

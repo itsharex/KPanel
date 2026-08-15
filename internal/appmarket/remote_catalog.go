@@ -22,6 +22,7 @@ const (
 	maxRemoteCatalogApps  = 500
 	remoteCatalogTTL      = 5 * time.Minute
 	genericThirdPartyIcon = "/app-icons/thirdparty-default.svg"
+	dynamicAppIconPrefix  = "/api/v1/apps/icons/"
 )
 
 var remoteIconPattern = regexp.MustCompile(`^icons/[a-z0-9][a-z0-9_-]{0,63}[.]webp$`)
@@ -153,6 +154,7 @@ func validateRemoteCatalog(catalog Catalog, meta remoteCatalogMeta) error {
 	for _, app := range catalog.Apps {
 		if !catalogIDPattern.MatchString(app.ID) || !tokenPattern.MatchString(app.Token) ||
 			!tokenPattern.MatchString(app.Slug) || !remoteIconPattern.MatchString(app.Icon) ||
+			app.Icon != "icons/"+app.Slug+".webp" ||
 			!categories[app.Category] || app.NameZH == "" || len(app.NameZH) > 160 ||
 			len(app.NameEN) > 160 || len(app.Description) > 2000 ||
 			len(app.DescriptionEN) > 2000 || ids[app.ID] || tokens[app.Token] || slugs[app.Slug] {
@@ -192,6 +194,10 @@ func validateRemoteCatalog(catalog Catalog, meta remoteCatalogMeta) error {
 }
 
 func mergeRemoteCatalog(embedded, remote Catalog) Catalog {
+	return mergeRemoteCatalogWithDynamicIcons(embedded, remote, false)
+}
+
+func mergeRemoteCatalogWithDynamicIcons(embedded, remote Catalog, enabled bool) Catalog {
 	localByID := make(map[string]App, len(embedded.Apps))
 	localByToken := make(map[string]App, len(embedded.Apps))
 	result := Catalog{
@@ -213,6 +219,9 @@ func mergeRemoteCatalog(embedded, remote Catalog) Catalog {
 		if ok {
 			app.Icon = local.Icon
 			app.IconSHA256 = local.IconSHA256
+		} else if enabled {
+			app.Icon = dynamicAppIconPrefix + app.Slug + ".webp"
+			app.IconSHA256 = ""
 		} else {
 			app.Icon = genericThirdPartyIcon
 			app.IconSHA256 = ""
@@ -220,4 +229,20 @@ func mergeRemoteCatalog(embedded, remote Catalog) Catalog {
 		result.Apps = append(result.Apps, app)
 	}
 	return result
+}
+
+func dynamicRemoteIconSources(embedded, remote Catalog) map[string]string {
+	localByID := make(map[string]bool, len(embedded.Apps))
+	localByToken := make(map[string]bool, len(embedded.Apps))
+	for _, app := range embedded.Apps {
+		localByID[app.ID] = true
+		localByToken[app.Token] = true
+	}
+	sources := make(map[string]string)
+	for _, app := range remote.Apps {
+		if !localByID[app.ID] && !localByToken[app.Token] {
+			sources[app.Slug] = app.Icon
+		}
+	}
+	return sources
 }

@@ -301,6 +301,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.webEnvironmentJob(w, r, requestID)
 	case r.URL.Path == "/v1/apps":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.appList)
+	case strings.HasPrefix(r.URL.Path, "/v1/apps/icons/"):
+		s.requireMethod(w, r, requestID, http.MethodGet, s.appIcon)
 	case r.URL.Path == "/v1/app-jobs":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.appJobList)
 	case strings.HasPrefix(r.URL.Path, "/v1/app-jobs/"):
@@ -1074,6 +1076,43 @@ func (s *Server) appList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, inventory)
+}
+
+func (s *Server) appIcon(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	const prefix = "/v1/apps/icons/"
+	const suffix = ".webp"
+	rest := strings.TrimPrefix(r.URL.Path, prefix)
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" || !strings.HasSuffix(rest, suffix) {
+		writeProblem(w, requestID, http.StatusNotFound, "app_icon_not_found", "应用图标不存在", "")
+		return
+	}
+	slug := strings.TrimSuffix(rest, suffix)
+	if slug == "" || strings.Contains(slug, "/") {
+		writeProblem(w, requestID, http.StatusNotFound, "app_icon_not_found", "应用图标不存在", "")
+		return
+	}
+	icon, err := s.appMarket.Icon(r.Context(), slug)
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	if err != nil {
+		if errors.Is(err, appmarket.ErrAppIconNotFound) {
+			writeProblem(w, requestID, http.StatusNotFound, "app_icon_not_found", "应用图标不存在", "")
+			return
+		}
+		writeProblem(w, requestID, http.StatusServiceUnavailable, "app_icon_unavailable", "应用图标暂不可用", "")
+		return
+	}
+	if icon.ContentType != "image/webp" || len(icon.Data) == 0 ||
+		len(icon.Data) > 128<<10 {
+		writeProblem(w, requestID, http.StatusBadGateway, "invalid_app_icon", "应用图标响应无效", "")
+		return
+	}
+	w.Header().Set("Content-Type", icon.ContentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(icon.Data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(icon.Data)
 }
 
 func (s *Server) appJobList(w http.ResponseWriter, r *http.Request) {

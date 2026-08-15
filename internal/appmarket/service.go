@@ -108,6 +108,8 @@ type Service struct {
 	scriptAppRoot                 string
 	now                           func() time.Time
 	fetchCatalog                  catalogFetcher
+	iconCache                     *officialIconCache
+	dynamicIconSources            map[string]string
 	catalogMu                     sync.Mutex
 	liveCatalog                   *Catalog
 	catalogExpiry                 time.Time
@@ -148,6 +150,7 @@ func newService(docker Docker, appRoot string, fetcher catalogFetcher) (*Service
 		catalog: catalog, legacy: legacy, scriptSHA256: scriptSHA256,
 		docker: docker, appRoot: filepath.Clean(appRoot), now: time.Now,
 		scriptAppRoot: "/root/apps", fetchCatalog: fetcher,
+		dynamicIconSources:            make(map[string]string),
 		scriptInteractiveFinder:       findKejilionInteractiveScript,
 		scriptInteractiveManageFinder: findKejilionInteractiveManageScript,
 		scriptManageFinder:            findKejilionManageScript,
@@ -397,15 +400,32 @@ func (s *Service) currentCatalog(_ context.Context) catalogSnapshot {
 
 func (s *Service) refreshCatalog() {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
 	remote, err := s.fetchCatalog(ctx)
+	cancel()
 	now := s.now().UTC()
+	var merged Catalog
+	var dynamicSources map[string]string
+	if err == nil {
+		s.catalogMu.Lock()
+		iconCache := s.iconCache
+		s.catalogMu.Unlock()
+		dynamicSources = dynamicRemoteIconSources(s.catalog, remote)
+		merged = mergeRemoteCatalogWithDynamicIcons(s.catalog, remote, iconCache != nil)
+		if iconCache != nil && len(dynamicSources) > 0 {
+			iconContext, iconCancel := context.WithTimeout(context.Background(), 8*time.Second)
+			iconCache.Prefetch(iconContext, dynamicSources)
+			iconCancel()
+		}
+		if iconCache != nil {
+			iconCache.Prune(dynamicSources)
+		}
+	}
 	s.catalogMu.Lock()
 	defer s.catalogMu.Unlock()
 	s.catalogLoading = false
 	if err == nil {
-		merged := mergeRemoteCatalog(s.catalog, remote)
 		s.liveCatalog = &merged
+		s.dynamicIconSources = dynamicSources
 		s.catalogExpiry = now.Add(remoteCatalogTTL)
 		s.catalogRefreshedAt = now
 		s.catalogWarning = ""
