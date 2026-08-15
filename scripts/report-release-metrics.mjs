@@ -130,17 +130,21 @@ function validDate(value) {
 
 function hasFailureRecoveryDetails(value) {
   if (value === null) return false;
-  const detail = (label) => validValue(value.match(
-    new RegExp('(?:^|[；;])\\s*' + label + '\\s*[：:=]\\s*([^；;]+)'),
+  const segments = value.split(/[；;]/).map((segment) => segment.trim());
+  if (segments.length !== 3) return false;
+  const detail = (segment, label) => validValue(segment.match(
+    new RegExp('^' + label + '\\s*[：:=]\\s*(.+)$'),
   )?.[1]);
-  const discoveredAt = detail('发现时间');
-  const recoveredAt = detail('恢复时间');
-  const escapedGate = detail('逃逸门禁');
+  const discoveredAt = detail(segments[0], '发现时间');
+  const recoveredAt = detail(segments[1], '恢复时间');
+  const escapedGate = detail(segments[2], '逃逸门禁');
   const escapedGateMatch = escapedGate?.match(/^(?:已逃逸|未逃逸)\s*[：:]\s*(.+)$/);
   const escapedGateDetail = validValue(escapedGateMatch?.[1]);
-  const escapedGatePlaceholder = /^(?:无|无(?:缺口|门禁|异常|问题)|待.*|tbd|todo|none|null|unknown|n\.?a\.?|not applicable|<?具体(?:缺口|原因)>?)$/i;
+  const compactGateDetail = escapedGateDetail?.toLowerCase().replace(/[\s\/._-]+/g, '') ?? '';
+  const escapedGatePlaceholder = /^(?:无|无(?:缺口|门禁|异常|问题)|待.*|tbd|todo|none|null|unknown|na|notapplicable|具体(?:缺口|原因))$/i;
   const concreteEscapedGate = escapedGateDetail !== null && escapedGateDetail.length >= 4 &&
-    !escapedGatePlaceholder.test(escapedGateDetail);
+    !escapedGatePlaceholder.test(compactGateDetail) &&
+    !/待(?:进一步)?(?:确认|分析|调查|复核|补充|填写|定)|请填写|<[^>]*>|已逃逸|未逃逸|逃逸门禁/.test(escapedGateDetail);
   return validDate(discoveredAt) && validDate(recoveredAt) && concreteEscapedGate &&
     Date.parse(recoveredAt) >= Date.parse(discoveredAt);
 }
@@ -173,8 +177,12 @@ export function validateAcceptanceMetrics(markdown, label = 'acceptance record')
     if (metrics.commitToProduction !== null) {
       errors.push(label + ': 提交到生产用时 must stay unreported when production completion is unverified');
     }
-    if (classifyChangeFailure(metrics.changeFailure) === 'yes' && !hasFailureRecoveryDetails(metrics.recovery)) {
+    const failure = classifyChangeFailure(metrics.changeFailure);
+    if (failure === 'yes' && !hasFailureRecoveryDetails(metrics.recovery)) {
       errors.push(label + ': a failed change requires discovery, recovery, and escaped-gate details');
+    }
+    if (failure !== 'yes' && metrics.recovery !== null) {
+      errors.push(label + ': recovery details require an explicit failed change state');
     }
     return errors;
   }
@@ -202,6 +210,9 @@ export function validateAcceptanceMetrics(markdown, label = 'acceptance record')
   }
   if (failure === 'yes' && !hasFailureRecoveryDetails(metrics.recovery)) {
     errors.push(label + ': a failed change requires discovery, recovery, and escaped-gate details');
+  }
+  if (failure !== 'yes' && metrics.recovery !== null) {
+    errors.push(label + ': recovery details require an explicit failed change state');
   }
   return errors;
 }

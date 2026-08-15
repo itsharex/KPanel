@@ -182,6 +182,17 @@ test('acceptance validation permits explicit non-production evidence without inv
     '- 若发生失败，发现时间、恢复时间和逃逸门禁：未记录',
   ].join('\n'));
   assert.deepEqual(historicalUnknown, []);
+
+  const successWithRecovery = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：否',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：未逃逸：发布后健康检查阻断并回滚',
+  ].join('\n'));
+  assert.match(successWithRecovery.join('\n'), /require an explicit failed change state/);
 });
 
 test('acceptance validation keeps known failure state when historical completion time is missing', () => {
@@ -274,6 +285,29 @@ test('acceptance validation keeps known failure state when historical completion
     '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：候选冻结后缺少回归',
   ].join('\n'));
   assert.match(missingGateState.join('\n'), /requires discovery, recovery/);
+
+  const adversarialGateValues = [
+    '已逃逸：<遗漏门禁和原因> / 未逃逸：<实际拦截门禁>',
+    '已逃逸：未逃逸：发布后健康检查阻断',
+    '已逃逸：候选冻结后缺少回归；逃逸门禁：未逃逸：发布后健康检查阻断',
+    '已逃逸：候选冻结后缺少回归；待进一步调查',
+    '已逃逸：T B D',
+    '未逃逸：N / A',
+    '已逃逸：仍待确认',
+    '已逃逸：<请填写具体缺口>',
+  ];
+  for (const gate of adversarialGateValues) {
+    const adversarial = validateAcceptanceMetrics([
+      '## 交付节奏数据',
+      '- 首个纳入提交时间：未记录',
+      '- 候选冻结时间：未记录',
+      '- 生产完成时间：未记录',
+      '- 提交到生产用时：未记录',
+      '- 是否回滚、紧急热修复或重复发布：是',
+      '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：' + gate,
+    ].join('\n'));
+    assert.match(adversarial.join('\n'), /requires discovery, recovery/, gate);
+  }
 
   const keywordsWithoutStructure = validateAcceptanceMetrics([
     '## 交付节奏数据',
