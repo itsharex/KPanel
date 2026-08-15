@@ -1878,6 +1878,7 @@ watch(windowActive, syncJobPollingForWindow)
 
 .app-card__body {
   display: grid;
+  flex: 1 1 0;
   gap: 7px;
 }
 
@@ -1889,10 +1890,16 @@ watch(windowActive, syncJobPollingForWindow)
 }
 
 .app-card__title strong {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   font-size: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.app-card__title .status-badge {
+  flex: 0 0 auto;
 }
 
 .app-card__meta {

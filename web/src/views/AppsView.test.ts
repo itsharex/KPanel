@@ -140,6 +140,9 @@ describe('AppsView catalog filtering performance', () => {
     expect(source).toContain('loading="lazy"')
     expect(source).toContain('decoding="async"')
     expect(source).toMatch(/\.app-card\s*\{[^}]*content-visibility:\s*auto;/)
+    expect(source).toMatch(/\.app-card__body\s*\{[^}]*flex:\s*1 1 0;/)
+    expect(source).toMatch(/\.app-card__title strong\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*1 1 auto;/)
+    expect(source).toMatch(/\.app-card__title \.status-badge\s*\{[^}]*flex:\s*0 0 auto;/)
   })
 
   it('keeps the compact inventory summary visually distinct', () => {
