@@ -227,9 +227,13 @@ onBeforeUnmount(() => {
               :distro="operatingSystemIdentity(host).key"
               :label="operatingSystemIdentity(host).label"
             />
-            <div>
+            <div class="share-card__identity">
               <h2>{{ host.name }}</h2>
-              <p>
+              <p class="share-card__system">
+                <span>{{ host.os || operatingSystemIdentity(host).label }}</span>
+                <small v-if="host.architecture">{{ host.architecture }}</small>
+              </p>
+              <p class="share-card__location">
                 <CountryFlagIcon
                   v-if="host.location.countryCode"
                   :country-code="host.location.countryCode"
@@ -237,11 +241,15 @@ onBeforeUnmount(() => {
                 />
                 <MapPin v-else :size="12" />
                 <span>{{ locationLabel(host) }}</span>
+                <em>{{ host.location.isp || '网络信息未公开' }}</em>
               </p>
             </div>
-            <span class="share-status" :class="`is-${host.state}`">
-              <i /> {{ stateLabel(host.state) }}
-            </span>
+            <div class="share-card__aside">
+              <span class="share-status" :class="`is-${host.state}`">
+                <i /> {{ stateLabel(host.state) }}
+              </span>
+              <small>{{ host.collectedAt ? `采集于 ${relativeTime(host.collectedAt)}` : '尚无数据' }}</small>
+            </div>
           </header>
 
           <div v-if="host.collectedAt" class="share-metrics">
@@ -268,10 +276,6 @@ onBeforeUnmount(() => {
 
           <dl class="share-details">
             <div>
-              <dt>系统</dt>
-              <dd>{{ host.os || '—' }}<small>{{ host.architecture || '' }}</small></dd>
-            </div>
-            <div>
               <dt><Clock3 :size="13" /> 运行时间</dt>
               <dd>{{ host.uptimeSeconds ? formatDuration(host.uptimeSeconds) : '—' }}</dd>
             </div>
@@ -284,11 +288,6 @@ onBeforeUnmount(() => {
               <dd>{{ formatRate(host.network.transmitBytesPerSecond || 0) }}</dd>
             </div>
           </dl>
-
-          <footer>
-            <span>{{ host.location.isp || '网络信息未公开' }}</span>
-            <small>{{ host.collectedAt ? `采集于 ${relativeTime(host.collectedAt)}` : '尚无数据' }}</small>
-          </footer>
         </article>
       </section>
 
@@ -336,7 +335,7 @@ onBeforeUnmount(() => {
   z-index: 1;
   width: min(1280px, calc(100% - 40px));
   margin: 0 auto;
-  padding: 26px 0 34px;
+  padding: 18px 0 26px;
 }
 
 .share-header,
@@ -354,7 +353,7 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
-.share-header { justify-content: space-between; gap: 18px; margin-bottom: 26px; }
+.share-header { justify-content: space-between; gap: 18px; margin-bottom: 18px; }
 .share-header__actions { justify-content: flex-end; gap: 9px; }
 .share-brand { gap: 10px; color: inherit; text-decoration: none; letter-spacing: 0.02em; }
 .share-brand > span {
@@ -417,9 +416,9 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
-  gap: 30px;
-  padding: clamp(24px, 3vw, 36px);
-  margin-bottom: 18px;
+  gap: 20px;
+  padding: clamp(20px, 2vw, 24px);
+  margin-bottom: 14px;
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--brand-soft) 46%, transparent), transparent 48%),
     color-mix(in srgb, var(--surface) 96%, transparent);
@@ -430,13 +429,13 @@ onBeforeUnmount(() => {
 }
 
 .share-kicker { display: flex; align-items: center; gap: 7px; color: var(--brand-strong); font-size: 11px; font-weight: 800; letter-spacing: 0.16em; }
-.share-hero h1 { margin: 12px 0 8px; font-size: clamp(28px, 4vw, 48px); line-height: 1.05; letter-spacing: -0.04em; }
-.share-hero p { max-width: 670px; margin: 0 0 14px; color: var(--text-soft); font-size: 15px; line-height: 1.7; }
+.share-hero h1 { margin: 7px 0 4px; font-size: clamp(28px, 3vw, 38px); line-height: 1.05; letter-spacing: -0.04em; }
+.share-hero p { max-width: 670px; margin: 0 0 7px; color: var(--text-soft); font-size: 14px; line-height: 1.5; }
 .share-hero small { color: var(--muted); }
 
 .share-stats { display: grid; grid-template-columns: repeat(3, minmax(90px, 1fr)); }
-.share-stats div { display: grid; gap: 4px; padding: 4px 20px; border-left: 1px solid var(--border); }
-.share-stats strong { font-size: 30px; line-height: 1; }
+.share-stats div { display: grid; gap: 3px; padding: 2px 16px; border-left: 1px solid var(--border); }
+.share-stats strong { font-size: 25px; line-height: 1; }
 .share-stats span { color: var(--muted); font-size: 11px; }
 .share-stats .is-online strong { color: var(--brand); }
 .share-stats .is-attention strong { color: var(--amber); }
@@ -456,25 +455,30 @@ onBeforeUnmount(() => {
 
 .share-grid.is-list .share-card {
   display: grid;
-  grid-template-columns: minmax(230px, 0.9fr) minmax(360px, 1.35fr) minmax(300px, 1.05fr);
-  grid-template-areas:
-    "header metrics details"
-    "footer footer footer";
+  grid-template-columns: minmax(300px, 1.08fr) minmax(360px, 1.3fr) minmax(280px, 0.9fr);
+  grid-template-areas: "header metrics details";
   align-items: stretch;
 }
 
 .share-grid.is-list .share-card__header { grid-area: header; border-right: 1px solid var(--border); }
 .share-grid.is-list .share-metrics { grid-area: metrics; border-block: 0; border-right: 1px solid var(--border); }
 .share-grid.is-list .share-details { grid-area: details; align-content: center; }
-.share-grid.is-list .share-card > footer { grid-area: footer; }
 
-.share-card__header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 11px; padding: 17px; }
-.share-card__header :deep(.os-identity__mark) { width: 42px; height: 42px; border-radius: 12px; }
-.share-card__header :deep(.os-identity__mark svg) { width: 24px; height: 24px; }
-.share-card h2 { overflow: hidden; margin: 0 0 4px; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.share-card__header p { display: flex; align-items: center; gap: 6px; overflow: hidden; margin: 0; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.share-card__header p span { overflow: hidden; text-overflow: ellipsis; }
-.share-card__header p :deep(.country-flag) { width: 18px; height: 18px; }
+.share-card__header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 14px; }
+.share-card__header :deep(.os-identity__mark) { width: 40px; height: 40px; border-radius: 11px; }
+.share-card__header :deep(.os-identity__mark svg) { width: 23px; height: 23px; }
+.share-card h2 { overflow: hidden; margin: 0 0 2px; font-size: 14px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.share-card__identity { min-width: 0; }
+.share-card__system { display: flex; min-width: 0; align-items: center; gap: 6px; margin: 0 0 5px; color: var(--text-soft); font-size: 10px; }
+.share-card__system span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-card__system small { flex: 0 0 auto; padding: 1px 4px; color: var(--muted); background: var(--neutral-soft); border-radius: 4px; font-size: 8px; }
+.share-card__location { display: flex; align-items: center; gap: 5px; overflow: hidden; margin: 0; color: var(--muted); font-size: 9px; white-space: nowrap; }
+.share-card__location > span { overflow: hidden; text-overflow: ellipsis; }
+.share-card__location em { overflow: hidden; color: color-mix(in srgb, var(--muted) 78%, transparent); font-size: 8px; font-style: normal; text-overflow: ellipsis; }
+.share-card__location em::before { margin-right: 5px; content: "·"; }
+.share-card__location :deep(.country-flag) { width: 16px; height: 16px; }
+.share-card__aside { display: grid; min-width: 58px; justify-items: end; align-content: center; gap: 6px; }
+.share-card__aside > small { color: var(--muted); font-size: 8px; white-space: nowrap; }
 .share-status { gap: 5px; color: var(--muted); font-size: 10px; }
 .share-status i { width: 7px; height: 7px; background: currentColor; border-radius: 50%; box-shadow: 0 0 10px currentColor; }
 .share-status.is-online { color: var(--brand); }
@@ -482,21 +486,19 @@ onBeforeUnmount(() => {
 .share-status.is-offline { color: var(--danger); }
 
 .share-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--border); }
-.share-metrics > div { display: grid; align-content: center; gap: 6px; padding: 14px; border-left: 1px solid var(--border); }
+.share-metrics > div { display: grid; align-content: center; gap: 5px; padding: 11px 13px; border-left: 1px solid var(--border); }
 .share-metrics > div:first-child { border-left: 0; }
 .share-metrics span { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; }
-.share-metrics strong { font-size: 16px; }
+.share-metrics strong { font-size: 15px; }
 .share-metrics > div > i { height: 4px; overflow: hidden; background: var(--neutral-soft); border-radius: 10px; }
 .share-metrics b { display: block; height: 100%; background: linear-gradient(90deg, var(--blue), var(--brand)); border-radius: inherit; }
 .share-metrics small { color: var(--muted); font-size: 9px; }
 .share-card__empty { padding: 29px; color: var(--muted); text-align: center; border-block: 1px solid var(--border); }
 
-.share-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; padding: 17px; margin: 0; }
+.share-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; gap: 10px; padding: 12px 14px; margin: 0; }
 .share-details div { min-width: 0; }
-.share-details dt { gap: 5px; margin-bottom: 5px; color: var(--muted); font-size: 10px; }
-.share-details dd { overflow: hidden; margin: 0; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.share-details dd small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
-.share-card footer { display: flex; justify-content: space-between; gap: 10px; padding: 12px 17px; color: var(--muted); background: var(--surface-subtle); border-top: 1px solid var(--border); font-size: 9px; }
+.share-details dt { gap: 4px; margin-bottom: 4px; color: var(--muted); font-size: 9px; }
+.share-details dd { overflow: hidden; margin: 0; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 
 .share-state { display: grid; min-height: 280px; place-items: center; align-content: center; gap: 12px; color: var(--muted); text-align: center; }
 .share-state p { margin: 0; }
@@ -507,11 +509,10 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1100px) {
   .share-grid.is-list .share-card {
-    grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.35fr);
+    grid-template-columns: minmax(300px, 0.95fr) minmax(0, 1.35fr);
     grid-template-areas:
       "header metrics"
-      "details details"
-      "footer footer";
+      "details details";
   }
   .share-grid.is-list .share-metrics { border-right: 0; }
   .share-grid.is-list .share-details { border-top: 1px solid var(--border); }
@@ -519,7 +520,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1000px) {
   .share-grid.is-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .share-hero { grid-template-columns: 1fr; align-items: start; }
+  .share-hero { grid-template-columns: 1fr; align-items: start; gap: 16px; }
   .share-stats div:first-child { border-left: 0; }
 }
 
@@ -529,8 +530,8 @@ onBeforeUnmount(() => {
   .share-header__actions { gap: 6px; }
   .share-view-switch button { padding-inline: 8px; }
   .share-refresh span { display: none; }
-  .share-hero { gap: 24px; padding: 24px 18px; border-radius: 18px; }
-  .share-hero h1 { font-size: 31px; }
+  .share-hero { gap: 14px; padding: 18px 16px; border-radius: 18px; }
+  .share-hero h1 { font-size: 30px; }
   .share-stats { width: 100%; }
   .share-stats div { padding: 2px 13px; }
   .share-stats div:first-child { border-left: 0; }
