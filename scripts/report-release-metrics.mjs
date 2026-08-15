@@ -98,13 +98,13 @@ function acceptanceFields(markdown) {
   const malformed = new Set();
   let defaultIgnorables = false;
   for (const line of markdown.split(/\r?\n/)) {
-    const bullet = line.match(/^-\s*(.*)$/)?.[1];
+    const bullet = line.match(/^(?:(?:\p{White_Space}|\p{Default_Ignorable_Code_Point})*)-\s*(.*)$/u)?.[1];
     if (bullet === undefined) continue;
     const canonicalBullet = comparableFieldText(bullet);
     const expectedField = ACCEPTANCE_FIELDS.find((field) =>
       canonicalBullet.startsWith(comparableFieldText(field)));
-    if (expectedField && DEFAULT_IGNORABLE.test(bullet)) defaultIgnorables = true;
-    const match = line.match(/^-\s*([^：:]+)[：:]\s*(.*)$/);
+    if (expectedField && DEFAULT_IGNORABLE.test(line)) defaultIgnorables = true;
+    const match = bullet.match(/^([^：:]+)[：:]\s*(.*)$/);
     if (match) {
       const field = normalizedFieldName(match[1]);
       if (fields.has(field)) duplicates.add(field);

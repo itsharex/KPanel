@@ -153,6 +153,14 @@ test('acceptance validation requires machine-readable delivery evidence', () => 
   ));
   assert.match(duplicateFailure.join('\n'), /duplicate structured field/);
 
+  for (const prefix of ['  ', '\u200b']) {
+    const prefixedDuplicate = validateAcceptanceMetrics(valid.replace(
+      '- 是否回滚、紧急热修复或重复发布：否',
+      '- 是否回滚、紧急热修复或重复发布：否\n' + prefix + '- 是否回滚、紧急热修复或重复发布：是（已回滚）',
+    ));
+    assert.match(prefixedDuplicate.join('\n'), /duplicate structured field|default-ignorable characters/, JSON.stringify(prefix));
+  }
+
   const looseDate = validateAcceptanceMetrics(valid.replace(
     '2026-08-15T11:21:11+08:00',
     'August 15, 2026 11:21:11 GMT+0800',
