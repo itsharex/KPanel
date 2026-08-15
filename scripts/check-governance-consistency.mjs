@@ -25,6 +25,8 @@ const requiredFiles = [
   'scripts/tests/check-environment-policy.test.mjs',
   'scripts/background-browser-test.mjs',
   'scripts/tests/background-browser-test.test.mjs',
+  'scripts/run-release-gate.sh',
+  'scripts/tests/release-gate-runner.test.mjs',
   'scripts/report-release-metrics.mjs',
   'scripts/tests/report-release-metrics.test.mjs',
   'scripts/check-business-context-freshness.mjs',
@@ -187,6 +189,11 @@ requireText('scripts/verify-change.sh', [
   '.github/workflows/*.yml|.github/workflows/*.yaml',
 ]);
 requireText('.codex-workflows/release-kpanel.workflow.yaml', [
+  'scripts/run-release-gate.sh',
+  'git bundle create',
+  '--entrypoint sh',
+  'Docker 自动分配',
+  '持久业务结果',
   'evidence_dir=<本次唯一持久化证据目录>',
   'timeout_seconds=<风险窗口加清理余量>',
   'command_spec=<无秘密、已哈希的仓库测试命令规格>',

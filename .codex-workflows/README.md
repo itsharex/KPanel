@@ -7,7 +7,8 @@
 - `session-collaboration.workflow.yaml`：复用或创建任务、等待、复核并统一交付。
 - `background-browser-validation.workflow.yaml`：在登记的隔离环境后台执行真实浏览器 E2E/稳定性验收，
   以持久化 job 状态和证据跨会话恢复；测试强度由风险画像决定，不机械套固定时长。
-- `release-kpanel.workflow.yaml`：版本准备、CI、Release、Docker Hub、应用市场、隔离验收和生产部署安全核对。
+- `release-kpanel.workflow.yaml`：版本准备、标准 Linux Runner、CI、Release、Docker Hub、应用市场、
+  隔离验收和生产部署安全核对。
 - `quality-audit-kpanel.workflow.yaml`：快速迭代后的业务正确性、体验、性能、稳定、安全、交付节奏和
   发布门禁健康审计。
 - `evolve-kpanel.workflow.yaml`：从可复核证据形成改进假设，经独立复核、最小试行、指标对比和观察窗口

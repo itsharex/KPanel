@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
 description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产部署安全核对和回滚记录"
-version: "2.3"
+version: "2.4"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
-params: [project_dir, version, previous_version, image, apps_repo, validation_environment, production_environment]
+params: [project_dir, version, previous_version, image, runner_image, apps_repo, validation_environment, production_environment]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-15T14:55:00+08:00"
+updated: "2026-08-15T22:52:00+08:00"
 ---
 
 # Release KPanel
@@ -102,17 +102,33 @@ bash scripts/check-version-consistency.sh
 进入本步骤即冻结候选。此后新增功能默认进入下一版本；若候选文件、分支或 `HEAD` 发生任何变化，
 本轮 L3 结果作废，必须先按 `docs/project-management.md` 的冲突恢复流程重建候选，再重新核验。
 
-在 Linux、WSL 或 CI 等支持 Bash、Go、Node 和 Docker 的环境执行：
+远程 L3 必须从包含完整 Git 元数据和稳定 Tag 的候选重建，禁止用 `git archive` 代替 Git 仓库。
+生成 bundle 时同时携带候选历史和 Tag；克隆后先固定 detached SHA 并确认回滚 Tag 存在：
 
 ```bash
-npm ci --prefix web
-make verify-release
-docker run --rm \
-  -e KPANEL_APP_CONF_TEST_ROOTFS=1 \
-  -v "$PWD:/src:ro" \
-  bash:5.2.37-alpine3.22@sha256:3bee76a96d86d5d2d5efc7c1c570e5a7c95db22348a26944e0e546fa174e3324 \
-  bash /src/packaging/tests/app-conf-lifecycle.sh /src
+git bundle create "../kpanel-v${{version}}.bundle" HEAD --tags
+git bundle verify "../kpanel-v${{version}}.bundle"
+git clone "../kpanel-v${{version}}.bundle" "../kpanel-v${{version}}-l3"
+git -C "../kpanel-v${{version}}-l3" checkout --detach <冻结的完整提交>
+git -C "../kpanel-v${{version}}-l3" show-ref --verify "refs/tags/v${{previous_version}}"
 ```
+
+在 Linux 验证主机调用仓库标准 Runner。它会一次完成精确 SHA、干净工作树、稳定基线 Tag、Docker
+socket、Runner 镜像 ID、固定 `--entrypoint sh`、宿主与 Runner 相同绝对路径挂载、完整
+`make verify-release` 和嵌套应用生命周期门禁：
+
+```bash
+cd "../kpanel-v${{version}}-l3"
+bash scripts/run-release-gate.sh \
+  <冻结的完整提交> \
+  "v${{previous_version}}" \
+  "${{runner_image}}" \
+  2>&1 | tee "<仓库外受限证据目录>/l3-verify-release.log"
+```
+
+不得为同一发布临时重写多份 L2/L3 wrapper；Runner 预检失败视为“验收基础设施失败”，候选代码未执行时
+不得记为产品失败，但仍必须 fail-closed。修复 Runner 后从同一冻结 SHA 完整重跑，旧日志保留并在验收
+记录中注明发现、修复和未触碰生产。Runner 镜像 tag 必须在日志中解析为不可变 image ID。
 
 `make verify-release` 必须实际覆盖核心特权包 race、固定摘要 Trivy 源码/最终镜像扫描，以及
 最终镜像构建；Release 工作流还必须在 `256 MiB`、`1 CPU`、`128 PID`、非 root、只读根、
@@ -129,6 +145,14 @@ docker run --rm \
 按发布画像补充自动门禁不能代替的证据：受影响性能基准、桌面/窄视口、浅/深色、键盘/焦点、
 多语言、失败状态、`kejilion.sh` 双向互通，以及 L2/L3 写路径的失败注入、重启恢复和回滚。
 危险或破坏性写操作优先使用隔离真机，不为了生产形式完整主动改变无关业务数据。
+
+隔离容器网络默认让 Docker 自动分配，并读取实际 subnet/IP 生成受信边界；只有完成现有网络清单冲突
+检查后才允许固定子网。不得因硬编码测试网段与并发任务冲突而把候选误判为失败。
+
+真实 API/浏览器证据必须先校验响应 schema，再选择业务字段；页面优先提供稳定 `data-testid` 或结构化
+状态。只能使用文案时必须精确匹配并断言唯一。业务成功以服务端状态、目标文件/数据库记录等
+**持久业务结果**为主证据，Toast/瞬时浮层只作辅助；浏览器差异导致提示提前消失时，不得覆盖已经验证的
+持久结果，但至少一个浏览器和自动回归仍须覆盖成功反馈，且各浏览器控制台错误必须为 0。
 
 若发布画像需要本地或远程长时间浏览器 E2E、跨视口回归或稳定性验收，使用登记的
 `${{validation_environment}}` 后台执行，前台发布任务只记录 job ID 并由监控任务读取终态：
@@ -229,6 +253,11 @@ git commit -m "chore: update KPanel to ${{version}}"
 git push origin HEAD:main
 ```
 
+生产 apps 工作树显示 dirty 时先比较目标文件的 Git blob、工作文件 blob 与最新远端真源。未知内容或
+blob 不一致必须停止；若仅因旧基线/换行表现导致状态差异且三方业务 blob 完全一致，则先按原权限备份
+该文件，只恢复明确文件的旧索引状态，使用 `git pull --ff-only` 更新，并再次确认 blob、权限和工作树
+干净。不得重置整个仓库、覆盖其他文件或把同内容状态差异提交为空变更。
+
 **Expected output:** 应用市场配置与发布契约一致；无变化时工作树干净且无提交，有变化时
 `kejilion/apps` 的 `main` 已更新且工作树干净。
 
@@ -327,6 +356,7 @@ node scripts/report-release-metrics.mjs \
 - `${{version}}`：不含 `v` 的目标语义版本，例如 `0.20.2`。
 - `${{previous_version}}`：发布前稳定源码或镜像版本，用于回滚说明。
 - `${{image}}`：完整镜像仓库，默认 `docker.io/kjlion/kejilion-panel`。
+- `${{runner_image}}`：Linux L3 工具链 Runner；版本随依赖策略更新，执行时记录解析后的不可变 image ID。
 - `${{apps_repo}}`：`kejilion/apps` 本地路径，默认 `C:\GitHub\kejilion\apps`。
 - `${{validation_environment}}`：登记的隔离验收环境，默认 `arena-154`。
 - `${{production_environment}}`：登记的稳定生产部署环境，默认 `arena-154`；禁止填写 `prod-108`/`108`。
@@ -344,6 +374,7 @@ py -3 "${CODEX_WORKFLOWS_CLI:-$HOME/.codex/skills/codex-workflows/scripts/workfl
   --param version=0.0.0-test \
   --param previous_version=0.0.0 \
   --param image=docker.io/example/kpanel \
+  --param runner_image=kpanel-release-gate:go1.26.6-node24 \
   --param apps_repo=C:/tmp/apps \
   --param validation_environment=arena-154 \
   --param production_environment=arena-154
