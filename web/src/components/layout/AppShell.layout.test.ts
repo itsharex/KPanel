@@ -64,6 +64,12 @@ describe('responsive application shell comfort', () => {
     expect(appShellSource).not.toContain('documentFullscreen')
   })
 
+  it('keeps section navigation active on nested workspace routes', () => {
+    expect(appShellSource).toContain(
+      "'router-link-active': route.path === item.to || route.path.startsWith(`${item.to}/`)",
+    )
+  })
+
   it('falls back to the classic shell when the lazy desktop chunk cannot load', () => {
     expect(appShellSource).toContain('loadingComponent: DesktopLoadingView')
     expect(appShellSource).toContain('delay: 0')
