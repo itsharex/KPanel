@@ -2161,6 +2161,19 @@ body.desktop-mode-open::-webkit-scrollbar {
   font-size: 13px;
 }
 
+.modal-panel--compact:has(.desktop__external-confirm) .modal-panel__header {
+  align-items: center;
+  padding-block: 12px;
+}
+
+.modal-panel--compact:has(.desktop__external-confirm) .modal-panel__header h2 {
+  margin-bottom: 0;
+}
+
+.modal-panel--compact:has(.desktop__external-confirm) .modal-panel__body {
+  padding-block: 14px;
+}
+
 .desktop__external-confirm-entry {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
