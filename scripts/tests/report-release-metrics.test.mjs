@@ -141,6 +141,18 @@ test('acceptance validation requires machine-readable delivery evidence', () => 
 
   const inconsistent = validateAcceptanceMetrics(valid.replace('0.66 小时', '2.00 小时'));
   assert.match(inconsistent.join('\n'), /does not match/);
+
+  const looseDate = validateAcceptanceMetrics(valid.replace(
+    '2026-08-15T11:21:11+08:00',
+    'August 15, 2026 11:21:11 GMT+0800',
+  ));
+  assert.match(looseDate.join('\n'), /must be an ISO timestamp/);
+
+  const impossibleDate = validateAcceptanceMetrics(valid.replace(
+    '2026-08-15T11:21:11+08:00',
+    '2026-02-30T11:21:11+08:00',
+  ));
+  assert.match(impossibleDate.join('\n'), /must be an ISO timestamp/);
 });
 
 test('acceptance validation permits explicit non-production evidence without inventing success', () => {
@@ -186,7 +198,29 @@ test('acceptance validation keeps known failure state when historical completion
     '- 生产完成时间：未记录',
     '- 提交到生产用时：未记录',
     '- 是否回滚、紧急热修复或重复发布：是',
-    '- 若发生失败，发现时间、恢复时间和逃逸门禁：未记录',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：已回滚',
   ].join('\n'));
   assert.match(failedWithoutRecovery.join('\n'), /requires discovery, recovery/);
+
+  const failedWithDetails = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：是',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：10:05；恢复时间：10:20；逃逸门禁：候选冻结后缺少回归',
+  ].join('\n'));
+  assert.deepEqual(failedWithDetails, []);
+
+  const keywordsWithoutStructure = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：是',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：已发现并恢复，复查逃逸门禁',
+  ].join('\n'));
+  assert.match(keywordsWithoutStructure.join('\n'), /requires discovery, recovery/);
 });

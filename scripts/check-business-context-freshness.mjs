@@ -8,11 +8,24 @@ import { fileURLToPath } from 'node:url';
 const DEFAULT_MAX_COMMITS = 50;
 const DEFAULT_MAX_RELEASES = 8;
 const DEFAULT_MIN_COMMITS_WITH_RELEASES = 20;
+const STABLE_RELEASE_TAG = /^v\d+\.\d+\.\d+$/;
+
+function gitEnvironment(repo) {
+  const env = { ...process.env };
+  const explicitWorkTree = env.GIT_WORK_TREE ? resolve(env.GIT_WORK_TREE) : null;
+  if (explicitWorkTree !== resolve(repo)) {
+    delete env.GIT_DIR;
+    delete env.GIT_WORK_TREE;
+    delete env.GIT_INDEX_FILE;
+  }
+  return env;
+}
 
 function runGit(repo, arguments_) {
   return execFileSync('git', ['-C', repo, ...arguments_], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: gitEnvironment(repo),
   }).trim();
 }
 
@@ -41,18 +54,45 @@ export function evaluateFreshness({
   return { stale: reasons.length > 0, reasons };
 }
 
-function releaseCountAfter(repo, baseline, target) {
-  const commits = new Set(runGit(repo, ['rev-list', baseline + '..' + target]).split(/\r?\n/).filter(Boolean));
-  const tags = runGit(repo, [
+function stableTagEntries(repo, target) {
+  return runGit(repo, [
     'for-each-ref',
     '--merged=' + target,
     '--format=%(refname:short)%09%(*objectname)%09%(objectname)',
     'refs/tags/v*',
-  ]).split(/\r?\n/).filter(Boolean);
-  return tags.filter((line) => {
-    const [, peeled, object] = line.split('\t');
-    return commits.has(peeled || object);
-  }).length;
+  ]).split(/\r?\n/).filter(Boolean).flatMap((line) => {
+    const [tag, peeled, object] = line.split('\t');
+    return STABLE_RELEASE_TAG.test(tag) ? [{ tag, commit: peeled || object }] : [];
+  });
+}
+
+export function releaseCountAfter(repo, baseline, target) {
+  const commits = new Set(runGit(repo, ['rev-list', baseline + '..' + target]).split(/\r?\n/).filter(Boolean));
+  return stableTagEntries(repo, target).filter(({ commit }) => commits.has(commit)).length;
+}
+
+function compareStableVersions(left, right) {
+  const a = left.slice(1).split('.').map(Number);
+  const b = right.slice(1).split('.').map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return 0;
+}
+
+export function nearestStableVersion(repo, target) {
+  const tagsByCommit = new Map();
+  for (const { tag, commit } of stableTagEntries(repo, target)) {
+    const tags = tagsByCommit.get(commit) ?? [];
+    tags.push(tag);
+    tagsByCommit.set(commit, tags);
+  }
+  const firstParent = runGit(repo, ['rev-list', '--first-parent', target]).split(/\r?\n/).filter(Boolean);
+  for (const commit of firstParent) {
+    const tags = tagsByCommit.get(commit);
+    if (tags) return tags.sort((left, right) => compareStableVersions(right, left))[0];
+  }
+  return null;
 }
 
 export function checkBusinessContext({ repo, document, target = 'HEAD', maxCommits = DEFAULT_MAX_COMMITS, maxReleases = DEFAULT_MAX_RELEASES }) {
@@ -69,11 +109,15 @@ export function checkBusinessContext({ repo, document, target = 'HEAD', maxCommi
   const baseline = runGit(repo, ['rev-parse', '--verify', metadata.baselineCommit + '^{commit}']);
   const targetCommit = runGit(repo, ['rev-parse', '--verify', target + '^{commit}']);
   try {
-    execFileSync('git', ['-C', repo, 'merge-base', '--is-ancestor', baseline, targetCommit], { stdio: 'ignore' });
+    execFileSync('git', ['-C', repo, 'merge-base', '--is-ancestor', baseline, targetCommit], {
+      stdio: 'ignore',
+      env: gitEnvironment(repo),
+    });
   } catch {
     throw new Error('business context baseline is not an ancestor of ' + target);
   }
-  const describedVersion = runGit(repo, ['describe', '--tags', '--abbrev=0', baseline]);
+  const describedVersion = nearestStableVersion(repo, baseline);
+  if (describedVersion === null) throw new Error('business context baseline has no reachable stable release tag');
   if (describedVersion !== metadata.baselineVersion) {
     throw new Error('business context baseline version mismatch: expected ' + describedVersion + ', recorded ' + metadata.baselineVersion);
   }

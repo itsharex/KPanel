@@ -108,8 +108,28 @@ const ACCEPTANCE_FIELDS = [
   '若发生失败，发现时间、恢复时间和逃逸门禁',
 ];
 
+const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-](\d{2}):(\d{2}))$/;
+
 function validDate(value) {
-  return value !== null && !Number.isNaN(new Date(value).getTime());
+  if (value === null) return false;
+  const match = value.match(ISO_TIMESTAMP);
+  if (!match) return false;
+  const [, year, month, day, hour, minute, second, offsetHour = '00', offsetMinute = '00'] = match;
+  const parts = [year, month, day, hour, minute, second, offsetHour, offsetMinute].map(Number);
+  const [y, mo, d, h, mi, s, oh, om] = parts;
+  if (mo < 1 || mo > 12 || d < 1 || h > 23 || mi > 59 || s > 59 || oh > 23 || om > 59) return false;
+  const calendar = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
+  if (calendar.getUTCFullYear() !== y || calendar.getUTCMonth() !== mo - 1 || calendar.getUTCDate() !== d ||
+      calendar.getUTCHours() !== h || calendar.getUTCMinutes() !== mi || calendar.getUTCSeconds() !== s) return false;
+  return !Number.isNaN(Date.parse(value));
+}
+
+function hasFailureRecoveryDetails(value) {
+  if (value === null) return false;
+  const detail = (label) => validValue(value.match(
+    new RegExp('(?:^|[；;])\\s*' + label + '\\s*[：:=]\\s*([^；;]+)'),
+  )?.[1]);
+  return detail('发现时间') !== null && detail('恢复时间') !== null && detail('逃逸门禁') !== null;
 }
 
 export function validateAcceptanceMetrics(markdown, label = 'acceptance record') {
@@ -140,7 +160,7 @@ export function validateAcceptanceMetrics(markdown, label = 'acceptance record')
     if (metrics.commitToProduction !== null) {
       errors.push(label + ': 提交到生产用时 must stay unreported when production completion is unverified');
     }
-    if (classifyChangeFailure(metrics.changeFailure) === 'yes' && metrics.recovery === null) {
+    if (classifyChangeFailure(metrics.changeFailure) === 'yes' && !hasFailureRecoveryDetails(metrics.recovery)) {
       errors.push(label + ': a failed change requires discovery, recovery, and escaped-gate details');
     }
     return errors;
@@ -167,7 +187,7 @@ export function validateAcceptanceMetrics(markdown, label = 'acceptance record')
   if (failure === 'unreported') {
     errors.push(label + ': production completion requires an explicit 是/否 change failure state');
   }
-  if (failure === 'yes' && metrics.recovery === null) {
+  if (failure === 'yes' && !hasFailureRecoveryDetails(metrics.recovery)) {
     errors.push(label + ': a failed change requires discovery, recovery, and escaped-gate details');
   }
   return errors;

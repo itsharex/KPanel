@@ -183,6 +183,8 @@ requireText('scripts/verify-change.sh', [
   'node scripts/check-governance-consistency.mjs',
   'node scripts/check-business-context-freshness.mjs',
   '--validate-acceptance',
+  '--diff-filter=ACMRTD',
+  '.github/workflows/*.yml|.github/workflows/*.yaml',
 ]);
 requireText('.codex-workflows/release-kpanel.workflow.yaml', [
   'evidence_dir=<本次唯一持久化证据目录>',

@@ -17,19 +17,19 @@ esac
 if [[ -n "$base_ref" ]] && git cat-file -e "${base_ref}^{commit}" 2>/dev/null; then
   mapfile -t changed_files < <(
     {
-      git diff --name-only --diff-filter=ACMRT "$base_ref" --
+      git diff --name-only --diff-filter=ACMRTD "$base_ref" --
       git ls-files --others --exclude-standard
     } | sed '/^$/d' | sort -u
   )
 elif [[ "${CI:-}" == "true" ]] && git rev-parse --verify HEAD^ >/dev/null 2>&1; then
   mapfile -t changed_files < <(
-    git diff --name-only --diff-filter=ACMRT HEAD^ HEAD -- |
+    git diff --name-only --diff-filter=ACMRTD HEAD^ HEAD -- |
       sed '/^$/d' | sort -u
   )
 elif git rev-parse --verify HEAD >/dev/null 2>&1; then
   mapfile -t changed_files < <(
     {
-      git diff --name-only --diff-filter=ACMRT HEAD --
+      git diff --name-only --diff-filter=ACMRTD HEAD --
       git ls-files --others --exclude-standard
     } | sed '/^$/d' | sort -u
   )
@@ -56,6 +56,10 @@ acceptance_files=()
 for path in "${changed_files[@]}"; do
   case "$path" in
     docs/release-v*-acceptance.md)
+      if [[ ! -f "$path" ]]; then
+        echo "Release acceptance records are immutable; deletion detected: $path" >&2
+        exit 1
+      fi
       acceptance_files+=("$path")
       ;;
   esac
@@ -81,7 +85,7 @@ for path in "${changed_files[@]}"; do
     scripts/tests/check-environment-policy.test.mjs|scripts/tests/background-browser-test.test.mjs|\
     scripts/tests/verify-change-forced-level.test.mjs|scripts/tests/business-context-freshness.test.mjs|\
     scripts/tests/report-release-metrics.test.mjs|scripts/tests/report-dependency-freshness.test.mjs|\
-    .github/workflows/dependency-freshness.yml)
+    .github/workflows/*.yml|.github/workflows/*.yaml)
       needs_governance=true
       ;;
   esac
