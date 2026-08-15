@@ -3,16 +3,20 @@
 ## 任务契约
 
 - 任务 scope / 角色 / AI：`cross-kpanel-file-transfer` / development / Codex。
-- 目标与用户价值：允许用户把 KPanel A 文件窗口中的一个或多个普通文件/目录拖到 KPanel B 桌面或文件管理窗口；B 将内容复制到指定目录，桌面目标在复制成功后创建入口。
+- 目标与用户价值：允许用户把 KPanel A 文件窗口或桌面上的一个或多个普通文件/目录拖到 KPanel B 桌面或文件管理窗口；B 将内容复制到指定目录，桌面目标在复制成功后创建入口。
 - 允许路径：`internal/cluster`、`internal/filemanager`、`internal/agent`、`internal/panel`、`internal/contract`、`web/src`、本文件及针对性测试。禁止路径：安装/升级/发布脚本、生产配置、版本号、数据库迁移。
 - 共享契约：Cluster v2 Noise 身份、Panel-Agent Unix socket、文件路径/resourceVersion、桌面 workspace。
-- 业务真源与用户旅程：`docs/cluster-monitoring.md`、`docs/desktop-icon-workspace.md`、`docs/storage-strategy.md`；A 文件行拖拽 -> B 桌面识别 -> B 后端向已配对 A 拉取 -> B Agent 原子落盘 -> 创建桌面入口。
+- 业务真源与用户旅程：`docs/cluster-monitoring.md`、`docs/desktop-icon-workspace.md`、`docs/storage-strategy.md`；A 文件行或桌面文件/目录快捷方式拖拽 -> B 桌面/文件窗口识别 -> B 后端向已配对 A 拉取 -> B Agent 原子落盘 -> 桌面目标创建入口。
 - worktree / branch / base / rollback：`C:\GitHub\kejilion-panel-cross-kpanel-file-transfer` / `feat/cross-kpanel-file-transfer` / `origin/main@431b9ca5ac21d5a3d1629e46e209ce718367569f` / 源实现回滚到 `431b9ca5ac21d5a3d1629e46e209ce718367569f`；正式版本继续记录上一稳定 Tag、镜像与生产备份。
 - 依赖、相邻任务与冲突面：依赖现有 Cluster v2 配对；相邻 worktree 均未修改上述实现路径，治理 worktree 的脏文件不重叠。
 - 风险等级：L2。新增跨前后端网络认证、流式传输与 Agent 文件写入；不发布、不改安装链。
 - 验收：Go 定向测试与全量测试、Web 单测/typecheck/build、两个本地 KPanel 浏览器跨窗口拖放；长时间浏览器测试按 registered arena 工作流执行。
 - 权限：用户已明确授权将文件互传及当前可上线内容提交并进入上线流程；由唯一发布任务负责候选推送、更新 main、tag、Release 与已授权生产部署。
 - 交付物：可审阅差异、设计文档、测试与浏览器证据、已知限制。
+
+桌面来源扩展在 `C:\GitHub\kejilion-panel-desktop-cross-panel-transfer`、分支
+`feat/desktop-cross-panel-transfer` 上基于 `origin/main@f982f2e8c4e08dfda190ae63938c8114acff4006`
+实现；该任务只形成可重放提交，不推送、不更新 main、版本、Tag、Release 或生产环境，由唯一 release writer 集成。
 
 ## 产品规则
 
@@ -24,11 +28,18 @@
 6. 一次最多接收 64 个顶层文件或目录。批量传输按选择顺序逐项执行，每项独立原子提交；单项失败不阻断后续项目，并在结束时展示成功/失败明细。
 7. 拖到 B 桌面时复制到桌面文件目录并批量创建入口；拖到 B 文件管理空白区时复制到当前目录，拖到目录项时复制到该目录，不创建桌面入口。
 8. 跨面板拖放始终是复制；双向互传要求 A 和 B 分别持有读取对方的有效授权，任何方向都不因另一方向已配对而自动扩权。
+9. 桌面只有 `file` / `directory` 快捷方式可以跨面板传输；应用、网站、URL 和固定系统入口只参与本地布局。混合框选拖动时跨面板描述符只包含已确认可读的文件/目录并提示跳过数量；同一桌面内落下仍移动整组选中图标。
+10. 桌面来源在后台通过单次有界 `POST /api/v1/files/entries` 获取最多 64 项当前元数据与 `resourceVersion`。缺失、无权限或类型变化的入口不可开始跨面板拖拽，避免拖到目标后才暴露陈旧引用。
 
 ## 协议与安全
 
 浏览器兼容读取单项 MIME `application/x-kpanel-cross-panel-file-v1`；批量拖拽使用
 `application/x-kpanel-cross-panel-files-v2`，只包含来源 `nodeId` 和最多 64 个项目的文件名、规范化绝对路径、类型及 `resourceVersion`。描述符不是授权凭据；B 后端必须为每项使用本地保存的配对密钥找到 A 并重新鉴权。旧目标仍可接收新来源的单项 v1 描述符，不会把批量误当成单项。
+
+桌面文件/目录快捷方式在宽屏鼠标环境使用浏览器原生 HTML5 drag，以便跨标签页、窗口和域名传递上述
+自定义 MIME；WebKit 跨域会隐藏自定义 MIME，因此同时提供不含凭据的带标记 `text/plain` 描述符，
+目标仍执行相同严格解析与后端重新鉴权。同一桌面的 drop 只更新 workspace 位置。触摸、手写笔和紧凑布局继续使用既有
+Pointer Events 布局手势。来源与目标 `nodeId` 相同时拒绝跨面板路径，避免把本机布局拖动误解为远程复制。
 
 B Panel 通过 Cluster v2 Noise IK 向 A 的固定端点请求文件。握手响应携带经认证的文件元数据，随后复用握手产生的 Noise transport cipher，以长度帧传输加密正文和经认证的结束记录。此方式同时覆盖 HTTPS 与受允许私网中的 `http://IP:port`，且不放宽 SSRF、重放、时钟偏差、并发和空闲超时规则。
 
@@ -52,7 +63,7 @@ B Panel 通过 Cluster v2 Noise IK 向 A 的固定端点请求文件。握手响
 
 ## 开发验收记录
 
-- Go：`internal/filemanager`、`internal/agent`、`internal/cluster` 定向测试通过；Panel 文件相关测试与编译通过；变更范围 `go vet` 通过。
-- Web：Vitest 97 个测试文件、715 项测试通过；i18n 校验、`vue-tsc --noEmit`、Vite 生产构建与预压缩通过。
-- 浏览器：本地生产构建在应用内真实浏览器中完成桌面壳和经典文件管理页烟测，页面结构正常且控制台无 warning/error；静态预览不具备真实 Panel Session、双 Agent 和 Cluster v2 配对，目录 API 的 `Not found` 属于环境限制，因此未把该结果记录为跨面板传输 E2E。
-- 待发布前：在两台已配对 Linux KPanel 上验证单项和多选文件/目录分别拖到桌面、文件管理当前目录与目录项；同时验证双方向授权、同名副本、部分失败、取消、来源变更、旧配对拒绝、断链清理及快捷方式失败保留真实文件。
+- Go：`internal/agent` 全量测试、新增批量元数据 Agent/Panel 定向测试及 Panel 文件路径定向测试通过；变更范围 `go vet` 通过。Windows 下 Panel 全量测试仍受既有绝对路径与静态资源 fixture 基线限制，不作为本功能失败。
+- Web：Vitest 97 个测试文件、719 项测试通过；i18n 校验、`vue-tsc --noEmit`、Vite 生产构建与预压缩通过。
+- 浏览器：本地生产构建在应用内真实 Chromium 中完成经典页、桌面壳和桌面文件窗口烟测，页面结构正常且控制台无 warning/error。预览 workspace 没有文件快捷方式，且不具备双 Agent 和 Cluster v2 配对，因此没有把该结果记录为桌面跨面板传输 E2E；原生 drag、批量描述符、WebKit 文本回退和本地组选中移动由组件/单元测试覆盖。
+- 待 release writer：在两台已配对 Linux KPanel 上验证文件窗口及桌面快捷方式来源的单项、多选、混合框选分别拖到桌面、文件管理当前目录与目录项；同时验证 Chrome/Safari、双方向授权、同名副本、部分失败、取消、来源变更、旧配对拒绝、断链清理及快捷方式失败保留真实文件。

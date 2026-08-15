@@ -116,6 +116,45 @@ func (s *Server) fileEntry(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entry)
 }
 
+func (s *Server) fileEntries(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "文件查询参数无效", "")
+		return
+	}
+	var input contract.FileEntryBatchRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	if len(input.Paths) == 0 || len(input.Paths) > contract.MaxFileEntryBatch {
+		writeProblem(w, requestID, http.StatusBadRequest, "file_request_invalid", "文件请求无效", "")
+		return
+	}
+	seen := make(map[string]struct{}, len(input.Paths))
+	result := contract.FileEntryBatchResult{
+		Entries:     make([]contract.FileEntry, 0, len(input.Paths)),
+		Unavailable: make([]string, 0),
+	}
+	for _, filePath := range input.Paths {
+		if filePath == "" {
+			writeProblem(w, requestID, http.StatusBadRequest, "file_request_invalid", "文件请求无效", "")
+			return
+		}
+		if _, exists := seen[filePath]; exists {
+			writeProblem(w, requestID, http.StatusBadRequest, "file_request_invalid", "文件请求无效", "")
+			return
+		}
+		seen[filePath] = struct{}{}
+		entry, err := s.files.Stat(filePath)
+		if err != nil {
+			result.Unavailable = append(result.Unavailable, filePath)
+			continue
+		}
+		result.Entries = append(result.Entries, entry)
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) fileTrashList(w http.ResponseWriter, r *http.Request) {
 	requestID := requestIDFrom(w)
 	if r.URL.RawPath != "" || r.URL.RawQuery != "" {

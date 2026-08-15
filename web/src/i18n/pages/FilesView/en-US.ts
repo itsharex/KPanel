@@ -1,6 +1,8 @@
 import type { PhraseCatalog } from '@/i18n/phrase'
 
 export default [
+  ["来源和目标是同一个 KPanel", "The source and destination are the same KPanel"],
+  ["请在文件管理器中使用复制或移动。", "Use copy or move in Files instead."],
   ["刷新目录", "Refresh directory"],
   ["打开回收站", "Open trash"],
   ["（显示最近 500 项）", "(Recent 500 shown)"],

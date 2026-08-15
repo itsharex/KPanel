@@ -150,6 +150,7 @@ GET    /api/v1/desktop/shortcuts/{id}/icon[?v=<64 lowercase hex>]
 PUT    /api/v1/desktop/shortcuts/{id}/icon
 DELETE /api/v1/desktop/shortcuts/{id}/icon
 GET    /api/v1/files/entry?path=<absolute-posix-path>
+POST   /api/v1/files/entries
 POST   /api/v1/files/upload?path=<directory>&name=<file>&overwrite=false
 POST   /api/v1/files/actions
 ```
@@ -170,7 +171,8 @@ POST   /api/v1/files/actions
 - URL 入口继续复用跳转确认窗并使用安全的新窗口打开策略。workspace 和图标变更均写审计；审计只
   记录入口 ID、类型、字节数或变化计数，不记录完整 URL、查询参数、描述、本地路径和文件名。
 - 文件路径前后端都只接受规范绝对 POSIX 路径，继续复用文件管理既有根目录约束、保护路径、符号链接
-  与权限判定。`files/entry` 只返回单个现有条目的元数据，不读取文件内容；打开文件后才按文件管理
+  与权限判定。`files/entry` 只返回单个现有条目的元数据；`files/entries` 要求同源 CSRF，一次接受 1–64 个
+  不重复规范路径，只返回可访问条目并把不可用路径单独列出。两者都不读取文件内容；打开文件后才按文件管理
   既有预览规则读取，目录只列出当前目录。快捷方式保存/打开不会把路径拼入 Shell，也不会新增路径审计。
 - 外部拖入不新增上传协议：每个普通文件继续使用 raw `application/octet-stream` 的既有 upload 端点，
   目录继续使用固定枚举的 `mkdir` action。Panel 校验 Session、同源 Origin、CSRF、Content-Type 和
@@ -222,6 +224,10 @@ Shift+F10 打开菜单；位置变化通过 `aria-live` 宣告。可见焦点、
 跨 KPanel 拖放另用版本化、非凭据的 `DataTransfer` 描述符。目标 KPanel 必须通过已有 Cluster v2
 配对身份向来源重新鉴权并拉取内容；一次最多处理 64 个顶层项目，每项独立原子提交。复制到目标桌面后
 批量创建入口；拖到目标文件管理窗口的空白区或目录项时只复制到对应目录。跨面板永远是复制，不改变来源。
+桌面上的 `file` / `directory` 快捷方式也可作为来源：宽屏鼠标以原生 drag 传递当前路径、类型和
+`resourceVersion`，桌面悬停或键盘聚焦时用轻量角标说明可跨面板复制。元数据由单次有界批量请求预取，
+缺失、无权限或类型变化的入口不进入描述符；混合框选只传可用文件/目录并明确提示跳过数量。应用、网站、
+URL 和固定系统入口不生成文件描述符。同一桌面落下只移动整组选中图标，不复制真实文件。
 完整规则见 [`cross-kpanel-file-transfer.md`](cross-kpanel-file-transfer.md)。
 
 操作系统外部拖入与上述内部令牌严格分流。外部 `DataTransfer` 中的普通文件和目录先在浏览器内有界
@@ -237,8 +243,9 @@ Shift+F10 打开菜单；位置变化通过 `aria-live` 宣告。可见焦点、
 或目录项默认移动，按住 Ctrl/Option 时复制。相同目录、源目录本身及其后代属于无效目标；同名目标不
 覆盖，批量操作允许部分成功并展示结果。窗口间文件剪贴板共享同一内存状态，为键盘用户提供复制/剪切
 后在另一窗口粘贴的等价路径。跨 KPanel 文件管理拖放无论修饰键如何都只执行复制；反向复制需要反向配对授权。
-应用、网站、URL 入口或桌面文件入口拖入文件窗口仍不生成
-`.desktop`/`.url`、不复制、不移动真实目标。窗口间复制和上传传输可取消当前请求；移动开始后不提供主动
+应用、网站、URL 或固定系统入口拖入文件窗口仍不生成 `.desktop`/`.url`，也不复制真实目标。桌面文件/
+目录快捷方式拖入同一 KPanel 的文件窗口不执行操作；拖入另一个已配对 KPanel 的文件窗口则按跨面板规则
+复制真实目标。窗口间复制和上传传输可取消当前请求；移动开始后不提供主动
 取消，确保客户端取得每个成功项目的新路径并同步桌面引用。Agent 仍以同目录
 临时文件、`fsync` 和原子重命名为提交边界，已成功提交的早先项目不会因后续取消而回滚或被删除。
 

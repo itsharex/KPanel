@@ -48,8 +48,10 @@ import { api, ApiError, type SystemResourceSnapshot } from '@/lib/api'
 import { transferCrossPanelFileBatch } from '@/lib/crossPanelFileTransfer'
 import {
   addFileEntriesToDesktop,
+  beginDesktopFileDrag,
   clearDesktopFileDrag,
   crossPanelFileDragEntries,
+  desktopFileDragOrigin,
   desktopFileDragEntries,
   DesktopShortcutLimitError,
   hasCrossPanelFileDrag,
@@ -90,7 +92,7 @@ import { useDocumentFullscreen } from '@/composables/useDocumentFullscreen'
 import { useTheme } from '@/stores/theme'
 import { useToast } from '@/stores/toast'
 import { useI18n } from '@/i18n'
-import type { AgentStatus, DesktopIconPosition, DesktopShortcut } from '@/types/api'
+import type { AgentStatus, DesktopIconPosition, DesktopShortcut, FileEntry } from '@/types/api'
 
 /**
  * Desktop overlay with Windows-style selection/open behavior, desktop-side
@@ -225,6 +227,20 @@ const shortcutEntries = computed<DesktopEntry[]>(() => shortcuts.value.map((shor
   shortcut,
 })))
 
+function isTransferableDesktopShortcut(entry: DesktopEntry): boolean {
+  return entry.kind === 'shortcut'
+    && (entry.launch === 'file' || entry.launch === 'directory')
+    && Boolean(entry.path)
+    && entry.path !== '/'
+}
+
+const desktopShortcutPaths = computed(() => [...new Set(
+  shortcutEntries.value
+    .filter(isTransferableDesktopShortcut)
+    .map((entry) => entry.path!),
+)])
+const desktopShortcutPathSignature = computed(() => desktopShortcutPaths.value.join('\0'))
+
 const iconsElement = ref<HTMLElement>()
 const desktopElement = ref<HTMLElement>()
 const iconBounds = ref<DesktopIconBounds>({ width: 90, height: 96 })
@@ -241,6 +257,8 @@ const removingEntry = ref<DesktopEntry>()
 const batchRemovingEntries = ref<DesktopEntry[]>([])
 const shortcutSaving = ref(false)
 const shortcutError = ref('')
+const localClusterNodeId = ref('')
+const desktopFileMetadata = ref<Record<string, FileEntry>>({})
 const fileDropActive = ref(false)
 const fileDropMode = ref<'shortcut' | 'upload' | 'panel-copy'>('shortcut')
 type DesktopTransferPhase = 'preparing' | 'uploading' | 'complete' | 'partial' | 'error' | 'cancelled'
@@ -279,6 +297,8 @@ const desktopTransferActive = computed(() => Boolean(
 const deletingFileShortcut = computed(() => deletingShortcut.value?.targetType === 'file' || deletingShortcut.value?.targetType === 'directory')
 let pendingShortcutID = ''
 let workspaceAbort: AbortController | undefined
+let desktopFileMetadataAbort: AbortController | undefined
+let desktopFileMetadataSequence = 0
 let iconsResizeObserver: ResizeObserver | undefined
 let desktopTransferController: AbortController | undefined
 let desktopTransferClearTimer: number | undefined
@@ -390,6 +410,41 @@ const selectedEntries = computed(() => {
     .map((key) => byKey.get(key))
     .filter((entry): entry is DesktopEntry => Boolean(entry))
 })
+
+async function refreshDesktopFileMetadata(paths: readonly string[], replaceAll = false): Promise<void> {
+  const requested = [...new Set(paths)].filter((path) => path && path !== '/').slice(0, 64)
+  desktopFileMetadataAbort?.abort()
+  desktopFileMetadataAbort = undefined
+  const sequence = ++desktopFileMetadataSequence
+  if (!requested.length) {
+    if (replaceAll) desktopFileMetadata.value = {}
+    return
+  }
+  const controller = new AbortController()
+  desktopFileMetadataAbort = controller
+  try {
+    const result = await api.files.entries(requested, controller.signal)
+    if (controller.signal.aborted || sequence !== desktopFileMetadataSequence) return
+    const next = replaceAll ? {} : { ...desktopFileMetadata.value }
+    for (const path of requested) delete next[path]
+    for (const entry of result.entries) {
+      if ((entry.kind === 'file' || entry.kind === 'directory') && requested.includes(entry.path)) {
+        next[entry.path] = entry
+      }
+    }
+    desktopFileMetadata.value = next
+  } catch (error) {
+    if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
+    if (replaceAll && sequence === desktopFileMetadataSequence) desktopFileMetadata.value = {}
+  } finally {
+    if (desktopFileMetadataAbort === controller) desktopFileMetadataAbort = undefined
+  }
+}
+
+watch(desktopShortcutPathSignature, () => {
+  void refreshDesktopFileMetadata(desktopShortcutPaths.value, true)
+}, { immediate: true })
+
 const removableSelectedCount = computed(() => selectedEntries.value.length)
 watch(allIconKeys, (keys) => {
   const visible = new Set(keys)
@@ -822,6 +877,132 @@ function placementsToPositions(
   return next
 }
 
+interface DesktopShortcutNativeDrag {
+  anchorKey: string
+  keys: string[]
+  paths: string[]
+}
+
+let desktopShortcutNativeDrag: DesktopShortcutNativeDrag | undefined
+
+function desktopShortcutDragCandidates(anchor: DesktopEntry): DesktopEntry[] {
+  const candidates = selectedIcons.value.has(anchor.key) && selectedIcons.value.size > 1
+    ? selectedEntries.value
+    : [anchor]
+  return candidates.filter(isTransferableDesktopShortcut)
+}
+
+function desktopShortcutTransferEntries(anchor: DesktopEntry): FileEntry[] {
+  return desktopShortcutDragCandidates(anchor).flatMap((entry) => {
+    const metadata = entry.path ? desktopFileMetadata.value[entry.path] : undefined
+    if (!metadata || metadata.kind !== entry.launch) return []
+    return [metadata]
+  })
+}
+
+function desktopShortcutTransferReady(entry: DesktopEntry): boolean {
+  if (!isTransferableDesktopShortcut(entry) || !localClusterNodeId.value) return false
+  const metadata = desktopFileMetadata.value[entry.path!]
+  return Boolean(metadata && metadata.kind === entry.launch)
+}
+
+function desktopShortcutTransferHint(entry: DesktopEntry): string | undefined {
+  if (!isTransferableDesktopShortcut(entry)) return undefined
+  return i18n.t(
+    desktopShortcutTransferReady(entry)
+      ? 'desktop.crossPanelDragReady'
+      : 'desktop.crossPanelDragPreparing',
+  )
+}
+
+async function loadLocalClusterIdentity(): Promise<void> {
+  try {
+    const hosts = await api.cluster.hosts()
+    localClusterNodeId.value = hosts.nodeId
+  } catch {
+    localClusterNodeId.value = ''
+  }
+}
+
+function startDesktopShortcutDrag(event: DragEvent, entry: DesktopEntry): void {
+  if (!event.dataTransfer || compactIconLayout.value || !isTransferableDesktopShortcut(entry)) {
+    event.preventDefault()
+    return
+  }
+  const candidates = desktopShortcutDragCandidates(entry)
+  const transferable = desktopShortcutTransferEntries(entry)
+  const anchorMetadata = desktopFileMetadata.value[entry.path!]
+  if (!localClusterNodeId.value || !anchorMetadata || anchorMetadata.kind !== entry.launch || !transferable.length) {
+    event.preventDefault()
+    void loadLocalClusterIdentity()
+    void refreshDesktopFileMetadata(candidates.map((candidate) => candidate.path!))
+    toast.show(i18n.t('desktop.crossPanelDragUnavailableTitle'), {
+      message: i18n.t('desktop.crossPanelDragUnavailableMessage'),
+    })
+    return
+  }
+  const keys = selectedIcons.value.has(entry.key) && selectedIcons.value.size > 1
+    ? [...selectedIcons.value].filter((key) => renderedPositionByKey.value.has(key))
+    : [entry.key]
+  if (!selectedIcons.value.has(entry.key)) setIconSelection([entry.key])
+  if (!beginDesktopFileDrag(event, transferable, localClusterNodeId.value, 'desktop-shortcut')) {
+    event.preventDefault()
+    return
+  }
+  desktopShortcutNativeDrag = {
+    anchorKey: entry.key,
+    keys,
+    paths: transferable.map((item) => item.path),
+  }
+  draggingIcons.value = new Set(keys)
+  closeContextMenu(false)
+  const skipped = Math.max(0, keys.length - transferable.length)
+  iconAnnouncement.value = i18n.t('desktop.crossPanelDragStarted', { count: transferable.length })
+  if (skipped) {
+    toast.show(i18n.t('desktop.crossPanelDragSkippedTitle'), {
+      message: i18n.t('desktop.crossPanelDragSkippedMessage', {
+        count: transferable.length,
+        skipped,
+      }),
+    })
+  }
+}
+
+function finishDesktopShortcutDrag(): void {
+  const drag = desktopShortcutNativeDrag
+  desktopShortcutNativeDrag = undefined
+  draggingIcons.value = new Set()
+  clearDesktopFileDrag()
+  if (drag?.paths.length) void refreshDesktopFileMetadata(drag.paths)
+}
+
+async function moveDesktopShortcutDrop(
+  destination: DesktopIconPosition,
+): Promise<void> {
+  const drag = desktopShortcutNativeDrag
+  if (!drag) return
+  for (const key of drag.keys) suppressActivationAfterDrag.add(key)
+  const placements = drag.keys.length > 1
+    ? moveDesktopIconGroup(
+        renderedIconLayout.value.placements,
+        drag.keys,
+        drag.anchorKey,
+        destination,
+        iconBounds.value,
+      )
+    : dropDesktopIcon(
+        renderedIconLayout.value.placements,
+        drag.anchorKey,
+        destination,
+        iconBounds.value,
+      )
+  const next = placementsToPositions(placements)
+  iconAnnouncement.value = drag.keys.length > 1
+    ? i18n.t('desktop.iconsMoved', { count: drag.keys.length })
+    : i18n.t('desktop.iconMoved', { name: iconLabel(drag.anchorKey) })
+  await persistPositions(next).catch(() => undefined)
+}
+
 interface IconDragState {
   key: string
   keys: string[]
@@ -955,6 +1136,10 @@ function beginIconDrag(event: PointerEvent, key: string): void {
   if (event.button === 0 && event.isPrimary !== false) suppressActivationAfterDrag.delete(key)
   if (compactIconLayout.value || event.button !== 0 || event.isPrimary === false || iconDrag) return
   const pointerType = event.pointerType || 'mouse'
+  if (
+    pointerType === 'mouse'
+    && shortcutEntries.value.some((entry) => entry.key === key && isTransferableDesktopShortcut(entry))
+  ) return
   const position = renderedPositionByKey.value.get(key)
   if (!position) return
   const keys = selectedIcons.value.has(key) && selectedIcons.value.size > 1
@@ -1348,6 +1533,14 @@ function onDesktopFileDragOver(event: DragEvent): void {
   }
   event.preventDefault()
   const internal = hasDesktopFileDrag(event)
+  const localShortcutMove = internal
+    && desktopShortcutNativeDrag
+    && desktopFileDragOrigin(event) === 'desktop-shortcut'
+  if (localShortcutMove) {
+    fileDropActive.value = false
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    return
+  }
   const crossPanel = !internal && hasCrossPanelFileDrag(event)
   const external = !internal && !crossPanel && hasExternalFileDrop(event)
   if ((external || crossPanel) && desktopTransfer.value && ['preparing', 'uploading'].includes(desktopTransfer.value.phase)) {
@@ -1650,6 +1843,10 @@ async function addCrossPanelFileDrop(event: DragEvent, destination: DesktopIconP
     toast.danger(i18n.t('desktop.transferFailedTitle'), i18n.t('desktop.panelCopyInvalid'))
     return
   }
+  if (payload.sourceNodeId === localClusterNodeId.value) {
+    toast.show(i18n.t('desktop.panelCopySameNode'))
+    return
+  }
   if (desktopTransferActive.value) {
     toast.show(i18n.t('desktop.transferBusyTitle'), { message: i18n.t('desktop.transferBusyMessage') })
     return
@@ -1766,7 +1963,12 @@ async function onDesktopFileDrop(event: DragEvent): Promise<void> {
   fileDropActive.value = false
   const destination = desktopDropPosition(event)
   if (!destination) return
-  if (hasDesktopFileDrag(event)) await addInternalFileDrop(event, destination)
+  if (
+    desktopShortcutNativeDrag
+    && hasDesktopFileDrag(event)
+    && desktopFileDragOrigin(event) === 'desktop-shortcut'
+  ) await moveDesktopShortcutDrop(destination)
+  else if (hasDesktopFileDrag(event)) await addInternalFileDrop(event, destination)
   else if (hasCrossPanelFileDrag(event)) await addCrossPanelFileDrop(event, destination)
   else if (hasExternalFileDrop(event)) await addExternalFileDrop(event, destination)
 }
@@ -2180,6 +2382,7 @@ onMounted(() => {
   window.addEventListener('resize', onViewportResize)
   void loadEntries()
   void loadWorkspace()
+  void loadLocalClusterIdentity()
   void nextTick(() => {
     measureIconWorkArea()
     if (typeof ResizeObserver !== 'undefined' && iconsElement.value) {
@@ -2198,10 +2401,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onViewportResize)
   entriesAbort?.abort()
   workspaceAbort?.abort()
+  desktopFileMetadataAbort?.abort()
   desktopTransferController?.abort()
   iconsResizeObserver?.disconnect()
   cancelIconDrag()
   cancelSelectionFrame()
+  desktopShortcutNativeDrag = undefined
   clearDesktopFileDrag()
   fileDropActive.value = false
   suppressActivationAfterDrag.clear()
@@ -2449,10 +2654,17 @@ function onViewportResize(): void {
         v-for="(entry, index) in shortcutEntries"
         :key="entry.key"
         class="desktop__icon-slot"
-        :class="{ 'desktop__icon-slot--dragging': draggingIcons.has(entry.key) }"
+        :class="{
+          'desktop__icon-slot--dragging': draggingIcons.has(entry.key),
+          'desktop__icon-slot--transferable': isTransferableDesktopShortcut(entry),
+          'desktop__icon-slot--transfer-ready': desktopShortcutTransferReady(entry),
+        }"
         :style="iconSlotStyle(entry.key)"
         :data-icon-key="entry.key"
+        :draggable="!compactIconLayout && isTransferableDesktopShortcut(entry)"
         @pointerdown="beginIconDrag($event, entry.key)"
+        @dragstart.stop="startDesktopShortcutDrag($event, entry)"
+        @dragend.stop="finishDesktopShortcutDrag"
         @keydown.capture="clearDraggedActivationSuppression(entry.key)"
         @click.capture="suppressDraggedActivation($event, entry.key)"
         @dblclick.capture="suppressDraggedActivation($event, entry.key)"
@@ -2464,6 +2676,8 @@ function onViewportResize(): void {
           :selected="selectedIcons.has(entry.key)"
           :order="desktopApps.length + visibleDynamicEntries.length + index"
           :dragging="draggingIcons.has(entry.key)"
+          :transfer-hint="desktopShortcutTransferHint(entry)"
+          :transfer-ready="desktopShortcutTransferReady(entry)"
           @select="(event) => selectEntry(entry, event)"
           @open="(event) => onEntryOpen(event, entry)"
           @context="(event) => onEntryContext(event, entry)"

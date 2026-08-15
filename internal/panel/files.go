@@ -101,6 +101,53 @@ func (s *Server) handleFileEntry(w http.ResponseWriter, r *http.Request) {
 	s.writeAgentResponse(w, r, response)
 }
 
+func (s *Server) handleFileEntries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusBadRequest, "file_query_invalid", "文件查询参数无效", "")
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	var input contract.FileEntryBatchRequest
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	if len(input.Paths) == 0 || len(input.Paths) > contract.MaxFileEntryBatch {
+		s.writeProblem(w, r, http.StatusBadRequest, "file_request_invalid", "文件请求无效", "")
+		return
+	}
+	seen := make(map[string]struct{}, len(input.Paths))
+	for _, filePath := range input.Paths {
+		if !validFileDownloadPath(filePath) {
+			s.writeValidationProblem(w, r, "paths", "all file paths must be canonical absolute paths")
+			return
+		}
+		if _, exists := seen[filePath]; exists {
+			s.writeValidationProblem(w, r, "paths", "duplicate file paths are not allowed")
+			return
+		}
+		seen[filePath] = struct{}{}
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
+		return
+	}
+	response, err := s.agent.Do(r.Context(), http.MethodPost, "/v1/files/entries", "", requestID(r), body)
+	if err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	s.writeAgentResponse(w, r, response)
+}
+
 func (s *Server) handleFileTrashList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)

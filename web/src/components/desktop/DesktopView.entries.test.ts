@@ -39,9 +39,14 @@ vi.mock('@/lib/api', async (importOriginal) => {
       files: {
         ...actual.api.files,
         entry: vi.fn(),
+        entries: vi.fn(),
         action: vi.fn(),
         upload: vi.fn(),
         transferFromPanel: vi.fn(),
+      },
+      cluster: {
+        ...actual.api.cluster,
+        hosts: vi.fn(),
       },
     },
   }
@@ -53,9 +58,11 @@ const mockedWorkspace = vi.mocked(api.desktop.workspace)
 const mockedWorkspaceUpdate = vi.mocked(api.desktop.updateWorkspace)
 const mockedUploadShortcutIcon = vi.mocked(api.desktop.uploadShortcutIcon)
 const mockedFileEntry = vi.mocked(api.files.entry)
+const mockedFileEntries = vi.mocked(api.files.entries)
 const mockedFileAction = vi.mocked(api.files.action)
 const mockedFileUpload = vi.mocked(api.files.upload)
 const mockedPanelTransfer = vi.mocked(api.files.transferFromPanel)
+const mockedClusterHosts = vi.mocked(api.cluster.hosts)
 
 function makeWorkspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
   return {
@@ -126,6 +133,10 @@ describe('DesktopView dynamic entries', () => {
     mockedPanelTransfer.mockReset()
     mockedFileEntry.mockReset()
     mockedFileEntry.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }))
+    mockedFileEntries.mockReset()
+    mockedFileEntries.mockResolvedValue({ entries: [], unavailable: [] })
+    mockedClusterHosts.mockReset()
+    mockedClusterHosts.mockResolvedValue({ nodeId: 'f'.repeat(32) } as Awaited<ReturnType<typeof api.cluster.hosts>>)
     mockedFileAction.mockReset()
     mockedFileAction.mockImplementation(async (input) => ({
       action: input.action,
@@ -574,20 +585,20 @@ describe('DesktopView dynamic entries', () => {
     await flushPromises()
     const desktop = useDesktopMode()
 
-    expect(wrapper.get('button[title="网站目录"] svg').classes()).toContain('lucide-folder-open')
+    expect(wrapper.get(`[data-icon-key="shortcut:${'d'.repeat(32)}"] svg`).classes()).toContain('lucide-folder-open')
 
-    await wrapper.get('button[title="nginx.conf"]').trigger('dblclick')
-    await wrapper.get('button[title="网站目录"]').trigger('dblclick')
+    await wrapper.get(`[data-icon-key="shortcut:${'c'.repeat(32)}"] button`).trigger('dblclick')
+    await wrapper.get(`[data-icon-key="shortcut:${'d'.repeat(32)}"] button`).trigger('dblclick')
     expect(desktop.windows.value.map((windowState) => windowState.path)).toEqual([
       '/files?path=%2Fetc%2Fnginx&file=%2Fetc%2Fnginx%2Fnginx.conf',
       '/files?path=%2Fhome%2Fweb',
     ])
     const firstWindowID = desktop.windows.value[0]!.id
-    await wrapper.get('button[title="Nginx 目录"]').trigger('dblclick')
+    await wrapper.get(`[data-icon-key="shortcut:${'f'.repeat(32)}"] button`).trigger('dblclick')
     expect(desktop.windows.value).toHaveLength(2)
     expect(desktop.focusedId.value).toBe(firstWindowID)
 
-    await wrapper.get('button[title="mime.types"]').trigger('dblclick')
+    await wrapper.get(`[data-icon-key="shortcut:${'e'.repeat(32)}"] button`).trigger('dblclick')
     expect(desktop.windows.value).toHaveLength(2)
     expect(desktop.focusedId.value).toBe(firstWindowID)
     expect(desktop.windows.value[0]?.path).toBe(
@@ -638,6 +649,79 @@ describe('DesktopView dynamic entries', () => {
     const shortcut = update?.shortcuts.find((item) => item.path === '/etc/nginx.conf')
     expect(shortcut && update?.positions[`shortcut:${shortcut.id}`]).toBeTruthy()
     expect(wrapper.find('.desktop__file-drop').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('natively drags selected desktop file shortcuts across panels and moves them locally as a group', async () => {
+    const firstID = '1'.repeat(32)
+    const secondID = '2'.repeat(32)
+    mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
+      shortcuts: [
+        {
+          id: firstID, name: 'one.txt', description: '', targetType: 'file', path: '/home/one.txt',
+          createdAt: '2026-08-14T00:00:00Z', updatedAt: '2026-08-14T00:00:00Z',
+        },
+        {
+          id: secondID, name: 'app', description: '', targetType: 'directory', path: '/home/app',
+          createdAt: '2026-08-14T00:00:00Z', updatedAt: '2026-08-14T00:00:00Z',
+        },
+      ],
+    }))
+    mockedFileEntries.mockResolvedValue({
+      entries: [
+        {
+          name: 'one.txt', path: '/home/one.txt', kind: 'file', resourceVersion: 'sha256:one',
+          sizeBytes: 3, mode: '0644', owner: 'root', group: 'root', modifiedAt: '2026-08-15T00:00:00Z',
+          editable: true, previewable: true,
+        },
+        {
+          name: 'app', path: '/home/app', kind: 'directory', resourceVersion: 'sha256:app',
+          sizeBytes: 0, mode: '0755', owner: 'root', group: 'root', modifiedAt: '2026-08-15T00:00:00Z',
+          editable: false, previewable: false,
+        },
+      ],
+      unavailable: [],
+    })
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const first = wrapper.get(`[data-icon-key="shortcut:${firstID}"]`)
+    const second = wrapper.get(`[data-icon-key="shortcut:${secondID}"]`)
+    expect(first.attributes('draggable')).toBe('true')
+    expect(second.classes()).toContain('desktop__icon-slot--transfer-ready')
+    expect(wrapper.get('[data-icon-key="app:nginx"]').attributes('draggable')).toBeUndefined()
+
+    await first.get('button').trigger('click')
+    await second.get('button').trigger('click', { ctrlKey: true })
+    const values = new Map<string, string>()
+    const types: string[] = []
+    const dataTransfer = {
+      types, effectAllowed: 'none', dropEffect: 'none',
+      setData(type: string, value: string) {
+        if (!types.includes(type)) types.push(type)
+        values.set(type, value)
+      },
+      getData(type: string) { return values.get(type) || '' },
+    }
+    first.element.dispatchEvent(internalFileDragEvent('dragstart', dataTransfer, 40, 40))
+    const payload = JSON.parse(values.get('application/x-kpanel-cross-panel-files-v2') || '{}')
+    expect(payload).toMatchObject({
+      version: 2,
+      sourceNodeId: 'f'.repeat(32),
+      entries: [
+        { path: '/home/one.txt', resourceVersion: 'sha256:one' },
+        { path: '/home/app', resourceVersion: 'sha256:app' },
+      ],
+    })
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('dragover', dataTransfer, 360, 260))
+    wrapper.element.dispatchEvent(internalFileDragEvent('drop', dataTransfer, 360, 260))
+    first.element.dispatchEvent(internalFileDragEvent('dragend', dataTransfer, 360, 260))
+    await flushPromises()
+
+    const positions = mockedWorkspaceUpdate.mock.calls.at(-1)?.[0].positions
+    expect(positions?.[`shortcut:${firstID}`]).toBeDefined()
+    expect(positions?.[`shortcut:${secondID}`]).toBeDefined()
+    expect(mockedPanelTransfer).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

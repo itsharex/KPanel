@@ -154,6 +154,47 @@ func TestFileEntryRequiresSessionAndForwardsExactPath(t *testing.T) {
 	}
 }
 
+func TestFileEntriesRequiresCSRFAndForwardsCanonicalBatch(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &fileStubAgent{stubAgent: &stubAgent{response: AgentResponse{
+		StatusCode: http.StatusOK, ContentType: "application/json",
+		Body: []byte(`{"entries":[{"name":"app","path":"/home/app","kind":"directory","resourceVersion":"sha256:app"}],"unavailable":["/missing"]}`),
+	}}}
+	server.agent = agent
+	body := []byte(`{"paths":["/home/app","/missing"]}`)
+
+	unauthenticated := performRequest(server, http.MethodPost, "/api/v1/files/entries", body, nil)
+	if unauthenticated.Code != http.StatusUnauthorized || len(agent.snapshotCalls()) != 0 {
+		t.Fatalf("unauthenticated status=%d calls=%#v", unauthenticated.Code, agent.snapshotCalls())
+	}
+	withoutCSRF := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/entries", body, sessionCookie, csrfCookie,
+		map[string]string{"Content-Type": "application/json", "Origin": "http://panel.test"},
+	)
+	if withoutCSRF.Code != http.StatusForbidden || len(agent.snapshotCalls()) != 0 {
+		t.Fatalf("without CSRF status=%d calls=%#v", withoutCSRF.Code, agent.snapshotCalls())
+	}
+	response := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/entries", body, sessionCookie, csrfCookie,
+		map[string]string{"Content-Type": "application/json", "Origin": "http://panel.test", "X-CSRF-Token": csrfCookie.Value},
+	)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"path":"/home/app"`) {
+		t.Fatalf("entries response=%d %s", response.Code, response.Body.String())
+	}
+	calls := agent.snapshotCalls()
+	if len(calls) != 1 || calls[0].path != "/v1/files/entries" || calls[0].rawQuery != "" || string(calls[0].body) != string(body) {
+		t.Fatalf("unexpected Agent calls: %#v", calls)
+	}
+	invalid := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/entries", []byte(`{"paths":["/home//app"]}`), sessionCookie, csrfCookie,
+		map[string]string{"Content-Type": "application/json", "Origin": "http://panel.test", "X-CSRF-Token": csrfCookie.Value},
+	)
+	if invalid.Code != http.StatusUnprocessableEntity || len(agent.snapshotCalls()) != 1 {
+		t.Fatalf("invalid status=%d calls=%#v", invalid.Code, agent.snapshotCalls())
+	}
+}
+
 func TestFileTrashListRequiresSessionAndForwardsToAgent(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)

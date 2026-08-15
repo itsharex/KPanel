@@ -1060,6 +1060,21 @@ describe('API client', () => {
     expect(requestURL).toContain('path=%2Fhome%2Fapp+config.json')
   })
 
+  it('loads bounded desktop shortcut metadata in one POST request', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      entries: [{ name: 'app', path: '/home/app', kind: 'directory', resourceVersion: 'sha256:app' }],
+      unavailable: ['/missing'],
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.files.entries(['/home/app', '/missing'])
+
+    const [requestURL, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(requestURL).toContain('/api/v1/files/entries')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ paths: ['/home/app', '/missing'] })
+  })
+
   it('aborts an in-flight binary file upload through the caller signal', async () => {
     class UploadXHR {
       static latest?: UploadXHR

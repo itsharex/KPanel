@@ -39,6 +39,7 @@ import type {
   FileDirectory,
   FileDownloadTicket,
   FileEntry,
+  FileEntryBatchResult,
   FileWriteResult,
   FirewallSnapshot,
   HostsSnapshot,
@@ -1629,6 +1630,12 @@ export const api = {
   files: {
     entry: (path: string, signal?: AbortSignal): Promise<FileEntry> =>
       request<FileEntry>('/files/entry', { query: { path }, signal }),
+    entries: (paths: readonly string[], signal?: AbortSignal): Promise<FileEntryBatchResult> =>
+      request<FileEntryBatchResult>('/files/entries', {
+        method: 'POST',
+        body: { paths },
+        signal,
+      }),
     list: (
       path = '/',
       options?: { offset?: number; search?: string },

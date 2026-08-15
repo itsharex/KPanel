@@ -225,6 +225,55 @@ func TestFileEntryReturnsOneProtectedFileManagerEntry(t *testing.T) {
 	}
 }
 
+func TestFileEntriesReturnsBoundedMetadataAndUnavailablePaths(t *testing.T) {
+	server := testServer(t)
+	root := t.TempDir()
+	manager, err := filemanager.New(filemanager.Config{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server.files = manager
+	if err := os.WriteFile(filepath.Join(root, "nginx.conf"), []byte("events {}"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "app"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	response := fileRequest(server, http.MethodPost, "/v1/files/entries", `{"paths":["/nginx.conf","/missing","/app"]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("entries status=%d body=%s", response.Code, response.Body.String())
+	}
+	var result contract.FileEntryBatchResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 2 || result.Entries[0].Path != "/nginx.conf" || result.Entries[1].Path != "/app" {
+		t.Fatalf("entries=%#v", result.Entries)
+	}
+	if len(result.Unavailable) != 1 || result.Unavailable[0] != "/missing" {
+		t.Fatalf("unavailable=%#v", result.Unavailable)
+	}
+
+	duplicate := fileRequest(server, http.MethodPost, "/v1/files/entries", `{"paths":["/app","/app"]}`)
+	if duplicate.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate status=%d body=%s", duplicate.Code, duplicate.Body.String())
+	}
+	paths := make([]string, contract.MaxFileEntryBatch+1)
+	for index := range paths {
+		paths[index] = fmt.Sprintf("/item-%d", index)
+	}
+	content, err := json.Marshal(contract.FileEntryBatchRequest{Paths: paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overLimit := fileRequest(server, http.MethodPost, "/v1/files/entries", string(content))
+	if overLimit.Code != http.StatusBadRequest {
+		t.Fatalf("over-limit status=%d body=%s", overLimit.Code, overLimit.Body.String())
+	}
+}
+
 func TestFileTailReadsLargeUTF8LogAndHonorsProtectedPaths(t *testing.T) {
 	server := testServer(t)
 	root := t.TempDir()

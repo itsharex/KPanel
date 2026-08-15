@@ -1213,6 +1213,41 @@ body.desktop-mode-open::-webkit-scrollbar {
   transition: none;
 }
 
+.desktop__icon-transfer-badge {
+  position: absolute;
+  z-index: 2;
+  top: 3px;
+  right: 7px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: color-mix(in srgb, var(--desktop-label) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--desktop-label) 14%, transparent);
+  border-radius: 7px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s ease, color .16s ease, background .16s ease;
+}
+
+.desktop__icon-slot:hover .desktop__icon-transfer-badge,
+.desktop__icon:focus-visible .desktop__icon-transfer-badge,
+.desktop__icon--selected .desktop__icon-transfer-badge {
+  opacity: 1;
+}
+
+.desktop__icon-transfer-badge--ready {
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 74%, white);
+}
+
+.desktop__icon-transfer-badge:not(.desktop__icon-transfer-badge--ready) svg {
+  animation: desktop-transfer-spin .8s linear infinite;
+}
+
 .desktop__icon--dragging {
   cursor: grabbing;
 }

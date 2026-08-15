@@ -5,6 +5,7 @@ import type { DesktopShortcut, DesktopWorkspaceUpdate, FileEntry } from '@/types
 export const DESKTOP_FILE_DRAG_TYPE = 'application/x-kpanel-desktop-file-shortcut'
 export const CROSS_PANEL_FILE_DRAG_TYPE = 'application/x-kpanel-cross-panel-file-v1'
 export const CROSS_PANEL_FILES_DRAG_TYPE = 'application/x-kpanel-cross-panel-files-v2'
+export const CROSS_PANEL_FILES_TEXT_PREFIX = 'KPanel cross-panel files v2\n'
 export const MAX_DESKTOP_SHORTCUTS = 64
 export const MAX_CROSS_PANEL_DRAG_ENTRIES = 64
 
@@ -43,7 +44,10 @@ export class DesktopShortcutLimitError extends Error {
 interface ActiveDesktopFileDrag {
   token: string
   entries: DesktopFileEntry[]
+  origin: DesktopFileDragOrigin
 }
+
+export type DesktopFileDragOrigin = 'file-manager' | 'desktop-shortcut'
 
 let activeDrag: ActiveDesktopFileDrag | undefined
 
@@ -125,12 +129,13 @@ export function beginDesktopFileDrag(
   event: DragEvent,
   entries: readonly DesktopFileEntry[],
   sourceNodeId?: string,
+  origin: DesktopFileDragOrigin = 'file-manager',
 ): boolean {
   const dataTransfer = event.dataTransfer
   const supported = entries.filter(supportedEntry)
   if (!dataTransfer || !supported.length) return false
   const token = randomToken()
-  activeDrag = { token, entries: supported.map((entry) => ({ ...entry })) }
+  activeDrag = { token, entries: supported.map((entry) => ({ ...entry })), origin }
   dataTransfer.effectAllowed = 'all'
   dataTransfer.setData(DESKTOP_FILE_DRAG_TYPE, token)
   const crossPanelEntries = supported.filter(
@@ -141,12 +146,13 @@ export function beginDesktopFileDrag(
     && sourceNodeId
     && /^[a-f0-9]{32}$/.test(sourceNodeId)
   ) {
+    let batchDescriptor: string
     if (crossPanelEntries.length > MAX_CROSS_PANEL_DRAG_ENTRIES) {
-      dataTransfer.setData(CROSS_PANEL_FILES_DRAG_TYPE, JSON.stringify({
+      batchDescriptor = JSON.stringify({
         version: 2, sourceNodeId, entries: [], rejectedCount: crossPanelEntries.length,
-      }))
+      })
     } else {
-      dataTransfer.setData(CROSS_PANEL_FILES_DRAG_TYPE, JSON.stringify({
+      batchDescriptor = JSON.stringify({
         version: 2,
         sourceNodeId,
         entries: crossPanelEntries.map((entry) => ({
@@ -155,8 +161,13 @@ export function beginDesktopFileDrag(
           kind: entry.kind,
           resourceVersion: entry.resourceVersion,
         })),
-      }))
+      })
     }
+    dataTransfer.setData(CROSS_PANEL_FILES_DRAG_TYPE, batchDescriptor)
+    // WebKit exposes arbitrary drag MIME types only to same-origin pages.
+    // The descriptor is intentionally non-secret and still requires the
+    // destination Panel to authenticate to the paired source node.
+    dataTransfer.setData('text/plain', CROSS_PANEL_FILES_TEXT_PREFIX + batchDescriptor)
     if (crossPanelEntries.length === 1) {
       const crossPanelEntry = crossPanelEntries[0]!
       dataTransfer.setData(CROSS_PANEL_FILE_DRAG_TYPE, JSON.stringify({
@@ -168,14 +179,17 @@ export function beginDesktopFileDrag(
         resourceVersion: crossPanelEntry.resourceVersion,
       } satisfies CrossPanelFileDragEntry))
     }
+  } else {
+    dataTransfer.setData('text/plain', supported.length === 1 ? supported[0]!.name : `${supported.length} 个项目`)
   }
-  dataTransfer.setData('text/plain', supported.length === 1 ? supported[0]!.name : `${supported.length} 个项目`)
   return true
 }
 
 export function hasCrossPanelFileDrag(event: DragEvent): boolean {
   const types = Array.from(event.dataTransfer?.types || [])
-  return types.includes(CROSS_PANEL_FILES_DRAG_TYPE) || types.includes(CROSS_PANEL_FILE_DRAG_TYPE)
+  return types.includes(CROSS_PANEL_FILES_DRAG_TYPE)
+    || types.includes(CROSS_PANEL_FILE_DRAG_TYPE)
+    || (!types.includes('Files') && types.includes('text/plain'))
 }
 
 function validCrossPanelDragItem(value: unknown): value is CrossPanelFileDragItem {
@@ -195,7 +209,13 @@ function validCrossPanelDragItem(value: unknown): value is CrossPanelFileDragIte
 }
 
 export function crossPanelFileDragEntries(event: DragEvent): CrossPanelFileDragPayload | undefined {
-  const rawBatch = event.dataTransfer?.getData(CROSS_PANEL_FILES_DRAG_TYPE)
+  const customBatch = event.dataTransfer?.getData(CROSS_PANEL_FILES_DRAG_TYPE)
+  const textFallback = event.dataTransfer?.getData('text/plain') || ''
+  const rawBatch = customBatch || (
+    textFallback.startsWith(CROSS_PANEL_FILES_TEXT_PREFIX)
+      ? textFallback.slice(CROSS_PANEL_FILES_TEXT_PREFIX.length)
+      : ''
+  )
   if (rawBatch && rawBatch.length <= 512 * 1024) {
     try {
       const value: unknown = JSON.parse(rawBatch)
@@ -261,6 +281,12 @@ export function desktopFileDragEntries(event: DragEvent): DesktopFileEntry[] {
   const token = event.dataTransfer?.getData(DESKTOP_FILE_DRAG_TYPE)
   if (!activeDrag || !token || token !== activeDrag.token) return []
   return activeDrag.entries.map((entry) => ({ ...entry }))
+}
+
+export function desktopFileDragOrigin(event: DragEvent): DesktopFileDragOrigin | undefined {
+  const token = event.dataTransfer?.getData(DESKTOP_FILE_DRAG_TYPE)
+  if (!activeDrag || !token || token !== activeDrag.token) return undefined
+  return activeDrag.origin
 }
 
 /** Drag data is protected before drop in some browsers, so hover uses only the active in-memory payload. */

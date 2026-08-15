@@ -319,6 +319,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.fileList)
 	case r.URL.Path == "/v1/files/entry":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.fileEntry)
+	case r.URL.Path == "/v1/files/entries":
+		s.requireMethod(w, r, requestID, http.MethodPost, s.fileEntries)
 	case r.URL.Path == "/v1/files/trash":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.fileTrashList)
 	case r.URL.Path == "/v1/files/content":

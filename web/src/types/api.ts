@@ -1613,6 +1613,11 @@ export interface FileEntry {
   previewable: boolean
 }
 
+export interface FileEntryBatchResult {
+  entries: FileEntry[]
+  unavailable: string[]
+}
+
 export interface FileDirectory {
   path: string
   entries: FileEntry[]

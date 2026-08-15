@@ -50,6 +50,7 @@ import {
   beginDesktopFileDrag,
   clearDesktopFileDrag,
   crossPanelFileDragEntries,
+  desktopFileDragOrigin,
   desktopFileDragEntries,
   DesktopShortcutLimitError,
   hasCrossPanelFileDrag,
@@ -641,6 +642,11 @@ function updateInternalDropTarget(event: DragEvent, target: string): boolean {
     return true
   }
   if (!hasDesktopFileDrag(event)) return false
+  if (desktopFileDragOrigin(event) === 'desktop-shortcut') {
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'
+    clearInternalDropTarget()
+    return false
+  }
   const entries = peekDesktopFileDragEntries(event)
   const operation = fileTransferOperation(event)
   const invalid = fileTransferTargetError(entries, target)
@@ -761,6 +767,10 @@ async function transferCrossPanelFileDrop(event: DragEvent, target: string): Pro
     toast.danger('跨面板复制失败', '拖拽数据无效或超过 64 项，请从来源 KPanel 重新拖动。')
     return
   }
+  if (payload.sourceNodeId === localClusterNodeId.value) {
+    toast.show('来源和目标是同一个 KPanel', { message: '请在文件管理器中使用复制或移动。' })
+    return
+  }
   if (fileTransferState.value?.phase === 'running') {
     toast.show('已有文件操作正在进行')
     return
@@ -822,6 +832,10 @@ function onEntryDrop(event: DragEvent, entry: FileEntry): void {
   if (entry.kind !== 'directory' || (!hasDesktopFileDrag(event) && !hasCrossPanelFileDrag(event))) return
   event.preventDefault()
   event.stopPropagation()
+  if (hasDesktopFileDrag(event) && desktopFileDragOrigin(event) === 'desktop-shortcut') {
+    clearInternalDropTarget()
+    return
+  }
   if (hasDesktopFileDrag(event)) void transferInternalFileDrop(event, entry.path)
   else void transferCrossPanelFileDrop(event, entry.path)
 }
@@ -1217,6 +1231,10 @@ async function uploadFiles(files: FileList | File[]): Promise<void> {
 function onDrop(event: DragEvent): void {
   dragging.value = false
   if (hasDesktopFileDrag(event)) {
+    if (desktopFileDragOrigin(event) === 'desktop-shortcut') {
+      clearInternalDropTarget()
+      return
+    }
     void transferInternalFileDrop(event, currentPath.value)
     return
   }

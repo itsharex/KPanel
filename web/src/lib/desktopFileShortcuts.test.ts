@@ -9,6 +9,7 @@ import {
   clearDesktopFileDrag,
   crossPanelFileDragEntries,
   crossPanelFileDragEntry,
+  desktopFileDragOrigin,
   desktopFileDragEntries,
   DesktopShortcutLimitError,
   hasCrossPanelFileDrag,
@@ -122,8 +123,17 @@ describe('desktop file shortcuts', () => {
     expect(desktopFileDragEntries(event)).toEqual([{
       name: 'etc', path: '/etc', kind: 'directory', resourceVersion: 'sha256:etc',
     }])
+    expect(desktopFileDragOrigin(event)).toBe('file-manager')
     clearDesktopFileDrag()
     expect(desktopFileDragEntries(event)).toEqual([])
+  })
+
+  it('distinguishes a native desktop shortcut drag from a Files drag', () => {
+    const event = dragEvent()
+    expect(beginDesktopFileDrag(event, [{
+      name: 'app', path: '/app', kind: 'directory', resourceVersion: 'sha256:app',
+    }], 'd'.repeat(32), 'desktop-shortcut')).toBe(true)
+    expect(desktopFileDragOrigin(event)).toBe('desktop-shortcut')
   })
 
   it('serializes one versioned cross-panel descriptor without an authorization secret', () => {
@@ -163,6 +173,26 @@ describe('desktop file shortcuts', () => {
       ],
     })
     expect(event.dataTransfer?.getData('application/x-kpanel-cross-panel-file-v1')).toBe('')
+  })
+
+  it('reads the non-secret text fallback when a cross-origin browser strips custom MIME types', () => {
+    const source = dragEvent()
+    beginDesktopFileDrag(source, [{
+      name: 'app', path: '/app', kind: 'directory', resourceVersion: 'sha256:app',
+    }], 'e'.repeat(32), 'desktop-shortcut')
+    const textPayload = source.dataTransfer!.getData('text/plain')
+    const target = {
+      dataTransfer: {
+        types: ['text/plain'],
+        getData: (type: string) => type === 'text/plain' ? textPayload : '',
+      },
+    } as unknown as DragEvent
+
+    expect(hasCrossPanelFileDrag(target)).toBe(true)
+    expect(crossPanelFileDragEntries(target)).toEqual({
+      sourceNodeId: 'e'.repeat(32),
+      entries: [{ name: 'app', path: '/app', kind: 'directory', resourceVersion: 'sha256:app' }],
+    })
   })
 
   it('advertises an over-limit drag so the target can reject it explicitly', () => {

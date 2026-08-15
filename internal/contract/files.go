@@ -2,6 +2,8 @@ package contract
 
 import "time"
 
+const MaxFileEntryBatch = 64
+
 type FileEntry struct {
 	Name            string    `json:"name"`
 	Path            string    `json:"path"`
@@ -27,6 +29,15 @@ type FileDirectory struct {
 	Truncated     bool        `json:"truncated"`
 	ScanTruncated bool        `json:"scanTruncated,omitempty"`
 	ReadAt        time.Time   `json:"readAt"`
+}
+
+type FileEntryBatchRequest struct {
+	Paths []string `json:"paths"`
+}
+
+type FileEntryBatchResult struct {
+	Entries     []FileEntry `json:"entries"`
+	Unavailable []string    `json:"unavailable"`
 }
 
 type FileActionRequest struct {

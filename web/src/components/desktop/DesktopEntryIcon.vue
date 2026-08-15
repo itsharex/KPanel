@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { Globe2 } from '@lucide/vue'
+import { Copy, Globe2, LoaderCircle } from '@lucide/vue'
 import type { DesktopEntry } from '@/lib/desktopEntries'
 
 /**
@@ -21,6 +21,8 @@ const props = defineProps<{
   selected?: boolean
   order?: number
   dragging?: boolean
+  transferHint?: string
+  transferReady?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -57,7 +59,8 @@ watch(
 const monogram = computed(() => props.label.trim().slice(0, 1).toLocaleUpperCase() || 'K')
 const accessibleLabel = computed(() => {
   const domain = props.entry?.kind === 'site' ? props.entry.site?.primaryDomain : undefined
-  return domain && domain !== props.label ? `${props.label} · ${domain}` : props.label
+  const label = domain && domain !== props.label ? `${props.label} · ${domain}` : props.label
+  return props.transferHint ? `${label} · ${props.transferHint}` : label
 })
 
 function isCoarseInput(): boolean {
@@ -264,5 +267,15 @@ onBeforeUnmount(clearLongPress)
       <span v-else class="desktop__icon-monogram" aria-hidden="true">{{ monogram }}</span>
     </span>
     <span class="desktop__icon-label">{{ label }}</span>
+    <span
+      v-if="transferHint"
+      class="desktop__icon-transfer-badge"
+      :class="{ 'desktop__icon-transfer-badge--ready': transferReady }"
+      :title="transferHint"
+      aria-hidden="true"
+    >
+      <Copy v-if="transferReady" :size="11" :stroke-width="2.4" />
+      <LoaderCircle v-else :size="11" :stroke-width="2.4" />
+    </span>
   </button>
 </template>
