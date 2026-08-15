@@ -89,21 +89,52 @@ function comparableFieldText(value) {
   return value.replace(DEFAULT_IGNORABLE_GLOBAL, '').normalize('NFKC').replace(/\p{White_Space}/gu, '');
 }
 
+function suspiciousFieldName(line) {
+  const comparableLine = comparableFieldText(line);
+  return ACCEPTANCE_FIELDS.find((field) => {
+    const fieldName = comparableFieldText(field);
+    const index = comparableLine.indexOf(fieldName);
+    return index >= 0 && /^[:=﹕∶]/u.test(comparableLine.slice(index + fieldName.length));
+  });
+}
+
 const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
 const DEFAULT_IGNORABLE_GLOBAL = /\p{Default_Ignorable_Code_Point}/gu;
+
+function withoutHtmlComments(markdown) {
+  return markdown.replace(/<!--[\s\S]*?(?:-->|$)/g, (comment) => comment.replace(/[^\r\n]/g, ''));
+}
 
 function acceptanceFields(markdown) {
   const fields = new Map();
   const duplicates = new Set();
   const malformed = new Set();
   let defaultIgnorables = false;
-  for (const line of markdown.split(/\r?\n/)) {
-    const bullet = line.match(/^(?:(?:\p{White_Space}|\p{Default_Ignorable_Code_Point})*)-\s*(.*)$/u)?.[1];
-    if (bullet === undefined) continue;
+  let fence = null;
+  for (const line of withoutHtmlComments(markdown).split(/\r?\n/)) {
+    if (fence !== null) {
+      const closingFence = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/)?.[1];
+      if (closingFence?.[0] === fence.character && closingFence.length >= fence.length) fence = null;
+      continue;
+    }
+    const openingFence = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (openingFence && !(openingFence[1][0] === '`' && openingFence[2].includes('`'))) {
+      fence = { character: openingFence[1][0], length: openingFence[1].length };
+      continue;
+    }
+
+    const visibleBullet = line.match(/^ {0,3}-[ \t]+(.*)$/)?.[1];
+    const suspiciousField = suspiciousFieldName(line);
+    if (suspiciousField && DEFAULT_IGNORABLE.test(line)) defaultIgnorables = true;
+    if (visibleBullet === undefined) {
+      if (suspiciousField) malformed.add(normalizedFieldName(suspiciousField));
+      continue;
+    }
+
+    const bullet = visibleBullet;
     const canonicalBullet = comparableFieldText(bullet);
     const expectedField = ACCEPTANCE_FIELDS.find((field) =>
       canonicalBullet.startsWith(comparableFieldText(field)));
-    if (expectedField && DEFAULT_IGNORABLE.test(line)) defaultIgnorables = true;
     const match = bullet.match(/^([^：:]+)[：:]\s*(.*)$/);
     if (match) {
       const field = normalizedFieldName(match[1]);

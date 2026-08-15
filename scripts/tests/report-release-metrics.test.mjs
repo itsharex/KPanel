@@ -161,6 +161,29 @@ test('acceptance validation requires machine-readable delivery evidence', () => 
     assert.match(prefixedDuplicate.join('\n'), /duplicate structured field|default-ignorable characters/, JSON.stringify(prefix));
   }
 
+  for (const prefix of ['    ', '\t', '\u00a0', '\u3000']) {
+    const hiddenAsCodeOrText = valid.replace(/^- /gm, prefix + '- ');
+    assert.equal(validateAcceptanceMetrics(hiddenAsCodeOrText).filter((error) => error.includes('missing structured field')).length, 6);
+    const invalidPrefixedDuplicate = valid.replace(
+      '- 是否回滚、紧急热修复或重复发布：否',
+      '- 是否回滚、紧急热修复或重复发布：否\n' + prefix + '- 是否回滚、紧急热修复或重复发布：是（已回滚）',
+    );
+    assert.match(validateAcceptanceMetrics(invalidPrefixedDuplicate).join('\n'), /malformed structured field/);
+  }
+
+  for (const hidden of ['```text\n' + valid + '\n```', '<!--\n' + valid + '\n-->']) {
+    assert.equal(validateAcceptanceMetrics(hidden).filter((error) => error.includes('missing structured field')).length, 6);
+  }
+
+  const examplesDoNotOverrideVisibleEvidence = valid + '\n```text\n- 是否回滚、紧急热修复或重复发布：是（已回滚）\n```' +
+    '\n<!-- - 若发生失败，发现时间、恢复时间和逃逸门禁：伪造值 -->';
+  assert.deepEqual(validateAcceptanceMetrics(examplesDoNotOverrideVisibleEvidence), []);
+
+  const fenceInfoIsNotAClosingFence = '```text\n```not-a-close\n' + valid + '\n```';
+  assert.equal(validateAcceptanceMetrics(fenceInfoIsNotAClosingFence).filter(
+    (error) => error.includes('missing structured field'),
+  ).length, 6);
+
   const looseDate = validateAcceptanceMetrics(valid.replace(
     '2026-08-15T11:21:11+08:00',
     'August 15, 2026 11:21:11 GMT+0800',
