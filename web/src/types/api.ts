@@ -215,6 +215,49 @@ export interface ClusterHostList {
   nodeId: string
 }
 
+export interface ClusterShareSettings {
+	enabled: boolean
+	title: string
+	description: string
+	sharePath?: string
+	resourceVersion: string
+	updatedAt?: string
+}
+
+export type PublicClusterShareHostState = 'online' | 'degraded' | 'offline' | 'pending'
+
+export interface PublicClusterShareHost {
+	id: string
+	name: string
+	state: PublicClusterShareHostState
+	os?: string
+	architecture?: string
+	uptimeSeconds?: number
+	load: { one: number; five: number; fifteen: number }
+	cpu: { cores: number; usagePercent: number }
+	memory: { totalBytes: number; usedBytes: number; usagePercent: number }
+	disk: { totalBytes: number; usedBytes: number; usagePercent: number }
+	network: { receiveBytesPerSecond: number; transmitBytesPerSecond: number }
+	location: {
+		isp?: string
+		country?: string
+		countryCode?: string
+		region?: string
+		city?: string
+	}
+	collectedAt?: string
+}
+
+export interface PublicClusterShareSnapshot {
+	title: string
+	description?: string
+	generatedAt: string
+	total: number
+	online: number
+	attention: number
+	items: PublicClusterShareHost[]
+}
+
 export interface ClusterPairingCode {
   code: string
   scope:

@@ -8,6 +8,7 @@ import type {
   ClusterHostList,
   ClusterLightEnrollment,
   ClusterPairingCode,
+  ClusterShareSettings,
 } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
@@ -21,6 +22,9 @@ const mocks = vi.hoisted(() => ({
   createLightEnrollment: vi.fn(),
   controllers: vi.fn(),
   revokeController: vi.fn(),
+  shareSettings: vi.fn(),
+  updateShare: vi.fn(),
+  resetShareToken: vi.fn(),
   open: vi.fn(),
   confirm: vi.fn(),
   toastSuccess: vi.fn(),
@@ -54,6 +58,9 @@ vi.mock('@/lib/api', () => ({
       createLightEnrollment: mocks.createLightEnrollment,
       controllers: mocks.controllers,
       revokeController: mocks.revokeController,
+      shareSettings: mocks.shareSettings,
+      updateShare: mocks.updateShare,
+      resetShareToken: mocks.resetShareToken,
     },
   },
 }))
@@ -77,6 +84,10 @@ interface ClusterBindings {
   hostOrder: Ref<string[]>
   accessOpen: Ref<boolean>
   manageOpen: Ref<boolean>
+  shareOpen: Ref<boolean>
+  shareSettings: Ref<ClusterShareSettings | undefined>
+  shareURL: ComputedRef<string>
+  shareForm: { enabled: boolean; title: string; description: string }
   selected: Ref<ClusterHost | undefined>
   pairingCode: Ref<ClusterPairingCode | undefined>
   lightEnrollment: Ref<ClusterLightEnrollment | undefined>
@@ -91,6 +102,10 @@ interface ClusterBindings {
   copyAccessCredential: () => Promise<void>
   createLightEnrollment: () => Promise<void>
   copyLightEnrollment: () => Promise<void>
+  openShare: () => Promise<void>
+  saveShare: () => Promise<void>
+  resetShareLink: () => Promise<void>
+  copyShareLink: () => Promise<void>
   formatClusterAccessCredential: (origin: string, pairingCode: string) => string
   parseClusterAccessCredential: (
     raw: string,
@@ -533,8 +548,51 @@ describe('ClusterView inventory and navigation', () => {
     )
     expect(mocks.toastSuccess).not.toHaveBeenCalledWith(
       '主机已加入集群',
-      expect.stringContaining('已完成只读配对'),
+      expect.stringContaining('已完成安全配对'),
     )
+  })
+
+  it('enables, copies, and rotates the anonymous public share link', async () => {
+    const view = setupView()
+    const initial: ClusterShareSettings = {
+      enabled: false,
+      title: 'My fleet',
+      description: 'Public status',
+      resourceVersion: 'share-v1',
+    }
+    const enabled: ClusterShareSettings = {
+      ...initial,
+      enabled: true,
+      sharePath: `/share/${'a'.repeat(64)}`,
+      resourceVersion: 'share-v2',
+    }
+    const rotated: ClusterShareSettings = {
+      ...enabled,
+      sharePath: `/share/${'b'.repeat(64)}`,
+      resourceVersion: 'share-v3',
+    }
+    mocks.shareSettings.mockResolvedValueOnce(initial)
+    mocks.updateShare.mockResolvedValueOnce(enabled)
+    mocks.resetShareToken.mockResolvedValueOnce(rotated)
+
+    await view.openShare()
+    expect(view.shareOpen.value).toBe(true)
+    view.shareForm.enabled = true
+    await view.saveShare()
+
+    expect(mocks.updateShare).toHaveBeenCalledWith({
+      enabled: true,
+      title: 'My fleet',
+      description: 'Public status',
+      expectedResourceVersion: 'share-v1',
+    })
+    expect(view.shareURL.value).toBe(`https://center.example.com/share/${'a'.repeat(64)}`)
+    await view.copyShareLink()
+    expect(mocks.clipboardWriteText).toHaveBeenCalledWith(view.shareURL.value)
+
+    await view.resetShareLink()
+    expect(mocks.resetShareToken).toHaveBeenCalledWith('share-v2')
+    expect(view.shareURL.value).toBe(`https://center.example.com/share/${'b'.repeat(64)}`)
   })
 
   it('lets the local node update its display name while keeping removal unavailable', async () => {

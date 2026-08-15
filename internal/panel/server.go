@@ -56,6 +56,10 @@ type Server struct {
 	lastAuthAudit       map[string]time.Time
 	lastGlobalAuthAudit time.Time
 	cluster             *cluster.Service
+	clusterShareMu      sync.Mutex
+	clusterShareCache   clusterShareCacheEntry
+	clusterShareRateMu  sync.Mutex
+	clusterShareRates   map[string]clusterShareRateEntry
 	terminalMu          sync.Mutex
 	terminalSessions    map[string]panelTerminalSession
 	terminalOpening     int
@@ -193,6 +197,12 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleTOTPRecoveryCodes(w, r)
 	case (r.Method == http.MethodGet || r.Method == http.MethodPut) && r.URL.Path == "/api/v1/settings/security-entry":
 		s.handleSecurityEntranceSettings(w, r)
+	case r.URL.Path == "/api/v1/cluster/share":
+		s.handleClusterShareSettings(w, r)
+	case r.URL.Path == "/api/v1/cluster/share/token":
+		s.handleClusterShareTokenReset(w, r)
+	case strings.HasPrefix(r.URL.Path, clusterShareAPIPrefix):
+		s.handlePublicClusterShare(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit":
 		s.handleAudit(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/v1/cluster/"):
@@ -642,7 +652,7 @@ func (s *Server) handleSecurityEntrance(w http.ResponseWriter, r *http.Request) 
 }
 
 func securityEntrancePublicPath(requestPath string) bool {
-	return requestPath == "/api/v1/health" || isFileDownloadTicketPath(requestPath) || isStaticAssetPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/") || strings.HasPrefix(requestPath, "/api/v3/federation/light/")
+	return requestPath == "/api/v1/health" || isFileDownloadTicketPath(requestPath) || isStaticAssetPath(requestPath) || isClusterSharePagePath(requestPath) || isPublicClusterShareAPIPath(requestPath) || strings.HasPrefix(requestPath, "/api/v2/federation/") || strings.HasPrefix(requestPath, "/api/v3/federation/light/")
 }
 
 func isStaticAssetPath(requestPath string) bool {

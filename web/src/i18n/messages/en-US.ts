@@ -26,6 +26,7 @@ export const enUSMessages = {
   'route.monitoring': 'Monitoring history',
   'route.processes': 'Process manager',
   'route.cluster': 'Cluster',
+  'route.clusterShare': 'Cluster status',
   'route.sites': 'Sites',
   'route.environment': 'Sites · Environment',
   'route.apps': 'App marketplace',

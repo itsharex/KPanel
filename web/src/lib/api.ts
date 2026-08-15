@@ -19,6 +19,7 @@ import type {
   ClusterHostList,
   ClusterLightEnrollment,
   ClusterPairingCode,
+  ClusterShareSettings,
   CrossPanelFileTransferEvent,
   CrossPanelFileTransferInput,
   DockerInventory,
@@ -55,6 +56,7 @@ import type {
   PanelSettings,
   ProcessQuery,
   ProcessSnapshot,
+  PublicClusterShareSnapshot,
   SecurityEntranceSettings,
   SetupRequest,
   Site,
@@ -1303,6 +1305,22 @@ export const api = {
   cluster: {
     hosts: (signal?: AbortSignal): Promise<ClusterHostList> =>
       request<ClusterHostList>('/cluster/hosts', { signal }),
+    shareSettings: (signal?: AbortSignal): Promise<ClusterShareSettings> =>
+      request<ClusterShareSettings>('/cluster/share', { signal }),
+    updateShare: (body: {
+      enabled: boolean
+      title: string
+      description: string
+      expectedResourceVersion: string
+    }): Promise<ClusterShareSettings> =>
+      request<ClusterShareSettings>('/cluster/share', { method: 'PUT', body }),
+    resetShareToken: (expectedResourceVersion: string): Promise<ClusterShareSettings> =>
+      request<ClusterShareSettings>('/cluster/share/token', {
+        method: 'POST',
+        body: { expectedResourceVersion },
+      }),
+    publicShare: (token: string, signal?: AbortSignal): Promise<PublicClusterShareSnapshot> =>
+      request<PublicClusterShareSnapshot>(`/public/cluster-share/${encodeURIComponent(token)}`, { signal }),
     host: (id: string, signal?: AbortSignal): Promise<ClusterHost> =>
       request<ClusterHost>(`/cluster/hosts/${encodeURIComponent(id)}`, { signal }),
     add: (body: { name?: string; origin: string; pairingCode: string }): Promise<ClusterHost> =>

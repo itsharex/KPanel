@@ -1440,6 +1440,61 @@ describe('API client', () => {
     })
   })
 
+  it('separates authenticated share settings from the anonymous public snapshot', async () => {
+    const token = 'a'.repeat(64)
+    const settings = {
+      enabled: true,
+      title: 'My fleet',
+      description: 'Public status',
+      sharePath: `/share/${token}`,
+      resourceVersion: 'share-v1',
+    }
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/v1/auth/bootstrap') return jsonResponse({ required: false })
+      if (url === '/api/v1/auth/session') {
+        return jsonResponse({
+          user: { id: 'user-1', username: 'admin', role: 'administrator' },
+          csrfToken: 'share-csrf-secret',
+          expiresAt: '2026-08-15T13:00:00Z',
+        })
+      }
+      if (url.startsWith('/api/v1/public/cluster-share/')) {
+        return jsonResponse({
+          title: settings.title, generatedAt: '2026-08-15T12:00:00Z',
+          total: 0, online: 0, attention: 0, items: [],
+        })
+      }
+      return jsonResponse(settings)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.auth.status()
+    await api.cluster.shareSettings()
+    await api.cluster.updateShare({
+      enabled: true,
+      title: settings.title,
+      description: settings.description,
+      expectedResourceVersion: settings.resourceVersion,
+    })
+    await api.cluster.resetShareToken(settings.resourceVersion)
+    await api.cluster.publicShare(token)
+
+    const calls = fetchMock.mock.calls.slice(2)
+    expect(calls.map(([url]) => url)).toEqual([
+      '/api/v1/cluster/share',
+      '/api/v1/cluster/share',
+      '/api/v1/cluster/share/token',
+      `/api/v1/public/cluster-share/${token}`,
+    ])
+    expect(calls.map(([, init]) => (init as RequestInit).method)).toEqual([
+      'GET', 'PUT', 'POST', 'GET',
+    ])
+    expect(new Headers((calls[1]?.[1] as RequestInit).headers).get('x-csrf-token')).toBe('share-csrf-secret')
+    expect(new Headers((calls[2]?.[1] as RequestInit).headers).get('x-csrf-token')).toBe('share-csrf-secret')
+    expect(new Headers((calls[3]?.[1] as RequestInit).headers).get('x-csrf-token')).toBeNull()
+  })
+
   it('keeps terminal output objects intact instead of treating their data field as an envelope', async () => {
     const sessionID = 'a'.repeat(64)
     const output = {

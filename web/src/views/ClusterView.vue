@@ -17,7 +17,9 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Server,
+  Share2,
   ShieldCheck,
   Trash2,
 } from '@lucide/vue'
@@ -48,6 +50,7 @@ import type {
   ClusterHostList,
   ClusterLightEnrollment,
   ClusterPairingCode,
+  ClusterShareSettings,
 } from '@/types/api'
 
 const toast = useToast()
@@ -61,18 +64,24 @@ const search = ref('')
 const addOpen = ref(false)
 const accessOpen = ref(false)
 const manageOpen = ref(false)
+const shareOpen = ref(false)
 const adding = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
 const generatingCode = ref(false)
 const generatingLightEnrollment = ref(false)
 const controllersLoading = ref(false)
+const shareLoading = ref(false)
+const shareSaving = ref(false)
+const shareResetting = ref(false)
 const pairingCode = ref<ClusterPairingCode>()
 const lightEnrollment = ref<ClusterLightEnrollment>()
 const controllers = ref<ClusterController[]>([])
+const shareSettings = ref<ClusterShareSettings>()
 const selected = ref<ClusterHost>()
 const addAccessInput = ref<HTMLTextAreaElement>()
 const addForm = reactive({ name: '', accessCredential: '' })
+const shareForm = reactive({ enabled: false, title: '', description: '' })
 const editName = ref('')
 const originError = ref('')
 type HostViewMode = 'list' | 'card'
@@ -113,6 +122,11 @@ const panelOrigin = computed(() =>
 const accessCredentialText = computed(() =>
   pairingCode.value && panelOrigin.value
     ? formatClusterAccessCredential(panelOrigin.value, pairingCode.value.code)
+    : '',
+)
+const shareURL = computed(() =>
+  shareSettings.value?.sharePath && typeof window !== 'undefined'
+    ? `${window.location.origin}${shareSettings.value.sharePath}`
     : '',
 )
 
@@ -181,6 +195,7 @@ function friendlyError(reason: unknown, fallback: string): string {
     federation_identity_changed: '目标主机加密身份发生变化，已停止连接；确认服务器未被替换后请重新配对。',
     cluster_remote_unreachable: '暂时无法连接目标 KPanel，请检查域名、证书和网络。',
     cluster_resource_changed: '主机信息已变化，请刷新后重试。',
+    cluster_share_changed: '分享设置已在其他页面变化，请重新打开后再保存。',
   }
   return messages[reason.code] || reason.message || fallback
 }
@@ -357,7 +372,7 @@ async function addHost(): Promise<void> {
       '主机已加入集群',
       host.state === 'pairing'
         ? `${host.name} 的安全配对正在后台继续。`
-        : `${host.name} 已完成只读配对。`,
+        : `${host.name} 已完成安全配对。`,
     )
     await load(true)
   } catch (reason) {
@@ -438,6 +453,75 @@ async function copyAccessCredential(): Promise<void> {
     '接入凭据已复制',
     '请手动选择完整接入凭据复制。',
   )
+}
+
+async function openShare(): Promise<void> {
+  shareOpen.value = true
+  shareLoading.value = true
+  try {
+    const settings = await api.cluster.shareSettings()
+    applyShareSettings(settings)
+  } catch (reason) {
+    toast.danger('分享设置读取失败', friendlyError(reason, '请稍后重试。'))
+    shareOpen.value = false
+  } finally {
+    shareLoading.value = false
+  }
+}
+
+function closeShare(): void {
+  if (shareSaving.value || shareResetting.value) return
+  shareOpen.value = false
+}
+
+function applyShareSettings(settings: ClusterShareSettings): void {
+  shareSettings.value = settings
+  shareForm.enabled = settings.enabled
+  shareForm.title = settings.title
+  shareForm.description = settings.description
+}
+
+async function saveShare(): Promise<void> {
+  if (!shareSettings.value || shareSaving.value) return
+  shareSaving.value = true
+  try {
+    const settings = await api.cluster.updateShare({
+      enabled: shareForm.enabled,
+      title: shareForm.title,
+      description: shareForm.description,
+      expectedResourceVersion: shareSettings.value.resourceVersion,
+    })
+    applyShareSettings(settings)
+    toast.success(settings.enabled ? '公开分享已开启' : '公开分享已关闭')
+  } catch (reason) {
+    toast.danger('分享设置保存失败', friendlyError(reason, '请稍后重试。'))
+  } finally {
+    shareSaving.value = false
+  }
+}
+
+async function resetShareLink(): Promise<void> {
+  if (!shareSettings.value || shareResetting.value) return
+  if (!window.confirm('重置公开链接？旧链接会立即失效。')) return
+  shareResetting.value = true
+  try {
+    const settings = await api.cluster.resetShareToken(shareSettings.value.resourceVersion)
+    applyShareSettings(settings)
+    toast.success('公开链接已重置', '旧链接已经失效。')
+  } catch (reason) {
+    toast.danger('公开链接重置失败', friendlyError(reason, '请稍后重试。'))
+  } finally {
+    shareResetting.value = false
+  }
+}
+
+async function copyShareLink(): Promise<void> {
+  if (!shareURL.value) return
+  await copyToClipboard(shareURL.value, '公开链接已复制', '请手动选择完整链接复制。')
+}
+
+function previewShare(): void {
+  if (shareURL.value) window.open(shareURL.value, '_blank', 'noopener,noreferrer')
 }
 
 async function copyToClipboard(value: string, success: string, fallback: string): Promise<void> {
@@ -590,7 +674,7 @@ function finishHostDrag(): void {
 }
 
 async function revokeController(controller: ClusterController): Promise<void> {
-  if (!window.confirm(`撤销 ${controller.name || controller.fingerprint} 的只读访问授权？`)) return
+  if (!window.confirm(`撤销 ${controller.name || controller.fingerprint} 的访问授权？`)) return
   try {
     await api.cluster.revokeController(controller.id)
     controllers.value = controllers.value.filter((item) => item.id !== controller.id)
@@ -796,6 +880,9 @@ onBeforeUnmount(() => {
         </button>
         <button class="button button--secondary button--small" type="button" @click="openAccess">
           <KeyRound :size="15" /> 接入授权
+        </button>
+        <button class="button button--secondary button--small" type="button" @click="openShare">
+          <Share2 :size="15" /> 公开分享
         </button>
         <button class="button button--primary button--small" type="button" @click="openAdd">
           <Plus :size="15" /> 添加主机
@@ -1073,6 +1160,85 @@ onBeforeUnmount(() => {
     </section>
 
     <ModalDialog
+      :open="shareOpen"
+      title="公开分享"
+      description="生成匿名只读页面，向其他人展示当前集群的机器状态。"
+      size="medium"
+      @close="closeShare"
+    >
+      <LoadingState v-if="shareLoading" title="正在读取分享设置…" />
+      <form v-else id="cluster-share-form" class="cluster-share" @submit.prevent="saveShare">
+        <label class="cluster-share__switch">
+          <span>
+            <strong>启用公开分享</strong>
+            <small>默认关闭；关闭后现有链接立即返回 404。</small>
+          </span>
+          <input v-model="shareForm.enabled" type="checkbox" role="switch" />
+        </label>
+
+        <label class="field">
+          展示标题
+          <input v-model="shareForm.title" maxlength="80" placeholder="我的 KPanel 集群" />
+        </label>
+        <label class="field">
+          一句话介绍（可选）
+          <input
+            v-model="shareForm.description"
+            maxlength="240"
+            placeholder="例如：这些是我正在运行的服务器。"
+          />
+        </label>
+
+        <section class="cluster-share__privacy">
+          <ShieldCheck :size="19" />
+          <span>
+            <strong>公开字段经过白名单过滤</strong>
+            <small>仅展示名称、状态、地区、系统和资源使用情况；不公开 IP、面板地址、节点 ID、身份指纹、错误详情、版本或管理入口。</small>
+          </span>
+        </section>
+
+        <section v-if="shareURL" class="cluster-share__link">
+          <span>
+            <strong>{{ shareSettings?.enabled ? '当前公开链接' : '已暂停的公开链接' }}</strong>
+            <small>{{ shareSettings?.enabled ? '任何获得链接的人都可以查看。' : '保存并开启后，此链接恢复访问。' }}</small>
+          </span>
+          <pre>{{ shareURL }}</pre>
+          <div>
+            <button class="button button--secondary button--small" type="button" @click="copyShareLink">
+              <Copy :size="14" /> 复制链接
+            </button>
+            <button class="button button--secondary button--small" type="button" @click="previewShare">
+              <ArrowUpRight :size="14" /> 预览
+            </button>
+            <button
+              class="button button--ghost button--small"
+              type="button"
+              :disabled="shareResetting"
+              @click="resetShareLink"
+            >
+              <LoaderCircle v-if="shareResetting" class="spin" :size="14" />
+              <RotateCcw v-else :size="14" /> 重置链接
+            </button>
+          </div>
+        </section>
+        <p v-else class="cluster-share__hint">首次开启并保存后生成随机公开链接。</p>
+      </form>
+      <template #footer>
+        <button class="button button--secondary" type="button" :disabled="shareSaving" @click="closeShare">取消</button>
+        <button
+          class="button button--primary"
+          type="submit"
+          form="cluster-share-form"
+          :disabled="shareLoading || shareSaving"
+        >
+          <LoaderCircle v-if="shareSaving" class="spin" :size="16" />
+          <Share2 v-else :size="16" />
+          {{ shareSaving ? '正在保存…' : '保存分享设置' }}
+        </button>
+      </template>
+    </ModalDialog>
+
+    <ModalDialog
       :open="addOpen"
       title="添加 KPanel 主机"
       description="在目标 KPanel 的“集群 → 接入授权”复制接入凭据，然后在此整段粘贴。"
@@ -1195,7 +1361,7 @@ onBeforeUnmount(() => {
     <ModalDialog
       :open="accessOpen"
       title="本机接入授权"
-      description="本机可以同时被其他 KPanel 只读监控；授权可随时撤销。"
+      description="其他 KPanel 可按授权范围读取摘要、打开终端和浏览文件；授权可随时撤销。"
       size="medium"
       @close="closeAccess"
     >
@@ -1205,7 +1371,7 @@ onBeforeUnmount(() => {
             <KeyRound :size="20" />
             <span>
               <strong>本机接入凭据</strong>
-              <small>同时包含当前主机 URL 与一次性授权码；5 分钟内只能使用一次，权限固定为只读主机摘要。</small>
+              <small>同时包含当前主机 URL 与一次性授权码；5 分钟内只能使用一次，权限包含摘要读取、终端和文件只读访问。</small>
             </span>
           </div>
           <button
@@ -2011,6 +2177,97 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
+.cluster-share {
+  display: grid;
+  gap: 15px;
+}
+
+.cluster-share__switch,
+.cluster-share__privacy,
+.cluster-share__link > span {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.cluster-share__switch {
+  align-items: center;
+  padding: 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.cluster-share__switch > span,
+.cluster-share__privacy > span,
+.cluster-share__link > span {
+  display: grid;
+  gap: 4px;
+}
+
+.cluster-share__switch small,
+.cluster-share__privacy small,
+.cluster-share__link small,
+.cluster-share__hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.cluster-share__switch input {
+  width: 38px;
+  height: 21px;
+  flex: 0 0 auto;
+  accent-color: var(--brand);
+}
+
+.cluster-share__privacy {
+  justify-content: flex-start;
+  padding: 13px;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--success) 18%, var(--border));
+  border-radius: var(--radius-sm);
+}
+
+.cluster-share__privacy small {
+  color: var(--text-soft);
+}
+
+.cluster-share__link {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.cluster-share__link pre {
+  padding: 10px;
+  margin: 0;
+  overflow: auto;
+  color: var(--brand);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.cluster-share__link > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.cluster-share__hint {
+  margin: 0;
+  text-align: center;
+}
+
 @media (max-width: 1240px) {
   .cluster-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2065,7 +2322,7 @@ onBeforeUnmount(() => {
 
   .cluster-hero__actions {
     display: grid;
-    grid-template-columns: 42px repeat(2, minmax(0, 1fr));
+    grid-template-columns: 42px repeat(3, minmax(0, 1fr));
     width: 100%;
     gap: 6px;
   }
