@@ -214,9 +214,20 @@ test('acceptance validation keeps known failure state when historical completion
     '- 生产完成时间：未记录',
     '- 提交到生产用时：未记录',
     '- 是否回滚、紧急热修复或重复发布：是',
-    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：候选冻结后缺少回归',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：已逃逸：候选冻结后缺少回归',
   ].join('\n'));
   assert.deepEqual(failedWithDetails, []);
+
+  const caughtByGate = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：是',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：未逃逸：发布后健康检查阻断并回滚',
+  ].join('\n'));
+  assert.deepEqual(caughtByGate, []);
 
   const unknownDetails = validateAcceptanceMetrics([
     '## 交付节奏数据',
@@ -239,6 +250,30 @@ test('acceptance validation keeps known failure state when historical completion
     '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T13:00:00+08:00；恢复时间：2026-08-15T12:30:00+08:00；逃逸门禁：候选冻结后缺少回归',
   ].join('\n'));
   assert.match(reversedRecovery.join('\n'), /requires discovery, recovery/);
+
+  for (const placeholder of ['待确认', '待分析', '待进一步调查', '无', '无缺口', 'TBD', 'TODO', 'none', 'null', 'unknown', 'N/A', '<具体缺口>']) {
+    const placeholderGate = validateAcceptanceMetrics([
+      '## 交付节奏数据',
+      '- 首个纳入提交时间：未记录',
+      '- 候选冻结时间：未记录',
+      '- 生产完成时间：未记录',
+      '- 提交到生产用时：未记录',
+      '- 是否回滚、紧急热修复或重复发布：是',
+      '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：已逃逸：' + placeholder,
+    ].join('\n'));
+    assert.match(placeholderGate.join('\n'), /requires discovery, recovery/, placeholder);
+  }
+
+  const missingGateState = validateAcceptanceMetrics([
+    '## 交付节奏数据',
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：是',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：候选冻结后缺少回归',
+  ].join('\n'));
+  assert.match(missingGateState.join('\n'), /requires discovery, recovery/);
 
   const keywordsWithoutStructure = validateAcceptanceMetrics([
     '## 交付节奏数据',

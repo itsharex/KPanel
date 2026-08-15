@@ -136,7 +136,12 @@ function hasFailureRecoveryDetails(value) {
   const discoveredAt = detail('发现时间');
   const recoveredAt = detail('恢复时间');
   const escapedGate = detail('逃逸门禁');
-  return validDate(discoveredAt) && validDate(recoveredAt) && escapedGate !== null &&
+  const escapedGateMatch = escapedGate?.match(/^(?:已逃逸|未逃逸)\s*[：:]\s*(.+)$/);
+  const escapedGateDetail = validValue(escapedGateMatch?.[1]);
+  const escapedGatePlaceholder = /^(?:无|无(?:缺口|门禁|异常|问题)|待.*|tbd|todo|none|null|unknown|n\.?a\.?|not applicable|<?具体(?:缺口|原因)>?)$/i;
+  const concreteEscapedGate = escapedGateDetail !== null && escapedGateDetail.length >= 4 &&
+    !escapedGatePlaceholder.test(escapedGateDetail);
+  return validDate(discoveredAt) && validDate(recoveredAt) && concreteEscapedGate &&
     Date.parse(recoveredAt) >= Date.parse(discoveredAt);
 }
 
