@@ -306,6 +306,10 @@ test('acceptance validation keeps known failure state when historical completion
     '已逃逸：T\u200bB\u200bD',
     '已逃逸：仍待\u200b确认',
     '已逃逸：〈具体缺口〉',
+    '已逃逸：T\uFE0FB\uFE0FD',
+    '已逃逸：T\u034FB\u034FD',
+    '已逃逸：T\u180BB\u180BD',
+    '已逃逸：仍待\uFE0F确认',
   ];
   for (const gate of adversarialGateValues) {
     const adversarial = validateAcceptanceMetrics([
@@ -317,7 +321,7 @@ test('acceptance validation keeps known failure state when historical completion
       '- 是否回滚、紧急热修复或重复发布：是',
       '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：' + gate,
     ].join('\n'));
-    assert.match(adversarial.join('\n'), /requires discovery, recovery|format-control characters/, gate);
+    assert.match(adversarial.join('\n'), /requires discovery, recovery|default-ignorable characters/, gate);
   }
 
   const equalsSeparators = validateAcceptanceMetrics([
@@ -353,7 +357,21 @@ test('acceptance validation keeps known failure state when historical completion
     '- 是否回滚、紧急热修复或重复\u200b发布：否',
     '- 若发生失败，发现时间、恢复时间和逃逸门禁：发现时间：2026-08-15T10:05:00+08:00；恢复时间：2026-08-15T10:20:00+08:00；逃逸门禁：已逃逸：候选冻结后缺少回归',
   ].join('\n'));
-  assert.match(hiddenDuplicateKey.join('\n'), /format-control characters/);
+  assert.match(hiddenDuplicateKey.join('\n'), /default-ignorable characters/);
+
+  for (const separator of ['=', '＝', '﹕', '∶']) {
+    const hiddenConflictingField = validateAcceptanceMetrics([
+      '## 交付节奏数据',
+      '- 首个纳入提交时间：未记录',
+      '- 候选冻结时间：未记录',
+      '- 生产完成时间：未记录',
+      '- 提交到生产用时：未记录',
+      '- 是否回滚、紧急热修复或重复发布：否',
+      '- 是否回滚、紧急热修复或重复发布' + separator + '是（已回滚）',
+      '- 若发生失败，发现时间、恢复时间和逃逸门禁：不适用',
+    ].join('\n'));
+    assert.match(hiddenConflictingField.join('\n'), /malformed structured field/, separator);
+  }
 
   const keywordsWithoutStructure = validateAcceptanceMetrics([
     '## 交付节奏数据',

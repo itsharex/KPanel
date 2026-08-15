@@ -85,20 +85,38 @@ function normalizedFieldName(value) {
   return value.trim().normalize('NFKC');
 }
 
+function comparableFieldText(value) {
+  return value.replace(DEFAULT_IGNORABLE_GLOBAL, '').normalize('NFKC').replace(/\p{White_Space}/gu, '');
+}
+
+const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
+const DEFAULT_IGNORABLE_GLOBAL = /\p{Default_Ignorable_Code_Point}/gu;
+
 function acceptanceFields(markdown) {
   const fields = new Map();
   const duplicates = new Set();
-  let formatControls = false;
+  const malformed = new Set();
+  let defaultIgnorables = false;
   for (const line of markdown.split(/\r?\n/)) {
+    const bullet = line.match(/^-\s*(.*)$/)?.[1];
+    if (bullet === undefined) continue;
+    const canonicalBullet = comparableFieldText(bullet);
+    const expectedField = ACCEPTANCE_FIELDS.find((field) =>
+      canonicalBullet.startsWith(comparableFieldText(field)));
+    if (expectedField && DEFAULT_IGNORABLE.test(bullet)) defaultIgnorables = true;
     const match = line.match(/^-\s*([^：:]+)[：:]\s*(.*)$/);
     if (match) {
-      if (/\p{Cf}/u.test(line)) formatControls = true;
       const field = normalizedFieldName(match[1]);
       if (fields.has(field)) duplicates.add(field);
       fields.set(field, match[2].trim());
+      if (expectedField && field !== normalizedFieldName(expectedField)) {
+        malformed.add(normalizedFieldName(expectedField));
+      }
+    } else if (expectedField) {
+      malformed.add(normalizedFieldName(expectedField));
     }
   }
-  return { fields, duplicates, formatControls };
+  return { fields, duplicates, malformed, defaultIgnorables };
 }
 
 export function extractAcceptanceMetrics(markdown) {
@@ -141,7 +159,7 @@ function validDate(value) {
 }
 
 function hasFailureRecoveryDetails(value) {
-  if (value === null || /\p{Cf}/u.test(value)) return false;
+  if (value === null || DEFAULT_IGNORABLE.test(value)) return false;
   const normalizedValue = value.normalize('NFKC');
   const segments = normalizedValue.split(';').map((segment) => segment.trim());
   if (segments.length !== 3) return false;
@@ -164,14 +182,15 @@ function hasFailureRecoveryDetails(value) {
 
 export function validateAcceptanceMetrics(markdown, label = 'acceptance record') {
   const errors = [];
-  const { fields, duplicates, formatControls } = acceptanceFields(markdown);
-  if (formatControls) {
-    errors.push(label + ': structured acceptance evidence must not contain format-control characters');
+  const { fields, duplicates, malformed, defaultIgnorables } = acceptanceFields(markdown);
+  if (defaultIgnorables) {
+    errors.push(label + ': structured acceptance evidence must not contain default-ignorable characters');
   }
   for (const field of ACCEPTANCE_FIELDS) {
     const normalizedField = normalizedFieldName(field);
     if (!fields.has(normalizedField)) errors.push(label + ': missing structured field "' + field + '"');
     if (duplicates.has(normalizedField)) errors.push(label + ': duplicate structured field "' + field + '"');
+    if (malformed.has(normalizedField)) errors.push(label + ': malformed structured field "' + field + '"');
   }
   if (errors.length > 0) return errors;
 
