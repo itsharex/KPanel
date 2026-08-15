@@ -145,6 +145,8 @@ describe('AppsView catalog filtering performance', () => {
   it('keeps the compact inventory summary visually distinct', () => {
     const source = readFileSync(new URL('./AppsView.vue', import.meta.url), 'utf8')
 
+    expect(source).toMatch(/\.app-market\s*\{[^}]*--success:\s*var\(--brand\);/)
+    expect(source).toMatch(/\.app-card\.is-installed\s*\{[^}]*border-color:\s*color-mix\(in srgb, var\(--success\) 72%, var\(--border\)\);/)
     expect(source).toMatch(/\.market-hero\s*\{[^}]*overflow:\s*hidden;[^}]*radial-gradient\([^}]*var\(--market-accent\)/)
     expect(source).toMatch(/\.market-hero\s*\{[^}]*grid-template-columns:\s*max-content minmax\(0, 1fr\);/)
     expect(source).toMatch(/\.market-stats\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(116px, 132px\)\);/)

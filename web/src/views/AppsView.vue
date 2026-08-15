@@ -1607,6 +1607,7 @@ watch(windowActive, syncJobPollingForWindow)
 .app-market {
   --market-accent: #6d5dfc;
   --market-accent-soft: color-mix(in srgb, var(--market-accent) 12%, transparent);
+  --success: var(--brand);
 }
 
 .market-hero {
@@ -1804,7 +1805,7 @@ watch(windowActive, syncJobPollingForWindow)
 }
 
 .app-card.is-installed {
-  border-color: color-mix(in srgb, var(--success) 26%, var(--border));
+  border-color: color-mix(in srgb, var(--success) 72%, var(--border));
 }
 
 .app-card.is-recently-installed {
