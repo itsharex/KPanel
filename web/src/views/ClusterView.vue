@@ -70,6 +70,7 @@ const shareOpen = ref(false)
 const adding = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
+const enablingMutualFiles = ref(false)
 const generatingCode = ref(false)
 const generatingLightEnrollment = ref(false)
 const controllersLoading = ref(false)
@@ -193,7 +194,8 @@ function friendlyError(reason: unknown, fallback: string): string {
     cluster_host_limit: '已达到 100 台主机上限。',
     cluster_remote_tls_error: '目标 KPanel 的 HTTPS 证书校验失败。',
     cluster_remote_authentication_failed: '加密响应校验失败，连接已拒绝。',
-    federation_incompatible: '目标 KPanel 不支持当前加密直连协议，请更新目标面板或改用 HTTPS。',
+    cluster_mutual_files_unsupported: '目标 KPanel 版本不支持双向文件互传，请先升级目标面板后重试。',
+    federation_incompatible: '目标 KPanel 不支持当前加密直连协议，请更新目标面板后重试。',
     federation_identity_changed: '目标主机加密身份发生变化，已停止连接；确认服务器未被替换后请重新配对。',
     cluster_remote_unreachable: '暂时无法连接目标 KPanel，请检查域名、证书和网络。',
     cluster_resource_changed: '主机信息已变化，请刷新后重试。',
@@ -374,7 +376,9 @@ async function addHost(): Promise<void> {
       '主机已加入集群',
       host.state === 'pairing'
         ? `${host.name} 的安全配对正在后台继续。`
-        : `${host.name} 已完成安全配对。`,
+        : host.mutualFileTransferAvailable
+          ? `${host.name} 已完成配对，双向文件互传已自动启用。`
+          : `${host.name} 已完成配对，当前保持单向文件读取；可在主机管理中启用，旧版 KPanel 需先升级。`,
     )
     await load(true)
   } catch (reason) {
@@ -693,14 +697,52 @@ function openManage(host: ClusterHost): void {
 }
 
 function closeManage(): void {
-  if (saving.value || deleting.value) return
+  if (saving.value || deleting.value || enablingMutualFiles.value) return
   manageOpen.value = false
   selected.value = undefined
 }
 
+function mutualFilesHostEligible(host: ClusterHost): boolean {
+  return !host.isLocal
+    && host.kind !== 'light_node'
+    && host.federationProtocol === 'v2'
+    && !['pairing', 'revoking'].includes(host.state)
+    && host.fileTransferAvailable === true
+    && host.scope.split(/\s+/).includes('cluster.files.read')
+}
+
+async function enableMutualFiles(): Promise<void> {
+  const host = selected.value
+  if (
+    !host
+    || enablingMutualFiles.value
+    || !mutualFilesHostEligible(host)
+  ) return
+  const refreshing = host.mutualFileTransferAvailable
+  enablingMutualFiles.value = true
+  try {
+    const updated = await api.cluster.enableMutualFiles(host.id)
+    upsertHost(updated)
+    if (selected.value?.id === host.id) selected.value = updated
+    toast.success(
+      refreshing ? '双向文件互传连接已刷新' : '双向文件互传已启用',
+      refreshing
+        ? `${updated.name} 已使用当前 KPanel 地址刷新互传连接。`
+        : `${updated.name} 现在可以与当前 KPanel 互相复制文件。`,
+    )
+  } catch (reason) {
+    toast.danger(
+      refreshing ? '刷新双向文件互传连接失败' : '启用双向文件互传失败',
+      friendlyError(reason, '请确认双方 KPanel 在线后重试。'),
+    )
+  } finally {
+    enablingMutualFiles.value = false
+  }
+}
+
 async function saveName(): Promise<void> {
   const host = selected.value
-  if (!host || saving.value || !editName.value.trim()) return
+  if (!host || saving.value || enablingMutualFiles.value || !editName.value.trim()) return
   saving.value = true
   try {
     const updated = await api.cluster.rename(host.id, {
@@ -719,7 +761,7 @@ async function saveName(): Promise<void> {
 
 async function removeHost(): Promise<void> {
   const host = selected.value
-  if (!host || host.isLocal || deleting.value) return
+  if (!host || host.isLocal || deleting.value || enablingMutualFiles.value) return
   if (!window.confirm(`从当前 KPanel 移除 ${host.name}？目标主机业务不会受到影响。`)) return
   deleting.value = true
   try {
@@ -1470,6 +1512,38 @@ onBeforeUnmount(() => {
           <span>{{ selected.kind === 'light_node' ? '节点程序' : 'Panel / Agent' }}</span>
           <code v-if="selected.kind === 'light_node'">{{ selected.panelVersion || selected.lastSnapshot?.telemetry.agentVersion || '未知' }}</code>
           <code v-else>{{ selected.panelVersion || '未知' }} / {{ selected.lastSnapshot?.telemetry.agentVersion || '未知' }}</code>
+          <template v-if="mutualFilesHostEligible(selected)">
+            <span>文件互传</span>
+            <div
+              v-if="selected.mutualFileTransferAvailable"
+              class="cluster-manage__mutual-controls"
+            >
+              <strong class="cluster-manage__mutual-state">
+                <Check :size="14" /> 双向文件互传已启用
+              </strong>
+              <button
+                class="button button--ghost button--small cluster-manage__mutual-button"
+                type="button"
+                :disabled="enablingMutualFiles || saving || deleting"
+                @click="enableMutualFiles"
+              >
+                <LoaderCircle v-if="enablingMutualFiles" class="spin" :size="14" />
+                <RefreshCw v-else :size="14" />
+                {{ enablingMutualFiles ? '正在刷新…' : '刷新连接' }}
+              </button>
+            </div>
+            <button
+              v-else
+              class="button button--secondary button--small cluster-manage__mutual-button"
+              type="button"
+              :disabled="enablingMutualFiles || saving || deleting"
+              @click="enableMutualFiles"
+            >
+              <LoaderCircle v-if="enablingMutualFiles" class="spin" :size="14" />
+              <ShieldCheck v-else :size="14" />
+              {{ enablingMutualFiles ? '正在启用…' : '启用双向文件互传' }}
+            </button>
+          </template>
         </div>
       </div>
       <template #footer>
@@ -1477,17 +1551,17 @@ onBeforeUnmount(() => {
           v-if="selected && !selected.isLocal"
           class="button button--danger"
           type="button"
-          :disabled="saving || deleting"
+          :disabled="saving || deleting || enablingMutualFiles"
           @click="removeHost"
         >
           <LoaderCircle v-if="deleting" class="spin" :size="16" />
           <Trash2 v-else :size="16" /> 移除主机
         </button>
-        <button class="button button--secondary" type="button" :disabled="saving || deleting" @click="closeManage">关闭</button>
+        <button class="button button--secondary" type="button" :disabled="saving || deleting || enablingMutualFiles" @click="closeManage">关闭</button>
         <button
           class="button button--primary"
           type="button"
-          :disabled="saving || deleting || !editName.trim()"
+          :disabled="saving || deleting || enablingMutualFiles || !editName.trim()"
           @click="saveName"
         >
           <LoaderCircle v-if="saving" class="spin" :size="16" />
@@ -2268,6 +2342,25 @@ onBeforeUnmount(() => {
 .cluster-share__hint {
   margin: 0;
   text-align: center;
+}
+
+.cluster-manage__mutual-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--brand);
+  font-size: 12px;
+}
+
+.cluster-manage__mutual-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cluster-manage__mutual-button {
+  width: fit-content;
 }
 
 @media (max-width: 1240px) {

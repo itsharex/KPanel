@@ -63,6 +63,9 @@ kp2.<base64url-json>
 - secret 只用于本地派生配对 PSK，不出现在联邦 HTTP 请求、状态、审计或日志中；
 - 新授权权限固定为 `cluster.summary.read cluster.terminal.open cluster.files.read`；旧授权保留
   `cluster.summary.read`，不会因升级自动扩权。
+- 新版中心执行“添加主机”时，在主配对成功后另行协商一个文件专用的双向 link；它复用既有
+  Noise 静态身份但不建立反向 Host、不授予反向终端或概要权限。旧 v2 配对可由管理员显式
+  启用该 link，无需重新配对；不支持 link 的旧版本继续保持原单向能力。
 
 中心端为每台远端主机生成独立 X25519 身份。初次配对使用
 `Noise_IKpsk0_25519_ChaChaPoly_SHA256`，日常采集和撤销使用

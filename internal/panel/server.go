@@ -310,7 +310,9 @@ func isFederationV2Request(r *http.Request) bool {
 		"/api/v2/federation/terminal/input",
 		"/api/v2/federation/terminal/resize",
 		"/api/v2/federation/terminal/close",
-		"/api/v2/federation/files/open":
+		"/api/v2/federation/files/open",
+		"/api/v2/federation/files/link",
+		"/api/v2/federation/files/open-linked":
 		return true
 	default:
 		return false

@@ -1346,6 +1346,10 @@ export const api = {
       request<ClusterHost>(`/cluster/hosts/${encodeURIComponent(id)}/refresh`, {
         method: 'POST',
       }),
+    enableMutualFiles: (id: string): Promise<ClusterHost> =>
+      request<ClusterHost>(`/cluster/hosts/${encodeURIComponent(id)}/mutual-files`, {
+        method: 'POST',
+      }),
     createPairingCode: (): Promise<ClusterPairingCode> =>
       request<ClusterPairingCode>('/cluster/pairing-codes/v2', { method: 'POST' }),
     createLightEnrollment: (): Promise<ClusterLightEnrollment> =>

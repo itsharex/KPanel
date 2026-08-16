@@ -224,7 +224,27 @@ func (s *Service) addHostV2Locked(
 		Scope:                 SummaryScope,
 		CreatedAt:             now, UpdatedAt: now,
 	}
+	// Persist the administrator's mutual-file intent before the Host record. If
+	// the process stops between these two writes, startup reconciliation removes
+	// the harmless orphaned pending grant; the opposite ordering could leave a
+	// successfully resumed pairing permanently one-way.
+	filePeerOrigin := input.ControllerOrigin
+	if filePeerOrigin == "" {
+		filePeerOrigin = s.publicURL
+	}
+	filePeerPrepared := false
+	if filePeerOrigin != "" {
+		if normalized, normalizeErr := NormalizeV2Origin(filePeerOrigin); normalizeErr == nil {
+			record.ResourceVersion = hostResourceVersionV2(record)
+			if _, prepareErr := s.filePeersV2.PrepareGrant(record, normalized, now); prepareErr == nil {
+				filePeerPrepared = true
+			}
+		}
+	}
 	if err := s.storeV2.AddHost(record); err != nil {
+		if filePeerPrepared {
+			_ = s.deleteFilePeerGrant(record.ID)
+		}
 		_ = s.secretsV2.Delete(pairingCredentialFile)
 		s.v2SecretStateMu.Unlock()
 		return Host{}, err
@@ -236,6 +256,9 @@ func (s *Service) addHostV2Locked(
 	}
 	s.mu.Unlock()
 	s.pollV2Locked(ctx, hostID)
+	if !filePeerPrepared && (input.ControllerOrigin != "" || s.publicURL != "") {
+		_ = s.enableFilePeerV2Locked(ctx, hostID, input.ControllerOrigin)
+	}
 	return s.Host(ctx, hostID)
 }
 
@@ -402,6 +425,12 @@ func (s *Service) deleteHostV2Locked(
 			return DeleteHostResult{}, err
 		}
 	}
+	// The parent Host is no longer active before sidecar cleanup. Linked file
+	// authorization therefore fails closed even if deleting the grant hits a
+	// storage error.
+	if err := s.deleteFilePeerGrant(record.ID); err != nil {
+		return DeleteHostResult{}, err
+	}
 	result, err := s.revokeAndFinalizeV2(ctx, record)
 	if err != nil {
 		return s.finalizeLocalHostV2(record, false)
@@ -437,6 +466,9 @@ func (s *Service) finalizeLocalHostV2(
 	record hostRecordV2,
 	remoteRevoked bool,
 ) (DeleteHostResult, error) {
+	if err := s.deleteFilePeerGrant(record.ID); err != nil {
+		return DeleteHostResult{}, err
+	}
 	if _, err := s.storeV2.DeleteHost(record.ID, record.ResourceVersion); err != nil &&
 		!errors.Is(err, ErrNotFound) {
 		return DeleteHostResult{}, err
@@ -509,6 +541,27 @@ func (s *Service) pollV2Locked(ctx context.Context, id string) {
 	} else {
 		record, err = s.advanceV2Host(ctx, record)
 	}
+	filePeerSyncAttempted := false
+	if err == nil && record.State == hostStateV2Active {
+		if !ScopeAllowsFiles(normalizedV2Scope(record.Scope)) {
+			_ = s.deleteFilePeerGrant(record.ID)
+		} else {
+			s.mu.RLock()
+			nextFilePeerSyncAt := s.runtime[id].nextFilePeerSyncAt
+			s.mu.RUnlock()
+			if nextFilePeerSyncAt.IsZero() || !nextFilePeerSyncAt.After(s.now().UTC()) {
+				if grant, grantErr := s.filePeersV2.GrantByHost(record.ID); grantErr == nil {
+					filePeerSyncAttempted = true
+					if grant, grantErr = s.prepareFilePeerGrantForSync(record, grant); grantErr == nil {
+						_ = s.syncFilePeerV2(ctx, record, grant)
+					}
+				}
+			}
+		}
+	}
+	// File-peer lease maintenance is intentionally independent from telemetry.
+	// A summary collection failure must not expire an otherwise healthy file
+	// route after 30 minutes.
 	var summary FederationSummary
 	if err == nil && record.State == hostStateV2Active {
 		credential, readErr := s.secretsV2.ReadCredential(record.CredentialFile)
@@ -536,6 +589,9 @@ func (s *Service) pollV2Locked(ctx context.Context, id string) {
 	}
 	current.inFlight = false
 	current.lastAttemptAt = timePointer(finishedAt)
+	if filePeerSyncAttempted {
+		current.nextFilePeerSyncAt = finishedAt.Add(filePeerSyncInterval)
+	}
 	if err != nil {
 		current.consecutiveFailures++
 		current.lastErrorCode = remoteErrorCode(err)
@@ -655,6 +711,8 @@ func (s *Service) HandleFederationV2(
 		return s.handleSummaryV2(ctx, envelope, now)
 	case v2RevokePath:
 		return s.handleRevokeV2(envelope, now)
+	case v2FileLinkPath:
+		return s.handleFilePeerLinkV2(ctx, envelope, now)
 	case v2TerminalOpenPath:
 		return s.handleTerminalOpenV2(ctx, envelope, now)
 	case v2TerminalOutputPath:
@@ -827,6 +885,10 @@ func (s *Service) handleRevokeV2(
 			return FederationEnvelopeV2{}, err
 		}
 	}
+	if err := s.filePeersV2.DeleteController(controller.ID); err != nil &&
+		!errors.Is(err, ErrNotFound) {
+		return FederationEnvelopeV2{}, err
+	}
 	return sealV2JSONResponse(
 		envelope, handshake, v2RevokeResult{Revoked: true},
 	)
@@ -856,6 +918,8 @@ func (s *Service) openControllerV2(
 	requestLimiter := s.requestLimiter
 	if v2TerminalPath(path) {
 		requestLimiter = s.terminalRequests
+	} else if path == v2FileOpenPath {
+		requestLimiter = s.fileRequests
 	}
 	if !requestLimiter.Allow(controller.ID, now) {
 		return controllerRecordV2{}, nil, nil, ErrRateLimited

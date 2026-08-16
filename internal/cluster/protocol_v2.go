@@ -28,6 +28,8 @@ const (
 	v2TerminalResizePath = "/api/v2/federation/terminal/resize"
 	v2TerminalClosePath  = "/api/v2/federation/terminal/close"
 	v2FileOpenPath       = "/api/v2/federation/files/open"
+	v2FileLinkPath       = "/api/v2/federation/files/link"
+	v2FileLinkedOpenPath = "/api/v2/federation/files/open-linked"
 	maxV2PairingCode     = 1024
 	maxV2EnvelopeBytes   = MaxFederationV2Bytes
 )
@@ -124,6 +126,18 @@ type v2CommitPayload struct {
 type v2CommitResult struct {
 	TransactionID string `json:"transactionId"`
 	Active        bool   `json:"active"`
+}
+
+type v2FilePeerLinkRequest struct {
+	LinkID string `json:"linkId"`
+	NodeID string `json:"nodeId"`
+	Origin string `json:"origin"`
+}
+
+type v2FilePeerLinkResult struct {
+	LinkID string `json:"linkId"`
+	NodeID string `json:"nodeId"`
+	Linked bool   `json:"linked"`
 }
 
 type v2RevokeResult struct {
@@ -470,7 +484,8 @@ func v2PathAllowed(method, path string) bool {
 	switch path {
 	case v2PairPath, v2CommitPath, v2SummaryPath, v2RevokePath,
 		v2TerminalOpenPath, v2TerminalOutputPath, v2TerminalInputPath,
-		v2TerminalResizePath, v2TerminalClosePath, v2FileOpenPath:
+		v2TerminalResizePath, v2TerminalClosePath, v2FileOpenPath,
+		v2FileLinkPath, v2FileLinkedOpenPath:
 		return true
 	default:
 		return false

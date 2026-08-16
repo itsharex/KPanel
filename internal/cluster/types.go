@@ -36,20 +36,21 @@ const (
 )
 
 var (
-	ErrNotFound         = errors.New("cluster record not found")
-	ErrConflict         = errors.New("cluster record changed")
-	ErrDuplicate        = errors.New("cluster host already exists")
-	ErrHostLimit        = errors.New("cluster host limit reached")
-	ErrInvalidOrigin    = errors.New("invalid cluster origin")
-	ErrLightHTTPSOrigin = errors.New("light node requires an HTTPS origin")
-	ErrPrivateOrigin    = errors.New("cluster origin is outside the configured private network allowlist")
-	ErrPairingCode      = errors.New("pairing code is invalid or expired")
-	ErrAuthentication   = errors.New("federation authentication failed")
-	ErrReplay           = errors.New("federation request replayed")
-	ErrRateLimited      = errors.New("federation request rate limited")
-	ErrProtocolMismatch = errors.New("federation protocol is incompatible")
-	ErrIdentityMismatch = errors.New("federation target identity changed")
-	ErrLocalHost        = errors.New("local cluster host cannot be modified")
+	ErrNotFound               = errors.New("cluster record not found")
+	ErrConflict               = errors.New("cluster record changed")
+	ErrDuplicate              = errors.New("cluster host already exists")
+	ErrHostLimit              = errors.New("cluster host limit reached")
+	ErrInvalidOrigin          = errors.New("invalid cluster origin")
+	ErrLightHTTPSOrigin       = errors.New("light node requires an HTTPS origin")
+	ErrPrivateOrigin          = errors.New("cluster origin is outside the configured private network allowlist")
+	ErrPairingCode            = errors.New("pairing code is invalid or expired")
+	ErrAuthentication         = errors.New("federation authentication failed")
+	ErrReplay                 = errors.New("federation request replayed")
+	ErrRateLimited            = errors.New("federation request rate limited")
+	ErrProtocolMismatch       = errors.New("federation protocol is incompatible")
+	ErrMutualFilesUnsupported = errors.New("mutual file transfer is unsupported")
+	ErrIdentityMismatch       = errors.New("federation target identity changed")
+	ErrLocalHost              = errors.New("local cluster host cannot be modified")
 )
 
 type HostState string
@@ -76,31 +77,32 @@ type HostSnapshot struct {
 }
 
 type Host struct {
-	ID                    string            `json:"id"`
-	IsLocal               bool              `json:"isLocal"`
-	Name                  string            `json:"name"`
-	Kind                  HostKind          `json:"kind"`
-	Origin                string            `json:"origin"`
-	TransportSecurity     TransportSecurity `json:"transportSecurity"`
-	PeerFingerprint       string            `json:"peerFingerprint,omitempty"`
-	RemoteNodeID          string            `json:"remoteNodeId"`
-	FederationProtocol    string            `json:"federationProtocol"`
-	Scope                 string            `json:"scope"`
-	TerminalAvailable     bool              `json:"terminalAvailable"`
-	FileTransferAvailable bool              `json:"fileTransferAvailable"`
-	PanelVersion          string            `json:"panelVersion,omitempty"`
-	State                 HostState         `json:"state"`
-	LastSnapshot          *HostSnapshot     `json:"lastSnapshot,omitempty"`
-	LastAttemptAt         *time.Time        `json:"lastAttemptAt,omitempty"`
-	LastSuccessAt         *time.Time        `json:"lastSuccessAt,omitempty"`
-	ConsecutiveFailures   int               `json:"consecutiveFailures"`
-	LastErrorCode         string            `json:"lastErrorCode,omitempty"`
-	LastError             string            `json:"lastError,omitempty"`
-	Polling               bool              `json:"polling"`
-	NextPollAt            *time.Time        `json:"nextPollAt,omitempty"`
-	ResourceVersion       string            `json:"resourceVersion"`
-	CreatedAt             time.Time         `json:"createdAt"`
-	UpdatedAt             time.Time         `json:"updatedAt"`
+	ID                          string            `json:"id"`
+	IsLocal                     bool              `json:"isLocal"`
+	Name                        string            `json:"name"`
+	Kind                        HostKind          `json:"kind"`
+	Origin                      string            `json:"origin"`
+	TransportSecurity           TransportSecurity `json:"transportSecurity"`
+	PeerFingerprint             string            `json:"peerFingerprint,omitempty"`
+	RemoteNodeID                string            `json:"remoteNodeId"`
+	FederationProtocol          string            `json:"federationProtocol"`
+	Scope                       string            `json:"scope"`
+	TerminalAvailable           bool              `json:"terminalAvailable"`
+	FileTransferAvailable       bool              `json:"fileTransferAvailable"`
+	MutualFileTransferAvailable bool              `json:"mutualFileTransferAvailable"`
+	PanelVersion                string            `json:"panelVersion,omitempty"`
+	State                       HostState         `json:"state"`
+	LastSnapshot                *HostSnapshot     `json:"lastSnapshot,omitempty"`
+	LastAttemptAt               *time.Time        `json:"lastAttemptAt,omitempty"`
+	LastSuccessAt               *time.Time        `json:"lastSuccessAt,omitempty"`
+	ConsecutiveFailures         int               `json:"consecutiveFailures"`
+	LastErrorCode               string            `json:"lastErrorCode,omitempty"`
+	LastError                   string            `json:"lastError,omitempty"`
+	Polling                     bool              `json:"polling"`
+	NextPollAt                  *time.Time        `json:"nextPollAt,omitempty"`
+	ResourceVersion             string            `json:"resourceVersion"`
+	CreatedAt                   time.Time         `json:"createdAt"`
+	UpdatedAt                   time.Time         `json:"updatedAt"`
 }
 
 func ScopeAllowsTerminal(scope string) bool {
@@ -138,9 +140,10 @@ type LightReportResponse struct {
 }
 
 type AddHostInput struct {
-	Name        string `json:"name,omitempty"`
-	Origin      string `json:"origin"`
-	PairingCode string `json:"pairingCode"`
+	Name             string `json:"name,omitempty"`
+	Origin           string `json:"origin"`
+	PairingCode      string `json:"pairingCode"`
+	ControllerOrigin string `json:"-"`
 }
 
 type UpdateHostInput struct {

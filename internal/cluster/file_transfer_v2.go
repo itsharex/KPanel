@@ -36,6 +36,7 @@ type FederationFileOpenRequest struct {
 type FederationFileAuthorization struct {
 	request   v2Envelope
 	handshake *noise.HandshakeState
+	release   func()
 }
 
 type remoteV2FileAPI interface {
@@ -45,12 +46,66 @@ type remoteV2FileAPI interface {
 	) (io.ReadCloser, contract.FileTransferMetadata, error)
 }
 
+type remoteV2LinkedFileAPI interface {
+	OpenLinkedFileV2(
+		context.Context, string, string, string, noise.DHKey, []byte, time.Time,
+		FederationFileOpenRequest,
+	) (io.ReadCloser, contract.FileTransferMetadata, error)
+}
+
+type fileStreamLimiter struct {
+	mu            sync.Mutex
+	active        int
+	activeByPeer  map[string]int
+	maxActive     int
+	maxActivePeer int
+}
+
+func newFileStreamLimiter(maxActive, maxActivePeer int) *fileStreamLimiter {
+	return &fileStreamLimiter{
+		activeByPeer:  make(map[string]int),
+		maxActive:     maxActive,
+		maxActivePeer: maxActivePeer,
+	}
+}
+
+func (l *fileStreamLimiter) acquire(peerID string) (func(), bool) {
+	if l == nil || !validID(peerID) {
+		return nil, false
+	}
+	l.mu.Lock()
+	if l.maxActive < 1 || l.maxActivePeer < 1 ||
+		l.active >= l.maxActive || l.activeByPeer[peerID] >= l.maxActivePeer {
+		l.mu.Unlock()
+		return nil, false
+	}
+	l.active++
+	l.activeByPeer[peerID]++
+	l.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			if current := l.activeByPeer[peerID]; current <= 1 {
+				delete(l.activeByPeer, peerID)
+			} else {
+				l.activeByPeer[peerID] = current - 1
+			}
+			if l.active > 0 {
+				l.active--
+			}
+		})
+	}, true
+}
+
 func (s *Service) AuthorizeFederationFileV2(
 	source string,
 	envelope FederationEnvelopeV2,
 ) (FederationFileOpenRequest, *FederationFileAuthorization, error) {
 	now := s.now().UTC()
-	if !s.v2SourceLimiter.Allow(cleanRateSubject(source), now) {
+	if !s.fileSources.Allow(cleanRateSubject(source), now) {
 		return FederationFileOpenRequest{}, nil, ErrRateLimited
 	}
 	if err := s.validateV2Request(v2FileOpenPath, envelope, now); err != nil {
@@ -67,8 +122,89 @@ func (s *Service) AuthorizeFederationFileV2(
 		!validTransferPath(input.Path) || len(input.ResourceVersion) < 8 || len(input.ResourceVersion) > 256 {
 		return FederationFileOpenRequest{}, nil, ErrAuthentication
 	}
+	release, ok := s.fileStreams.acquire(controller.ID)
+	if !ok {
+		return FederationFileOpenRequest{}, nil, ErrRateLimited
+	}
 	_ = s.storeV2.TouchController(controller.ID, now)
-	return input, &FederationFileAuthorization{request: envelope, handshake: handshake}, nil
+	return input, &FederationFileAuthorization{
+		request: envelope, handshake: handshake, release: release,
+	}, nil
+}
+
+// AuthorizeLinkedFederationFileV2 authenticates the reverse file-only channel
+// created by a bidirectional pairing. It deliberately does not fall back to a
+// Controller record: the link grant and its active parent Host must both still
+// match before the reused controller key may act as the Noise responder.
+func (s *Service) AuthorizeLinkedFederationFileV2(
+	source string,
+	envelope FederationEnvelopeV2,
+) (FederationFileOpenRequest, *FederationFileAuthorization, error) {
+	now := s.now().UTC()
+	if !s.fileSources.Allow(cleanRateSubject(source), now) {
+		return FederationFileOpenRequest{}, nil, ErrRateLimited
+	}
+	if err := s.validateV2Request(v2FileLinkedOpenPath, envelope, now); err != nil {
+		return FederationFileOpenRequest{}, nil, err
+	}
+	grant, err := s.filePeersV2.ActiveGrant(envelope.ControllerID, now)
+	if err != nil || grant.LinkID != envelope.ControllerID || grant.Scope != filePeerReadScope {
+		return FederationFileOpenRequest{}, nil, ErrAuthentication
+	}
+	host, err := s.storeV2.Host(grant.HostID)
+	if err != nil || host.State != hostStateV2Active ||
+		!ScopeAllowsFiles(normalizedV2Scope(host.Scope)) ||
+		host.ControllerID != grant.HostControllerID ||
+		host.TransactionID != grant.HostTransaction ||
+		host.RemoteNodeID != grant.PeerNodeID ||
+		host.PeerFingerprint != grant.PeerFingerprint {
+		return FederationFileOpenRequest{}, nil, ErrAuthentication
+	}
+	credential, err := s.secretsV2.ReadCredential(host.CredentialFile)
+	if err != nil {
+		return FederationFileOpenRequest{}, nil, ErrAuthentication
+	}
+	expectedTarget, err := base64.RawURLEncoding.DecodeString(host.TargetPublicKey)
+	if err != nil || !bytes.Equal(expectedTarget, credential.TargetPublic) ||
+		fingerprintV2(credential.TargetPublic) != host.PeerFingerprint {
+		return FederationFileOpenRequest{}, nil, ErrAuthentication
+	}
+	payload, peerStatic, handshake, err := openV2Request(
+		http.MethodPost,
+		v2FileLinkedOpenPath,
+		envelope,
+		noiseKeyV2(credential),
+		nil,
+	)
+	if err != nil || !bytes.Equal(peerStatic, credential.TargetPublic) {
+		return FederationFileOpenRequest{}, nil, ErrAuthentication
+	}
+	if !s.fileRequests.Allow(grant.LinkID, now) {
+		return FederationFileOpenRequest{}, nil, ErrRateLimited
+	}
+	if err := s.replays.Accept(grant.LinkID, envelope.RequestID, now); err != nil {
+		return FederationFileOpenRequest{}, nil, err
+	}
+	var input FederationFileOpenRequest
+	if err := decodeV2Payload(payload, &input); err != nil ||
+		!validTransferPath(input.Path) ||
+		len(input.ResourceVersion) < 8 || len(input.ResourceVersion) > 256 {
+		return FederationFileOpenRequest{}, nil, ErrAuthentication
+	}
+	release, ok := s.fileStreams.acquire(grant.LinkID)
+	if !ok {
+		return FederationFileOpenRequest{}, nil, ErrRateLimited
+	}
+	return input, &FederationFileAuthorization{
+		request: envelope, handshake: handshake, release: release,
+	}, nil
+}
+
+func (a *FederationFileAuthorization) Close() error {
+	if a != nil && a.release != nil {
+		a.release()
+	}
+	return nil
 }
 
 func (a *FederationFileAuthorization) SealMetadata(
@@ -196,28 +332,64 @@ func (s *Service) OpenRemoteFileV2(
 	if !validID(remoteNodeID) || !validTransferPath(input.Path) {
 		return nil, contract.FileTransferMetadata{}, ErrNotFound
 	}
+	now := s.now().UTC()
 	var record hostRecordV2
 	for _, candidate := range s.storeV2.Hosts() {
-		if candidate.RemoteNodeID == remoteNodeID && candidate.State == hostStateV2Active &&
-			ScopeAllowsFiles(normalizedV2Scope(candidate.Scope)) {
+		if candidate.RemoteNodeID == remoteNodeID {
 			record = candidate
 			break
 		}
 	}
-	if record.ID == "" {
+	if record.ID != "" {
+		if record.State != hostStateV2Active ||
+			!ScopeAllowsFiles(normalizedV2Scope(record.Scope)) {
+			return nil, contract.FileTransferMetadata{}, ErrNotFound
+		}
+		credential, err := s.secretsV2.ReadCredential(record.CredentialFile)
+		if err != nil {
+			return nil, contract.FileTransferMetadata{}, err
+		}
+		remote, ok := s.remoteV2.(remoteV2FileAPI)
+		if !ok {
+			return nil, contract.FileTransferMetadata{}, ErrProtocolMismatch
+		}
+		return remote.OpenFileV2(
+			ctx, record.Origin, record.ControllerID, record.RemoteNodeID,
+			noiseKeyV2(credential), credential.TargetPublic, now, input,
+		)
+	}
+
+	// Only the absence of a direct Host permits the reverse route. A failed
+	// direct authentication must never be retried under different credentials.
+	route, err := s.filePeersV2.ActiveRoute(remoteNodeID, now)
+	if err != nil || route.PeerNodeID != remoteNodeID || route.Scope != filePeerReadScope {
 		return nil, contract.FileTransferMetadata{}, ErrNotFound
 	}
-	credential, err := s.secretsV2.ReadCredential(record.CredentialFile)
-	if err != nil {
-		return nil, contract.FileTransferMetadata{}, err
+	controller, err := s.storeV2.Controller(route.ControllerID)
+	if err != nil || controller.State != controllerStateV2Active ||
+		!ScopeAllowsFiles(normalizedV2Scope(controller.Scope)) ||
+		controller.TransactionID != route.ControllerTransaction ||
+		controller.Fingerprint != route.ControllerFingerprint {
+		return nil, contract.FileTransferMetadata{}, ErrNotFound
 	}
-	remote, ok := s.remoteV2.(remoteV2FileAPI)
+	controllerPublic, err := base64.RawURLEncoding.DecodeString(controller.PublicKey)
+	if err != nil || len(controllerPublic) != 32 ||
+		fingerprintV2(controllerPublic) != controller.Fingerprint {
+		return nil, contract.FileTransferMetadata{}, ErrAuthentication
+	}
+	remote, ok := s.remoteV2.(remoteV2LinkedFileAPI)
 	if !ok {
 		return nil, contract.FileTransferMetadata{}, ErrProtocolMismatch
 	}
-	return remote.OpenFileV2(
-		ctx, record.Origin, record.ControllerID, record.RemoteNodeID,
-		noiseKeyV2(credential), credential.TargetPublic, s.now().UTC(), input,
+	return remote.OpenLinkedFileV2(
+		ctx,
+		route.PeerOrigin,
+		route.LinkID,
+		route.PeerNodeID,
+		nodeNoiseKeyV2(s.nodeIdentityV2),
+		controllerPublic,
+		now,
+		input,
 	)
 }
 
@@ -231,6 +403,42 @@ func (c *RemoteClient) OpenFileV2(
 	now time.Time,
 	input FederationFileOpenRequest,
 ) (io.ReadCloser, contract.FileTransferMetadata, error) {
+	return c.openFileV2(
+		ctx, origin, v2FileOpenPath, controllerID, targetID,
+		controllerKey, targetPublicKey, now, input,
+	)
+}
+
+func (c *RemoteClient) OpenLinkedFileV2(
+	ctx context.Context,
+	origin string,
+	linkID string,
+	targetID string,
+	nodeKey noise.DHKey,
+	controllerPublicKey []byte,
+	now time.Time,
+	input FederationFileOpenRequest,
+) (io.ReadCloser, contract.FileTransferMetadata, error) {
+	return c.openFileV2(
+		ctx, origin, v2FileLinkedOpenPath, linkID, targetID,
+		nodeKey, controllerPublicKey, now, input,
+	)
+}
+
+func (c *RemoteClient) openFileV2(
+	ctx context.Context,
+	origin string,
+	requestPath string,
+	controllerID string,
+	targetID string,
+	localKey noise.DHKey,
+	targetPublicKey []byte,
+	now time.Time,
+	input FederationFileOpenRequest,
+) (io.ReadCloser, contract.FileTransferMetadata, error) {
+	if requestPath != v2FileOpenPath && requestPath != v2FileLinkedOpenPath {
+		return nil, contract.FileTransferMetadata{}, ErrAuthentication
+	}
 	payload, err := json.Marshal(input)
 	if err != nil || len(payload) > MaxSummaryBytes {
 		return nil, contract.FileTransferMetadata{}, ErrAuthentication
@@ -240,9 +448,9 @@ func (c *RemoteClient) OpenFileV2(
 		return nil, contract.FileTransferMetadata{}, err
 	}
 	envelope, handshake, err := sealV2Request(
-		http.MethodPost, v2FileOpenPath,
+		http.MethodPost, requestPath,
 		v2Envelope{Protocol: FederationProtocolV2, ControllerID: controllerID, TargetID: targetID, Timestamp: now.UTC().Unix(), RequestID: requestID},
-		controllerKey, targetPublicKey, nil, payload,
+		localKey, targetPublicKey, nil, payload,
 	)
 	if err != nil {
 		return nil, contract.FileTransferMetadata{}, err
@@ -251,7 +459,7 @@ func (c *RemoteClient) OpenFileV2(
 	if err != nil || len(body) > maxV2EnvelopeBytes {
 		return nil, contract.FileTransferMetadata{}, ErrAuthentication
 	}
-	request, err := c.newV2Request(ctx, http.MethodPost, origin, v2FileOpenPath, bytes.NewReader(body))
+	request, err := c.newV2Request(ctx, http.MethodPost, origin, requestPath, bytes.NewReader(body))
 	if err != nil {
 		return nil, contract.FileTransferMetadata{}, err
 	}

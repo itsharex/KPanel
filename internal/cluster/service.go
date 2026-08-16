@@ -74,12 +74,14 @@ type runtimeState struct {
 	panelVersion        string
 	nextPollAt          time.Time
 	inFlight            bool
+	nextFilePeerSyncAt  time.Time
 }
 
 type Service struct {
 	store           *Store
 	secrets         *secretStore
 	storeV2         *storeV2
+	filePeersV2     *filePeerStoreV2
 	secretsV2       *secretStoreV2
 	remote          remoteAPI
 	remoteV2        remoteV2API
@@ -112,6 +114,9 @@ type Service struct {
 	pairLimiter      *fixedWindowLimiter
 	v2SourceLimiter  *fixedWindowLimiter
 	requestLimiter   *fixedWindowLimiter
+	fileSources      *fixedWindowLimiter
+	fileRequests     *fixedWindowLimiter
+	fileStreams      *fileStreamLimiter
 	terminalSources  *fixedWindowLimiter
 	terminalRequests *fixedWindowLimiter
 	lightEnrolls     *fixedWindowLimiter
@@ -188,6 +193,13 @@ func NewService(config ServiceConfig) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	filePeersV2, err := openFilePeerStoreV2(filepath.Join(config.DataDir, filePeerStateV2FileName))
+	if err != nil {
+		return nil, err
+	}
+	if err := filePeersV2.Reconcile(storeV2.Controllers(), storeV2.Hosts(), config.Now().UTC()); err != nil {
+		return nil, err
+	}
 	light, err := openLightStore(filepath.Join(config.DataDir, lightStateFileName))
 	if err != nil {
 		return nil, err
@@ -231,7 +243,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 	now := config.Now().UTC()
 	service := &Service{
 		store: store, secrets: secrets,
-		storeV2: storeV2, secretsV2: secretsV2,
+		storeV2: storeV2, filePeersV2: filePeersV2, secretsV2: secretsV2,
 		remote: config.Remote, remoteV2: remoteV2, telemetry: config.Telemetry, terminal: config.Terminal,
 		light: light, publicURL: strings.TrimRight(strings.TrimSpace(config.PublicURL), "/"),
 		nodeIdentityV2: cloneNodeIdentityV2(nodeIdentity),
@@ -244,6 +256,9 @@ func NewService(config ServiceConfig) (*Service, error) {
 		pairLimiter:      newFixedWindowLimiter(20, time.Minute, 1024),
 		v2SourceLimiter:  newFixedWindowLimiter(120, time.Minute, 2048),
 		requestLimiter:   newFixedWindowLimiter(30, time.Minute, 512),
+		fileSources:      newFixedWindowLimiter(1200, time.Minute, 2048),
+		fileRequests:     newFixedWindowLimiter(256, time.Minute, 512),
+		fileStreams:      newFileStreamLimiter(8, 2),
 		terminalSources:  newFixedWindowLimiter(1200, time.Minute, 2048),
 		terminalRequests: newFixedWindowLimiter(600, time.Minute, 512),
 		lightEnrolls:     newFixedWindowLimiter(10, time.Minute, 2048),
@@ -263,6 +278,11 @@ func NewService(config ServiceConfig) (*Service, error) {
 		}
 	}
 	for _, record := range storeV2.Hosts() {
+		nextFilePeerSyncAt := time.Time{}
+		if grant, peerErr := filePeersV2.GrantByHost(record.ID); peerErr == nil &&
+			grant.State == filePeerGrantActive {
+			nextFilePeerSyncAt = now.Add(config.Jitter(filePeerSyncInterval / 10))
+		}
 		service.runtime[record.ID] = runtimeState{
 			snapshot:            cloneSnapshot(record.LastSnapshot),
 			lastAttemptAt:       cloneTime(record.LastAttemptAt),
@@ -272,6 +292,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 			lastError:           record.LastError,
 			panelVersion:        record.PanelVersion,
 			nextPollAt:          now.Add(config.Jitter(config.PollInterval / 10)),
+			nextFilePeerSyncAt:  nextFilePeerSyncAt,
 		}
 	}
 	return service, nil
@@ -323,7 +344,9 @@ func (s *Service) Hosts(ctx context.Context) HostList {
 		items = append(items, publicHost(record, s.runtime[record.ID], now))
 	}
 	for _, record := range recordsV2 {
-		items = append(items, publicHostV2(record, s.runtime[record.ID], now))
+		host := publicHostV2(record, s.runtime[record.ID], now)
+		host.MutualFileTransferAvailable = s.hasActiveFilePeerGrant(record.ID, now)
+		items = append(items, host)
 	}
 	for _, record := range lightRecords {
 		items = append(items, publicLightHost(record, now))
@@ -353,7 +376,10 @@ func (s *Service) Host(ctx context.Context, id string) (Host, error) {
 		s.mu.RLock()
 		current := s.runtime[id]
 		s.mu.RUnlock()
-		return publicHostV2(recordV2, current, s.now().UTC()), nil
+		now := s.now().UTC()
+		host := publicHostV2(recordV2, current, now)
+		host.MutualFileTransferAvailable = s.hasActiveFilePeerGrant(recordV2.ID, now)
+		return host, nil
 	}
 	lightRecord, lightErr := s.light.Host(id)
 	if lightErr != nil {
@@ -536,7 +562,10 @@ func (s *Service) RenameHost(id string, input UpdateHostInput) (Host, error) {
 	s.mu.RLock()
 	current := s.runtime[id]
 	s.mu.RUnlock()
-	return publicHostV2(recordV2, current, s.now().UTC()), nil
+	now := s.now().UTC()
+	host := publicHostV2(recordV2, current, now)
+	host.MutualFileTransferAvailable = s.hasActiveFilePeerGrant(recordV2.ID, now)
+	return host, nil
 }
 
 func (s *Service) DeleteHost(
@@ -671,7 +700,13 @@ func (s *Service) DeleteController(id string) error {
 		now,
 		now.Add(v2RevocationRetain),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if err := s.filePeersV2.DeleteController(id); err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) AcceptPair(source string, input PairRequest) (PairResponse, error) {

@@ -191,6 +191,7 @@ export interface ClusterHost {
   scope: string
   terminalAvailable: boolean
   fileTransferAvailable?: boolean
+  mutualFileTransferAvailable: boolean
   panelVersion?: string
   state: ClusterHostState
   lastSnapshot?: ClusterHostSnapshot

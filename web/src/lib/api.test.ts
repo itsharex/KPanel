@@ -1398,6 +1398,7 @@ describe('API client', () => {
     })
     await api.cluster.remove(hostID, 'host-version-2')
     await api.cluster.refresh(hostID)
+    await api.cluster.enableMutualFiles(hostID)
     await api.cluster.createPairingCode()
     await api.cluster.createLightEnrollment()
     await api.cluster.controllers()
@@ -1411,6 +1412,7 @@ describe('API client', () => {
       `/api/v1/cluster/hosts/${encodedHostID}`,
       `/api/v1/cluster/hosts/${encodedHostID}`,
       `/api/v1/cluster/hosts/${encodedHostID}/refresh`,
+      `/api/v1/cluster/hosts/${encodedHostID}/mutual-files`,
       '/api/v1/cluster/pairing-codes/v2',
       '/api/v1/cluster/light-enrollments',
       '/api/v1/cluster/controllers',
@@ -1423,6 +1425,7 @@ describe('API client', () => {
       'POST',
       'PATCH',
       'DELETE',
+      'POST',
       'POST',
       'POST',
       'POST',
@@ -1444,6 +1447,7 @@ describe('API client', () => {
     expect((clusterCalls[5]?.[1] as RequestInit).body).toBeUndefined()
     expect((clusterCalls[6]?.[1] as RequestInit).body).toBeUndefined()
     expect((clusterCalls[7]?.[1] as RequestInit).body).toBeUndefined()
+    expect((clusterCalls[8]?.[1] as RequestInit).body).toBeUndefined()
 
     const mutationCalls = clusterCalls.filter(
       ([, init]) => (init as RequestInit).method !== 'GET',

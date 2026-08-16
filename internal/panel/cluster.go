@@ -108,6 +108,7 @@ func (s *Server) handleClusterHostAdd(w http.ResponseWriter, r *http.Request) {
 	if err := s.decodeJSON(w, r, &input); err != nil {
 		return
 	}
+	input.ControllerOrigin = s.clusterFileCallbackOrigin(r)
 	change := map[string]any{
 		"name": strings.TrimSpace(input.Name), "origin": strings.TrimSpace(input.Origin),
 	}
@@ -141,6 +142,15 @@ func (s *Server) handleClusterHost(w http.ResponseWriter, r *http.Request) {
 		s.handleClusterHostRefresh(w, r, id)
 		return
 	}
+	if strings.HasSuffix(rest, "/mutual-files") {
+		id := strings.TrimSuffix(rest, "/mutual-files")
+		if strings.Contains(id, "/") || r.Method != http.MethodPost {
+			s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+			return
+		}
+		s.handleClusterHostMutualFiles(w, r, id)
+		return
+	}
 	if strings.Contains(rest, "/") {
 		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
 		return
@@ -163,6 +173,29 @@ func (s *Server) handleClusterHost(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
 	}
+}
+
+func (s *Server) handleClusterHostMutualFiles(w http.ResponseWriter, r *http.Request, id string) {
+	session, ok := s.requireClusterMutation(w, r)
+	if !ok {
+		return
+	}
+	if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+		s.writeProblem(w, r, http.StatusBadRequest, "request_body_not_allowed", "Request body not allowed", "")
+		return
+	}
+	if err := s.audit(r, session.User.ID, "cluster.host.mutual-files.enable", "cluster-host", id, "intent", nil); err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
+		return
+	}
+	host, err := s.cluster.EnableMutualFileTransfer(r.Context(), id, s.clusterFileCallbackOrigin(r))
+	if err != nil {
+		_ = s.audit(r, session.User.ID, "cluster.host.mutual-files.enable", "cluster-host", id, "failure", nil)
+		s.writeClusterError(w, r, err)
+		return
+	}
+	_ = s.audit(r, session.User.ID, "cluster.host.mutual-files.enable", "cluster-host", id, "success", nil)
+	s.writeJSON(w, http.StatusOK, host)
 }
 
 func (s *Server) handleClusterHostRename(w http.ResponseWriter, r *http.Request, id string) {
@@ -403,7 +436,8 @@ func (s *Server) handleFederationV2(w http.ResponseWriter, r *http.Request) {
 	); err != nil {
 		return
 	}
-	if r.URL.Path == "/api/v2/federation/files/open" {
+	if r.URL.Path == "/api/v2/federation/files/open" ||
+		r.URL.Path == "/api/v2/federation/files/open-linked" {
 		s.handleFederationFileOpenV2(w, r, envelope)
 		return
 	}
@@ -428,6 +462,8 @@ func (s *Server) handleFederationV2(w http.ResponseWriter, r *http.Request) {
 		action = "cluster.federation.v2.commit"
 	case "/api/v2/federation/revoke":
 		action = "cluster.federation.v2.revoke"
+	case "/api/v2/federation/files/link":
+		action = "cluster.federation.v2.files.link"
 	case "/api/v2/federation/terminal/open":
 		action = "cluster.federation.v2.terminal.open"
 	case "/api/v2/federation/terminal/close":
@@ -452,12 +488,25 @@ func (s *Server) handleFederationFileOpenV2(
 	r *http.Request,
 	envelope cluster.FederationEnvelopeV2,
 ) {
-	input, authorization, err := s.cluster.AuthorizeFederationFileV2(s.remoteIP(r), envelope)
+	linked := r.URL.Path == "/api/v2/federation/files/open-linked"
+	var input cluster.FederationFileOpenRequest
+	var authorization *cluster.FederationFileAuthorization
+	var err error
+	if linked {
+		input, authorization, err = s.cluster.AuthorizeLinkedFederationFileV2(s.remoteIP(r), envelope)
+	} else {
+		input, authorization, err = s.cluster.AuthorizeFederationFileV2(s.remoteIP(r), envelope)
+	}
 	if err != nil {
-		s.auditAuthFailure(r, "cluster.federation.v2.files.open")
+		action := "cluster.federation.v2.files.open"
+		if linked {
+			action = "cluster.federation.v2.files.open-linked"
+		}
+		s.auditAuthFailure(r, action)
 		s.writeClusterError(w, r, err)
 		return
 	}
+	defer authorization.Close()
 	streamer, ok := s.agent.(agentStreamAPI)
 	if !ok {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_stream_unavailable", "Agent 文件流不可用", "")
@@ -517,7 +566,11 @@ func (s *Server) handleFederationFileOpenV2(
 	if copyErr != nil {
 		result = "failure"
 	}
-	_ = s.audit(r, "", "cluster.federation.v2.files.open", "cluster-controller", envelope.ControllerID, result, map[string]any{
+	action := "cluster.federation.v2.files.open"
+	if linked {
+		action = "cluster.federation.v2.files.open-linked"
+	}
+	_ = s.audit(r, "", action, "cluster-controller", envelope.ControllerID, result, map[string]any{
 		"kind": metadata.Kind, "bytes": metadata.SizeBytes,
 	})
 }
@@ -632,6 +685,29 @@ func (s *Server) requireClusterMutation(w http.ResponseWriter, r *http.Request) 
 	return session, true
 }
 
+// clusterFileCallbackOrigin is called only after requireClusterMutation has
+// authenticated the session, Origin and CSRF token. It never trusts a
+// browser-supplied callback value from JSON.
+func (s *Server) clusterFileCallbackOrigin(r *http.Request) string {
+	candidates := make([]string, 0, 3)
+	if origin, ok := s.requestHTTPSOrigin(r); ok {
+		candidates = append(candidates, origin)
+	}
+	if origin, ok := directIPOrigin(r); ok {
+		candidates = append(candidates, origin)
+	}
+	if configured := strings.TrimRight(strings.TrimSpace(s.config.PublicURL), "/"); configured != "" {
+		candidates = append(candidates, configured)
+	}
+	for _, candidate := range candidates {
+		normalized, err := cluster.NormalizeV2Origin(candidate)
+		if err == nil && normalized == candidate {
+			return normalized
+		}
+	}
+	return ""
+}
+
 func (s *Server) writeClusterError(w http.ResponseWriter, r *http.Request, err error) {
 	status := http.StatusInternalServerError
 	code := "cluster_operation_failed"
@@ -661,6 +737,8 @@ func (s *Server) writeClusterError(w http.ResponseWriter, r *http.Request, err e
 		status, code, title = http.StatusConflict, "federation_replay_rejected", "Federation request rejected"
 	case errors.Is(err, cluster.ErrRateLimited):
 		status, code, title = http.StatusTooManyRequests, "federation_rate_limited", "Federation request rate limited"
+	case errors.Is(err, cluster.ErrMutualFilesUnsupported):
+		status, code, title = http.StatusUpgradeRequired, "cluster_mutual_files_unsupported", "Mutual file transfer unsupported"
 	case errors.Is(err, cluster.ErrProtocolMismatch):
 		status, code, title = http.StatusUpgradeRequired, "federation_incompatible", "Federation protocol incompatible"
 	case errors.Is(err, cluster.ErrIdentityMismatch):

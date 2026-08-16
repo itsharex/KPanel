@@ -89,6 +89,28 @@ func TestClusterMutationsRequireOriginAndCSRF(t *testing.T) {
 	}
 }
 
+func TestClusterMutualFilesRejectsChunkedRequestBody(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://panel.test/api/v1/cluster/hosts/missing/mutual-files",
+		strings.NewReader(`{}`),
+	)
+	request.ContentLength = -1
+	request.TransferEncoding = []string{"chunked"}
+	request.Header.Set("Origin", "http://panel.test")
+	request.Header.Set("X-CSRF-Token", csrfCookie.Value)
+	request.AddCookie(sessionCookie)
+	request.AddCookie(csrfCookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest ||
+		!strings.Contains(response.Body.String(), "request_body_not_allowed") {
+		t.Fatalf("chunked mutual-files body returned %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestClusterLocalHostCanBeRenamed(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
@@ -441,6 +463,53 @@ func TestFederationV2BypassesPublicHostCheckButStillAuthenticates(t *testing.T) 
 	}
 	if strings.Contains(response.Body.String(), "host_header_rejected") {
 		t.Fatalf("v2 federation request was rejected by the browser Host policy: %s", response.Body.String())
+	}
+}
+
+func TestFederationV2MutualFileEndpointsBypassBrowserHostPolicy(t *testing.T) {
+	server, _ := newTestServer(t)
+	for _, endpoint := range []string{
+		"/api/v2/federation/files/link",
+		"/api/v2/federation/files/open-linked",
+	} {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"http://8.8.8.8:1801"+endpoint,
+			strings.NewReader(`{}`),
+		)
+		request.Host = "8.8.8.8:1801"
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s status = %d, want %d; body=%s", endpoint, response.Code, http.StatusUnauthorized, response.Body.String())
+		}
+		if strings.Contains(response.Body.String(), "host_header_rejected") {
+			t.Fatalf("%s was rejected by browser Host policy: %s", endpoint, response.Body.String())
+		}
+	}
+}
+
+func TestClusterFileCallbackOriginUsesOnlyValidatedReachableRequestShape(t *testing.T) {
+	server, _ := newTestServerWithPublicURL(t, "")
+	for _, test := range []struct {
+		name   string
+		target string
+		host   string
+		want   string
+	}{
+		{name: "direct https domain", target: "https://panel.example/api/v1/cluster/hosts", host: "panel.example", want: "https://panel.example"},
+		{name: "direct http literal ip", target: "http://203.0.113.10:1801/api/v1/cluster/hosts", host: "203.0.113.10:1801", want: "http://203.0.113.10:1801"},
+		{name: "http domain is not a callback", target: "http://panel.example/api/v1/cluster/hosts", host: "panel.example", want: ""},
+		{name: "default http port is not a callback", target: "http://203.0.113.10/api/v1/cluster/hosts", host: "203.0.113.10", want: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.target, strings.NewReader(`{}`))
+			request.Host = test.host
+			if got := server.clusterFileCallbackOrigin(request); got != test.want {
+				t.Fatalf("clusterFileCallbackOrigin() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
