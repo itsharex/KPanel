@@ -74,7 +74,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(145deg, rgb(226 242 239 / 18%), rgb(190 218 224 / 7%)),
+    linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%)),
     var(--desktop-wallpaper-image, url('/wallpapers/kpanel-desktop.webp')) center / cover no-repeat,
     linear-gradient(145deg, #b9d4d4, #edf5f3);
 }

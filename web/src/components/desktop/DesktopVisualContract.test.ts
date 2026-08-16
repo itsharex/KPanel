@@ -97,7 +97,7 @@ describe('desktop visual and interaction contract', () => {
   })
 
   it('preserves wallpaper depth in light mode without changing the dark treatment', () => {
-    expect(styles).toContain('linear-gradient(145deg, rgb(226 242 239 / 18%), rgb(190 218 224 / 7%))')
+    expect(styles).toContain('linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%))')
     expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__wallpaper::after\s*\{/)
     expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__aurora\s*\{[^}]*opacity:\s*\.2;/)
   })
