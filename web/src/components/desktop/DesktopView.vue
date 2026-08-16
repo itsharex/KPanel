@@ -363,7 +363,7 @@ let desktopTransferController: AbortController | undefined
 let desktopTransferClearTimer: number | undefined
 let dropPulseTimer: number | undefined
 let themeTransitionTimer: number | undefined
-let themeTransitionFrame: number | undefined
+let themeTogglePendingAfterContextMenu = false
 
 const allIconKeys = computed(() => [
   ...desktopApps.map((app) => `nav:${app.path}`),
@@ -2144,7 +2144,7 @@ function onContextMenuAction(
       void refreshDesktop()
       break
     case 'theme':
-      toggleDesktopThemeAfterContextMenuClose()
+      themeTogglePendingAfterContextMenu = true
       break
     case 'wallpaper':
       wallpaperDialogOpen.value = true
@@ -2176,14 +2176,10 @@ function onContextMenuAction(
   }
 }
 
-function toggleDesktopThemeAfterContextMenuClose(): void {
-  void nextTick(() => {
-    if (themeTransitionFrame !== undefined) window.cancelAnimationFrame(themeTransitionFrame)
-    themeTransitionFrame = window.requestAnimationFrame(() => {
-      themeTransitionFrame = undefined
-      toggleDesktopTheme()
-    })
-  })
+function onContextMenuAfterLeave(): void {
+  if (!themeTogglePendingAfterContextMenu) return
+  themeTogglePendingAfterContextMenu = false
+  toggleDesktopTheme()
 }
 
 function toggleDesktopTheme(): void {
@@ -2611,7 +2607,7 @@ onBeforeUnmount(() => {
   if (desktopTransferClearTimer !== undefined) window.clearTimeout(desktopTransferClearTimer)
   if (dropPulseTimer !== undefined) window.clearTimeout(dropPulseTimer)
   if (themeTransitionTimer !== undefined) window.clearTimeout(themeTransitionTimer)
-  if (themeTransitionFrame !== undefined) window.cancelAnimationFrame(themeTransitionFrame)
+  themeTogglePendingAfterContextMenu = false
   document.documentElement.classList.remove('desktop-theme-transitioning')
   if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
   if (resizePersistTimer !== undefined) {
@@ -2908,7 +2904,7 @@ function onViewportResize(): void {
       :title="windowTitle(windowState.titleKey, windowState.path)"
     />
 
-    <Transition name="desktop-menu">
+    <Transition name="desktop-menu" @after-leave="onContextMenuAfterLeave">
       <div
         v-if="contextMenu.open"
         ref="contextMenuElement"
