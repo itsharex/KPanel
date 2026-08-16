@@ -193,7 +193,7 @@ func TestDynamicCatalogPrefetchesOfficialIconForBuiltinAndThirdParty(t *testing.
 	payload := remotePayloadFromCatalog(embedded)
 	payload.Apps = append(payload.Apps,
 		App{
-			ID: "builtin-116", Num: 116, Source: "builtin", Token: "new-builtin-app",
+			ID: "builtin-117", Num: 117, Source: "builtin", Token: "new-builtin-app",
 			NameZH: "新内置应用", NameEN: "New Builtin App", Category: "ai",
 			Icon: "icons/new-builtin-app.webp", Slug: "new-builtin-app",
 		},

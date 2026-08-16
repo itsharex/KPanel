@@ -83,8 +83,8 @@ func TestEmbeddedCatalogMatchesAuditedApplicationMarket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Apps) != 147 || len(legacy) != 115 {
-		t.Fatalf("catalog counts = %d/%d, want 147/115", len(catalog.Apps), len(legacy))
+	if len(catalog.Apps) != 153 || len(legacy) != 115 {
+		t.Fatalf("catalog counts = %d/%d, want 153/115", len(catalog.Apps), len(legacy))
 	}
 	if !strings.HasPrefix(catalog.Source, "https://app.kejilion.sh") ||
 		len(scriptSHA256) != 64 {
@@ -157,7 +157,7 @@ func TestInventoryCombinesDockerTruthAndScriptMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inventory.Items) != 147 || inventory.Installed != 2 || inventory.Running != 1 {
+	if len(inventory.Items) != 153 || inventory.Installed != 2 || inventory.Running != 1 {
 		t.Fatalf("inventory counts are wrong: %#v", inventory)
 	}
 	var speedtest, itTools Summary
@@ -274,7 +274,7 @@ func TestRemoteCatalogDynamicallyReplacesBuiltinAndThirdPartyEntries(t *testing.
 		apps = append(apps, app)
 	}
 	apps = append(apps, App{
-		ID: "builtin-116", Num: 116, Source: "builtin", Token: "new-builtin-app",
+		ID: "builtin-117", Num: 117, Source: "builtin", Token: "new-builtin-app",
 		NameZH: "新内置应用", NameEN: "New Builtin App", Description: "动态内置目录测试",
 		DescriptionEN: "Dynamic builtin catalog test", Category: "ai",
 		Icon: "icons/new-builtin-app.webp", Slug: "new-builtin-app", AddedAt: "2026-08-15",
@@ -319,7 +319,7 @@ func TestRemoteCatalogDynamicallyReplacesBuiltinAndThirdPartyEntries(t *testing.
 				dynamicSources[app.Slug] == "icons/new-safe-app.webp"
 		}
 		if app.Token == "new-builtin-app" {
-			foundNewBuiltin = app.Num == 116 &&
+			foundNewBuiltin = app.Num == 117 &&
 				app.Icon == dynamicAppIconPrefix+"new-builtin-app.webp" &&
 				app.IconSHA256 == "" && app.AddedAt == "2026-08-15" &&
 				dynamicSources[app.Slug] == "icons/new-builtin-app.webp"
