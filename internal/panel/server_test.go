@@ -181,8 +181,16 @@ func TestSecurityEntranceGatesLoginWithoutBreakingSessions(t *testing.T) {
 	}
 
 	entry := performRequest(server, http.MethodGet, "/panel-secure1", nil, nil)
-	if entry.Code != http.StatusSeeOther || entry.Header().Get("Location") != "/login" {
+	if entry.Code != http.StatusOK || entry.Header().Get("Location") != "" {
 		t.Fatalf("unexpected entrance response: %d %s", entry.Code, entry.Header().Get("Location"))
+	}
+	if entry.Header().Get("Cache-Control") != "no-store" ||
+		entry.Header().Get("Referrer-Policy") != "no-referrer" ||
+		entry.Header().Get("X-Content-Type-Options") != "nosniff" ||
+		!strings.Contains(entry.Header().Get("Content-Security-Policy"), "default-src 'none'") ||
+		!strings.Contains(entry.Body.String(), `http-equiv="refresh" content="0;url=/login"`) ||
+		!strings.Contains(entry.Body.String(), `href="/login"`) {
+		t.Fatalf("security entrance transition page is incomplete: headers=%v body=%s", entry.Header(), entry.Body.String())
 	}
 	var entryCookie *http.Cookie
 	for _, cookie := range entry.Result().Cookies() {

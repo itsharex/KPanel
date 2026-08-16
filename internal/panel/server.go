@@ -652,7 +652,18 @@ func (s *Server) handleSecurityEntrance(w http.ResponseWriter, r *http.Request) 
 			MaxAge: max(int(s.config.SessionTTL.Seconds()), 1), Expires: expires, HttpOnly: true,
 			Secure: s.requestUsesHTTPS(r), SameSite: http.SameSiteStrictMode,
 		})
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		// A redirect in the original cross-site navigation chain does not carry a
+		// freshly issued SameSite=Strict cookie in current browsers. Complete one
+		// target-origin document load first, then let a static meta refresh enter
+		// the login route without weakening the cookie policy.
+		const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/login"><meta name="referrer" content="no-referrer"><title>KPanel</title></head><body><p><a href="/login">Continue to KPanel</a></p></body></html>`
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, body)
 		return true
 	}
 	if securityEntrancePublicPath(r.URL.Path) || s.hasSecurityEntranceCookie(r, value) || s.hasValidSession(r) {
