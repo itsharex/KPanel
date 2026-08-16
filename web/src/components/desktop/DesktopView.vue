@@ -2618,12 +2618,15 @@ function onViewportResize(): void {
     @dragleave="onDesktopFileDragLeave"
     @drop="onDesktopFileDrop"
   >
-    <div
-      class="desktop__wallpaper"
-      :data-wallpaper="activeDesktopWallpaper.id"
-      :style="desktopWallpaperStyle"
-      aria-hidden="true"
-    >
+    <div class="desktop__wallpaper" aria-hidden="true">
+      <Transition name="desktop-wallpaper-fade">
+        <div
+          :key="activeDesktopWallpaper.id"
+          class="desktop__wallpaper-image"
+          :data-wallpaper="activeDesktopWallpaper.id"
+          :style="desktopWallpaperStyle"
+        />
+      </Transition>
       <div class="desktop__aurora desktop__aurora--one" />
       <div class="desktop__aurora desktop__aurora--two" />
       <div class="desktop__aurora desktop__aurora--three" />

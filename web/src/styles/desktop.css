@@ -66,18 +66,54 @@ body.desktop-mode-open::-webkit-scrollbar {
   z-index: 0;
   inset: 0;
   overflow: hidden;
+  background: linear-gradient(145deg, #b9d4d4, #edf5f3);
+  transform: scale(1.01);
+}
+
+.desktop__wallpaper-image {
+  position: absolute;
+  inset: 0;
   background:
     linear-gradient(145deg, rgb(226 242 239 / 18%), rgb(190 218 224 / 7%)),
     var(--desktop-wallpaper-image, url('/wallpapers/kpanel-desktop.webp')) center / cover no-repeat,
     linear-gradient(145deg, #b9d4d4, #edf5f3);
-  transform: scale(1.01);
 }
 
 :root[data-theme='dark'] .desktop__wallpaper {
+  background: linear-gradient(145deg, #06151a, #0a2026);
+}
+
+:root[data-theme='dark'] .desktop__wallpaper-image {
   background:
     linear-gradient(145deg, rgb(0 12 15 / 14%), rgb(1 10 14 / 30%)),
     var(--desktop-wallpaper-image, url('/wallpapers/kpanel-desktop.webp')) center / cover no-repeat,
     linear-gradient(145deg, #06151a, #0a2026);
+}
+
+.desktop-wallpaper-fade-enter-active,
+.desktop-wallpaper-fade-leave-active {
+  transition:
+    opacity .5s cubic-bezier(.22, 1, .36, 1),
+    transform .65s cubic-bezier(.22, 1, .36, 1);
+  will-change: opacity, transform;
+}
+
+.desktop-wallpaper-fade-enter-active {
+  z-index: 1;
+}
+
+.desktop-wallpaper-fade-leave-active {
+  z-index: 0;
+}
+
+.desktop-wallpaper-fade-enter-from {
+  opacity: 0;
+  transform: scale(1.012);
+}
+
+.desktop-wallpaper-fade-leave-to {
+  opacity: 0;
+  transform: scale(1.004);
 }
 
 .desktop__wallpaper::after {
@@ -125,6 +161,13 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop__aurora--three {
   display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-wallpaper-fade-enter-active,
+  .desktop-wallpaper-fade-leave-active {
+    transition: none;
+  }
 }
 
 /* Menu bar --------------------------------------------------------------- */

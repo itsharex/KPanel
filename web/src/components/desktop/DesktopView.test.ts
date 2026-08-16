@@ -323,7 +323,7 @@ describe('DesktopView', () => {
   it('changes the wallpaper from the desktop menu and restores the saved choice', async () => {
     const wrapper = mount(DesktopView)
 
-    expect(wrapper.find('.desktop__wallpaper').attributes('data-wallpaper')).toBe('classic')
+    expect(wrapper.find('.desktop__wallpaper-image').attributes('data-wallpaper')).toBe('classic')
     await wrapper.trigger('contextmenu', { clientX: 200, clientY: 150 })
     await nextTick()
     await wrapper.find('[data-context-action="wallpaper"]').trigger('click')
@@ -337,14 +337,14 @@ describe('DesktopView', () => {
 
     orbit?.click()
     await nextTick()
-    expect(wrapper.find('.desktop__wallpaper').attributes('data-wallpaper')).toBe('orbit')
-    expect(wrapper.find('.desktop__wallpaper').attributes('style')).toContain('kpanel-desktop-orbit.webp')
+    expect(wrapper.find('.desktop__wallpaper-image').attributes('data-wallpaper')).toBe('orbit')
+    expect(wrapper.find('.desktop__wallpaper-image').attributes('style')).toContain('kpanel-desktop-orbit.webp')
     expect(window.localStorage.getItem('kpanel:desktop-wallpaper:v1')).toBe('orbit')
     expect(document.body.querySelector('.desktop-wallpaper-picker')).toBeNull()
     wrapper.unmount()
 
     const restored = mount(DesktopView)
-    expect(restored.find('.desktop__wallpaper').attributes('data-wallpaper')).toBe('orbit')
+    expect(restored.find('.desktop__wallpaper-image').attributes('data-wallpaper')).toBe('orbit')
     restored.unmount()
   })
 

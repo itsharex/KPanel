@@ -102,6 +102,12 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__aurora\s*\{[^}]*opacity:\s*\.2;/)
   })
 
+  it('crossfades wallpaper layers and respects reduced motion', () => {
+    expect(styles).toMatch(/\.desktop-wallpaper-fade-enter-active,\s*\.desktop-wallpaper-fade-leave-active\s*\{[^}]*opacity \.5s cubic-bezier\(\.22, 1, \.36, 1\),[^}]*transform \.65s cubic-bezier\(\.22, 1, \.36, 1\);/)
+    expect(styles).toMatch(/\.desktop-wallpaper-fade-enter-from\s*\{[^}]*opacity:\s*0;[^}]*transform:\s*scale\(1\.012\);/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.desktop-wallpaper-fade-enter-active,[\s\S]*?transition:\s*none;/)
+  })
+
   it('keeps all three monitor rows evenly spaced while compacting cumulative traffic', () => {
     expect(styles).toContain('grid-template-rows: repeat(3, 37px);')
     expect(styles).toContain('row-gap: 14px;')
