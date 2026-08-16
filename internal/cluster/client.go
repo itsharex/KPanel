@@ -240,6 +240,7 @@ func (c *RemoteClient) Summary(
 	if err := SignRequest(request, controllerID, targetID, privateKey, now, nonce); err != nil {
 		return FederationSummary{}, err
 	}
+	request.Header.Set(FederationCapabilitiesHeader, SecurityEntrancePathCapability)
 	var response FederationSummary
 	if err := c.doJSON(request, MaxSummaryBytes, &response); err != nil {
 		return FederationSummary{}, err

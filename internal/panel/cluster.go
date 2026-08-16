@@ -445,6 +445,7 @@ func (s *Server) handleFederationV2(w http.ResponseWriter, r *http.Request) {
 		r.Context(),
 		s.remoteIP(r),
 		r.URL.Path,
+		r.Header.Get(cluster.FederationCapabilitiesHeader),
 		envelope,
 	)
 	if err != nil {

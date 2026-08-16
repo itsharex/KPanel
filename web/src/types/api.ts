@@ -193,6 +193,7 @@ export interface ClusterHost {
   fileTransferAvailable?: boolean
   mutualFileTransferAvailable: boolean
   panelVersion?: string
+  securityEntrancePath?: string
   state: ClusterHostState
   lastSnapshot?: ClusterHostSnapshot
   lastAttemptAt?: string

@@ -631,6 +631,7 @@ func (s *Service) pollV2Locked(ctx context.Context, id string) {
 	current.lastErrorCode = ""
 	current.lastError = ""
 	current.panelVersion = summary.PanelVersion
+	current.securityEntrancePath = summary.SecurityEntrancePath
 	current.nextPollAt = finishedAt.Add(s.jitter(s.pollInterval))
 	s.runtime[id] = current
 	s.mu.Unlock()
@@ -674,6 +675,9 @@ func publicHostV2(
 		TerminalAvailable:     ScopeAllowsTerminal(normalizedV2Scope(record.Scope)),
 		FileTransferAvailable: ScopeAllowsFiles(normalizedV2Scope(record.Scope)),
 		PanelVersion:          panelVersion, State: state,
+
+		SecurityEntrancePath: current.securityEntrancePath,
+
 		LastSnapshot:        cloneSnapshot(current.snapshot),
 		LastAttemptAt:       cloneTime(current.lastAttemptAt),
 		LastSuccessAt:       cloneTime(current.lastSuccessAt),
@@ -689,6 +693,7 @@ func (s *Service) HandleFederationV2(
 	ctx context.Context,
 	source string,
 	path string,
+	capabilities string,
 	envelope FederationEnvelopeV2,
 ) (FederationEnvelopeV2, error) {
 	now := s.now().UTC()
@@ -708,7 +713,7 @@ func (s *Service) HandleFederationV2(
 	case v2CommitPath:
 		return s.handleCommitV2(envelope, now)
 	case v2SummaryPath:
-		return s.handleSummaryV2(ctx, envelope, now)
+		return s.handleSummaryV2(ctx, capabilities, envelope, now)
 	case v2RevokePath:
 		return s.handleRevokeV2(envelope, now)
 	case v2FileLinkPath:
@@ -835,6 +840,7 @@ func (s *Service) handleCommitV2(
 
 func (s *Service) handleSummaryV2(
 	ctx context.Context,
+	capabilities string,
 	envelope v2Envelope,
 	now time.Time,
 ) (FederationEnvelopeV2, error) {
@@ -855,8 +861,9 @@ func (s *Service) handleSummaryV2(
 	_ = s.storeV2.TouchController(controller.ID, now)
 	return sealV2JSONResponse(envelope, handshake, FederationSummary{
 		NodeID: s.store.NodeID(), PanelVersion: s.panelVersion,
-		FederationProtocol: FederationProtocolV2,
-		Telemetry:          telemetry,
+		FederationProtocol:   FederationProtocolV2,
+		SecurityEntrancePath: s.responseSecurityEntrancePath(capabilities),
+		Telemetry:            telemetry,
 	})
 }
 
@@ -1005,6 +1012,10 @@ func validateFederationSummaryV2(
 		return ErrProtocolMismatch
 	}
 	if cleanDisplayText(summary.PanelVersion, 64) != summary.PanelVersion {
+		return &RemoteError{Code: "invalid_response"}
+	}
+	if summary.SecurityEntrancePath != "" &&
+		!validSecurityEntrancePath(summary.SecurityEntrancePath) {
 		return &RemoteError{Code: "invalid_response"}
 	}
 	return validateTelemetry(summary.Telemetry, now)

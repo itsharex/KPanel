@@ -104,6 +104,7 @@ interface ClusterBindings {
   mutualFilesHostEligible: (host: ClusterHost) => boolean
   enableMutualFiles: () => Promise<void>
   openPanel: (host: ClusterHost) => void
+  panelURL: (host: ClusterHost) => string
   copyAccessCredential: () => Promise<void>
   createLightEnrollment: () => Promise<void>
   copyLightEnrollment: () => Promise<void>
@@ -319,6 +320,45 @@ describe('ClusterView inventory and navigation', () => {
       'noopener,noreferrer',
     )
     expect(mocks.confirm).not.toHaveBeenCalled()
+  })
+
+  it('uses a synchronized security entrance only for the remote panel jump', () => {
+    const view = setupView()
+    const remote = host('remote', false, 'https://hk.example.com:8443')
+    remote.securityEntrancePath = 'panel-secure1'
+    const current = host('local', true, 'https://stored-local.invalid')
+    current.securityEntrancePath = 'panel-ignored1'
+
+    view.openPanel(remote)
+    view.openPanel(current)
+
+    expect(mocks.open).toHaveBeenNthCalledWith(
+      1,
+      'https://hk.example.com:8443/panel-secure1',
+      '_blank',
+      'noopener,noreferrer',
+    )
+    expect(mocks.open).toHaveBeenNthCalledWith(
+      2,
+      'https://center.example.com',
+      '_blank',
+      'noopener,noreferrer',
+    )
+  })
+
+  it('falls back to the root origin for an invalid entrance path', () => {
+    const view = setupView()
+    const remote = host('remote', false, 'https://hk.example.com')
+    remote.securityEntrancePath = '//attacker.example'
+
+    expect(view.panelURL(remote)).toBe('https://hk.example.com')
+    view.openPanel(remote)
+
+    expect(mocks.open).toHaveBeenCalledWith(
+      'https://hk.example.com',
+      '_blank',
+      'noopener,noreferrer',
+    )
   })
 
   it('never exposes a management-page jump for a telemetry-only light node', () => {

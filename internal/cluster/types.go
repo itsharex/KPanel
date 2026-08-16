@@ -91,6 +91,7 @@ type Host struct {
 	FileTransferAvailable       bool              `json:"fileTransferAvailable"`
 	MutualFileTransferAvailable bool              `json:"mutualFileTransferAvailable"`
 	PanelVersion                string            `json:"panelVersion,omitempty"`
+	SecurityEntrancePath        string            `json:"securityEntrancePath,omitempty"`
 	State                       HostState         `json:"state"`
 	LastSnapshot                *HostSnapshot     `json:"lastSnapshot,omitempty"`
 	LastAttemptAt               *time.Time        `json:"lastAttemptAt,omitempty"`
@@ -201,8 +202,9 @@ type PairResponse struct {
 }
 
 type FederationSummary struct {
-	NodeID             string                 `json:"nodeId"`
-	PanelVersion       string                 `json:"panelVersion"`
-	FederationProtocol string                 `json:"federationProtocol"`
-	Telemetry          contract.HostTelemetry `json:"telemetry"`
+	NodeID               string                 `json:"nodeId"`
+	PanelVersion         string                 `json:"panelVersion"`
+	FederationProtocol   string                 `json:"federationProtocol"`
+	SecurityEntrancePath string                 `json:"securityEntrancePath,omitempty"`
+	Telemetry            contract.HostTelemetry `json:"telemetry"`
 }

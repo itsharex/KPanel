@@ -830,12 +830,27 @@ function openPanel(host: ClusterHost): void {
   ) {
     return
   }
-  window.open(displayOrigin(host), '_blank', 'noopener,noreferrer')
+  window.open(panelURL(host), '_blank', 'noopener,noreferrer')
 }
 
 function displayOrigin(host: ClusterHost): string {
   if (host.kind === 'light_node') return ''
   return host.isLocal ? window.location.origin : host.origin
+}
+
+const securityEntrancePathPattern = /^[a-z0-9](?:[a-z0-9-]{4,46}[a-z0-9])$/
+
+function panelURL(host: ClusterHost): string {
+  const origin = displayOrigin(host)
+  if (
+    !origin ||
+    host.isLocal ||
+    !host.securityEntrancePath ||
+    !securityEntrancePathPattern.test(host.securityEntrancePath)
+  ) {
+    return origin
+  }
+  return `${origin}/${host.securityEntrancePath}`
 }
 
 function transportSecurityLabel(host: ClusterHost): string {
@@ -1042,7 +1057,7 @@ onBeforeUnmount(() => {
             <a
               v-if="host.kind !== 'light_node' && (host.isLocal || host.transportSecurity === 'tls')"
               class="cluster-card__origin"
-              :href="displayOrigin(host)"
+              :href="panelURL(host)"
               target="_blank"
               rel="noopener noreferrer"
             >

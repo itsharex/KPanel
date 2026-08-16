@@ -20,7 +20,9 @@ Agent、Shell、文件、网站或 Docker 管理能力，只通过出站 HTTPS �
 [`multi-host-terminal.md`](multi-host-terminal.md)。跨面板文件复制契约见
 [`cross-kpanel-file-transfer.md`](cross-kpanel-file-transfer.md)。集群公开分享契约见
 [`cluster-public-share.md`](cluster-public-share.md)。当前不提供批量写操作或免登录打开目标面板。
-点击“打开面板”只打开配对时保存的根地址，目标面板仍需独立登录。集群链路支持 HTTPS，或在没有域名时使用
+点击“打开面板”默认使用配对时保存的根地址；支持安全入口的目标面板会通过现有集群摘要同步可选入口路径，
+跳转时先进入该路径再由目标面板转到登录页，目标面板仍需独立登录。入口路径只在控制端声明兼容能力后返回，
+旧控制端、旧目标端或未启用安全入口时继续使用根地址，不需要重新配对。集群链路支持 HTTPS，或在没有域名时使用
 端到端加密的 `http://公网IP:非80端口`；后者只保护 KPanel 间的集群数据，浏览器登录目标
 面板仍是普通 HTTP，页面会在跳转前明确警告。
 

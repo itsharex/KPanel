@@ -54,6 +54,8 @@ type ServiceConfig struct {
 	CheckpointEvery time.Duration
 	MaxConcurrency  int
 	Jitter          func(time.Duration) time.Duration
+
+	SecurityEntrancePath func() string
 }
 
 type TerminalBackend interface {
@@ -75,6 +77,8 @@ type runtimeState struct {
 	nextPollAt          time.Time
 	inFlight            bool
 	nextFilePeerSyncAt  time.Time
+
+	securityEntrancePath string
 }
 
 type Service struct {
@@ -98,6 +102,8 @@ type Service struct {
 	checkpointEvery time.Duration
 	jitter          func(time.Duration) time.Duration
 	sem             chan struct{}
+
+	securityEntrancePath func() string
 
 	mutationMu      sync.Mutex
 	v2SecretStateMu sync.Mutex
@@ -264,6 +270,8 @@ func NewService(config ServiceConfig) (*Service, error) {
 		lightEnrolls:     newFixedWindowLimiter(10, time.Minute, 2048),
 		lightSources:     newFixedWindowLimiter(240, time.Minute, 2048),
 		lightReports:     newFixedWindowLimiter(180, time.Minute, MaxHosts),
+
+		securityEntrancePath: config.SecurityEntrancePath,
 	}
 	for _, record := range store.Hosts() {
 		service.runtime[record.ID] = runtimeState{
@@ -759,8 +767,24 @@ func (s *Service) SignedSummary(ctx context.Context, request *http.Request) (Fed
 	s.store.TouchController(controllerID, s.now().UTC())
 	return FederationSummary{
 		NodeID: s.store.NodeID(), PanelVersion: s.panelVersion,
-		FederationProtocol: FederationProtocol, Telemetry: telemetry,
+		FederationProtocol: FederationProtocol,
+		SecurityEntrancePath: s.responseSecurityEntrancePath(
+			request.Header.Get(FederationCapabilitiesHeader),
+		),
+		Telemetry: telemetry,
 	}, nil
+}
+
+func (s *Service) responseSecurityEntrancePath(capabilities string) string {
+	if !hasFederationCapability(capabilities, SecurityEntrancePathCapability) ||
+		s.securityEntrancePath == nil {
+		return ""
+	}
+	path := s.securityEntrancePath()
+	if !validSecurityEntrancePath(path) {
+		return ""
+	}
+	return path
 }
 
 func (s *Service) SignedRevoke(request *http.Request) error {
@@ -926,6 +950,7 @@ func (s *Service) poll(ctx context.Context, id string) {
 	current.lastErrorCode = ""
 	current.lastError = ""
 	current.panelVersion = summary.PanelVersion
+	current.securityEntrancePath = summary.SecurityEntrancePath
 	current.nextPollAt = finishedAt.Add(s.jitter(s.pollInterval))
 	s.runtime[id] = current
 	s.mu.Unlock()
@@ -1127,6 +1152,9 @@ func publicHost(record hostRecord, current runtimeState, now time.Time) Host {
 		RemoteNodeID:      record.RemoteNodeID, FederationProtocol: record.FederationProtocol,
 		Scope: SummaryScope, TerminalAvailable: false,
 		PanelVersion: panelVersion, State: hostState(current, now),
+
+		SecurityEntrancePath: current.securityEntrancePath,
+
 		LastSnapshot:        cloneSnapshot(current.snapshot),
 		LastAttemptAt:       cloneTime(current.lastAttemptAt),
 		LastSuccessAt:       cloneTime(current.lastSuccessAt),
@@ -1189,7 +1217,24 @@ func validateFederationSummary(summary FederationSummary, expectedNodeID string,
 	if cleanDisplayText(summary.PanelVersion, 64) != summary.PanelVersion {
 		return &RemoteError{Code: "invalid_response"}
 	}
+	if summary.SecurityEntrancePath != "" &&
+		!validSecurityEntrancePath(summary.SecurityEntrancePath) {
+		return &RemoteError{Code: "invalid_response"}
+	}
 	return validateTelemetry(summary.Telemetry, now)
+}
+
+func validSecurityEntrancePath(value string) bool {
+	if len(value) < 6 || len(value) > 48 || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') && character != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func validateTelemetry(value contract.HostTelemetry, now time.Time) error {

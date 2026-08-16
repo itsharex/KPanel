@@ -119,7 +119,8 @@ func (t *serviceV2RoundTripper) RoundTrip(
 		), nil
 	}
 	response, err := t.target.HandleFederationV2(
-		request.Context(), "198.51.100.10", request.URL.Path, envelope,
+		request.Context(), "198.51.100.10", request.URL.Path,
+		request.Header.Get(FederationCapabilitiesHeader), envelope,
 	)
 	if err != nil {
 		status := http.StatusUnauthorized
@@ -193,10 +194,12 @@ func newServiceV2Remote(t *testing.T) (*RemoteClient, *serviceV2RoundTripper) {
 func TestServiceV2PairsPollsAndRevokesOverEncryptedHTTP(t *testing.T) {
 	now := time.Date(2026, 7, 29, 9, 0, 0, 0, time.UTC)
 	clock := &serviceTestClock{now: now}
+	securityEntrancePath := "panel-secure2"
 	targetRemote, _ := newServiceV2Remote(t)
 	target, err := NewService(ServiceConfig{
 		DataDir:      filepath.Join(t.TempDir(), "target"),
 		PanelVersion: "v0.27.0", Hostname: "target-v2",
+		SecurityEntrancePath: func() string { return securityEntrancePath },
 		Telemetry: serviceTestTelemetry{
 			now: clock.Now, hostname: "target-v2",
 		},
@@ -243,6 +246,27 @@ func TestServiceV2PairsPollsAndRevokesOverEncryptedHTTP(t *testing.T) {
 		!strings.HasPrefix(host.PeerFingerprint, "sha256:") {
 		t.Fatalf("unexpected paired host: %#v", host)
 	}
+	if host.SecurityEntrancePath != "panel-secure2" {
+		t.Fatalf("security entrance path was not synchronized over Noise: %#v", host)
+	}
+	securityEntrancePath = "panel-regenerated2"
+	center.pollV2Locked(context.Background(), host.ID)
+	refreshed, err := center.Host(context.Background(), host.ID)
+	if err != nil {
+		t.Fatalf("Host() after security entrance change error = %v", err)
+	}
+	if refreshed.SecurityEntrancePath != "panel-regenerated2" {
+		t.Fatalf("regenerated security entrance path was not synchronized: %#v", refreshed)
+	}
+	securityEntrancePath = ""
+	center.pollV2Locked(context.Background(), host.ID)
+	refreshed, err = center.Host(context.Background(), host.ID)
+	if err != nil {
+		t.Fatalf("Host() after disabling security entrance error = %v", err)
+	}
+	if refreshed.SecurityEntrancePath != "" {
+		t.Fatalf("disabled security entrance path was retained: %#v", refreshed)
+	}
 	controllers := target.Controllers()
 	if len(controllers) != 1 ||
 		controllers[0].ID == "" ||
@@ -271,6 +295,7 @@ func TestServiceV2PairsPollsAndRevokesOverEncryptedHTTP(t *testing.T) {
 		context.Background(),
 		"198.51.100.10",
 		v2SummaryPath,
+		SecurityEntrancePathCapability,
 		replayedSummary,
 	); !errors.Is(err, ErrReplay) {
 		t.Fatalf("replayed encrypted summary error = %v, want ErrReplay", err)

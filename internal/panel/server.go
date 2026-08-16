@@ -105,6 +105,13 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		PrivateCIDRs: config.ClusterPrivateCIDRs,
 		Telemetry:    clusterTelemetrySource{agent: agent},
 		Terminal:     clusterTerminalSource{agent: agent},
+		SecurityEntrancePath: func() string {
+			entrance, _ := storage.SecurityEntrance()
+			if !authService.IsInitialized() || !entrance.Enabled {
+				return ""
+			}
+			return entrance.Path
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize cluster service: %w", err)
