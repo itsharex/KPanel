@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import DesktopView from '@/components/desktop/DesktopView.vue'
 import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
+import { useTheme } from '@/stores/theme'
 
 function setupViewport(width: number, height: number): void {
   Object.defineProperty(window, 'innerWidth', { value: width, configurable: true })
@@ -318,6 +319,35 @@ describe('DesktopView', () => {
     expect(exitFullscreen).toHaveBeenCalledOnce()
     expect(fullscreenElement).toBeNull()
     wrapper.unmount()
+  })
+
+  it('removes the context menu before starting a theme transition', async () => {
+    const theme = useTheme()
+    theme.setTheme('light')
+    let scheduledFrame: FrameRequestCallback | undefined
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      scheduledFrame = callback
+      return 1
+    })
+    const wrapper = mount(DesktopView)
+
+    await wrapper.trigger('contextmenu', { clientX: 200, clientY: 150 })
+    await nextTick()
+    expect(wrapper.find('.desktop__context-menu').exists()).toBe(true)
+
+    await wrapper.find('[data-context-action="theme"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.desktop__context-menu').exists()).toBe(false)
+    expect(theme.resolved.value).toBe('light')
+    expect(scheduledFrame).toBeTypeOf('function')
+
+    scheduledFrame?.(performance.now())
+    await nextTick()
+    expect(theme.resolved.value).toBe('dark')
+
+    wrapper.unmount()
+    theme.setTheme('system')
+    requestFrame.mockRestore()
   })
 
   it('changes the wallpaper from the desktop menu and restores the saved choice', async () => {

@@ -363,6 +363,7 @@ let desktopTransferController: AbortController | undefined
 let desktopTransferClearTimer: number | undefined
 let dropPulseTimer: number | undefined
 let themeTransitionTimer: number | undefined
+let themeTransitionFrame: number | undefined
 
 const allIconKeys = computed(() => [
   ...desktopApps.map((app) => `nav:${app.path}`),
@@ -2143,7 +2144,7 @@ function onContextMenuAction(
       void refreshDesktop()
       break
     case 'theme':
-      toggleDesktopTheme()
+      toggleDesktopThemeAfterContextMenuClose()
       break
     case 'wallpaper':
       wallpaperDialogOpen.value = true
@@ -2173,6 +2174,16 @@ function onContextMenuAction(
       break
     }
   }
+}
+
+function toggleDesktopThemeAfterContextMenuClose(): void {
+  void nextTick(() => {
+    if (themeTransitionFrame !== undefined) window.cancelAnimationFrame(themeTransitionFrame)
+    themeTransitionFrame = window.requestAnimationFrame(() => {
+      themeTransitionFrame = undefined
+      toggleDesktopTheme()
+    })
+  })
 }
 
 function toggleDesktopTheme(): void {
@@ -2600,6 +2611,7 @@ onBeforeUnmount(() => {
   if (desktopTransferClearTimer !== undefined) window.clearTimeout(desktopTransferClearTimer)
   if (dropPulseTimer !== undefined) window.clearTimeout(dropPulseTimer)
   if (themeTransitionTimer !== undefined) window.clearTimeout(themeTransitionTimer)
+  if (themeTransitionFrame !== undefined) window.cancelAnimationFrame(themeTransitionFrame)
   document.documentElement.classList.remove('desktop-theme-transitioning')
   if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
   if (resizePersistTimer !== undefined) {
