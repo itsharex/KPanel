@@ -362,6 +362,7 @@ let iconsResizeObserver: ResizeObserver | undefined
 let desktopTransferController: AbortController | undefined
 let desktopTransferClearTimer: number | undefined
 let dropPulseTimer: number | undefined
+let themeTransitionTimer: number | undefined
 
 const allIconKeys = computed(() => [
   ...desktopApps.map((app) => `nav:${app.path}`),
@@ -2142,7 +2143,7 @@ function onContextMenuAction(
       void refreshDesktop()
       break
     case 'theme':
-      theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')
+      toggleDesktopTheme()
       break
     case 'wallpaper':
       wallpaperDialogOpen.value = true
@@ -2172,6 +2173,19 @@ function onContextMenuAction(
       break
     }
   }
+}
+
+function toggleDesktopTheme(): void {
+  const root = document.documentElement
+  const duration = motionDuration(420)
+  if (themeTransitionTimer !== undefined) window.clearTimeout(themeTransitionTimer)
+  if (duration > 0) root.classList.add('desktop-theme-transitioning')
+  theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')
+  if (duration === 0) return
+  themeTransitionTimer = window.setTimeout(() => {
+    root.classList.remove('desktop-theme-transitioning')
+    themeTransitionTimer = undefined
+  }, duration + 40)
 }
 
 function selectDesktopWallpaper(wallpaperID: DesktopWallpaperID): void {
@@ -2585,6 +2599,8 @@ onBeforeUnmount(() => {
   if (bounceTimer !== undefined) window.clearTimeout(bounceTimer)
   if (desktopTransferClearTimer !== undefined) window.clearTimeout(desktopTransferClearTimer)
   if (dropPulseTimer !== undefined) window.clearTimeout(dropPulseTimer)
+  if (themeTransitionTimer !== undefined) window.clearTimeout(themeTransitionTimer)
+  document.documentElement.classList.remove('desktop-theme-transitioning')
   if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
   if (resizePersistTimer !== undefined) {
     window.clearTimeout(resizePersistTimer)
@@ -3151,7 +3167,7 @@ function onViewportResize(): void {
           type="button"
           :title="theme.resolved.value === 'dark' ? i18n.t('desktop.menuLight') : i18n.t('desktop.menuDark')"
           :aria-label="theme.resolved.value === 'dark' ? i18n.t('desktop.menuLight') : i18n.t('desktop.menuDark')"
-          @click="theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')"
+          @click="toggleDesktopTheme"
         >
           <Sun v-if="theme.resolved.value === 'dark'" :size="16" aria-hidden="true" />
           <Moon v-else :size="16" aria-hidden="true" />

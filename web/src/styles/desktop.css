@@ -22,6 +22,20 @@
   --desktop-shadow: rgb(0 0 0 / 42%);
 }
 
+:root.desktop-theme-transitioning .desktop,
+:root.desktop-theme-transitioning .desktop__widgets,
+:root.desktop-theme-transitioning .desktop-clock,
+:root.desktop-theme-transitioning .desktop-clock *,
+:root.desktop-theme-transitioning .desktop-monitor,
+:root.desktop-theme-transitioning .desktop-monitor *,
+:root.desktop-theme-transitioning .desktop__taskbar,
+:root.desktop-theme-transitioning .desktop__taskbar *,
+:root.desktop-theme-transitioning .desktop__icon-label {
+  transition-property: color, background-color, border-color, box-shadow, opacity;
+  transition-duration: .42s;
+  transition-timing-function: cubic-bezier(.22, 1, .36, 1);
+}
+
 html.desktop-mode-open,
 body.desktop-mode-open {
   overflow: hidden;
@@ -73,21 +87,38 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop__wallpaper-image {
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%)),
-    var(--desktop-wallpaper-image, url('/wallpapers/kpanel-desktop.webp')) center / cover no-repeat,
-    linear-gradient(145deg, #b9d4d4, #edf5f3);
+  background: var(--desktop-wallpaper-image, url('/wallpapers/kpanel-desktop.webp')) center / cover no-repeat;
+}
+
+.desktop__wallpaper-image::before,
+.desktop__wallpaper-image::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  pointer-events: none;
+  transition: opacity .42s cubic-bezier(.22, 1, .36, 1);
+}
+
+.desktop__wallpaper-image::before {
+  background: linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%));
+  opacity: 1;
+}
+
+.desktop__wallpaper-image::after {
+  background: linear-gradient(145deg, rgb(0 12 15 / 14%), rgb(1 10 14 / 30%));
+  opacity: 0;
 }
 
 :root[data-theme='dark'] .desktop__wallpaper {
   background: linear-gradient(145deg, #06151a, #0a2026);
 }
 
-:root[data-theme='dark'] .desktop__wallpaper-image {
-  background:
-    linear-gradient(145deg, rgb(0 12 15 / 14%), rgb(1 10 14 / 30%)),
-    var(--desktop-wallpaper-image, url('/wallpapers/kpanel-desktop.webp')) center / cover no-repeat,
-    linear-gradient(145deg, #06151a, #0a2026);
+:root[data-theme='dark'] .desktop__wallpaper-image::before {
+  opacity: 0;
+}
+
+:root[data-theme='dark'] .desktop__wallpaper-image::after {
+  opacity: 1;
 }
 
 .desktop-wallpaper-fade-enter-active,

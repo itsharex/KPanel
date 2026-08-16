@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync(new URL('../../styles/desktop.css', import.meta.url), 'utf8')
 const windowSource = readFileSync(new URL('./DesktopWindow.vue', import.meta.url), 'utf8')
+const desktopViewSource = readFileSync(new URL('./DesktopView.vue', import.meta.url), 'utf8')
 
 describe('desktop visual and interaction contract', () => {
   it('keeps desktop chrome, windows, fullscreen views and teleports in a stable layer order', () => {
@@ -106,6 +107,14 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/\.desktop-wallpaper-fade-enter-active,\s*\.desktop-wallpaper-fade-leave-active\s*\{[^}]*opacity \.5s cubic-bezier\(\.22, 1, \.36, 1\),[^}]*transform \.65s cubic-bezier\(\.22, 1, \.36, 1\);/)
     expect(styles).toMatch(/\.desktop-wallpaper-fade-enter-from\s*\{[^}]*opacity:\s*0;[^}]*transform:\s*scale\(1\.012\);/)
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.desktop-wallpaper-fade-enter-active,[\s\S]*?transition:\s*none;/)
+  })
+
+  it('crossfades full desktop theme changes with a motion-safe fallback', () => {
+    expect(desktopViewSource).toContain("root.classList.add('desktop-theme-transitioning')")
+    expect(desktopViewSource).toContain('const duration = motionDuration(420)')
+    expect(styles).toMatch(/:root\.desktop-theme-transitioning \.desktop[\s\S]*?transition-duration:\s*\.42s;[\s\S]*?cubic-bezier\(\.22, 1, \.36, 1\);/)
+    expect(styles).toMatch(/\.desktop__wallpaper-image::before,\s*\.desktop__wallpaper-image::after\s*\{[^}]*transition:\s*opacity \.42s cubic-bezier\(\.22, 1, \.36, 1\);/)
+    expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__wallpaper-image::after\s*\{[^}]*opacity:\s*1;/)
   })
 
   it('keeps all three monitor rows evenly spaced while compacting cumulative traffic', () => {
