@@ -364,6 +364,8 @@ let desktopTransferClearTimer: number | undefined
 let dropPulseTimer: number | undefined
 let themeTransitionTimer: number | undefined
 let themeTogglePendingAfterContextMenu = false
+let pendingPositionWrites = 0
+let latestPositionWrite = 0
 
 const allIconKeys = computed(() => [
   ...desktopApps.map((app) => `nav:${app.path}`),
@@ -405,7 +407,7 @@ const iconScrollHeight = computed(() => {
 })
 
 watch(() => workspace.value.positions, (positions) => {
-  if (draggingIcons.value.size) return
+  if (draggingIcons.value.size || pendingPositionWrites > 0) return
   localPositions.value = Object.fromEntries(
     Object.entries(positions).map(([key, position]) => [key, { ...position }]),
   )
@@ -911,6 +913,8 @@ async function persistPositions(next: Record<string, DesktopIconPosition>): Prom
     toast.danger(i18n.t('desktop.iconLayoutLimitTitle'), message)
     throw new Error(message)
   }
+  const write = ++latestPositionWrite
+  pendingPositionWrites += 1
   localPositions.value = next
   try {
     await desktopIcons.mutate((draft) => {
@@ -919,11 +923,15 @@ async function persistPositions(next: Record<string, DesktopIconPosition>): Prom
       )
     })
   } catch (error) {
-    localPositions.value = Object.fromEntries(
-      Object.entries(workspace.value.positions).map(([key, position]) => [key, { ...position }]),
-    )
+    if (write === latestPositionWrite) {
+      localPositions.value = Object.fromEntries(
+        Object.entries(workspace.value.positions).map(([key, position]) => [key, { ...position }]),
+      )
+    }
     toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
     throw error
+  } finally {
+    pendingPositionWrites -= 1
   }
 }
 
@@ -1131,6 +1139,7 @@ async function moveDesktopShortcutDrop(
   iconAnnouncement.value = drag.keys.length > 1
     ? i18n.t('desktop.iconsMoved', { count: drag.keys.length })
     : i18n.t('desktop.iconMoved', { name: iconLabel(drag.anchorKey) })
+  draggingIcons.value = new Set()
   clearDesktopShortcutNativeDragPreview()
   await persistPositions(next).catch(() => undefined)
 }

@@ -727,6 +727,9 @@ describe('DesktopView dynamic entries', () => {
     expect(first.attributes('style')).toContain('top: 220px')
     expect(second.classes()).toContain('desktop__icon-slot--dragging')
     wrapper.element.dispatchEvent(internalFileDragEvent('drop', dataTransfer, 360, 260))
+    await wrapper.vm.$nextTick()
+    expect(first.classes()).not.toContain('desktop__icon-slot--dragging')
+    expect(second.classes()).not.toContain('desktop__icon-slot--dragging')
     first.element.dispatchEvent(internalFileDragEvent('dragend', dataTransfer, 360, 260))
     await flushPromises()
 

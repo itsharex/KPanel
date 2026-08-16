@@ -60,6 +60,20 @@ function workspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace 
   }
 }
 
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason?: unknown) => void
+} {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 describe('DesktopView icon layout interaction', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -110,6 +124,84 @@ describe('DesktopView icon layout interaction', () => {
     window.dispatchEvent(pointer('pointerup', 145, 30))
     await icon.trigger('dblclick')
     expect(desktop.windows.value).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('keeps the newest optimistic position while an earlier position write settles', async () => {
+    const firstWrite = deferred<DesktopWorkspace>()
+    const secondWrite = deferred<DesktopWorkspace>()
+    updateWorkspace
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockImplementationOnce(() => secondWrite.promise)
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const slot = wrapper.get('[data-icon-key="nav:/overview"]')
+
+    slot.element.dispatchEvent(pointer('pointerdown', 30, 30))
+    window.dispatchEvent(pointer('pointermove', 145, 30))
+    window.dispatchEvent(pointer('pointerup', 145, 30))
+    await flushPromises()
+    const firstPosition = updateWorkspace.mock.calls[0]![0].positions['nav:/overview']!
+
+    slot.element.dispatchEvent(pointer('pointerdown', 145, 30))
+    window.dispatchEvent(pointer('pointermove', 250, 30))
+    window.dispatchEvent(pointer('pointerup', 250, 30))
+    await flushPromises()
+    const optimisticStyle = slot.attributes('style')
+    expect(updateWorkspace).toHaveBeenCalledTimes(1)
+
+    firstWrite.resolve(workspace({
+      resourceVersion: `sha256:${'2'.repeat(64)}`,
+      positions: { 'nav:/overview': firstPosition },
+    }))
+    await flushPromises()
+
+    expect(updateWorkspace).toHaveBeenCalledTimes(2)
+    expect(slot.attributes('style')).toBe(optimisticStyle)
+    const finalBody = updateWorkspace.mock.calls[1]![0]
+    secondWrite.resolve(workspace({
+      resourceVersion: `sha256:${'3'.repeat(64)}`,
+      positions: finalBody.positions,
+    }))
+    await flushPromises()
+
+    expect(slot.attributes('style')).toBe(optimisticStyle)
+    wrapper.unmount()
+  })
+
+  it('does not roll back a newer optimistic position when an earlier write fails', async () => {
+    const firstWrite = deferred<DesktopWorkspace>()
+    const secondWrite = deferred<DesktopWorkspace>()
+    updateWorkspace
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockImplementationOnce(() => secondWrite.promise)
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const slot = wrapper.get('[data-icon-key="nav:/overview"]')
+
+    slot.element.dispatchEvent(pointer('pointerdown', 30, 30))
+    window.dispatchEvent(pointer('pointermove', 145, 30))
+    window.dispatchEvent(pointer('pointerup', 145, 30))
+    await flushPromises()
+    slot.element.dispatchEvent(pointer('pointerdown', 145, 30))
+    window.dispatchEvent(pointer('pointermove', 250, 30))
+    window.dispatchEvent(pointer('pointerup', 250, 30))
+    await flushPromises()
+    const optimisticStyle = slot.attributes('style')
+
+    firstWrite.reject(new Error('earlier write failed'))
+    await flushPromises()
+
+    expect(updateWorkspace).toHaveBeenCalledTimes(2)
+    expect(slot.attributes('style')).toBe(optimisticStyle)
+    const finalBody = updateWorkspace.mock.calls[1]![0]
+    secondWrite.resolve(workspace({
+      resourceVersion: `sha256:${'3'.repeat(64)}`,
+      positions: finalBody.positions,
+    }))
+    await flushPromises()
+
+    expect(slot.attributes('style')).toBe(optimisticStyle)
     wrapper.unmount()
   })
 
