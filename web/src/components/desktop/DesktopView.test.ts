@@ -273,7 +273,7 @@ describe('DesktopView', () => {
     wrapper.unmount()
   })
 
-  it('places the browser fullscreen toggle directly below the theme action', async () => {
+  it('places the wallpaper action below theme and fullscreen below wallpaper', async () => {
     let fullscreenElement: Element | null = null
     const requestFullscreen = vi.fn(async () => {
       fullscreenElement = document.documentElement
@@ -298,8 +298,10 @@ describe('DesktopView', () => {
     await nextTick()
     const actions = wrapper.findAll('[role="menuitem"]')
     const themeIndex = actions.findIndex((action) => action.attributes('data-context-action') === 'theme')
+    const wallpaperIndex = actions.findIndex((action) => action.attributes('data-context-action') === 'wallpaper')
     const fullscreenIndex = actions.findIndex((action) => action.attributes('data-context-action') === 'fullscreen')
-    expect(fullscreenIndex).toBe(themeIndex + 1)
+    expect(wallpaperIndex).toBe(themeIndex + 1)
+    expect(fullscreenIndex).toBe(wallpaperIndex + 1)
     expect(actions[fullscreenIndex]?.text()).toContain('进入全屏')
 
     await actions[fullscreenIndex]!.trigger('click')
@@ -316,6 +318,34 @@ describe('DesktopView', () => {
     expect(exitFullscreen).toHaveBeenCalledOnce()
     expect(fullscreenElement).toBeNull()
     wrapper.unmount()
+  })
+
+  it('changes the wallpaper from the desktop menu and restores the saved choice', async () => {
+    const wrapper = mount(DesktopView)
+
+    expect(wrapper.find('.desktop__wallpaper').attributes('data-wallpaper')).toBe('classic')
+    await wrapper.trigger('contextmenu', { clientX: 200, clientY: 150 })
+    await nextTick()
+    await wrapper.find('[data-context-action="wallpaper"]').trigger('click')
+    await nextTick()
+
+    const dialog = document.body.querySelector<HTMLElement>('.desktop-wallpaper-picker')
+    const orbit = dialog?.querySelector<HTMLButtonElement>('[data-wallpaper-option="orbit"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog?.querySelectorAll('[data-wallpaper-option]')).toHaveLength(5)
+    expect(orbit?.getAttribute('aria-checked')).toBe('false')
+
+    orbit?.click()
+    await nextTick()
+    expect(wrapper.find('.desktop__wallpaper').attributes('data-wallpaper')).toBe('orbit')
+    expect(wrapper.find('.desktop__wallpaper').attributes('style')).toContain('kpanel-desktop-orbit.webp')
+    expect(window.localStorage.getItem('kpanel:desktop-wallpaper:v1')).toBe('orbit')
+    expect(document.body.querySelector('.desktop-wallpaper-picker')).toBeNull()
+    wrapper.unmount()
+
+    const restored = mount(DesktopView)
+    expect(restored.find('.desktop__wallpaper').attributes('data-wallpaper')).toBe('orbit')
+    restored.unmount()
   })
 
   it('opens and closes a context menu on right-click', async () => {

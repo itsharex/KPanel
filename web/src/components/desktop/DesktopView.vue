@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Sun,
   Moon,
+  Image as ImageIcon,
   Info,
   Pencil,
   SquareTerminal,
@@ -130,7 +131,55 @@ const agentStatus = computed(() => {
 // icons that open their external URL.
 const SITE_RENAMES_KEY = 'kpanel:desktop-site-names:v1'
 const DESKTOP_UPLOAD_LOCATION_KEY = 'kpanel:desktop-upload-location:v1'
+const DESKTOP_WALLPAPER_KEY = 'kpanel:desktop-wallpaper:v1'
 const MAX_SITE_NAME_LENGTH = 48
+
+const DESKTOP_WALLPAPERS = [
+  {
+    id: 'classic',
+    src: '/wallpapers/kpanel-desktop.webp',
+    nameKey: 'desktop.wallpaperClassic',
+    descriptionKey: 'desktop.wallpaperClassicDescription',
+  },
+  {
+    id: 'orbit',
+    src: '/wallpapers/kpanel-desktop-orbit.webp',
+    nameKey: 'desktop.wallpaperOrbit',
+    descriptionKey: 'desktop.wallpaperOrbitDescription',
+  },
+  {
+    id: 'horizon',
+    src: '/wallpapers/kpanel-desktop-horizon.webp',
+    nameKey: 'desktop.wallpaperHorizon',
+    descriptionKey: 'desktop.wallpaperHorizonDescription',
+  },
+  {
+    id: 'rift',
+    src: '/wallpapers/kpanel-desktop-rift.webp',
+    nameKey: 'desktop.wallpaperRift',
+    descriptionKey: 'desktop.wallpaperRiftDescription',
+  },
+  {
+    id: 'prism',
+    src: '/wallpapers/kpanel-desktop-prism.webp',
+    nameKey: 'desktop.wallpaperPrism',
+    descriptionKey: 'desktop.wallpaperPrismDescription',
+  },
+] as const
+type DesktopWallpaperID = typeof DESKTOP_WALLPAPERS[number]['id']
+
+function isDesktopWallpaperID(value: string | null): value is DesktopWallpaperID {
+  return DESKTOP_WALLPAPERS.some((wallpaper) => wallpaper.id === value)
+}
+
+function readDesktopWallpaperID(): DesktopWallpaperID {
+  try {
+    const stored = window.localStorage.getItem(DESKTOP_WALLPAPER_KEY)
+    return isDesktopWallpaperID(stored) ? stored : 'classic'
+  } catch {
+    return 'classic'
+  }
+}
 
 function normalizedHostDirectory(value: string): string | undefined {
   const candidate = value.trim()
@@ -251,6 +300,15 @@ const dragPreviews = ref<Record<string, { left: number; top: number }>>({})
 const draggingIcons = ref<Set<string>>(new Set())
 const iconAnnouncement = ref('')
 const iconManagerOpen = ref(false)
+const wallpaperDialogOpen = ref(false)
+const desktopWallpaperID = ref<DesktopWallpaperID>(readDesktopWallpaperID())
+const activeDesktopWallpaper = computed(() =>
+  DESKTOP_WALLPAPERS.find((wallpaper) => wallpaper.id === desktopWallpaperID.value)
+    || DESKTOP_WALLPAPERS[0],
+)
+const desktopWallpaperStyle = computed(() => ({
+  '--desktop-wallpaper-image': `url("${activeDesktopWallpaper.value.src}")`,
+}))
 const shortcutDialogOpen = ref(false)
 const editingShortcut = ref<DesktopShortcut>()
 const deletingShortcut = ref<DesktopShortcut>()
@@ -2076,7 +2134,7 @@ async function onDesktopFileDrop(event: DragEvent): Promise<void> {
 
 function onContextMenuAction(
   action: 'refresh' | 'theme' | 'classic' | 'about' | 'processes' | 'add-shortcut'
-    | 'manage-icons' | 'fullscreen',
+    | 'manage-icons' | 'wallpaper' | 'fullscreen',
 ): void {
   closeContextMenu()
   switch (action) {
@@ -2085,6 +2143,9 @@ function onContextMenuAction(
       break
     case 'theme':
       theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')
+      break
+    case 'wallpaper':
+      wallpaperDialogOpen.value = true
       break
     case 'fullscreen':
       void toggleDocumentFullscreen()
@@ -2110,6 +2171,16 @@ function onContextMenuAction(
       }
       break
     }
+  }
+}
+
+function selectDesktopWallpaper(wallpaperID: DesktopWallpaperID): void {
+  desktopWallpaperID.value = wallpaperID
+  wallpaperDialogOpen.value = false
+  try {
+    window.localStorage.setItem(DESKTOP_WALLPAPER_KEY, wallpaperID)
+  } catch {
+    // The wallpaper still applies to this session when storage is unavailable.
   }
 }
 
@@ -2547,7 +2618,12 @@ function onViewportResize(): void {
     @dragleave="onDesktopFileDragLeave"
     @drop="onDesktopFileDrop"
   >
-    <div class="desktop__wallpaper" aria-hidden="true">
+    <div
+      class="desktop__wallpaper"
+      :data-wallpaper="activeDesktopWallpaper.id"
+      :style="desktopWallpaperStyle"
+      aria-hidden="true"
+    >
       <div class="desktop__aurora desktop__aurora--one" />
       <div class="desktop__aurora desktop__aurora--two" />
       <div class="desktop__aurora desktop__aurora--three" />
@@ -2950,6 +3026,15 @@ function onViewportResize(): void {
           <button
             type="button"
             role="menuitem"
+            data-context-action="wallpaper"
+            @click="onContextMenuAction('wallpaper')"
+          >
+            <ImageIcon :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.changeWallpaper') }}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
             data-context-action="fullscreen"
             @click="onContextMenuAction('fullscreen')"
           >
@@ -3080,6 +3165,48 @@ function onViewportResize(): void {
         </button>
       </div>
     </footer>
+
+    <ModalDialog
+      :open="wallpaperDialogOpen"
+      :title="i18n.t('desktop.wallpaperTitle')"
+      :description="i18n.t('desktop.wallpaperDescription')"
+      size="wide"
+      @close="wallpaperDialogOpen = false"
+    >
+      <div
+        class="desktop-wallpaper-picker"
+        role="radiogroup"
+        :aria-label="i18n.t('desktop.wallpaperTitle')"
+      >
+        <button
+          v-for="wallpaper in DESKTOP_WALLPAPERS"
+          :key="wallpaper.id"
+          class="desktop-wallpaper-picker__option"
+          :class="{ 'desktop-wallpaper-picker__option--selected': wallpaper.id === desktopWallpaperID }"
+          type="button"
+          role="radio"
+          :aria-checked="wallpaper.id === desktopWallpaperID"
+          :data-wallpaper-option="wallpaper.id"
+          @click="selectDesktopWallpaper(wallpaper.id)"
+        >
+          <span
+            class="desktop-wallpaper-picker__preview"
+            :style="{ backgroundImage: `url('${wallpaper.src}')` }"
+            aria-hidden="true"
+          />
+          <span class="desktop-wallpaper-picker__copy">
+            <strong>{{ i18n.t(wallpaper.nameKey) }}</strong>
+            <small>{{ i18n.t(wallpaper.descriptionKey) }}</small>
+          </span>
+          <Check
+            v-if="wallpaper.id === desktopWallpaperID"
+            class="desktop-wallpaper-picker__check"
+            :size="17"
+            aria-hidden="true"
+          />
+        </button>
+      </div>
+    </ModalDialog>
 
     <ModalDialog
       :open="Boolean(externalOpenEntry)"
