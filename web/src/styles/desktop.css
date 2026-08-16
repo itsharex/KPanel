@@ -1287,6 +1287,10 @@ body.desktop-mode-open::-webkit-scrollbar {
   transition: none;
 }
 
+.desktop__icon-slot--native-drag-hidden {
+  opacity: 0;
+}
+
 .desktop__icon-transfer-badge {
   position: absolute;
   z-index: 2;

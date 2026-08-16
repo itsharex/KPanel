@@ -298,6 +298,7 @@ const compactIconLayout = ref(window.innerWidth <= 760)
 const localPositions = ref<Record<string, DesktopIconPosition>>({})
 const dragPreviews = ref<Record<string, { left: number; top: number }>>({})
 const draggingIcons = ref<Set<string>>(new Set())
+const nativeDragHiddenIcons = ref<Set<string>>(new Set())
 const iconAnnouncement = ref('')
 const iconManagerOpen = ref(false)
 const wallpaperDialogOpen = ref(false)
@@ -955,6 +956,8 @@ interface DesktopShortcutNativeDrag {
   lastX: number
   lastY: number
   localPreviewActive: boolean
+  localDropHandled: boolean
+  outsideDesktop: boolean
 }
 
 let desktopShortcutNativeDrag: DesktopShortcutNativeDrag | undefined
@@ -1050,8 +1053,11 @@ function startDesktopShortcutDrag(event: DragEvent, entry: DesktopEntry): void {
     lastX: event.clientX,
     lastY: event.clientY,
     localPreviewActive: false,
+    localDropHandled: false,
+    outsideDesktop: false,
   }
   draggingIcons.value = new Set(keys)
+  nativeDragHiddenIcons.value = new Set()
   closeContextMenu(false)
   const skipped = Math.max(0, keys.length - transferable.length)
   iconAnnouncement.value = i18n.t('desktop.crossPanelDragStarted', { count: transferable.length })
@@ -1065,11 +1071,26 @@ function startDesktopShortcutDrag(event: DragEvent, entry: DesktopEntry): void {
   }
 }
 
-function finishDesktopShortcutDrag(): void {
+function desktopShortcutDragEndPosition(event: DragEvent): DesktopIconPosition | undefined {
   const drag = desktopShortcutNativeDrag
+  if (!drag || drag.outsideDesktop || drag.localDropHandled || event.dataTransfer?.dropEffect !== 'none') return undefined
+  if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return undefined
+  if (event.clientX === 0 && event.clientY === 0) return undefined
+  const target = document.elementFromPoint(event.clientX, event.clientY)
+  const desktop = desktopElement.value
+  if (!target || !desktop?.contains(target)) return undefined
+  if (target.closest('.desktop-window, .desktop__widgets, .desktop__taskbar')) return undefined
+  return desktopShortcutDropPosition(event)
+}
+
+function finishDesktopShortcutDrag(event: DragEvent): void {
+  const drag = desktopShortcutNativeDrag
+  const fallbackPosition = desktopShortcutDragEndPosition(event)
+  if (fallbackPosition) void moveDesktopShortcutDrop(fallbackPosition)
   clearDesktopShortcutNativeDragPreview()
   desktopShortcutNativeDrag = undefined
   draggingIcons.value = new Set()
+  nativeDragHiddenIcons.value = new Set()
   clearDesktopFileDrag()
   if (drag?.paths.length) void refreshDesktopFileMetadata(drag.paths)
 }
@@ -1119,7 +1140,8 @@ async function moveDesktopShortcutDrop(
   destination: DesktopIconPosition,
 ): Promise<void> {
   const drag = desktopShortcutNativeDrag
-  if (!drag) return
+  if (!drag || drag.localDropHandled) return
+  drag.localDropHandled = true
   for (const key of drag.keys) suppressActivationAfterDrag.add(key)
   const placements = drag.keys.length > 1
     ? moveDesktopIconGroup(
@@ -1140,6 +1162,7 @@ async function moveDesktopShortcutDrop(
     ? i18n.t('desktop.iconsMoved', { count: drag.keys.length })
     : i18n.t('desktop.iconMoved', { name: iconLabel(drag.anchorKey) })
   draggingIcons.value = new Set()
+  nativeDragHiddenIcons.value = new Set()
   clearDesktopShortcutNativeDragPreview()
   await persistPositions(next).catch(() => undefined)
 }
@@ -1700,6 +1723,8 @@ function onDesktopFileDragOver(event: DragEvent): void {
     && desktopShortcutNativeDrag
     && peekDesktopFileDragOrigin(event) === 'desktop-shortcut'
   if (localShortcutMove) {
+    desktopShortcutNativeDrag!.outsideDesktop = false
+    nativeDragHiddenIcons.value = new Set()
     fileDropActive.value = false
     updateDesktopShortcutNativeDragPreview(event.clientX, event.clientY)
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
@@ -1720,6 +1745,10 @@ function onDesktopFileDragOver(event: DragEvent): void {
 function onDesktopFileDragLeave(event: DragEvent): void {
   const related = event.relatedTarget as Node | null
   if (!related || !(event.currentTarget as HTMLElement).contains(related)) {
+    if (desktopShortcutNativeDrag) {
+      desktopShortcutNativeDrag.outsideDesktop = true
+      nativeDragHiddenIcons.value = new Set(desktopShortcutNativeDrag.keys)
+    }
     fileDropActive.value = false
     clearDesktopShortcutNativeDragPreview()
   }
@@ -2869,6 +2898,7 @@ function onViewportResize(): void {
         class="desktop__icon-slot"
         :class="{
           'desktop__icon-slot--dragging': draggingIcons.has(entry.key),
+          'desktop__icon-slot--native-drag-hidden': nativeDragHiddenIcons.has(entry.key),
           'desktop__icon-slot--transferable': isTransferableDesktopShortcut(entry),
           'desktop__icon-slot--transfer-ready': desktopShortcutTransferReady(entry),
         }"
@@ -2877,7 +2907,7 @@ function onViewportResize(): void {
         :draggable="!compactIconLayout && isTransferableDesktopShortcut(entry)"
         @pointerdown="beginIconDrag($event, entry.key)"
         @dragstart.stop="startDesktopShortcutDrag($event, entry)"
-        @dragend.stop="finishDesktopShortcutDrag"
+        @dragend.stop="finishDesktopShortcutDrag($event)"
         @keydown.capture="clearDraggedActivationSuppression(entry.key)"
         @click.capture="suppressDraggedActivation($event, entry.key)"
         @dblclick.capture="suppressDraggedActivation($event, entry.key)"

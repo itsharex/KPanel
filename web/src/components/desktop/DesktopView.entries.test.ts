@@ -740,6 +740,108 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
+  it('commits a fast local desktop shortcut release when the native drop event is skipped', async () => {
+    const shortcutID = '3'.repeat(32)
+    mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
+      shortcuts: [{
+        id: shortcutID, name: 'fast.txt', description: '', targetType: 'file', path: '/home/fast.txt',
+        createdAt: '2026-08-14T00:00:00Z', updatedAt: '2026-08-14T00:00:00Z',
+      }],
+    }))
+    mockedFileEntries.mockResolvedValue({
+      entries: [{
+        name: 'fast.txt', path: '/home/fast.txt', kind: 'file', resourceVersion: 'sha256:fast',
+        sizeBytes: 3, mode: '0644', owner: 'root', group: 'root', modifiedAt: '2026-08-15T00:00:00Z',
+        editable: true, previewable: true,
+      }],
+      unavailable: [],
+    })
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const shortcut = wrapper.get(`[data-icon-key="shortcut:${shortcutID}"]`)
+    const values = new Map<string, string>()
+    const types: string[] = []
+    const dataTransfer = {
+      types, effectAllowed: 'none', dropEffect: 'none', setDragImage: vi.fn(),
+      setData(type: string, value: string) {
+        if (!types.includes(type)) types.push(type)
+        values.set(type, value)
+      },
+      getData(type: string) { return values.get(type) || '' },
+    }
+    shortcut.element.dispatchEvent(internalFileDragEvent('dragstart', dataTransfer, 40, 40))
+    Object.defineProperty(document, 'elementFromPoint', {
+      configurable: true,
+      value: vi.fn(() => wrapper.element),
+    })
+    shortcut.element.dispatchEvent(internalFileDragEvent('dragend', dataTransfer, 360, 260))
+    await flushPromises()
+
+    expect(mockedWorkspaceUpdate.mock.calls.at(-1)?.[0].positions[`shortcut:${shortcutID}`]).toBeDefined()
+    expect(mockedPanelTransfer).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('does not turn cross-panel shortcut drags into local moves on dragend', async () => {
+    const shortcutID = '4'.repeat(32)
+    mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
+      shortcuts: [{
+        id: shortcutID, name: 'remote.txt', description: '', targetType: 'file', path: '/home/remote.txt',
+        createdAt: '2026-08-14T00:00:00Z', updatedAt: '2026-08-14T00:00:00Z',
+      }],
+    }))
+    mockedFileEntries.mockResolvedValue({
+      entries: [{
+        name: 'remote.txt', path: '/home/remote.txt', kind: 'file', resourceVersion: 'sha256:remote',
+        sizeBytes: 3, mode: '0644', owner: 'root', group: 'root', modifiedAt: '2026-08-15T00:00:00Z',
+        editable: true, previewable: true,
+      }],
+      unavailable: [],
+    })
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const shortcut = wrapper.get(`[data-icon-key="shortcut:${shortcutID}"]`)
+    const values = new Map<string, string>()
+    const types: string[] = []
+    const dataTransfer = {
+      types, effectAllowed: 'none', dropEffect: 'none', setDragImage: vi.fn(),
+      setData(type: string, value: string) {
+        if (!types.includes(type)) types.push(type)
+        values.set(type, value)
+      },
+      getData(type: string) { return values.get(type) || '' },
+    }
+    shortcut.element.dispatchEvent(internalFileDragEvent('dragstart', dataTransfer, 40, 40))
+    dataTransfer.dropEffect = 'copy'
+    Object.defineProperty(document, 'elementFromPoint', {
+      configurable: true,
+      value: vi.fn(() => wrapper.element),
+    })
+    shortcut.element.dispatchEvent(internalFileDragEvent('dragend', dataTransfer, 360, 260))
+    await flushPromises()
+
+    expect(mockedWorkspaceUpdate).not.toHaveBeenCalled()
+
+    dataTransfer.dropEffect = 'none'
+    shortcut.element.dispatchEvent(internalFileDragEvent('dragstart', dataTransfer, 40, 40))
+    wrapper.element.dispatchEvent(internalFileDragEvent('dragleave', dataTransfer, 360, 260))
+    await nextTick()
+    expect(shortcut.classes()).toContain('desktop__icon-slot--native-drag-hidden')
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('dragover', dataTransfer, 360, 260))
+    await nextTick()
+    expect(shortcut.classes()).not.toContain('desktop__icon-slot--native-drag-hidden')
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('dragleave', dataTransfer, 360, 260))
+    dataTransfer.dropEffect = 'none'
+    shortcut.element.dispatchEvent(internalFileDragEvent('dragend', dataTransfer, 360, 260))
+    await flushPromises()
+
+    expect(mockedWorkspaceUpdate).not.toHaveBeenCalled()
+    expect(shortcut.classes()).not.toContain('desktop__icon-slot--native-drag-hidden')
+    wrapper.unmount()
+  })
+
   it('uploads an external operating-system file and creates a real server-file desktop entry', async () => {
     const wrapper = mount(DesktopView, { attachTo: document.body })
     await flushPromises()
