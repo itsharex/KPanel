@@ -2134,7 +2134,7 @@
       "iconSha256": "c5850a93215e405982760a4816507070d342913c1c7dbb6a3097e9fcc9ecd241",
       "name_zh_tw": "DeepSeek Harness",
       "desc_zh_tw": "DeepSeek 官方開源的智慧代理執行與管理框架，提供 Web UI、模型/API 設定及 Headless 模式。",
-      "addedAt": "2026-08-17"
+      "addedAt": "2026-08-16"
     },
     {
       "id": "thirdparty-AIClient-2-API",
@@ -2169,7 +2169,7 @@
       "iconSha256": "7fc661fa6f3112cea360e7a12fdc2424db066b417bd22d8f92d66eeeca376708",
       "name_zh_tw": "AIradio",
       "desc_zh_tw": "AI 驅動的線上電臺，可產生節目、配音並管理音樂播放。",
-      "addedAt": "2026-08-17"
+      "addedAt": "2026-08-16"
     },
     {
       "id": "thirdparty-antigravity",
@@ -2204,7 +2204,7 @@
       "iconSha256": "68f42ad52effcb4712f9522163bca13eee59b7657f75bb387a2f621220ff378b",
       "name_zh_tw": "大亂鬥 Arena Brawl",
       "desc_zh_tw": "即時多人網頁大亂鬥遊戲，支援排行榜與聊天。",
-      "addedAt": "2026-08-17"
+      "addedAt": "2026-08-16"
     },
     {
       "id": "thirdparty-bomb-party",
@@ -2222,7 +2222,7 @@
       "iconSha256": "68f42ad52effcb4712f9522163bca13eee59b7657f75bb387a2f621220ff378b",
       "name_zh_tw": "炸彈派對 Bomb Party",
       "desc_zh_tw": "Q 版多人線上炸彈人對戰遊戲，支援即時連線與排行榜。",
-      "addedAt": "2026-08-17"
+      "addedAt": "2026-08-16"
     },
     {
       "id": "thirdparty-CLIProxyAPI",
@@ -2512,7 +2512,7 @@
       "iconSha256": "68f42ad52effcb4712f9522163bca13eee59b7657f75bb387a2f621220ff378b",
       "name_zh_tw": "敲冰塊大逃脫",
       "desc_zh_tw": "多人線上敲冰塊爬塔逃殺遊戲，支援即時連線與排行榜。",
-      "addedAt": "2026-08-17"
+      "addedAt": "2026-08-16"
     },
     {
       "id": "thirdparty-kpanel",
@@ -2615,7 +2615,7 @@
       "iconSha256": "68f42ad52effcb4712f9522163bca13eee59b7657f75bb387a2f621220ff378b",
       "name_zh_tw": "霓虹競技場",
       "desc_zh_tw": "3D 第一人稱多人線上射擊遊戲，採用霓虹風格競技場。",
-      "addedAt": "2026-08-17"
+      "addedAt": "2026-08-16"
     },
     {
       "id": "thirdparty-next-terminal",
