@@ -408,9 +408,14 @@ func (s *Service) refreshCatalog() {
 	if err == nil {
 		s.catalogMu.Lock()
 		iconCache := s.iconCache
+		var previous Catalog
+		if s.liveCatalog != nil {
+			previous = *s.liveCatalog
+		}
 		s.catalogMu.Unlock()
 		dynamicSources = dynamicRemoteIconSources(s.catalog, remote)
 		merged = mergeRemoteCatalogWithDynamicIcons(s.catalog, remote, iconCache != nil)
+		preserveExistingAddedDates(previous, &merged)
 		if iconCache != nil && len(dynamicSources) > 0 {
 			iconContext, iconCancel := context.WithTimeout(context.Background(), 8*time.Second)
 			iconCache.Prefetch(iconContext, dynamicSources)

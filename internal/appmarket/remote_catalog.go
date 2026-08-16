@@ -157,7 +157,8 @@ func validateRemoteCatalog(catalog Catalog, meta remoteCatalogMeta) error {
 			app.Icon != "icons/"+app.Slug+".webp" ||
 			!categories[app.Category] || app.NameZH == "" || len(app.NameZH) > 160 ||
 			len(app.NameEN) > 160 || len(app.Description) > 2000 ||
-			len(app.DescriptionEN) > 2000 || ids[app.ID] || tokens[app.Token] || slugs[app.Slug] {
+			len(app.DescriptionEN) > 2000 || !validCatalogDate(app.AddedAt) ||
+			ids[app.ID] || tokens[app.Token] || slugs[app.Slug] {
 			return fmt.Errorf("application catalog entry %q is invalid or duplicated", app.ID)
 		}
 		if app.Source != "builtin" && app.Source != "thirdparty" {
@@ -230,6 +231,7 @@ func mergeRemoteCatalogWithDynamicIcons(embedded, remote Catalog, enabled bool) 
 			app.IconSHA256 = local.IconSHA256
 			app.NameZHTW = local.NameZHTW
 			app.DescriptionZHTW = local.DescriptionZHTW
+			app.AddedAt = local.AddedAt
 		} else if enabled {
 			app.Icon = dynamicAppIconPrefix + app.Slug + ".webp"
 			app.IconSHA256 = ""
@@ -240,6 +242,24 @@ func mergeRemoteCatalogWithDynamicIcons(embedded, remote Catalog, enabled bool) 
 		result.Apps = append(result.Apps, app)
 	}
 	return result
+}
+
+func preserveExistingAddedDates(existing Catalog, next *Catalog) {
+	existingByID := make(map[string]string, len(existing.Apps))
+	existingByToken := make(map[string]string, len(existing.Apps))
+	for _, app := range existing.Apps {
+		existingByID[app.ID] = app.AddedAt
+		existingByToken[app.Token] = app.AddedAt
+	}
+	for index := range next.Apps {
+		addedAt, ok := existingByID[next.Apps[index].ID]
+		if !ok {
+			addedAt, ok = existingByToken[next.Apps[index].Token]
+		}
+		if ok {
+			next.Apps[index].AddedAt = addedAt
+		}
+	}
 }
 
 func dynamicRemoteIconSources(embedded, remote Catalog) map[string]string {

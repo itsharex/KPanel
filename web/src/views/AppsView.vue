@@ -94,6 +94,8 @@ let recentInstalledTimer: number | undefined
 const activeJobStorageKey = 'kpanel:active-app-job'
 const activeJobPollDelay = 2_000
 const backgroundJobPollDelay = 15_000
+const millisecondsPerDay = 86_400_000
+const newAppWindowDays = 60
 
 const selected = computed(() => inventory.value?.items.find((item) => item.id === selectedID.value))
 const selectedPort = computed(() =>
@@ -112,10 +114,42 @@ const activeJobCancellable = computed(
     activeJob.value?.stage !== 'cancelling',
 )
 
+function catalogEpochDay(value?: string): number | undefined {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined
+  const timestamp = Date.parse(`${value}T00:00:00Z`)
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== value) {
+    return undefined
+  }
+  return Math.floor(timestamp / millisecondsPerDay)
+}
+
+const newAppAddedDays = computed(() => {
+  const today = Math.floor(Date.now() / millisecondsPerDay)
+  const addedDays = new Map<string, number>()
+  for (const item of inventory.value?.items || []) {
+    const addedDay = catalogEpochDay(item.addedAt)
+    if (addedDay !== undefined && addedDay <= today && today - addedDay < newAppWindowDays) {
+      addedDays.set(item.id, addedDay)
+    }
+  }
+  return addedDays
+})
+
+function isNewApp(item: AppMarketItem): boolean {
+  return newAppAddedDays.value.has(item.id)
+}
+
 const sortedApps = computed(() =>
   [...(inventory.value?.items || [])].sort((left, right) => {
     if (left.id === recentInstalledID.value) return -1
     if (right.id === recentInstalledID.value) return 1
+    const leftAddedDay = newAppAddedDays.value.get(left.id)
+    const rightAddedDay = newAppAddedDays.value.get(right.id)
+    if (leftAddedDay !== undefined && rightAddedDay === undefined) return -1
+    if (leftAddedDay === undefined && rightAddedDay !== undefined) return 1
+    if (leftAddedDay !== undefined && rightAddedDay !== undefined && leftAddedDay !== rightAddedDay) {
+      return rightAddedDay - leftAddedDay
+    }
     if (left.runtime.installed !== right.runtime.installed) return left.runtime.installed ? -1 : 1
     return (left.num || 9999) - (right.num || 9999)
   }),
@@ -1119,6 +1153,7 @@ watch(windowActive, syncJobPollingForWindow)
               />
             </span>
             <span class="app-card__meta">
+              <em v-if="isNewApp(item)" class="is-new">新品</em>
               <em>{{ categoryName(item.cat) }}</em>
               <em>{{ sourceMeta(item) }}</em>
               <em v-if="capability(item, 'install') || capability(item, 'update')" class="is-adapted">
@@ -1940,6 +1975,12 @@ watch(windowActive, syncJobPollingForWindow)
 .app-card__meta em.is-adapted {
   color: var(--success);
   background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.app-card__meta em.is-new {
+  color: var(--brand);
+  background: var(--brand-soft);
+  font-weight: 800;
 }
 
 .app-card__description {

@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const catalog = JSON.parse(await readFile(join(root, 'internal', 'appmarket', 'catalog.json'), 'utf8'))
 const legacy = JSON.parse(await readFile(join(root, 'internal', 'appmarket', 'legacy-apps.json'), 'utf8'))
+const mockNewApp = catalog.apps.find((app) => app.token === 'speedtest')
+if (mockNewApp) mockNewApp.addedAt = new Date().toISOString().slice(0, 10)
 const legacyByNumber = new Map(legacy.apps.map((item) => [item.num, item]))
 const installed = new Map([
   ['speedtest', { state: 'running', direct: true }],

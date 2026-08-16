@@ -143,6 +143,7 @@ describe('AppsView catalog filtering performance', () => {
     expect(source).toMatch(/\.app-card__body\s*\{[^}]*flex:\s*1 1 0;/)
     expect(source).toMatch(/\.app-card__title strong\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*1 1 auto;/)
     expect(source).toMatch(/\.app-card__title \.status-badge\s*\{[^}]*flex:\s*0 0 auto;/)
+    expect(source).toContain('v-if="isNewApp(item)" class="is-new">新品</em>')
   })
 
   it('keeps the compact inventory summary visually distinct', () => {
@@ -190,6 +191,84 @@ describe('AppsView catalog filtering performance', () => {
     expect(view.filteredApps.value.map((item) => item.id)).toEqual(['builtin-99'])
     expect(view.appSearchCatalog.value).toBe(catalog)
   })
+
+  it('prioritizes valid additions for exactly 60 UTC calendar days', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-16T12:00:00Z'))
+    try {
+      const view = setupView()
+      const current = inventory('catalog-version')
+      const installed = current.items[0]
+      if (!installed) throw new Error('test inventory is incomplete')
+      const uninstalled = { ...installed.runtime, installed: false, state: 'not_installed' }
+      current.items.push(
+        {
+          ...installed,
+          id: 'builtin-99',
+          num: 99,
+          token: 'newest',
+          name_zh: 'Newest',
+          name_en: 'Newest',
+          addedAt: '2026-08-16',
+          runtime: uninstalled,
+        },
+        {
+          ...installed,
+          id: 'builtin-98',
+          num: 98,
+          token: 'day-60',
+          name_zh: 'Day 60',
+          name_en: 'Day 60',
+          addedAt: '2026-06-18',
+          runtime: uninstalled,
+        },
+        {
+          ...installed,
+          id: 'builtin-1',
+          num: 1,
+          token: 'expired',
+          name_zh: 'Expired',
+          name_en: 'Expired',
+          addedAt: '2026-06-17',
+          runtime: uninstalled,
+        },
+        {
+          ...installed,
+          id: 'builtin-2',
+          num: 2,
+          token: 'future',
+          name_zh: 'Future',
+          name_en: 'Future',
+          addedAt: '2026-08-17',
+          runtime: uninstalled,
+        },
+        {
+          ...installed,
+          id: 'builtin-3',
+          num: 3,
+          token: 'invalid-date',
+          name_zh: 'Invalid date',
+          name_en: 'Invalid date',
+          addedAt: '2026-02-29',
+          runtime: uninstalled,
+        },
+      )
+      view.inventory.value = current
+      view.status.value = 'all'
+
+      expect(view.filteredApps.value.map((item) => item.id)).toEqual([
+        'builtin-99',
+        'builtin-98',
+        'builtin-13',
+        'builtin-1',
+        'builtin-2',
+        'builtin-3',
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
 })
 
 function setupView(windowActive?: Ref<boolean>): AppsBindings {

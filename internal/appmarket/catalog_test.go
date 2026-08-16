@@ -120,6 +120,23 @@ func TestEmbeddedCatalogMatchesAuditedApplicationMarket(t *testing.T) {
 	}
 }
 
+func TestCatalogDateValidation(t *testing.T) {
+	tests := map[string]bool{
+		"":           true,
+		"2026-08-16": true,
+		"2026-02-29": false,
+		"2024-02-29": true,
+		"2026-8-16":  false,
+		"2026-08-32": false,
+		"not-a-date": false,
+	}
+	for value, expected := range tests {
+		if actual := validCatalogDate(value); actual != expected {
+			t.Errorf("validCatalogDate(%q) = %v, want %v", value, actual, expected)
+		}
+	}
+}
+
 func TestInventoryCombinesDockerTruthAndScriptMarker(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "appno.txt"), []byte("28\n64\n"), 0o644); err != nil {
@@ -230,9 +247,16 @@ func TestRemoteCatalogDynamicallyReplacesBuiltinAndThirdPartyEntries(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	for index := range embedded.Apps {
+		if embedded.Apps[index].Source == "builtin" {
+			embedded.Apps[index].AddedAt = "2026-06-01"
+			break
+		}
+	}
 	payload := remotePayloadFromCatalog(embedded)
 	removedThirdParty := ""
 	updatedBuiltin := ""
+	historicalBuiltin := ""
 	apps := make([]App, 0, len(payload.Apps))
 	for _, app := range payload.Apps {
 		if app.Source == "thirdparty" && removedThirdParty == "" {
@@ -242,6 +266,10 @@ func TestRemoteCatalogDynamicallyReplacesBuiltinAndThirdPartyEntries(t *testing.
 		if app.Source == "builtin" && updatedBuiltin == "" {
 			updatedBuiltin = app.Token
 			app.NameZH = "动态更新的内置应用"
+			app.AddedAt = "2026-08-16"
+		} else if app.Source == "builtin" && historicalBuiltin == "" {
+			historicalBuiltin = app.Token
+			app.AddedAt = "2026-08-16"
 		}
 		apps = append(apps, app)
 	}
@@ -249,13 +277,14 @@ func TestRemoteCatalogDynamicallyReplacesBuiltinAndThirdPartyEntries(t *testing.
 		ID: "builtin-116", Num: 116, Source: "builtin", Token: "new-builtin-app",
 		NameZH: "新内置应用", NameEN: "New Builtin App", Description: "动态内置目录测试",
 		DescriptionEN: "Dynamic builtin catalog test", Category: "ai",
-		Icon: "icons/new-builtin-app.webp", Slug: "new-builtin-app",
+		Icon: "icons/new-builtin-app.webp", Slug: "new-builtin-app", AddedAt: "2026-08-15",
 	})
 	apps = append(apps, App{
 		ID: "thirdparty-new-safe-app", Source: "thirdparty", Token: "new-safe-app",
 		NameZH: "新入驻应用", NameEN: "New Safe App", Description: "动态目录测试",
 		DescriptionEN: "Dynamic catalog test", Category: "commtools",
 		Website: "https://example.com", Icon: "icons/new-safe-app.webp", Slug: "new-safe-app",
+		AddedAt: "2026-08-16",
 	})
 	payload.Apps = apps
 	payload.Meta.Builtin++
@@ -281,34 +310,52 @@ func TestRemoteCatalogDynamicallyReplacesBuiltinAndThirdPartyEntries(t *testing.
 	foundNewThirdParty := false
 	foundNewBuiltin := false
 	foundUpdatedBuiltin := false
+	foundHistoricalBuiltin := false
 	foundRemovedThirdParty := false
 	for _, app := range merged.Apps {
 		if app.Token == "new-safe-app" {
 			foundNewThirdParty = app.Icon == dynamicAppIconPrefix+"new-safe-app.webp" &&
-				app.IconSHA256 == "" && dynamicSources[app.Slug] == "icons/new-safe-app.webp"
+				app.IconSHA256 == "" && app.AddedAt == "2026-08-16" &&
+				dynamicSources[app.Slug] == "icons/new-safe-app.webp"
 		}
 		if app.Token == "new-builtin-app" {
 			foundNewBuiltin = app.Num == 116 &&
 				app.Icon == dynamicAppIconPrefix+"new-builtin-app.webp" &&
-				app.IconSHA256 == "" &&
+				app.IconSHA256 == "" && app.AddedAt == "2026-08-15" &&
 				dynamicSources[app.Slug] == "icons/new-builtin-app.webp"
 		}
 		if app.Token == updatedBuiltin {
 			local := embeddedAppByToken(t, embedded, updatedBuiltin)
 			foundUpdatedBuiltin = app.NameZH == "动态更新的内置应用" &&
-				app.Icon == local.Icon && app.IconSHA256 == local.IconSHA256
+				app.Icon == local.Icon && app.IconSHA256 == local.IconSHA256 &&
+				app.AddedAt == "2026-06-01"
+		}
+		if app.Token == historicalBuiltin {
+			foundHistoricalBuiltin = app.AddedAt == ""
 		}
 		if app.Token == removedThirdParty {
 			foundRemovedThirdParty = true
 		}
 	}
-	if !foundNewThirdParty || !foundNewBuiltin || !foundUpdatedBuiltin ||
+	if !foundNewThirdParty || !foundNewBuiltin || !foundUpdatedBuiltin || !foundHistoricalBuiltin ||
 		foundRemovedThirdParty || len(merged.Apps) != len(embedded.Apps)+1 {
 		t.Fatalf(
-			"dynamic merge failed: thirdParty=%v builtin=%v updated=%v removedStillPresent=%v count=%d",
-			foundNewThirdParty, foundNewBuiltin, foundUpdatedBuiltin,
+			"dynamic merge failed: thirdParty=%v builtin=%v updated=%v historical=%v removedStillPresent=%v count=%d",
+			foundNewThirdParty, foundNewBuiltin, foundUpdatedBuiltin, foundHistoricalBuiltin,
 			foundRemovedThirdParty, len(merged.Apps),
 		)
+	}
+
+	refreshed := merged
+	refreshed.Apps = append([]App(nil), merged.Apps...)
+	for index := range refreshed.Apps {
+		if refreshed.Apps[index].Token == "new-safe-app" {
+			refreshed.Apps[index].AddedAt = "2026-08-17"
+		}
+	}
+	preserveExistingAddedDates(merged, &refreshed)
+	if app := embeddedAppByToken(t, refreshed, "new-safe-app"); app.AddedAt != "2026-08-16" {
+		t.Fatalf("existing application addedAt was refreshed: %q", app.AddedAt)
 	}
 }
 
@@ -348,6 +395,12 @@ func TestRemoteCatalogRejectsUntrustedDynamicBuiltinMetadata(t *testing.T) {
 			name: "icon identity",
 			mutate: func(payload *remoteCatalogPayload) {
 				payload.Apps[0].Icon = "icons/another-app.webp"
+			},
+		},
+		{
+			name: "invalid added date",
+			mutate: func(payload *remoteCatalogPayload) {
+				payload.Apps[0].AddedAt = "2026-02-29"
 			},
 		},
 	}

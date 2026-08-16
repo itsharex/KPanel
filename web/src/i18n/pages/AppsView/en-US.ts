@@ -45,6 +45,7 @@ export default [
   ["访问端口", "Access Port"],
   ["复用 KPanel 网站反向代理", "Reuse KPanel site reverse proxy"],
   ["刚刚安装", "Just installed"],
+  ["新品", "New"],
   ["更新", "Update"],
   ["更新失败", "Update failed"],
   ["更新失败会自动恢复旧容器；卸载只删除已核验的容器与兼容标记，不清理共享镜像。", "A failed update restores the previous containers automatically. Uninstall removes only verified containers and compatibility markers, without deleting shared images."],

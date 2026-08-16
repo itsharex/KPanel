@@ -876,6 +876,7 @@ export interface AppMarketItem {
   icon: string
   iconSha256: string
   slug: string
+  addedAt?: string
   defaultPort?: number
   installPortConfigurable?: boolean
   installer: 'declarative' | 'kejilion' | 'guided'
