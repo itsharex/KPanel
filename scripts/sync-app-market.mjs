@@ -49,7 +49,7 @@ function validateCatalog(raw) {
   if (!raw || !Array.isArray(raw.categories) || !Array.isArray(raw.apps)) {
     throw new Error('catalog payload has an invalid shape')
   }
-  if (raw.meta?.builtin !== 115 || raw.apps.length < 115 || raw.apps.length > 500) {
+  if (raw.meta?.builtin !== 116 || raw.apps.length < 116 || raw.apps.length > 500) {
     throw new Error('catalog application count is outside the audited boundary')
   }
   if (raw.categories.length !== allowedCategories.size) {
@@ -143,8 +143,12 @@ await mkdir(dirname(catalogPath), { recursive: true })
 await mkdir(iconRoot, { recursive: true })
 const apps = []
 for (const app of raw.apps) {
-  const synced = await syncIcon(app)
   const existing = existingTraditional.apps.get(app.id) || existingTraditional.apps.get(app.token)
+  // Existing KPanel metadata and icon assets may contain audited product-specific refinements.
+  // Remote catalog refreshes only add missing icons; they must not overwrite those local assets.
+  const synced = existing?.icon && existing?.iconSha256
+    ? { ...app, icon: existing.icon, iconSha256: existing.iconSha256 }
+    : await syncIcon(app)
   apps.push({
     ...synced,
     ...(app.name_zh_tw || existing?.name_zh_tw ? { name_zh_tw: app.name_zh_tw || existing.name_zh_tw } : {}),
