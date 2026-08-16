@@ -305,6 +305,7 @@ func TestKejilionGuidedAppsUseFixedInteractiveSelector(t *testing.T) {
 		"builtin-104",
 		"builtin-114",
 		"builtin-115",
+		"builtin-116",
 	} {
 		item, findErr := service.Find(context.Background(), appID)
 		if findErr != nil {
@@ -390,12 +391,6 @@ func TestAllAuditedBuiltinAppsOfferSafeInstallPath(t *testing.T) {
 			continue
 		}
 		builtinCount++
-		if item.Num > 115 {
-			if item.ID != "builtin-116" || item.Capabilities["install"].Enabled {
-				t.Fatalf("dynamic builtin escaped selector compatibility checks: %#v", item)
-			}
-			continue
-		}
 		if !item.Capabilities["install"].Enabled {
 			t.Fatalf("builtin application %s has no install path: %#v", item.ID, item)
 		}
