@@ -152,6 +152,13 @@ const ACCEPTANCE_FIELDS = [
   '是否回滚、紧急热修复或重复发布',
   '若发生失败，发现时间、恢复时间和逃逸门禁',
 ];
+const PROCESS_BLOCK_START = '<!-- kpanel-release-process-metrics:start -->';
+const PROCESS_BLOCK_END = '<!-- kpanel-release-process-metrics:end -->';
+const PROCESS_FIELDS = [
+  '已记录发布流程异常或无效证据拦截次数',
+  '其中生产写操作开始后异常次数',
+];
+const PROCESS_METRICS_REQUIRED_FROM = [0, 81, 2];
 
 function acceptanceFields(markdown) {
   const fields = new Map();
@@ -198,6 +205,82 @@ function acceptanceFields(markdown) {
   return { fields, duplicates, structureErrors, defaultIgnorables };
 }
 
+function acceptanceVersion(markdown) {
+  const match = markdown.match(/^#\s+KPanel\s+v(\d+)\.(\d+)\.(\d+)\b/m);
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function versionAtLeast(version, minimum) {
+  if (version === null) return false;
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (version[index] !== minimum[index]) return version[index] > minimum[index];
+  }
+  return true;
+}
+
+function processFields(markdown) {
+  const fields = new Map();
+  const duplicates = new Set();
+  const structureErrors = [];
+  let defaultIgnorables = false;
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const starts = lines.flatMap((line, index) => line === PROCESS_BLOCK_START ? [index] : []);
+  const ends = lines.flatMap((line, index) => line === PROCESS_BLOCK_END ? [index] : []);
+  const present = starts.length > 0 || ends.length > 0;
+  if (!present) return { fields, duplicates, structureErrors, defaultIgnorables, present };
+  if (starts.length !== 1 || ends.length !== 1 || ends[0] <= starts[0]) {
+    structureErrors.push('requires exactly one ordered release-process-metrics marker pair');
+    return { fields, duplicates, structureErrors, defaultIgnorables, present };
+  }
+
+  const rows = lines.slice(starts[0] + 1, ends[0]);
+  if (rows.length !== PROCESS_FIELDS.length) {
+    structureErrors.push('release-process-metrics block must contain exactly two rows');
+  }
+  for (const [index, line] of rows.entries()) {
+    if (DEFAULT_IGNORABLE.test(line)) defaultIgnorables = true;
+    const normalizedLine = line.normalize('NFKC');
+    if (/`|<!--|-->/.test(normalizedLine)) {
+      structureErrors.push('release-process-metrics rows must be plain text without Markdown code or HTML comment controls');
+    }
+    const match = line.match(/^- ([^：]+)：\s*(.*)$/);
+    if (!match) {
+      structureErrors.push('release-process-metrics rows must use "- 字段：值" syntax');
+      continue;
+    }
+    if (match[2].trim() === '') {
+      structureErrors.push('release-process-metrics values must be explicit and non-blank');
+    }
+    const field = normalizedFieldName(match[1]);
+    if (!PROCESS_FIELDS.some((expected) => normalizedFieldName(expected) === field)) {
+      structureErrors.push('release-process-metrics block contains an unknown field');
+      continue;
+    }
+    if (normalizedFieldName(PROCESS_FIELDS[index] ?? '') !== field) {
+      structureErrors.push('release-process-metrics fields must keep the canonical order');
+    }
+    if (fields.has(field)) duplicates.add(field);
+    fields.set(field, match[2].trim().normalize('NFKC'));
+  }
+  return { fields, duplicates, structureErrors, defaultIgnorables, present };
+}
+
+function explicitCount(value) {
+  const normalized = validValue(value);
+  if (normalized === null || !/^\d+$/.test(normalized)) return null;
+  const count = Number(normalized);
+  return Number.isSafeInteger(count) ? count : null;
+}
+
+export function extractProcessMetrics(markdown) {
+  const { fields } = processFields(markdown);
+  const field = (name) => fields.get(normalizedFieldName(name));
+  return {
+    processIncidentCount: explicitCount(field('已记录发布流程异常或无效证据拦截次数')),
+    postProductionProcessIncidentCount: explicitCount(field('其中生产写操作开始后异常次数')),
+  };
+}
+
 export function extractAcceptanceMetrics(markdown) {
   const { fields } = acceptanceFields(markdown);
   const field = (name) => fields.get(normalizedFieldName(name));
@@ -209,6 +292,7 @@ export function extractAcceptanceMetrics(markdown) {
     commitToProduction: validValue(field('提交到生产用时')),
     changeFailure: validValue(field('是否回滚、紧急热修复或重复发布')),
     recovery: validValue(field('若发生失败，发现时间、恢复时间和逃逸门禁')),
+    ...extractProcessMetrics(markdown),
   };
 }
 
@@ -262,7 +346,43 @@ export function validateAcceptanceMetrics(markdown, label = 'acceptance record')
     if (!fields.has(normalizedField)) errors.push(label + ': missing structured field "' + field + '"');
     if (duplicates.has(normalizedField)) errors.push(label + ': duplicate structured field "' + field + '"');
   }
+  const process = processFields(markdown);
+  if (versionAtLeast(acceptanceVersion(markdown), PROCESS_METRICS_REQUIRED_FROM) && !process.present) {
+    errors.push(label + ': release v0.81.2 and later requires release-process-metrics evidence');
+  }
+  for (const error of process.structureErrors) errors.push(label + ': ' + error);
+  if (process.defaultIgnorables) {
+    errors.push(label + ': structured process evidence must not contain default-ignorable characters');
+  }
+  if (process.present) {
+    for (const field of PROCESS_FIELDS) {
+      const normalizedField = normalizedFieldName(field);
+      if (!process.fields.has(normalizedField)) errors.push(label + ': missing structured field "' + field + '"');
+      if (process.duplicates.has(normalizedField)) errors.push(label + ': duplicate structured field "' + field + '"');
+    }
+  }
   if (errors.length > 0) return errors;
+
+  if (process.present) {
+    const totalValue = process.fields.get(normalizedFieldName(PROCESS_FIELDS[0]));
+    const postProductionValue = process.fields.get(normalizedFieldName(PROCESS_FIELDS[1]));
+    const total = explicitCount(totalValue);
+    const postProduction = explicitCount(postProductionValue);
+    const totalUnreported = validValue(totalValue) === null;
+    const postProductionUnreported = validValue(postProductionValue) === null;
+    if (!totalUnreported && total === null) {
+      errors.push(label + ': 发布流程异常次数 must be a non-negative integer or an explicit unreported marker');
+    }
+    if (!postProductionUnreported && postProduction === null) {
+      errors.push(label + ': 生产写操作开始后异常次数 must be a non-negative integer or an explicit unreported marker');
+    }
+    if (totalUnreported !== postProductionUnreported) {
+      errors.push(label + ': process incident counts must be reported or unreported together');
+    }
+    if (total !== null && postProduction !== null && postProduction > total) {
+      errors.push(label + ': 生产写操作开始后异常次数 cannot exceed total process incidents');
+    }
+  }
 
   const metrics = extractAcceptanceMetrics(markdown);
   if (metrics.firstIncludedCommitAt !== null && !validDate(metrics.firstIncludedCommitAt)) {
@@ -367,6 +487,17 @@ export function summarizeReleaseMetrics(releases, options) {
   const freezeTimes = selected
     .map((release) => durationHours(release.acceptance.metrics.candidateFrozenAt, release.acceptance.metrics.productionCompletedAt))
     .filter((value) => value !== null);
+  const processIncidentReleases = selected.filter((release) =>
+    release.acceptance.metrics.processIncidentCount !== null &&
+    release.acceptance.metrics.postProductionProcessIncidentCount !== null);
+  const processIncidentReleaseCount = processIncidentReleases.filter((release) =>
+    release.acceptance.metrics.processIncidentCount > 0).length;
+  const processIncidentCount = processIncidentReleases.length === 0 ? null :
+    processIncidentReleases.reduce((total, release) =>
+      total + release.acceptance.metrics.processIncidentCount, 0);
+  const postProductionProcessIncidentCount = processIncidentReleases.length === 0 ? null :
+    processIncidentReleases.reduce((total, release) =>
+      total + release.acceptance.metrics.postProductionProcessIncidentCount, 0);
 
   return {
     generatedAt: options.now.toISOString(),
@@ -393,6 +524,12 @@ export function summarizeReleaseMetrics(releases, options) {
       failedReleaseCount,
       changeFailureRate: reportedFailureCount === 0 ? null : Number((failedReleaseCount / reportedFailureCount).toFixed(4)),
       recoveryReported: selected.filter((release) => release.acceptance.metrics.recovery !== null).length,
+      processIncidentReported: processIncidentReleases.length,
+      processIncidentReleaseCount,
+      processIncidentReleaseRate: processIncidentReleases.length === 0 ? null :
+        Number((processIncidentReleaseCount / processIncidentReleases.length).toFixed(4)),
+      processIncidentCount,
+      postProductionProcessIncidentCount,
     },
     releases: selected,
   };
@@ -474,21 +611,25 @@ export function renderMarkdown(report) {
     '| 候选冻结到生产完成中位数 | ' + metric(report.recent.freezeToProductionHoursMedian, ' 小时') + ' | ' + report.recent.freezeToProductionReported + '/' + report.recent.available + ' |',
     '| 变更失败率 | ' + percentage(report.recent.changeFailureRate) + ' | ' + report.recent.changeFailureReported + '/' + report.recent.available + ' |',
     '| 已报告失败恢复详情 | ' + report.recent.recoveryReported + ' | ' + report.recent.recoveryReported + '/' + report.recent.available + ' |',
+    '| 已报告流程指标版本中的异常占比 | ' + percentage(report.recent.processIncidentReleaseRate) + ' | ' + report.recent.processIncidentReported + '/' + report.recent.available + ' |',
+    '| 已记录发布流程异常/无效证据拦截总数 | ' + metric(report.recent.processIncidentCount) + ' | ' + report.recent.processIncidentReported + '/' + report.recent.available + ' |',
+    '| 其中生产写操作开始后异常数 | ' + metric(report.recent.postProductionProcessIncidentCount) + ' | ' + report.recent.processIncidentReported + '/' + report.recent.available + ' |',
     '',
     '## 最近版本证据',
     '',
-    '| 标签 | 标签时间 | 验收记录 | 提交到生产 | 失败状态 |',
-    '| --- | --- | --- | --- | --- |',
+    '| 标签 | 标签时间 | 验收记录 | 提交到生产 | 失败状态 | 流程异常 |',
+    '| --- | --- | --- | --- | --- | --- |',
   ];
 
   for (const release of report.releases) {
     const leadTime = productionLeadHours(release.acceptance.metrics);
     lines.push('| ' + release.tag + ' | ' + release.createdAt.toISOString() + ' | ' +
       (release.acceptance.exists ? release.acceptance.path : '缺失') + ' | ' + metric(leadTime, ' 小时') + ' | ' +
-      failureLabel(release.acceptance.metrics.changeFailure) + ' |');
+      failureLabel(release.acceptance.metrics.changeFailure) + ' | ' +
+      metric(release.acceptance.metrics.processIncidentCount) + ' |');
   }
 
-  lines.push('', '> 标签时间不等于生产完成时间；变更失败率只以明确填报“是/否”的验收记录为分母，不把缺失数据推断为成功。');
+  lines.push('', '> 标签时间不等于生产完成时间；变更失败率只以明确填报“是/否”的验收记录为分母。发布流程异常独立统计，不把基础设施或无效证据问题歪曲为产品失败，也不把缺失数据推断为成功。');
   return lines.join('\n');
 }
 

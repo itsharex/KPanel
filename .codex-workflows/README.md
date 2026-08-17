@@ -23,7 +23,8 @@
 - `normalize-kpanel-app-icons.workflow.yaml`：以现有应用图标为身份参考，生成统一风格候选，完成透明背景、
   视觉居中、真实桌面尺寸复核和单问题定向返工；默认只输出预览，上游采用与 KPanel 同步分开授权。
 - 新版本发布后使用 `docs/release-acceptance-template.md` 记录多维质量状态、证据层级、生产部署安全核对、
-  交付节奏和回滚点；不批量改写历史验收记录。
+  交付节奏和回滚点；产品变更失败与发布流程异常/无效证据独立统计，缺失数据保持“未报告”。除有明确
+  追溯依据的单版本补录外，不批量改写历史验收记录。
 - 重复缺陷、指标恶化或门禁缺口使用 `docs/quality-improvement-proposal-template.md` 建立提案，并通过
   `make release-metrics` 和受控自我改进工作流验证；数据不足时保持“未报告”。
 - 依赖、工具链和底层组件使用 `make dependency-policy-check` 离线验证清单，使用

@@ -17,6 +17,8 @@ import {
 
 const ACCEPTANCE_BLOCK_START = '<!-- kpanel-release-metrics:start -->';
 const ACCEPTANCE_BLOCK_END = '<!-- kpanel-release-metrics:end -->';
+const PROCESS_BLOCK_START = '<!-- kpanel-release-process-metrics:start -->';
+const PROCESS_BLOCK_END = '<!-- kpanel-release-process-metrics:end -->';
 const ACCEPTANCE_FIELD_NAMES = [
   '首个纳入提交时间',
   '候选冻结时间',
@@ -61,6 +63,8 @@ function release(tag, createdAt, acceptance = {}) {
         commitToProduction: null,
         changeFailure: null,
         recovery: null,
+        processIncidentCount: null,
+        postProductionProcessIncidentCount: null,
         ...acceptance.metrics,
       },
     },
@@ -115,6 +119,8 @@ test('summarizeReleaseMetrics never treats missing failure data as success', () 
         productionCompletedAt: '2026-08-10T10:00:00Z',
         changeFailure: '是（已回滚）',
         recovery: '10:05 发现，10:20 恢复',
+        processIncidentCount: 1,
+        postProductionProcessIncidentCount: 0,
       },
     }),
     release('v1.1.0', '2026-08-09T12:00:00Z', { metrics: { changeFailure: '否' } }),
@@ -133,6 +139,11 @@ test('summarizeReleaseMetrics never treats missing failure data as success', () 
   assert.equal(report.recent.productionLeadTimeHoursMedian, 4);
   assert.equal(report.recent.freezeToProductionHoursMedian, 2);
   assert.equal(report.recent.recoveryReported, 1);
+  assert.equal(report.recent.processIncidentReported, 1);
+  assert.equal(report.recent.processIncidentReleaseCount, 1);
+  assert.equal(report.recent.processIncidentReleaseRate, 1);
+  assert.equal(report.recent.processIncidentCount, 1);
+  assert.equal(report.recent.postProductionProcessIncidentCount, 0);
 });
 
 test('markdown output discloses evidence completeness', () => {
@@ -146,7 +157,57 @@ test('markdown output discloses evidence completeness', () => {
   const output = renderMarkdown(report);
   assert.match(output, /验收记录覆盖率 \| 0\/1/);
   assert.match(output, /变更失败率 \| 未报告/);
+  assert.match(output, /已报告流程指标版本中的异常占比 \| 未报告/);
+  assert.match(output, /已记录发布流程异常\/无效证据拦截总数 \| 未报告/);
   assert.match(output, /不把缺失数据推断为成功/);
+});
+
+test('process metrics are separate, explicit, and required from v0.81.2', () => {
+  const acceptanceRows = [
+    ACCEPTANCE_BLOCK_START,
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：否',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：不适用',
+    ACCEPTANCE_BLOCK_END,
+  ];
+  const processRows = [
+    PROCESS_BLOCK_START,
+    '- 已记录发布流程异常或无效证据拦截次数：1',
+    '- 其中生产写操作开始后异常次数：0',
+    PROCESS_BLOCK_END,
+  ];
+  const valid = ['# KPanel v0.81.2 发布验收记录', ...acceptanceRows, ...processRows].join('\n');
+  assert.deepEqual(validateAcceptanceMetricsRaw(valid), []);
+  assert.equal(extractAcceptanceMetricsRaw(valid).processIncidentCount, 1);
+  assert.equal(extractAcceptanceMetricsRaw(valid).postProductionProcessIncidentCount, 0);
+
+  const oldRecord = ['# KPanel v0.81.1 发布验收记录', ...acceptanceRows].join('\n');
+  assert.deepEqual(validateAcceptanceMetricsRaw(oldRecord), []);
+  const missing = validateAcceptanceMetricsRaw(['# KPanel v0.81.2 发布验收记录', ...acceptanceRows].join('\n'));
+  assert.match(missing.join('\n'), /requires release-process-metrics evidence/);
+
+  const unreported = validateAcceptanceMetricsRaw(valid
+    .replace('次数：1', '次数：未记录')
+    .replace('次数：0', '次数：未记录'));
+  assert.deepEqual(unreported, []);
+
+  const postExceedsTotal = validateAcceptanceMetricsRaw(valid.replace('后异常次数：0', '后异常次数：2'));
+  assert.match(postExceedsTotal.join('\n'), /cannot exceed total process incidents/);
+  const partial = validateAcceptanceMetricsRaw(valid.replace('后异常次数：0', '后异常次数：未记录'));
+  assert.match(partial.join('\n'), /reported or unreported together/);
+  for (const invalid of ['-1', '1.5', '9007199254740992', '未知值']) {
+    const result = validateAcceptanceMetricsRaw(valid.replace('拦截次数：1', '拦截次数：' + invalid));
+    assert.match(result.join('\n'), /non-negative integer/, invalid);
+  }
+
+  const duplicate = validateAcceptanceMetricsRaw(valid.replace(
+    PROCESS_BLOCK_END,
+    '- 已记录发布流程异常或无效证据拦截次数：0\n' + PROCESS_BLOCK_END,
+  ));
+  assert.match(duplicate.join('\n'), /exactly two rows|duplicate structured field/);
 });
 
 test('argument parser rejects invalid windows', () => {

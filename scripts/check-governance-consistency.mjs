@@ -221,6 +221,9 @@ requireText('docs/release-acceptance-template.md', [
   '两者之间只能按模板顺序保留六行固定纯文本字段',
   '首个纳入提交时间',
   '公共默认更新通道决策',
+  '<!-- kpanel-release-process-metrics:start -->',
+  '<!-- kpanel-release-process-metrics:end -->',
+  '已记录发布流程异常或无效证据拦截次数',
   '## 遗留风险与后续准入',
 ]);
 requireText('docs/quality-improvement-proposal-template.md', [

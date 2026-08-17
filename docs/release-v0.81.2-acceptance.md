@@ -107,8 +107,17 @@
 - 若发生失败，发现时间、恢复时间和逃逸门禁：不适用
 <!-- kpanel-release-metrics:end -->
 
+<!-- kpanel-release-process-metrics:start -->
+- 已记录发布流程异常或无效证据拦截次数：1
+- 其中生产写操作开始后异常次数：0
+<!-- kpanel-release-process-metrics:end -->
+
+上述 1 次为生产写操作前的隔离浏览器通道端口与 Host allowlist 不匹配；门禁拦截后以同端口 loopback
+重新取证并通过。它不属于产品变更失败，未计入变更失败率。
+
 ## 遗留风险与后续准入
 
 - 未验证风险：没有逐页人工浏览所有已认证后台页面；未变化的 DOM 结构由 typecheck、i18n 和 741 项全量测试覆盖，受影响认证页面已做真实浏览器和生产复核。
 - 不阻断本版的理由：本版仅替换既有文案和精确测试，不改变业务逻辑、API、数据、权限或部署契约；最终源码、OCI、浏览器和生产 revision 完全一致。
-- 本次复用 `release-kpanel` v2.4 与 `project-version-control`，没有发现需要新增工作流或永久规范的长期缺口。
+- 本次复用 `release-kpanel` v2.4 与 `project-version-control`；隔离验证通道异常已进入独立流程指标，
+  不再被迫丢失或歪曲为产品失败。
