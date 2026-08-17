@@ -57,6 +57,7 @@ import {
   DesktopShortcutLimitError,
   hasCrossPanelFileDrag,
   hasDesktopFileDrag,
+  nativeArchiveDownloadName,
   peekDesktopFileDragOrigin,
 } from '@/lib/desktopFileShortcuts'
 import {
@@ -1022,7 +1023,23 @@ function startDesktopShortcutDrag(event: DragEvent, entry: DesktopEntry): void {
     ? [...selectedIcons.value].filter((key) => renderedPositionByKey.value.has(key))
     : [entry.key]
   if (!selectedIcons.value.has(entry.key)) setIconSelection([entry.key])
-  if (!beginDesktopFileDrag(event, transferable, localClusterNodeId.value, 'desktop-shortcut')) {
+  const directFile = transferable.length === 1 && transferable[0]!.kind === 'file'
+  const nativeArchiveName = directFile
+    ? undefined
+    : nativeArchiveDownloadName(transferable, 'KPanel Desktop')
+  const nativeDownloadURL = directFile
+    ? api.files.contentUrl(transferable[0]!.path, 'attachment')
+    : nativeArchiveName
+      ? api.files.archiveUrl(transferable, nativeArchiveName)
+      : undefined
+  if (!beginDesktopFileDrag(
+    event,
+    transferable,
+    localClusterNodeId.value,
+    'desktop-shortcut',
+    nativeDownloadURL,
+    nativeArchiveName,
+  )) {
     event.preventDefault()
     return
   }

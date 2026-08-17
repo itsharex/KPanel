@@ -40,6 +40,11 @@ type FileEntryBatchResult struct {
 	Unavailable []string    `json:"unavailable"`
 }
 
+type FileArchiveDownloadRequest struct {
+	Sources                  []string          `json:"sources"`
+	ExpectedResourceVersions map[string]string `json:"expectedResourceVersions,omitempty"`
+}
+
 type FileActionRequest struct {
 	Action                   string            `json:"action"`
 	Sources                  []string          `json:"sources,omitempty"`

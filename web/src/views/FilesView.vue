@@ -57,6 +57,7 @@ import {
   DesktopShortcutLimitError,
   hasCrossPanelFileDrag,
   hasDesktopFileDrag,
+  nativeArchiveDownloadName,
   peekDesktopFileDragEntries,
 } from '@/lib/desktopFileShortcuts'
 import {
@@ -619,7 +620,23 @@ async function addEntriesToDesktop(entry?: FileEntry, currentDirectory = false):
 
 function startEntryDrag(event: DragEvent, entry: FileEntry): void {
   const targets = (selected.value.has(entry.path) ? entriesForBatch(entry) : [entry]).filter(canAddToDesktop)
-  if (!beginDesktopFileDrag(event, targets, localClusterNodeId.value)) event.preventDefault()
+  const directFile = targets.length === 1 && targets[0]!.kind === 'file'
+  const nativeArchiveName = directFile
+    ? undefined
+    : nativeArchiveDownloadName(targets, currentDirectoryEntry().name)
+  const nativeDownloadURL = directFile
+    ? api.files.contentUrl(targets[0]!.path, 'attachment')
+    : nativeArchiveName
+      ? api.files.archiveUrl(targets, nativeArchiveName)
+      : undefined
+  if (!beginDesktopFileDrag(
+    event,
+    targets,
+    localClusterNodeId.value,
+    'file-manager',
+    nativeDownloadURL,
+    nativeArchiveName,
+  )) event.preventDefault()
 }
 
 function finishEntryDrag(): void {

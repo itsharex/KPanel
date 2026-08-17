@@ -268,6 +268,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleFileTrashList(w, r)
 	case r.URL.Path == "/api/v1/files/content":
 		s.handleFileContent(w, r)
+	case r.URL.Path == "/api/v1/files/archive":
+		s.handleFileArchiveDownload(w, r)
 	case r.URL.Path == "/api/v1/files/download-tickets":
 		s.handleFileDownloadTicketCreate(w, r)
 	case isFileDownloadTicketPath(r.URL.Path):

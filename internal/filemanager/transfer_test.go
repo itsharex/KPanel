@@ -1,13 +1,89 @@
 package filemanager
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestExportZIPStreamsFoldersAndSelectionsWithoutCreatingAnArchive(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "folder"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "one.txt"), []byte("one"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "folder", "two.txt"), []byte("two"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := New(Config{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	one, err := manager.Stat("/one.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := manager.Stat("/folder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := manager.ExportZIP(
+		context.Background(),
+		[]string{"/one.txt", "/folder"},
+		map[string]string{"/one.txt": one.ResourceVersion, "/folder": folder.ResourceVersion},
+		&output,
+	); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(output.Bytes()), int64(output.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := make(map[string]string)
+	for _, item := range reader.File {
+		if item.FileInfo().IsDir() {
+			continue
+		}
+		file, err := item.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, readErr := io.ReadAll(file)
+		_ = file.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		contents[item.Name] = string(content)
+	}
+	if contents["one.txt"] != "one" || contents["folder/two.txt"] != "two" {
+		t.Fatalf("archive contents=%#v", contents)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("stream export changed source directory: entries=%#v err=%v", entries, err)
+	}
+
+	output.Reset()
+	if err := manager.ExportZIP(
+		context.Background(), []string{"/folder"},
+		map[string]string{"/folder": folder.ResourceVersion}, &output,
+	); err != nil {
+		t.Fatal(err)
+	}
+	reader, err = zip.NewReader(bytes.NewReader(output.Bytes()), int64(output.Len()))
+	if err != nil || len(reader.File) != 1 || reader.File[0].Name != "two.txt" {
+		t.Fatalf("single folder archive=%#v err=%v", reader.File, err)
+	}
+}
 
 func TestDirectoryTransferRoundTripIsAtomic(t *testing.T) {
 	root := t.TempDir()

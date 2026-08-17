@@ -25,11 +25,12 @@ import (
 )
 
 const (
-	panelFileTransferIdleTimeout = 45 * time.Second
-	panelFileTransferMaxDuration = 2 * time.Hour
-	fileDownloadTicketTTL        = 5 * time.Minute
-	maxFileDownloadTickets       = 128
-	desktopFileTransferDirectory = "/home/KPanel Desktop"
+	panelFileTransferIdleTimeout  = 45 * time.Second
+	panelFileTransferMaxDuration  = 2 * time.Hour
+	fileDownloadTicketTTL         = 5 * time.Minute
+	maxFileDownloadTickets        = 128
+	panelFileArchiveQueryMaxBytes = 256 << 10
+	desktopFileTransferDirectory  = "/home/KPanel Desktop"
 )
 
 type fileDownloadTicket struct {
@@ -193,6 +194,26 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	s.streamFileDownload(w, r, r.URL.RawQuery)
 }
 
+func (s *Server) handleFileArchiveDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if r.URL.RawPath != "" || !strictPanelQuery(r.URL.Query(), "selection", "name") {
+		s.writeProblem(w, r, http.StatusBadRequest, "file_query_invalid", "压缩下载参数无效", "")
+		return
+	}
+	if selection, name := r.URL.Query().Get("selection"), r.URL.Query().Get("name"); selection == "" || len(selection) > panelFileArchiveQueryMaxBytes || name == "" || len(name) > 1024 {
+		s.writeProblem(w, r, http.StatusBadRequest, "file_query_invalid", "压缩下载参数无效", "")
+		return
+	}
+	if _, _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	s.streamFileArchiveDownload(w, r)
+}
+
 func (s *Server) handleFileDownloadTicketCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -290,6 +311,31 @@ func (s *Server) streamFileDownload(w http.ResponseWriter, r *http.Request, rawQ
 	if r.Method == http.MethodHead {
 		return
 	}
+	_, _ = io.CopyBuffer(writer, response.Body, make([]byte, 64<<10))
+}
+
+func (s *Server) streamFileArchiveDownload(w http.ResponseWriter, r *http.Request) {
+	streamer, ok := s.agent.(agentStreamAPI)
+	if !ok {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_stream_unavailable", "Agent 文件流不可用", "")
+		return
+	}
+	transferContext, cancel := context.WithTimeout(r.Context(), panelFileTransferMaxDuration)
+	defer cancel()
+	response, err := streamer.OpenStream(
+		transferContext, http.MethodGet, "/v1/files/archive", r.URL.RawQuery,
+		requestID(r), http.NoBody, nil, 0,
+	)
+	if err != nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
+		return
+	}
+	defer response.Body.Close()
+	copyFileHeaders(w.Header(), response.Header)
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Pragma", "no-cache")
+	writer := httpstream.NewIdleResponseWriter(transferContext, w, panelFileTransferIdleTimeout)
+	writer.WriteHeader(response.StatusCode)
 	_, _ = io.CopyBuffer(writer, response.Body, make([]byte, 64<<10))
 }
 

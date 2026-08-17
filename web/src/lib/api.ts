@@ -1654,6 +1654,18 @@ export const api = {
       }),
     contentUrl: (path: string, disposition: 'inline' | 'attachment' = 'inline'): string =>
       buildUrl('/files/content', { path, disposition }),
+    archiveUrl: (
+      entries: readonly Pick<FileEntry, 'path' | 'resourceVersion'>[],
+      name: string,
+    ): string => buildUrl('/files/archive', {
+      selection: JSON.stringify({
+        sources: entries.map((entry) => entry.path),
+        expectedResourceVersions: Object.fromEntries(
+          entries.map((entry) => [entry.path, entry.resourceVersion]),
+        ),
+      }),
+      name,
+    }),
     createDownloadTicket: (path: string): Promise<FileDownloadTicket> =>
       request<FileDownloadTicket>('/files/download-tickets', {
         method: 'POST',

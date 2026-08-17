@@ -282,6 +282,52 @@ func TestFileContentStreamsRangeAndUploadRequiresCSRF(t *testing.T) {
 	}
 }
 
+func TestFileArchiveDownloadRequiresSessionAndStreamsAgentZIP(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &fileStubAgent{
+		stubAgent:      &stubAgent{},
+		streamStatus:   http.StatusOK,
+		streamResponse: []byte("PK\x03\x04archive"),
+		streamHeaders: http.Header{
+			"Content-Type":        []string{"application/zip"},
+			"Content-Disposition": []string{`attachment; filename="bundle.zip"`},
+		},
+	}
+	server.agent = agent
+	query := "selection=%7B%22sources%22%3A%5B%22%2Fapp%22%5D%7D&name=bundle.zip"
+	unauthenticated := performRequest(
+		server, http.MethodGet, "/api/v1/files/archive?"+query, nil, nil,
+	)
+	if unauthenticated.Code != http.StatusUnauthorized || len(agent.snapshotStreamCalls()) != 0 {
+		t.Fatalf("unauthenticated archive=%d calls=%#v", unauthenticated.Code, agent.snapshotStreamCalls())
+	}
+
+	response := authenticatedRequest(
+		server, http.MethodGet, "/api/v1/files/archive?"+query, nil,
+		sessionCookie, csrfCookie, nil,
+	)
+	if response.Code != http.StatusOK || response.Body.String() != "PK\x03\x04archive" ||
+		response.Header().Get("Content-Type") != "application/zip" ||
+		!strings.Contains(response.Header().Get("Content-Disposition"), "bundle.zip") ||
+		response.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("archive response=%d headers=%#v body=%q", response.Code, response.Header(), response.Body.String())
+	}
+	calls := agent.snapshotStreamCalls()
+	if len(calls) != 1 || calls[0].method != http.MethodGet || calls[0].path != "/v1/files/archive" ||
+		calls[0].rawQuery != query {
+		t.Fatalf("archive Agent calls=%#v", calls)
+	}
+
+	invalid := authenticatedRequest(
+		server, http.MethodGet, "/api/v1/files/archive?"+query+"&extra=1", nil,
+		sessionCookie, csrfCookie, nil,
+	)
+	if invalid.Code != http.StatusBadRequest || len(agent.snapshotStreamCalls()) != 1 {
+		t.Fatalf("invalid archive=%d calls=%#v", invalid.Code, agent.snapshotStreamCalls())
+	}
+}
+
 func TestFileDownloadTicketSupportsCookielessRangeHeadAndSecurityEntrance(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)

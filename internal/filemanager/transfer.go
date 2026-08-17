@@ -2,13 +2,52 @@ package filemanager
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"context"
 	"errors"
 	"io"
 	"os"
+	"path"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
+
+// ExportZIP streams one or more regular files or directories as a restricted
+// ZIP archive. It never creates a server-side archive file and reuses the same
+// traversal, version, concurrency, and resource budgets as regular downloads.
+func (m *Manager) ExportZIP(
+	ctx context.Context,
+	sources []string,
+	expectedVersions map[string]string,
+	output io.Writer,
+) error {
+	if err := acquireNow(ctx, m.downloadGate); err != nil {
+		return err
+	}
+	defer release(m.downloadGate)
+	prepared, err := m.prepareArchiveSources(sources, expectedVersions, "")
+	if err != nil {
+		return err
+	}
+
+	writer := zip.NewWriter(output)
+	budget := &copyBudget{maxEntries: m.maxCopyEntries, maxBytes: m.maxCopyBytes}
+	writeEntry := m.zipEntryWriter(writer)
+	stripSingleDirectory := len(prepared) == 1 && prepared[0].info.IsDir()
+	for _, source := range prepared {
+		archiveName := path.Base(source.virtual)
+		if stripSingleDirectory {
+			archiveName = ""
+		}
+		if err := m.walkArchive(ctx, source.virtual, archiveName, source.info, budget, writeEntry); err != nil {
+			return err
+		}
+	}
+	if err := m.verifyArchiveSources(prepared); err != nil {
+		return err
+	}
+	return writer.Close()
+}
 
 // ExportDirectory writes the contents of one directory as a restricted TAR
 // stream. It shares the archive traversal budget and rejects links and special

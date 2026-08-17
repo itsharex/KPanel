@@ -6,10 +6,12 @@ export const DESKTOP_FILE_DRAG_TYPE = 'application/x-kpanel-desktop-file-shortcu
 export const CROSS_PANEL_FILE_DRAG_TYPE = 'application/x-kpanel-cross-panel-file-v1'
 export const CROSS_PANEL_FILES_DRAG_TYPE = 'application/x-kpanel-cross-panel-files-v2'
 export const CROSS_PANEL_FILES_TEXT_PREFIX = 'KPanel cross-panel files v2\n'
+export const NATIVE_FILE_DOWNLOAD_DRAG_TYPE = 'DownloadURL'
 export const MAX_DESKTOP_SHORTCUTS = 64
 export const MAX_CROSS_PANEL_DRAG_ENTRIES = 64
 
-export type DesktopFileEntry = Pick<FileEntry, 'name' | 'path' | 'kind'> & Partial<Pick<FileEntry, 'resourceVersion'>>
+export type DesktopFileEntry = Pick<FileEntry, 'name' | 'path' | 'kind'>
+  & Partial<Pick<FileEntry, 'mime' | 'resourceVersion'>>
 
 export interface CrossPanelFileDragEntry extends DesktopFileEntry {
   kind: 'file' | 'directory'
@@ -60,6 +62,96 @@ function randomToken(): string {
 
 function supportedEntry(entry: DesktopFileEntry): entry is DesktopFileEntry & { kind: 'file' | 'directory' } {
   return entry.kind === 'file' || entry.kind === 'directory'
+}
+
+function nativeDownloadName(name: string): string {
+  const cleaned = name.replace(/[\u0000-\u001f<>:"/\\|?*]/g, '_').replace(/[ .]+$/u, '').trim()
+  const characters = [...(cleaned || 'download')]
+  const bounded = characters.length <= 180 ? characters.join('') : characters.slice(0, 180).join('')
+  const stem = bounded.replace(/\.[^.]*$/u, '').toUpperCase()
+  return /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(stem) ? `_${bounded}` : bounded
+}
+
+function nativeDownloadMime(mime?: string): string {
+  const value = mime?.trim() || ''
+  return /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(value)
+    ? value
+    : 'application/octet-stream'
+}
+
+export function nativeArchiveDownloadName(
+  entries: readonly DesktopFileEntry[],
+  batchName: string,
+): string | undefined {
+  const supported = entries.filter(supportedEntry)
+  if (!supported.length || supported.length !== entries.length) return undefined
+  const sourceName = supported.length === 1 && supported[0]!.kind === 'directory'
+    ? supported[0]!.name
+    : batchName
+  const cleaned = nativeDownloadName(sourceName).replace(/\.zip$/iu, '') || 'download'
+  return `${cleaned}.zip`
+}
+
+function nativeDownloadDragDescriptor(
+  name: string,
+  mime: string | undefined,
+  downloadURL: string,
+  pageURL = globalThis.location?.href,
+): string | undefined {
+  if (!downloadURL || !pageURL) return undefined
+  try {
+    const page = new URL(pageURL)
+    const target = new URL(downloadURL, page)
+    if (!['http:', 'https:'].includes(target.protocol) || target.origin !== page.origin) return undefined
+    if (target.username || target.password) return undefined
+    return `${nativeDownloadMime(mime)}:${nativeDownloadName(name)}:${target.href}`
+  } catch {
+    return undefined
+  }
+}
+
+export function nativeFileDownloadDragDescriptor(
+  entry: DesktopFileEntry,
+  downloadURL: string,
+  pageURL = globalThis.location?.href,
+): string | undefined {
+  if (entry.kind !== 'file' || !downloadURL || !pageURL) return undefined
+  return nativeDownloadDragDescriptor(entry.name, entry.mime, downloadURL, pageURL)
+}
+
+export function nativeArchiveDownloadDragDescriptor(
+  entries: readonly DesktopFileEntry[],
+  downloadURL: string,
+  archiveName: string,
+  pageURL = globalThis.location?.href,
+): string | undefined {
+  if (!entries.length || entries.some((entry) => !supportedEntry(entry)) || !archiveName.endsWith('.zip')) {
+    return undefined
+  }
+  return nativeDownloadDragDescriptor(archiveName, 'application/zip', downloadURL, pageURL)
+}
+
+function addNativeDownloadDrag(
+  dataTransfer: DataTransfer,
+  entries: readonly DesktopFileEntry[],
+  downloadURL?: string,
+  archiveName?: string,
+): void {
+  if (!downloadURL) return
+  const descriptor = archiveName
+    ? nativeArchiveDownloadDragDescriptor(entries, downloadURL, archiveName)
+    : entries.length === 1
+      ? nativeFileDownloadDragDescriptor(entries[0]!, downloadURL)
+      : undefined
+  if (!descriptor) return
+  try {
+    // Chromium turns this private drag type into a promised file for Windows
+    // Explorer and macOS Finder. Other browsers ignore the extra type while
+    // KPanel's existing same-page and cross-panel payloads remain available.
+    dataTransfer.setData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE, descriptor)
+  } catch {
+    // A browser rejecting the private type must not disable internal dragging.
+  }
 }
 
 function cleanShortcutName(entry: DesktopFileEntry): string {
@@ -130,6 +222,8 @@ export function beginDesktopFileDrag(
   entries: readonly DesktopFileEntry[],
   sourceNodeId?: string,
   origin: DesktopFileDragOrigin = 'file-manager',
+  nativeDownloadURL?: string,
+  nativeArchiveName?: string,
 ): boolean {
   const dataTransfer = event.dataTransfer
   const supported = entries.filter(supportedEntry)
@@ -182,6 +276,7 @@ export function beginDesktopFileDrag(
   } else {
     dataTransfer.setData('text/plain', supported.length === 1 ? supported[0]!.name : `${supported.length} 个项目`)
   }
+  addNativeDownloadDrag(dataTransfer, supported, nativeDownloadURL, nativeArchiveName)
   return true
 }
 

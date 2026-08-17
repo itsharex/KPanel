@@ -14,6 +14,10 @@ import {
   DesktopShortcutLimitError,
   hasCrossPanelFileDrag,
   hasDesktopFileDrag,
+  NATIVE_FILE_DOWNLOAD_DRAG_TYPE,
+  nativeArchiveDownloadDragDescriptor,
+  nativeArchiveDownloadName,
+  nativeFileDownloadDragDescriptor,
   peekDesktopFileDragEntries,
   peekDesktopFileDragOrigin,
 } from './desktopFileShortcuts'
@@ -143,6 +147,71 @@ describe('desktop file shortcuts', () => {
     } as unknown as DragEvent
     expect(desktopFileDragOrigin(protectedHover)).toBeUndefined()
     expect(peekDesktopFileDragOrigin(protectedHover)).toBe('desktop-shortcut')
+  })
+
+  it('adds one same-origin file as a native Chromium download without changing internal drag data', () => {
+    const event = dragEvent()
+    expect(beginDesktopFileDrag(event, [{
+      name: 'report:Q?.txt', path: '/reports/report:Q?.txt', kind: 'file', mime: 'text/plain',
+      resourceVersion: 'sha256:report',
+    }], undefined, 'file-manager', '/api/v1/files/content?path=%2Freports%2Freport%3AQ%3F.txt&disposition=attachment')).toBe(true)
+
+    const descriptor = event.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE) || ''
+    expect(descriptor).toMatch(/^text\/plain:report_Q_\.txt:https?:\/\//)
+    expect(descriptor).toContain('/api/v1/files/content?path=%2Freports%2Freport%3AQ%3F.txt&disposition=attachment')
+    expect(desktopFileDragEntries(event)).toEqual([{
+      name: 'report:Q?.txt', path: '/reports/report:Q?.txt', kind: 'file', mime: 'text/plain',
+      resourceVersion: 'sha256:report',
+    }])
+  })
+
+  it('advertises a folder or multi-selection as one same-origin ZIP download', () => {
+    const folder = { name: 'photos', path: '/photos', kind: 'directory' as const, resourceVersion: 'sha256:photos' }
+    expect(nativeArchiveDownloadName([folder], 'KPanel Desktop')).toBe('photos.zip')
+    const event = dragEvent()
+    expect(beginDesktopFileDrag(
+      event,
+      [folder],
+      undefined,
+      'desktop-shortcut',
+      '/api/v1/files/archive?selection=photos&name=photos.zip',
+      'photos.zip',
+    )).toBe(true)
+    expect(event.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toContain(
+      'application/zip:photos.zip:',
+    )
+    expect(desktopFileDragEntries(event)).toEqual([folder])
+
+    expect(nativeArchiveDownloadName([
+      { name: 'a.txt', path: '/a.txt', kind: 'file' },
+      { name: 'logs', path: '/logs', kind: 'directory' },
+    ], 'KPanel Desktop')).toBe('KPanel Desktop.zip')
+    expect(nativeArchiveDownloadDragDescriptor(
+      [folder],
+      'https://downloads.example/photos.zip',
+      'photos.zip',
+      'https://panel.example/files',
+    )).toBeUndefined()
+  })
+
+  it('does not advertise directories, selections, or cross-origin URLs as native files', () => {
+    const directory = dragEvent()
+    beginDesktopFileDrag(directory, [{ name: 'reports', path: '/reports', kind: 'directory' }],
+      undefined, 'file-manager', '/api/v1/files/content?path=%2Freports&disposition=attachment')
+    expect(directory.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toBe('')
+
+    const selection = dragEvent()
+    beginDesktopFileDrag(selection, [
+      { name: 'a.txt', path: '/a.txt', kind: 'file' },
+      { name: 'b.txt', path: '/b.txt', kind: 'file' },
+    ], undefined, 'file-manager', '/api/v1/files/content?path=%2Fa.txt&disposition=attachment')
+    expect(selection.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toBe('')
+
+    expect(nativeFileDownloadDragDescriptor(
+      { name: 'secret.txt', path: '/secret.txt', kind: 'file' },
+      'https://downloads.example/secret.txt',
+      'https://panel.example/files',
+    )).toBeUndefined()
   })
 
   it('serializes one versioned cross-panel descriptor without an authorization secret', () => {

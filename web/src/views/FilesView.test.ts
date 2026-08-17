@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   transferFromPanel: vi.fn(),
   trash: vi.fn(),
   write: vi.fn(),
+  contentUrl: vi.fn(),
+  archiveUrl: vi.fn(),
   createDownloadTicket: vi.fn(),
   thumbnailUrl: vi.fn(),
   desktopWorkspace: vi.fn(),
@@ -40,7 +42,8 @@ vi.mock('@/lib/api', () => ({
       action: mocks.action,
       transferFromPanel: mocks.transferFromPanel,
       trash: mocks.trash,
-      contentUrl: vi.fn(),
+      contentUrl: mocks.contentUrl,
+      archiveUrl: mocks.archiveUrl,
       createDownloadTicket: mocks.createDownloadTicket,
       thumbnailUrl: mocks.thumbnailUrl,
       text: vi.fn(),
@@ -100,6 +103,7 @@ interface FileBindings {
   transferCrossPanelFileDrop: (event: DragEvent, target: string) => Promise<void>
   cancelFileTransfer: () => void
   addEntriesToDesktop: (entry?: TestFileEntry, currentDirectory?: boolean) => Promise<void>
+  startEntryDrag: (event: DragEvent, entry: TestFileEntry) => void
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
   showContext: (event: MouseEvent, entry: TestFileEntry) => void
   showDirectoryContext: (event: MouseEvent) => void
@@ -167,7 +171,7 @@ interface FileBindings {
 interface TestFileEntry {
   name: string
   path: string
-  kind: 'file'
+  kind: 'file' | 'directory'
   mime: string
   sizeBytes: number
   mode: string
@@ -260,6 +264,7 @@ beforeEach(() => {
       setItem: vi.fn(),
     },
   })
+  vi.stubGlobal('location', { href: 'https://panel.example/files' })
   vi.stubGlobal('document', { activeElement: null })
   mocks.list.mockResolvedValue(testDirectory('/web'))
   mocks.action.mockResolvedValue({ action: 'trash', succeeded: [], failed: [] })
@@ -276,6 +281,12 @@ beforeEach(() => {
     downloadUrl: '/api/v1/files/download/test-ticket',
     expiresAt: '2026-07-30T00:05:00Z',
   })
+  mocks.contentUrl.mockImplementation((path: string, disposition: string) => (
+    `/api/v1/files/content?path=${encodeURIComponent(path)}&disposition=${disposition}`
+  ))
+  mocks.archiveUrl.mockImplementation((_entries: TestFileEntry[], name: string) => (
+    `/api/v1/files/archive?selection=test&name=${encodeURIComponent(name)}`
+  ))
   mocks.thumbnailUrl.mockImplementation((path: string, version: string) => `/thumb?path=${path}&version=${version}`)
   const desktopWorkspace = {
     schemaVersion: 2 as const,
@@ -299,6 +310,35 @@ beforeEach(() => {
 })
 
 describe('FilesView desktop shortcuts', () => {
+  it('drags one file directly and folders or selections as one ZIP download', () => {
+    const view = setupView()
+    const first = testEntry('one.txt')
+    const second = testEntry('two.txt')
+    view.directory.value = { path: '/', entries: [first, second] }
+    const single = internalDrag([])
+
+    view.startEntryDrag(single, first)
+
+    expect(mocks.contentUrl).toHaveBeenCalledWith('/one.txt', 'attachment')
+    expect(single.dataTransfer?.getData('DownloadURL')).toContain(
+      '/api/v1/files/content?path=%2Fone.txt&disposition=attachment',
+    )
+
+    view.selected.value = new Set([first.path, second.path])
+    const selection = internalDrag([])
+    view.startEntryDrag(selection, first)
+    expect(mocks.archiveUrl).toHaveBeenCalledWith([first, second], 'home.zip')
+    expect(selection.dataTransfer?.getData('DownloadURL')).toContain(
+      'application/zip:home.zip:https://panel.example/api/v1/files/archive',
+    )
+
+    const folder = { ...testEntry('photos'), kind: 'directory' as const }
+    const directory = internalDrag([])
+    view.startEntryDrag(directory, folder)
+    expect(mocks.archiveUrl).toHaveBeenCalledWith([folder], 'photos.zip')
+    expect(directory.dataTransfer?.getData('DownloadURL')).toContain('application/zip:photos.zip:')
+  })
+
   it('adds the current multi-selection in one desktop workspace update', async () => {
     const view = setupView()
     const first = testEntry('nginx.conf')

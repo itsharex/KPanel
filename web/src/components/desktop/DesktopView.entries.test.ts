@@ -714,6 +714,9 @@ describe('DesktopView dynamic entries', () => {
         { path: '/home/app', resourceVersion: 'sha256:app' },
       ],
     })
+    expect(values.get('DownloadURL')).toMatch(/^application\/zip:KPanel Desktop\.zip:https?:\/\//)
+    expect(values.get('DownloadURL')).toContain('/api/v1/files/archive?selection=')
+    expect(values.get('DownloadURL')).toContain('name=KPanel+Desktop.zip')
 
     const protectedHoverDataTransfer = {
       ...dataTransfer,
@@ -750,7 +753,7 @@ describe('DesktopView dynamic entries', () => {
     }))
     mockedFileEntries.mockResolvedValue({
       entries: [{
-        name: 'fast.txt', path: '/home/fast.txt', kind: 'file', resourceVersion: 'sha256:fast',
+        name: 'fast.txt', path: '/home/fast.txt', kind: 'file', mime: 'text/plain', resourceVersion: 'sha256:fast',
         sizeBytes: 3, mode: '0644', owner: 'root', group: 'root', modifiedAt: '2026-08-15T00:00:00Z',
         editable: true, previewable: true,
       }],
@@ -770,6 +773,9 @@ describe('DesktopView dynamic entries', () => {
       getData(type: string) { return values.get(type) || '' },
     }
     shortcut.element.dispatchEvent(internalFileDragEvent('dragstart', dataTransfer, 40, 40))
+    expect(values.get('DownloadURL')).toMatch(
+      /^text\/plain:fast\.txt:https?:\/\/[^/]+\/api\/v1\/files\/content\?path=%2Fhome%2Ffast\.txt&disposition=attachment$/,
+    )
     Object.defineProperty(document, 'elementFromPoint', {
       configurable: true,
       value: vi.fn(() => wrapper.element),

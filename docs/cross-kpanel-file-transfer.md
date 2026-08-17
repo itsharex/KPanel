@@ -59,9 +59,15 @@ route/grant 只写入独立 `cluster-file-peers-v2.json`，不含任何密钥；
 
 取消或错误进入 `cancelled` / `error`。在 `committing` 前取消会清理临时文件；文件已提交而桌面入口失败时进入 `partial`，保留真实文件并允许用户手动重试“添加到桌面”。
 
+## 与操作系统拖出的边界
+
+- 窗口外拖出能力在 Chromium 桌面端把单个普通文件作为同源流式下载交给 Windows Explorer 或
+  macOS Finder；单个目录或批量选择由来源 Agent 实时生成一个 ZIP 后作为单文件传出。
+- ZIP 下载不改变本协议的跨 KPanel 描述符、授权或复制状态机，不创建持久或临时归档文件；Firefox、
+  Safari 等不支持 Chromium 私有 `DownloadURL` 的浏览器继续使用显式下载或压缩入口。
+
 ## 明确非目标
 
-- KPanel 桌面拖回 Windows/macOS 桌面。浏览器无法为远端目录提供原生文件系统对象；文件 drag-out 还依赖浏览器私有下载协议。本任务不伪装为可用能力。
 - KPanel A 到 B 的移动、双向同步、断点续传、后台任务跨刷新恢复。
 - 未配对面板、Cluster v1 或 light node 的文件传输。
 

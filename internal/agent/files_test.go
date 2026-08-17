@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -21,6 +22,74 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/filemanager"
 )
+
+func TestFileArchiveDownloadStreamsOneZIPAndRejectsStaleSelections(t *testing.T) {
+	server := testServer(t)
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "assets"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "readme.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "assets", "site.css"), []byte("body{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := filemanager.New(filemanager.Config{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server.files = manager
+	readme, err := manager.Stat("/readme.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets, err := manager.Stat("/assets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, _ := json.Marshal(contract.FileArchiveDownloadRequest{
+		Sources: []string{"/readme.txt", "/assets"},
+		ExpectedResourceVersions: map[string]string{
+			"/readme.txt": readme.ResourceVersion,
+			"/assets":     assets.ResourceVersion,
+		},
+	})
+	response := fileRequest(
+		server, http.MethodGet,
+		"/v1/files/archive?selection="+url.QueryEscape(string(selection))+"&name=release.zip", "",
+	)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/zip" ||
+		!strings.Contains(response.Header().Get("Content-Disposition"), "release.zip") {
+		t.Fatalf("archive status=%d headers=%#v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+	archive, err := zip.NewReader(bytes.NewReader(response.Body.Bytes()), int64(response.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(archive.File))
+	for _, item := range archive.File {
+		if !item.FileInfo().IsDir() {
+			names = append(names, item.Name)
+		}
+	}
+	if strings.Join(names, ",") != "readme.txt,assets/site.css" {
+		t.Fatalf("archive names=%#v", names)
+	}
+
+	stale, _ := json.Marshal(contract.FileArchiveDownloadRequest{
+		Sources:                  []string{"/readme.txt"},
+		ExpectedResourceVersions: map[string]string{"/readme.txt": "sha256:stale"},
+	})
+	conflict := fileRequest(
+		server, http.MethodGet,
+		"/v1/files/archive?selection="+url.QueryEscape(string(stale))+"&name=stale.zip", "",
+	)
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), "file_conflict") {
+		t.Fatalf("stale archive status=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+}
 
 func TestFileThumbnailIsBoundedAndVersionProtected(t *testing.T) {
 	server := testServer(t)

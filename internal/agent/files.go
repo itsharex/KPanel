@@ -15,6 +15,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -31,14 +32,15 @@ const (
 )
 
 const (
-	fileTransferIdleTimeout = 45 * time.Second
-	fileTransferMaxDuration = 2 * time.Hour
-	fileThumbnailTimeout    = 20 * time.Second
-	fileThumbnailMaxBytes   = 12 << 20
-	fileThumbnailMaxPixels  = 8_000_000
-	fileThumbnailMaxWidth   = 320
-	fileThumbnailMaxHeight  = 210
-	fileToolTextMaxBytes    = 64 << 10
+	fileTransferIdleTimeout  = 45 * time.Second
+	fileTransferMaxDuration  = 2 * time.Hour
+	fileThumbnailTimeout     = 20 * time.Second
+	fileThumbnailMaxBytes    = 12 << 20
+	fileThumbnailMaxPixels   = 8_000_000
+	fileThumbnailMaxWidth    = 320
+	fileThumbnailMaxHeight   = 210
+	fileToolTextMaxBytes     = 64 << 10
+	fileArchiveQueryMaxBytes = 256 << 10
 )
 
 type fileTextResult struct {
@@ -179,6 +181,84 @@ func (s *Server) fileContent(w http.ResponseWriter, r *http.Request, requestID s
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead+", "+http.MethodPut)
 		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
 	}
+}
+
+func (s *Server) fileArchive(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(w)
+	if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "selection", "name") {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "压缩下载参数无效", "")
+		return
+	}
+	selection := r.URL.Query().Get("selection")
+	name := r.URL.Query().Get("name")
+	if len(selection) == 0 || len(selection) > fileArchiveQueryMaxBytes || !validArchiveDownloadName(name) {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_archive_download", "压缩下载参数无效", "")
+		return
+	}
+	var input contract.FileArchiveDownloadRequest
+	if err := json.Unmarshal([]byte(selection), &input); err != nil {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_archive_download", "压缩下载参数无效", "")
+		return
+	}
+	if !validArchiveDownloadSelection(input) {
+		writeProblem(w, requestID, http.StatusBadRequest, "invalid_archive_download", "压缩下载参数无效", "")
+		return
+	}
+
+	transferContext, cancel := context.WithTimeout(r.Context(), fileTransferMaxDuration)
+	defer cancel()
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	go func() {
+		err := s.files.ExportZIP(
+			transferContext, input.Sources, input.ExpectedResourceVersions, writer,
+		)
+		_ = writer.CloseWithError(err)
+	}()
+
+	buffer := make([]byte, 64<<10)
+	read, err := reader.Read(buffer)
+	if err != nil && read == 0 {
+		writeFileProblem(w, requestID, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	if formatted := mime.FormatMediaType("attachment", map[string]string{"filename": name}); formatted != "" {
+		w.Header().Set("Content-Disposition", formatted)
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	output := httpstream.NewIdleResponseWriter(transferContext, w, fileTransferIdleTimeout)
+	output.WriteHeader(http.StatusOK)
+	if read > 0 {
+		if _, writeErr := output.Write(buffer[:read]); writeErr != nil {
+			_ = reader.CloseWithError(writeErr)
+			return
+		}
+	}
+	if err == nil {
+		_, _ = io.CopyBuffer(output, reader, buffer)
+	}
+}
+
+func validArchiveDownloadName(name string) bool {
+	return name != "" && len(name) <= 1024 && path.Base(name) == name &&
+		!strings.ContainsAny(name, "\\\x00\r\n") && strings.HasSuffix(strings.ToLower(name), ".zip")
+}
+
+func validArchiveDownloadSelection(input contract.FileArchiveDownloadRequest) bool {
+	if len(input.Sources) == 0 || len(input.Sources) > filemanager.MaxBatchItems ||
+		len(input.ExpectedResourceVersions) != len(input.Sources) {
+		return false
+	}
+	for _, source := range input.Sources {
+		version, ok := input.ExpectedResourceVersions[source]
+		if !ok || version == "" || len(version) > 256 || source == "" || len(source) > 4096 ||
+			!strings.HasPrefix(source, "/") || strings.ContainsAny(source, "\\\x00") || path.Clean(source) != source {
+			return false
+		}
+	}
+	return true
 }
 
 // fileText returns a bounded JSON representation for structured consumers.
