@@ -158,6 +158,9 @@ describe('Docker resource toolbar layout', () => {
 
   it('groups Compose containers and exposes project configuration management', () => {
     expect(dockerSource).toContain('v-for="group in containerGroups"')
+    expect(dockerSource).toContain(':aria-expanded="!isContainerGroupCollapsed(group.key)"')
+    expect(dockerSource).toContain('@click="toggleContainerGroup(group.key)"')
+    expect(dockerSource).toContain('v-show="!isContainerGroupCollapsed(group.key)"')
     expect(dockerSource).toContain('管理 Compose')
     expect(dockerSource).toContain('保存并重新部署')
     expect(dockerSource).toMatch(/\.docker-table\s*\{\s*min-width:\s*1240px;/)

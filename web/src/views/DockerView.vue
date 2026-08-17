@@ -9,6 +9,7 @@ import {
   Box,
   Boxes,
   BrushCleaning,
+  ChevronRight,
   CircleStop,
   Container,
   Copy,
@@ -113,6 +114,7 @@ const selectedContainer = ref<DockerContainer>()
 const pendingAction = ref<ContainerAction>()
 const actionRunning = ref(false)
 const contextMenu = ref<DockerContextMenu>()
+const collapsedContainerGroups = ref(new Set<string>())
 
 const backups = ref<DockerBackup[]>([])
 const environment = ref<DockerEnvironment>()
@@ -293,6 +295,17 @@ const filteredContainers = computed(() => {
     : sortedContainers.value
 })
 const containerGroups = computed(() => groupDockerContainers(filteredContainers.value))
+
+function isContainerGroupCollapsed(key: string): boolean {
+  return collapsedContainerGroups.value.has(key)
+}
+
+function toggleContainerGroup(key: string): void {
+  const next = new Set(collapsedContainerGroups.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  collapsedContainerGroups.value = next
+}
 const composeAnalysis = computed(() => analyzeDockerDeployment(composeSource.value))
 const composeDiagnostics = computed(() => composeAnalysis.value.kind === 'invalid' ? composeAnalysis.value.diagnostics : [])
 const selectedComposeFile = computed(() => composeProject.value?.configFiles.find((file) => file.path === composeFilePath.value))
@@ -1407,12 +1420,21 @@ onBeforeUnmount(() => {
                 <tr class="docker-group__row">
                   <td colspan="6">
                     <div class="docker-group__summary">
-                      <span class="docker-group__icon"><Boxes v-if="group.kind === 'compose'" :size="17" /><Container v-else :size="17" /></span>
-                      <span>
-                        <strong>{{ group.name }}</strong>
-                        <small v-if="group.kind === 'compose'">Compose 项目 · {{ group.running }}/{{ group.containers.length }} 运行中 · {{ group.services.length || group.containers.length }} 个服务</small>
-                        <small v-else>{{ group.running }}/{{ group.containers.length }} 运行中 · 不属于 Compose 项目</small>
-                      </span>
+                      <button
+                        class="docker-group__toggle"
+                        type="button"
+                        :aria-expanded="!isContainerGroupCollapsed(group.key)"
+                        :aria-label="`${isContainerGroupCollapsed(group.key) ? '展开' : '收起'} ${group.name}`"
+                        @click="toggleContainerGroup(group.key)"
+                      >
+                        <ChevronRight :size="15" :class="{ 'is-expanded': !isContainerGroupCollapsed(group.key) }" />
+                        <span class="docker-group__icon"><Boxes v-if="group.kind === 'compose'" :size="17" /><Container v-else :size="17" /></span>
+                        <span class="docker-group__copy">
+                          <strong>{{ group.name }}</strong>
+                          <small v-if="group.kind === 'compose'">Compose 项目 · {{ group.running }}/{{ group.containers.length }} 运行中 · {{ group.services.length || group.containers.length }} 个服务</small>
+                          <small v-else>{{ group.running }}/{{ group.containers.length }} 运行中 · 不属于 Compose 项目</small>
+                        </span>
+                      </button>
                       <button
                         v-if="group.kind === 'compose'"
                         class="button button--secondary button--small"
@@ -1425,6 +1447,7 @@ onBeforeUnmount(() => {
                 </tr>
                 <tr
                   v-for="container in group.containers"
+                  v-show="!isContainerGroupCollapsed(group.key)"
                   :key="container.id"
                   :class="`docker-row docker-row--${container.state}`"
                   @contextmenu="showContainerContext($event, container)"
@@ -1930,8 +1953,13 @@ onBeforeUnmount(() => {
 .docker-row--restarting > td:first-child, .docker-row--paused > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--amber) 75%, transparent); }
 .docker-group + .docker-group .docker-group__row td { border-top: 8px solid var(--surface-subtle); }
 .docker-group__row td { padding: 0; background: color-mix(in srgb, var(--surface-raised) 72%, transparent); }
-.docker-group__summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 54px; padding: 8px 12px; }
-.docker-group__summary > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
+.docker-group__summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 54px; padding: 8px 12px; }
+.docker-group__toggle { display: grid; min-width: 0; align-items: center; grid-template-columns: auto auto minmax(0, 1fr); gap: 9px; padding: 0; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.docker-group__toggle > svg { color: var(--muted); transition: transform .16s ease, color .16s ease; }
+.docker-group__toggle > svg.is-expanded { transform: rotate(90deg); }
+.docker-group__toggle:hover > svg { color: var(--brand); }
+.docker-group__toggle:focus-visible { border-radius: 10px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent); }
+.docker-group__copy { display: grid; min-width: 0; gap: 2px; }
 .docker-group__summary small { overflow: hidden; color: var(--muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .docker-group__icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); }
 .docker-context-menu {
@@ -2065,7 +2093,7 @@ onBeforeUnmount(() => {
   .backup-list article { gap: 9px; padding: 11px; }
   .compact-input { width: 100%; }
   .network-membership { grid-template-columns: 1fr; }
-  .docker-group__summary { grid-template-columns: auto minmax(0, 1fr); }
+  .docker-group__summary { grid-template-columns: minmax(0, 1fr); }
   .docker-group__summary .button { grid-column: 1 / -1; width: 100%; }
   .compose-manager__meta { grid-template-columns: 1fr; }
   .repeat-row--ports, .repeat-row--mounts, .repeat-row--environment { grid-template-columns: 1fr; }
