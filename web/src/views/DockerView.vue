@@ -40,7 +40,7 @@ import DockerDeploymentEditor from '@/components/docker/DockerDeploymentEditor.v
 import { ApiError, api } from '@/lib/api'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import { analyzeDockerDeployment } from '@/lib/dockerDeployment'
-import { groupDockerContainers, type DockerContainerGroup } from '@/lib/dockerComposeGroups'
+import { dockerComposeGroupAccent, groupDockerContainers, type DockerContainerGroup } from '@/lib/dockerComposeGroups'
 import {
   sortDockerContainers,
   sortDockerImages,
@@ -305,6 +305,12 @@ function toggleContainerGroup(key: string): void {
   if (next.has(key)) next.delete(key)
   else next.add(key)
   collapsedContainerGroups.value = next
+}
+
+function containerGroupStyle(group: DockerContainerGroup): Record<string, string> {
+  return {
+    '--docker-group-accent': group.kind === 'compose' ? dockerComposeGroupAccent(group.name) : 'var(--muted)',
+  }
 }
 const composeAnalysis = computed(() => analyzeDockerDeployment(composeSource.value))
 const composeDiagnostics = computed(() => composeAnalysis.value.kind === 'invalid' ? composeAnalysis.value.diagnostics : [])
@@ -1416,7 +1422,7 @@ onBeforeUnmount(() => {
                 <col class="docker-table__actions" />
               </colgroup>
               <thead><tr><th>容器</th><th>状态</th><th>端口</th><th>网络</th><th>归属</th><th>操作</th></tr></thead>
-              <tbody v-for="group in containerGroups" :key="group.key" class="docker-group">
+              <tbody v-for="group in containerGroups" :key="group.key" class="docker-group" :style="containerGroupStyle(group)">
                 <tr class="docker-group__row">
                   <td colspan="6">
                     <div class="docker-group__summary">
@@ -1949,19 +1955,19 @@ onBeforeUnmount(() => {
 .docker-row-actions__group .icon-button:hover { background: var(--surface); }
 .docker-row { transition: background-color .14s ease; }
 .docker-row:hover { background: color-mix(in srgb, var(--brand) 4%, var(--surface)); }
-.docker-row--running > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--brand) 75%, transparent); }
+.docker-row--running > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--docker-group-accent, var(--brand)) 75%, transparent); }
 .docker-row--restarting > td:first-child, .docker-row--paused > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--amber) 75%, transparent); }
 .docker-group + .docker-group .docker-group__row td { border-top: 8px solid var(--surface-subtle); }
-.docker-group__row td { padding: 0; background: color-mix(in srgb, var(--surface-raised) 72%, transparent); }
+.docker-group__row td { padding: 0; background: color-mix(in srgb, var(--docker-group-accent, var(--brand)) 6%, var(--surface-raised)); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--docker-group-accent, var(--brand)) 72%, transparent); }
 .docker-group__summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 54px; padding: 8px 12px; }
 .docker-group__toggle { display: grid; min-width: 0; align-items: center; grid-template-columns: auto auto minmax(0, 1fr); gap: 9px; padding: 0; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
-.docker-group__toggle > svg { color: var(--muted); transition: transform .16s ease, color .16s ease; }
+.docker-group__toggle > svg { color: color-mix(in srgb, var(--docker-group-accent, var(--brand)) 72%, var(--muted)); transition: transform .16s ease, color .16s ease; }
 .docker-group__toggle > svg.is-expanded { transform: rotate(90deg); }
-.docker-group__toggle:hover > svg { color: var(--brand); }
+.docker-group__toggle:hover > svg { color: var(--docker-group-accent, var(--brand)); }
 .docker-group__toggle:focus-visible { border-radius: 10px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent); }
 .docker-group__copy { display: grid; min-width: 0; gap: 2px; }
 .docker-group__summary small { overflow: hidden; color: var(--muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
-.docker-group__icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); }
+.docker-group__icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; color: var(--docker-group-accent, var(--brand)); background: color-mix(in srgb, var(--docker-group-accent, var(--brand)) 12%, transparent); }
 .docker-context-menu {
   position: fixed;
   z-index: 110;

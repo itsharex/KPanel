@@ -9,6 +9,16 @@ export interface DockerContainerGroup {
   running: number
 }
 
+const composeGroupAccents = ['#25b99a', '#4f86e8', '#9a6bd6', '#2ca8c2', '#d08b45', '#c084b8'] as const
+
+export function dockerComposeGroupAccent(projectName: string): string {
+  let hash = 0
+  for (const character of projectName) {
+    hash = (Math.imul(hash, 31) + (character.codePointAt(0) ?? 0)) >>> 0
+  }
+  return composeGroupAccents[hash % composeGroupAccents.length] ?? composeGroupAccents[0]
+}
+
 export function groupDockerContainers(containers: DockerContainer[]): DockerContainerGroup[] {
   const compose = new Map<string, DockerContainer[]>()
   const standalone: DockerContainer[] = []

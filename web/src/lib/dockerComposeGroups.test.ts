@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupDockerContainers } from './dockerComposeGroups'
+import { dockerComposeGroupAccent, groupDockerContainers } from './dockerComposeGroups'
 import type { DockerContainer } from '@/types/api'
 
 function container(name: string, project?: string, service?: string, state: DockerContainer['state'] = 'running'): DockerContainer {
@@ -24,5 +24,12 @@ describe('Docker Compose container groups', () => {
 
   it('omits the standalone group when every container belongs to Compose', () => {
     expect(groupDockerContainers([container('web', 'demo', 'web')])).toHaveLength(1)
+  })
+
+  it('assigns stable, varied accents from the Compose project name', () => {
+    expect(dockerComposeGroupAccent('wordpress')).toBe(dockerComposeGroupAccent('wordpress'))
+    expect(dockerComposeGroupAccent('monitoring')).not.toBe(dockerComposeGroupAccent('shop'))
+    expect(new Set(['wordpress', 'monitoring', 'media', 'shop'].map(dockerComposeGroupAccent)).size).toBeGreaterThan(1)
+    expect(dockerComposeGroupAccent('中文项目')).toMatch(/^#[0-9a-f]{6}$/)
   })
 })
