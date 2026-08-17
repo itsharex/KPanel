@@ -1966,7 +1966,7 @@ onBeforeUnmount(() => {
 .docker-group__row td { padding: 0; background: color-mix(in srgb, var(--docker-group-accent, var(--brand)) 6%, var(--surface-raised)); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--docker-group-accent, var(--brand)) 72%, transparent); }
 .docker-group__summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 54px; padding: 8px 12px; }
 .docker-group__toggle { display: grid; min-width: 0; align-items: center; grid-template-columns: auto auto minmax(0, 1fr); gap: 9px; padding: 0; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
-.docker-group__toggle > svg { color: color-mix(in srgb, var(--docker-group-accent, var(--brand)) 72%, var(--muted)); transition: transform .16s ease, color .16s ease; }
+.docker-group__toggle > svg { color: color-mix(in srgb, var(--docker-group-accent, var(--brand)) 72%, var(--muted)); transition: transform .12s ease-out, color .12s ease-out; }
 .docker-group__toggle > svg.is-expanded { transform: rotate(90deg); }
 .docker-group__toggle:hover > svg { color: var(--docker-group-accent, var(--brand)); }
 .docker-group__toggle:focus-visible { border-radius: 10px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent); }
@@ -1974,9 +1974,9 @@ onBeforeUnmount(() => {
 .docker-group__summary small { overflow: hidden; color: var(--muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .docker-group__icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; color: var(--docker-group-accent, var(--brand)); background: color-mix(in srgb, var(--docker-group-accent, var(--brand)) 12%, transparent); }
 .docker-group-row-enter-active,
-.docker-group-row-leave-active { transform-origin: top center; transition: opacity .18s ease, transform .18s ease; }
+.docker-group-row-leave-active { will-change: opacity, transform; transition: opacity .12s linear, transform .12s cubic-bezier(.2, .8, .2, 1); }
 .docker-group-row-enter-from,
-.docker-group-row-leave-to { opacity: 0; transform: translateY(-5px) scaleY(.97); }
+.docker-group-row-leave-to { opacity: 0; transform: translate3d(0, -3px, 0); }
 .docker-context-menu {
   position: fixed;
   z-index: 110;
