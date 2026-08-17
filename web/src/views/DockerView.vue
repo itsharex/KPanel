@@ -312,6 +312,10 @@ function containerGroupStyle(group: DockerContainerGroup): Record<string, string
     '--docker-group-accent': group.kind === 'compose' ? dockerComposeGroupAccent(group.name) : 'var(--muted)',
   }
 }
+
+function visibleContainerGroupRows(group: DockerContainerGroup): DockerContainer[] {
+  return isContainerGroupCollapsed(group.key) ? [] : group.containers
+}
 const composeAnalysis = computed(() => analyzeDockerDeployment(composeSource.value))
 const composeDiagnostics = computed(() => composeAnalysis.value.kind === 'invalid' ? composeAnalysis.value.diagnostics : [])
 const selectedComposeFile = computed(() => composeProject.value?.configFiles.find((file) => file.path === composeFilePath.value))
@@ -1451,13 +1455,13 @@ onBeforeUnmount(() => {
                     </div>
                   </td>
                 </tr>
-                <tr
-                  v-for="container in group.containers"
-                  v-show="!isContainerGroupCollapsed(group.key)"
-                  :key="container.id"
-                  :class="`docker-row docker-row--${container.state}`"
-                  @contextmenu="showContainerContext($event, container)"
-                >
+                <TransitionGroup name="docker-group-row">
+                  <tr
+                    v-for="container in visibleContainerGroupRows(group)"
+                    :key="container.id"
+                    :class="`docker-row docker-row--${container.state}`"
+                    @contextmenu="showContainerContext($event, container)"
+                  >
                   <td>
                     <div class="resource-name">
                       <span class="resource-name__icon resource-name__icon--docker"><Container :size="18" /></span>
@@ -1488,7 +1492,8 @@ onBeforeUnmount(() => {
                       <span v-if="!container.allowedActions?.length" class="action-unavailable-label">状态暂不可操作</span>
                     </div>
                   </td>
-                </tr>
+                  </tr>
+                </TransitionGroup>
               </tbody>
             </table>
           </div>
@@ -1968,6 +1973,10 @@ onBeforeUnmount(() => {
 .docker-group__copy { display: grid; min-width: 0; gap: 2px; }
 .docker-group__summary small { overflow: hidden; color: var(--muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .docker-group__icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; color: var(--docker-group-accent, var(--brand)); background: color-mix(in srgb, var(--docker-group-accent, var(--brand)) 12%, transparent); }
+.docker-group-row-enter-active,
+.docker-group-row-leave-active { transform-origin: top center; transition: opacity .18s ease, transform .18s ease; }
+.docker-group-row-enter-from,
+.docker-group-row-leave-to { opacity: 0; transform: translateY(-5px) scaleY(.97); }
 .docker-context-menu {
   position: fixed;
   z-index: 110;
@@ -2109,5 +2118,10 @@ onBeforeUnmount(() => {
   .deployment-detection small { white-space: normal; }
   .deployment-options { justify-content: stretch; flex-direction: column; }
   .deployment-options .button { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .docker-group__toggle > svg,
+  .docker-group-row-enter-active,
+  .docker-group-row-leave-active { transition: none; }
 }
 </style>
