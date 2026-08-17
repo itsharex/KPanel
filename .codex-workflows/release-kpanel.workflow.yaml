@@ -6,7 +6,7 @@ author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, runner_image, apps_repo, validation_environment, production_environment]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-17T09:25:23Z"
+updated: "2026-08-17T17:33:27+08:00"
 ---
 
 # Release KPanel
