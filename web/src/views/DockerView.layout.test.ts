@@ -126,6 +126,11 @@ describe('Docker resource toolbar layout', () => {
     expect(deploymentEditorSource).toContain('setSelectionRange(item.from, Math.max(item.from + 1, item.to))')
   })
 
+  it('does not repeat generic invalid-state copy when precise diagnostics are visible', () => {
+    expect(dockerSource).toContain(`v-if="createAnalysis.kind !== 'invalid' || !createDiagnostics.length"`)
+    expect(dockerSource).toContain(`v-if="composeAnalysis.kind !== 'invalid' || !composeDiagnostics.length"`)
+  })
+
   it('keeps resource actions aligned to the right on desktop', () => {
     expect(dockerSource).toContain('.workspace-card > header:not(.resource-section__header)')
     expect(dockerSource).toMatch(/\.resource-section__header\s*\{[^}]*align-items:\s*center;/)

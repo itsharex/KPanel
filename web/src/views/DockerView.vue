@@ -1669,7 +1669,7 @@ onBeforeUnmount(() => {
             placeholder="docker run -d --name my-app -p 8080:80 nginx:alpine&#10;&#10;也可以直接粘贴 compose.yaml 内容"
           />
         </label>
-        <div class="deployment-detection" :class="{ 'is-invalid': createAnalysis.kind === 'invalid', 'is-ready': createAnalysis.kind === 'docker-run' || createAnalysis.kind === 'compose' }">
+        <div v-if="createAnalysis.kind !== 'invalid' || !createDiagnostics.length" class="deployment-detection" :class="{ 'is-invalid': createAnalysis.kind === 'invalid', 'is-ready': createAnalysis.kind === 'docker-run' || createAnalysis.kind === 'compose' }">
           <template v-if="createAnalysis.kind === 'empty'">
             <span class="deployment-kind"><FileText :size="16" />等待粘贴</span>
             <small>支持常见 docker run 参数和完整 Compose YAML，无需先选择部署类型。</small>
@@ -1755,7 +1755,7 @@ onBeforeUnmount(() => {
             :aria-label="`${composeProject.name} Compose 配置`"
           />
         </label>
-        <div class="deployment-detection" :class="{ 'is-invalid': composeAnalysis.kind === 'invalid', 'is-ready': composeAnalysis.kind === 'compose' }">
+        <div v-if="composeAnalysis.kind !== 'invalid' || !composeDiagnostics.length" class="deployment-detection" :class="{ 'is-invalid': composeAnalysis.kind === 'invalid', 'is-ready': composeAnalysis.kind === 'compose' }">
           <span v-if="composeAnalysis.kind === 'compose'" class="deployment-kind"><ShieldCheck :size="16" />语法检查通过</span>
           <span v-else class="deployment-kind"><CircleStop :size="16" />配置暂不可部署</span>
           <small v-if="composeAnalysis.kind === 'compose'">识别到 {{ composeAnalysis.services.length }} 个服务；Agent 提交前还会执行 docker compose config。</small>
