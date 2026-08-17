@@ -161,6 +161,7 @@ describe('Docker resource toolbar layout', () => {
     expect(dockerSource).toContain('管理 Compose')
     expect(dockerSource).toContain('保存并重新部署')
     expect(dockerSource).toMatch(/\.docker-table\s*\{\s*min-width:\s*1240px;/)
+    expect(dockerSource).toMatch(/\.docker-table \.docker-row > td:last-child\s*\{[^}]*min-width:\s*372px;[^}]*max-width:\s*372px;/)
   })
 })
 

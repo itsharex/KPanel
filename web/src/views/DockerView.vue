@@ -1911,7 +1911,15 @@ onBeforeUnmount(() => {
 .docker-table__ports { width: 23%; }
 .docker-table__network { width: 13%; }
 .docker-table__owner { width: 11%; }
-.docker-table__actions { width: 330px; }
+.docker-table__actions { width: 372px; }
+.docker-table > thead th:last-child,
+.docker-table .docker-row > td:last-child {
+  width: 372px;
+  min-width: 372px;
+  max-width: 372px;
+  padding-right: 8px;
+  padding-left: 8px;
+}
 .docker-row-actions { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
 .docker-row-actions__group { display: inline-flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface-raised) 70%, transparent); }
 .docker-row-actions__group .icon-button { width: 32px; height: 32px; border: 0; border-radius: 7px; background: transparent; }
