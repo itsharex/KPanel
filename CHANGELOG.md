@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.82.0] - 2026-08-17
+
+### Added
+
+- Docker Run 与 Compose 粘贴部署新增轻量语法、语义诊断和精确行列定位，错误项可点击聚焦；提交前仍由 Agent 使用 `docker compose config` 做最终校验。
+- Docker 容器按标准 `com.docker.compose.*` 标签编组，并新增基于真实 `working_dir`、`config_files` 的 Compose 项目启动、停止、重启、编辑与重新部署管理。
+
+### Changed
+
+- Compose 配置重新部署加入资源版本并发保护、同目录暂存、权限与属主保留及原子替换；启动失败时自动恢复原配置并重新拉起原项目。
+- 优化 Docker 页面桌面与窄屏布局、部署诊断提示和管理入口可达性，独立容器继续单独展示。
+
+### Upgrade Notes
+
+- 本版本不迁移数据库、不改变 KPanel 自身端口、Agent 权限、`kejilion.sh` 或应用市场安装契约。Compose 项目状态继续以 Docker 标准标签和实际配置文件为真源。
+- 升级不会自动改写现有业务 Compose 文件；只有管理员明确保存并重新部署时才进入带备份与失败回滚的写事务。
+- 回滚到 v0.81.2 会移除 Compose 编组、诊断和项目管理界面，不删除现有容器、网络、卷或 Compose 配置；如回滚前正在执行重部署，应先等待任务结束并核对项目实际状态。
+
 ## [0.81.2] - 2026-08-17
 
 ### Changed
