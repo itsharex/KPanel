@@ -4995,7 +4995,7 @@ div.resource-name {
   padding: 10px 0;
 }
 
-.stage-list li > span {
+.stage-list__marker {
   z-index: 1;
   width: 8px;
   height: 8px;

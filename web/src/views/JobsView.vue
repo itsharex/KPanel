@@ -216,7 +216,7 @@ onBeforeUnmount(() => {
           <h3><RotateCw :size="17" /> 执行阶段</h3>
           <ol class="stage-list">
             <li v-for="stage in selectedJob.stages" :key="stage.name">
-              <span />
+              <span class="stage-list__marker" />
               <div>
                 <strong>{{ stage.name }}</strong>
                 <small>{{ stage.message || formatDateTime(stage.finishedAt || stage.startedAt) }}</small>
