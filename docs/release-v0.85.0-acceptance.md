@@ -63,6 +63,7 @@
 
 <!-- kpanel-release-process-metrics:start -->
 - 发布流程异常或无效证据拦截次数：4
+- 其中生产写操作开始后异常次数：2
 <!-- kpanel-release-process-metrics:end -->
 
 四次均 fail-closed：三次备份脚本校验/断言问题（每次均恢复 Panel/Agent，最终备份恢复校验通过），以及一次上线后脚本摘要检查未考虑 `permission_granted` 运行时单字节标记；均未造成数据丢失、版本漂移、回滚或 108 操作。失败备份目录保留在 `/root/kpanel-backups/pre-v0.85.0-*` 供审计，不作为正式回滚点。
