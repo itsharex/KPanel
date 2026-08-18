@@ -15,6 +15,8 @@
   不根据旧会话记忆继续写入。
 - 按 `docs/project-management.md` 使用统一任务契约和 Definition of Ready/Done。任务必须明确角色、
   scope、允许/禁止路径、共享契约、业务真源、受影响用户旅程、worktree/branch/base、L0-L3、证据和权限。
+- 涉及界面布局、交互、字体、主题、图标、动效或视觉资产时，加载共享入口
+  `docs/ui-visual-language.md`；本适配文件不另行定义字号或视觉规则。
 - 一个写任务独占一个专用 worktree 和短期分支；管理工作树只用于同步、盘点和只读比较。
 - 不修改其他智能体拥有的路径，不切换、重置、清理、删除或覆盖其他任务的工作树、分支和未提交内容。
 - SSH 远端 `git@github.com:kejilion/KPanel.git`、聚焦提交、CI、Release 和验收记录是跨工具真源；

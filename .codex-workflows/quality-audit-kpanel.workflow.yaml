@@ -1,12 +1,12 @@
 ---
 name: quality-audit-kpanel
 description: "审计快速迭代后的 KPanel 业务正确性、体验、性能、稳定、安全、交付节奏和发布门禁"
-version: "1.7"
+version: "1.8"
 author: "Codex"
 tags: [quality, security, performance, stability, ux, delivery, review, regression]
 params: [project_dir, baseline_ref, candidate_image, test_host]
 created: "2026-08-02T13:02:08Z"
-updated: "2026-08-17T15:04:32+08:00"
+updated: "2026-08-18T10:00:00+08:00"
 ---
 
 # KPanel Quality Audit
@@ -92,9 +92,10 @@ memory=256 MiB, cpu=1, pids=128, read-only, non-root, cap-drop=ALL
 
 ### 5. 验证用户体验与可访问性
 
-在真实浏览器验证受影响页面的桌面/窄视口、浅/深色、键盘与焦点、缩放、多语言、加载/空/失败态、
-长文本和控制台错误。终端、对话框、固定底栏和桌面窗口不得遮挡焦点或输入；点击目标、焦点可见和
-无意外上下文切换按 `docs/development-quality-standard.md` 的 WCAG 2.2 目标复核。
+按 `docs/ui-visual-language.md` 和 `docs/development-quality-standard.md` 在真实浏览器验证受影响页面的桌面/窄视口、
+浅/深色、键盘与焦点、100%/125%/200% 缩放、多语言、加载/空/失败态、长文本和控制台错误。终端、对话框、
+固定底栏和桌面窗口不得遮挡焦点或输入；点击目标、焦点可见和无意外上下文切换按两份规范的 WCAG 2.2 目标复核；
+有语义文字低于 12px 或正文/控件低于 14px 时必须记录为失败或迁移债务。
 
 预计超过普通交互反馈窗口的浏览器 E2E/稳定性测试必须调用 `background-browser-validation`，以后台
 job 和证据目录跨会话恢复；普通 UI 审计不机械增加 soak，生命周期/资源风险按画像确定窗口或循环数。

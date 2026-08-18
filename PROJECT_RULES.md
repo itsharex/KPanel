@@ -147,6 +147,9 @@ KPanel 可以在外层增加结构化输入校验、登录鉴权、原子写入�
 
 所有新功能和修改必须遵守
 [`docs/development-quality-standard.md`](docs/development-quality-standard.md)。
+涉及界面布局、交互、字体、主题、图标、动效或视觉资产时，同时遵守
+[`docs/ui-visual-language.md`](docs/ui-visual-language.md)；该文件是界面视觉与可读性标准的唯一产品入口，
+业务设计文档只能扩展具体旅程，不能降低其字号、对比度、缩放、键盘焦点或状态反馈要求。
 
 KPanel 是面向单管理员、直接管理 Linux 宿主机真实资源的轻量控制面，不是普通内容站点或
 独立业务数据库。质量判断必须同时服从“`kejilion.sh` 双向互通、Panel/Agent 权限分离、低配主机

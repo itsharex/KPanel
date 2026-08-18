@@ -15,6 +15,7 @@ const requiredFiles = [
   'docs/project-management.md',
   'docs/multi-agent-collaboration.md',
   'docs/development-quality-standard.md',
+  'docs/ui-visual-language.md',
   'docs/local-feature-preview-standard.md',
   'docs/product-quality-review-current.md',
   'docs/release-acceptance-template.md',
@@ -132,6 +133,7 @@ const adapterTokens = [
   'Definition of Done',
   'make verify-change',
   'make verify-release',
+  'docs/ui-visual-language.md',
   'docs/product-quality-review-current.md',
 ];
 requireText('AGENTS.md', adapterTokens);
@@ -139,6 +141,7 @@ requireText('CLAUDE.md', adapterTokens);
 
 requireText('PROJECT_RULES.md', [
   'docs/development-quality-standard.md',
+  'docs/ui-visual-language.md',
   'docs/release-acceptance-template.md',
   '受控自我改进',
   '不得自动放宽',
@@ -162,6 +165,7 @@ requireText('PROJECT_RULES.md', [
   '首次生产写操作前被拦截的流程异常不计变更失败',
 ]);
 requireText('docs/development-quality-standard.md', [
+  'ui-visual-language.md',
   '宿主机系统动作',
   '`kejilion.sh` 原生交互',
   '目标容器内控制台',
@@ -175,6 +179,7 @@ requireText('docs/product-quality-review-current.md', [
   '目标容器内有界控制台',
 ]);
 requireText('docs/project-management.md', [
+  'docs/ui-visual-language.md',
   'Definition of Ready',
   'Definition of Done',
   '标准交付包',
@@ -192,6 +197,7 @@ requireText('docs/project-management.md', [
   'kpanel-release-process-metrics:start/end',
 ]);
 requireText('.codex-workflows/README.md', [
+  'ui-visual-language.md',
   'evolve-kpanel.workflow.yaml',
   'maintain-kpanel-dependencies.workflow.yaml',
   'make dependency-policy-check',
@@ -204,6 +210,7 @@ requireText('.codex-workflows/README.md', [
   'kpanel-site-icon-cache-validation.workflow.yaml',
 ]);
 requireText('docs/local-feature-preview-standard.md', [
+  'ui-visual-language.md',
   'UI Mock',
   'Local Integration',
   'Isolated Real Host',
@@ -248,7 +255,14 @@ requireText('.codex-workflows/release-kpanel.workflow.yaml', [
 ]);
 requireText('.codex-workflows/quality-audit-kpanel.workflow.yaml', [
   'docs/product-quality-review-current.md',
+  'docs/ui-visual-language.md',
+  '100%/125%/200%',
   'node scripts/check-business-context-freshness.mjs',
+]);
+requireText('.codex-workflows/local-feature-preview.workflow.yaml', [
+  'docs/local-feature-preview-standard.md',
+  'docs/ui-visual-language.md',
+  '100%/125%/200%',
 ]);
 requireText('.codex-workflows/evolve-kpanel.workflow.yaml', [
   'PROJECT_RULES.md` 5.3',
@@ -293,6 +307,13 @@ requireText('docs/quality-improvement-proposal-template.md', [
   '规范验收结论',
   '规范验收停止依据',
 ]);
+requireText('docs/ui-visual-language.md', [
+  '小字最小 12px',
+  '正文和操作控件最小 14px',
+  '100%、125% 和 200%',
+  '历史低于该基线的样式按受影响功能迁移',
+  'WCAG 2.2',
+]);
 
 const workflows = [
   '.codex-workflows/session-collaboration.workflow.yaml',
@@ -323,6 +344,7 @@ requireText('.codex-workflows/kpanel-real-machine-app-lifecycle.workflow.yaml', 
 ]);
 requireText('.codex-workflows/local-feature-preview.workflow.yaml', [
   'docs/local-feature-preview-standard.md',
+  'docs/ui-visual-language.md',
   'scripts/local-feature-preview.mjs start',
   '模拟数据预览',
   '草稿预览，变更尚未冻结',

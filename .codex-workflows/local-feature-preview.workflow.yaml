@@ -1,12 +1,12 @@
 ---
 name: local-feature-preview
 description: "为 KPanel 功能会话建立可复现、可并行、可停止且证据分层明确的本地交互预览"
-version: "1.0"
+version: "1.1"
 author: "Codex"
 tags: [kpanel, preview, frontend, browser, multi-agent, quality]
 params: [project_dir, scope, preview_mode, preview_grade, api_target, evidence_dir, affected_journeys]
 created: "2026-08-17T12:25:44Z"
-updated: "2026-08-17T20:30:00+08:00"
+updated: "2026-08-18T10:00:00+08:00"
 ---
 
 # KPanel Local Feature Preview
@@ -19,7 +19,7 @@ updated: "2026-08-17T20:30:00+08:00"
 
 ## Prerequisites
 
-- 已阅读 `docs/local-feature-preview-standard.md`、`PROJECT_RULES.md` 和本任务相关业务文档。
+- 已阅读 `docs/local-feature-preview-standard.md`、`docs/ui-visual-language.md`、`PROJECT_RULES.md` 和本任务相关业务文档。
 - `${{project_dir}}` 是当前任务独占的 KPanel worktree；主线管理工作树不得承载功能预览。
 - `${{scope}}` 是稳定的小写连字符标识，`${{affected_journeys}}` 已列出本轮可操作路径。
 - `web/node_modules` 来自当前 `web/package-lock.json`；缺失时先在该 worktree 执行 `npm ci`。
@@ -102,7 +102,8 @@ Mock 预览首句必须写“模拟数据预览”；dirty 预览首句必须写
 ### 4. 完成受影响旅程验收
 
 普通确定性交互由当前功能会话使用真实浏览器完成，至少覆盖受影响的桌面与窄视口、关键成功路径、
-一个真实失败/空状态、焦点和控制台错误。没有影响的维度写明不适用依据。
+一个真实失败/空状态、焦点、100%/125%/200% 缩放下的可读性和控制台错误；按
+`docs/ui-visual-language.md` 记录最小计算字号。没有影响的维度写明不适用依据。
 
 预计跨会话、涉及生命周期、重连、并发、流式或资源趋势的浏览器验收：
 
