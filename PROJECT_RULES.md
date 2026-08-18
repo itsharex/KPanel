@@ -172,6 +172,11 @@ KPanel 是面向单管理员、直接管理 Linux 宿主机真实资源的轻量
 SSH 或单个 AI 会话持续存在。后台化不降低断言或门禁。普通确定性交互按完成条件验收；只有生命周期、
 重连、并发、流式或资源趋势风险才执行 soak，时长或循环数由发布画像决定，禁止机械套用固定 10/30 分钟。
 
+本地功能预览：可见功能会话按 [`docs/local-feature-preview-standard.md`](docs/local-feature-preview-standard.md)
+提供统一预览卡和可停止的回环地址。Mock、回环集成和隔离真机必须分层声明；dirty worktree 只能提供
+草稿预览，绑定验收证据的预览必须是 clean checkpoint。预览启动成功、截图或 mock 结果不得单独解释为
+功能已验收；多会话不得共用固定端口、证据目录或通过停止其他会话进程解决冲突。
+
 ### 3.2 依赖与技术栈生命周期
 
 1. Go/npm 直接与传递依赖、Go/Node 工具链、Docker 基础镜像与构建 frontend、GitHub Actions、

@@ -10,6 +10,7 @@ node scripts/check-environment-policy.mjs --validate-only
 node --test \
   scripts/tests/check-environment-policy.test.mjs \
   scripts/tests/background-browser-test.test.mjs \
+  scripts/tests/local-feature-preview.test.mjs \
   scripts/tests/release-gate-runner.test.mjs \
   scripts/tests/verify-change-forced-level.test.mjs \
   scripts/tests/business-context-freshness.test.mjs \
