@@ -2156,6 +2156,7 @@ onBeforeUnmount(() => {
 .docker-group__toggle:focus-visible { border-radius: 10px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent); }
 .docker-group__copy { display: grid; min-width: 0; gap: 2px; }
 .docker-group__summary small { overflow: hidden; color: var(--muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.docker-group__summary > .button { position: sticky; right: 12px; z-index: 2; justify-self: end; white-space: nowrap; }
 .docker-group__icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; color: var(--docker-group-accent, var(--brand)); background: color-mix(in srgb, var(--docker-group-accent, var(--brand)) 12%, transparent); }
 .docker-group-row-enter-active,
 .docker-group-row-leave-active { will-change: opacity, transform; transition: opacity .12s linear, transform .12s cubic-bezier(.2, .8, .2, 1); }
@@ -2315,8 +2316,8 @@ onBeforeUnmount(() => {
   .backup-list article { gap: 9px; padding: 11px; }
   .compact-input { width: 100%; }
   .network-membership { grid-template-columns: 1fr; }
-  .docker-group__summary { grid-template-columns: minmax(0, 1fr); }
-  .docker-group__summary .button { grid-column: 1 / -1; width: 100%; }
+  .docker-group__summary { grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; }
+  .docker-group__summary .button { grid-column: auto; width: auto; }
   .compose-manager__meta { grid-template-columns: 1fr; }
   .repeat-row--ports, .repeat-row--mounts, .repeat-row--environment, .repeat-row--compose-environment { grid-template-columns: 1fr; }
   .compose-environment-card__header, .compose-environment-card__concealed { align-items: stretch; flex-direction: column; }

@@ -192,6 +192,9 @@ describe('Docker resource toolbar layout', () => {
     expect(dockerSource).not.toContain('1panel.env')
     expect(dockerSource).toMatch(/\.docker-table\s*\{\s*min-width:\s*1240px;/)
     expect(dockerSource).toMatch(/\.docker-table \.docker-row > td:last-child\s*\{[^}]*min-width:\s*372px;[^}]*max-width:\s*372px;/)
+    expect(dockerSource).toMatch(/\.docker-group__summary > \.button\s*\{[^}]*position:\s*sticky;[^}]*right:\s*12px;/)
+    expect(dockerSource).toMatch(/@media \(max-width: 720px\)[\s\S]*?\.docker-group__summary\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto;/)
+    expect(dockerSource).toMatch(/@media \(max-width: 720px\)[\s\S]*?\.docker-group__summary \.button\s*\{[^}]*grid-column:\s*auto;[^}]*width:\s*auto;/)
   })
 })
 
