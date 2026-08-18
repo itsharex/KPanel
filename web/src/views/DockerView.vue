@@ -212,7 +212,7 @@ const tabs = computed(() => [
   { id: 'images' as const, label: '镜像', icon: Box, count: String(data.value?.images.length || 0) },
   { id: 'networks' as const, label: '网络', icon: Network, count: String(data.value?.networks.length || 0) },
   { id: 'volumes' as const, label: '存储卷', icon: HardDrive, count: String(data.value?.volumes.length || 0) },
-  { id: 'environment' as const, label: '环境设置', icon: Wrench, count: data.value?.available ? '正常' : '异常' },
+  { id: 'environment' as const, label: '环境', icon: Wrench, count: '' },
 ])
 const dockerJobActive = computed(() =>
   activeJob.value?.status === 'queued' || activeJob.value?.status === 'running',
@@ -1336,9 +1336,13 @@ onBeforeUnmount(() => {
 
       <section class="docker-command-center">
         <header class="docker-command-center__header">
-          <div>
+          <div class="docker-command-center__identity">
             <span class="workspace-card__icon"><Boxes :size="20" /></span>
             <span><strong>Docker Engine</strong><small>{{ data.version || '版本待检测' }} · 观测于 {{ formatDateTime(data.observedAt) }}</small></span>
+          </div>
+          <div class="docker-command-center__stats" aria-label="Docker 运行统计">
+            <span class="docker-command-center__stat docker-command-center__stat--running"><strong>{{ runningCount }}</strong><small>运行中</small></span>
+            <span class="docker-command-center__stat"><strong>{{ manageableCount }}</strong><small>可管理</small></span>
           </div>
           <div class="docker-command-center__actions">
             <StatusBadge :status="data.available ? 'running' : 'critical'" :label="data.available ? '运行正常' : '连接异常'" />
@@ -1348,39 +1352,21 @@ onBeforeUnmount(() => {
           </div>
         </header>
 
-        <section class="docker-summary" aria-label="Docker 摘要">
-          <div><span class="summary-strip__icon"><Container :size="19" /></span><span><strong>{{ data.containers.length }}</strong><small>全部容器</small></span></div>
-          <div><span class="summary-strip__icon summary-strip__icon--success"><Play :size="19" /></span><span><strong>{{ runningCount }}</strong><small>运行中</small></span></div>
-          <div><span class="summary-strip__icon summary-strip__icon--blue"><ShieldCheck :size="19" /></span><span><strong>{{ manageableCount }}</strong><small>可管理</small></span></div>
-          <div><span class="summary-strip__icon summary-strip__icon--violet"><Boxes :size="19" /></span><span><strong>{{ data.images.length }}</strong><small>本地镜像</small></span></div>
-        </section>
-
-        <nav class="docker-nav" aria-label="Docker 功能分区">
-          <button
-            v-for="tab in tabs"
-            :key="tab.id"
-            type="button"
-            :class="{ 'is-active': activeTab === tab.id }"
-            :aria-current="activeTab === tab.id ? 'page' : undefined"
-            @click="activeTab = tab.id; search = ''; resourceSort = 'smart'"
-          >
-            <component :is="tab.icon" :size="17" />
-            <strong>{{ tab.label }}</strong>
-            <small>{{ tab.count }}</small>
-          </button>
-        </nav>
-
-        <div v-if="activeTab !== 'environment'" class="docker-toolbar">
-          <span class="docker-toolbar__count">显示 {{ visibleResourceCount }} 项</span>
-          <div class="search-field search-field--small">
-            <Search :size="16" />
-            <input v-model="search" type="search" placeholder="搜索当前资源" aria-label="搜索 Docker 资源" />
-          </div>
-          <select v-model="resourceSort" class="select-input docker-sort" aria-label="Docker 资源排序">
-            <option value="smart">智能排序</option>
-            <option value="name-asc">名称 A–Z</option>
-            <option value="name-desc">名称 Z–A</option>
-          </select>
+        <div class="docker-workspace-bar">
+          <nav class="docker-nav" aria-label="Docker 功能分区">
+            <button
+              v-for="tab in tabs"
+              :key="tab.id"
+              type="button"
+              :class="{ 'is-active': activeTab === tab.id }"
+              :aria-current="activeTab === tab.id ? 'page' : undefined"
+              @click="activeTab = tab.id; search = ''; resourceSort = 'smart'"
+            >
+              <component :is="tab.icon" :size="16" />
+              <strong>{{ tab.label }}</strong>
+              <small v-if="tab.count">{{ tab.count }}</small>
+            </button>
+          </nav>
         </div>
       </section>
 
@@ -1493,17 +1479,30 @@ onBeforeUnmount(() => {
       <template v-else-if="activeTab === 'containers'">
         <section class="workspace-card workspace-card--wide resource-section">
           <header class="resource-section__header">
-            <div>
+            <div class="resource-section__heading">
               <span class="workspace-card__icon"><Container :size="20" /></span>
-              <div><strong>容器日常管理</strong><small>创建、生命周期、日志、性能、控制台和外部访问；右键可打开完整操作菜单</small></div>
+              <div><strong>容器日常管理</strong><small>{{ visibleResourceCount }} 项 · 生命周期、日志、性能与终端</small></div>
             </div>
-            <div class="card-actions">
-              <button class="button button--secondary button--small" type="button" @click="askPrune('container_prune', '清理已停止容器')">
-                <BrushCleaning :size="15" /> 清理停止容器
-              </button>
-              <button class="button button--primary button--small" type="button" :disabled="panel.isReadOnly.value" @click="resetCreateForm(); createOpen = true">
-                <Plus :size="15" /> 新建容器
-              </button>
+            <div class="resource-section__controls">
+              <div class="docker-toolbar">
+                <div class="search-field search-field--small">
+                  <Search :size="15" />
+                  <input v-model="search" type="search" placeholder="搜索当前资源" aria-label="搜索 Docker 资源" />
+                </div>
+                <select v-model="resourceSort" class="select-input docker-sort" aria-label="Docker 资源排序">
+                  <option value="smart">智能排序</option>
+                  <option value="name-asc">名称 A–Z</option>
+                  <option value="name-desc">名称 Z–A</option>
+                </select>
+              </div>
+              <div class="card-actions">
+                <button class="button button--secondary button--small" type="button" @click="askPrune('container_prune', '清理已停止容器')">
+                  <BrushCleaning :size="15" /> 清理停止容器
+                </button>
+                <button class="button button--primary button--small" type="button" :disabled="panel.isReadOnly.value" @click="resetCreateForm(); createOpen = true">
+                  <Plus :size="15" /> 新建容器
+                </button>
+              </div>
             </div>
           </header>
           <EmptyState v-if="!containerGroups.length" title="没有符合条件的容器" description="Docker Engine 未返回容器，或搜索条件没有匹配项。" />
@@ -1596,11 +1595,24 @@ onBeforeUnmount(() => {
       <template v-else-if="activeTab === 'images'">
         <section class="workspace-card workspace-card--wide resource-section">
           <header class="resource-section__header">
-            <div><span class="workspace-card__icon"><Box :size="20" /></span><div><strong>镜像日常管理</strong><small>拉取即更新；右键可复制引用、更新或删除</small></div></div>
-            <div class="card-actions">
-              <input v-model="imageReference" class="text-input compact-input" type="text" placeholder="nginx:alpine" @keyup.enter="pullImage" />
-              <button class="button button--primary button--small" type="button" :disabled="!imageReference.trim()" @click="pullImage"><Download :size="15" /> 拉取镜像</button>
-              <button class="button button--secondary button--small" type="button" @click="askPrune('image_prune', '清理未使用镜像')"><BrushCleaning :size="15" /> 清理</button>
+            <div class="resource-section__heading"><span class="workspace-card__icon"><Box :size="20" /></span><div><strong>镜像日常管理</strong><small>{{ visibleResourceCount }} 项 · 拉取、更新与清理</small></div></div>
+            <div class="resource-section__controls">
+              <div class="docker-toolbar">
+                <div class="search-field search-field--small">
+                  <Search :size="15" />
+                  <input v-model="search" type="search" placeholder="搜索当前资源" aria-label="搜索 Docker 资源" />
+                </div>
+                <select v-model="resourceSort" class="select-input docker-sort" aria-label="Docker 资源排序">
+                  <option value="smart">智能排序</option>
+                  <option value="name-asc">名称 A–Z</option>
+                  <option value="name-desc">名称 Z–A</option>
+                </select>
+              </div>
+              <div class="card-actions">
+                <input v-model="imageReference" class="text-input compact-input" type="text" placeholder="nginx:alpine" @keyup.enter="pullImage" />
+                <button class="button button--primary button--small" type="button" :disabled="!imageReference.trim()" @click="pullImage"><Download :size="15" /> 拉取镜像</button>
+                <button class="button button--secondary button--small" type="button" @click="askPrune('image_prune', '清理未使用镜像')"><BrushCleaning :size="15" /> 清理</button>
+              </div>
             </div>
           </header>
           <EmptyState v-if="!filteredImages.length" title="没有本地镜像" description="可输入完整镜像引用拉取，任务会在后台继续。" />
@@ -1627,12 +1639,25 @@ onBeforeUnmount(() => {
         <div class="workspace-grid">
           <section class="workspace-card workspace-card--wide resource-section">
             <header class="resource-section__header">
-              <div><span class="workspace-card__icon"><Network :size="20" /></span><div><strong>网络日常管理</strong><small>网络创建、删除和成员关系均直接写入 Docker Engine；支持右键管理</small></div></div>
-              <div class="card-actions">
-                <input v-model="networkName" class="text-input compact-input" type="text" placeholder="新网络名称" @keyup.enter="createDockerNetwork" />
-                <input v-model="networkDriver" class="text-input compact-input compact-input--driver" type="text" placeholder="驱动，例如 bridge" @keyup.enter="createDockerNetwork" />
-                <button class="button button--primary button--small" type="button" :disabled="!networkName.trim() || !networkDriver.trim()" @click="createDockerNetwork"><Plus :size="15" /> 创建网络</button>
-                <button class="button button--secondary button--small" type="button" @click="askPrune('network_prune', '清理未使用网络')"><BrushCleaning :size="15" /> 清理</button>
+              <div class="resource-section__heading"><span class="workspace-card__icon"><Network :size="20" /></span><div><strong>网络日常管理</strong><small>{{ visibleResourceCount }} 项 · 创建、成员关系与清理</small></div></div>
+              <div class="resource-section__controls">
+                <div class="docker-toolbar">
+                  <div class="search-field search-field--small">
+                    <Search :size="15" />
+                    <input v-model="search" type="search" placeholder="搜索当前资源" aria-label="搜索 Docker 资源" />
+                  </div>
+                  <select v-model="resourceSort" class="select-input docker-sort" aria-label="Docker 资源排序">
+                    <option value="smart">智能排序</option>
+                    <option value="name-asc">名称 A–Z</option>
+                    <option value="name-desc">名称 Z–A</option>
+                  </select>
+                </div>
+                <div class="card-actions">
+                  <input v-model="networkName" class="text-input compact-input" type="text" placeholder="新网络名称" @keyup.enter="createDockerNetwork" />
+                  <input v-model="networkDriver" class="text-input compact-input compact-input--driver" type="text" placeholder="驱动，例如 bridge" @keyup.enter="createDockerNetwork" />
+                  <button class="button button--primary button--small" type="button" :disabled="!networkName.trim() || !networkDriver.trim()" @click="createDockerNetwork"><Plus :size="15" /> 创建网络</button>
+                  <button class="button button--secondary button--small" type="button" @click="askPrune('network_prune', '清理未使用网络')"><BrushCleaning :size="15" /> 清理</button>
+                </div>
               </div>
             </header>
             <div class="network-membership">
@@ -1661,12 +1686,25 @@ onBeforeUnmount(() => {
       <template v-else>
         <section class="workspace-card workspace-card--wide resource-section">
           <header class="resource-section__header">
-            <div><span class="workspace-card__icon"><HardDrive :size="20" /></span><div><strong>存储卷日常管理</strong><small>所有 Docker 卷均可直接管理；右键可复制名称、挂载点或删除</small></div></div>
-            <div class="card-actions">
-              <input v-model="volumeName" class="text-input compact-input" type="text" placeholder="新存储卷名称" @keyup.enter="createDockerVolume" />
-              <input v-model="volumeDriver" class="text-input compact-input compact-input--driver" type="text" placeholder="驱动，例如 local" @keyup.enter="createDockerVolume" />
-              <button class="button button--primary button--small" type="button" :disabled="!volumeName.trim() || !volumeDriver.trim()" @click="createDockerVolume"><Plus :size="15" /> 创建卷</button>
-              <button class="button button--secondary button--small" type="button" @click="askPrune('volume_prune', '清理未使用存储卷')"><BrushCleaning :size="15" /> 清理</button>
+            <div class="resource-section__heading"><span class="workspace-card__icon"><HardDrive :size="20" /></span><div><strong>存储卷日常管理</strong><small>{{ visibleResourceCount }} 项 · 创建、挂载点与清理</small></div></div>
+            <div class="resource-section__controls">
+              <div class="docker-toolbar">
+                <div class="search-field search-field--small">
+                  <Search :size="15" />
+                  <input v-model="search" type="search" placeholder="搜索当前资源" aria-label="搜索 Docker 资源" />
+                </div>
+                <select v-model="resourceSort" class="select-input docker-sort" aria-label="Docker 资源排序">
+                  <option value="smart">智能排序</option>
+                  <option value="name-asc">名称 A–Z</option>
+                  <option value="name-desc">名称 Z–A</option>
+                </select>
+              </div>
+              <div class="card-actions">
+                <input v-model="volumeName" class="text-input compact-input" type="text" placeholder="新存储卷名称" @keyup.enter="createDockerVolume" />
+                <input v-model="volumeDriver" class="text-input compact-input compact-input--driver" type="text" placeholder="驱动，例如 local" @keyup.enter="createDockerVolume" />
+                <button class="button button--primary button--small" type="button" :disabled="!volumeName.trim() || !volumeDriver.trim()" @click="createDockerVolume"><Plus :size="15" /> 创建卷</button>
+                <button class="button button--secondary button--small" type="button" @click="askPrune('volume_prune', '清理未使用存储卷')"><BrushCleaning :size="15" /> 清理</button>
+              </div>
             </div>
           </header>
           <EmptyState v-if="!filteredVolumes.length" title="没有 Docker 存储卷" description="可创建 local 卷，并在新建容器时选择挂载。" />
@@ -2017,39 +2055,45 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.docker-page { gap: 18px; }
+.docker-page { gap: 14px; }
 .docker-job { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(160px, 28%); align-items: center; gap: 12px; }
 .docker-job span { display: grid; gap: 3px; }
 .docker-job small { color: var(--muted); }
 .docker-job progress { width: 100%; }
-.docker-command-center { overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-sm); }
-.docker-command-center__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
-.docker-command-center__header > div { display: flex; align-items: center; gap: 11px; }
-.docker-command-center__header > div > span:last-child { display: grid; gap: 3px; }
+.docker-command-center { overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-sm); }
+.docker-command-center__header { display: flex; min-width: 0; align-items: center; gap: 14px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.docker-command-center__identity { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 10px; }
+.docker-command-center__identity > span:last-child { display: grid; min-width: 0; gap: 2px; }
+.docker-command-center__identity strong { font-size: .92rem; }
+.docker-command-center__identity small { overflow: hidden; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
 .docker-command-center__header small { color: var(--muted); }
+.docker-command-center__stats { display: flex; flex: 0 0 auto; align-items: center; }
+.docker-command-center__stat { display: inline-flex; align-items: baseline; gap: 5px; padding: 0 12px; border-left: 1px solid var(--border); }
+.docker-command-center__stat strong { font-size: 1rem; line-height: 1; }
+.docker-command-center__stat small { font-size: .7rem; }
+.docker-command-center__stat--running strong { color: var(--brand-strong, var(--brand)); }
 .docker-command-center__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
-.docker-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--border); }
-.docker-summary > div { display: flex; align-items: center; gap: 11px; min-width: 0; padding: 13px 16px; border-right: 1px solid var(--border); }
-.docker-summary > div:last-child { border-right: 0; }
-.docker-summary > div > span:last-child { display: grid; gap: 2px; }
-.docker-summary strong { font-size: 1.12rem; }
-.docker-summary small { color: var(--muted); font-size: .73rem; }
-.docker-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 8px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface-raised) 62%, transparent); }
-.docker-nav button { min-width: 0; min-height: 40px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--text); padding: 7px 11px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; text-align: left; cursor: pointer; transition: background-color .16s ease, border-color .16s ease; }
+.docker-command-center__identity .workspace-card__icon { width: 34px; height: 34px; border-radius: 10px; }
+.docker-workspace-bar { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 6px 8px; background: color-mix(in srgb, var(--surface-raised) 62%, transparent); }
+.docker-nav { display: flex; min-width: 0; flex: 1 1 auto; gap: 3px; overflow-x: auto; scrollbar-width: none; }
+.docker-nav::-webkit-scrollbar { display: none; }
+.docker-nav button { display: flex; min-width: 0; min-height: 34px; flex: 1 1 0; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid transparent; border-radius: 8px; color: var(--text); background: transparent; text-align: left; cursor: pointer; transition: background-color .16s ease, border-color .16s ease; }
 .docker-nav button:hover { border-color: color-mix(in srgb, var(--brand) 38%, var(--border)); background: var(--surface); }
 .docker-nav button.is-active { border-color: color-mix(in srgb, var(--brand) 34%, var(--border)); color: var(--brand); background: var(--surface); box-shadow: var(--shadow-sm); }
 .docker-nav button > svg { color: var(--brand); }
+.docker-nav button strong { overflow: hidden; font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
 .docker-nav small { color: var(--muted); }
-.docker-toolbar { display: grid; grid-template-columns: 1fr minmax(220px, 320px) 130px; gap: 10px; align-items: center; padding: 10px 12px; }
-.docker-toolbar__count { padding-left: 4px; color: var(--muted); font-size: .78rem; }
-.docker-sort { width: 100%; height: 39px; min-height: 39px; border-radius: 10px; }
+.docker-nav button small { margin-left: auto; font-size: .7rem; }
+.docker-toolbar { display: flex; min-width: 0; flex: 0 1 auto; align-items: center; gap: 7px; padding: 0; }
+.docker-toolbar .search-field { width: min(220px, 24vw); min-width: 170px; }
+.docker-sort { width: 122px; height: 36px; min-height: 36px; border-radius: 9px; }
 .workspace-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .workspace-grid--environment { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .workspace-card { min-width: 0; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); padding: 18px; display: grid; align-content: start; gap: 16px; }
 .workspace-card--wide { grid-column: 1 / -1; }
 .workspace-card--danger { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
 .workspace-card > header, .resource-section__header, .form-section > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
-.workspace-card > header > div, .resource-section__header > div:first-child, .form-section > header > div { display: grid; gap: 3px; }
+.workspace-card > header > div:not(.resource-section__heading):not(.resource-section__controls), .form-section > header > div { display: grid; gap: 3px; }
 .workspace-card > header:not(.resource-section__header) { grid-template-columns: auto 1fr; justify-content: start; }
 .workspace-card > header small, .resource-section__header small, .form-section small, .card-note { color: var(--muted); }
 .workspace-card__icon { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); flex: 0 0 auto; }
@@ -2059,7 +2103,7 @@ onBeforeUnmount(() => {
 .action-card small { color: var(--muted); line-height: 1.45; }
 .card-actions, .row-actions { display: flex; align-items: center; gap: 8px; }
 .workspace-card > header > .card-actions,
-.resource-section__header > .card-actions { display: flex; flex: 0 0 auto; flex-wrap: nowrap; }
+.resource-section__controls > .card-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
 .card-actions .button { flex: 0 0 auto; white-space: nowrap; }
 .row-actions--wrap { flex-wrap: wrap; }
 .backup-list { display: grid; gap: 8px; }
@@ -2072,10 +2116,12 @@ onBeforeUnmount(() => {
 .check-row { display: flex; gap: 10px; align-items: flex-start; }
 .check-row span { display: grid; gap: 3px; }
 .resource-section { padding: 0; overflow: hidden; }
-.resource-section__header { min-height: 76px; padding: 18px; border-bottom: 1px solid var(--border); align-items: center; }
-.resource-section__header > div:first-child { grid-template-columns: auto minmax(0, 1fr); align-items: center; flex: 1 1 auto; min-width: 0; }
-.resource-section__header > div:first-child > div { display: grid; min-width: 0; gap: 3px; }
-.resource-section__header > .card-actions { margin-left: auto; justify-content: flex-end; }
+.resource-section__header { min-height: 0; padding: 11px 14px; border-bottom: 1px solid var(--border); align-items: center; }
+.resource-section__heading { display: flex !important; min-width: 180px; flex: 1 1 190px; align-items: center; gap: 10px; }
+.resource-section__heading > div { display: grid; min-width: 0; gap: 2px; }
+.resource-section__heading strong { font-size: .88rem; }
+.resource-section__heading small { overflow: hidden; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
+.resource-section__controls { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .resource-section .table-scroll, .resource-section > .empty-state { margin: 0; }
 .docker-table { min-width: 1240px; }
 .docker-table__name { width: 20%; }
@@ -2174,8 +2220,8 @@ onBeforeUnmount(() => {
 .text-input[list]:hover::-webkit-calendar-picker-indicator { opacity: .68; }
 .inline-check input[type='checkbox'],
 .check-row input[type='checkbox'] { width: 18px; height: 18px; flex: 0 0 auto; margin: 0; border: 1px solid var(--border-strong); border-radius: 5px; accent-color: var(--brand); }
-.compact-input { width: min(240px, 34vw); }
-.compact-input--driver { width: min(170px, 24vw); }
+.compact-input { width: min(180px, 24vw); }
+.compact-input--driver { width: min(130px, 17vw); }
 .table-sub { display: block; color: var(--muted); margin-top: 3px; }
 .action-unavailable-label { font-size: .78rem; color: var(--muted); }
 .form-grid { display: grid; gap: 14px; }
@@ -2232,33 +2278,40 @@ onBeforeUnmount(() => {
 .console-output { min-height: 240px; margin-top: 14px; }
 .modal-copy { color: var(--muted); line-height: 1.65; }
 @media (max-width: 1000px) {
-  .docker-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .docker-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .docker-summary > div:nth-child(2) { border-right: 0; }
-  .docker-summary > div:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
   .action-grid { grid-template-columns: 1fr; }
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .resource-section__header { align-items: stretch; flex-direction: column; }
-  .resource-section__header > .card-actions { width: 100%; margin-left: 0; justify-content: flex-start; flex-wrap: wrap; }
+  .resource-section__heading,
+  .resource-section__controls { width: 100%; }
+  .resource-section__heading { flex: 0 0 auto; }
+  .resource-section__controls { justify-content: flex-start; }
+  .resource-section__controls > .docker-toolbar,
+  .resource-section__controls > .card-actions { width: 100%; }
+  .resource-section__controls > .card-actions { margin-left: 0; justify-content: flex-start; flex-wrap: wrap; }
 }
 @media (max-width: 720px) {
   .docker-job { grid-template-columns: auto 1fr; }
   .docker-job progress { grid-column: 1 / -1; }
-  .docker-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .docker-nav button:last-child:nth-child(odd) { grid-column: 1 / -1; }
-  .docker-command-center__header { align-items: stretch; flex-direction: column; padding: 12px; }
-  .docker-command-center__actions { width: 100%; justify-content: space-between; }
-  .docker-summary > div { gap: 8px; padding: 10px; }
-  .docker-toolbar { grid-template-columns: 1fr; }
-  .docker-toolbar__count { display: none; }
+  .docker-command-center__header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px; }
+  .docker-command-center__identity { flex: 1 1 180px; }
+  .docker-command-center__actions { width: auto; justify-content: flex-end; }
+  .docker-command-center__stats { order: 3; width: 100%; flex: 1 1 100%; padding-top: 8px; border-top: 1px solid var(--border); }
+  .docker-workspace-bar { align-items: stretch; flex-direction: column; padding: 6px; }
+  .docker-nav { width: 100%; flex: 0 0 auto; }
+  .docker-nav button { min-width: 104px; flex: 0 0 auto; }
+  .docker-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 122px; width: 100%; flex: 1 1 100%; }
+  .docker-toolbar .search-field { width: auto; min-width: 0; }
   .workspace-grid, .workspace-grid--environment, .form-grid--two { grid-template-columns: 1fr; }
-  .docker-toolbar, .resource-section__header, .backup-list article { align-items: stretch; flex-direction: column; }
+  .resource-section__controls { align-items: stretch; flex-direction: column; flex-wrap: nowrap; }
   .workspace-card > header > .card-actions,
-  .resource-section__header > .card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .resource-section__controls > .card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
   .workspace-card { gap: 13px; padding: 14px; border-radius: 14px; }
+  .resource-section { padding: 0; }
   .workspace-card > header:not(.resource-section__header) { display: grid; align-items: stretch; grid-template-columns: 1fr; }
   .workspace-card > header:not(.resource-section__header) > .card-actions { grid-column: 1; }
-  .resource-section__header { min-height: 0; padding: 14px; }
+  .resource-section__header { min-height: 0; padding: 12px; }
+  .resource-section__heading small { overflow: visible; white-space: normal; }
+  .resource-section__controls > .card-actions > * { min-width: 0; }
   .backup-list article { gap: 9px; padding: 11px; }
   .compact-input { width: 100%; }
   .network-membership { grid-template-columns: 1fr; }

@@ -134,17 +134,28 @@ describe('Docker resource toolbar layout', () => {
   it('keeps resource actions aligned to the right on desktop', () => {
     expect(dockerSource).toContain('.workspace-card > header:not(.resource-section__header)')
     expect(dockerSource).toMatch(/\.resource-section__header\s*\{[^}]*align-items:\s*center;/)
-    expect(dockerSource).toMatch(/\.resource-section__header > \.card-actions\s*\{[^}]*margin-left:\s*auto;[^}]*justify-content:\s*flex-end;/)
+    expect(dockerSource).toMatch(/\.resource-section__controls\s*\{[^}]*justify-content:\s*flex-end;/)
+    expect(dockerSource).toMatch(/\.resource-section__controls > \.card-actions\s*\{[^}]*justify-content:\s*flex-end;/)
   })
 
   it('lets resource actions wrap below the title on narrower screens', () => {
-    expect(dockerSource).toMatch(/@media \(max-width: 1000px\)[\s\S]*?\.resource-section__header > \.card-actions\s*\{[^}]*width:\s*100%;[^}]*margin-left:\s*0;[^}]*flex-wrap:\s*wrap;/)
+    expect(dockerSource).toMatch(/@media \(max-width: 1000px\)[\s\S]*?\.resource-section__controls > \.docker-toolbar,[\s\S]*?\.resource-section__controls > \.card-actions\s*\{[^}]*width:\s*100%;/)
+    expect(dockerSource).toMatch(/@media \(max-width: 1000px\)[\s\S]*?\.resource-section__controls > \.card-actions\s*\{[^}]*margin-left:\s*0;[^}]*flex-wrap:\s*wrap;/)
   })
 
   it('keeps resource titles and descriptions stacked instead of running together', () => {
     expect(dockerSource).toMatch(
-      /\.resource-section__header > div:first-child > div\s*\{[^}]*display:\s*grid;[^}]*gap:\s*3px;/,
+      /\.resource-section__heading > div\s*\{[^}]*display:\s*grid;[^}]*gap:\s*2px;/,
     )
+  })
+
+  it('keeps the Docker command center compact and removes duplicate resource summaries', () => {
+    expect(dockerSource).not.toContain('class="docker-summary"')
+    expect(dockerSource).toContain('class="docker-command-center__stats"')
+    expect(dockerSource).toContain('class="docker-workspace-bar"')
+    expect(dockerSource).toMatch(/\.docker-command-center__header\s*\{[^}]*padding:\s*10px 14px;/)
+    expect(dockerSource).toMatch(/\.docker-nav\s*\{[^}]*display:\s*flex;/)
+    expect(dockerSource).toMatch(/<header class="resource-section__header">[\s\S]*?class="resource-section__controls"/)
   })
 
   it('exposes right-click menus for every daily Docker resource', () => {
