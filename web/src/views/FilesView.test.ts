@@ -480,6 +480,17 @@ describe('FilesView route path', () => {
 })
 
 describe('FilesView large icon layout', () => {
+  it('uses metadata-first streaming and a stable responsive video stage', () => {
+    const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
+
+    expect(source).toMatch(/<video[\s\S]*preload="metadata"[\s\S]*playsinline[\s\S]*@loadedmetadata="handleMediaReady"/)
+    expect(source).toContain('<source :src="previewURL" :type="previewEntry.mime || undefined" />')
+    expect(source).toContain('视频流响应超时，请检查网络或服务器。')
+    expect(source).toMatch(/\.media-player\s*\{[^}]*aspect-ratio:\s*16 \/ 9;/)
+    expect(source).toMatch(/\.media-player video\s*\{[^}]*width:\s*100%;[^}]*height:\s*100%;/)
+    expect(source).toContain('支持边缓冲边播放')
+  })
+
   it('keeps the desktop shortcut action behind permissions without wrapping batch labels', () => {
     const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
     const batchToolbar = source.match(/aria-label="批量文件操作"[\s\S]*?<\/Transition>/)?.[0] || ''

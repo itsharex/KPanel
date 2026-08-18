@@ -302,6 +302,12 @@ func (s *Server) streamFileDownload(w http.ResponseWriter, r *http.Request, rawQ
 	}
 	defer response.Body.Close()
 	copyFileHeaders(w.Header(), response.Header)
+	// net/http stores a received Content-Length on Response.ContentLength and
+	// removes it from Response.Header. Preserve it before writing the response;
+	// ranged media requests need the exact segment length to start playback.
+	if response.Header.Get("Content-Length") == "" && response.ContentLength >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(response.ContentLength, 10))
+	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Pragma", "no-cache")
 	writer := httpstream.NewIdleResponseWriter(
@@ -875,12 +881,14 @@ func allowedFileAction(action string) bool {
 func copyFileHeaders(target, source http.Header) {
 	for _, key := range []string{
 		"Accept-Ranges", "Content-Disposition", "Content-Length", "Content-Range",
-		"Content-Type", "ETag", "Last-Modified",
+		"Content-Security-Policy", "Content-Type", "ETag", "Last-Modified",
 	} {
 		if value := source.Get(key); value != "" {
 			target.Set(key, value)
 		}
 	}
 	target.Set("X-Content-Type-Options", "nosniff")
-	target.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	if target.Get("Content-Security-Policy") == "" {
+		target.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	}
 }

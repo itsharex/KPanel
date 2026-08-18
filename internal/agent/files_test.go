@@ -420,6 +420,25 @@ func TestFileEndpointsListWriteUploadAndRejectProtectedPaths(t *testing.T) {
 	if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Length") != "3" {
 		t.Fatalf("file HEAD status=%d length=%q body=%q", head.Code, head.Header().Get("Content-Length"), head.Body.String())
 	}
+	if err := os.WriteFile(filepath.Join(root, "clip.mp4"), []byte("0123456789"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ranged := fileRequestWithHeaders(
+		server, http.MethodGet,
+		"/v1/files/content?path=%2Fclip.mp4&disposition=inline", "",
+		map[string]string{"Range": "bytes=2-5"},
+	)
+	if ranged.Code != http.StatusPartialContent || ranged.Body.String() != "2345" {
+		t.Fatalf("range status=%d body=%q", ranged.Code, ranged.Body.String())
+	}
+	if ranged.Header().Get("Accept-Ranges") != "bytes" ||
+		ranged.Header().Get("Content-Range") != "bytes 2-5/10" ||
+		ranged.Header().Get("Content-Length") != "4" {
+		t.Fatalf("range headers=%#v", ranged.Header())
+	}
+	if strings.Contains(ranged.Header().Get("Content-Security-Policy"), "sandbox") {
+		t.Fatalf("media CSP should not sandbox native playback: %q", ranged.Header().Get("Content-Security-Policy"))
+	}
 
 	response = fileRequest(server, http.MethodPost, "/v1/files/upload?path=%2F&name=upload.txt", "uploaded")
 	if response.Code != http.StatusCreated {
@@ -656,8 +675,15 @@ func TestFileTrashEndpointSupportsRestoreAndPermanentDelete(t *testing.T) {
 }
 
 func fileRequest(server *Server, method, target, body string) *httptest.ResponseRecorder {
+	return fileRequestWithHeaders(server, method, target, body, nil)
+}
+
+func fileRequestWithHeaders(server *Server, method, target, body string, headers map[string]string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, target, strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
 	switch target {
 	case "/v1/files/upload?path=%2F&name=upload.txt":
 		request.Header.Set("Content-Type", "application/octet-stream")

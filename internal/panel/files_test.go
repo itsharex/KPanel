@@ -56,9 +56,10 @@ func (agent *fileStubAgent) OpenStream(
 		responseHeaders = make(http.Header)
 	}
 	return &http.Response{
-		StatusCode: status,
-		Header:     responseHeaders,
-		Body:       io.NopCloser(bytes.NewReader(agent.streamResponse)),
+		StatusCode:    status,
+		Header:        responseHeaders,
+		ContentLength: int64(len(agent.streamResponse)),
+		Body:          io.NopCloser(bytes.NewReader(agent.streamResponse)),
 	}, nil
 }
 
@@ -241,6 +242,9 @@ func TestFileContentStreamsRangeAndUploadRequiresCSRF(t *testing.T) {
 	)
 	if download.Code != http.StatusPartialContent || download.Body.String() != "hello" {
 		t.Fatalf("download = %d %q", download.Code, download.Body.String())
+	}
+	if download.Header().Get("Content-Length") != "5" {
+		t.Fatalf("download content length = %q", download.Header().Get("Content-Length"))
 	}
 	if download.Header().Get("Content-Security-Policy") == "" ||
 		download.Header().Get("X-Content-Type-Options") != "nosniff" ||

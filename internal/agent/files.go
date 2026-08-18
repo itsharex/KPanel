@@ -464,7 +464,7 @@ func (s *Server) fileRead(w http.ResponseWriter, r *http.Request, requestID stri
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("ETag", `"`+entry.ResourceVersion+`"`)
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("Content-Security-Policy", fileContentSecurityPolicy(contentType))
 	http.ServeContent(
 		httpstream.NewIdleResponseWriter(transferContext, w, fileTransferIdleTimeout),
 		r, entry.Name, entry.ModifiedAt, file,
@@ -830,6 +830,17 @@ func activeContent(name, contentType string) bool {
 		contentType == "text/html" ||
 		contentType == "image/svg+xml" ||
 		contentType == "application/xhtml+xml"
+}
+
+func fileContentSecurityPolicy(contentType string) string {
+	mediaType := strings.TrimSpace(strings.Split(contentType, ";")[0])
+	if strings.HasPrefix(mediaType, "audio/") || strings.HasPrefix(mediaType, "video/") {
+		// Media has no document subresources and does not need a CSP sandbox.
+		// Keeping the sandbox flag here can make native media loading behave
+		// differently across browsers while providing no additional protection.
+		return "default-src 'none'"
+	}
+	return "default-src 'none'; sandbox"
 }
 
 func writeFileProblem(w http.ResponseWriter, requestID string, err error) {

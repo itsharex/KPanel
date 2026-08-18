@@ -160,6 +160,11 @@ const previewContent = ref('')
 const previewLoading = ref(false)
 const previewSaving = ref(false)
 const previewDirty = ref(false)
+const mediaLoading = ref(false)
+const mediaReady = ref(false)
+const mediaError = ref(false)
+const mediaErrorMessage = ref('')
+const mediaReloadKey = ref(0)
 const editorInfo = ref<Pick<CodeLanguage, 'label' | 'highlighted' | 'reason'> & { loadMs: number }>()
 const codeEditorRef = ref<CodeEditorHandle>()
 const editorStatus = ref<CodeEditorStatus>()
@@ -178,12 +183,14 @@ let fileTransferController: AbortController | undefined
 let fileTransferClearTimer: number | undefined
 let unsubscribeFileDirectoryChanges: (() => void) | undefined
 let searchTimer: number | undefined
+let mediaLoadTimer: number | undefined
 let unmounted = false
 let openedRouteFile = ''
 const fileWindowChangeOrigin = Symbol('file-window')
 
 const fileViewStorageKey = 'kpanel:files:view:v1'
 const thumbnailSourceMaxBytes = 12 * 1024 * 1024
+const mediaLoadTimeoutMs = 20_000
 
 const fileTransferTitle = computed(() => {
   const state = fileTransferState.value
@@ -275,6 +282,15 @@ const previewMode = computed<PreviewMode>(() => {
   if (entry.mime?.startsWith('video/')) return 'video'
   if (entry.mime === 'application/pdf') return 'pdf'
   return 'metadata'
+})
+const mediaStatusLabel = computed(() => {
+  if (mediaError.value) return mediaErrorMessage.value || '无法读取媒体文件'
+  if (mediaLoading.value && previewMode.value === 'video') return '正在缓冲视频…'
+  if (previewMode.value === 'video') return '按需加载 · 支持边缓冲边播放'
+  if (previewMode.value === 'audio') return '音频流'
+  if (previewMode.value === 'image') return '图片预览'
+  if (previewMode.value === 'pdf') return 'PDF 文档'
+  return ''
 })
 const previewURL = computed(() =>
   previewEntry.value ? api.files.contentUrl(previewEntry.value.path, 'inline') : '',
@@ -423,10 +439,37 @@ function openEntry(entry: FileEntry): void {
   if (entry.kind === 'file') void openPreview(entry)
 }
 
+function clearMediaLoadTimer(): void {
+  if (mediaLoadTimer !== undefined) {
+    window.clearTimeout(mediaLoadTimer)
+    mediaLoadTimer = undefined
+  }
+}
+
+function resetMediaState(entry?: FileEntry): void {
+  clearMediaLoadTimer()
+  const isVideo = Boolean(entry?.mime?.startsWith('video/'))
+  mediaLoading.value = isVideo
+  mediaReady.value = false
+  mediaError.value = false
+  mediaErrorMessage.value = ''
+  if (!isVideo) return
+  mediaLoadTimer = window.setTimeout(() => {
+    if (!mediaReady.value && !mediaError.value && previewEntry.value?.path === entry?.path) {
+      mediaLoading.value = false
+      mediaError.value = true
+      mediaErrorMessage.value = '视频流响应超时，请检查网络或服务器。'
+    }
+    mediaLoadTimer = undefined
+  }, mediaLoadTimeoutMs)
+}
+
 async function openPreview(entry: FileEntry): Promise<void> {
   previewEntry.value = entry
   previewContent.value = ''
   previewDirty.value = false
+  mediaReloadKey.value += 1
+  resetMediaState(entry)
   editorInfo.value = undefined
   editorStatus.value = undefined
   editorLineWrap.value = false
@@ -442,11 +485,56 @@ async function openPreview(entry: FileEntry): Promise<void> {
   }
 }
 
+function handleMediaLoadStart(): void {
+  mediaLoading.value = true
+  mediaReady.value = false
+  mediaError.value = false
+  mediaErrorMessage.value = ''
+}
+
+function handleMediaReady(): void {
+  mediaReady.value = true
+  mediaLoading.value = false
+  mediaError.value = false
+  clearMediaLoadTimer()
+}
+
+function handleMediaCanPlay(): void {
+  handleMediaReady()
+}
+
+function handleMediaWaiting(): void {
+  mediaLoading.value = true
+}
+
+function handleMediaError(event: Event): void {
+  const video = event.currentTarget as HTMLVideoElement | null
+  mediaLoading.value = false
+  mediaReady.value = false
+  mediaError.value = true
+  mediaErrorMessage.value = video?.error?.code === 4
+    ? '浏览器不支持该视频编码或格式。'
+    : ''
+  clearMediaLoadTimer()
+}
+
+function retryMedia(): void {
+  const entry = previewEntry.value
+  if (!entry || !entry.mime?.startsWith('video/')) return
+  mediaReloadKey.value += 1
+  resetMediaState(entry)
+}
+
 function closePreview(): void {
   if (previewDirty.value && !window.confirm('文件尚未保存，确认关闭吗？')) return
   previewEntry.value = undefined
   previewContent.value = ''
   previewDirty.value = false
+  clearMediaLoadTimer()
+  mediaLoading.value = false
+  mediaReady.value = false
+  mediaError.value = false
+  mediaErrorMessage.value = ''
   editorInfo.value = undefined
   editorStatus.value = undefined
   editorLineWrap.value = false
@@ -1415,6 +1503,7 @@ onBeforeUnmount(() => {
   fileTransferController?.abort()
   if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
   if (searchTimer !== undefined) window.clearTimeout(searchTimer)
+  clearMediaLoadTimer()
   window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleFileShortcut)
 })
@@ -2085,11 +2174,36 @@ onBeforeUnmount(() => {
           </span>
         </footer>
       </div>
-      <div v-else-if="previewEntry" class="media-viewer">
-        <img v-if="previewMode === 'image'" :src="previewURL" :alt="previewEntry.name" />
-        <audio v-else-if="previewMode === 'audio'" :src="previewURL" controls />
-        <video v-else-if="previewMode === 'video'" :src="previewURL" controls />
-        <iframe v-else-if="previewMode === 'pdf'" :src="previewURL" :title="previewEntry.name" />
+      <div v-else-if="previewEntry" class="media-viewer" :class="`media-viewer--${previewMode}`">
+        <div v-if="previewMode === 'video'" class="media-player">
+          <video
+            :key="mediaReloadKey"
+            :aria-label="previewEntry.name"
+            controls
+            preload="metadata"
+            playsinline
+            @loadstart="handleMediaLoadStart"
+            @loadedmetadata="handleMediaReady"
+            @canplay="handleMediaCanPlay"
+            @playing="handleMediaCanPlay"
+            @waiting="handleMediaWaiting"
+            @error="handleMediaError"
+          >
+            <source :src="previewURL" :type="previewEntry.mime || undefined" />
+          </video>
+          <div v-if="mediaLoading && !mediaError" class="media-player__loading" role="status" aria-live="polite">
+            <RefreshCw :size="20" class="spinning" />
+            <span>正在连接视频流…</span>
+          </div>
+          <div v-else-if="mediaError" class="media-player__error" role="alert">
+            <strong>{{ mediaErrorMessage || '视频暂时无法播放' }}</strong>
+            <span>请检查文件编码或服务器是否支持该格式。</span>
+            <button class="button button--secondary button--small" type="button" @click.stop="retryMedia">重试播放</button>
+          </div>
+        </div>
+        <img v-else-if="previewMode === 'image'" :src="previewURL" :alt="previewEntry.name" decoding="async" />
+        <audio v-else-if="previewMode === 'audio'" :src="previewURL" controls preload="metadata" />
+        <iframe v-else-if="previewMode === 'pdf'" :src="previewURL" :title="previewEntry.name" loading="lazy" />
         <div v-else class="metadata-viewer">
           <component :is="entryIcon(previewEntry)" :size="44" />
           <strong>此格式暂不在浏览器内解析</strong>
@@ -2098,6 +2212,14 @@ onBeforeUnmount(() => {
             <Download :size="16" />下载文件
           </button>
         </div>
+        <footer v-if="previewMode !== 'metadata'" class="media-viewer__footer">
+          <span class="media-viewer__status" :class="{ 'is-loading': mediaLoading, 'is-error': mediaError }">
+            <i aria-hidden="true" />{{ mediaStatusLabel }}
+          </span>
+          <button class="button button--secondary button--small" type="button" @click="download(previewEntry)">
+            <Download :size="15" />下载原文件
+          </button>
+        </footer>
       </div>
     </ModalDialog>
   </section>
@@ -3190,33 +3312,172 @@ onBeforeUnmount(() => {
 }
 
 .media-viewer {
-  display: grid;
-  min-height: 480px;
-  place-items: center;
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: 1px solid var(--terminal-shell-border, #29383a);
+  border-radius: 16px;
   background:
-    linear-gradient(45deg, var(--surface-subtle) 25%, transparent 25%) 0 0 / 20px 20px,
-    linear-gradient(-45deg, var(--surface-subtle) 25%, transparent 25%) 0 0 / 20px 20px,
-    var(--surface);
+    radial-gradient(circle at 50% -12%, rgb(53 203 166 / 15%), transparent 42%),
+    linear-gradient(180deg, #111c1d 0%, var(--terminal-shell-background, #0b1214) 100%);
+  box-shadow: var(--terminal-shell-shadow, inset 0 1px 0 rgb(255 255 255 / 3%));
 }
 
-.media-viewer img,
-.media-viewer video {
+.media-viewer--video,
+.media-viewer--image,
+.media-viewer--metadata {
+  min-height: min(58vh, 600px);
+}
+
+.media-player {
+  position: relative;
+  display: grid;
+  width: min(100%, 1120px);
+  min-width: 0;
+  aspect-ratio: 16 / 9;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 14px;
+  background: #000;
+  box-shadow: 0 18px 46px rgb(0 0 0 / 30%);
+}
+
+.media-player video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  background: #000;
+}
+
+.media-player__loading,
+.media-player__error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 20px;
+  color: #eef8f5;
+  background: linear-gradient(180deg, rgb(2 10 9 / 8%), rgb(2 10 9 / 66%));
+  text-align: center;
+}
+
+.media-player__loading {
+  pointer-events: none;
+}
+
+.media-player__error {
+  flex-direction: column;
+  gap: 6px;
+  color: #ffe7e7;
+  pointer-events: auto;
+}
+
+.media-player__error span {
+  color: rgb(255 231 231 / 72%);
+  font-size: 12px;
+}
+
+.media-player__error .button {
+  margin-top: 4px;
+}
+
+.media-viewer img {
+  display: block;
+  width: auto;
   max-width: 100%;
-  max-height: 68vh;
+  max-height: min(68vh, 640px);
+  border-radius: 10px;
+  object-fit: contain;
+  box-shadow: 0 18px 46px rgb(0 0 0 / 24%);
 }
 
 .media-viewer audio {
-  width: min(620px, 84%);
+  width: min(720px, 100%);
 }
 
 .media-viewer iframe {
   width: 100%;
-  height: 68vh;
+  min-height: min(68vh, 680px);
   border: 0;
+  border-radius: 10px;
   background: #fff;
+}
+
+.media-viewer--pdf {
+  align-items: stretch;
+  padding: 0;
+}
+
+.media-viewer--pdf iframe {
+  min-height: min(68vh, 680px);
+  border-radius: 14px;
+}
+
+.media-viewer__footer {
+  display: flex;
+  width: min(100%, 1120px);
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--terminal-shell-muted, #8a9695);
+  font-size: 12px;
+}
+
+.media-viewer__status {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.media-viewer__status i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--brand, #35cba6);
+  box-shadow: 0 0 0 4px rgb(53 203 166 / 13%);
+}
+
+.media-viewer__status.is-loading i {
+  background: var(--amber, #d5ae62);
+  box-shadow: 0 0 0 4px rgb(213 174 98 / 13%);
+}
+
+.media-viewer__status.is-error i {
+  background: var(--danger, #d86f74);
+  box-shadow: 0 0 0 4px rgb(216 111 116 / 13%);
+}
+
+:global(.modal-panel--wide:has(.media-viewer)) {
+  width: min(1080px, calc(100vw - 32px));
+}
+
+:global(.modal-panel--wide:has(.media-viewer) .modal-panel__body) {
+  padding: 10px;
+  background: var(--surface-subtle);
+}
+
+:global(.modal-panel--fullscreen .media-viewer) {
+  height: 100%;
+  min-height: 0;
+}
+
+:global(.modal-panel--fullscreen .media-player) {
+  max-height: calc(100% - 42px);
 }
 
 .metadata-viewer {
@@ -3485,6 +3746,53 @@ onBeforeUnmount(() => {
 
   .code-editor-actions {
     margin-left: auto;
+  }
+
+  :global(.modal-panel--wide:has(.media-viewer)) {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  :global(.modal-panel--wide:has(.media-viewer) .modal-panel__header) {
+    padding: 12px;
+  }
+
+  :global(.modal-panel--wide:has(.media-viewer) .modal-panel__header p) {
+    max-width: calc(100vw - 128px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :global(.modal-panel--wide:has(.media-viewer) .modal-panel__body) {
+    padding: 8px;
+  }
+
+  .media-viewer {
+    gap: 9px;
+    padding: 8px;
+    border-radius: 12px;
+  }
+
+  .media-viewer--video,
+  .media-viewer--image,
+  .media-viewer--metadata {
+    min-height: 0;
+  }
+
+  .media-player,
+  .media-player video {
+    border-radius: 10px;
+  }
+
+  .media-viewer__footer {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .media-viewer iframe,
+  .media-viewer--pdf iframe {
+    min-height: 60dvh;
   }
 
   .code-viewer__header-right > span:first-child {
