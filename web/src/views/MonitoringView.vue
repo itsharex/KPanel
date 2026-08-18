@@ -629,9 +629,8 @@ onBeforeUnmount(() => controller?.abort())
       </button>
     </div>
 
-    <div class="monitoring-zoom-strip" :class="{ 'is-loading': updating }">
+    <div v-if="activeWindow || updating" class="monitoring-zoom-strip" :class="{ 'is-loading': updating }">
       <span v-if="activeWindow"><strong>已放大</strong> {{ zoomWindowLabel }}</span>
-      <span v-else>在任意趋势图上横向拖动，即可同步框选放大全部图表。</span>
       <span v-if="updating" class="monitoring-zoom-strip__loading" title="正在读取更精细的数据">
         <RefreshCw :size="14" class="is-spinning" /> 正在读取更精细的数据
       </span>

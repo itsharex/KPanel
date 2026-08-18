@@ -99,7 +99,6 @@ export default [
   ["已隐藏全部线路，选择上方线路即可显示。", "All routes are hidden. Select a route above to show it."],
   ["/9 · 每", "/9 · Every"],
   ["分钟", "minutes"],
-  ["在任意趋势图上横向拖动，即可同步框选放大全部图表。", "Drag horizontally on any trend chart to zoom all charts together."],
   ["已放大", "Zoomed"],
   ["正在读取更精细的数据", "Loading finer-grained data"],
   ["返回", "Back"],
