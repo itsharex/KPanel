@@ -62,7 +62,7 @@
 <!-- kpanel-release-metrics:end -->
 
 <!-- kpanel-release-process-metrics:start -->
-- 发布流程异常或无效证据拦截次数：4
+- 已记录发布流程异常或无效证据拦截次数：4
 - 其中生产写操作开始后异常次数：2
 <!-- kpanel-release-process-metrics:end -->
 
