@@ -43,6 +43,7 @@ import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import { analyzeDockerDeployment, composeEnvironmentVariables } from '@/lib/dockerDeployment'
 import { dockerComposeGroupAccent, groupDockerContainers, type DockerContainerGroup } from '@/lib/dockerComposeGroups'
 import {
+  type ContainerSort,
   sortDockerContainers,
   sortDockerImages,
   sortDockerNetworks,
@@ -109,6 +110,7 @@ const error = ref('')
 const search = ref('')
 const activeTab = ref<DockerTab>('containers')
 const resourceSort = ref<ResourceSort>('smart')
+const containerSort = ref<ContainerSort>('smart')
 const taskRunning = ref(false)
 const activeJob = ref<DockerMaintenanceJob>()
 const pendingMaintenance = ref<{
@@ -287,7 +289,7 @@ const createCanSubmit = computed(() => {
 })
 
 const sortedContainers = computed(() =>
-  sortDockerContainers(data.value?.containers || [], resourceSort.value),
+  sortDockerContainers(data.value?.containers || [], containerSort.value),
 )
 const containerCatalog = computed(() => sortedContainers.value.map((item) => ({
   item,
@@ -1360,7 +1362,7 @@ onBeforeUnmount(() => {
               type="button"
               :class="{ 'is-active': activeTab === tab.id }"
               :aria-current="activeTab === tab.id ? 'page' : undefined"
-              @click="activeTab = tab.id; search = ''; resourceSort = 'smart'"
+              @click="activeTab = tab.id; search = ''; resourceSort = 'smart'; containerSort = 'smart'"
             >
               <component :is="tab.icon" :size="16" />
               <strong>{{ tab.label }}</strong>
@@ -1489,8 +1491,10 @@ onBeforeUnmount(() => {
                   <Search :size="15" />
                   <input v-model="search" type="search" placeholder="搜索当前资源" aria-label="搜索 Docker 资源" />
                 </div>
-                <select v-model="resourceSort" class="select-input docker-sort" aria-label="Docker 资源排序">
+                <select v-model="containerSort" class="select-input docker-sort" aria-label="Docker 容器排序">
                   <option value="smart">智能排序</option>
+                  <option value="created-desc">创建时间（新→旧）</option>
+                  <option value="created-asc">创建时间（旧→新）</option>
                   <option value="name-asc">名称 A–Z</option>
                   <option value="name-desc">名称 Z–A</option>
                 </select>

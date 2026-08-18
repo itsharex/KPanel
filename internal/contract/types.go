@@ -364,6 +364,7 @@ type ContainerSummary struct {
 	State             string            `json:"state"`
 	Status            string            `json:"status"`
 	Health            string            `json:"health,omitempty"`
+	CreatedAt         *time.Time        `json:"createdAt,omitempty"`
 	Ports             []PortBinding     `json:"ports"`
 	Mounts            []Mount           `json:"mounts"`
 	Networks          []string          `json:"networks"`

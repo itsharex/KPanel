@@ -300,6 +300,7 @@ interface RawContainer {
   state: string
   status?: string
   health?: string
+  createdAt?: string
   ports?: Array<{
     privatePort: number
     publicPort?: number
@@ -903,6 +904,7 @@ function normalizeContainer(raw: RawContainer): DockerInventory['containers'][nu
     consistency: raw.ownership === 'ambiguous' ? 'ambiguous' : 'synced',
     project: raw.composeProject,
     service: raw.composeService,
+    createdAt: raw.createdAt,
     ports: (raw.ports || []).map((port) => ({
       privatePort: port.privatePort,
       publicPort: port.publicPort,

@@ -158,6 +158,12 @@ describe('Docker resource toolbar layout', () => {
     expect(dockerSource).toMatch(/<header class="resource-section__header">[\s\S]*?class="resource-section__controls"/)
   })
 
+  it('exposes both container creation-time sort directions', () => {
+    expect(dockerSource).toContain('v-model="containerSort"')
+    expect(dockerSource).toContain('<option value="created-desc">创建时间（新→旧）</option>')
+    expect(dockerSource).toContain('<option value="created-asc">创建时间（旧→新）</option>')
+  })
+
   it('exposes right-click menus for every daily Docker resource', () => {
     expect(dockerSource).toContain('@contextmenu="showContainerContext($event, container)"')
     expect(dockerSource).toContain('@contextmenu="showImageContext($event, image)"')
