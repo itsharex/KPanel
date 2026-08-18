@@ -1,4 +1,5 @@
 import type { DockerContainer } from '@/types/api'
+import type { ContainerSort } from './dockerSorting'
 
 export interface DockerContainerGroup {
   key: string
@@ -7,6 +8,7 @@ export interface DockerContainerGroup {
   containers: DockerContainer[]
   services: string[]
   running: number
+  createdAtMs?: number
 }
 
 const composeGroupAccents = ['#25b99a', '#4f86e8', '#9a6bd6', '#2ca8c2', '#d08b45', '#c084b8'] as const
@@ -19,8 +21,36 @@ export function dockerComposeGroupAccent(projectName: string): string {
   return composeGroupAccents[hash % composeGroupAccents.length] ?? composeGroupAccents[0]
 }
 
-export function groupDockerContainers(containers: DockerContainer[], managedProjects: string[] = []): DockerContainerGroup[] {
+const groupNameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
+
+function compareGroups(left: DockerContainerGroup, right: DockerContainerGroup, sort: ContainerSort): number {
+  if (sort === 'created-asc' || sort === 'created-desc') {
+    const leftCreatedAt = left.createdAtMs
+    const rightCreatedAt = right.createdAtMs
+    const leftValid = leftCreatedAt !== undefined
+    const rightValid = rightCreatedAt !== undefined
+    if (!leftValid && !rightValid) return groupNameCollator.compare(left.name, right.name)
+    if (!leftValid) return 1
+    if (!rightValid) return -1
+    const byCreatedAt = sort === 'created-desc'
+      ? rightCreatedAt - leftCreatedAt
+      : leftCreatedAt - rightCreatedAt
+    return byCreatedAt || groupNameCollator.compare(left.name, right.name)
+  }
+
+  return sort === 'name-desc'
+    ? groupNameCollator.compare(right.name, left.name)
+    : groupNameCollator.compare(left.name, right.name)
+}
+
+export function groupDockerContainers(
+  containers: DockerContainer[],
+  sort: ContainerSort = 'smart',
+  managedProjects: string[] = [],
+): DockerContainerGroup[] {
   const compose = new Map<string, DockerContainer[]>()
+  const sortByCreatedAt = sort === 'created-asc' || sort === 'created-desc'
+  const composeCreatedAt = new Map<string, number>()
   const standalone: DockerContainer[] = []
   for (const container of containers) {
     if (!container.project) {
@@ -30,6 +60,13 @@ export function groupDockerContainers(containers: DockerContainer[], managedProj
     const group = compose.get(container.project) || []
     group.push(container)
     compose.set(container.project, group)
+    if (sortByCreatedAt && container.createdAt) {
+      const timestamp = Date.parse(container.createdAt)
+      const earliest = composeCreatedAt.get(container.project)
+      if (Number.isFinite(timestamp) && (earliest === undefined || timestamp < earliest)) {
+        composeCreatedAt.set(container.project, timestamp)
+      }
+    }
   }
   for (const project of managedProjects) {
     if (project && !compose.has(project)) compose.set(project, [])
@@ -40,11 +77,12 @@ export function groupDockerContainers(containers: DockerContainer[], managedProj
     name,
     containers: items,
     services: [...new Set(items.map((item) => item.service).filter((item): item is string => Boolean(item)))].sort(
-      (left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }),
+      (left, right) => groupNameCollator.compare(left, right),
     ),
     running: items.filter((item) => item.state === 'running').length,
+    createdAtMs: composeCreatedAt.get(name),
   }))
-  groups.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' }))
+  groups.sort((left, right) => compareGroups(left, right, sort))
   if (standalone.length) {
     groups.push({
       key: 'standalone', kind: 'standalone', name: '独立容器', containers: standalone,

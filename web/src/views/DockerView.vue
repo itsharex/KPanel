@@ -328,7 +328,7 @@ const visibleManagedComposeProjects = computed(() => {
   return (data.value?.composeProjects || []).filter((name) => !query || name.toLowerCase().includes(query))
 })
 const containerGroups = computed(() =>
-  groupDockerContainers(filteredContainers.value, visibleManagedComposeProjects.value),
+  groupDockerContainers(filteredContainers.value, containerSort.value, visibleManagedComposeProjects.value),
 )
 
 function isContainerGroupCollapsed(key: string): boolean {
