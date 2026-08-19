@@ -165,7 +165,9 @@ func parseEmbeddedJSON(text string, builder *summaryBuilder) {
 		var value map[string]any
 		if err := decoder.Decode(&value); err == nil && looksLikeBenchmarkJSON(value) {
 			parseBenchmarkJSON(value, builder)
-			builder.parser = "json"
+			if builder.parser != "protocol" {
+				builder.parser = "json"
+			}
 		}
 		offset = index + 1
 	}
@@ -670,7 +672,7 @@ func jsonQuantity(value any, unit any) string {
 		return formatBinaryQuantity(number, []string{"KB", "MB", "GB", "TB"}, 1000)
 	case "kbps":
 		// YABS stores fio speeds as KiB/s while labelling the JSON unit KBps.
-		return formatBinaryQuantity(number*1024, []string{"KB/s", "MB/s", "GB/s", "TB/s"}, 1000)
+		return formatBinaryQuantity(number*1024, []string{"B/s", "KB/s", "MB/s", "GB/s", "TB/s"}, 1000)
 	default:
 		if unitValue == "" {
 			return formatSummaryNumber(number)
