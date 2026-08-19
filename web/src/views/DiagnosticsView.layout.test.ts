@@ -62,6 +62,25 @@ describe('diagnostics workspace layout', () => {
     )
   })
 
+  it('keeps bounded desktop windows in drawer mode instead of stacking the result below commands', () => {
+    expect(diagnosticsSource).toContain('@container desktop-window (max-width: 820px)')
+    expect(diagnosticsSource).toMatch(
+      /@container desktop-window \(max-width: 820px\)[\s\S]*?\.diagnostic-workbench,[\s\S]*?grid-template-columns: minmax\(0, 1fr\) !important;[\s\S]*?height: 100% !important;/,
+    )
+    expect(diagnosticsSource).toContain('const scoreRouteStatusLabel = computed')
+    expect(diagnosticsSource).toContain("return 'covered'")
+    expect(diagnosticsSource).toContain("viewMode === 'terminal' && selectedCheck?.id === check.id")
+  })
+
+  it('reserves a dedicated home row above the scrollable command list', () => {
+    expect(diagnosticsSource).toContain('class="diagnostic-command-panel__toolbar"')
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-command-panel\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\);/,
+    )
+    expect(diagnosticsSource).toContain('.diagnostic-command-list {')
+    expect(diagnosticsSource).toContain('padding-top: 8px;')
+  })
+
   it('uses darker category accents in light mode and brighter accents in dark mode', () => {
     expect(diagnosticsSource).toContain('--diagnostic-category: #087a72;')
     expect(diagnosticsSource).toContain('--diagnostic-category: #2563c4;')
@@ -69,6 +88,15 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toContain('--diagnostic-category: #7546c8;')
     expect(diagnosticsSource).toContain(":global(:root[data-theme='dark'] .diagnostic-command-group.is-category-access)")
     expect(diagnosticsSource).toContain('--diagnostic-category: #4ecdc4;')
+  })
+
+  it('binds first-screen metrics to backend summaries and keeps the terminal as the raw-output fallback', () => {
+    expect(diagnosticsSource).toContain('const scoreSummaryMetricCount = computed')
+    expect(diagnosticsSource).toContain('summaryMetrics(dimension)')
+    expect(diagnosticsSource).toContain('summaryReportURL')
+    expect(diagnosticsSource).toContain('真实结果已汇总')
+    expect(diagnosticsSource).toContain('未识别项目仍保留在终端中。')
+    expect(diagnosticsSource).toContain('openSummaryTerminal')
   })
 
   it('removes the history block and fills the desktop window with the workbench', () => {

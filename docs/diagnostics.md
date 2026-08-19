@@ -52,6 +52,13 @@ Agent 为每个任务创建 `kejilion-panel-diagnostic-<job-id>` transient syste
 第三方脚本可能安装依赖、消耗带宽/CPU/磁盘。YABS 与 CPU 测试沿用脚本语义：主机没有 Swap
 时会创建 1 GiB `/swapfile`。页面在执行前明确提示这些影响。
 
+任务完成后，Agent 会从脚本原始输出中提取明确存在的少量指标，写入任务的 `summary` 字段，供体检首页汇总展示：
+
+- NodeQuality/YABS 使用各自的文本与 JSON 字段适配；IPQuality、NetQuality 和 SuperSpeed 使用对应的报告结构或输出行适配；
+- 只保留性能、路由、延迟、网速和 IP 质量五类白名单字段，不计算或猜测一个不存在的“综合分数”；
+- 未识别的字段、线路明细、第三方提示和完整报告仍以终端原始输出为准，不因汇总失败而丢失；
+- `summary` 缺失时，旧任务仍可在读取完成状态时按同一规则从持久化日志懒解析，保持升级兼容。
+
 ## 验收状态
 
 - **已验证**：目录解析、HTTPS 校验、未知 selector 拒绝、协议许可校验、固定 systemd

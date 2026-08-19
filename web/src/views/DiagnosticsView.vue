@@ -34,7 +34,12 @@ import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import { formatDateTime } from '@/lib/format'
 import { containWheelScroll } from '@/lib/scroll'
 import { useToast } from '@/stores/toast'
-import type { DiagnosticCatalog, DiagnosticCheck, DiagnosticJob } from '@/types/api'
+import type {
+  DiagnosticCatalog,
+  DiagnosticCheck,
+  DiagnosticJob,
+  DiagnosticSummaryMetric,
+} from '@/types/api'
 
 const catalog = ref<DiagnosticCatalog>()
 const jobs = ref<DiagnosticJob[]>([])
@@ -44,8 +49,10 @@ const activeJob = ref<DiagnosticJob>()
 const loading = ref(true)
 const starting = ref(false)
 const error = ref('')
+const viewMode = ref<'overview' | 'terminal'>('overview')
 const commandsCollapsed = ref(false)
 const mobileCommandsOpen = ref(false)
+const pendingScore = ref(false)
 const toast = useToast()
 const i18n = useI18n()
 const windowActive = inject(desktopWindowActiveKey, computed(() => true))
@@ -77,6 +84,136 @@ const hasActiveJob = computed(
   () => activeJob.value?.status === 'queued' || activeJob.value?.status === 'running',
 )
 const activeLog = computed(() => activeJob.value?.logs.join('\n') || '等待脚本输出…')
+const scoreDimensions = [
+  {
+    id: 'performance',
+    label: '性能',
+    detail: 'CPU · 磁盘 · 系统吞吐',
+    category: 'hardware',
+    keywords: ['yabs', 'cpu', '性能'],
+    icon: Cpu,
+    tone: 'performance',
+  },
+  {
+    id: 'route',
+    label: '路由',
+    detail: '三网回程与线路质量',
+    category: 'network',
+    keywords: ['besttrace', 'mtr', 'nxtrace', 'backtrace', '回程', '路由', '线路'],
+    icon: Network,
+    tone: 'route',
+  },
+  {
+    id: 'latency',
+    label: '延迟',
+    detail: '往返时延 · 抖动 · 丢包',
+    category: 'network',
+    keywords: ['net-quality', 'tcp-quality', '网络质量', '延迟', '抖动', '丢包'],
+    icon: Activity,
+    tone: 'latency',
+  },
+  {
+    id: 'speed',
+    label: '网速',
+    detail: '多节点上下行带宽',
+    category: 'network',
+    keywords: ['superspeed', 'speedtest', '测速', '带宽', '网速'],
+    icon: Gauge,
+    tone: 'speed',
+  },
+  {
+    id: 'ip',
+    label: 'IP 质量',
+    detail: '风险 · 信誉 · 解锁能力',
+    category: 'access',
+    keywords: ['ip-quality', 'IP 质量', '信誉'],
+    icon: Globe2,
+    tone: 'ip',
+  },
+] as const
+
+type ScoreDimension = (typeof scoreDimensions)[number]
+
+const scoreCheck = computed(() => {
+  const items = catalog.value?.items || []
+  const comprehensive = items.filter((item) => item.category === 'comprehensive')
+  return comprehensive.find((item) => /NodeQuality|融合怪/i.test(item.name)) || comprehensive[0]
+})
+const scoreJob = computed(() => {
+  const checkID = scoreCheck.value?.id
+  if (!checkID) return undefined
+  if (activeJob.value?.checkId === checkID) return activeJob.value
+  return jobs.value.find((job) => job.checkId === checkID)
+})
+const scoreSummaryMetricCount = computed(() => scoreDimensions.reduce(
+  (total, dimension) => total + summaryMetrics(dimension).length,
+  0,
+))
+const scoreState = computed<'ready' | 'running' | 'completed' | 'failed' | 'busy' | 'unavailable'>(() => {
+  if (!scoreCheck.value) return 'unavailable'
+  if (scoreJob.value?.status === 'queued' || scoreJob.value?.status === 'running') return 'running'
+  if (scoreJob.value?.status === 'succeeded') return 'completed'
+  if (scoreJob.value?.status === 'failed') return 'failed'
+  if (hasActiveJob.value) return 'busy'
+  return 'ready'
+})
+const scoreProgress = computed(() => {
+  if (scoreState.value === 'completed') return 100
+  if (scoreState.value === 'running') return Math.max(0, Math.min(100, scoreJob.value?.progress || 0))
+  return 0
+})
+const scoreRingOffset = computed(() => 351.86 * (1 - scoreProgress.value / 100))
+const scoreRunLabel = computed(() => {
+  switch (scoreState.value) {
+    case 'unavailable': return '综合脚本未就绪'
+    case 'running': return '跑分进行中'
+    case 'completed': return '再次开始跑分'
+    case 'failed': return '重新开始跑分'
+    case 'busy': return '终端测试进行中'
+    default: return '开始一键跑分'
+  }
+})
+const scoreStateLabel = computed(() => {
+  switch (scoreState.value) {
+    case 'unavailable': return '未就绪'
+    case 'running': return '进行中'
+    case 'completed': return '已完成'
+    case 'failed': return '需要重试'
+    case 'busy': return '单项测试中'
+    default: return '待开始'
+  }
+})
+const scoreRouteStatusLabel = computed(() => {
+  switch (scoreState.value) {
+    case 'unavailable': return '未就绪'
+    case 'running': return '实时采集'
+    case 'completed': return '已完成'
+    case 'failed': return '需要重试'
+    case 'busy': return '单项测试中'
+    default: return '待开始'
+  }
+})
+const scoreCenterLabel = computed(() => {
+  switch (scoreState.value) {
+    case 'running': return `${scoreProgress.value}%`
+    case 'completed': return '完成'
+    case 'failed': return '重试'
+    case 'busy': return '—'
+    default: return '—'
+  }
+})
+const scoreStatusLabel = computed(() => {
+  switch (scoreState.value) {
+    case 'unavailable': return '等待脚本目录提供综合评测入口'
+    case 'running': return scoreJob.value?.message || '正在采集综合体检数据'
+    case 'completed': return scoreSummaryMetricCount.value > 0
+      ? '真实测试结果已汇总，原始结果已保存在终端记录'
+      : '综合测试完成，原始结果已保存在终端记录'
+    case 'failed': return scoreJob.value?.message || '上次综合测试未完成'
+    case 'busy': return '请先完成当前终端中的体检任务'
+    default: return '从性能、路由、延迟、网速和 IP 质量开始检查'
+  }
+})
 
 function categoryName(id: string): string {
   if (i18n.locale.value === 'en-US') {
@@ -92,15 +229,18 @@ function categoryName(id: string): string {
 }
 
 function checkNameLabel(value: string): string {
-  if (i18n.locale.value !== 'en-US') return value
-  const labels: Record<string, string> = {
-    'ChatGPT 解锁检测': 'ChatGPT access check',
-    'IP 质量体检': 'IP quality check',
-    'SuperSpeed 三网测速': 'SuperSpeed network test',
-    '网络质量体检': 'Network quality check',
-    'YABS 性能测试': 'YABS benchmark',
-    'NodeQuality 综合测评': 'NodeQuality benchmark',
-  }
+  const labels: Record<string, string> = i18n.locale.value === 'en-US'
+    ? {
+        'ChatGPT 解锁检测': 'ChatGPT access check',
+        'IP 质量体检': 'IP quality check',
+        'SuperSpeed 三网测速': 'SuperSpeed network test',
+        '网络质量体检': 'Network quality check',
+        'YABS 性能测试': 'YABS benchmark',
+        'NodeQuality 综合测评': 'Server health check',
+      }
+    : {
+        'NodeQuality 综合测评': '服务器综合体检',
+      }
   return labels[value] || value
 }
 
@@ -127,6 +267,144 @@ function sourceHost(value: string): string {
   } catch {
     return value
   }
+}
+
+function dimensionCheck(dimension: ScoreDimension): DiagnosticCheck | undefined {
+  const items = catalog.value?.items || []
+  return items.find((item) =>
+    item.category === dimension.category &&
+    dimension.keywords.some((keyword) => `${item.id} ${item.name} ${item.description}`.toLowerCase().includes(keyword.toLowerCase())),
+  )
+}
+
+function summaryMetrics(dimension: ScoreDimension): DiagnosticSummaryMetric[] {
+  const sources = [dimensionJob(dimension), scoreJob.value]
+  const metrics: DiagnosticSummaryMetric[] = []
+  const seen = new Set<string>()
+  for (const job of sources) {
+    for (const metric of job?.summary?.dimensions?.[dimension.id]?.metrics || []) {
+      if (seen.has(metric.key)) continue
+      seen.add(metric.key)
+      metrics.push(metric)
+    }
+  }
+  const priority = dimension.id === 'ip'
+    ? ['quality', 'unlock', 'asn', 'host', 'country', 'location', 'ipv4_ipv6']
+    : []
+  metrics.sort((left, right) => {
+    const leftIndex = priority.indexOf(left.key)
+    const rightIndex = priority.indexOf(right.key)
+    return (leftIndex < 0 ? priority.length : leftIndex) - (rightIndex < 0 ? priority.length : rightIndex)
+  })
+  return metrics
+}
+
+function summaryMetricLabel(key: string): string {
+  const labels: Record<string, string> = {
+    cpu_model: 'CPU',
+    cpu_cores: '核心',
+    memory: '内存',
+    disk: '磁盘',
+    disk_read: '磁盘读',
+    disk_write: '磁盘写',
+    disk_total: '磁盘总计',
+    geekbench_single: '单核',
+    geekbench_multi: '多核',
+    cpu_score: 'CPU 分数',
+    memory_score: '内存分数',
+    memory_read: '内存读',
+    memory_write: '内存写',
+    upload: '上行',
+    download: '下行',
+    average: '平均延迟',
+    jitter: '抖动',
+    loss: '丢包',
+    path: '线路',
+    isp: '运营商',
+    asn: 'ASN',
+    host: '网络归属',
+    country: '地区',
+    location: '位置',
+    ipv4_ipv6: 'IP 连通性',
+    quality: 'IP 质量',
+    unlock: '解锁',
+    ct_average: '电信',
+    cu_average: '联通',
+    cm_average: '移动',
+  }
+  return labels[key] || key
+}
+
+function dimensionJob(dimension: ScoreDimension): DiagnosticJob | undefined {
+  const check = dimensionCheck(dimension)
+  if (!check) return undefined
+  if (activeJob.value?.checkId === check.id) return activeJob.value
+  return jobs.value.find((job) => job.checkId === check.id)
+}
+
+function summaryJobForOverview(): DiagnosticJob | undefined {
+  if (scoreJob.value) return scoreJob.value
+  for (const dimension of scoreDimensions) {
+    const job = dimensionJob(dimension)
+    if (job?.summary) return job
+  }
+  return undefined
+}
+
+const summaryReportURL = computed(() => {
+  const jobsForSummary = [scoreJob.value, ...scoreDimensions.map((dimension) => dimensionJob(dimension))]
+  return jobsForSummary.find((job) => job?.summary?.reportUrl)?.summary?.reportUrl || ''
+})
+
+function dimensionState(dimension: ScoreDimension): 'idle' | 'running' | 'completed' | 'failed' | 'covered' {
+  const job = dimensionJob(dimension)
+  if (job?.status === 'queued' || job?.status === 'running') return 'running'
+  if (job?.status === 'succeeded') return 'completed'
+  if (job?.status === 'failed') return 'failed'
+  if (scoreState.value === 'running') return 'running'
+  if (scoreState.value === 'completed') return 'completed'
+  if (scoreState.value === 'failed') return 'failed'
+  if (!dimensionCheck(dimension) && scoreCheck.value) return 'covered'
+  return 'idle'
+}
+
+function dimensionStateLabel(dimension: ScoreDimension): string {
+  const state = dimensionState(dimension)
+  if (state === 'running') return '单项测试中'
+  if (state === 'completed') return summaryMetrics(dimension).length > 0 ? '已汇总' : '单项已完成'
+  if (state === 'failed') return '上次未完成'
+  if (state === 'covered') return '综合入口覆盖'
+  if (scoreState.value === 'running') return '综合测试中'
+  if (scoreState.value === 'completed') return '已输出到终端'
+  return dimensionCheck(dimension) ? '等待测试' : '脚本未提供'
+}
+
+function dimensionStateClass(dimension: ScoreDimension): string {
+  return `is-${dimensionState(dimension)}`
+}
+
+function selectOverview(): void {
+  viewMode.value = 'overview'
+  mobileCommandsOpen.value = false
+}
+
+function openDimension(dimension: ScoreDimension): void {
+  const check = dimensionCheck(dimension)
+  if (check) selectCheck(check)
+}
+
+function openScoreTerminal(): void {
+  const job = scoreJob.value
+  if (!job) return
+  openJob(job)
+  viewMode.value = 'terminal'
+}
+
+function openSummaryTerminal(): void {
+  const job = summaryJobForOverview()
+  if (!job) return
+  openJob(job)
+  viewMode.value = 'terminal'
 }
 
 function stopPolling(): void {
@@ -217,14 +495,20 @@ async function load(): Promise<void> {
     ])
     catalog.value = nextCatalog
     jobs.value = history.items
-    if (!selectedCheck.value || !nextCatalog.items.some((item) => item.id === selectedCheck.value?.id)) {
-      selectedCheck.value = nextCatalog.items[0]
+    if (selectedCheck.value && !nextCatalog.items.some((item) => item.id === selectedCheck.value?.id)) {
+      selectedCheck.value = undefined
     }
     const current = history.items.find((item) => item.id === activeJob.value?.id)
     if (current) activeJob.value = current
     const active = history.items.find((item) => item.status === 'queued' || item.status === 'running')
-    if (active) startPolling(active)
-    else stopPolling()
+    if (active) {
+      selectedCheck.value = nextCatalog.items.find((item) => item.id === active.checkId)
+      viewMode.value = 'terminal'
+      startPolling(active)
+    } else {
+      viewMode.value = 'overview'
+      stopPolling()
+    }
   } catch (reason) {
     if (!(reason instanceof DOMException && reason.name === 'AbortError')) {
       error.value = reason instanceof ApiError ? reason.message : '无法读取体检项目，请检查 Agent 与 kejilion.sh 版本。'
@@ -234,19 +518,22 @@ async function load(): Promise<void> {
   }
 }
 
-async function confirmStart(): Promise<void> {
-  const check = pendingCheck.value
+async function startCheck(check: DiagnosticCheck, keepOverview = false): Promise<void> {
   if (!check || starting.value || hasActiveJob.value) return
   starting.value = true
   try {
     const job = await api.diagnostics.start(check.id)
     jobs.value.unshift(job)
-    pendingCheck.value = undefined
+    selectedCheck.value = check
+    if (!keepOverview) viewMode.value = 'terminal'
     startPolling(job)
-    toast.success(`${checkNameLabel(check.name)}已开始`, '任务已在后台运行；第三方脚本需要确认时可直接在终端输入。')
+    toast.success(
+      keepOverview ? '综合跑分已开始' : `${checkNameLabel(check.name)}已开始`,
+      '任务已在后台运行；第三方脚本需要确认时可直接在终端输入。',
+    )
   } catch (reason) {
     toast.danger(
-      '体检任务启动失败',
+      keepOverview ? '综合跑分启动失败' : '体检任务启动失败',
       reason instanceof ApiError ? reason.message : '请检查 Agent、systemd 和 kejilion.sh 是否正常并保持版本一致。',
     )
   } finally {
@@ -254,8 +541,18 @@ async function confirmStart(): Promise<void> {
   }
 }
 
+async function confirmStart(): Promise<void> {
+  const check = pendingScore.value ? scoreCheck.value : pendingCheck.value
+  if (!check) return
+  const keepOverview = pendingScore.value
+  pendingScore.value = false
+  pendingCheck.value = undefined
+  await startCheck(check, keepOverview)
+}
+
 function openJob(job: DiagnosticJob): void {
   activeJob.value = job
+  viewMode.value = 'terminal'
   const check = catalog.value?.items.find((item) => item.id === job.checkId)
   if (check) {
     selectedCheck.value = check
@@ -265,6 +562,7 @@ function openJob(job: DiagnosticJob): void {
 
 function selectCheck(check: DiagnosticCheck): void {
   selectedCheck.value = check
+  viewMode.value = 'terminal'
   mobileCommandsOpen.value = false
   const matchingJob = jobs.value.find((job) => job.checkId === check.id)
   if (matchingJob) openJob(matchingJob)
@@ -274,6 +572,11 @@ function selectCheck(check: DiagnosticCheck): void {
 function requestCheck(check: DiagnosticCheck): void {
   selectCheck(check)
   pendingCheck.value = check
+}
+
+function requestScore(): void {
+  if (!scoreCheck.value || hasActiveJob.value || starting.value) return
+  pendingScore.value = true
 }
 
 function runCheckLabel(check: DiagnosticCheck): string {
@@ -342,25 +645,41 @@ onBeforeUnmount(() => {
           @click="mobileCommandsOpen = false"
         />
         <aside id="diagnostic-command-drawer" class="diagnostic-command-panel">
+          <div class="diagnostic-command-panel__toolbar">
+            <button
+              class="diagnostic-command-panel__toggle diagnostic-command-panel__desktop-toggle"
+              type="button"
+              aria-controls="diagnostic-command-selector"
+              :aria-expanded="!commandsCollapsed"
+              :title="commandsCollapsed ? '展开体检列表' : '收起体检列表'"
+              :aria-label="commandsCollapsed ? '展开体检列表' : '收起体检列表'"
+              @click="toggleCommands"
+            >
+              <PanelLeftOpen v-if="commandsCollapsed" :size="17" />
+              <PanelLeftClose v-else :size="17" />
+            </button>
+            <button
+              class="diagnostic-command-panel__toggle diagnostic-command-panel__mobile-close"
+              type="button"
+              aria-label="关闭体检项目选择"
+              @click="mobileCommandsOpen = false"
+            >
+              <X :size="17" />
+            </button>
+          </div>
           <button
-            class="diagnostic-command-panel__toggle diagnostic-command-panel__desktop-toggle"
+            class="diagnostic-command-overview"
+            :class="{ 'is-active': viewMode === 'overview' }"
             type="button"
-            aria-controls="diagnostic-command-selector"
-            :aria-expanded="!commandsCollapsed"
-            :title="commandsCollapsed ? '展开体检列表' : '收起体检列表'"
-            :aria-label="commandsCollapsed ? '展开体检列表' : '收起体检列表'"
-            @click="toggleCommands"
+            :aria-current="viewMode === 'overview' ? 'page' : undefined"
+            @click="selectOverview"
           >
-            <PanelLeftOpen v-if="commandsCollapsed" :size="17" />
-            <PanelLeftClose v-else :size="17" />
-          </button>
-          <button
-            class="diagnostic-command-panel__toggle diagnostic-command-panel__mobile-close"
-            type="button"
-            aria-label="关闭体检项目选择"
-            @click="mobileCommandsOpen = false"
-          >
-            <X :size="17" />
+            <span class="diagnostic-command-overview__icon"><Gauge :size="17" /></span>
+            <span class="diagnostic-command-overview__copy">
+              <strong>综合跑分</strong>
+              <small>默认首页</small>
+            </span>
+            <i class="diagnostic-command-overview__dot" :class="`is-${scoreState}`" />
           </button>
           <div id="diagnostic-command-selector" v-if="groupedChecks.length" v-show="!commandsCollapsed || mobileCommandsOpen" class="diagnostic-command-list">
             <section
@@ -377,7 +696,7 @@ onBeforeUnmount(() => {
                 v-for="check in group.items"
                 :key="check.id"
                 class="diagnostic-command-row"
-                :class="[`is-category-${check.category}`, { 'is-active': selectedCheck?.id === check.id }]"
+                :class="[`is-category-${check.category}`, { 'is-active': viewMode === 'terminal' && selectedCheck?.id === check.id }]"
               >
                 <button class="diagnostic-command-select" type="button" @click="selectCheck(check)">
                   <span class="diagnostic-card__icon"><component :is="categoryIcon(check.category)" :size="17" /></span>
@@ -400,10 +719,20 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="commandsCollapsed && !mobileCommandsOpen" class="diagnostic-command-rail" aria-label="收起的体检命令列表">
             <button
+              class="diagnostic-command-rail__item diagnostic-command-rail__overview"
+              :class="{ 'is-active': viewMode === 'overview' }"
+              type="button"
+              title="综合跑分"
+              aria-label="综合跑分"
+              @click="selectOverview"
+            >
+              <Gauge :size="17" />
+            </button>
+            <button
               v-for="check in catalog.items"
               :key="check.id"
               class="diagnostic-command-rail__item"
-              :class="[`is-category-${check.category}`, { 'is-active': selectedCheck?.id === check.id }]"
+              :class="[`is-category-${check.category}`, { 'is-active': viewMode === 'terminal' && selectedCheck?.id === check.id }]"
               type="button"
               :title="checkNameLabel(check.name)"
               :aria-label="checkNameLabel(check.name)"
@@ -415,7 +744,7 @@ onBeforeUnmount(() => {
           <EmptyState v-if="(!commandsCollapsed || mobileCommandsOpen) && !groupedChecks.length" title="暂无体检项目" description="请刷新后重试。" />
         </aside>
 
-        <section class="diagnostic-result">
+        <section class="diagnostic-result" :class="{ 'is-overview': viewMode === 'overview' }">
           <div class="diagnostic-mobile-selector">
             <button
               type="button"
@@ -425,53 +754,198 @@ onBeforeUnmount(() => {
               @click="mobileCommandsOpen = true"
             >
               <Menu :size="18" />
-              <span>{{ selectedCheck ? checkNameLabel(selectedCheck.name) : '选择体检项目' }}</span>
+              <span>{{ viewMode === 'overview' ? '综合跑分' : (selectedCheck ? checkNameLabel(selectedCheck.name) : '选择体检项目') }}</span>
             </button>
             <small>{{ catalog.items.length }} 个项目</small>
           </div>
-          <div v-if="hasActiveJob" class="diagnostic-progress" aria-label="任务进度">
-            <span :style="{ width: `${activeJob?.progress || 0}%` }" />
-          </div>
-          <div v-if="!activeJob?.interactive" class="diagnostic-terminal-bar">
-            <span><i :class="{ 'is-live': hasActiveJob }" /> {{ hasActiveJob ? '实时输出' : '终端输出' }}</span>
-            <StatusBadge v-if="activeJob" :status="activeJob.status" />
-          </div>
-          <AppInteractiveTerminal
-            v-if="activeJob?.interactive && windowActive"
-            class="diagnostic-interactive-terminal"
-            :job-id="activeJob.id"
-            :input-open="activeJob.inputOpen"
-            kind="diagnostic"
-          />
-          <p v-else-if="!activeJob" class="diagnostic-log diagnostic-log-empty" @wheel="containLogWheel">选择左侧体检命令，点击“开始体检”后在这里查看实时输出。</p>
-          <pre v-else class="diagnostic-log" aria-live="polite" data-i18n-ignore @wheel="containLogWheel">{{ activeLog }}</pre>
-          <footer v-if="activeJob">
-            <span><Activity :size="14" /> {{ activeJob.message }}</span>
-            <span><Timer :size="14" /> {{ formatDateTime(activeJob.startedAt || activeJob.createdAt) }}</span>
-            <a :href="activeJob.sourceUrl" target="_blank" rel="noopener noreferrer">
-              查看来源 <ExternalLink :size="13" />
-            </a>
-          </footer>
-          <footer v-else-if="selectedCheck">
-            <span><Timer :size="14" /> 约 {{ selectedCheck.estimatedMinutes }} 分钟</span>
-            <span class="impact-pill" :class="impactClass(selectedCheck.impact)">{{ impactLabel(selectedCheck.impact) }}</span>
-            <a :href="selectedCheck.sourceUrl" target="_blank" rel="noopener noreferrer">
-              {{ sourceHost(selectedCheck.sourceUrl) }} <ExternalLink :size="13" />
-            </a>
-          </footer>
+          <template v-if="viewMode === 'overview'">
+            <div class="diagnostic-overview">
+              <header class="diagnostic-overview__header">
+                <div>
+                  <div class="diagnostic-overview__eyebrow"><span><Gauge :size="15" /></span> 服务器体检工作台</div>
+                  <h2>一键综合跑分</h2>
+                  <p>用一套清晰的体检路径，快速了解这台主机的性能底座与网络质量。</p>
+                </div>
+                <span class="diagnostic-overview__status" :class="`is-${scoreState}`">
+                  <i /> {{ scoreStateLabel }}
+                </span>
+              </header>
+
+              <section class="diagnostic-score-hero" aria-labelledby="diagnostic-score-title">
+                <div class="diagnostic-score-ring" :class="`is-${scoreState}`" aria-label="综合跑分进度">
+                  <svg viewBox="0 0 140 140" aria-hidden="true">
+                    <circle class="diagnostic-score-ring__track" cx="70" cy="70" r="56" />
+                    <circle
+                      class="diagnostic-score-ring__progress"
+                      cx="70"
+                      cy="70"
+                      r="56"
+                      :style="{ strokeDashoffset: scoreRingOffset }"
+                    />
+                  </svg>
+                  <div class="diagnostic-score-ring__center">
+                    <strong>{{ scoreCenterLabel }}</strong>
+                    <span>{{ scoreState === 'running' ? '实时进度' : '综合状态' }}</span>
+                  </div>
+                </div>
+
+                <div class="diagnostic-score-hero__copy">
+                  <div class="diagnostic-score-hero__label">
+                    综合跑分 <span>POWERED BY KPanel</span>
+                    <em v-if="scoreSummaryMetricCount">真实结果已汇总</em>
+                  </div>
+                  <h3 id="diagnostic-score-title">{{ scoreCheck ? checkNameLabel(scoreCheck.name) : '等待综合评测脚本' }}</h3>
+                  <p>{{ scoreStatusLabel }}</p>
+                  <div class="diagnostic-score-meta">
+                    <span><Timer :size="15" /> 约 {{ scoreCheck?.estimatedMinutes || '—' }} 分钟</span>
+                    <span><Activity :size="15" /> {{ scoreCheck ? '实时终端可追踪' : '请更新体检脚本' }}</span>
+                  </div>
+                  <div class="diagnostic-score-actions">
+                    <button
+                      class="button button--primary"
+                      type="button"
+                      :disabled="!scoreCheck || hasActiveJob || starting"
+                      @click="requestScore"
+                    >
+                      <LoaderCircle v-if="starting && pendingScore" :size="16" class="is-spinning" />
+                      <Play v-else :size="16" />
+                      {{ scoreRunLabel }}
+                    </button>
+                    <button
+                      v-if="scoreJob"
+                      class="button button--secondary"
+                      type="button"
+                      @click="openScoreTerminal"
+                    >
+                      查看终端
+                    </button>
+                  </div>
+                </div>
+
+                <div class="diagnostic-score-route" aria-label="综合跑分路径">
+                  <div class="diagnostic-score-route__header">
+                    <strong>五维体检路径</strong>
+                    <span>{{ scoreRouteStatusLabel }}</span>
+                  </div>
+                  <div v-for="(dimension, index) in scoreDimensions" :key="dimension.id" class="diagnostic-score-route__item">
+                    <span class="diagnostic-score-route__index">0{{ index + 1 }}</span>
+                    <span>{{ dimension.label }}</span>
+                    <i :class="dimensionStateClass(dimension)" />
+                  </div>
+                </div>
+              </section>
+
+              <section class="diagnostic-score-dimensions" aria-labelledby="diagnostic-score-dimensions-title">
+                <header>
+                  <div>
+                    <h3 id="diagnostic-score-dimensions-title">体检维度</h3>
+                    <p>综合入口负责统一启动；需要深挖时，可直接点选对应脚本进入终端。</p>
+                  </div>
+                  <span>{{ catalog.items.length }} 个脚本可用</span>
+                </header>
+                <div class="diagnostic-score-dimension-grid">
+                  <button
+                    v-for="dimension in scoreDimensions"
+                    :key="dimension.id"
+                    class="diagnostic-score-dimension"
+                    :class="[`is-tone-${dimension.tone}`, dimensionStateClass(dimension)]"
+                    type="button"
+                    :disabled="!dimensionCheck(dimension)"
+                    :aria-label="dimensionCheck(dimension) ? `查看${dimension.label}测试` : `${dimension.label}脚本未提供`"
+                    @click="openDimension(dimension)"
+                  >
+                    <span class="diagnostic-score-dimension__icon"><component :is="dimension.icon" :size="19" /></span>
+                    <span class="diagnostic-score-dimension__copy">
+                      <strong>{{ dimension.label }}</strong>
+                      <span v-if="!summaryMetrics(dimension).length">{{ dimension.detail }}</span>
+                      <span v-else class="is-summary">
+                        <template v-for="(metric, metricIndex) in summaryMetrics(dimension).slice(0, 2)" :key="metric.key">
+                          <b>{{ summaryMetricLabel(metric.key) }}</b> {{ metric.value }}<i v-if="metricIndex < Math.min(summaryMetrics(dimension).length, 2) - 1"> · </i>
+                        </template>
+                      </span>
+                    </span>
+                    <span class="diagnostic-score-dimension__state"><i />{{ dimensionStateLabel(dimension) }}</span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="diagnostic-score-note">
+                <div class="diagnostic-score-note__icon"><Activity :size="17" /></div>
+                <div>
+                  <strong>{{ scoreSummaryMetricCount ? '真实结果已汇总' : '结果透明，原始输出不丢失' }}</strong>
+                  <p>{{ scoreSummaryMetricCount ? '以下指标来自脚本原始输出；未识别项目仍保留在终端中。' : '页面只呈现真实任务状态与进度，不替脚本猜测分数；详细结果、线路明细和第三方提示都可在终端中查看。' }}</p>
+                </div>
+                <a
+                  v-if="summaryReportURL"
+                  class="diagnostic-score-note__link"
+                  :href="summaryReportURL"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  查看完整报告 <ExternalLink :size="14" />
+                </a>
+                <button v-else-if="summaryJobForOverview()" class="diagnostic-score-note__link" type="button" @click="openSummaryTerminal">
+                  打开最近结果 <ExternalLink :size="14" />
+                </button>
+              </section>
+            </div>
+          </template>
+          <template v-else>
+            <div v-if="hasActiveJob" class="diagnostic-progress" aria-label="任务进度">
+              <span :style="{ width: `${activeJob?.progress || 0}%` }" />
+            </div>
+            <div v-if="!activeJob?.interactive" class="diagnostic-terminal-bar">
+              <span><i :class="{ 'is-live': hasActiveJob }" /> {{ hasActiveJob ? '实时输出' : '终端输出' }}</span>
+              <StatusBadge v-if="activeJob" :status="activeJob.status" />
+            </div>
+            <AppInteractiveTerminal
+              v-if="activeJob?.interactive && windowActive"
+              class="diagnostic-interactive-terminal"
+              :job-id="activeJob.id"
+              :input-open="activeJob.inputOpen"
+              kind="diagnostic"
+            />
+            <p v-else-if="!activeJob" class="diagnostic-log diagnostic-log-empty" @wheel="containLogWheel">选择左侧体检命令，点击“开始体检”后在这里查看实时输出。</p>
+            <pre v-else class="diagnostic-log" aria-live="polite" data-i18n-ignore @wheel="containLogWheel">{{ activeLog }}</pre>
+            <footer v-if="activeJob">
+              <span><Activity :size="14" /> {{ activeJob.message }}</span>
+              <span><Timer :size="14" /> {{ formatDateTime(activeJob.startedAt || activeJob.createdAt) }}</span>
+              <a :href="activeJob.sourceUrl" target="_blank" rel="noopener noreferrer">
+                查看来源 <ExternalLink :size="13" />
+              </a>
+            </footer>
+            <footer v-else-if="selectedCheck">
+              <span><Timer :size="14" /> 约 {{ selectedCheck.estimatedMinutes }} 分钟</span>
+              <span class="impact-pill" :class="impactClass(selectedCheck.impact)">{{ impactLabel(selectedCheck.impact) }}</span>
+              <a :href="selectedCheck.sourceUrl" target="_blank" rel="noopener noreferrer">
+                {{ sourceHost(selectedCheck.sourceUrl) }} <ExternalLink :size="13" />
+              </a>
+            </footer>
+          </template>
         </section>
       </section>
 
     </template>
 
     <ModalDialog
-      :open="Boolean(pendingCheck)"
-      title="确认运行第三方体检？"
-      :description="pendingCheck ? `${checkNameLabel(pendingCheck.name)} · 预计 ${pendingCheck.estimatedMinutes} 分钟` : ''"
+      :open="Boolean(pendingCheck || pendingScore)"
+      :title="pendingScore ? '确认开始一键跑分？' : '确认运行第三方体检？'"
+      :description="pendingScore ? `${scoreCheck ? checkNameLabel(scoreCheck.name) : '综合评测'} · 预计 ${scoreCheck?.estimatedMinutes || '—'} 分钟` : (pendingCheck ? `${checkNameLabel(pendingCheck.name)} · 预计 ${pendingCheck.estimatedMinutes} 分钟` : '')"
       size="small"
-      @close="pendingCheck = undefined"
+      @close="pendingCheck = undefined; pendingScore = false"
     >
-      <div v-if="pendingCheck" class="diagnostic-confirm">
+      <div v-if="pendingScore" class="diagnostic-confirm diagnostic-score-confirm">
+        <Gauge :size="24" />
+        <div>
+          <p>
+            将调用脚本目录中的综合评测入口，以真实终端输出完成一次多维度体检。测试期间可能消耗较多网络、CPU 或磁盘资源。
+          </p>
+          <div class="diagnostic-score-confirm__list">
+            <span v-for="dimension in scoreDimensions" :key="dimension.id"><i /> {{ dimension.label }}</span>
+          </div>
+        </div>
+      </div>
+      <div v-else-if="pendingCheck" class="diagnostic-confirm">
         <TriangleAlert :size="24" />
         <div>
           <p>
@@ -483,13 +957,13 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <template #footer>
-        <button class="button button--secondary" type="button" :disabled="starting" @click="pendingCheck = undefined">
+        <button class="button button--secondary" type="button" :disabled="starting" @click="pendingCheck = undefined; pendingScore = false">
           取消
         </button>
         <button class="button button--primary" type="button" :disabled="starting" @click="confirmStart">
           <LoaderCircle v-if="starting" :size="16" class="is-spinning" />
           <Play v-else :size="16" />
-          {{ starting ? '正在启动' : '确认开始' }}
+          {{ starting ? '正在启动' : (pendingScore ? '确认开始跑分' : '确认开始') }}
         </button>
       </template>
     </ModalDialog>
@@ -524,21 +998,31 @@ onBeforeUnmount(() => {
   grid-template-columns: 52px minmax(0, 1fr);
 }
 
+.diagnostic-workbench.is-command-panel-collapsed .diagnostic-command-overview {
+  display: none;
+}
+
 .diagnostic-command-panel {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-subtle) 38%, var(--surface));
 }
 
+.diagnostic-command-panel__toolbar {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 6px 8px 0;
+}
+
 .diagnostic-command-panel__toggle {
-  position: absolute;
+  position: static;
   z-index: 3;
-  top: 8px;
-  right: 8px;
   display: grid;
   width: 30px;
   height: 30px;
@@ -563,8 +1047,91 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-.diagnostic-workbench.is-command-panel-collapsed .diagnostic-command-panel__toggle {
-  right: 10px;
+.diagnostic-command-overview {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  min-height: 58px;
+  padding: 8px 12px;
+  margin: 8px;
+  border: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border));
+  border-radius: var(--radius);
+  color: var(--text);
+  background: color-mix(in srgb, var(--brand-soft) 42%, var(--surface));
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.diagnostic-command-overview:hover,
+.diagnostic-command-overview:focus-visible,
+.diagnostic-command-overview.is-active {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand-soft) 72%, var(--surface));
+  outline: none;
+}
+
+.diagnostic-command-overview:active {
+  transform: translateY(1px);
+}
+
+.diagnostic-command-overview__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-muted);
+  border-radius: 10px;
+}
+
+.diagnostic-command-overview__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.diagnostic-command-overview__copy strong {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-command-overview__copy small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diagnostic-command-overview__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.diagnostic-command-overview__dot.is-running {
+  background: var(--brand);
+  box-shadow: 0 0 0 4px var(--brand-soft);
+}
+
+.diagnostic-command-overview__dot.is-completed {
+  background: var(--brand-strong);
+}
+
+.diagnostic-command-overview__dot.is-failed {
+  background: var(--danger);
+}
+
+.diagnostic-command-overview__dot.is-busy {
+  background: var(--amber);
+}
+
+.diagnostic-command-overview__dot.is-unavailable {
+  background: var(--border-strong);
 }
 
 .diagnostic-command-list {
@@ -575,11 +1142,6 @@ onBeforeUnmount(() => {
   padding: 8px;
 }
 
-.diagnostic-command-group:first-child > header {
-  min-height: 34px;
-  padding-right: 42px;
-}
-
 .diagnostic-command-rail {
   display: grid;
   min-height: 0;
@@ -588,7 +1150,7 @@ onBeforeUnmount(() => {
   gap: 7px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 48px 7px 10px;
+  padding: 8px 7px 10px;
   scrollbar-width: none;
 }
 
@@ -608,6 +1170,11 @@ onBeforeUnmount(() => {
   color: var(--diagnostic-category);
   background: color-mix(in srgb, var(--diagnostic-category) 10%, var(--surface));
   cursor: pointer;
+}
+
+.diagnostic-command-rail__overview {
+  --diagnostic-category: var(--brand-strong);
+  margin-bottom: 3px;
 }
 
 .diagnostic-command-rail__item:hover,
@@ -634,13 +1201,13 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   padding: 4px 9px 5px;
   color: var(--diagnostic-category);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .diagnostic-command-group > header small {
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .diagnostic-command-row {
@@ -713,7 +1280,7 @@ onBeforeUnmount(() => {
 
 .diagnostic-command-select strong {
   overflow: hidden;
-  font-size: 13px;
+  font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -723,7 +1290,7 @@ onBeforeUnmount(() => {
   padding: 2px 6px;
   color: var(--diagnostic-category);
   background: color-mix(in srgb, var(--diagnostic-category) 12%, var(--surface));
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -759,6 +1326,591 @@ onBeforeUnmount(() => {
 .diagnostic-command-run:disabled {
   cursor: not-allowed;
   opacity: .42;
+}
+
+.diagnostic-result.is-overview {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.diagnostic-result.is-overview::-webkit-scrollbar {
+  width: 8px;
+}
+
+.diagnostic-result.is-overview::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
+
+.diagnostic-overview {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-height: 100%;
+  padding: 22px;
+  background: color-mix(in srgb, var(--surface-subtle) 30%, var(--surface));
+}
+
+.diagnostic-overview__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.diagnostic-overview__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  color: var(--brand-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.diagnostic-overview__eyebrow > span {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-muted);
+  border-radius: 8px;
+}
+
+.diagnostic-overview__header h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(20px, 2.4vw, 27px);
+  line-height: 1.2;
+}
+
+.diagnostic-overview__header p {
+  max-width: 600px;
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.diagnostic-overview__status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--text-soft);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.diagnostic-overview__status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.diagnostic-overview__status.is-running {
+  color: var(--brand-strong);
+  border-color: var(--brand-muted);
+}
+
+.diagnostic-overview__status.is-running i {
+  background: var(--brand);
+  box-shadow: 0 0 0 4px var(--brand-soft);
+}
+
+.diagnostic-overview__status.is-completed {
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  border-color: var(--brand-muted);
+}
+
+.diagnostic-overview__status.is-completed i {
+  background: var(--brand-strong);
+}
+
+.diagnostic-overview__status.is-failed {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+}
+
+.diagnostic-overview__status.is-failed i {
+  background: var(--danger);
+}
+
+.diagnostic-overview__status.is-busy {
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: color-mix(in srgb, var(--amber) 28%, var(--border));
+}
+
+.diagnostic-overview__status.is-busy i {
+  background: var(--amber);
+}
+
+.diagnostic-score-hero {
+  display: grid;
+  grid-template-columns: minmax(145px, .4fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  padding: 18px;
+  background: color-mix(in srgb, var(--brand-soft) 38%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--brand) 18%, var(--border));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.diagnostic-score-ring {
+  position: relative;
+  display: grid;
+  width: 148px;
+  height: 148px;
+  place-items: center;
+  justify-self: center;
+}
+
+.diagnostic-score-ring svg {
+  width: 148px;
+  height: 148px;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.diagnostic-score-ring circle {
+  fill: none;
+  stroke-width: 7;
+}
+
+.diagnostic-score-ring__track {
+  stroke: color-mix(in srgb, var(--brand) 13%, var(--border));
+}
+
+.diagnostic-score-ring__progress {
+  stroke: var(--brand);
+  stroke-linecap: round;
+  stroke-dasharray: 351.86;
+  transition: stroke-dashoffset 300ms ease, stroke 160ms ease;
+}
+
+.diagnostic-score-ring.is-failed .diagnostic-score-ring__progress {
+  stroke: var(--danger);
+}
+
+.diagnostic-score-ring.is-busy .diagnostic-score-ring__progress {
+  stroke: var(--amber);
+}
+
+.diagnostic-score-ring.is-unavailable .diagnostic-score-ring__progress {
+  stroke: var(--border-strong);
+}
+
+.diagnostic-score-ring__center {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  gap: 4px;
+}
+
+.diagnostic-score-ring__center strong {
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 750;
+  line-height: 1.1;
+}
+
+.diagnostic-score-ring__center span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diagnostic-score-hero__copy {
+  min-width: 0;
+}
+
+.diagnostic-score-hero__label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--brand-strong);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.diagnostic-score-hero__label span {
+  padding: 3px 7px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .04em;
+}
+
+.diagnostic-score-hero__label em {
+  padding: 3px 7px;
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-muted);
+  border-radius: 999px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.diagnostic-score-hero__copy h3 {
+  margin: 9px 0 0;
+  color: var(--text);
+  font-size: 21px;
+  line-height: 1.3;
+}
+
+.diagnostic-score-hero__copy p {
+  max-width: 560px;
+  margin: 7px 0 0;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.diagnostic-score-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-top: 15px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.diagnostic-score-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diagnostic-score-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.diagnostic-score-actions .button {
+  min-height: 40px;
+}
+
+.diagnostic-score-route {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-content: start;
+  gap: 1px;
+  padding: 11px 12px;
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.diagnostic-score-route__header {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.diagnostic-score-route__header strong {
+  font-size: 14px;
+}
+
+.diagnostic-score-route__header span {
+  color: var(--brand-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.diagnostic-score-route__item {
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr) 8px;
+  gap: 7px;
+  align-items: center;
+  min-height: 26px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.diagnostic-score-route__index {
+  color: var(--muted);
+  font: 650 12px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.diagnostic-score-route__item i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.diagnostic-score-route__item i.is-running {
+  background: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.diagnostic-score-route__item i.is-completed {
+  background: var(--brand-strong);
+}
+
+.diagnostic-score-route__item i.is-failed {
+  background: var(--danger);
+}
+
+.diagnostic-score-route__item i.is-covered {
+  background: var(--brand-muted);
+}
+
+.diagnostic-score-dimensions {
+  display: grid;
+  gap: 12px;
+}
+
+.diagnostic-score-dimensions > header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diagnostic-score-dimensions h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+}
+
+.diagnostic-score-dimensions p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.diagnostic-score-dimensions > header > span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.diagnostic-score-dimension-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.diagnostic-score-dimension {
+  --dimension-color: var(--brand-strong);
+
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 11px;
+  align-items: center;
+  min-width: 0;
+  min-height: 86px;
+  padding: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.diagnostic-score-dimension:hover:not(:disabled),
+.diagnostic-score-dimension:focus-visible {
+  border-color: color-mix(in srgb, var(--dimension-color) 62%, var(--border));
+  background: color-mix(in srgb, var(--dimension-color) 7%, var(--surface));
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.diagnostic-score-dimension:disabled {
+  cursor: not-allowed;
+  opacity: .68;
+}
+
+.diagnostic-score-dimension.is-covered:disabled {
+  border-style: dashed;
+  opacity: .84;
+}
+
+.diagnostic-score-dimension.is-tone-performance { --dimension-color: #965900; }
+.diagnostic-score-dimension.is-tone-route { --dimension-color: #2563c4; }
+.diagnostic-score-dimension.is-tone-latency { --dimension-color: #087a72; }
+.diagnostic-score-dimension.is-tone-speed { --dimension-color: #7546c8; }
+.diagnostic-score-dimension.is-tone-ip { --dimension-color: #0c9b78; }
+
+.diagnostic-score-dimension__icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  color: var(--dimension-color);
+  background: color-mix(in srgb, var(--dimension-color) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--dimension-color) 22%, var(--border));
+  border-radius: 12px;
+}
+
+.diagnostic-score-dimension__copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.diagnostic-score-dimension__copy strong {
+  font-size: 15px;
+}
+
+.diagnostic-score-dimension__copy > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-score-dimension__copy > span.is-summary {
+  color: var(--text-soft);
+  font-weight: 650;
+}
+
+.diagnostic-score-dimension__state {
+  display: inline-flex;
+  grid-column: 2;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diagnostic-score-dimension__state i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.diagnostic-score-dimension.is-running .diagnostic-score-dimension__state,
+.diagnostic-score-dimension.is-running .diagnostic-score-dimension__state i {
+  color: var(--brand-strong);
+}
+
+.diagnostic-score-dimension.is-running .diagnostic-score-dimension__state i {
+  background: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.diagnostic-score-dimension.is-completed .diagnostic-score-dimension__state,
+.diagnostic-score-dimension.is-completed .diagnostic-score-dimension__state i {
+  color: var(--brand-strong);
+}
+
+.diagnostic-score-dimension.is-completed .diagnostic-score-dimension__state i {
+  background: var(--brand-strong);
+}
+
+.diagnostic-score-dimension.is-failed .diagnostic-score-dimension__state,
+.diagnostic-score-dimension.is-failed .diagnostic-score-dimension__state i {
+  color: var(--danger);
+}
+
+.diagnostic-score-dimension.is-failed .diagnostic-score-dimension__state i {
+  background: var(--danger);
+}
+
+.diagnostic-score-dimension.is-covered .diagnostic-score-dimension__state,
+.diagnostic-score-dimension.is-covered .diagnostic-score-dimension__state i {
+  color: var(--brand-strong);
+}
+
+.diagnostic-score-dimension.is-covered .diagnostic-score-dimension__state i {
+  background: var(--brand-muted);
+}
+
+.diagnostic-score-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 13px 14px;
+  background: color-mix(in srgb, var(--surface) 65%, var(--surface-subtle));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.diagnostic-score-note__icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  border-radius: 9px;
+}
+
+.diagnostic-score-note strong {
+  display: block;
+  color: var(--text-soft);
+  font-size: 14px;
+}
+
+.diagnostic-score-note p {
+  max-width: 680px;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.diagnostic-score-note__link {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 5px 0;
+  color: var(--brand-strong);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.diagnostic-score-note__link:hover,
+.diagnostic-score-note__link:focus-visible {
+  color: var(--brand);
+  outline: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .diagnostic-result h2 {
@@ -798,6 +1950,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   background: var(--surface);
+  container: diagnostic-result / inline-size;
 }
 
 .diagnostic-progress {
@@ -879,7 +2032,7 @@ onBeforeUnmount(() => {
   gap: 10px 18px;
   padding: 12px 20px;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .diagnostic-result footer a {
@@ -904,8 +2057,33 @@ onBeforeUnmount(() => {
 
 .diagnostic-confirm a {
   color: var(--primary);
-  font-size: 12px;
+  font-size: 13px;
   overflow-wrap: anywhere;
+}
+
+.diagnostic-score-confirm > svg {
+  color: var(--brand-strong);
+}
+
+.diagnostic-score-confirm__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.diagnostic-score-confirm__list span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.diagnostic-score-confirm__list i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand);
 }
 
 .is-spinning {
@@ -915,6 +2093,235 @@ onBeforeUnmount(() => {
 @keyframes diagnostic-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1120px) {
+  .diagnostic-score-hero {
+    grid-template-columns: minmax(145px, .4fr) minmax(0, 1fr);
+  }
+
+  .diagnostic-score-route {
+    gap: 8px;
+  }
+
+  .diagnostic-score-route__header {
+    grid-column: 1 / -1;
+  }
+
+  .diagnostic-score-route__item {
+    grid-template-columns: 25px minmax(0, 1fr) 8px;
+  }
+}
+
+@media (max-width: 900px) {
+  .diagnostic-score-dimension-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container diagnostic-result (max-width: 760px) {
+  .diagnostic-score-route {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .diagnostic-score-dimension-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container diagnostic-result (max-width: 560px) {
+  .diagnostic-score-route {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .diagnostic-score-dimension-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container diagnostic-result (min-width: 860px) {
+  .diagnostic-score-dimension-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .diagnostic-score-dimension {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 8px;
+    min-height: 96px;
+    padding: 11px;
+  }
+
+  .diagnostic-score-dimension__icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .diagnostic-score-dimension__copy strong {
+    font-size: 14px;
+  }
+
+  .diagnostic-score-dimension__copy > span {
+    display: -webkit-box;
+    overflow: hidden;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-height: 1.35;
+  }
+}
+
+/* A desktop window can be narrower than the browser viewport. Keep the
+   diagnostic drawer responsive to that bounded surface, not only to the
+   outer viewport media query. */
+@container desktop-window (max-width: 820px) {
+  .diagnostic-workbench,
+  .diagnostic-workbench.is-command-panel-collapsed {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr);
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  .diagnostic-command-panel {
+    position: absolute;
+    z-index: 22;
+    inset: 0 auto 0 0;
+    width: min(320px, calc(100% - 48px));
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+    box-shadow: var(--shadow-md);
+    transform: translateX(-105%);
+    transition: transform .2s ease;
+  }
+
+  .diagnostic-workbench.is-command-drawer-open .diagnostic-command-panel {
+    transform: translateX(0);
+  }
+
+  .diagnostic-command-overlay {
+    position: absolute;
+    z-index: 21;
+    inset: 0;
+    display: block;
+    border: 0;
+    background: rgb(5 16 13 / 42%);
+  }
+
+  .diagnostic-command-panel__desktop-toggle {
+    display: none;
+  }
+
+  .diagnostic-command-panel__mobile-close {
+    display: grid;
+  }
+
+  .diagnostic-command-list {
+    padding-top: 8px;
+  }
+
+  .diagnostic-command-overview {
+    margin-top: 8px;
+  }
+
+  .diagnostic-mobile-selector {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 50px;
+    padding: 8px 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--terminal-shell-border, #29383a) 78%, var(--terminal-shell-text, #d8dddc));
+    background: var(--terminal-shell-panel, #111a1d);
+  }
+
+  .diagnostic-mobile-selector button {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    padding: 7px 8px;
+    color: var(--terminal-shell-text, #d8dddc);
+    background: transparent;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .diagnostic-mobile-selector button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .diagnostic-mobile-selector small {
+    flex: 0 0 auto;
+    color: var(--terminal-shell-muted, #8a9695);
+  }
+
+  .diagnostic-overview {
+    gap: 15px;
+    padding: 15px;
+  }
+
+  .diagnostic-overview__header {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .diagnostic-overview__status {
+    align-self: flex-start;
+  }
+
+  .diagnostic-score-hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+    padding: 16px;
+  }
+
+  .diagnostic-score-ring {
+    width: 144px;
+    height: 144px;
+  }
+
+  .diagnostic-score-ring svg {
+    width: 144px;
+    height: 144px;
+  }
+
+  .diagnostic-score-route {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .diagnostic-score-route__header {
+    grid-column: 1 / -1;
+  }
+
+  .diagnostic-score-dimension-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .diagnostic-score-note {
+    flex-wrap: wrap;
+  }
+
+  .diagnostic-score-note__link {
+    width: 100%;
+    margin-left: 41px;
+  }
+
+  .diagnostic-log,
+  .diagnostic-interactive-terminal :deep(.interactive-terminal__screen) {
+    min-height: min(400px, 48dvh);
+  }
+
+  .diagnostic-terminal-bar,
+  .diagnostic-result footer {
+    padding-right: 14px;
+    padding-left: 14px;
   }
 }
 
@@ -966,7 +2373,62 @@ onBeforeUnmount(() => {
 
   .diagnostic-command-list {
     max-height: none;
-    padding-top: 44px;
+    padding-top: 8px;
+  }
+
+  .diagnostic-command-overview {
+    margin-top: 8px;
+  }
+
+  .diagnostic-overview {
+    gap: 15px;
+    padding: 15px;
+  }
+
+  .diagnostic-overview__header {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .diagnostic-overview__status {
+    align-self: flex-start;
+  }
+
+  .diagnostic-score-hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+    padding: 16px;
+  }
+
+  .diagnostic-score-ring {
+    width: 144px;
+    height: 144px;
+  }
+
+  .diagnostic-score-ring svg {
+    width: 144px;
+    height: 144px;
+  }
+
+  .diagnostic-score-route {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .diagnostic-score-route__header {
+    grid-column: 1 / -1;
+  }
+
+  .diagnostic-score-dimension-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .diagnostic-score-note {
+    flex-wrap: wrap;
+  }
+
+  .diagnostic-score-note__link {
+    width: 100%;
+    margin-left: 41px;
   }
 
   .diagnostic-mobile-selector {

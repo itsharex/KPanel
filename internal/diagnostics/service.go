@@ -80,6 +80,7 @@ type Job struct {
 	Progress         int        `json:"progress"`
 	Message          string     `json:"message,omitempty"`
 	Logs             []string   `json:"logs"`
+	Summary          *DiagnosticSummary `json:"summary,omitempty"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	StartedAt        *time.Time `json:"startedAt,omitempty"`
 	FinishedAt       *time.Time `json:"finishedAt,omitempty"`
@@ -515,6 +516,9 @@ func RunJob(ctx context.Context, stateDir, id string) error {
 		runErr = readErr
 	}
 	_ = logFile.Sync()
+	if data, readLogErr := os.ReadFile(service.logPath(id)); readLogErr == nil {
+		item.Summary = diagnosticSummaryFromOutput(item.CheckID, item.CheckName, data)
+	}
 
 	finished := service.now().UTC()
 	item.Progress = 100
@@ -815,6 +819,11 @@ func (s *Service) listLocked() []record {
 func (s *Service) publicLocked(item record) Job {
 	job := item.Job
 	job.Logs = s.logTail(item.ID)
+	if job.Summary == nil && (job.Status == "succeeded" || job.Status == "failed") {
+		if data, err := os.ReadFile(s.logPath(item.ID)); err == nil {
+			job.Summary = diagnosticSummaryFromOutput(job.CheckID, job.CheckName, data)
+		}
+	}
 	return job
 }
 

@@ -972,6 +972,21 @@ export interface DiagnosticCatalog {
   items: DiagnosticCheck[]
 }
 
+export interface DiagnosticSummaryMetric {
+  key: string
+  value: string
+}
+
+export interface DiagnosticSummaryDimension {
+  metrics: DiagnosticSummaryMetric[]
+}
+
+export interface DiagnosticSummary {
+  parser?: string
+  reportUrl?: string
+  dimensions: Record<string, DiagnosticSummaryDimension>
+}
+
 export interface DiagnosticJob {
   id: string
   checkId: string
@@ -987,6 +1002,7 @@ export interface DiagnosticJob {
   interactive?: boolean
   inputOpen?: boolean
   logs: string[]
+  summary?: DiagnosticSummary
   createdAt: string
   startedAt?: string
   finishedAt?: string
