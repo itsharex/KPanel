@@ -51,6 +51,11 @@ interface ActiveDesktopFileDrag {
 
 export type DesktopFileDragOrigin = 'file-manager' | 'desktop-shortcut'
 
+// Chromium's promised-file drag protocol is more reliable on Windows when
+// the descriptor uses a generic binary MIME, while the server response still
+// retains its authoritative Content-Type and filename.
+const NATIVE_DOWNLOAD_MIME = 'application/octet-stream'
+
 let activeDrag: ActiveDesktopFileDrag | undefined
 
 function randomToken(): string {
@@ -70,13 +75,6 @@ function nativeDownloadName(name: string): string {
   const bounded = characters.length <= 180 ? characters.join('') : characters.slice(0, 180).join('')
   const stem = bounded.replace(/\.[^.]*$/u, '').toUpperCase()
   return /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(stem) ? `_${bounded}` : bounded
-}
-
-function nativeDownloadMime(mime?: string): string {
-  const value = mime?.trim() || ''
-  return /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(value)
-    ? value
-    : 'application/octet-stream'
 }
 
 function nativeDownloadTarget(
@@ -110,12 +108,11 @@ export function nativeArchiveDownloadName(
 
 function nativeDownloadDragDescriptor(
   name: string,
-  mime: string | undefined,
   downloadURL: string,
   pageURL = globalThis.location?.href,
 ): string | undefined {
   const target = nativeDownloadTarget(downloadURL, pageURL)
-  return target ? `${nativeDownloadMime(mime)}:${nativeDownloadName(name)}:${target.href}` : undefined
+  return target ? `${NATIVE_DOWNLOAD_MIME}:${nativeDownloadName(name)}:${target.href}` : undefined
 }
 
 export function nativeFileDownloadDragDescriptor(
@@ -124,7 +121,7 @@ export function nativeFileDownloadDragDescriptor(
   pageURL = globalThis.location?.href,
 ): string | undefined {
   if (entry.kind !== 'file' || !downloadURL || !pageURL) return undefined
-  return nativeDownloadDragDescriptor(entry.name, entry.mime, downloadURL, pageURL)
+  return nativeDownloadDragDescriptor(entry.name, downloadURL, pageURL)
 }
 
 export function nativeArchiveDownloadDragDescriptor(
@@ -136,7 +133,7 @@ export function nativeArchiveDownloadDragDescriptor(
   if (!entries.length || entries.some((entry) => !supportedEntry(entry)) || !archiveName.endsWith('.zip')) {
     return undefined
   }
-  return nativeDownloadDragDescriptor(archiveName, 'application/zip', downloadURL, pageURL)
+  return nativeDownloadDragDescriptor(archiveName, downloadURL, pageURL)
 }
 
 function addNativeDownloadDrag(
@@ -144,16 +141,16 @@ function addNativeDownloadDrag(
   entries: readonly DesktopFileEntry[],
   downloadURL?: string,
   archiveName?: string,
-): void {
-  if (!downloadURL) return
+): boolean {
+  if (!downloadURL) return false
   const target = nativeDownloadTarget(downloadURL)
-  if (!target) return
+  if (!target) return false
   const descriptor = archiveName
     ? nativeArchiveDownloadDragDescriptor(entries, downloadURL, archiveName)
     : entries.length === 1
       ? nativeFileDownloadDragDescriptor(entries[0]!, downloadURL)
       : undefined
-  if (!descriptor) return
+  if (!descriptor) return false
   try {
     // Chromium turns this private drag type into a promised file for Windows
     // Explorer and macOS Finder. Other browsers ignore the extra type while
@@ -169,6 +166,7 @@ function addNativeDownloadDrag(
   } catch {
     // A browser rejecting the fallback must not disable internal dragging.
   }
+  return true
 }
 
 function cleanShortcutName(entry: DesktopFileEntry): string {
@@ -293,7 +291,13 @@ export function beginDesktopFileDrag(
   } else {
     dataTransfer.setData('text/plain', supported.length === 1 ? supported[0]!.name : `${supported.length} 个项目`)
   }
-  addNativeDownloadDrag(dataTransfer, supported, nativeDownloadURL, nativeArchiveName)
+  const nativeDownload = addNativeDownloadDrag(dataTransfer, supported, nativeDownloadURL, nativeArchiveName)
+  if (nativeDownload) {
+    // Match Chromium/Windows Explorer's copy semantics for the native
+    // promised-file path without changing KPanel's internal move/copy drag.
+    dataTransfer.effectAllowed = 'copyMove'
+    if (origin === 'file-manager') dataTransfer.dropEffect = 'copy'
+  }
   return true
 }
 

@@ -56,6 +56,7 @@ function dragEvent() {
   const dataTransfer = {
     types,
     effectAllowed: 'none',
+    dropEffect: 'none',
     setData(type: string, value: string) {
       if (!types.includes(type)) types.push(type)
       values.set(type, value)
@@ -157,7 +158,7 @@ describe('desktop file shortcuts', () => {
     }], undefined, 'file-manager', '/api/v1/files/content?path=%2Freports%2Freport%3AQ%3F.txt&disposition=attachment')).toBe(true)
 
     const descriptor = event.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE) || ''
-    expect(descriptor).toMatch(/^text\/plain:report_Q_\.txt:https?:\/\//)
+    expect(descriptor).toMatch(/^application\/octet-stream:report_Q_\.txt:https?:\/\//)
     expect(descriptor).toContain('/api/v1/files/content?path=%2Freports%2Freport%3AQ%3F.txt&disposition=attachment')
     expect(event.dataTransfer?.getData('text/uri-list')).toBe(
       'http://localhost:3000/api/v1/files/content?path=%2Freports%2Freport%3AQ%3F.txt&disposition=attachment\r\n',
@@ -166,6 +167,8 @@ describe('desktop file shortcuts', () => {
       name: 'report:Q?.txt', path: '/reports/report:Q?.txt', kind: 'file', mime: 'text/plain',
       resourceVersion: 'sha256:report',
     }])
+    expect(event.dataTransfer?.effectAllowed).toBe('copyMove')
+    expect(event.dataTransfer?.dropEffect).toBe('copy')
   })
 
   it('advertises a folder or multi-selection as one same-origin ZIP download', () => {
@@ -181,11 +184,13 @@ describe('desktop file shortcuts', () => {
       'photos.zip',
     )).toBe(true)
     expect(event.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toContain(
-      'application/zip:photos.zip:',
+      'application/octet-stream:photos.zip:',
     )
     expect(event.dataTransfer?.getData('text/uri-list')).toBe(
       'http://localhost:3000/api/v1/files/archive?selection=photos&name=photos.zip\r\n',
     )
+    expect(event.dataTransfer?.effectAllowed).toBe('copyMove')
+    expect(event.dataTransfer?.dropEffect).toBe('none')
     expect(desktopFileDragEntries(event)).toEqual([folder])
 
     expect(nativeArchiveDownloadName([

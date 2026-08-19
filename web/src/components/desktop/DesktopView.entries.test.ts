@@ -714,7 +714,7 @@ describe('DesktopView dynamic entries', () => {
         { path: '/home/app', resourceVersion: 'sha256:app' },
       ],
     })
-    expect(values.get('DownloadURL')).toMatch(/^application\/zip:KPanel Desktop\.zip:https?:\/\//)
+    expect(values.get('DownloadURL')).toMatch(/^application\/octet-stream:KPanel Desktop\.zip:https?:\/\//)
     expect(values.get('DownloadURL')).toContain('/api/v1/files/archive?selection=')
     expect(values.get('DownloadURL')).toContain('name=KPanel+Desktop.zip')
 
@@ -774,7 +774,7 @@ describe('DesktopView dynamic entries', () => {
     }
     shortcut.element.dispatchEvent(internalFileDragEvent('dragstart', dataTransfer, 40, 40))
     expect(values.get('DownloadURL')).toMatch(
-      /^text\/plain:fast\.txt:https?:\/\/[^/]+\/api\/v1\/files\/content\?path=%2Fhome%2Ffast\.txt&disposition=attachment$/,
+      /^application\/octet-stream:fast\.txt:https?:\/\/[^/]+\/api\/v1\/files\/content\?path=%2Fhome%2Ffast\.txt&disposition=attachment$/,
     )
     Object.defineProperty(document, 'elementFromPoint', {
       configurable: true,

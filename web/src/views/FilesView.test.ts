@@ -329,14 +329,14 @@ describe('FilesView desktop shortcuts', () => {
     view.startEntryDrag(selection, first)
     expect(mocks.archiveUrl).toHaveBeenCalledWith([first, second], 'home.zip')
     expect(selection.dataTransfer?.getData('DownloadURL')).toContain(
-      'application/zip:home.zip:https://panel.example/api/v1/files/archive',
+      'application/octet-stream:home.zip:https://panel.example/api/v1/files/archive',
     )
 
     const folder = { ...testEntry('photos'), kind: 'directory' as const }
     const directory = internalDrag([])
     view.startEntryDrag(directory, folder)
     expect(mocks.archiveUrl).toHaveBeenCalledWith([folder], 'photos.zip')
-    expect(directory.dataTransfer?.getData('DownloadURL')).toContain('application/zip:photos.zip:')
+    expect(directory.dataTransfer?.getData('DownloadURL')).toContain('application/octet-stream:photos.zip:')
   })
 
   it('adds the current multi-selection in one desktop workspace update', async () => {
