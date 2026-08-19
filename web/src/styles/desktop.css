@@ -90,8 +90,15 @@ body.desktop-mode-open::-webkit-scrollbar {
   background: var(--desktop-wallpaper-image, url('/wallpapers/kpanel-desktop.webp')) center / cover no-repeat;
 }
 
-.desktop__wallpaper-image::before,
-.desktop__wallpaper-image::after {
+.desktop__wallpaper-veil {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+}
+
+.desktop__wallpaper-veil::before,
+.desktop__wallpaper-veil::after {
   position: absolute;
   inset: 0;
   content: '';
@@ -99,12 +106,12 @@ body.desktop-mode-open::-webkit-scrollbar {
   transition: opacity .42s cubic-bezier(.22, 1, .36, 1);
 }
 
-.desktop__wallpaper-image::before {
+.desktop__wallpaper-veil::before {
   background: linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%));
   opacity: 1;
 }
 
-.desktop__wallpaper-image::after {
+.desktop__wallpaper-veil::after {
   background: linear-gradient(145deg, rgb(0 12 15 / 14%), rgb(1 10 14 / 30%));
   opacity: 0;
 }
@@ -113,11 +120,11 @@ body.desktop-mode-open::-webkit-scrollbar {
   background: linear-gradient(145deg, #06151a, #0a2026);
 }
 
-:root[data-theme='dark'] .desktop__wallpaper-image::before {
+:root[data-theme='dark'] .desktop__wallpaper-veil::before {
   opacity: 0;
 }
 
-:root[data-theme='dark'] .desktop__wallpaper-image::after {
+:root[data-theme='dark'] .desktop__wallpaper-veil::after {
   opacity: 1;
 }
 
@@ -149,6 +156,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop__wallpaper::after {
   position: absolute;
+  z-index: 4;
   inset: 0;
   background:
     linear-gradient(90deg, rgb(3 14 17 / 6%), transparent 30%, transparent 80%, rgb(3 14 17 / 5%)),
@@ -165,6 +173,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop__aurora {
   position: absolute;
+  z-index: 3;
   border-radius: 50%;
   opacity: .12;
   pointer-events: none;

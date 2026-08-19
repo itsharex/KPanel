@@ -113,8 +113,10 @@ describe('desktop visual and interaction contract', () => {
     expect(desktopViewSource).toContain("root.classList.add('desktop-theme-transitioning')")
     expect(desktopViewSource).toContain('const duration = motionDuration(420)')
     expect(styles).toMatch(/:root\.desktop-theme-transitioning \.desktop[\s\S]*?transition-duration:\s*\.42s;[\s\S]*?cubic-bezier\(\.22, 1, \.36, 1\);/)
-    expect(styles).toMatch(/\.desktop__wallpaper-image::before,\s*\.desktop__wallpaper-image::after\s*\{[^}]*transition:\s*opacity \.42s cubic-bezier\(\.22, 1, \.36, 1\);/)
-    expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__wallpaper-image::after\s*\{[^}]*opacity:\s*1;/)
+    expect(styles).toMatch(/\.desktop__wallpaper-veil\s*\{[^}]*z-index:\s*2;/)
+    expect(styles).toMatch(/\.desktop__wallpaper-veil::before,\s*\.desktop__wallpaper-veil::after\s*\{[^}]*transition:\s*opacity \.42s cubic-bezier\(\.22, 1, \.36, 1\);/)
+    expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__wallpaper-veil::after\s*\{[^}]*opacity:\s*1;/)
+    expect(desktopViewSource).toContain('<div class="desktop__wallpaper-veil" aria-hidden="true" />')
   })
 
   it('keeps all three monitor rows evenly spaced while compacting cumulative traffic', () => {

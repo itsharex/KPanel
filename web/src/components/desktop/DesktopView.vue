@@ -133,6 +133,7 @@ const agentStatus = computed(() => {
 const SITE_RENAMES_KEY = 'kpanel:desktop-site-names:v1'
 const DESKTOP_UPLOAD_LOCATION_KEY = 'kpanel:desktop-upload-location:v1'
 const DESKTOP_WALLPAPER_KEY = 'kpanel:desktop-wallpaper:v1'
+const DESKTOP_WALLPAPER_SWITCH_DELAY = 500
 const MAX_SITE_NAME_LENGTH = 48
 
 const DESKTOP_WALLPAPERS = [
@@ -2250,9 +2251,17 @@ function toggleDesktopTheme(): void {
   }, duration + 40)
 }
 
-function selectDesktopWallpaper(wallpaperID: DesktopWallpaperID): void {
-  desktopWallpaperID.value = wallpaperID
+function waitForWallpaperSwitchDelay(): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, DESKTOP_WALLPAPER_SWITCH_DELAY)
+  })
+}
+
+async function selectDesktopWallpaper(wallpaperID: DesktopWallpaperID): Promise<void> {
   wallpaperDialogOpen.value = false
+  await nextTick()
+  await waitForWallpaperSwitchDelay()
+  desktopWallpaperID.value = wallpaperID
   try {
     window.localStorage.setItem(DESKTOP_WALLPAPER_KEY, wallpaperID)
   } catch {
@@ -2706,6 +2715,7 @@ function onViewportResize(): void {
           :style="desktopWallpaperStyle"
         />
       </Transition>
+      <div class="desktop__wallpaper-veil" aria-hidden="true" />
       <div class="desktop__aurora desktop__aurora--one" />
       <div class="desktop__aurora desktop__aurora--two" />
       <div class="desktop__aurora desktop__aurora--three" />

@@ -360,12 +360,23 @@ describe('DesktopView', () => {
     expect(dialog?.querySelectorAll('[data-wallpaper-option]')).toHaveLength(5)
     expect(orbit?.getAttribute('aria-checked')).toBe('false')
 
+    vi.useFakeTimers()
     orbit?.click()
     await nextTick()
-    expect(wrapper.find('.desktop__wallpaper-image').attributes('data-wallpaper')).toBe('orbit')
-    expect(wrapper.find('.desktop__wallpaper-image').attributes('style')).toContain('kpanel-desktop-orbit.webp')
-    expect(window.localStorage.getItem('kpanel:desktop-wallpaper:v1')).toBe('orbit')
     expect(document.body.querySelector('.desktop-wallpaper-picker')).toBeNull()
+    expect(wrapper.find('.desktop__wallpaper-image').attributes('data-wallpaper')).toBe('classic')
+
+    await vi.advanceTimersByTimeAsync(499)
+    await nextTick()
+    expect(wrapper.find('.desktop__wallpaper-image').attributes('data-wallpaper')).toBe('classic')
+
+    await vi.advanceTimersByTimeAsync(1)
+    await flushPromises()
+    await nextTick()
+    const nextWallpaper = wrapper.find('[data-wallpaper="orbit"]')
+    expect(nextWallpaper.exists()).toBe(true)
+    expect(nextWallpaper.attributes('style')).toContain('kpanel-desktop-orbit.webp')
+    expect(window.localStorage.getItem('kpanel:desktop-wallpaper:v1')).toBe('orbit')
     wrapper.unmount()
 
     const restored = mount(DesktopView)
