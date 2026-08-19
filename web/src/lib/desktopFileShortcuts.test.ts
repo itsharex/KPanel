@@ -159,6 +159,9 @@ describe('desktop file shortcuts', () => {
     const descriptor = event.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE) || ''
     expect(descriptor).toMatch(/^text\/plain:report_Q_\.txt:https?:\/\//)
     expect(descriptor).toContain('/api/v1/files/content?path=%2Freports%2Freport%3AQ%3F.txt&disposition=attachment')
+    expect(event.dataTransfer?.getData('text/uri-list')).toBe(
+      'http://localhost:3000/api/v1/files/content?path=%2Freports%2Freport%3AQ%3F.txt&disposition=attachment\r\n',
+    )
     expect(desktopFileDragEntries(event)).toEqual([{
       name: 'report:Q?.txt', path: '/reports/report:Q?.txt', kind: 'file', mime: 'text/plain',
       resourceVersion: 'sha256:report',
@@ -179,6 +182,9 @@ describe('desktop file shortcuts', () => {
     )).toBe(true)
     expect(event.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toContain(
       'application/zip:photos.zip:',
+    )
+    expect(event.dataTransfer?.getData('text/uri-list')).toBe(
+      'http://localhost:3000/api/v1/files/archive?selection=photos&name=photos.zip\r\n',
     )
     expect(desktopFileDragEntries(event)).toEqual([folder])
 
@@ -212,6 +218,7 @@ describe('desktop file shortcuts', () => {
       'https://downloads.example/secret.txt',
       'https://panel.example/files',
     )).toBeUndefined()
+    expect(selection.dataTransfer?.getData('text/uri-list')).toBe('')
   })
 
   it('serializes one versioned cross-panel descriptor without an authorization secret', () => {

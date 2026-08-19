@@ -79,6 +79,22 @@ function nativeDownloadMime(mime?: string): string {
     : 'application/octet-stream'
 }
 
+function nativeDownloadTarget(
+  downloadURL: string,
+  pageURL = globalThis.location?.href,
+): URL | undefined {
+  if (!downloadURL || !pageURL) return undefined
+  try {
+    const page = new URL(pageURL)
+    const target = new URL(downloadURL, page)
+    if (!['http:', 'https:'].includes(target.protocol) || target.origin !== page.origin) return undefined
+    if (target.username || target.password) return undefined
+    return target
+  } catch {
+    return undefined
+  }
+}
+
 export function nativeArchiveDownloadName(
   entries: readonly DesktopFileEntry[],
   batchName: string,
@@ -98,16 +114,8 @@ function nativeDownloadDragDescriptor(
   downloadURL: string,
   pageURL = globalThis.location?.href,
 ): string | undefined {
-  if (!downloadURL || !pageURL) return undefined
-  try {
-    const page = new URL(pageURL)
-    const target = new URL(downloadURL, page)
-    if (!['http:', 'https:'].includes(target.protocol) || target.origin !== page.origin) return undefined
-    if (target.username || target.password) return undefined
-    return `${nativeDownloadMime(mime)}:${nativeDownloadName(name)}:${target.href}`
-  } catch {
-    return undefined
-  }
+  const target = nativeDownloadTarget(downloadURL, pageURL)
+  return target ? `${nativeDownloadMime(mime)}:${nativeDownloadName(name)}:${target.href}` : undefined
 }
 
 export function nativeFileDownloadDragDescriptor(
@@ -138,6 +146,8 @@ function addNativeDownloadDrag(
   archiveName?: string,
 ): void {
   if (!downloadURL) return
+  const target = nativeDownloadTarget(downloadURL)
+  if (!target) return
   const descriptor = archiveName
     ? nativeArchiveDownloadDragDescriptor(entries, downloadURL, archiveName)
     : entries.length === 1
@@ -151,6 +161,13 @@ function addNativeDownloadDrag(
     dataTransfer.setData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE, descriptor)
   } catch {
     // A browser rejecting the private type must not disable internal dragging.
+  }
+  try {
+    // Keep the standard URI fallback for Windows Explorer and browsers that do
+    // not consume Chromium's DownloadURL type.
+    dataTransfer.setData('text/uri-list', `${target.href}\r\n`)
+  } catch {
+    // A browser rejecting the fallback must not disable internal dragging.
   }
 }
 
