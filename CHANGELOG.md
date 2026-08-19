@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.86.1] - 2026-08-19
+
+### Fixed
+
+- 原生拖拽下载在保留 `DownloadURL` 的同时补充标准 `text/uri-list` 回退，兼容 Windows Explorer、Chrome/Edge 的不同拖拽接收路径。
+- `DownloadURL` 与 `text/uri-list` 共用同源、HTTP(S)、无凭据 URL 校验；跨域、非 HTTP(S) 或含用户名/密码的地址不会写入拖拽数据。
+
+### Upgrade Notes
+
+- 本补丁不改变后端/API、下载权限、端口、Agent 权限、Compose 或应用市场契约；文件夹/多选 ZIP 和页面内拖拽保持不变。
+- 拖拽仍受浏览器企业下载策略、会话有效期和 Windows Explorer 行为影响；本版本不宣称绕过浏览器策略，需在目标 Windows 环境实测。
+- 回滚到 v0.86.0 会恢复仅 `DownloadURL` 的拖拽格式，不删除用户文件或配置。
+
 ## [0.86.0] - 2026-08-18
 
 ### Added
