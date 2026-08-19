@@ -4585,7 +4585,7 @@ div.resource-name {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), #8e83ff);
+  background: linear-gradient(90deg, var(--brand), #8e83ff);
   transition: width 0.35s ease;
 }
 
