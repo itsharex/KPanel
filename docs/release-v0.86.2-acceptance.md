@@ -62,11 +62,11 @@
 <!-- kpanel-release-metrics:end -->
 
 <!-- kpanel-release-process-metrics:start -->
-- 已记录发布流程异常或无效证据拦截次数：3
-- 其中生产写操作开始后异常次数：1
+- 已记录发布流程异常或无效证据拦截次数：6
+- 其中生产写操作开始后异常次数：2
 <!-- kpanel-release-process-metrics:end -->
 
-异常说明：首次 L3 bundle 未包含业务事实新鲜度所需的历史稳定 tags，按 fail-closed 停止并重新生成 v2 bundle；停写备份脚本最后的 Windows→SSH 换行使 `df` 参数带 CR，服务已恢复且归档校验通过；生产更新外层日志包装的 `PIPESTATUS` 引号错误导致包装返回码误报 1，但应用更新本身完成、Panel/Agent 健康，未触发回滚或重复写入。
+异常说明：两次 L3 bundle 迭代分别缺少基线 tag 和业务事实新鲜度所需的历史稳定 tags，均按 fail-closed 停止后重建；停写备份脚本最后的 Windows→SSH 换行使 `df` 参数带 CR，随后独立复核归档/hash 并恢复服务；一次备份复核命令的远端变量引用错误被拦截并重跑；生产更新外层日志包装的 `PIPESTATUS` 引号错误导致包装返回码误报 1，但应用更新本身完成；临时资源清理命令的 `awk` 引用错误被拦截并重跑。以上均未造成服务退化、回滚、重复发布或数据变化。
 
 ## 遗留风险
 
