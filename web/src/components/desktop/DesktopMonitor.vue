@@ -129,7 +129,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="desktop-monitor" :aria-label="i18n.t('desktop.monitorLabel')">
-    <header class="desktop-monitor__header">
+    <header class="desktop-monitor__header desktop-widget__drag-handle">
       <Activity :size="15" aria-hidden="true" />
       <span>{{ i18n.t('desktop.monitorTitle') }}</span>
       <i aria-hidden="true" />

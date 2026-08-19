@@ -18,11 +18,12 @@ import {
 
 function workspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     resourceVersion: `sha256:${'1'.repeat(64)}`,
     available: true,
     hiddenEntryKeys: [],
     positions: {},
+    widgetPositions: {},
     labels: {},
     shortcuts: [],
     ...overrides,
@@ -91,6 +92,7 @@ describe('file window transfer', () => {
       ...initial,
       resourceVersion: `sha256:${'2'.repeat(64)}`,
       positions: input.positions,
+      widgetPositions: input.widgetPositions,
       shortcuts: input.shortcuts.map((shortcut) => ({
         ...shortcut,
         createdAt: '2026-08-14T00:00:00Z',

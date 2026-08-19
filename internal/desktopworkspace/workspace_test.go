@@ -30,7 +30,7 @@ func TestOpenCreatesPrivateWorkspaceAndPersistsReplacement(t *testing.T) {
 	if !initial.Available || initial.SchemaVersion != SchemaVersion || !ValidResourceVersion(initial.ResourceVersion) {
 		t.Fatalf("unexpected initial workspace: %#v", initial)
 	}
-	if initial.HiddenEntryKeys == nil || initial.Positions == nil || initial.Labels == nil || initial.Shortcuts == nil {
+	if initial.HiddenEntryKeys == nil || initial.HiddenWidgetKeys == nil || initial.Positions == nil || initial.WidgetPositions == nil || initial.Labels == nil || initial.Shortcuts == nil {
 		t.Fatalf("default collections must be non-nil: %#v", initial)
 	}
 	if runtime.GOOS != "windows" {
@@ -58,7 +58,9 @@ func TestOpenCreatesPrivateWorkspaceAndPersistsReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := reopened.Workspace()
-	if restored.ResourceVersion != saved.ResourceVersion || len(restored.Shortcuts) != 1 || restored.Shortcuts[0].URL != input.Shortcuts[0].URL {
+	if restored.ResourceVersion != saved.ResourceVersion || len(restored.Shortcuts) != 1 || restored.Shortcuts[0].URL != input.Shortcuts[0].URL ||
+		len(restored.HiddenWidgetKeys) != 1 || restored.HiddenWidgetKeys[0] != "widget:monitor" ||
+		restored.WidgetPositions["widget:clock"] != input.WidgetPositions["widget:clock"] {
 		t.Fatalf("workspace did not survive restart: %#v", restored)
 	}
 	if _, err := reopened.Replace(input); !errors.Is(err, ErrConflict) {
@@ -133,6 +135,15 @@ func TestReplaceValidatesWorkspaceContract(t *testing.T) {
 				return input
 			},
 			field: "positions",
+		},
+		{
+			name: "invalid widget key",
+			input: func() ReplaceInput {
+				input := validReplaceInput(base.ResourceVersion)
+				input.WidgetPositions["widget:Clock"] = Position{X: 0, Y: 0}
+				return input
+			},
+			field: "widgetPositions",
 		},
 		{
 			name: "non-site label",
@@ -314,8 +325,8 @@ func TestOpenMigratesVersionOneURLShortcuts(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(workspacePath)
-	if err != nil || !bytes.Contains(data, []byte(`"schemaVersion": 2`)) || !bytes.Contains(data, []byte(`"targetType": "url"`)) {
-		t.Fatalf("migrated workspace was not persisted as v2: %s, %v", data, err)
+	if err != nil || !bytes.Contains(data, []byte(`"schemaVersion": 3`)) || !bytes.Contains(data, []byte(`"widgetPositions": {}`)) || !bytes.Contains(data, []byte(`"targetType": "url"`)) {
+		t.Fatalf("migrated workspace was not persisted as v3: %s, %v", data, err)
 	}
 }
 
@@ -353,6 +364,18 @@ func TestReplaceEnforcesEntryAndMetadataLimits(t *testing.T) {
 	}
 	if _, err := store.Replace(tooManyPositions); validationField(err) != "positions" {
 		t.Fatalf("position limit error = %v", err)
+	}
+
+	tooManyWidgetPositions := ReplaceInput{
+		ExpectedResourceVersion: version,
+		Positions: map[string]Position{"nav:/overview": {X: 0, Y: 0}},
+		WidgetPositions: make(map[string]Position),
+	}
+	for index := 0; index < MaxPositions; index++ {
+		tooManyWidgetPositions.WidgetPositions["widget:test-"+fmt.Sprintf("%03x", index)] = Position{X: 0.5, Y: 0.5}
+	}
+	if _, err := store.Replace(tooManyWidgetPositions); validationField(err) != "widgetPositions" {
+		t.Fatalf("combined position limit error = %v", err)
 	}
 
 	tooManyHidden := ReplaceInput{ExpectedResourceVersion: version}
@@ -576,12 +599,14 @@ func validReplaceInput(version string) ReplaceInput {
 	return ReplaceInput{
 		ExpectedResourceVersion: version,
 		HiddenEntryKeys:         []string{"app:builtin-1", "site:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		HiddenWidgetKeys:        []string{"widget:monitor"},
 		Positions: map[string]Position{
 			"nav:/overview":                         {X: 0.1, Y: 0.2},
 			"app:builtin-1":                         {X: 0.2, Y: 0.3},
 			"site:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {X: 0.3, Y: 0.4},
 			"shortcut:" + testShortcutID:            {X: 0.4, Y: 0.5},
 		},
+		WidgetPositions: map[string]Position{"widget:clock": {X: 0.8, Y: 0}},
 		Labels: map[string]string{"site:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "示例网站"},
 		Shortcuts: []ShortcutInput{{
 			ID: testShortcutID, Name: "控制台", Description: "本地管理入口",

@@ -31,13 +31,14 @@ import (
 )
 
 const (
-	SchemaVersion        = 2
+	SchemaVersion        = 3
 	MaxWorkspaceBytes    = 256 << 10
 	MaxIconBytes         = 256 << 10
 	MaxIconTotalBytes    = 16 << 20
 	MaxShortcuts         = 64
 	MaxPositions         = 512
 	MaxHiddenEntryKeys   = 512
+	MaxHiddenWidgetKeys  = 512
 	MaxShortcutNameRunes = 48
 	MaxDescriptionRunes  = 160
 	MaxURLBytes          = 2048
@@ -68,6 +69,7 @@ var (
 	navKeyPattern     = regexp.MustCompile(`^nav:/[a-z][a-z0-9-]{0,63}$`)
 	appIDPattern      = regexp.MustCompile(`^(?:builtin|thirdparty)-[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 	siteIDPattern     = regexp.MustCompile(`^[a-f0-9]{32}$`)
+	widgetKeyPattern  = regexp.MustCompile(`^widget:[a-z][a-z0-9-]{0,63}$`)
 )
 
 type Position struct {
@@ -103,7 +105,9 @@ type Workspace struct {
 	Available       bool                `json:"available"`
 	Warning         string              `json:"warning,omitempty"`
 	HiddenEntryKeys []string            `json:"hiddenEntryKeys"`
+	HiddenWidgetKeys []string           `json:"hiddenWidgetKeys"`
 	Positions       map[string]Position `json:"positions"`
+	WidgetPositions map[string]Position `json:"widgetPositions"`
 	Labels          map[string]string   `json:"labels"`
 	Shortcuts       []Shortcut          `json:"shortcuts"`
 }
@@ -111,7 +115,9 @@ type Workspace struct {
 type ReplaceInput struct {
 	ExpectedResourceVersion string              `json:"expectedResourceVersion"`
 	HiddenEntryKeys         []string            `json:"hiddenEntryKeys"`
+	HiddenWidgetKeys        []string            `json:"hiddenWidgetKeys"`
 	Positions               map[string]Position `json:"positions"`
+	WidgetPositions         map[string]Position `json:"widgetPositions"`
 	Labels                  map[string]string   `json:"labels"`
 	Shortcuts               []ShortcutInput     `json:"shortcuts"`
 }
@@ -145,7 +151,9 @@ type shortcutRecord struct {
 type persistedWorkspace struct {
 	SchemaVersion   int                 `json:"schemaVersion"`
 	HiddenEntryKeys []string            `json:"hiddenEntryKeys"`
+	HiddenWidgetKeys []string           `json:"hiddenWidgetKeys"`
 	Positions       map[string]Position `json:"positions"`
+	WidgetPositions map[string]Position `json:"widgetPositions"`
 	Labels          map[string]string   `json:"labels"`
 	Shortcuts       []shortcutRecord    `json:"shortcuts"`
 }
@@ -336,7 +344,9 @@ func (s *Store) workspaceLocked() Workspace {
 	result := Workspace{
 		SchemaVersion: SchemaVersion, ResourceVersion: resourceVersion(state),
 		Available: s.available, HiddenEntryKeys: append([]string{}, state.HiddenEntryKeys...),
+		HiddenWidgetKeys: append([]string{}, state.HiddenWidgetKeys...),
 		Positions: clonePositions(state.Positions), Labels: cloneLabels(state.Labels),
+		WidgetPositions: clonePositions(state.WidgetPositions),
 		Shortcuts: shortcuts,
 	}
 	if !s.available {
@@ -450,8 +460,9 @@ func (s *Store) gcIconsLocked() error {
 
 func emptyPersistedWorkspace() persistedWorkspace {
 	return persistedWorkspace{
-		SchemaVersion: SchemaVersion, HiddenEntryKeys: []string{},
-		Positions: map[string]Position{}, Labels: map[string]string{}, Shortcuts: []shortcutRecord{},
+		SchemaVersion: SchemaVersion, HiddenEntryKeys: []string{}, HiddenWidgetKeys: []string{},
+		Positions: map[string]Position{}, WidgetPositions: map[string]Position{},
+		Labels: map[string]string{}, Shortcuts: []shortcutRecord{},
 	}
 }
 
@@ -498,6 +509,8 @@ func readPersistedWorkspace(path string) (persistedWorkspace, error) {
 			item.TargetType = ShortcutTargetURL
 		}
 		state.SchemaVersion = SchemaVersion
+	case 2:
+		state.SchemaVersion = SchemaVersion
 	case SchemaVersion:
 	default:
 		return persistedWorkspace{}, errInvalidOnDisk
@@ -517,7 +530,9 @@ func buildPersistedWorkspace(input ReplaceInput, current persistedWorkspace, now
 	state := persistedWorkspace{
 		SchemaVersion:   SchemaVersion,
 		HiddenEntryKeys: append([]string(nil), input.HiddenEntryKeys...),
+		HiddenWidgetKeys: append([]string(nil), input.HiddenWidgetKeys...),
 		Positions:       clonePositions(input.Positions), Labels: cloneLabels(input.Labels),
+		WidgetPositions: clonePositions(input.WidgetPositions),
 		Shortcuts: make([]shortcutRecord, 0, len(input.Shortcuts)),
 	}
 	currentByID := make(map[string]shortcutRecord, len(current.Shortcuts))
@@ -567,8 +582,14 @@ func validatePersistedWorkspace(state persistedWorkspace) error {
 	if len(state.HiddenEntryKeys) > MaxHiddenEntryKeys {
 		return &ValidationError{Field: "hiddenEntryKeys", Detail: "at most 512 hidden entries are allowed"}
 	}
+	if len(state.HiddenWidgetKeys) > MaxHiddenWidgetKeys {
+		return &ValidationError{Field: "hiddenWidgetKeys", Detail: "at most 512 hidden widgets are allowed"}
+	}
 	if len(state.Positions) > MaxPositions {
 		return &ValidationError{Field: "positions", Detail: "at most 512 positions are allowed"}
+	}
+	if len(state.Positions)+len(state.WidgetPositions) > MaxPositions {
+		return &ValidationError{Field: "widgetPositions", Detail: "at most 512 icon and widget positions are allowed in total"}
 	}
 	shortcutIDs := make(map[string]bool, len(state.Shortcuts))
 	for _, item := range state.Shortcuts {
@@ -599,6 +620,13 @@ func validatePersistedWorkspace(state persistedWorkspace) error {
 		}
 		hidden[key] = true
 	}
+	hiddenWidgets := make(map[string]bool, len(state.HiddenWidgetKeys))
+	for _, key := range state.HiddenWidgetKeys {
+		if !validWidgetKey(key) || hiddenWidgets[key] {
+			return &ValidationError{Field: "hiddenWidgetKeys", Detail: "hidden widget keys must be unique widget: keys"}
+		}
+		hiddenWidgets[key] = true
+	}
 	for key, position := range state.Positions {
 		if !validPositionKey(key) || math.IsNaN(position.X) || math.IsInf(position.X, 0) ||
 			math.IsNaN(position.Y) || math.IsInf(position.Y, 0) ||
@@ -613,6 +641,19 @@ func validatePersistedWorkspace(state persistedWorkspace) error {
 		}
 		if strings.HasPrefix(key, "shortcut:") && !shortcutIDs[strings.TrimPrefix(key, "shortcut:")] {
 			return &ValidationError{Field: "positions", Detail: "shortcut positions must reference an existing shortcut"}
+		}
+	}
+	for key, position := range state.WidgetPositions {
+		if !validWidgetPositionKey(key) || math.IsNaN(position.X) || math.IsInf(position.X, 0) ||
+			math.IsNaN(position.Y) || math.IsInf(position.Y, 0) ||
+			position.X < 0 || position.X > 1 || position.Y < 0 || position.Y > MaxPositions {
+			return &ValidationError{
+				Field: "widgetPositions",
+				Detail: fmt.Sprintf(
+					"widget positions require a stable widget key, x between 0 and 1, and paged y between 0 and %d",
+					MaxPositions,
+				),
+			}
 		}
 	}
 	for key, label := range state.Labels {
@@ -691,6 +732,14 @@ func validPositionKey(key string) bool {
 	return navKeyPattern.MatchString(key) || validAppKey(key) || validSiteKey(key) || validShortcutKey(key)
 }
 
+func validWidgetPositionKey(key string) bool {
+	return validWidgetKey(key)
+}
+
+func validWidgetKey(key string) bool {
+	return widgetKeyPattern.MatchString(key)
+}
+
 func validAppKey(key string) bool {
 	return strings.HasPrefix(key, "app:") && appIDPattern.MatchString(strings.TrimPrefix(key, "app:"))
 }
@@ -716,14 +765,22 @@ func canonicalizePersistedWorkspace(state persistedWorkspace) persistedWorkspace
 	result := persistedWorkspace{
 		SchemaVersion:   SchemaVersion,
 		HiddenEntryKeys: append([]string(nil), state.HiddenEntryKeys...),
-		Positions:       clonePositions(state.Positions), Labels: cloneLabels(state.Labels),
+		HiddenWidgetKeys: append([]string(nil), state.HiddenWidgetKeys...),
+		Positions:       clonePositions(state.Positions), WidgetPositions: clonePositions(state.WidgetPositions),
+		Labels:          cloneLabels(state.Labels),
 		Shortcuts: append([]shortcutRecord(nil), state.Shortcuts...),
 	}
 	if result.HiddenEntryKeys == nil {
 		result.HiddenEntryKeys = []string{}
 	}
+	if result.HiddenWidgetKeys == nil {
+		result.HiddenWidgetKeys = []string{}
+	}
 	if result.Positions == nil {
 		result.Positions = map[string]Position{}
+	}
+	if result.WidgetPositions == nil {
+		result.WidgetPositions = map[string]Position{}
 	}
 	if result.Labels == nil {
 		result.Labels = map[string]string{}
@@ -732,6 +789,7 @@ func canonicalizePersistedWorkspace(state persistedWorkspace) persistedWorkspace
 		result.Shortcuts = []shortcutRecord{}
 	}
 	sort.Strings(result.HiddenEntryKeys)
+	sort.Strings(result.HiddenWidgetKeys)
 	sort.Slice(result.Shortcuts, func(left, right int) bool {
 		return result.Shortcuts[left].ID < result.Shortcuts[right].ID
 	})

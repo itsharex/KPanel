@@ -74,6 +74,7 @@ describe('API client', () => {
       expectedResourceVersion: current.resourceVersion,
       hiddenEntryKeys: ['app:nginx'],
       positions: {},
+      widgetPositions: {},
       labels: {},
       shortcuts: [],
     })

@@ -49,11 +49,12 @@ function pointer(
 
 function workspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     resourceVersion: `sha256:${'1'.repeat(64)}`,
     available: true,
     hiddenEntryKeys: [],
     positions: {},
+    widgetPositions: {},
     labels: {},
     shortcuts: [],
     ...overrides,
@@ -93,6 +94,7 @@ describe('DesktopView icon layout interaction', () => {
       resourceVersion: `sha256:${'2'.repeat(64)}`,
       hiddenEntryKeys: body.hiddenEntryKeys,
       positions: body.positions,
+      widgetPositions: body.widgetPositions,
       labels: body.labels,
     }))
   })
@@ -124,6 +126,29 @@ describe('DesktopView icon layout interaction', () => {
     window.dispatchEvent(pointer('pointerup', 145, 30))
     await icon.trigger('dblclick')
     expect(desktop.windows.value).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('persists a widget drop in widgetPositions and supports keyboard nudging', async () => {
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const widget = wrapper.get('[aria-label="widget:clock"]')
+    const handle = widget.find('.desktop-widget__drag-handle')
+
+    handle.element.dispatchEvent(pointer('pointerdown', 900, 40))
+    window.dispatchEvent(pointer('pointermove', 760, 180))
+    window.dispatchEvent(pointer('pointerup', 760, 180))
+    await flushPromises()
+
+    expect(updateWorkspace).toHaveBeenCalledTimes(1)
+    expect(updateWorkspace.mock.calls[0]?.[0].widgetPositions['widget:clock']).toBeDefined()
+
+    await widget.trigger('keydown', { key: 'ArrowLeft', ctrlKey: true })
+    await flushPromises()
+    expect(updateWorkspace).toHaveBeenCalledTimes(2)
+    expect(updateWorkspace.mock.calls[1]?.[0].widgetPositions).toEqual(expect.objectContaining({
+      'widget:clock': expect.any(Object),
+    }))
     wrapper.unmount()
   })
 
@@ -426,6 +451,10 @@ describe('DesktopView icon layout interaction', () => {
     loadWorkspace.mockResolvedValueOnce(workspace({
       hiddenEntryKeys: ['app:hidden'],
       positions: { 'app:hidden': { x: 0.75, y: 0.5 } },
+      widgetPositions: {
+        'widget:clock': { x: 0.4073756432246998, y: 0 },
+        'widget:monitor': { x: 0.7332761578044596, y: 0.3246753246753247 },
+      },
     }))
     const wrapper = mount(DesktopView, { attachTo: document.body })
     await flushPromises()
@@ -433,7 +462,7 @@ describe('DesktopView icon layout interaction', () => {
     await wrapper.trigger('contextmenu', { clientX: 220, clientY: 160 })
     await flushPromises()
     const manage = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-      .find((item) => item.text().includes('管理桌面图标'))
+      .find((item) => item.text().includes('桌面布局管理'))
     await manage?.trigger('click')
     await flushPromises()
     document.body.querySelector<HTMLButtonElement>('.desktop-icon-manager__layout-action')?.click()
@@ -442,6 +471,10 @@ describe('DesktopView icon layout interaction', () => {
     expect(updateWorkspace).toHaveBeenCalledWith(expect.objectContaining({
       hiddenEntryKeys: ['app:hidden'],
       positions: expect.objectContaining({ 'app:hidden': { x: 0.75, y: 0.5 } }),
+      widgetPositions: expect.objectContaining({
+        'widget:clock': { x: 0.4073756432246998, y: 0 },
+        'widget:monitor': { x: 0.7332761578044596, y: 0.3246753246753247 },
+      }),
     }))
     wrapper.unmount()
   })
@@ -457,7 +490,7 @@ describe('DesktopView icon layout interaction', () => {
     expect(items.slice(0, 3).map((item) => item.text())).toEqual([
       '刷新桌面',
       '添加快捷方式',
-      '管理桌面图标',
+      '桌面布局管理',
     ])
     expect(items.some((item) => item.text().includes('自动整理'))).toBe(false)
     expect(items.some((item) => item.text().includes('恢复默认位置'))).toBe(false)
@@ -525,7 +558,7 @@ describe('DesktopView icon layout interaction', () => {
     await wrapper.trigger('contextmenu', { clientX: 220, clientY: 160 })
     await flushPromises()
     const manage = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-      .find((item) => item.text().includes('管理桌面图标'))
+      .find((item) => item.text().includes('桌面布局管理'))
     await manage?.trigger('click')
     await flushPromises()
     document.body.querySelector<HTMLButtonElement>('.desktop-icon-manager__layout-action')?.click()

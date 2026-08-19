@@ -9,11 +9,12 @@ function version(character: string): string {
 
 function workspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     resourceVersion: version('1'),
     available: true,
     hiddenEntryKeys: [],
     positions: {},
+    widgetPositions: {},
     labels: {},
     shortcuts: [],
     ...overrides,
@@ -48,6 +49,7 @@ describe('desktop icon workspace store', () => {
           resourceVersion: version(String(writes + 1)),
           hiddenEntryKeys: body.hiddenEntryKeys,
           positions: body.positions,
+          widgetPositions: body.widgetPositions,
           labels: body.labels,
         })
       })

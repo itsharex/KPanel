@@ -287,6 +287,38 @@ const systemSummary = {
   collectedAt: new Date().toISOString(),
 }
 
+let desktopWorkspaceRevision = 1
+let desktopWorkspace = {
+  schemaVersion: 3,
+  resourceVersion: `sha256:${'1'.repeat(64)}`,
+  available: true,
+  hiddenEntryKeys: [],
+  hiddenWidgetKeys: [],
+  positions: {},
+  widgetPositions: {
+    'widget:clock': { x: 0.82, y: 0 },
+    'widget:monitor': { x: 0.82, y: 0.32 },
+  },
+  labels: {},
+  shortcuts: [],
+}
+
+function commitDesktopWorkspace(input) {
+  desktopWorkspaceRevision += 1
+  desktopWorkspace = {
+    schemaVersion: 3,
+    resourceVersion: `sha256:${String(desktopWorkspaceRevision).padStart(64, '0')}`,
+    available: true,
+    hiddenEntryKeys: Array.isArray(input.hiddenEntryKeys) ? input.hiddenEntryKeys : [],
+    hiddenWidgetKeys: Array.isArray(input.hiddenWidgetKeys) ? input.hiddenWidgetKeys : [],
+    positions: input.positions && typeof input.positions === 'object' ? input.positions : {},
+    widgetPositions: input.widgetPositions && typeof input.widgetPositions === 'object' ? input.widgetPositions : {},
+    labels: input.labels && typeof input.labels === 'object' ? input.labels : {},
+    shortcuts: Array.isArray(input.shortcuts) ? input.shortcuts : [],
+  }
+  return desktopWorkspace
+}
+
 const systemCapabilities = [
   'hostname',
   'ssh-port',
@@ -470,6 +502,19 @@ createServer(async (request, response) => {
     })
     return
   }
+  if (request.method === 'GET' && url.pathname === '/api/v1/desktop/workspace') {
+    send(response, 200, desktopWorkspace)
+    return
+  }
+  if (request.method === 'PUT' && url.pathname === '/api/v1/desktop/workspace') {
+    const input = await readJSON(request)
+    if (input.expectedResourceVersion !== desktopWorkspace.resourceVersion) {
+      send(response, 409, { title: 'Desktop workspace changed', code: 'desktop_workspace_changed' })
+      return
+    }
+    send(response, 200, commitDesktopWorkspace(input))
+    return
+  }
   if (request.method === 'GET' && url.pathname === '/api/v1/agent/health') {
     send(response, 200, {
       status: 'ok',
@@ -563,6 +608,57 @@ createServer(async (request, response) => {
           allowedActions: ['update'],
         },
       ],
+    })
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/cluster/hosts') {
+    send(response, 200, {
+      items: [
+        {
+          id: 'e'.repeat(32),
+          isLocal: true,
+          name: 'kpanel-demo',
+          kind: 'panel',
+          origin: 'https://panel.example.com',
+          transportSecurity: 'tls',
+          remoteNodeId: 'local-node',
+          federationProtocol: 'v1',
+          scope: 'cluster.summary.read',
+          terminalAvailable: true,
+          mutualFileTransferAvailable: false,
+          state: 'online',
+          consecutiveFailures: 0,
+          polling: true,
+          resourceVersion: `sha256:${'f'.repeat(64)}`,
+          createdAt: new Date(Date.now() - 86_400_000).toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: 'a'.repeat(32),
+          isLocal: false,
+          name: 'edge-melbourne',
+          kind: 'light_node',
+          origin: 'https://edge.example.com',
+          transportSecurity: 'tls',
+          remoteNodeId: 'remote-node',
+          federationProtocol: 'v1',
+          scope: 'cluster.summary.read',
+          terminalAvailable: false,
+          mutualFileTransferAvailable: false,
+          state: 'degraded',
+          consecutiveFailures: 1,
+          lastError: '延迟偏高，保留上次成功快照',
+          polling: true,
+          resourceVersion: `sha256:${'a'.repeat(64)}`,
+          createdAt: new Date(Date.now() - 3_600_000).toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      total: 2,
+      remoteTotal: 1,
+      maxHosts: 16,
+      pollIntervalSeconds: 30,
+      nodeId: 'local-node',
     })
     return
   }

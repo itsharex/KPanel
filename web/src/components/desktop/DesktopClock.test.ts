@@ -30,6 +30,16 @@ describe('DesktopClock', () => {
     wrapper.unmount()
   })
 
+  it('keeps the date and weekday as separate layout lines', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-07T14:23:07'))
+    const wrapper = mount(DesktopClock)
+    await nextTick()
+    expect(wrapper.find('.desktop-clock__date-main').text().length).toBeGreaterThan(0)
+    expect(wrapper.find('.desktop-clock__weekday').text().length).toBeGreaterThan(0)
+    wrapper.unmount()
+  })
+
   it('updates the local time every second', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-07T14:23:07'))

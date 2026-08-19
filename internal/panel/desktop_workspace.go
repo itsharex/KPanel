@@ -252,7 +252,9 @@ func validDesktopShortcutIconQuery(r *http.Request) bool {
 func desktopWorkspaceChangedCounts(current desktopworkspace.Workspace, input desktopworkspace.ReplaceInput) map[string]int {
 	return map[string]int{
 		"hiddenEntries": changedStringSetCount(current.HiddenEntryKeys, input.HiddenEntryKeys),
+		"hiddenWidgets": changedStringSetCount(current.HiddenWidgetKeys, input.HiddenWidgetKeys),
 		"positions":     changedPositionCount(current.Positions, input.Positions),
+		"widgetPositions": changedPositionCount(current.WidgetPositions, input.WidgetPositions),
 		"labels":        changedStringMapCount(current.Labels, input.Labels),
 		"shortcuts":     changedShortcutCount(current.Shortcuts, input.Shortcuts),
 	}

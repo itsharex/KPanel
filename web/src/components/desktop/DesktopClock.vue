@@ -71,11 +71,15 @@ const localDateFormatter = computed(() => createFormatter({
   year: 'numeric',
   month: 'long',
   day: 'numeric',
+}))
+
+const localWeekdayFormatter = computed(() => createFormatter({
   weekday: 'long',
 }))
 
 const localTime = computed(() => localTimeFormatter.value?.format(now.value) ?? '--:--:--')
 const localDate = computed(() => localDateFormatter.value?.format(now.value) ?? '')
+const localWeekday = computed(() => localWeekdayFormatter.value?.format(now.value) ?? '')
 
 const serverTimezone = computed(() => props.systemTimezone?.trim() || '')
 
@@ -112,13 +116,16 @@ const serverLocation = computed(() => {
 
 <template>
   <section class="desktop-clock">
-    <header class="desktop-clock__header">
+    <header class="desktop-clock__header desktop-widget__drag-handle">
       <span><Clock3 :size="15" aria-hidden="true" />{{ i18n.t('desktop.localTime') }}</span>
       <i aria-hidden="true" />
     </header>
     <time class="desktop-clock__local" :datetime="new Date(now).toISOString()">
       <span class="desktop-clock__time">{{ localTime }}</span>
-      <span class="desktop-clock__date">{{ localDate }}</span>
+      <span class="desktop-clock__date">
+        <span class="desktop-clock__date-main">{{ localDate }}</span>
+        <span class="desktop-clock__weekday">{{ localWeekday }}</span>
+      </span>
     </time>
     <div v-if="serverLocation || serverLabel" class="desktop-clock__server" :title="serverLabel">
       <span class="desktop-clock__server-icon"><Globe2 :size="15" aria-hidden="true" /></span>
@@ -128,12 +135,14 @@ const serverLocation = computed(() => {
           <span class="desktop-clock__server-time">{{ serverTime || '—' }}</span>
         </span>
         <span class="desktop-clock__server-location">
-          <CountryFlagIcon
-            v-if="countryCode"
-            :country-code="countryCode"
-            :label="network?.country || countryCode"
-          />
-          <span class="desktop-clock__server-location-name">{{ serverLocation || i18n.t('desktop.hostLocationUnknown') }}</span>
+          <span class="desktop-clock__server-location-main">
+            <CountryFlagIcon
+              v-if="countryCode"
+              :country-code="countryCode"
+              :label="network?.country || countryCode"
+            />
+            <span class="desktop-clock__server-location-name">{{ serverLocation || i18n.t('desktop.hostLocationUnknown') }}</span>
+          </span>
           <span v-if="serverLabel" class="desktop-clock__server-timezone">{{ serverLabel }}</span>
         </span>
       </span>

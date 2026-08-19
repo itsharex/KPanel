@@ -66,11 +66,12 @@ const mockedClusterHosts = vi.mocked(api.cluster.hosts)
 
 function makeWorkspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     resourceVersion: `sha256:${'1'.repeat(64)}`,
     available: true,
     hiddenEntryKeys: [],
     positions: {},
+    widgetPositions: {},
     labels: {},
     shortcuts: [],
     ...overrides,
@@ -118,6 +119,7 @@ describe('DesktopView dynamic entries', () => {
       resourceVersion: `sha256:${'2'.repeat(64)}`,
       hiddenEntryKeys: body.hiddenEntryKeys,
       positions: body.positions,
+      widgetPositions: body.widgetPositions,
       labels: body.labels,
       shortcuts: body.shortcuts.map((shortcut) => ({
         ...shortcut,
@@ -459,7 +461,7 @@ describe('DesktopView dynamic entries', () => {
     await wrapper.trigger('contextmenu', { clientX: 220, clientY: 160 })
     await nextTick()
     const manage = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-      .find((item) => item.text().includes('管理桌面图标'))
+      .find((item) => item.text().includes('桌面布局管理'))
     await manage?.trigger('click')
     await nextTick()
     const restore = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.desktop-icon-manager button'))
@@ -1003,12 +1005,12 @@ describe('DesktopView dynamic entries', () => {
     await wrapper.trigger('contextmenu', { clientX: 220, clientY: 160 })
     await nextTick()
     const manage = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
-      .find((item) => item.text().includes('管理桌面图标'))
+      .find((item) => item.text().includes('桌面布局管理'))
     await manage?.trigger('click')
     await flushPromises()
 
     const managerPanel = Array.from(document.body.querySelectorAll<HTMLElement>('.modal-panel'))
-      .find((panel) => panel.textContent?.includes('管理桌面图标'))
+      .find((panel) => panel.textContent?.includes('桌面布局管理'))
     const addShortcut = Array.from(managerPanel?.querySelectorAll<HTMLButtonElement>('button') || [])
       .find((button) => button.textContent?.includes('添加快捷方式'))
     addShortcut?.focus()
@@ -1018,7 +1020,7 @@ describe('DesktopView dynamic entries', () => {
     const openPanels = Array.from(document.body.querySelectorAll<HTMLElement>('.modal-panel'))
     expect(managerPanel?.isConnected).toBe(true)
     expect(openPanels).toHaveLength(2)
-    expect(openPanels[0]?.textContent).toContain('管理桌面图标')
+    expect(openPanels[0]?.textContent).toContain('桌面布局管理')
     expect(openPanels[1]?.textContent).toContain('添加桌面快捷方式')
     expect(document.body.querySelectorAll('.modal-backdrop')).toHaveLength(2)
 

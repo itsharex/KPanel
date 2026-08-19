@@ -1612,13 +1612,16 @@ export interface DesktopShortcut {
 }
 
 export interface DesktopWorkspace {
-  schemaVersion: 2
+  schemaVersion: 3
   resourceVersion: string
   /** False means corrupt/unsupported persisted data was isolated read-only. */
   available: boolean
   warning?: string
   hiddenEntryKeys: string[]
+  /** Optional for compatibility with workspaces created before widget visibility was persisted. */
+  hiddenWidgetKeys?: string[]
   positions: Record<string, DesktopIconPosition>
+  widgetPositions: Record<string, DesktopIconPosition>
   labels: Record<string, string>
   shortcuts: DesktopShortcut[]
 }
@@ -1626,7 +1629,9 @@ export interface DesktopWorkspace {
 export interface DesktopWorkspaceUpdate {
   expectedResourceVersion: string
   hiddenEntryKeys: string[]
+  hiddenWidgetKeys?: string[]
   positions: Record<string, DesktopIconPosition>
+  widgetPositions: Record<string, DesktopIconPosition>
   labels: Record<string, string>
   shortcuts: Array<Pick<DesktopShortcut, 'id' | 'name' | 'description' | 'targetType' | 'url' | 'path'>>
 }

@@ -24,11 +24,12 @@ import {
 
 function workspace(overrides: Partial<DesktopWorkspace> = {}): DesktopWorkspace {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     resourceVersion: `sha256:${'1'.repeat(64)}`,
     available: true,
     hiddenEntryKeys: [],
     positions: {},
+    widgetPositions: {},
     labels: {},
     shortcuts: [],
     ...overrides,
@@ -41,6 +42,7 @@ function installWorkspace(initial: DesktopWorkspace): void {
     resourceVersion: `sha256:${'2'.repeat(64)}`,
     hiddenEntryKeys: input.hiddenEntryKeys,
     positions: input.positions,
+    widgetPositions: input.widgetPositions,
     labels: input.labels,
     shortcuts: input.shortcuts.map((shortcut) => ({
       ...shortcut,

@@ -45,9 +45,13 @@ func TestDesktopWorkspaceAPIAuthenticationValidationAndConflict(t *testing.T) {
 	input := desktopworkspace.ReplaceInput{
 		ExpectedResourceVersion: initial.ResourceVersion,
 		HiddenEntryKeys:         []string{"app:builtin-1"},
+		HiddenWidgetKeys:        []string{"widget:monitor"},
 		Positions: map[string]desktopworkspace.Position{
 			"nav:/overview":                   {X: 0.1, Y: 2.2},
 			"shortcut:" + panelTestShortcutID: {X: 0.4, Y: 0.5},
+		},
+		WidgetPositions: map[string]desktopworkspace.Position{
+			"widget:clock": {X: 0.8, Y: 0},
 		},
 		Shortcuts: []desktopworkspace.ShortcutInput{{
 			ID: panelTestShortcutID, Name: "Control", Description: "audit-secret-description",
@@ -85,6 +89,7 @@ func TestDesktopWorkspaceAPIAuthenticationValidationAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	if saved.ResourceVersion == initial.ResourceVersion || len(saved.Shortcuts) != 2 ||
+		len(saved.HiddenWidgetKeys) != 1 || saved.HiddenWidgetKeys[0] != "widget:monitor" ||
 		saved.Shortcuts[1].TargetType != desktopworkspace.ShortcutTargetFile ||
 		saved.Shortcuts[1].Path != "/etc/audit-secret-path.conf" ||
 		saved.Positions["nav:/overview"] != (desktopworkspace.Position{X: 0.1, Y: 2.2}) {

@@ -289,11 +289,12 @@ beforeEach(() => {
   ))
   mocks.thumbnailUrl.mockImplementation((path: string, version: string) => `/thumb?path=${path}&version=${version}`)
   const desktopWorkspace = {
-    schemaVersion: 2 as const,
+    schemaVersion: 3 as const,
     resourceVersion: `sha256:${'1'.repeat(64)}`,
     available: true,
     hiddenEntryKeys: [],
     positions: {},
+    widgetPositions: {},
     labels: {},
     shortcuts: [],
   }

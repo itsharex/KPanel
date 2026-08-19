@@ -14,11 +14,13 @@ const EMPTY_RESOURCE_VERSION = 'sha256:' + '0'.repeat(64)
 
 function emptyWorkspace(): DesktopWorkspace {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     resourceVersion: EMPTY_RESOURCE_VERSION,
     available: true,
     hiddenEntryKeys: [],
+    hiddenWidgetKeys: [],
     positions: {},
+    widgetPositions: {},
     labels: {},
     shortcuts: [],
   }
@@ -38,8 +40,12 @@ function cloneShortcuts(shortcuts: DesktopShortcut[]): DesktopWorkspaceDraft['sh
 function draftFrom(value: DesktopWorkspace): DesktopWorkspaceDraft {
   return {
     hiddenEntryKeys: [...value.hiddenEntryKeys],
+    hiddenWidgetKeys: [...(value.hiddenWidgetKeys || [])],
     positions: Object.fromEntries(
       Object.entries(value.positions).map(([key, position]) => [key, { ...position }]),
+    ),
+    widgetPositions: Object.fromEntries(
+      Object.entries(value.widgetPositions).map(([key, position]) => [key, { ...position }]),
     ),
     labels: { ...value.labels },
     shortcuts: cloneShortcuts(value.shortcuts),

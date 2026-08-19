@@ -30,8 +30,7 @@ import {
 } from '@lucide/vue'
 import DesktopWindow from '@/components/desktop/DesktopWindow.vue'
 import DesktopEntryIcon from '@/components/desktop/DesktopEntryIcon.vue'
-import DesktopClock from '@/components/desktop/DesktopClock.vue'
-import DesktopMonitor from '@/components/desktop/DesktopMonitor.vue'
+import DesktopWidgetHost from '@/components/desktop/DesktopWidgetHost.vue'
 import DesktopIconManagerDialog from '@/components/desktop/DesktopIconManagerDialog.vue'
 import DesktopShortcutDialog, {
   type DesktopShortcutDraft,
@@ -70,20 +69,24 @@ import {
 } from '@/lib/desktopExternalDrop'
 import { shortcutFileGradient, shortcutFileIcon } from '@/lib/fileEntryPresentation'
 import {
-  autoArrangeDesktopIcons,
-  deriveDesktopIconLayout,
   desktopIconGrid,
   desktopIconGridSlotForPosition,
   desktopIconPositionForGridSlot,
   desktopIconPixelsToPosition,
   desktopIconPositionToPixels,
-  dropDesktopIcon,
   MAX_DESKTOP_ICON_POSITIONS,
-  moveDesktopIconGroup,
-  moveDesktopIconByKeyboard,
   type DesktopIconBounds,
-  type DesktopIconPlacement,
 } from '@/lib/desktopIconLayout'
+import {
+  deriveDesktopGridLayout,
+  desktopGridPlacementRect,
+  dropDesktopGridItem,
+  moveDesktopGridItemByKeyboard,
+  moveDesktopGridItemGroup,
+  type DesktopGridItem,
+  type DesktopGridPlacement,
+} from '@/lib/desktopGridLayout'
+import { desktopWidgetKeys, desktopWidgets } from '@/lib/desktopWidgets'
 import { prefetchNavigationRoute } from '@/lib/navigation'
 import {
   desktopCloseGuardCoordinator,
@@ -252,6 +255,9 @@ let entriesSequence = 0
 
 const workspace = computed(() => desktopIcons.workspace.value)
 const hiddenEntryKeys = computed(() => new Set(workspace.value.hiddenEntryKeys))
+const hiddenWidgetKeys = computed(() => new Set(workspace.value.hiddenWidgetKeys || []))
+const hiddenWidgetKeyList = computed(() => [...hiddenWidgetKeys.value])
+const visibleDesktopWidgets = computed(() => desktopWidgets.filter((widget) => !hiddenWidgetKeys.value.has(widget.key)))
 const visibleDynamicEntries = computed(() =>
   (entries.value?.visible || []).filter((entry) => !hiddenEntryKeys.value.has(entry.key)),
 )
@@ -297,9 +303,12 @@ const iconsElement = ref<HTMLElement>()
 const desktopElement = ref<HTMLElement>()
 const iconBounds = ref<DesktopIconBounds>({ width: 90, height: 96 })
 const compactIconLayout = ref(window.innerWidth <= 760)
+const widgetLayoutVisible = ref(window.innerWidth > 900)
 const localPositions = ref<Record<string, DesktopIconPosition>>({})
+const localWidgetPositions = ref<Record<string, DesktopIconPosition>>({})
 const dragPreviews = ref<Record<string, { left: number; top: number }>>({})
 const draggingIcons = ref<Set<string>>(new Set())
+const draggingWidgets = ref<Set<string>>(new Set())
 const nativeDragHiddenIcons = ref<Set<string>>(new Set())
 const iconAnnouncement = ref('')
 const iconManagerOpen = ref(false)
@@ -376,19 +385,60 @@ const allIconKeys = computed(() => [
   ...shortcutEntries.value.map((entry) => entry.key),
 ])
 
-const savedPlacements = computed<DesktopIconPlacement[]>(() =>
-  Object.entries(localPositions.value).map(([key, position]) => ({ key, position })),
-)
+const desktopWidgetItems = computed<DesktopGridItem[]>(() => {
+  if (!widgetLayoutVisible.value) return []
+  const grid = desktopIconGrid(iconBounds.value)
+  return visibleDesktopWidgets.value.map((widget) => ({
+    key: widget.key,
+    columns: widget.columns,
+    rows: widget.rows,
+    defaultSlot: widget.defaultSlot(grid),
+  }))
+})
 
-const renderedIconLayout = computed(() => deriveDesktopIconLayout(
-  allIconKeys.value,
+const allDesktopLayoutItems = computed<DesktopGridItem[]>(() => [
+  ...allIconKeys.value.map((key) => ({ key })),
+  ...desktopWidgetItems.value,
+])
+
+function widgetComponentProps(key: string): Record<string, unknown> {
+  if (key === 'widget:clock') {
+    return {
+      network: entries.value?.publicNetwork,
+      systemTimezone: systemResources.value?.timezone,
+    }
+  }
+  if (key === 'widget:services') return { onOpen: openApp }
+  return { onSnapshot: (value: SystemResourceSnapshot) => { systemResources.value = value } }
+}
+
+const savedPlacements = computed<Array<Pick<DesktopGridPlacement, 'key' | 'position'>>>(() => [
+  ...Object.entries(localPositions.value).map(([key, position]) => ({ key, position })),
+  ...Object.entries(localWidgetPositions.value).map(([key, position]) => ({ key, position })),
+])
+
+const renderedDesktopLayout = computed(() => deriveDesktopGridLayout(
+  allDesktopLayoutItems.value,
   savedPlacements.value,
   iconBounds.value,
   compactIconLayout.value,
 ))
 
+const renderedIconLayout = computed(() => {
+  const iconKeys = new Set(allIconKeys.value)
+  const layout = renderedDesktopLayout.value
+  return {
+    ...layout,
+    placements: layout.placements.filter((placement) => iconKeys.has(placement.key)),
+    overflowKeys: layout.overflowKeys.filter((key) => iconKeys.has(key)),
+  }
+})
+
 const renderedPositionByKey = computed(() => new Map(
   renderedIconLayout.value.placements.map((placement) => [placement.key, placement.position]),
+))
+const renderedPlacementByKey = computed(() => new Map(
+  renderedDesktopLayout.value.placements.map((placement) => [placement.key, placement]),
 ))
 const renderedOverflowIndexByKey = computed(() => new Map(
   renderedIconLayout.value.overflowKeys.map((key, index) => [key, index]),
@@ -398,7 +448,7 @@ const iconOverflowStartTop = computed(() => (
   + (renderedIconLayout.value.overflowKeys.length ? 44 : 0)
 ))
 const iconScrollHeight = computed(() => {
-  const layout = renderedIconLayout.value
+  const layout = renderedDesktopLayout.value
   const overflowCount = layout.overflowKeys.length
   if (!overflowCount) return Math.ceil(layout.contentHeight)
   const overflowRows = Math.ceil(overflowCount / layout.grid.columns)
@@ -409,10 +459,13 @@ const iconScrollHeight = computed(() => {
   )
 })
 
-watch(() => workspace.value.positions, (positions) => {
-  if (draggingIcons.value.size || pendingPositionWrites > 0) return
+watch(() => [workspace.value.positions, workspace.value.widgetPositions], ([positions, widgetPositions]) => {
+  if (draggingIcons.value.size || draggingWidgets.value.size || pendingPositionWrites > 0) return
   localPositions.value = Object.fromEntries(
-    Object.entries(positions).map(([key, position]) => [key, { ...position }]),
+    Object.entries(positions || {}).map(([key, position]) => [key, { ...position }]),
+  )
+  localWidgetPositions.value = Object.fromEntries(
+    Object.entries(widgetPositions || {}).map(([key, position]) => [key, { ...position }]),
   )
 }, { deep: true, immediate: true })
 
@@ -872,17 +925,19 @@ function closeContextMenu(restoreFocus = true): void {
 
 function measureIconWorkArea(): void {
   const rect = iconsElement.value?.getBoundingClientRect()
-  const fallbackRight = window.innerWidth > 900 ? 342 : 16
   iconBounds.value = {
-    width: Math.max(90, rect?.width || window.innerWidth - fallbackRight),
+    width: Math.max(90, rect?.width || window.innerWidth - 24),
     height: Math.max(96, rect?.height || window.innerHeight - 88),
   }
   const compact = window.innerWidth <= 760
+  const widgetsVisible = window.innerWidth > 900
   if (compact && !compactIconLayout.value) {
     if (iconDrag) cancelIconDrag()
     if (selectionFrame) cancelSelectionFrame()
   }
+  if (!widgetsVisible && widgetLayoutVisible.value) cancelWidgetDrag()
   compactIconLayout.value = compact
+  widgetLayoutVisible.value = widgetsVisible
 }
 
 function iconSlotStyle(key: string): Record<string, string> {
@@ -904,14 +959,30 @@ function iconSlotStyle(key: string): Record<string, string> {
   }
 }
 
+function widgetSlotStyle(key: string): Record<string, string> {
+  const preview = dragPreviews.value[key]
+  const placement = renderedPlacementByKey.value.get(key)
+  if (!placement) return { display: 'none' }
+  const rect = desktopGridPlacementRect(placement, iconBounds.value)
+  return {
+    left: `${preview?.left ?? rect.left}px`,
+    top: `${preview?.top ?? rect.top}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+  }
+}
+
 function workspaceErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 409) return i18n.t('desktop.workspaceConflict')
   if (error instanceof ApiError) return error.message
   return i18n.t('desktop.workspaceSaveFailed')
 }
 
-async function persistPositions(next: Record<string, DesktopIconPosition>): Promise<void> {
-  if (Object.keys(next).length > MAX_DESKTOP_ICON_POSITIONS) {
+async function persistPositions(
+  next: Record<string, DesktopIconPosition>,
+  nextWidgets = localWidgetPositions.value,
+): Promise<void> {
+  if (Object.keys(next).length + Object.keys(nextWidgets).length > MAX_DESKTOP_ICON_POSITIONS) {
     const message = i18n.t('desktop.iconLayoutLimitMessage', { count: MAX_DESKTOP_ICON_POSITIONS })
     toast.danger(i18n.t('desktop.iconLayoutLimitTitle'), message)
     throw new Error(message)
@@ -919,16 +990,23 @@ async function persistPositions(next: Record<string, DesktopIconPosition>): Prom
   const write = ++latestPositionWrite
   pendingPositionWrites += 1
   localPositions.value = next
+  localWidgetPositions.value = nextWidgets
   try {
     await desktopIcons.mutate((draft) => {
       draft.positions = Object.fromEntries(
-        Object.entries(next).map(([key, position]) => [key, { ...position }]),
+          Object.entries(next).map(([key, position]) => [key, { ...position }]),
+      )
+      draft.widgetPositions = Object.fromEntries(
+        Object.entries(nextWidgets).map(([key, position]) => [key, { ...position }]),
       )
     })
   } catch (error) {
     if (write === latestPositionWrite) {
       localPositions.value = Object.fromEntries(
-        Object.entries(workspace.value.positions).map(([key, position]) => [key, { ...position }]),
+        Object.entries(workspace.value.positions || {}).map(([key, position]) => [key, { ...position }]),
+      )
+      localWidgetPositions.value = Object.fromEntries(
+        Object.entries(workspace.value.widgetPositions || {}).map(([key, position]) => [key, { ...position }]),
       )
     }
     toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
@@ -938,15 +1016,22 @@ async function persistPositions(next: Record<string, DesktopIconPosition>): Prom
   }
 }
 
-function placementsToPositions(
-  placements: DesktopIconPlacement[],
+function placementsToWorkspacePositions(
+  placements: DesktopGridPlacement[],
   base = localPositions.value,
-): Record<string, DesktopIconPosition> {
-  const next = Object.fromEntries(
+  baseWidgets = localWidgetPositions.value,
+): { positions: Record<string, DesktopIconPosition>; widgetPositions: Record<string, DesktopIconPosition> } {
+  const positions = Object.fromEntries(
     Object.entries(base).map(([key, position]) => [key, { ...position }]),
   )
-  for (const placement of placements) next[placement.key] = { ...placement.position }
-  return next
+  const widgetPositions = Object.fromEntries(
+    Object.entries(baseWidgets).map(([key, position]) => [key, { ...position }]),
+  )
+  for (const placement of placements) {
+    const target = desktopWidgetKeys.has(placement.key) ? widgetPositions : positions
+    target[placement.key] = { ...placement.position }
+  }
+  return { positions, widgetPositions }
 }
 
 interface DesktopShortcutNativeDrag {
@@ -1097,7 +1182,7 @@ function desktopShortcutDragEndPosition(event: DragEvent): DesktopIconPosition |
   const target = document.elementFromPoint(event.clientX, event.clientY)
   const desktop = desktopElement.value
   if (!target || !desktop?.contains(target)) return undefined
-  if (target.closest('.desktop-window, .desktop__widgets, .desktop__taskbar')) return undefined
+  if (target.closest('.desktop-window, .desktop-widget-slot, .desktop__widgets, .desktop__taskbar')) return undefined
   return desktopShortcutDropPosition(event)
 }
 
@@ -1162,27 +1247,29 @@ async function moveDesktopShortcutDrop(
   drag.localDropHandled = true
   for (const key of drag.keys) suppressActivationAfterDrag.add(key)
   const placements = drag.keys.length > 1
-    ? moveDesktopIconGroup(
-        renderedIconLayout.value.placements,
+    ? moveDesktopGridItemGroup(
+        renderedDesktopLayout.value.placements,
+        allDesktopLayoutItems.value,
         drag.keys,
         drag.anchorKey,
         destination,
         iconBounds.value,
       )
-    : dropDesktopIcon(
-        renderedIconLayout.value.placements,
+    : dropDesktopGridItem(
+        renderedDesktopLayout.value.placements,
+        allDesktopLayoutItems.value,
         drag.anchorKey,
         destination,
         iconBounds.value,
       )
-  const next = placementsToPositions(placements)
+  const next = placementsToWorkspacePositions(placements)
   iconAnnouncement.value = drag.keys.length > 1
     ? i18n.t('desktop.iconsMoved', { count: drag.keys.length })
     : i18n.t('desktop.iconMoved', { name: iconLabel(drag.anchorKey) })
   draggingIcons.value = new Set()
   nativeDragHiddenIcons.value = new Set()
   clearDesktopShortcutNativeDragPreview()
-  await persistPositions(next).catch(() => undefined)
+  await persistPositions(next.positions, next.widgetPositions).catch(() => undefined)
 }
 
 interface IconDragState {
@@ -1202,6 +1289,22 @@ interface IconDragState {
 }
 
 let iconDrag: IconDragState | undefined
+interface WidgetDragState {
+  key: string
+  pointerId: number
+  pointerType: string
+  captureTarget?: HTMLElement
+  pointerCaptured: boolean
+  startX: number
+  startY: number
+  lastX: number
+  lastY: number
+  startScrollTop: number
+  origin: { left: number; top: number }
+  moved: boolean
+}
+
+let widgetDrag: WidgetDragState | undefined
 let iconAutoScrollFrame: number | undefined
 const suppressActivationAfterDrag = new Set<string>()
 
@@ -1275,7 +1378,8 @@ function scheduleIconAutoScroll(): void {
   const nativeDrag = desktopShortcutNativeDrag?.localPreviewActive
     ? desktopShortcutNativeDrag
     : undefined
-  const clientY = pointerDrag?.lastY ?? nativeDrag?.lastY
+  const activeWidget = widgetDrag?.moved ? widgetDrag : undefined
+  const clientY = pointerDrag?.lastY ?? nativeDrag?.lastY ?? activeWidget?.lastY
   if (clientY === undefined || !iconAutoScrollVelocity(clientY)) return
   iconAutoScrollFrame = window.requestAnimationFrame(() => {
     iconAutoScrollFrame = undefined
@@ -1283,8 +1387,9 @@ function scheduleIconAutoScroll(): void {
     const activeNative = desktopShortcutNativeDrag?.localPreviewActive
       ? desktopShortcutNativeDrag
       : undefined
+    const activeWidget = widgetDrag?.moved ? widgetDrag : undefined
     const element = iconsElement.value
-    const activeClientY = activePointer?.lastY ?? activeNative?.lastY
+    const activeClientY = activePointer?.lastY ?? activeNative?.lastY ?? activeWidget?.lastY
     if (activeClientY === undefined || !element) return
     const velocity = iconAutoScrollVelocity(activeClientY)
     if (!velocity) return
@@ -1296,6 +1401,7 @@ function scheduleIconAutoScroll(): void {
     if (element.scrollTop === before) return
     if (activePointer) updateIconDragPreview(activePointer)
     else if (activeNative) updateDesktopShortcutNativeDragPreview(activeNative.lastX, activeNative.lastY)
+    else if (activeWidget) updateWidgetDragPreview(activeWidget)
     scheduleIconAutoScroll()
   })
 }
@@ -1303,6 +1409,178 @@ function scheduleIconAutoScroll(): void {
 function onIconDragScroll(): void {
   const drag = iconDrag
   if (drag?.moved) updateIconDragPreview(drag)
+}
+
+function updateWidgetDragPreview(drag: WidgetDragState): void {
+  const placement = renderedPlacementByKey.value.get(drag.key)
+  if (!placement) return
+  const rect = desktopGridPlacementRect(placement, iconBounds.value)
+  const grid = renderedDesktopLayout.value.grid
+  const scrollDelta = (iconsElement.value?.scrollTop || 0) - drag.startScrollTop
+  dragPreviews.value = {
+    [drag.key]: {
+      left: Math.min(
+        Math.max(0, drag.origin.left + drag.lastX - drag.startX),
+        Math.max(0, iconBounds.value.width - rect.width),
+      ),
+      top: Math.min(
+        Math.max(0, drag.origin.top + drag.lastY - drag.startY + scrollDelta),
+        Math.max(0, grid.maxRow * grid.stepY),
+      ),
+    },
+  }
+}
+
+function onWidgetDragScroll(): void {
+  if (widgetDrag?.moved) updateWidgetDragPreview(widgetDrag)
+}
+
+function removeWidgetDragListeners(): void {
+  window.removeEventListener('pointermove', onWidgetDragMove)
+  window.removeEventListener('pointerup', onWidgetDragEnd)
+  window.removeEventListener('pointercancel', onWidgetDragCancel)
+  window.removeEventListener('blur', cancelWidgetDrag)
+  iconsElement.value?.removeEventListener('scroll', onWidgetDragScroll)
+}
+
+function releaseWidgetDragPointer(drag: WidgetDragState): void {
+  const target = drag.captureTarget
+  if (!target || !drag.pointerCaptured) return
+  target.removeEventListener('lostpointercapture', onWidgetDragLostPointerCapture)
+  try {
+    if (
+      typeof target.releasePointerCapture === 'function'
+      && (typeof target.hasPointerCapture !== 'function' || target.hasPointerCapture(drag.pointerId))
+    ) target.releasePointerCapture(drag.pointerId)
+  } catch {
+    // Pointer capture may already have been released by the browser.
+  }
+  drag.pointerCaptured = false
+}
+
+function captureWidgetDragPointer(drag: WidgetDragState): void {
+  const target = drag.captureTarget
+  if (drag.pointerCaptured || !target || typeof target.setPointerCapture !== 'function') return
+  target.addEventListener('lostpointercapture', onWidgetDragLostPointerCapture)
+  try {
+    target.setPointerCapture(drag.pointerId)
+    drag.pointerCaptured = true
+  } catch {
+    target.removeEventListener('lostpointercapture', onWidgetDragLostPointerCapture)
+  }
+}
+
+function beginWidgetDrag(event: PointerEvent, key: string): void {
+  if (
+    !widgetLayoutVisible.value
+    || compactIconLayout.value
+    || event.button !== 0
+    || event.isPrimary === false
+    || widgetDrag
+    || iconDrag
+  ) return
+  const placement = renderedPlacementByKey.value.get(key)
+  if (!placement) return
+  const target = event.target instanceof Element
+    ? event.target.closest<HTMLElement>('.desktop-widget-slot') || undefined
+    : undefined
+  const rect = desktopGridPlacementRect(placement, iconBounds.value)
+  widgetDrag = {
+    key,
+    pointerId: event.pointerId,
+    pointerType: event.pointerType || 'mouse',
+    captureTarget: target,
+    pointerCaptured: false,
+    startX: event.clientX,
+    startY: event.clientY,
+    lastX: event.clientX,
+    lastY: event.clientY,
+    startScrollTop: iconsElement.value?.scrollTop || 0,
+    origin: { left: rect.left, top: rect.top },
+    moved: false,
+  }
+  event.preventDefault()
+  window.addEventListener('pointermove', onWidgetDragMove, { passive: false })
+  window.addEventListener('pointerup', onWidgetDragEnd)
+  window.addEventListener('pointercancel', onWidgetDragCancel)
+  window.addEventListener('blur', cancelWidgetDrag)
+  iconsElement.value?.addEventListener('scroll', onWidgetDragScroll, { passive: true })
+}
+
+function onWidgetDragMove(event: PointerEvent): void {
+  const drag = widgetDrag
+  if (!drag || event.pointerId !== drag.pointerId) return
+  drag.lastX = event.clientX
+  drag.lastY = event.clientY
+  const threshold = drag.pointerType === 'mouse' ? 6 : 12
+  if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < threshold) return
+  if (!drag.moved) {
+    captureWidgetDragPointer(drag)
+    drag.moved = true
+    draggingWidgets.value = new Set([drag.key])
+    closeContextMenu(false)
+    document.body.classList.add('desktop-widget-dragging')
+  }
+  event.preventDefault()
+  updateWidgetDragPreview(drag)
+  scheduleIconAutoScroll()
+}
+
+function finishWidgetDrag(): WidgetDragState | undefined {
+  const drag = widgetDrag
+  widgetDrag = undefined
+  stopIconAutoScroll()
+  removeWidgetDragListeners()
+  if (drag) releaseWidgetDragPointer(drag)
+  document.body.classList.remove('desktop-widget-dragging')
+  draggingWidgets.value = new Set()
+  return drag
+}
+
+function onWidgetDragEnd(event: PointerEvent): void {
+  const drag = widgetDrag
+  if (!drag || event.pointerId !== drag.pointerId) return
+  const preview = dragPreviews.value[drag.key]
+  finishWidgetDrag()
+  dragPreviews.value = {}
+  if (!drag.moved || !preview) return
+  const placements = dropDesktopGridItem(
+    renderedDesktopLayout.value.placements,
+    allDesktopLayoutItems.value,
+    drag.key,
+    desktopIconPixelsToPosition(preview, iconBounds.value),
+    iconBounds.value,
+  )
+  const next = placementsToWorkspacePositions(placements)
+  iconAnnouncement.value = `${drag.key} moved`
+  void persistPositions(next.positions, next.widgetPositions).catch(() => undefined)
+}
+
+function cancelWidgetDrag(): void {
+  finishWidgetDrag()
+  dragPreviews.value = {}
+}
+
+function onWidgetDragCancel(event: PointerEvent): void {
+  if (widgetDrag && event.pointerId === widgetDrag.pointerId) cancelWidgetDrag()
+}
+
+function onWidgetDragLostPointerCapture(event: PointerEvent): void {
+  if (widgetDrag && event.pointerId === widgetDrag.pointerId) cancelWidgetDrag()
+}
+
+function nudgeWidget(key: string, direction: 'left' | 'right' | 'up' | 'down'): void {
+  if (compactIconLayout.value || !renderedPlacementByKey.value.has(key)) return
+  const placements = moveDesktopGridItemByKeyboard(
+    renderedDesktopLayout.value.placements,
+    allDesktopLayoutItems.value,
+    key,
+    direction,
+    iconBounds.value,
+  )
+  const next = placementsToWorkspacePositions(placements)
+  iconAnnouncement.value = `${key} moved`
+  void persistPositions(next.positions, next.widgetPositions).catch(() => undefined)
 }
 
 function releaseIconDragPointer(drag: IconDragState): void {
@@ -1418,24 +1696,26 @@ function onIconDragEnd(event: PointerEvent): void {
   for (const key of drag.keys) suppressActivationAfterDrag.add(key)
   const destination = desktopIconPixelsToPosition(anchorPreview, iconBounds.value)
   const placements = drag.keys.length > 1
-    ? moveDesktopIconGroup(
-        renderedIconLayout.value.placements,
+    ? moveDesktopGridItemGroup(
+        renderedDesktopLayout.value.placements,
+        allDesktopLayoutItems.value,
         drag.keys,
         drag.key,
         destination,
         iconBounds.value,
       )
-    : dropDesktopIcon(
-        renderedIconLayout.value.placements,
+    : dropDesktopGridItem(
+        renderedDesktopLayout.value.placements,
+        allDesktopLayoutItems.value,
         drag.key,
         destination,
         iconBounds.value,
       )
-  const next = placementsToPositions(placements)
+  const next = placementsToWorkspacePositions(placements)
   iconAnnouncement.value = drag.keys.length > 1
     ? i18n.t('desktop.iconsMoved', { count: drag.keys.length })
     : i18n.t('desktop.iconMoved', { name: iconLabel(drag.key) })
-  void persistPositions(next).catch(() => undefined)
+  void persistPositions(next.positions, next.widgetPositions).catch(() => undefined)
 }
 
 function cancelIconDrag(): void {
@@ -1493,19 +1773,38 @@ function nudgeIcon(key: string, deltaX: number, deltaY: number): void {
     return slot
   })(), iconBounds.value)
   const placements = movingKeys.length > 1
-    ? moveDesktopIconGroup(renderedIconLayout.value.placements, movingKeys, key, destination, iconBounds.value)
-    : moveDesktopIconByKeyboard(renderedIconLayout.value.placements, key, direction, iconBounds.value)
+    ? moveDesktopGridItemGroup(
+        renderedDesktopLayout.value.placements,
+        allDesktopLayoutItems.value,
+        movingKeys,
+        key,
+        destination,
+        iconBounds.value,
+      )
+    : moveDesktopGridItemByKeyboard(
+        renderedDesktopLayout.value.placements,
+        allDesktopLayoutItems.value,
+        key,
+        direction,
+        iconBounds.value,
+      )
   setIconSelection(movingKeys)
   iconAnnouncement.value = movingKeys.length > 1
     ? i18n.t('desktop.iconsMoved', { count: movingKeys.length })
     : i18n.t('desktop.iconMoved', { name: iconLabel(key) })
-  void persistPositions(placementsToPositions(placements)).catch(() => undefined)
+  const next = placementsToWorkspacePositions(placements)
+  void persistPositions(next.positions, next.widgetPositions).catch(() => undefined)
 }
 
 async function autoArrangeIcons(): Promise<void> {
   if (compactIconLayout.value) return
   closeContextMenu()
-  const arranged = autoArrangeDesktopIcons(allIconKeys.value, iconBounds.value)
+  const arranged = deriveDesktopGridLayout(
+    allDesktopLayoutItems.value,
+    Object.entries(localWidgetPositions.value).map(([key, position]) => ({ key, position })),
+    iconBounds.value,
+    false,
+  )
   if (arranged.overflowKeys.length) {
     const message = i18n.t('desktop.iconLayoutLimitMessage', { count: MAX_DESKTOP_ICON_POSITIONS })
     iconAnnouncement.value = message
@@ -1513,7 +1812,8 @@ async function autoArrangeIcons(): Promise<void> {
     return
   }
   try {
-    await persistPositions(placementsToPositions(arranged.placements))
+    const next = placementsToWorkspacePositions(arranged.placements)
+    await persistPositions(next.positions, next.widgetPositions)
     iconAnnouncement.value = i18n.t('desktop.iconsArranged')
     toast.success(i18n.t('desktop.iconsArranged'))
   } catch {
@@ -1669,6 +1969,7 @@ function onGlobalKeyDown(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
   if (selectionFrame) cancelSelectionFrame()
   else if (iconDrag) cancelIconDrag()
+  else if (widgetDrag) cancelWidgetDrag()
   else if (contextMenu.value.open) closeContextMenu()
   else clearIconSelection()
 }
@@ -1691,7 +1992,7 @@ function onContextMenuKeyDown(event: KeyboardEvent): void {
 
 function onDesktopPointerDown(event: PointerEvent): void {
   const target = event.target instanceof Element ? event.target : undefined
-  if (target?.closest('.desktop-window, .desktop__widgets, .desktop__taskbar, .desktop__icon, .desktop__selection-actions')) return
+  if (target?.closest('.desktop-window, .desktop-widget-slot, .desktop__widgets, .desktop__taskbar, .desktop__icon, .desktop__selection-actions')) return
   const currentTarget = event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
   currentTarget?.focus({ preventScroll: true })
   if (
@@ -1726,7 +2027,7 @@ function onDesktopPointerDown(event: PointerEvent): void {
 function desktopFileDropAllowed(event: DragEvent): boolean {
   if (!hasDesktopFileDrag(event) && !hasCrossPanelFileDrag(event) && !hasExternalFileDrop(event)) return false
   const target = event.target as HTMLElement | null
-  return !target?.closest('.desktop-window, .desktop__widgets, .desktop__taskbar')
+  return !target?.closest('.desktop-window, .desktop-widget-slot, .desktop__widgets, .desktop__taskbar')
 }
 
 function onDesktopFileDragOver(event: DragEvent): void {
@@ -1789,9 +2090,15 @@ async function addDroppedFileEntries(
   return addFileEntriesToDesktop(sourceEntries, (draft, added) => {
     if (!added.length) return
     const addedKeys = added.map((shortcut) => `shortcut:${shortcut.id}`)
-    const layout = deriveDesktopIconLayout(
-      [...allIconKeys.value, ...addedKeys],
-      Object.entries(draft.positions).map(([key, position]) => ({ key, position })),
+    const layout = deriveDesktopGridLayout(
+      [
+        ...allDesktopLayoutItems.value,
+        ...addedKeys.map((key) => ({ key })),
+      ],
+      [
+        ...Object.entries(draft.positions).map(([key, position]) => ({ key, position })),
+        ...Object.entries(draft.widgetPositions).map(([key, position]) => ({ key, position })),
+      ],
       iconBounds.value,
       false,
     )
@@ -1799,23 +2106,19 @@ async function addDroppedFileEntries(
     if (!placeableKeys.length) return
     const placeableKeySet = new Set(placeableKeys)
     const initial = new Map(layout.placements.map((placement) => [placement.key, placement.position]))
-    const grid = desktopIconGrid(iconBounds.value)
     const start = desktopIconGridSlotForPosition(destination, iconBounds.value)
-    const page = Math.floor(start.row / grid.rows)
-    const startIndex = page * grid.pageCapacity
-      + start.column * grid.rows
-      + (start.row % grid.rows)
     let placements = layout.placements
     placeableKeys.forEach((key, index) => {
-      const ordered = startIndex + index
-      const targetPage = Math.floor(ordered / grid.pageCapacity)
-      const withinPage = ordered % grid.pageCapacity
       const slot = {
-        column: Math.floor(withinPage / grid.rows),
-        row: targetPage * grid.rows + (withinPage % grid.rows),
+        column: start.column,
+        row: start.row + index,
       }
-      placements = dropDesktopIcon(
+      placements = dropDesktopGridItem(
         placements,
+        [
+          ...allDesktopLayoutItems.value,
+          ...addedKeys.map((addedKey) => ({ key: addedKey })),
+        ],
         key,
         desktopIconPositionForGridSlot(slot, iconBounds.value),
         iconBounds.value,
@@ -1824,7 +2127,8 @@ async function addDroppedFileEntries(
     for (const placement of placements) {
       const previous = initial.get(placement.key)
       if (placeableKeySet.has(placement.key) || !previous || previous.x !== placement.position.x || previous.y !== placement.position.y) {
-        draft.positions[placement.key] = placement.position
+        if (desktopWidgetKeys.has(placement.key)) draft.widgetPositions[placement.key] = placement.position
+        else draft.positions[placement.key] = placement.position
       }
     }
   })
@@ -2434,6 +2738,20 @@ async function restoreEntry(entry: DesktopEntry): Promise<void> {
   }
 }
 
+async function toggleWidgetVisibility(key: string, visible: boolean): Promise<void> {
+  if (!desktopWidgetKeys.has(key) || !workspace.value.available) return
+  try {
+    await desktopIcons.mutate((draft) => {
+      const hidden = new Set(draft.hiddenWidgetKeys || [])
+      if (visible) hidden.delete(key)
+      else hidden.add(key)
+      draft.hiddenWidgetKeys = [...hidden].sort()
+    })
+  } catch (error) {
+    toast.danger(i18n.t('desktop.workspaceSaveErrorTitle'), workspaceErrorMessage(error))
+  }
+}
+
 function openShortcutDialog(shortcut?: DesktopShortcut): void {
   if (shortcut && shortcut.targetType !== 'url') return
   pendingShortcutID = ''
@@ -2662,6 +2980,7 @@ onBeforeUnmount(() => {
   desktopTransferController?.abort()
   iconsResizeObserver?.disconnect()
   cancelIconDrag()
+  cancelWidgetDrag()
   cancelSelectionFrame()
   desktopShortcutNativeDrag = undefined
   clearDesktopFileDrag()
@@ -2832,14 +3151,6 @@ function onViewportResize(): void {
       </button>
     </section>
 
-    <aside class="desktop__widgets" :aria-label="i18n.t('desktop.toolbarLabel')" @contextmenu.stop>
-      <DesktopClock
-        :network="entries?.publicNetwork"
-        :system-timezone="systemResources?.timezone"
-      />
-      <DesktopMonitor @snapshot="systemResources = $event" />
-    </aside>
-
     <nav
       ref="iconsElement"
       class="desktop__icons"
@@ -2850,6 +3161,17 @@ function onViewportResize(): void {
         class="desktop__icons-scroll-space"
         :style="{ height: `${iconScrollHeight}px` }"
         aria-hidden="true"
+      />
+      <DesktopWidgetHost
+        v-for="widget in visibleDesktopWidgets"
+        v-if="widgetLayoutVisible"
+        :key="widget.key"
+        :widget="widget"
+        :component-props="widgetComponentProps(widget.key)"
+        :class="{ 'desktop-widget-slot--dragging': draggingWidgets.has(widget.key) }"
+        :style="widgetSlotStyle(widget.key)"
+        @drag-start="beginWidgetDrag($event, widget.key)"
+        @nudge="nudgeWidget(widget.key, $event)"
       />
       <p
         v-if="renderedIconLayout.overflowKeys.length"
@@ -3441,6 +3763,8 @@ function onViewportResize(): void {
       :open="iconManagerOpen"
       :hidden-entries="hiddenEntries"
       :shortcuts="shortcuts"
+      :widgets="desktopWidgets"
+      :hidden-widget-keys="hiddenWidgetKeyList"
       :busy="desktopIcons.saving.value"
       :can-auto-arrange="!compactIconLayout && workspace.available"
       @close="iconManagerOpen = false"
@@ -3449,6 +3773,7 @@ function onViewportResize(): void {
       @edit="openShortcutDialog"
       @remove="requestDeleteShortcut"
       @restore="restoreEntry"
+      @toggle-widget="toggleWidgetVisibility"
     />
 
     <DesktopShortcutDialog
