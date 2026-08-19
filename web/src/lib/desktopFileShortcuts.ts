@@ -51,11 +51,6 @@ interface ActiveDesktopFileDrag {
 
 export type DesktopFileDragOrigin = 'file-manager' | 'desktop-shortcut'
 
-// Chromium's promised-file drag protocol is more reliable on Windows when
-// the descriptor uses a generic binary MIME, while the server response still
-// retains its authoritative Content-Type and filename.
-const NATIVE_DOWNLOAD_MIME = 'application/octet-stream'
-
 let activeDrag: ActiveDesktopFileDrag | undefined
 
 function randomToken(): string {
@@ -77,20 +72,11 @@ function nativeDownloadName(name: string): string {
   return /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(stem) ? `_${bounded}` : bounded
 }
 
-function nativeDownloadTarget(
-  downloadURL: string,
-  pageURL = globalThis.location?.href,
-): URL | undefined {
-  if (!downloadURL || !pageURL) return undefined
-  try {
-    const page = new URL(pageURL)
-    const target = new URL(downloadURL, page)
-    if (!['http:', 'https:'].includes(target.protocol) || target.origin !== page.origin) return undefined
-    if (target.username || target.password) return undefined
-    return target
-  } catch {
-    return undefined
-  }
+function nativeDownloadMime(mime?: string): string {
+  const value = mime?.trim() || ''
+  return /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(value)
+    ? value
+    : 'application/octet-stream'
 }
 
 export function nativeArchiveDownloadName(
@@ -108,11 +94,20 @@ export function nativeArchiveDownloadName(
 
 function nativeDownloadDragDescriptor(
   name: string,
+  mime: string | undefined,
   downloadURL: string,
   pageURL = globalThis.location?.href,
 ): string | undefined {
-  const target = nativeDownloadTarget(downloadURL, pageURL)
-  return target ? `${NATIVE_DOWNLOAD_MIME}:${nativeDownloadName(name)}:${target.href}` : undefined
+  if (!downloadURL || !pageURL) return undefined
+  try {
+    const page = new URL(pageURL)
+    const target = new URL(downloadURL, page)
+    if (!['http:', 'https:'].includes(target.protocol) || target.origin !== page.origin) return undefined
+    if (target.username || target.password) return undefined
+    return `${nativeDownloadMime(mime)}:${nativeDownloadName(name)}:${target.href}`
+  } catch {
+    return undefined
+  }
 }
 
 export function nativeFileDownloadDragDescriptor(
@@ -121,7 +116,7 @@ export function nativeFileDownloadDragDescriptor(
   pageURL = globalThis.location?.href,
 ): string | undefined {
   if (entry.kind !== 'file' || !downloadURL || !pageURL) return undefined
-  return nativeDownloadDragDescriptor(entry.name, downloadURL, pageURL)
+  return nativeDownloadDragDescriptor(entry.name, entry.mime, downloadURL, pageURL)
 }
 
 export function nativeArchiveDownloadDragDescriptor(
@@ -133,7 +128,7 @@ export function nativeArchiveDownloadDragDescriptor(
   if (!entries.length || entries.some((entry) => !supportedEntry(entry)) || !archiveName.endsWith('.zip')) {
     return undefined
   }
-  return nativeDownloadDragDescriptor(archiveName, downloadURL, pageURL)
+  return nativeDownloadDragDescriptor(archiveName, 'application/zip', downloadURL, pageURL)
 }
 
 function addNativeDownloadDrag(
@@ -141,16 +136,14 @@ function addNativeDownloadDrag(
   entries: readonly DesktopFileEntry[],
   downloadURL?: string,
   archiveName?: string,
-): boolean {
-  if (!downloadURL) return false
-  const target = nativeDownloadTarget(downloadURL)
-  if (!target) return false
+): void {
+  if (!downloadURL) return
   const descriptor = archiveName
     ? nativeArchiveDownloadDragDescriptor(entries, downloadURL, archiveName)
     : entries.length === 1
       ? nativeFileDownloadDragDescriptor(entries[0]!, downloadURL)
       : undefined
-  if (!descriptor) return false
+  if (!descriptor) return
   try {
     // Chromium turns this private drag type into a promised file for Windows
     // Explorer and macOS Finder. Other browsers ignore the extra type while
@@ -159,14 +152,6 @@ function addNativeDownloadDrag(
   } catch {
     // A browser rejecting the private type must not disable internal dragging.
   }
-  try {
-    // Keep the standard URI fallback for Windows Explorer and browsers that do
-    // not consume Chromium's DownloadURL type.
-    dataTransfer.setData('text/uri-list', `${target.href}\r\n`)
-  } catch {
-    // A browser rejecting the fallback must not disable internal dragging.
-  }
-  return true
 }
 
 function cleanShortcutName(entry: DesktopFileEntry): string {
@@ -291,13 +276,7 @@ export function beginDesktopFileDrag(
   } else {
     dataTransfer.setData('text/plain', supported.length === 1 ? supported[0]!.name : `${supported.length} 个项目`)
   }
-  const nativeDownload = addNativeDownloadDrag(dataTransfer, supported, nativeDownloadURL, nativeArchiveName)
-  if (nativeDownload) {
-    // Match Chromium/Windows Explorer's copy semantics for the native
-    // promised-file path without changing KPanel's internal move/copy drag.
-    dataTransfer.effectAllowed = 'copyMove'
-    if (origin === 'file-manager') dataTransfer.dropEffect = 'copy'
-  }
+  addNativeDownloadDrag(dataTransfer, supported, nativeDownloadURL, nativeArchiveName)
   return true
 }
 
