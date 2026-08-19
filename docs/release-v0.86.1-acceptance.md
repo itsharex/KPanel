@@ -14,7 +14,7 @@
 - 变更面：仅前端拖拽 `DataTransfer` 协议兼容；新增标准 `text/uri-list` 回退，并复用同源 HTTP(S)、无凭据 URL 校验。
 - 受影响用户旅程：桌面文件单项、ZIP（文件夹/多选）拖拽到浏览器或文件管理器；右键下载、内部桌面拖拽保持原有行为。
 - 未变化契约：后端/API、Agent 权限、端口、Compose 拓扑、apps 配置、`kejilion.sh` 与数据模型均未改变。
-- 风险等级及理由：中等；Windows Explorer/企业浏览器策略属于客户端边界，必须由用户现场验证，不能由前端单测替代。
+- 风险等级及理由：中等；Windows Explorer/企业浏览器策略属于客户端边界，已由用户现场验证并发现组织策略拦截，不能由前端代码绕过。
 
 ## 发布范围与未纳入内容
 
@@ -36,7 +36,7 @@
 | 业务正确性与兼容 | 已验证（自动化） | 定向 62 tests；前端全量 100 files / 772 tests；同源 URI、ZIP URI、跨域/凭据拒绝回归通过 | Windows Explorer 实机拖拽由用户现场验证 |
 | 网络与供应链安全 | 已验证 | 候选/主线/Release workflow 的 govuln、Trivy、npm audit、镜像契约、SBOM/provenance 全通过 | 无 |
 | 稳定性与失败恢复 | 已验证 | Go/Web/部署门禁、双架构构建与公开镜像 runtime contract 通过；154 升级后 3 次 health 采样成功 | 未做长时 soak；补丁无常驻后端改动 |
-| 用户体验与可访问性 | 部分验证 | 桌面前端测试与构建通过；不改变确认/右键路径 | Windows Explorer/Edge 企业策略、拖拽焦点由用户确认 |
+| 用户体验与可访问性 | 部分验证 | 桌面前端测试与构建通过；不改变确认/右键路径 | 用户现场 Chrome→Windows 拖拽被组织安全策略拦截，非 KPanel 主链路故障 |
 | 数据、配置与迁移 | 已验证 | 生产停写备份归档可读、SHA256SUMS 全部 OK；升级前后 Compose、`.env`、apps 哈希一致 | 未执行业务数据写入 |
 
 ## 自动门禁与发布产物
@@ -64,9 +64,11 @@
 
 ## Windows 拖拽现场验证
 
-- 发布者未接管用户桌面，也未执行 Windows Explorer/Edge 自动化；该验证保留给用户现场环境。
-- 待验证项：单文件、文件夹/多选 ZIP 拖拽到 Windows Explorer；过期会话/未登录拒绝；企业下载策略下的右键回退。
-- 通过标准：不泄露长期 Token；允许用户确认的本地路径能生成文件；失败时仍可使用右键下载/系统文件管理入口。
+- 用户现场已验证：从 Chrome 拖入 Windows 的单文件与多文件 ZIP 均显示“贵组织屏蔽了此文件，因为它不符合安全政策”。
+- v0.86.1 已同时写入 `DownloadURL` 与 `text/uri-list`；两者最终都进入 Chrome/Windows 原生下载边界，现象不是缺少 KPanel 拖拽协议。
+- 归类：`browser-policy / organization-DLP`，不是 `product-hard-failure`；KPanel 不降低安全边界、不伪造下载、不绕过 Chrome 企业策略。
+- 可行后续：由管理员对 Chrome/组织 DLP 放行相应下载类型，或另行评估受管扩展/Windows 客户端；不能通过普通 KPanel 补丁安全解决。
+- 右键下载、系统文件管理入口仍保留；本轮不新增代码、不改版本、不重发 Tag/Release。
 
 ## 回滚
 
@@ -94,6 +96,6 @@
 
 ## 遗留风险与后续准入
 
-- 未验证风险：Windows Explorer/Edge 企业策略与复杂本地拖拽环境，等待用户现场结果；未做长时 soak。
+- 已知边界：用户现场 Chrome→Windows 拖拽受组织安全策略拦截；未做长时 soak。该限制需组织策略或独立受管客户端方案处理。
 - 108 永久不纳入 KPanel 测试、灰度或部署。
-- 若现场拖拽仍失败，保留 v0.86.1，先收集脱敏行为证据，再基于最新 main 制作新的最小补丁；不得覆盖本 Tag/Release。
+- 若后续组织策略放行后仍出现产品错误，再收集脱敏行为证据并基于最新 main 制作新的最小补丁；不得覆盖本 Tag/Release。
