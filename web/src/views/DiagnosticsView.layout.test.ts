@@ -88,6 +88,13 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).not.toContain('class="diagnostic-score-dimensions"')
   })
 
+  it('states that native network scores measure the server rather than the browser link', () => {
+    expect(diagnosticsSource).toContain('原生探针由服务器本机执行')
+    expect(diagnosticsSource).toContain('服务器至探测节点')
+    expect(diagnosticsSource).toContain('服务器出口吞吐')
+    expect(diagnosticsSource).toContain('不包含当前浏览器到服务器的访问质量')
+  })
+
   it('reserves a dedicated home row above the scrollable command list', () => {
     expect(diagnosticsSource).toContain('class="diagnostic-command-panel__toolbar"')
     expect(diagnosticsSource).toMatch(

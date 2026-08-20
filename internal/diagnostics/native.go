@@ -93,7 +93,7 @@ func nativeCatalog() Catalog {
 			{
 				ID: nativeComprehensiveCheckID, Category: nativeCategoryID,
 				Name:        "KPanel 核心综合体检",
-				Description: "由 KPanel 原生探针完成 CPU、内存、硬盘、路由、延迟、测速和 IP 基础质量检测。",
+				Description: "由 KPanel Agent 在服务器本机执行性能探针，并从服务器出口完成路由、延迟、测速和 IP 基础质量检测。",
 				Provider:    nativeProvider, EstimatedMinutes: 3, Impact: "network",
 			},
 			{
@@ -123,19 +123,19 @@ func nativeCatalog() Catalog {
 			{
 				ID: nativeLatencyCheckID, Category: nativeCategoryID,
 				Name:        "延迟原生检测",
-				Description: "对多个固定 HTTPS 探测点进行多次请求，回显平均延迟、抖动和失败率。",
+				Description: "由服务器向多个固定 HTTPS 探测点发起请求，回显平均延迟、抖动和失败率。",
 				Provider:    nativeProvider, EstimatedMinutes: 1, Impact: "network",
 			},
 			{
 				ID: nativeSpeedCheckID, Category: nativeCategoryID,
 				Name:        "网速原生测速",
-				Description: "使用受控体积的下载与上传请求，回显本次实测上下行吞吐。",
+				Description: "由服务器出口发起受控体积的下载与上传请求，回显本次实测上下行吞吐。",
 				Provider:    nativeProvider, EstimatedMinutes: 1, Impact: "network",
 			},
 			{
 				ID: nativeIPQualityCheckID, Category: nativeCategoryID,
 				Name:        "IP 基础质量检测",
-				Description: "回显公网 IP、ASN、地区、IPv4/IPv6 和反向解析；信誉库评分暂不虚构。",
+				Description: "检测服务器出口公网 IP、ASN、地区、IPv4/IPv6 和反向解析，并按可用性补充 IPING 风险信息。",
 				Provider:    nativeProvider, EstimatedMinutes: 1, Impact: "network",
 			},
 		},

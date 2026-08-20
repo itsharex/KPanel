@@ -117,7 +117,7 @@ const scoreDimensions = [
   {
     id: 'latency',
     label: '延迟',
-    detail: '往返时延 · 抖动 · 丢包',
+    detail: '服务器至探测节点 · 抖动 · 丢包',
     nativeID: 'native-latency',
     category: 'network',
     keywords: ['net-quality', 'tcp-quality', '网络质量', '延迟', '抖动', '丢包'],
@@ -127,7 +127,7 @@ const scoreDimensions = [
   {
     id: 'speed',
     label: '网速',
-    detail: '多节点上下行带宽',
+    detail: '服务器出口上下行吞吐',
     nativeID: 'native-speed',
     category: 'network',
     keywords: ['superspeed', 'speedtest', '测速', '带宽', '网速'],
@@ -964,8 +964,8 @@ onBeforeUnmount(() => {
               <header class="diagnostic-overview__header">
                 <div>
                   <div class="diagnostic-overview__eyebrow"><span><Gauge :size="15" /></span> KPanel 核心体检</div>
-                  <h2>服务器体检报告</h2>
-                  <p>原生探针直接采集本机性能与网络质量，结果按性能和网络两大类呈现。</p>
+                  <h2>服务器体检结果</h2>
+                  <p>原生探针由服务器本机执行，采集主机性能与服务器出口网络；浏览器仅负责展示结果。</p>
                 </div>
                 <span class="diagnostic-overview__status" :class="`is-${scoreState}`">
                   <i /> {{ scoreStateLabel }}
@@ -980,7 +980,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="diagnostic-score-hero__copy">
-                  <div class="diagnostic-score-hero__label">一键综合体检 <span>POWERED BY KPanel</span></div>
+                  <div class="diagnostic-score-hero__label">服务器端一键体检 <span>POWERED BY KPanel</span></div>
                   <h3 id="diagnostic-score-title">{{ scoreCheck ? checkNameLabel(scoreCheck.name) : '等待 KPanel 核心体检' }}</h3>
                   <p>{{ scoreStatusLabel }}</p>
                   <div class="diagnostic-score-meta">
@@ -1048,29 +1048,29 @@ onBeforeUnmount(() => {
                 <header class="diagnostic-report-section__header">
                   <div class="diagnostic-report-section__title">
                     <span class="diagnostic-report-section__icon"><Network :size="18" /></span>
-                    <div><h3 id="diagnostic-network-title">网络</h3><p>IP · 运营商 · 延迟 · 测速 · IP 质量</p></div>
+                    <div><h3 id="diagnostic-network-title">网络</h3><p>服务器出口 IP · 运营商 · 延迟 · 测速 · IP 质量</p></div>
                   </div>
                   <div class="diagnostic-report-section__score"><strong>{{ reportScoreLabel(networkScore) }}</strong><span>/100</span></div>
                 </header>
                 <div class="diagnostic-report-identity">
-                  <div><span>IP 地址</span><strong>{{ summaryValue('ip', 'public_ip') || '等待检测' }}</strong></div>
-                  <div><span>运营商 / ASN</span><strong>{{ reportIPOperator() }}</strong></div>
-                  <div><span>地区</span><strong>{{ reportIPLocation() }}</strong></div>
-                  <div><span>线路</span><strong>{{ summaryValue('route', 'path') || '等待检测' }}</strong></div>
+                  <div><span>出口 IP</span><strong>{{ summaryValue('ip', 'public_ip') || '等待检测' }}</strong></div>
+                  <div><span>出口运营商 / ASN</span><strong>{{ reportIPOperator() }}</strong></div>
+                  <div><span>出口地区</span><strong>{{ reportIPLocation() }}</strong></div>
+                  <div><span>出口线路</span><strong>{{ summaryValue('route', 'path') || '等待检测' }}</strong></div>
                 </div>
                 <div class="diagnostic-report-card-grid diagnostic-report-card-grid--network">
                   <article class="diagnostic-report-card">
-                    <header><div class="diagnostic-report-card__heading"><span class="is-latency"><Activity :size="17" /></span><div><strong>延迟</strong><small>往返质量</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('latency')) }}</strong><span>分</span></div></header>
+                    <header><div class="diagnostic-report-card__heading"><span class="is-latency"><Activity :size="17" /></span><div><strong>延迟</strong><small>服务器至探测节点</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('latency')) }}</strong><span>分</span></div></header>
                     <p>{{ summaryValue('latency', 'average') || '等待检测' }}</p>
                     <small v-if="summaryValue('latency', 'jitter') || summaryValue('latency', 'loss')">{{ summaryValue('latency', 'jitter') }} · {{ summaryValue('latency', 'loss') }}</small>
                   </article>
                   <article class="diagnostic-report-card">
-                    <header><div class="diagnostic-report-card__heading"><span class="is-speed"><Gauge :size="17" /></span><div><strong>测速</strong><small>上下行带宽</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('speed')) }}</strong><span>分</span></div></header>
+                    <header><div class="diagnostic-report-card__heading"><span class="is-speed"><Gauge :size="17" /></span><div><strong>测速</strong><small>服务器出口吞吐</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('speed')) }}</strong><span>分</span></div></header>
                     <p>{{ summaryValue('speed', 'download') || '等待检测' }}</p>
                     <small v-if="summaryValue('speed', 'upload')">{{ summaryMetricLabel('upload') }} {{ summaryValue('speed', 'upload') }}</small>
                   </article>
                   <article class="diagnostic-report-card">
-                    <header><div class="diagnostic-report-card__heading"><span class="is-ip"><Globe2 :size="17" /></span><div><strong>IP 质量</strong><small>风险 · ISP · 代理</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('ip')) }}</strong><span>分</span></div></header>
+                    <header><div class="diagnostic-report-card__heading"><span class="is-ip"><Globe2 :size="17" /></span><div><strong>IP 质量</strong><small>服务器出口风险</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('ip')) }}</strong><span>分</span></div></header>
                     <p v-if="summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_score')">
                       <span>{{ reportIPRiskLevel() }}</span>
                       <span v-if="summaryValue('ip', 'risk_score')"><b>风险分</b>{{ summaryValue('ip', 'risk_score') }}/100</span>
@@ -1084,7 +1084,7 @@ onBeforeUnmount(() => {
 
               <section class="diagnostic-report-note">
                 <Activity :size="16" />
-                <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以上分数基于本次实际采集结果生成，IP 质量优先使用 IPING 风险分反向计算；接口不可用时回退为基础信息完整度。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : '完成一次核心体检后，这里会显示实际结果与分项分数。' }}</p>
+                <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以上分数均来自服务器本机与服务器出口实测，不包含当前浏览器到服务器的访问质量。IP 质量优先使用 IPING 风险分反向计算；接口不可用时回退为基础信息完整度。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : '完成一次核心体检后，这里会显示实际结果与分项分数。' }}</p>
                 <a v-if="summaryReportURL" :href="summaryReportURL" target="_blank" rel="noreferrer">查看完整报告 <ExternalLink :size="13" /></a>
                 <button v-else-if="terminalSummaryJobForOverview()" type="button" @click="openSummaryTerminal">打开最近结果 <ExternalLink :size="13" /></button>
               </section>
@@ -1140,7 +1140,7 @@ onBeforeUnmount(() => {
         <Gauge :size="24" />
         <div>
           <p>
-            {{ scoreCheck?.provider === 'native' ? '将使用 KPanel 原生探针完成 CPU、内存、硬盘、路由、延迟、测速和 IP 基础质量检测。测试期间会产生受控的 CPU、磁盘和网络开销。' : '将调用脚本目录中的综合评测入口，以真实终端输出完成一次多维度体检。测试期间可能消耗较多网络、CPU 或磁盘资源。' }}
+            {{ scoreCheck?.provider === 'native' ? '将使用 KPanel 原生探针在服务器本机完成 CPU、内存、硬盘测试，并由服务器出口执行路由、延迟、测速和 IP 基础质量检测。浏览器仅展示结果；测试期间会产生受控的 CPU、磁盘和网络开销。' : '将调用脚本目录中的综合评测入口，以真实终端输出完成一次多维度体检。测试期间可能消耗较多网络、CPU 或磁盘资源。' }}
           </p>
           <div class="diagnostic-score-confirm__list">
             <span v-for="dimension in scoreDimensions" :key="dimension.id"><i /> {{ dimension.label }}</span>
