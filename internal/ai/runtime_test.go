@@ -242,6 +242,10 @@ func TestCompletionMessagesReconstructToolCallBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assistantMessage, err := store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleAssistant, Content: "我将检查系统状态。"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	firstResult, err := store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleTool, ToolCallID: firstCall.ID, Content: `{"summary":true}`})
 	if err != nil {
 		t.Fatal(err)
@@ -251,11 +255,11 @@ func TestCompletionMessagesReconstructToolCallBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	messages := (&NativeRuntime{store: store}).completionMessages(ctx, []Message{firstResult, secondResult}, run.ID)
+	messages := (&NativeRuntime{store: store}).completionMessages(ctx, []Message{assistantMessage, firstResult, secondResult}, run.ID)
 	if len(messages) != 3 {
 		t.Fatalf("messages=%#v", messages)
 	}
-	if messages[0].Role != "assistant" || len(messages[0].ToolCalls) != 2 || messages[0].ToolCalls[0].ID != firstCall.ID || messages[0].ToolCalls[1].ID != secondCall.ID {
+	if messages[0].ID != assistantMessage.ID || messages[0].Content != assistantMessage.Content || messages[0].Role != "assistant" || len(messages[0].ToolCalls) != 2 || messages[0].ToolCalls[0].ID != firstCall.ID || messages[0].ToolCalls[1].ID != secondCall.ID {
 		t.Fatalf("tool calls were not reconstructed as one assistant batch: %#v", messages[0])
 	}
 	if string(messages[0].ToolCalls[0].ProviderData) != string(providerData) || len(messages[0].ToolCalls[1].ProviderData) != 0 {

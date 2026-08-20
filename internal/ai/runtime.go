@@ -423,11 +423,23 @@ func (r *NativeRuntime) completionMessages(ctx context.Context, history []Messag
 				results = append(results, ChatMessage{ID: toolMessage.ID, Role: "tool", Name: call.Name, Content: toolMessage.Content, ToolCallID: call.ID, CurrentRun: toolMessage.RunID == currentRunID})
 			}
 			if len(calls) > 0 {
-				callMessageID := results[0].ID
-				if callMessageID != "" {
-					callMessageID += "_call"
+				callMessage := ChatMessage{Role: "assistant", ToolCalls: calls, CurrentRun: message.RunID == currentRunID}
+				if index > 0 {
+					assistant := history[index-1]
+					if assistant.Role == RoleAssistant && assistant.ToolCallID == "" && assistant.RunID == message.RunID && len(messages) > 0 && messages[len(messages)-1].ID == assistant.ID {
+						callMessage.ID = assistant.ID
+						callMessage.Content = assistant.Content
+						callMessage.Attachments = assistant.Attachments
+						messages = messages[:len(messages)-1]
+					}
 				}
-				messages = append(messages, ChatMessage{ID: callMessageID, Role: "assistant", ToolCalls: calls, CurrentRun: message.RunID == currentRunID})
+				if callMessage.ID == "" {
+					callMessage.ID = results[0].ID
+					if callMessage.ID != "" {
+						callMessage.ID += "_call"
+					}
+				}
+				messages = append(messages, callMessage)
 				messages = append(messages, results...)
 				index += len(calls)
 				continue

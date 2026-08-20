@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- 修复工具调用响应中的可见 assistant 内容与 `reasoning_content`、`tool_calls` 被拆成不同历史消息，导致严格思考模型拒绝后续请求的问题。
+
 ## [0.88.1] - 2026-08-20
 
 ### Fixed
