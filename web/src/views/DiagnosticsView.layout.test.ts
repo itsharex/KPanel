@@ -88,6 +88,17 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).not.toContain('class="diagnostic-score-dimensions"')
   })
 
+  it('keeps report metrics visually flat and gives IP risk levels semantic colors', () => {
+    expect(diagnosticsSource).not.toContain('class="diagnostic-report-model"')
+    expect(diagnosticsSource).toContain('<strong>测速</strong>')
+    expect(diagnosticsSource).not.toContain('<strong>上传 / 下载</strong>')
+    expect(diagnosticsSource).toContain('class="diagnostic-report-pair diagnostic-report-pair--speed"')
+    expect(diagnosticsSource).toContain('`is-${reportIPRiskTone()}`')
+    expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-low')
+    expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-medium')
+    expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-high')
+  })
+
   it('states that native network scores measure the server rather than the browser link', () => {
     expect(diagnosticsSource).toContain('原生探针由服务器本机执行')
     expect(diagnosticsSource).toContain('服务器至探测节点')

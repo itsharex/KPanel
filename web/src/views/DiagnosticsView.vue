@@ -534,6 +534,26 @@ function reportIPRiskDetail(): string {
   return parts.join(' · ')
 }
 
+function reportIPRiskTone(): 'low' | 'medium' | 'high' | 'neutral' {
+  const value = summaryValue('ip', 'risk_level')
+  const firstCharacter = value.codePointAt(0)
+  if (firstCharacter === 0x4f4e || value.toLowerCase().includes('low')) return 'low'
+  if (firstCharacter === 0x4e2d || value.toLowerCase().includes('medium')) return 'medium'
+  if (firstCharacter === 0x9ad8 || value.toLowerCase().includes('high')) return 'high'
+  return 'neutral'
+}
+
+function reportIPQualitySummary(): string {
+  const value = summaryValue('ip', 'quality')
+  return value.split(/[；;]/).map((part) => part.trim()).filter(Boolean)[0] || '等待检测'
+}
+
+function reportIPQualityDetail(): string {
+  const value = summaryValue('ip', 'quality')
+  const parts = value.split(/[；;]/).map((part) => part.trim()).filter(Boolean)
+  return parts.slice(1).join(' · ') || summaryValue('ip', 'ipv4_ipv6')
+}
+
 function dimensionJob(dimension: ScoreDimension): DiagnosticJob | undefined {
   const check = dimensionCheck(dimension)
   if (!check) return undefined
@@ -1014,32 +1034,28 @@ onBeforeUnmount(() => {
                 <header class="diagnostic-report-section__header">
                   <div class="diagnostic-report-section__title">
                     <span class="diagnostic-report-section__icon"><Cpu :size="18" /></span>
-                    <div><h3 id="diagnostic-performance-title">性能</h3><p>型号 · CPU · 内存 · 硬盘</p></div>
+                    <div>
+                      <h3 id="diagnostic-performance-title">性能</h3>
+                      <p><span>型号</span>{{ summaryValue('performance', 'cpu_model') || '等待检测' }}<b v-if="summaryValue('performance', 'cpu_cores')">{{ summaryValue('performance', 'cpu_cores') }} 核</b></p>
+                    </div>
                   </div>
-                  <div class="diagnostic-report-section__score"><strong>{{ reportScoreLabel(performanceScore) }}</strong><span>/100</span></div>
+                  <div class="diagnostic-report-section__score"><small>性能分</small><div><strong>{{ reportScoreLabel(performanceScore) }}</strong><span>/100</span></div></div>
                 </header>
-                <div class="diagnostic-report-model">
-                  <span>型号</span>
-                  <strong>{{ summaryValue('performance', 'cpu_model') || '等待检测' }}</strong>
-                  <small v-if="summaryValue('performance', 'cpu_cores')">{{ summaryValue('performance', 'cpu_cores') }} 核</small>
-                  <small v-else>基础信息待采集</small>
-                </div>
                 <div class="diagnostic-report-card-grid diagnostic-report-card-grid--performance">
                   <article class="diagnostic-report-card">
                     <header><div class="diagnostic-report-card__heading"><span class="is-cpu"><Cpu :size="17" /></span><div><strong>CPU</strong><small>运算性能</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('cpu')) }}</strong><span>分</span></div></header>
-                    <p>{{ summaryValue('performance', 'cpu_score') || '等待检测' }}</p>
+                    <strong class="diagnostic-report-card__value">{{ summaryValue('performance', 'cpu_score') || '等待检测' }}</strong>
                   </article>
                   <article class="diagnostic-report-card">
                     <header><div class="diagnostic-report-card__heading"><span class="is-memory"><MemoryStick :size="17" /></span><div><strong>内存</strong><small>复制吞吐</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('memory')) }}</strong><span>分</span></div></header>
-                    <p>{{ summaryValue('performance', 'memory_score') || '等待检测' }}</p>
+                    <strong class="diagnostic-report-card__value">{{ summaryValue('performance', 'memory_score') || '等待检测' }}</strong>
                   </article>
                   <article class="diagnostic-report-card">
                     <header><div class="diagnostic-report-card__heading"><span class="is-disk"><HardDrive :size="17" /></span><div><strong>硬盘</strong><small>顺序读写</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('disk')) }}</strong><span>分</span></div></header>
-                    <p>
-                      <span v-if="summaryValue('performance', 'disk_read')"><b>{{ summaryMetricLabel('disk_read') }}</b> {{ summaryValue('performance', 'disk_read') }}</span>
-                      <span v-if="summaryValue('performance', 'disk_write')"><b>{{ summaryMetricLabel('disk_write') }}</b> {{ summaryValue('performance', 'disk_write') }}</span>
-                      <span v-if="!summaryValue('performance', 'disk_read') && !summaryValue('performance', 'disk_write')">等待检测</span>
-                    </p>
+                    <div class="diagnostic-report-pair">
+                      <div><span>{{ summaryMetricLabel('disk_read') }}</span><strong>{{ summaryValue('performance', 'disk_read') || '等待检测' }}</strong></div>
+                      <div><span>{{ summaryMetricLabel('disk_write') }}</span><strong>{{ summaryValue('performance', 'disk_write') || '等待检测' }}</strong></div>
+                    </div>
                   </article>
                 </div>
               </section>
@@ -1050,7 +1066,7 @@ onBeforeUnmount(() => {
                     <span class="diagnostic-report-section__icon"><Network :size="18" /></span>
                     <div><h3 id="diagnostic-network-title">网络</h3><p>服务器出口 IP · 运营商 · 延迟 · 测速 · IP 质量</p></div>
                   </div>
-                  <div class="diagnostic-report-section__score"><strong>{{ reportScoreLabel(networkScore) }}</strong><span>/100</span></div>
+                  <div class="diagnostic-report-section__score"><small>网络分</small><div><strong>{{ reportScoreLabel(networkScore) }}</strong><span>/100</span></div></div>
                 </header>
                 <div class="diagnostic-report-identity">
                   <div><span>出口 IP</span><strong>{{ summaryValue('ip', 'public_ip') || '等待检测' }}</strong></div>
@@ -1061,26 +1077,30 @@ onBeforeUnmount(() => {
                 <div class="diagnostic-report-card-grid diagnostic-report-card-grid--network">
                   <article class="diagnostic-report-card">
                     <header><div class="diagnostic-report-card__heading"><span class="is-latency"><Activity :size="17" /></span><div><strong>延迟</strong><small>服务器至探测节点</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('latency')) }}</strong><span>分</span></div></header>
-                    <p>{{ summaryValue('latency', 'average') || '等待检测' }}</p>
-                    <small v-if="summaryValue('latency', 'jitter') || summaryValue('latency', 'loss')">{{ summaryValue('latency', 'jitter') }} · {{ summaryValue('latency', 'loss') }}</small>
+                    <strong class="diagnostic-report-card__value">{{ summaryValue('latency', 'average') || '等待检测' }}</strong>
+                    <div class="diagnostic-report-card__meta" v-if="summaryValue('latency', 'jitter') || summaryValue('latency', 'loss')">
+                      <span v-if="summaryValue('latency', 'jitter')"><b>抖动</b>{{ summaryValue('latency', 'jitter') }}</span>
+                      <span v-if="summaryValue('latency', 'loss')"><b>丢包</b>{{ summaryValue('latency', 'loss') }}</span>
+                    </div>
                   </article>
                   <article class="diagnostic-report-card">
-                    <header><div class="diagnostic-report-card__heading"><span class="is-speed"><Gauge :size="17" /></span><div><strong>上传 / 下载</strong><small>服务器公网上下行测速</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('speed')) }}</strong><span>分</span></div></header>
-                    <p>
-                      <span v-if="summaryValue('speed', 'download')"><b>{{ summaryMetricLabel('download') }}</b> {{ summaryValue('speed', 'download') }}</span>
-                      <span v-if="summaryValue('speed', 'upload')"><b>{{ summaryMetricLabel('upload') }}</b> {{ summaryValue('speed', 'upload') }}</span>
-                      <span v-if="!summaryValue('speed', 'download') && !summaryValue('speed', 'upload')">等待检测</span>
-                    </p>
+                    <header><div class="diagnostic-report-card__heading"><span class="is-speed"><Gauge :size="17" /></span><div><strong>测速</strong><small>服务器公网上下行测速</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('speed')) }}</strong><span>分</span></div></header>
+                    <div class="diagnostic-report-pair diagnostic-report-pair--speed">
+                      <div><span>{{ summaryMetricLabel('download') }}</span><strong>{{ summaryValue('speed', 'download') || '等待检测' }}</strong></div>
+                      <div><span>{{ summaryMetricLabel('upload') }}</span><strong>{{ summaryValue('speed', 'upload') || '等待检测' }}</strong></div>
+                    </div>
                   </article>
                   <article class="diagnostic-report-card">
                     <header><div class="diagnostic-report-card__heading"><span class="is-ip"><Globe2 :size="17" /></span><div><strong>IP 质量</strong><small>服务器出口风险</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('ip')) }}</strong><span>分</span></div></header>
-                    <p v-if="summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_score')">
-                      <span>{{ reportIPRiskLevel() }}</span>
+                    <div v-if="summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_score')" class="diagnostic-report-risk">
+                      <span class="diagnostic-report-risk__level" :class="`is-${reportIPRiskTone()}`">{{ reportIPRiskLevel() }}</span>
                       <span v-if="summaryValue('ip', 'risk_score')"><b>风险分</b>{{ summaryValue('ip', 'risk_score') }}/100</span>
-                    </p>
-                    <p v-else>{{ summaryValue('ip', 'quality') || '等待检测' }}</p>
-                    <small v-if="summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_tag') || summaryValue('ip', 'is_proxy') || summaryValue('ip', 'usage_type')">{{ reportIPRiskDetail() }}</small>
-                    <small v-else-if="summaryValue('ip', 'ipv4_ipv6')">{{ summaryValue('ip', 'ipv4_ipv6') }}</small>
+                    </div>
+                    <strong v-else class="diagnostic-report-card__value diagnostic-report-card__value--text">{{ reportIPQualitySummary() }}</strong>
+                    <div class="diagnostic-report-card__meta">
+                      <span v-if="summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_tag') || summaryValue('ip', 'is_proxy') || summaryValue('ip', 'usage_type')">{{ reportIPRiskDetail() }}</span>
+                      <span v-else-if="reportIPQualityDetail()">{{ reportIPQualityDetail() }}</span>
+                    </div>
                   </article>
                 </div>
               </section>
@@ -2800,8 +2820,8 @@ onBeforeUnmount(() => {
 
 .diagnostic-report-section {
   display: grid;
-  gap: 12px;
-  padding: 16px 18px;
+  gap: 0;
+  padding: 18px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -2812,6 +2832,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding-bottom: 16px;
 }
 
 .diagnostic-report-section__title {
@@ -2853,8 +2874,11 @@ onBeforeUnmount(() => {
 }
 
 .diagnostic-report-section__title p {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   overflow: hidden;
-  margin: 3px 0 0;
+  margin: 4px 0 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
@@ -2862,12 +2886,38 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.diagnostic-report-section__title p span {
+  color: var(--brand-strong);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.diagnostic-report-section__title p b {
+  padding-left: 7px;
+  border-left: 1px solid var(--border);
+  color: var(--text-soft);
+  font-weight: 650;
+}
+
 .diagnostic-report-section__score {
-  display: flex;
+  display: grid;
   flex: 0 0 auto;
-  align-items: baseline;
+  justify-items: end;
   gap: 3px;
   color: var(--muted);
+}
+
+.diagnostic-report-section__score > small {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.diagnostic-report-section__score > div {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
 }
 
 .diagnostic-report-section__score strong {
@@ -2881,46 +2931,19 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-.diagnostic-report-model {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 9px;
-  align-items: center;
-  min-width: 0;
-  padding: 10px 12px;
-  background: color-mix(in srgb, var(--surface-subtle) 54%, var(--surface));
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.diagnostic-report-model > span,
 .diagnostic-report-identity span {
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
 }
 
-.diagnostic-report-model > strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-soft);
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.diagnostic-report-model > small {
-  padding: 3px 7px;
-  color: var(--brand-strong);
-  background: var(--brand-soft);
-  border-radius: 999px;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
 .diagnostic-report-card-grid {
   display: grid;
-  gap: 10px;
+  gap: 1px;
+  overflow: hidden;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 .diagnostic-report-card-grid--performance,
@@ -2930,10 +2953,9 @@ onBeforeUnmount(() => {
 
 .diagnostic-report-card {
   min-width: 0;
-  padding: 13px 14px;
-  background: color-mix(in srgb, var(--surface-subtle) 42%, var(--surface));
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  min-height: 126px;
+  padding: 14px 15px;
+  background: color-mix(in srgb, var(--surface-subtle) 32%, var(--surface));
 }
 
 .diagnostic-report-card > header {
@@ -3018,12 +3040,15 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   align-items: baseline;
   gap: 2px;
+  padding: 4px 7px;
   color: var(--muted);
+  background: color-mix(in srgb, var(--surface-subtle) 70%, transparent);
+  border-radius: 999px;
 }
 
 .diagnostic-report-card__score strong {
   color: var(--text);
-  font-size: 20px;
+  font-size: 15px;
   font-weight: 780;
   line-height: 1;
 }
@@ -3032,50 +3057,93 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
-.diagnostic-report-card > p {
-  min-height: 42px;
-  margin: 12px 0 0;
+.diagnostic-report-card__value {
+  display: block;
+  margin-top: 18px;
   color: var(--text-soft);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.45;
+  font-size: 20px;
+  font-weight: 760;
+  line-height: 1.2;
   overflow-wrap: anywhere;
 }
 
-.diagnostic-report-card > p span {
-  display: inline-block;
-  margin-right: 10px;
+.diagnostic-report-card__value--text {
+  font-size: 15px;
+  line-height: 1.35;
 }
 
-.diagnostic-report-card > p b {
-  margin-right: 2px;
+.diagnostic-report-card__meta {
+  display: flex;
+  min-height: 16px;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin-top: 7px;
   color: var(--muted);
   font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-report-card__meta b {
+  margin-right: 4px;
+  color: var(--text-soft);
   font-weight: 650;
 }
 
-.diagnostic-report-card > small {
+.diagnostic-report-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.diagnostic-report-pair > div {
+  min-width: 0;
+}
+
+.diagnostic-report-pair > div + div {
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.diagnostic-report-pair span {
   display: block;
-  min-height: 16px;
-  margin-top: 6px;
+  margin-bottom: 4px;
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.diagnostic-report-pair strong {
+  display: block;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.3;
   overflow-wrap: anywhere;
+}
+
+.diagnostic-report-pair--speed strong {
+  font-size: 15px;
 }
 
 .diagnostic-report-identity {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  margin-bottom: 12px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 
 .diagnostic-report-identity > div {
   min-width: 0;
-  padding: 10px 12px;
-  background: color-mix(in srgb, var(--surface-subtle) 42%, var(--surface));
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  padding: 11px 12px;
+}
+
+.diagnostic-report-identity > div:first-child {
+  padding-left: 0;
+}
+
+.diagnostic-report-identity > div + div {
+  border-left: 1px solid var(--border);
 }
 
 .diagnostic-report-identity span {
@@ -3090,6 +3158,55 @@ onBeforeUnmount(() => {
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.diagnostic-report-risk {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.diagnostic-report-risk > span:last-child b {
+  margin-right: 4px;
+  font-weight: 650;
+}
+
+.diagnostic-report-risk__level {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.diagnostic-report-risk__level.is-low {
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  border-color: var(--brand-muted);
+}
+
+.diagnostic-report-risk__level.is-medium {
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: color-mix(in srgb, var(--amber) 34%, var(--border));
+}
+
+.diagnostic-report-risk__level.is-high {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 34%, var(--border));
+}
+
+.diagnostic-report-risk__level.is-neutral {
+  color: var(--text-soft);
+  background: var(--surface-subtle);
 }
 
 .diagnostic-report-note {
@@ -3136,8 +3253,20 @@ onBeforeUnmount(() => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .diagnostic-report-card-grid > .diagnostic-report-card:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
   .diagnostic-report-identity {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .diagnostic-report-identity > div:nth-child(3) {
+    border-left: 0;
+  }
+
+  .diagnostic-report-identity > div:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
   }
 }
 
@@ -3177,13 +3306,18 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .diagnostic-report-model {
-    grid-template-columns: minmax(0, 1fr) auto;
+  .diagnostic-report-card-grid > .diagnostic-report-card:last-child:nth-child(odd) {
+    grid-column: auto;
   }
 
-  .diagnostic-report-model > strong {
-    grid-column: 1 / -1;
-    grid-row: 2;
+  .diagnostic-report-identity > div,
+  .diagnostic-report-identity > div:first-child {
+    padding: 10px 0;
+  }
+
+  .diagnostic-report-identity > div + div {
+    border-top: 1px solid var(--border);
+    border-left: 0;
   }
 
   .diagnostic-report-note {
