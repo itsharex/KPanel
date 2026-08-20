@@ -34,6 +34,7 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toMatch(
       /\.diagnostic-command-group \+ \.diagnostic-command-group\s*\{[^}]*border-top: 1px dashed/,
     )
+    expect(diagnosticsSource).not.toMatch(/font-size:\s*(?:10|11)px;/)
   })
 
   it('keeps native probes on the overview instead of presenting them as terminal commands', () => {
@@ -100,6 +101,12 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-low')
     expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-medium')
     expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-high')
+    expect(diagnosticsSource).toMatch(
+      /@container diagnostic-result \(max-width: 760px\)[\s\S]*?\.diagnostic-report-identity > div:nth-child\(odd\)\s*\{[^}]*padding-left: 0;/,
+    )
+    expect(diagnosticsSource).toMatch(/\.diagnostic-report-pair span\s*\{[^}]*font-size: 12px;/)
+    expect(diagnosticsSource).toMatch(/\.diagnostic-report-card__meta\s*\{[^}]*font-size: 13px;/)
+    expect(diagnosticsSource).toMatch(/\.diagnostic-report-note\s*\{[^}]*font-size: 13px;/)
   })
 
   it('states that native network scores measure the server rather than the browser link', () => {

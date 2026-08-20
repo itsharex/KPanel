@@ -1530,7 +1530,7 @@ onBeforeUnmount(() => {
 .diagnostic-command-tested {
   border-radius: 999px;
   padding: 2px 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -2881,7 +2881,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   margin: 4px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2889,7 +2889,7 @@ onBeforeUnmount(() => {
 
 .diagnostic-report-section__title p span {
   color: var(--brand-strong);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: .04em;
 }
@@ -2910,7 +2910,7 @@ onBeforeUnmount(() => {
 }
 
 .diagnostic-report-section__score > small {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: .04em;
 }
@@ -2934,7 +2934,7 @@ onBeforeUnmount(() => {
 
 .diagnostic-report-identity span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -3031,7 +3031,7 @@ onBeforeUnmount(() => {
 .diagnostic-report-card__heading small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3055,7 +3055,7 @@ onBeforeUnmount(() => {
 }
 
 .diagnostic-report-card__score span {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .diagnostic-report-card__value {
@@ -3080,7 +3080,7 @@ onBeforeUnmount(() => {
   gap: 5px 12px;
   margin-top: 7px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -3110,7 +3110,7 @@ onBeforeUnmount(() => {
   display: block;
   margin-bottom: 4px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -3168,7 +3168,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-top: 16px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .diagnostic-report-risk > span:last-child b {
@@ -3216,7 +3216,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 2px 2px 5px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .diagnostic-report-note > svg {
@@ -3237,7 +3237,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   color: var(--brand-strong);
-  font-size: 12px;
+  font-size: 14px;
   white-space: nowrap;
 }
 
@@ -3264,6 +3264,10 @@ onBeforeUnmount(() => {
 
   .diagnostic-report-identity > div:nth-child(3) {
     border-left: 0;
+  }
+
+  .diagnostic-report-identity > div:nth-child(odd) {
+    padding-left: 0;
   }
 
   .diagnostic-report-identity > div:nth-child(n + 3) {
