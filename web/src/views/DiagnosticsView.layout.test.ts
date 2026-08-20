@@ -45,6 +45,15 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toContain("scoreCheck?.provider !== 'native'")
   })
 
+  it('allows overview cards to shrink inside the phone-width result grid', () => {
+    expect(diagnosticsSource).toMatch(
+      /@container diagnostic-result \(max-width: 520px\)[\s\S]*?\.diagnostic-overview > \*\s*\{[^}]*min-width:\s*0;/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-report-section__header,[\s\S]*?\.diagnostic-report-section__title > div\s*\{[^}]*min-width:\s*0;/,
+    )
+  })
+
   it('collapses commands into a persistent icon rail', () => {
     expect(diagnosticsSource).toContain("'is-command-panel-collapsed': commandsCollapsed")
     expect(diagnosticsSource).toContain('aria-controls="diagnostic-command-selector"')

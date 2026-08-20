@@ -3301,6 +3301,16 @@ onBeforeUnmount(() => {
     padding: 14px;
   }
 
+  .diagnostic-overview > * {
+    min-width: 0;
+  }
+
+  .diagnostic-report-section__header,
+  .diagnostic-report-section__title,
+  .diagnostic-report-section__title > div {
+    min-width: 0;
+  }
+
   .diagnostic-report-section {
     padding: 14px;
   }
