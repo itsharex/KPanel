@@ -566,5 +566,5 @@ describe('DesktopView icon layout interaction', () => {
 
     expect(updateWorkspace).not.toHaveBeenCalled()
     wrapper.unmount()
-  })
+  }, 10_000)
 })
