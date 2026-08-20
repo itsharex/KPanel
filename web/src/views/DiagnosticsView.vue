@@ -127,7 +127,7 @@ const scoreDimensions = [
   {
     id: 'speed',
     label: '网速',
-    detail: '服务器出口上下行吞吐',
+    detail: '服务器公网上下行测速',
     nativeID: 'native-speed',
     category: 'network',
     keywords: ['superspeed', 'speedtest', '测速', '带宽', '网速'],
@@ -357,8 +357,8 @@ function summaryMetricLabel(key: string): string {
     memory_score: '内存分数',
     memory_read: '内存读',
     memory_write: '内存写',
-    upload: '上行',
-    download: '下行',
+    upload: '上传',
+    download: '下载',
     average: '平均延迟',
     jitter: '抖动',
     loss: '丢包',
@@ -1065,9 +1065,12 @@ onBeforeUnmount(() => {
                     <small v-if="summaryValue('latency', 'jitter') || summaryValue('latency', 'loss')">{{ summaryValue('latency', 'jitter') }} · {{ summaryValue('latency', 'loss') }}</small>
                   </article>
                   <article class="diagnostic-report-card">
-                    <header><div class="diagnostic-report-card__heading"><span class="is-speed"><Gauge :size="17" /></span><div><strong>测速</strong><small>服务器出口吞吐</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('speed')) }}</strong><span>分</span></div></header>
-                    <p>{{ summaryValue('speed', 'download') || '等待检测' }}</p>
-                    <small v-if="summaryValue('speed', 'upload')">{{ summaryMetricLabel('upload') }} {{ summaryValue('speed', 'upload') }}</small>
+                    <header><div class="diagnostic-report-card__heading"><span class="is-speed"><Gauge :size="17" /></span><div><strong>上传 / 下载</strong><small>服务器公网上下行测速</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('speed')) }}</strong><span>分</span></div></header>
+                    <p>
+                      <span v-if="summaryValue('speed', 'download')"><b>{{ summaryMetricLabel('download') }}</b> {{ summaryValue('speed', 'download') }}</span>
+                      <span v-if="summaryValue('speed', 'upload')"><b>{{ summaryMetricLabel('upload') }}</b> {{ summaryValue('speed', 'upload') }}</span>
+                      <span v-if="!summaryValue('speed', 'download') && !summaryValue('speed', 'upload')">等待检测</span>
+                    </p>
                   </article>
                   <article class="diagnostic-report-card">
                     <header><div class="diagnostic-report-card__heading"><span class="is-ip"><Globe2 :size="17" /></span><div><strong>IP 质量</strong><small>服务器出口风险</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('ip')) }}</strong><span>分</span></div></header>

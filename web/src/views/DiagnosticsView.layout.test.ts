@@ -91,7 +91,9 @@ describe('diagnostics workspace layout', () => {
   it('states that native network scores measure the server rather than the browser link', () => {
     expect(diagnosticsSource).toContain('原生探针由服务器本机执行')
     expect(diagnosticsSource).toContain('服务器至探测节点')
-    expect(diagnosticsSource).toContain('服务器出口吞吐')
+    expect(diagnosticsSource).toContain('服务器公网上下行测速')
+    expect(diagnosticsSource).toContain("summaryMetricLabel('download')")
+    expect(diagnosticsSource).toContain("summaryMetricLabel('upload')")
     expect(diagnosticsSource).toContain('不包含当前浏览器到服务器的访问质量')
   })
 
