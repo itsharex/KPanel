@@ -405,22 +405,36 @@ func (r *NativeRuntime) loop(ctx context.Context, runID string, decision *Decisi
 
 func (r *NativeRuntime) completionMessages(ctx context.Context, history []Message, currentRunID string) []ChatMessage {
 	messages := make([]ChatMessage, 0, len(history))
-	for _, message := range history {
+	for index := 0; index < len(history); {
+		message := history[index]
 		if message.ToolCallID != "" {
-			call, err := r.store.ToolCall(ctx, message.RunID, message.ToolCallID)
-			if err == nil {
-				callMessageID := message.ID
+			calls := make([]ToolCall, 0, 1)
+			results := make([]ChatMessage, 0, 1)
+			for next := index; next < len(history); next++ {
+				toolMessage := history[next]
+				if toolMessage.ToolCallID == "" || toolMessage.RunID != message.RunID {
+					break
+				}
+				call, err := r.store.ToolCall(ctx, toolMessage.RunID, toolMessage.ToolCallID)
+				if err != nil {
+					break
+				}
+				calls = append(calls, call)
+				results = append(results, ChatMessage{ID: toolMessage.ID, Role: "tool", Name: call.Name, Content: toolMessage.Content, ToolCallID: call.ID, CurrentRun: toolMessage.RunID == currentRunID})
+			}
+			if len(calls) > 0 {
+				callMessageID := results[0].ID
 				if callMessageID != "" {
 					callMessageID += "_call"
 				}
-				messages = append(messages,
-					ChatMessage{ID: callMessageID, Role: "assistant", ToolCalls: []ToolCall{call}, CurrentRun: message.RunID == currentRunID},
-					ChatMessage{ID: message.ID, Role: "tool", Name: call.Name, Content: message.Content, ToolCallID: call.ID, CurrentRun: message.RunID == currentRunID},
-				)
+				messages = append(messages, ChatMessage{ID: callMessageID, Role: "assistant", ToolCalls: calls, CurrentRun: message.RunID == currentRunID})
+				messages = append(messages, results...)
+				index += len(calls)
 				continue
 			}
 		}
 		messages = append(messages, ChatMessage{ID: message.ID, Role: string(message.Role), Content: message.Content, Attachments: message.Attachments, CurrentRun: message.RunID == currentRunID})
+		index++
 	}
 	return messages
 }

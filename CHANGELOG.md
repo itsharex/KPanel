@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- 按模型原始响应批次重建连续工具调用，避免将一次多工具响应拆成多条 assistant 消息而触发严格 Provider 的 reasoning 历史校验。
+
 ## [0.88.0] - 2026-08-20
 
 ### Added

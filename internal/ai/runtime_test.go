@@ -221,6 +221,57 @@ func TestCompletionMessagesPreserveStableIDs(t *testing.T) {
 	}
 }
 
+func TestCompletionMessagesReconstructToolCallBatch(t *testing.T) {
+	store, _, _, _ := runtimeFixture(t)
+	defer store.Close()
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, Session{UserID: "admin", ProviderID: "provider", ModelID: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.CreateRun(ctx, Run{SessionID: session.ID, UserID: "admin", ProviderID: "provider", ModelID: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerData := json.RawMessage(`{"type":"openai_chat_reasoning","providerId":"provider","field":"reasoning_content","text":"plan"}`)
+	firstCall, err := store.SaveToolCall(ctx, ToolCall{ID: "call_1", RunID: run.ID, SessionID: session.ID, Name: "host_system_summary", Arguments: json.RawMessage(`{}`), ProviderData: providerData, Status: ToolCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCall, err := store.SaveToolCall(ctx, ToolCall{ID: "call_2", RunID: run.ID, SessionID: session.ID, Name: "host_system_processes", Arguments: json.RawMessage(`{}`), Status: ToolCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstResult, err := store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleTool, ToolCallID: firstCall.ID, Content: `{"summary":true}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondResult, err := store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleTool, ToolCallID: secondCall.ID, Content: `{"processes":true}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	messages := (&NativeRuntime{store: store}).completionMessages(ctx, []Message{firstResult, secondResult}, run.ID)
+	if len(messages) != 3 {
+		t.Fatalf("messages=%#v", messages)
+	}
+	if messages[0].Role != "assistant" || len(messages[0].ToolCalls) != 2 || messages[0].ToolCalls[0].ID != firstCall.ID || messages[0].ToolCalls[1].ID != secondCall.ID {
+		t.Fatalf("tool calls were not reconstructed as one assistant batch: %#v", messages[0])
+	}
+	if string(messages[0].ToolCalls[0].ProviderData) != string(providerData) || len(messages[0].ToolCalls[1].ProviderData) != 0 {
+		t.Fatalf("provider context placement changed: %#v", messages[0].ToolCalls)
+	}
+	if reasoning := openAIChatReasoningText(messages[0].ToolCalls, "provider", ""); reasoning != "plan" {
+		t.Fatalf("tool batch reasoning=%q, want plan", reasoning)
+	}
+	if messages[1].ID != firstResult.ID || messages[1].ToolCallID != firstCall.ID || messages[2].ID != secondResult.ID || messages[2].ToolCallID != secondCall.ID {
+		t.Fatalf("tool result identities changed: %#v", messages)
+	}
+	if !messages[0].CurrentRun || !messages[1].CurrentRun || !messages[2].CurrentRun {
+		t.Fatalf("current run markers were not preserved: %#v", messages)
+	}
+}
+
 func TestNativeRuntimeReplansAfterAgentBusinessRejection(t *testing.T) {
 	store, providerService, provider, model := runtimeFixture(t)
 	defer store.Close()

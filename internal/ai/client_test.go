@@ -83,7 +83,7 @@ func TestOpenAIChatPreservesProviderReasoningAcrossToolCalls(t *testing.T) {
 						assistants = append(assistants, message)
 					}
 				}
-				if len(assistants) != 2 {
+				if len(assistants) != 1 || len(assistants[0]["tool_calls"].([]any)) != 2 {
 					t.Fatalf("tool batch was not reconstructed: %#v", payload.Messages)
 				}
 				if requestNumber == 2 {
@@ -124,9 +124,8 @@ func TestOpenAIChatPreservesProviderReasoningAcrossToolCalls(t *testing.T) {
 				t.Fatalf("hidden reasoning leaked through public tool JSON: %s", publicCall)
 			}
 			err = client.Stream(context.Background(), provider, "key", CompletionRequest{Model: "model", Messages: []ChatMessage{
-				{Role: "assistant", ToolCalls: calls[:1]},
+				{Role: "assistant", ToolCalls: calls},
 				{Role: "tool", ToolCallID: calls[0].ID, Content: `{"ok":true}`},
-				{Role: "assistant", ToolCalls: calls[1:]},
 				{Role: "tool", ToolCallID: calls[1].ID, Content: `{"ok":true}`},
 			}}, func(CompletionEvent) error { return nil })
 			if err != nil || requestNumber != 3 {
