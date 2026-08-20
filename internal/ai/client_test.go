@@ -262,6 +262,132 @@ func TestOpenAIChatFallsBackForStrictLegacyReasoningHistory(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatDoesNotReuseReasoningAcrossResponseBatches(t *testing.T) {
+	requestNumber := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestNumber++
+		var payload struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		assistants := make([]map[string]any, 0, 2)
+		for _, message := range payload.Messages {
+			if message["role"] == "assistant" && message["tool_calls"] != nil {
+				assistants = append(assistants, message)
+			}
+		}
+		switch requestNumber {
+		case 1:
+			if len(assistants) != 2 {
+				t.Fatalf("tool response batches changed: %#v", payload.Messages)
+			}
+			for _, assistant := range assistants {
+				if _, exists := assistant["reasoning_content"]; exists {
+					t.Fatalf("standard request guessed a reasoning field: %#v", assistant)
+				}
+			}
+		case 2:
+			if len(assistants) != 2 || assistants[0]["reasoning_content"] != "first-plan" || assistants[1]["reasoning_content"] != "" {
+				t.Fatalf("reasoning crossed response boundaries: %#v", assistants)
+			}
+		case 3:
+			if len(assistants) != 1 || assistants[0]["reasoning_content"] != "first-plan" {
+				t.Fatalf("exact batch was not preserved after legacy fallback: %#v", payload.Messages)
+			}
+			payloadText, _ := json.Marshal(payload.Messages)
+			if strings.Contains(string(payloadText), `"id":"call_2"`) || !strings.Contains(string(payloadText), "second-visible") || !strings.Contains(string(payloadText), "不可信数据") {
+				t.Fatalf("missing batch was not safely flattened: %s", payloadText)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			return
+		default:
+			t.Fatalf("unexpected request %d", requestNumber)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"The reasoning_content in the thinking mode must be passed back to the API."}}`)
+	}))
+	defer server.Close()
+
+	provider := Provider{ID: "strict-batch-reasoning", Protocol: ProtocolOpenAICompatible, BaseURL: server.URL, EndpointScope: EndpointPrivate}
+	providerData := json.RawMessage(`{"type":"openai_chat_reasoning","providerId":"strict-batch-reasoning","field":"reasoning_content","text":"first-plan"}`)
+	request := CompletionRequest{Model: "model", Messages: []ChatMessage{
+		{Role: "assistant", Content: "first-visible", ToolCalls: []ToolCall{{ID: "call_1", Name: "host_first", Arguments: json.RawMessage(`{}`), ProviderData: providerData}}},
+		{Role: "tool", ToolCallID: "call_1", Content: `{"first":true}`},
+		{Role: "assistant", Content: "second-visible", ToolCalls: []ToolCall{{ID: "call_2", Name: "host_second", Arguments: json.RawMessage(`{}`)}}},
+		{Role: "tool", ToolCallID: "call_2", Content: `{"second":true}`},
+	}}
+	if err := NewHTTPModelClient().Stream(context.Background(), provider, "key", request, func(CompletionEvent) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if requestNumber != 3 {
+		t.Fatalf("requests=%d, want 3", requestNumber)
+	}
+}
+
+func TestOpenAIChatDistinguishesCapturedEmptyReasoningFromMissingContext(t *testing.T) {
+	providerData := json.RawMessage(`{"type":"openai_chat_reasoning","providerId":"provider","field":"reasoning_content","text":""}`)
+	request := CompletionRequest{Messages: []ChatMessage{{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_1", ProviderData: providerData}}}}}
+	if openAIChatReasoningContextMissing(request, "provider", "model") {
+		t.Fatal("captured empty reasoning was treated as absent legacy context")
+	}
+	if !openAIChatReasoningContextMissing(request, "other-provider", "model") {
+		t.Fatal("provider-bound reasoning context crossed providers")
+	}
+}
+
+func TestProviderNativeToolContextDoesNotCrossModels(t *testing.T) {
+	chatCalls := []ToolCall{{ID: "chat_call"}}
+	attachOpenAIChatReasoning("provider", "model-a", chatCalls, "reasoning_content", "plan")
+	if text, found := openAIChatReasoningContext(chatCalls, "provider", "model-a"); !found || text != "plan" {
+		t.Fatalf("same-model chat context missing: found=%v text=%q", found, text)
+	}
+	if _, found := openAIChatReasoningContext(chatCalls, "provider", "model-b"); found {
+		t.Fatal("chat reasoning crossed models")
+	}
+
+	legacyChatCalls := []ToolCall{{ProviderData: json.RawMessage(`{"type":"openai_chat_reasoning","providerId":"provider","field":"reasoning_content","text":"legacy"}`)}}
+	if text, found := openAIChatReasoningContext(legacyChatCalls, "provider", "model-b"); !found || text != "legacy" {
+		t.Fatal("legacy provider-bound context without a model stopped loading")
+	}
+
+	responses := responsesCompletionEvent("provider", "model-a", map[int]*ToolCall{0: {ID: "responses_call"}}, []json.RawMessage{json.RawMessage(`{"type":"reasoning","encrypted_content":"opaque"}`)}, false, Usage{})
+	sameModelItems, _, _ := responsesProviderItems("provider", "model-a", responses.ToolCalls[0].ProviderData)
+	if len(responses.ToolCalls) != 1 || len(sameModelItems) != 1 {
+		t.Fatal("same-model Responses context missing")
+	}
+	otherModelItems, _, _ := responsesProviderItems("provider", "model-b", responses.ToolCalls[0].ProviderData)
+	if len(otherModelItems) != 0 {
+		t.Fatal("Responses reasoning crossed models")
+	}
+
+	anthropicCalls := []ToolCall{{ID: "anthropic_call"}}
+	attachAnthropicContent("provider", "model-a", anthropicCalls, map[int]*anthropicContentBlock{
+		0: {Type: "thinking", Signature: "opaque"},
+		1: {Type: "tool_use", ID: "anthropic_call", Name: "host_read", Input: json.RawMessage(`{}`)},
+	}, true)
+	sameModelBlocks, sameModelComplete := anthropicProviderContent("provider", "model-a", anthropicCalls)
+	if !sameModelComplete || len(sameModelBlocks) != 2 {
+		t.Fatal("same-model Anthropic context missing")
+	}
+	otherModelBlocks, otherModelComplete := anthropicProviderContent("provider", "model-b", anthropicCalls)
+	if otherModelComplete || len(otherModelBlocks) != 0 {
+		t.Fatal("Anthropic thinking crossed models")
+	}
+
+	geminiCall := ToolCall{ID: "gemini_call"}
+	attachGeminiThoughtSignature("provider", "model-a", &geminiCall, "opaque")
+	if geminiThoughtSignature("provider", "model-a", geminiCall.ProviderData) != "opaque" {
+		t.Fatal("same-model Gemini context missing")
+	}
+	if geminiThoughtSignature("provider", "model-b", geminiCall.ProviderData) != "" {
+		t.Fatal("Gemini thought signature crossed models")
+	}
+}
+
 func TestOpenAIChatRetriesTextOnlyWhenOnlyHistoryContainsImages(t *testing.T) {
 	requestNumber := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -356,15 +482,29 @@ func TestOpenAIResponsesStreamAndToolRoundTrip(t *testing.T) {
 				`{"type":"response.function_call_arguments.delta","output_index":2,"delta":"1}"}`,
 				`{"type":"response.function_call_arguments.done","output_index":2,"arguments":"{\"x\":1}"}`,
 				`{"type":"response.output_item.done","output_index":2,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"host_read","arguments":"{\"x\":1}"}}`,
-				`{"type":"response.completed","response":{"usage":{"input_tokens":7,"output_tokens":4,"total_tokens":11}}}`,
+				`{"type":"response.completed","response":{"output":[{"type":"reasoning","id":"rs_1","encrypted_content":"opaque"},{"type":"message","id":"msg_1","role":"assistant","content":[{"type":"output_text","text":"working"}]},{"type":"function_call","id":"fc_1","call_id":"call_1","name":"host_read","arguments":"{\"x\":1}"}],"usage":{"input_tokens":7,"output_tokens":4,"total_tokens":11}}}`,
 			} {
 				fmt.Fprintf(w, "event: ignored\ndata: %s\n\n", event)
 			}
 			return
 		}
-		for _, marker := range []string{`"type":"reasoning"`, `"encrypted_content":"opaque"`, `"type":"function_call"`, `"call_id":"call_1"`, `"type":"function_call_output"`, `"output":"{\"ok\":true}"`} {
+		for _, marker := range []string{`"type":"reasoning"`, `"encrypted_content":"opaque"`, `"type":"message"`, `"text":"working"`, `"type":"function_call"`, `"call_id":"call_1"`, `"type":"function_call_output"`, `"output":"{\"ok\":true}"`} {
 			if !strings.Contains(payload, marker) {
 				t.Fatalf("tool continuation missing %s: %s", marker, payload)
+			}
+		}
+		var continuation struct {
+			Input []struct {
+				Type string `json:"type"`
+			} `json:"input"`
+		}
+		if json.Unmarshal(body, &continuation) != nil || len(continuation.Input) != 4 {
+			t.Fatalf("complete Responses output was not replayed exactly once: %s", payload)
+		}
+		wantOrder := []string{"reasoning", "message", "function_call", "function_call_output"}
+		for index, want := range wantOrder {
+			if continuation.Input[index].Type != want {
+				t.Fatalf("Responses output order=%#v, want %#v", continuation.Input, wantOrder)
 			}
 		}
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}],\"usage\":{\"input_tokens\":9,\"output_tokens\":2,\"total_tokens\":11}}}\n\n")
@@ -405,6 +545,76 @@ func TestOpenAIResponsesStreamAndToolRoundTrip(t *testing.T) {
 	}, Tools: []ToolDefinition{definition}}, func(event CompletionEvent) error { text += event.Delta; return nil })
 	if err != nil || text != "done" {
 		t.Fatalf("continuation text=%q err=%v", text, err)
+	}
+}
+
+func TestOpenAIResponsesReplaysLegacyReasoningBeforeCompleteAssistantBatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Input []map[string]any `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Input) != 8 {
+			t.Fatalf("legacy Responses batch changed: %#v", payload.Input)
+		}
+		if payload.Input[0]["type"] != "reasoning" || payload.Input[1]["role"] != "assistant" || payload.Input[1]["type"] != nil {
+			t.Fatalf("reasoning must precede reconstructed assistant output: %#v", payload.Input)
+		}
+		for index := 0; index < 3; index++ {
+			if payload.Input[index+2]["type"] != "function_call" || payload.Input[index+5]["type"] != "function_call_output" {
+				t.Fatalf("parallel tool batch was not preserved: %#v", payload.Input)
+			}
+		}
+		content, _ := payload.Input[0]["content"].([]any)
+		if len(content) != 1 || content[0].(map[string]any)["type"] != "reasoning_text" {
+			t.Fatalf("legacy reasoning_text item changed: %#v", payload.Input[0])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{}}\n\n")
+	}))
+	defer server.Close()
+
+	reasoningItem := json.RawMessage(`{"type":"reasoning","id":"rs_legacy","status":"completed","content":[{"type":"reasoning_text","text":"opaque-summary"}],"summary":[],"encrypted_content":"opaque"}`)
+	providerData, err := json.Marshal(responsesNativeContext{ProviderID: "provider", Items: []json.RawMessage{reasoningItem}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := []ToolCall{
+		{ID: "call_1", Name: "host_system_summary", Arguments: json.RawMessage(`{}`), ProviderData: providerData},
+		{ID: "call_2", Name: "host_system_processes", Arguments: json.RawMessage(`{}`)},
+		{ID: "call_3", Name: "host_docker_resource_usage", Arguments: json.RawMessage(`{}`)},
+	}
+	request := CompletionRequest{Model: "deepseek-v4-flash", Messages: []ChatMessage{
+		{Role: "assistant", Content: "我将读取系统状态。", ToolCalls: calls},
+		{Role: "tool", ToolCallID: "call_1", Content: `{"ok":1}`},
+		{Role: "tool", ToolCallID: "call_2", Content: `{"ok":2}`},
+		{Role: "tool", ToolCallID: "call_3", Content: `{"ok":3}`},
+	}}
+	provider := Provider{ID: "provider", Protocol: ProtocolOpenAICompatible, APIMode: OpenAIResponses, BaseURL: server.URL, EndpointScope: EndpointPrivate}
+	if err := NewHTTPModelClient().Stream(context.Background(), provider, "key", request, func(CompletionEvent) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenAIResponsesCompletedOutputCannotDiscardStreamedReasoning(t *testing.T) {
+	collected := map[int]json.RawMessage{
+		0: json.RawMessage(`{"type":"reasoning","id":"rs_1","encrypted_content":"opaque"}`),
+		2: json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"host_read","arguments":"{}"}`),
+	}
+	partial := []json.RawMessage{
+		json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"host_read","arguments":"{}"}`),
+	}
+	if responsesCompletedOutputSupersedes(collected, partial) {
+		t.Fatal("partial completed output discarded a streamed encrypted reasoning item")
+	}
+	complete := []json.RawMessage{
+		json.RawMessage(`{"type":"reasoning","id":"rs_1","encrypted_content":"opaque"}`),
+		json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"host_read","arguments":"{}"}`),
+	}
+	if !responsesCompletedOutputSupersedes(collected, complete) {
+		t.Fatal("complete output did not supersede streamed item fragments")
 	}
 }
 
@@ -576,6 +786,103 @@ func TestAnthropicStream(t *testing.T) {
 	}
 }
 
+func TestAnthropicThinkingToolRoundTrip(t *testing.T) {
+	requestNumber := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestNumber++
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if requestNumber == 1 {
+			for _, event := range []string{
+				`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+				`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan"}}`,
+				`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"opaque-anthropic"}}`,
+				`{"type":"content_block_stop","index":0}`,
+				`{"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"opaque-redacted"}}`,
+				`{"type":"content_block_stop","index":1}`,
+				`{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}`,
+				`{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"assistant-visible"}}`,
+				`{"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"tool_1","name":"host_read"}}`,
+				`{"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"id\":1}"}}`,
+				`{"type":"message_stop"}`,
+			} {
+				fmt.Fprintf(w, "data: %s\n\n", event)
+			}
+			return
+		}
+		payload := string(body)
+		for _, marker := range []string{`"type":"thinking"`, `"thinking":"plan"`, `"signature":"opaque-anthropic"`, `"type":"redacted_thinking"`, `"data":"opaque-redacted"`, `"text":"assistant-visible"`, `"type":"tool_use"`} {
+			if !strings.Contains(payload, marker) {
+				t.Fatalf("Anthropic continuation missing %s: %s", marker, payload)
+			}
+		}
+		thinkingIndex := strings.Index(payload, `"type":"thinking"`)
+		redactedIndex := strings.Index(payload, `"type":"redacted_thinking"`)
+		textIndex := strings.Index(payload, `"text":"assistant-visible"`)
+		toolIndex := strings.Index(payload, `"type":"tool_use"`)
+		if thinkingIndex < 0 || thinkingIndex > redactedIndex || redactedIndex > textIndex || textIndex > toolIndex {
+			t.Fatalf("Anthropic assistant block order changed: %s", payload)
+		}
+		fmt.Fprint(w, "data: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer server.Close()
+
+	provider := Provider{ID: "anthropic-provider", Protocol: ProtocolAnthropic, BaseURL: server.URL, EndpointScope: EndpointPrivate}
+	client := NewHTTPModelClient()
+	var text string
+	var calls []ToolCall
+	if err := client.Stream(context.Background(), provider, "key", CompletionRequest{Model: "claude"}, func(event CompletionEvent) error {
+		text += event.Delta
+		if event.Done {
+			calls = event.ToolCalls
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if text != "assistant-visible" || len(calls) != 1 || len(calls[0].ProviderData) == 0 {
+		t.Fatalf("text=%q calls=%#v", text, calls)
+	}
+	publicCall, _ := json.Marshal(calls[0])
+	if strings.Contains(string(publicCall), "opaque-anthropic") || strings.Contains(string(publicCall), "opaque-redacted") || strings.Contains(string(publicCall), "providerData") {
+		t.Fatalf("Anthropic thinking context leaked through public JSON: %s", publicCall)
+	}
+	if err := client.Stream(context.Background(), provider, "key", CompletionRequest{Model: "claude", Messages: []ChatMessage{
+		{Role: "assistant", Content: text, ToolCalls: calls},
+		{Role: "tool", Name: calls[0].Name, ToolCallID: calls[0].ID, Content: `{"ok":true}`},
+	}}, func(CompletionEvent) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if requestNumber != 2 {
+		t.Fatalf("requests=%d, want 2", requestNumber)
+	}
+}
+
+func TestAnthropicInterleavedThinkingKeepsOriginalBlockOrder(t *testing.T) {
+	calls := []ToolCall{
+		{ID: "tool_1", Name: "host_first", Arguments: json.RawMessage(`{"id":1}`)},
+		{ID: "tool_2", Name: "host_second", Arguments: json.RawMessage(`{"id":2}`)},
+	}
+	parts := map[int]*anthropicContentBlock{
+		0: {Type: "thinking", Thinking: "first", Signature: "signature-1"},
+		1: {Type: "tool_use", ID: "tool_1", Name: "host_first", Input: json.RawMessage(`{"id":1}`)},
+		2: {Type: "thinking", Thinking: "second", Signature: "signature-2"},
+		3: {Type: "redacted_thinking", Data: "opaque-redacted"},
+		4: {Type: "tool_use", ID: "tool_2", Name: "host_second", Input: json.RawMessage(`{"id":2}`)},
+	}
+	attachAnthropicContent("provider", "claude-new", calls, parts, true)
+	blocks, complete := anthropicProviderContent("provider", "claude-new", calls)
+	if !complete || len(blocks) != 5 {
+		t.Fatalf("interleaved context incomplete: complete=%v blocks=%#v", complete, blocks)
+	}
+	want := []string{"thinking", "tool_use", "thinking", "redacted_thinking", "tool_use"}
+	for index, block := range blocks {
+		if block["type"] != want[index] {
+			t.Fatalf("block order=%#v, want %#v", blocks, want)
+		}
+	}
+}
+
 func TestGeminiStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.URL.Path, ":streamGenerateContent") {
@@ -590,13 +897,117 @@ func TestGeminiStream(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewHTTPModelClient()
-	var result CompletionEvent
-	err := client.Stream(context.Background(), Provider{Protocol: ProtocolGemini, BaseURL: server.URL, EndpointScope: EndpointPrivate}, "key", CompletionRequest{Model: "gemini-test"}, func(event CompletionEvent) error { result = event; return nil })
+	var text string
+	var calls []ToolCall
+	err := client.Stream(context.Background(), Provider{Protocol: ProtocolGemini, BaseURL: server.URL, EndpointScope: EndpointPrivate}, "key", CompletionRequest{Model: "gemini-test"}, func(event CompletionEvent) error {
+		text += event.Delta
+		if event.Done {
+			calls = event.ToolCalls
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Delta != "ok" || len(result.ToolCalls) != 1 || result.ToolCalls[0].Name != "host_read" {
-		t.Fatalf("event=%#v", result)
+	if text != "ok" || len(calls) != 1 || calls[0].ID == "" || calls[0].Name != "host_read" {
+		t.Fatalf("text=%q calls=%#v", text, calls)
+	}
+}
+
+func TestGeminiAccumulatesFunctionCallsAcrossStreamChunks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call_1\",\"name\":\"host_first\",\"args\":{}},\"thoughtSignature\":\"sig-1\"}]}}]}\n\n")
+		fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call_2\",\"name\":\"host_second\",\"args\":{}},\"thoughtSignature\":\"sig-2\"}]}}]}\n\n")
+	}))
+	defer server.Close()
+
+	var calls []ToolCall
+	err := NewHTTPModelClient().Stream(context.Background(), Provider{ID: "provider", Protocol: ProtocolGemini, BaseURL: server.URL, EndpointScope: EndpointPrivate}, "key", CompletionRequest{Model: "gemini-3"}, func(event CompletionEvent) error {
+		if event.Done {
+			calls = event.ToolCalls
+		}
+		return nil
+	})
+	if err != nil || len(calls) != 2 || calls[0].ID != "call_1" || calls[1].ID != "call_2" {
+		t.Fatalf("calls=%#v err=%v", calls, err)
+	}
+}
+
+func TestGeminiThoughtSignatureRoundTrip(t *testing.T) {
+	requestNumber := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestNumber++
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if requestNumber == 1 {
+			fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"assistant-visible\"},{\"functionCall\":{\"id\":\"gemini_call_1\",\"name\":\"host_read\",\"args\":{\"id\":1}},\"thoughtSignature\":\"opaque-gemini\"}]}}]}\n\n")
+			return
+		}
+		payload := string(body)
+		for _, marker := range []string{`"text":"assistant-visible"`, `"functionCall":{"args":{"id":1},"id":"gemini_call_1"`, `"thoughtSignature":"opaque-gemini"`, `"functionResponse":{"id":"gemini_call_1"`} {
+			if !strings.Contains(payload, marker) {
+				t.Fatalf("Gemini continuation missing %s: %s", marker, payload)
+			}
+		}
+		fmt.Fprint(w, "data: {\"candidates\":[]}\n\n")
+	}))
+	defer server.Close()
+
+	provider := Provider{ID: "gemini-provider", Protocol: ProtocolGemini, BaseURL: server.URL, EndpointScope: EndpointPrivate}
+	client := NewHTTPModelClient()
+	var text string
+	var calls []ToolCall
+	if err := client.Stream(context.Background(), provider, "key", CompletionRequest{Model: "gemini-3"}, func(event CompletionEvent) error {
+		text += event.Delta
+		if event.Done {
+			calls = event.ToolCalls
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if text != "assistant-visible" || len(calls) != 1 || calls[0].ID != "gemini_call_1" || len(calls[0].ProviderData) == 0 {
+		t.Fatalf("text=%q calls=%#v", text, calls)
+	}
+	publicCall, _ := json.Marshal(calls[0])
+	if strings.Contains(string(publicCall), "opaque-gemini") || strings.Contains(string(publicCall), "providerData") {
+		t.Fatalf("Gemini thought signature leaked through public JSON: %s", publicCall)
+	}
+	if err := client.Stream(context.Background(), provider, "key", CompletionRequest{Model: "gemini-3", Messages: []ChatMessage{
+		{Role: "assistant", Content: text, ToolCalls: calls},
+		{Role: "tool", Name: calls[0].Name, ToolCallID: calls[0].ID, Content: `{"ok":true}`},
+	}}, func(CompletionEvent) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if requestNumber != 2 {
+		t.Fatalf("requests=%d, want 2", requestNumber)
+	}
+}
+
+func TestGeminiThinkingConfigUsesModelFamilyContract(t *testing.T) {
+	tests := []struct {
+		model   string
+		level   ThinkingLevel
+		key     string
+		want    any
+		missing string
+	}{
+		{model: "gemini-2.5-flash", level: ThinkingLow, key: "thinkingBudget", want: 1024, missing: "thinkingLevel"},
+		{model: "models/gemini-2.5-pro", level: ThinkingMedium, key: "thinkingBudget", want: 8192, missing: "thinkingLevel"},
+		{model: "gemini-2.5-flash", level: ThinkingHigh, key: "thinkingBudget", want: 24576, missing: "thinkingLevel"},
+		{model: "gemini-3-flash", level: ThinkingMedium, key: "thinkingLevel", want: ThinkingMedium, missing: "thinkingBudget"},
+	}
+	for _, test := range tests {
+		t.Run(test.model+"/"+string(test.level), func(t *testing.T) {
+			config := geminiThinkingConfig(test.model, test.level)
+			if config[test.key] != test.want {
+				t.Fatalf("config=%#v, want %s=%v", config, test.key, test.want)
+			}
+			if _, exists := config[test.missing]; exists {
+				t.Fatalf("config mixed Gemini family controls: %#v", config)
+			}
+		})
 	}
 }
 
@@ -738,38 +1149,41 @@ func TestProviderErrorDoesNotEchoAPIKey(t *testing.T) {
 
 func TestNativeToolMessagesUseProviderSchemas(t *testing.T) {
 	tests := []struct {
-		name     string
-		protocol ProviderProtocol
-		want     []string
+		name             string
+		provider         Provider
+		want             []string
+		stream           string
+		wantUserMessages int
 	}{
-		{name: "openai", protocol: ProtocolOpenAICompatible, want: []string{`"tool_calls"`, `"tool_call_id":"call_1"`}},
-		{name: "anthropic", protocol: ProtocolAnthropic, want: []string{`"type":"tool_use"`, `"type":"tool_result"`, `"tool_use_id":"call_1"`}},
-		{name: "gemini", protocol: ProtocolGemini, want: []string{`"functionCall"`, `"functionResponse"`, `"name":"host_read"`}},
+		{name: "openai chat", provider: Provider{Protocol: ProtocolOpenAICompatible}, want: []string{`"assistant-progress"`, `"tool_calls"`, `"tool_call_id":"call_1"`, `"tool_call_id":"call_2"`}, stream: "data: [DONE]\n\n"},
+		{name: "openai responses", provider: Provider{Protocol: ProtocolOpenAICompatible, APIMode: OpenAIResponses}, want: []string{`"assistant-progress"`, `"type":"function_call"`, `"type":"function_call_output"`, `"call_id":"call_2"`}, stream: "data: {\"type\":\"response.completed\",\"response\":{}}\n\n"},
+		{name: "anthropic", provider: Provider{Protocol: ProtocolAnthropic}, want: []string{`"assistant-progress"`, `"type":"tool_use"`, `"type":"tool_result"`, `"tool_use_id":"call_2"`}, stream: "data: {\"type\":\"message_stop\"}\n\n", wantUserMessages: 1},
+		{name: "gemini", provider: Provider{Protocol: ProtocolGemini}, want: []string{`"assistant-progress"`, `"functionCall"`, `"functionResponse"`, `"name":"host_other"`}, stream: "data: {\"candidates\":[]}\n\n", wantUserMessages: 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, _ := io.ReadAll(r.Body)
+				payload := string(body)
 				for _, marker := range test.want {
-					if !strings.Contains(string(body), marker) {
+					if !strings.Contains(payload, marker) {
 						t.Fatalf("payload missing %s: %s", marker, body)
 					}
 				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				if test.protocol == ProtocolOpenAICompatible {
-					fmt.Fprint(w, "data: [DONE]\n\n")
-				} else if test.protocol == ProtocolAnthropic {
-					fmt.Fprint(w, "data: {\"type\":\"message_stop\"}\n\n")
-				} else {
-					fmt.Fprint(w, "data: {\"candidates\":[]}\n\n")
+				if test.wantUserMessages > 0 && strings.Count(payload, `"role":"user"`) != test.wantUserMessages {
+					t.Fatalf("tool results were not grouped into %d user message: %s", test.wantUserMessages, body)
 				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, test.stream)
 			}))
 			defer server.Close()
 			request := CompletionRequest{Model: "model", Messages: []ChatMessage{
-				{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_1", Name: "host_read", Arguments: json.RawMessage(`{"x":1}`)}}},
+				{Role: "assistant", Content: "assistant-progress", ToolCalls: []ToolCall{{ID: "call_1", Name: "host_read", Arguments: json.RawMessage(`{"x":1}`)}, {ID: "call_2", Name: "host_other", Arguments: json.RawMessage(`{"x":2}`)}}},
 				{Role: "tool", Name: "host_read", ToolCallID: "call_1", Content: `{"ok":true}`},
+				{Role: "tool", Name: "host_other", ToolCallID: "call_2", Content: `{"ok":true}`},
 			}}
-			provider := Provider{Protocol: test.protocol, BaseURL: server.URL, EndpointScope: EndpointPrivate}
+			provider := test.provider
+			provider.BaseURL, provider.EndpointScope = server.URL, EndpointPrivate
 			if err := NewHTTPModelClient().Stream(context.Background(), provider, "key", request, func(CompletionEvent) error { return nil }); err != nil {
 				t.Fatal(err)
 			}

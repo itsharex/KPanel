@@ -201,22 +201,25 @@ func (c *HTTPModelClient) streamOpenAIResponsesAttempt(ctx context.Context, prov
 		})
 	}
 	for messageIndex, message := range request.Messages {
-		if (message.Content != "" || len(message.Attachments) > 0) && message.ToolCallID == "" {
-			item := map[string]any{"role": message.Role, "content": openAIContent(message, true)}
-			if includeMessageIDs {
-				item["id"] = responsesInputItemID(message, messageIndex, "message", 0)
+		providerItems, completeOutput := responsesProviderOutput(provider.ID, request.Model, message.ToolCalls)
+		input = append(input, providerItems...)
+		if !completeOutput {
+			if (message.Content != "" || len(message.Attachments) > 0) && message.ToolCallID == "" {
+				item := map[string]any{"role": message.Role, "content": openAIContent(message, true)}
+				if includeMessageIDs {
+					item["id"] = responsesInputItemID(message, messageIndex, "message", 0)
+				}
+				input = append(input, item)
 			}
-			input = append(input, item)
-		}
-		for callIndex, call := range message.ToolCalls {
-			input = append(input, responsesProviderItems(provider.ID, call.ProviderData)...)
-			item := map[string]any{
-				"type": "function_call", "call_id": call.ID, "name": call.Name, "arguments": string(call.Arguments),
+			for callIndex, call := range message.ToolCalls {
+				item := map[string]any{
+					"type": "function_call", "call_id": call.ID, "name": call.Name, "arguments": string(call.Arguments),
+				}
+				if includeMessageIDs {
+					item["id"] = responsesInputItemID(message, messageIndex, "function_call", callIndex)
+				}
+				input = append(input, item)
 			}
-			if includeMessageIDs {
-				item["id"] = responsesInputItemID(message, messageIndex, "function_call", callIndex)
-			}
-			input = append(input, item)
 		}
 		if message.ToolCallID != "" {
 			item := map[string]any{
@@ -255,7 +258,8 @@ func (c *HTTPModelClient) streamOpenAIResponsesAttempt(ctx context.Context, prov
 	}
 	defer response.Body.Close()
 	toolParts := map[int]*ToolCall{}
-	reasoningItems := []json.RawMessage{}
+	outputItems := map[int]json.RawMessage{}
+	outputItemBytes := 0
 	textEmitted := false
 	completed := false
 	err = scanSSE(response.Body, func(event, data string) error {
@@ -264,7 +268,8 @@ func (c *HTTPModelClient) streamOpenAIResponsesAttempt(ctx context.Context, prov
 				return nil
 			}
 			completed = true
-			return emit(responsesCompletionEvent(provider.ID, toolParts, reasoningItems, Usage{}))
+			items := sortedResponsesOutputItems(outputItems)
+			return emit(responsesCompletionEvent(provider.ID, request.Model, toolParts, items, responsesOutputItemsComplete(items, toolParts, textEmitted), Usage{}))
 		}
 		var envelope struct {
 			Item json.RawMessage `json:"item"`
@@ -321,8 +326,8 @@ func (c *HTTPModelClient) streamOpenAIResponsesAttempt(ctx context.Context, prov
 				call.Arguments = json.RawMessage(chunk.Arguments)
 			}
 		case "response.output_item.done":
-			if chunk.Item.Type == "reasoning" && len(envelope.Item) > 0 {
-				reasoningItems = append(reasoningItems, append(json.RawMessage(nil), envelope.Item...))
+			if err := storeResponsesOutputItem(outputItems, &outputItemBytes, chunk.OutputIndex, envelope.Item); err != nil {
+				return err
 			}
 			if chunk.Item.Type == "function_call" {
 				call := toolParts[chunk.OutputIndex]
@@ -347,7 +352,15 @@ func (c *HTTPModelClient) streamOpenAIResponsesAttempt(ctx context.Context, prov
 		case "response.completed":
 			completed = true
 			var fallbackText strings.Builder
-			hadReasoningItems := len(reasoningItems) > 0
+			if len(chunk.Response.Output) > 0 && responsesCompletedOutputSupersedes(outputItems, chunk.Response.Output) {
+				outputItems = map[int]json.RawMessage{}
+				outputItemBytes = 0
+				for index, item := range chunk.Response.Output {
+					if err := storeResponsesOutputItem(outputItems, &outputItemBytes, index, item); err != nil {
+						return err
+					}
+				}
+			}
 			for index, item := range chunk.Response.Output {
 				var output struct {
 					Type      string `json:"type"`
@@ -364,10 +377,6 @@ func (c *HTTPModelClient) streamOpenAIResponsesAttempt(ctx context.Context, prov
 					continue
 				}
 				switch output.Type {
-				case "reasoning":
-					if !hadReasoningItems {
-						reasoningItems = append(reasoningItems, append(json.RawMessage(nil), item...))
-					}
 				case "function_call":
 					if toolParts[index] == nil {
 						id := output.CallID
@@ -396,7 +405,8 @@ func (c *HTTPModelClient) streamOpenAIResponsesAttempt(ctx context.Context, prov
 			if usage.TotalTokens == 0 {
 				usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 			}
-			return emit(responsesCompletionEvent(provider.ID, toolParts, reasoningItems, usage))
+			items := sortedResponsesOutputItems(outputItems)
+			return emit(responsesCompletionEvent(provider.ID, request.Model, toolParts, items, responsesOutputItemsComplete(items, toolParts, textEmitted), usage))
 		case "response.failed", "response.incomplete":
 			message := chunk.Response.Error.Message
 			code := chunk.Response.Error.Code
@@ -445,24 +455,55 @@ func responsesMessageIDsRequired(err error) bool {
 }
 
 type responsesNativeContext struct {
+	Type       string            `json:"type,omitempty"`
 	ProviderID string            `json:"providerId"`
+	Model      string            `json:"model,omitempty"`
+	Complete   bool              `json:"complete,omitempty"`
 	Items      []json.RawMessage `json:"items"`
 }
 
-func responsesProviderItems(providerID string, raw json.RawMessage) []any {
+func responsesProviderOutput(providerID, model string, calls []ToolCall) ([]any, bool) {
+	for _, call := range calls {
+		items, complete, found := responsesProviderItems(providerID, model, call.ProviderData)
+		if found {
+			return items, complete
+		}
+	}
+	return nil, false
+}
+
+func responsesProviderItems(providerID, model string, raw json.RawMessage) ([]any, bool, bool) {
 	if len(raw) == 0 {
-		return nil
+		return nil, false, false
 	}
 	var native responsesNativeContext
-	if json.Unmarshal(raw, &native) != nil || native.ProviderID != providerID {
-		return nil
+	if json.Unmarshal(raw, &native) != nil || (native.Type != "" && native.Type != "openai_responses_output") || len(native.Items) == 0 || !providerNativeContextMatches(providerID, model, native.ProviderID, native.Model) {
+		return nil, false, false
 	}
 	items := make([]any, 0, len(native.Items))
 	for _, rawItem := range native.Items {
+		if !native.Complete && !isResponsesReasoningItem(rawItem) {
+			continue
+		}
+		var item map[string]any
+		if json.Unmarshal(rawItem, &item) != nil || item["type"] == nil {
+			if native.Complete {
+				return responsesReasoningItems(native.Items), false, true
+			}
+			continue
+		}
+		items = append(items, item)
+	}
+	return items, native.Complete && len(items) > 0, true
+}
+
+func responsesReasoningItems(rawItems []json.RawMessage) []any {
+	items := make([]any, 0, len(rawItems))
+	for _, rawItem := range rawItems {
 		if !isResponsesReasoningItem(rawItem) {
 			continue
 		}
-		var item any
+		var item map[string]any
 		if json.Unmarshal(rawItem, &item) == nil {
 			items = append(items, item)
 		}
@@ -470,15 +511,129 @@ func responsesProviderItems(providerID string, raw json.RawMessage) []any {
 	return items
 }
 
-func responsesCompletionEvent(providerID string, parts map[int]*ToolCall, reasoningItems []json.RawMessage, usage Usage) CompletionEvent {
+func responsesCompletionEvent(providerID, model string, parts map[int]*ToolCall, outputItems []json.RawMessage, complete bool, usage Usage) CompletionEvent {
 	calls := sortedToolCalls(parts)
-	if len(calls) > 0 && len(reasoningItems) > 0 {
-		raw, err := json.Marshal(responsesNativeContext{ProviderID: providerID, Items: reasoningItems})
+	if !complete {
+		reasoningItems := make([]json.RawMessage, 0, len(outputItems))
+		for _, item := range outputItems {
+			if isResponsesReasoningItem(item) {
+				reasoningItems = append(reasoningItems, item)
+			}
+		}
+		outputItems = reasoningItems
+	}
+	if len(calls) > 0 && len(outputItems) > 0 {
+		raw, err := json.Marshal(responsesNativeContext{Type: "openai_responses_output", ProviderID: providerID, Model: model, Complete: complete, Items: outputItems})
 		if err == nil {
 			calls[0].ProviderData = raw
 		}
 	}
 	return CompletionEvent{Done: true, ToolCalls: calls, Usage: usage}
+}
+
+func storeResponsesOutputItem(items map[int]json.RawMessage, totalBytes *int, index int, raw json.RawMessage) error {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return nil
+	}
+	var item struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &item) != nil || item.Type == "" {
+		return nil
+	}
+	if previous := items[index]; len(previous) > 0 {
+		*totalBytes -= len(previous)
+	}
+	if *totalBytes+len(raw) > MaxAssistantBytes {
+		return errors.New("provider Responses output context exceeds 1 MiB")
+	}
+	items[index] = append(json.RawMessage(nil), raw...)
+	*totalBytes += len(raw)
+	return nil
+}
+
+func sortedResponsesOutputItems(items map[int]json.RawMessage) []json.RawMessage {
+	indices := make([]int, 0, len(items))
+	for index := range items {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	result := make([]json.RawMessage, 0, len(indices))
+	for _, index := range indices {
+		result = append(result, items[index])
+	}
+	return result
+}
+
+func responsesCompletedOutputSupersedes(collected map[int]json.RawMessage, completed []json.RawMessage) bool {
+	if len(collected) == 0 {
+		return true
+	}
+	completedIDs := make(map[string]struct{}, len(completed))
+	for _, item := range completed {
+		if identity := responsesOutputItemIdentity(item); identity != "" {
+			completedIDs[identity] = struct{}{}
+		}
+	}
+	for _, item := range collected {
+		identity := responsesOutputItemIdentity(item)
+		if identity == "" {
+			return false
+		}
+		if _, exists := completedIDs[identity]; !exists {
+			return false
+		}
+	}
+	return true
+}
+
+func responsesOutputItemIdentity(raw json.RawMessage) string {
+	var item struct {
+		Type   string `json:"type"`
+		ID     string `json:"id"`
+		CallID string `json:"call_id"`
+	}
+	if json.Unmarshal(raw, &item) != nil || item.Type == "" {
+		return ""
+	}
+	if item.ID != "" {
+		return item.Type + "\x00" + item.ID
+	}
+	if item.CallID != "" {
+		return item.Type + "\x00" + item.CallID
+	}
+	return ""
+}
+
+func responsesOutputItemsComplete(items []json.RawMessage, parts map[int]*ToolCall, textEmitted bool) bool {
+	if len(items) == 0 {
+		return false
+	}
+	missingCalls := make(map[string]struct{}, len(parts))
+	for _, call := range parts {
+		if call != nil && call.ID != "" {
+			missingCalls[call.ID] = struct{}{}
+		}
+	}
+	hasMessage := !textEmitted
+	for _, raw := range items {
+		var item struct {
+			Type   string `json:"type"`
+			ID     string `json:"id"`
+			CallID string `json:"call_id"`
+		}
+		if json.Unmarshal(raw, &item) != nil {
+			return false
+		}
+		switch item.Type {
+		case "message":
+			hasMessage = true
+		case "function_call":
+			delete(missingCalls, item.CallID)
+			delete(missingCalls, item.ID)
+		}
+	}
+	return hasMessage && len(missingCalls) == 0
 }
 
 func isResponsesReasoningItem(raw json.RawMessage) bool {
@@ -595,8 +750,8 @@ func (c *HTTPModelClient) streamOpenAI(ctx context.Context, provider Provider, a
 			requiredReasoningField = field
 			continue
 		}
-		if field := openAIChatRequiredReasoningField(lastErr); field != "" && !legacyHistoryFallback && openAIChatReasoningContextMissing(request, provider.ID) {
-			fallbackRequest, changed := flattenOpenAIChatLegacyToolHistory(request, provider.ID)
+		if field := openAIChatRequiredReasoningField(lastErr); field != "" && !legacyHistoryFallback && openAIChatReasoningContextMissing(request, provider.ID, request.Model) {
+			fallbackRequest, changed := flattenOpenAIChatLegacyToolHistory(request, provider.ID, request.Model)
 			if changed {
 				request = fallbackRequest
 				legacyHistoryFallback = true
@@ -610,7 +765,6 @@ func (c *HTTPModelClient) streamOpenAI(ctx context.Context, provider Provider, a
 
 func (c *HTTPModelClient) streamOpenAIAttempt(ctx context.Context, provider Provider, apiKey string, request CompletionRequest, includeImages bool, requiredReasoningField string, emit func(CompletionEvent) error) error {
 	messages := []map[string]any{{"role": "system", "content": request.System}}
-	batchReasoning := ""
 	for _, message := range request.Messages {
 		item := map[string]any{"role": message.Role, "content": openAIContentWithImages(message, false, includeImages)}
 		if message.ToolCallID != "" {
@@ -622,9 +776,7 @@ func (c *HTTPModelClient) streamOpenAIAttempt(ctx context.Context, provider Prov
 				calls = append(calls, map[string]any{"id": call.ID, "type": "function", "function": map[string]any{"name": call.Name, "arguments": string(call.Arguments)}})
 			}
 			item["tool_calls"] = calls
-			batchReasoning = applyOpenAIChatReasoning(item, provider.ID, message.ToolCalls, requiredReasoningField, batchReasoning)
-		} else if message.Role != "tool" {
-			batchReasoning = ""
+			applyOpenAIChatReasoning(item, provider.ID, request.Model, message.ToolCalls, requiredReasoningField)
 		}
 		messages = append(messages, item)
 	}
@@ -656,7 +808,7 @@ func (c *HTTPModelClient) streamOpenAIAttempt(ctx context.Context, provider Prov
 			completed = true
 			calls := sortedToolCalls(toolParts)
 			if reasoningSeen && len(calls) > 0 {
-				attachOpenAIChatReasoning(provider.ID, calls, reasoningField, reasoning.String())
+				attachOpenAIChatReasoning(provider.ID, request.Model, calls, reasoningField, reasoning.String())
 			}
 			return emit(CompletionEvent{Done: true, ToolCalls: calls})
 		}
@@ -717,56 +869,54 @@ func (c *HTTPModelClient) streamOpenAIAttempt(ctx context.Context, provider Prov
 type openAIChatNativeContext struct {
 	Type       string `json:"type"`
 	ProviderID string `json:"providerId"`
+	Model      string `json:"model,omitempty"`
 	Field      string `json:"field"`
 	Text       string `json:"text"`
 }
 
-func attachOpenAIChatReasoning(providerID string, calls []ToolCall, field, reasoning string) {
+func attachOpenAIChatReasoning(providerID, model string, calls []ToolCall, field, reasoning string) {
 	if !validOpenAIChatReasoningField(field) || len(calls) == 0 {
 		return
 	}
-	raw, err := json.Marshal(openAIChatNativeContext{Type: "openai_chat_reasoning", ProviderID: providerID, Field: field, Text: reasoning})
+	raw, err := json.Marshal(openAIChatNativeContext{Type: "openai_chat_reasoning", ProviderID: providerID, Model: model, Field: field, Text: reasoning})
 	if err == nil {
 		calls[0].ProviderData = raw
 	}
 }
 
-func openAIChatReasoningText(calls []ToolCall, providerID, fallbackText string) string {
-	text := fallbackText
+func openAIChatReasoningContext(calls []ToolCall, providerID, model string) (string, bool) {
 	for _, call := range calls {
 		var native openAIChatNativeContext
-		if json.Unmarshal(call.ProviderData, &native) == nil && native.Type == "openai_chat_reasoning" && native.ProviderID == providerID && validOpenAIChatReasoningField(native.Field) {
-			text = native.Text
-			break
+		if json.Unmarshal(call.ProviderData, &native) == nil && native.Type == "openai_chat_reasoning" && providerNativeContextMatches(providerID, model, native.ProviderID, native.Model) && validOpenAIChatReasoningField(native.Field) {
+			return native.Text, true
 		}
 	}
+	return "", false
+}
+
+func openAIChatReasoningText(calls []ToolCall, providerID, model string) string {
+	text, _ := openAIChatReasoningContext(calls, providerID, model)
 	return text
 }
 
-func applyOpenAIChatReasoning(item map[string]any, providerID string, calls []ToolCall, requiredField, fallbackText string) string {
-	text := openAIChatReasoningText(calls, providerID, fallbackText)
+func applyOpenAIChatReasoning(item map[string]any, providerID, model string, calls []ToolCall, requiredField string) {
 	if validOpenAIChatReasoningField(requiredField) {
-		item[requiredField] = text
+		item[requiredField] = openAIChatReasoningText(calls, providerID, model)
 	}
-	return text
 }
 
-func openAIChatReasoningContextMissing(request CompletionRequest, providerID string) bool {
-	fallbackText := ""
+func openAIChatReasoningContextMissing(request CompletionRequest, providerID, model string) bool {
 	for _, message := range request.Messages {
 		if len(message.ToolCalls) > 0 {
-			fallbackText = openAIChatReasoningText(message.ToolCalls, providerID, fallbackText)
-			if fallbackText == "" {
+			if _, found := openAIChatReasoningContext(message.ToolCalls, providerID, model); !found {
 				return true
 			}
-		} else if message.Role != "tool" {
-			fallbackText = ""
 		}
 	}
 	return false
 }
 
-func flattenOpenAIChatLegacyToolHistory(request CompletionRequest, providerID string) (CompletionRequest, bool) {
+func flattenOpenAIChatLegacyToolHistory(request CompletionRequest, providerID, model string) (CompletionRequest, bool) {
 	messages := make([]ChatMessage, 0, len(request.Messages))
 	skipped := make(map[int]bool)
 	changed := false
@@ -774,7 +924,8 @@ func flattenOpenAIChatLegacyToolHistory(request CompletionRequest, providerID st
 		if skipped[index] {
 			continue
 		}
-		if message.Role != "assistant" || len(message.ToolCalls) == 0 || openAIChatReasoningText(message.ToolCalls, providerID, "") != "" {
+		_, hasReasoning := openAIChatReasoningContext(message.ToolCalls, providerID, model)
+		if message.Role != "assistant" || len(message.ToolCalls) == 0 || hasReasoning {
 			messages = append(messages, message)
 			continue
 		}
@@ -867,18 +1018,31 @@ func imageInputUnsupportedError() error {
 
 func (c *HTTPModelClient) streamAnthropic(ctx context.Context, provider Provider, apiKey string, request CompletionRequest, emit func(CompletionEvent) error) error {
 	messages := make([]map[string]any, 0, len(request.Messages))
-	for _, message := range request.Messages {
+	for index := 0; index < len(request.Messages); {
+		message := request.Messages[index]
 		switch {
 		case len(message.ToolCalls) > 0:
-			blocks := make([]map[string]any, 0, len(message.ToolCalls))
-			for _, call := range message.ToolCalls {
-				var input any = map[string]any{}
-				_ = json.Unmarshal(call.Arguments, &input)
-				blocks = append(blocks, map[string]any{"type": "tool_use", "id": call.ID, "name": call.Name, "input": input})
+			blocks, completeOutput := anthropicProviderContent(provider.ID, request.Model, message.ToolCalls)
+			if !completeOutput {
+				if text := chatMessageText(message); text != "" {
+					blocks = append(blocks, map[string]any{"type": "text", "text": text})
+				}
+				for _, call := range message.ToolCalls {
+					var input any = map[string]any{}
+					_ = json.Unmarshal(call.Arguments, &input)
+					blocks = append(blocks, map[string]any{"type": "tool_use", "id": call.ID, "name": call.Name, "input": input})
+				}
 			}
 			messages = append(messages, map[string]any{"role": "assistant", "content": blocks})
 		case message.ToolCallID != "":
-			messages = append(messages, map[string]any{"role": "user", "content": []map[string]any{{"type": "tool_result", "tool_use_id": message.ToolCallID, "content": message.Content}}})
+			blocks := make([]map[string]any, 0, 1)
+			for index < len(request.Messages) && request.Messages[index].ToolCallID != "" {
+				result := request.Messages[index]
+				blocks = append(blocks, map[string]any{"type": "tool_result", "tool_use_id": result.ToolCallID, "content": result.Content})
+				index++
+			}
+			messages = append(messages, map[string]any{"role": "user", "content": blocks})
+			continue
 		default:
 			blocks := make([]map[string]any, 0, len(message.Attachments)+1)
 			for _, attachment := range message.Attachments {
@@ -891,6 +1055,7 @@ func (c *HTTPModelClient) streamAnthropic(ctx context.Context, provider Provider
 			}
 			messages = append(messages, map[string]any{"role": message.Role, "content": blocks})
 		}
+		index++
 	}
 	payload := map[string]any{"model": request.Model, "system": request.System, "messages": messages, "max_tokens": 4096, "stream": true}
 	if request.NativeReasoning && request.ThinkingLevel.Valid() {
@@ -911,14 +1076,31 @@ func (c *HTTPModelClient) streamAnthropic(ctx context.Context, provider Provider
 	}
 	defer response.Body.Close()
 	toolParts := map[int]*ToolCall{}
+	contentParts := map[int]*anthropicContentBlock{}
+	contentComplete := true
+	thinkingBytes := 0
 	completed := false
 	err = scanSSE(response.Body, func(event, data string) error {
 		var chunk struct {
-			Type         string                                   `json:"type"`
-			Index        int                                      `json:"index"`
-			ContentBlock struct{ Type, ID, Name string }          `json:"content_block"`
-			Delta        struct{ Type, Text, PartialJSON string } `json:"delta"`
-			Message      struct {
+			Type         string `json:"type"`
+			Index        int    `json:"index"`
+			ContentBlock struct {
+				Type      string `json:"type"`
+				ID        string `json:"id"`
+				Name      string `json:"name"`
+				Text      string `json:"text"`
+				Thinking  string `json:"thinking"`
+				Signature string `json:"signature"`
+				Data      string `json:"data"`
+			} `json:"content_block"`
+			Delta struct {
+				Type        string `json:"type"`
+				Text        string `json:"text"`
+				PartialJSON string `json:"partial_json"`
+				Thinking    string `json:"thinking"`
+				Signature   string `json:"signature"`
+			} `json:"delta"`
+			Message struct {
 				Usage struct {
 					InputTokens  int `json:"input_tokens"`
 					OutputTokens int `json:"output_tokens"`
@@ -933,12 +1115,44 @@ func (c *HTTPModelClient) streamAnthropic(ctx context.Context, provider Provider
 		}
 		switch chunk.Type {
 		case "content_block_start":
-			if chunk.ContentBlock.Type == "tool_use" {
+			switch chunk.ContentBlock.Type {
+			case "tool_use":
 				toolParts[chunk.Index] = &ToolCall{ID: chunk.ContentBlock.ID, Name: chunk.ContentBlock.Name}
+				contentParts[chunk.Index] = &anthropicContentBlock{Type: "tool_use", ID: chunk.ContentBlock.ID, Name: chunk.ContentBlock.Name}
+			case "thinking":
+				contentParts[chunk.Index] = &anthropicContentBlock{Type: "thinking", Thinking: chunk.ContentBlock.Thinking, Signature: chunk.ContentBlock.Signature}
+				thinkingBytes += len(chunk.ContentBlock.Thinking) + len(chunk.ContentBlock.Signature)
+			case "redacted_thinking":
+				contentParts[chunk.Index] = &anthropicContentBlock{Type: "redacted_thinking", Data: chunk.ContentBlock.Data}
+				thinkingBytes += len(chunk.ContentBlock.Data)
+			case "text":
+				contentParts[chunk.Index] = &anthropicContentBlock{Type: "text", Text: chunk.ContentBlock.Text}
+			default:
+				contentComplete = false
+			}
+			if thinkingBytes > MaxAssistantBytes {
+				return errors.New("provider thinking context exceeds 1 MiB")
 			}
 		case "content_block_delta":
 			if call := toolParts[chunk.Index]; call != nil {
 				call.Arguments = append(call.Arguments, chunk.Delta.PartialJSON...)
+			}
+			if block := contentParts[chunk.Index]; block != nil {
+				switch chunk.Delta.Type {
+				case "text_delta":
+					block.Text += chunk.Delta.Text
+				case "thinking_delta":
+					block.Thinking += chunk.Delta.Thinking
+					thinkingBytes += len(chunk.Delta.Thinking)
+				case "signature_delta":
+					block.Signature += chunk.Delta.Signature
+					thinkingBytes += len(chunk.Delta.Signature)
+				}
+				if thinkingBytes > MaxAssistantBytes {
+					return errors.New("provider thinking context exceeds 1 MiB")
+				}
+			} else {
+				contentComplete = false
 			}
 			return emit(CompletionEvent{Delta: chunk.Delta.Text})
 		case "message_start":
@@ -947,7 +1161,17 @@ func (c *HTTPModelClient) streamAnthropic(ctx context.Context, provider Provider
 			return emit(CompletionEvent{Usage: Usage{OutputTokens: chunk.Usage.OutputTokens}})
 		case "message_stop":
 			completed = true
-			return emit(CompletionEvent{Done: true, ToolCalls: sortedToolCalls(toolParts)})
+			calls := sortedToolCalls(toolParts)
+			for index, call := range toolParts {
+				if block := contentParts[index]; block != nil && block.Type == "tool_use" && call != nil {
+					block.Input = append(json.RawMessage(nil), call.Arguments...)
+					if len(block.Input) == 0 {
+						block.Input = json.RawMessage(`{}`)
+					}
+				}
+			}
+			attachAnthropicContent(provider.ID, request.Model, calls, contentParts, contentComplete)
+			return emit(CompletionEvent{Done: true, ToolCalls: calls})
 		}
 		return nil
 	})
@@ -957,38 +1181,225 @@ func (c *HTTPModelClient) streamAnthropic(ctx context.Context, provider Provider
 	return err
 }
 
+type anthropicThinkingBlock struct {
+	Type      string `json:"type"`
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Data      string `json:"data,omitempty"`
+}
+
+type anthropicContentBlock struct {
+	Type      string          `json:"type"`
+	Thinking  string          `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+	Data      string          `json:"data,omitempty"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+}
+
+type anthropicNativeContext struct {
+	Type       string                   `json:"type"`
+	ProviderID string                   `json:"providerId"`
+	Model      string                   `json:"model,omitempty"`
+	Complete   bool                     `json:"complete,omitempty"`
+	Content    []anthropicContentBlock  `json:"content,omitempty"`
+	Blocks     []anthropicThinkingBlock `json:"blocks,omitempty"`
+}
+
+func attachAnthropicContent(providerID, model string, calls []ToolCall, parts map[int]*anthropicContentBlock, complete bool) {
+	if len(calls) == 0 || len(parts) == 0 {
+		return
+	}
+	indices := make([]int, 0, len(parts))
+	for index := range parts {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	content := make([]anthropicContentBlock, 0, len(indices))
+	seenCalls := make(map[string]struct{}, len(calls))
+	for _, index := range indices {
+		block := parts[index]
+		if block == nil {
+			complete = false
+			continue
+		}
+		switch block.Type {
+		case "thinking":
+			complete = complete && block.Signature != ""
+		case "redacted_thinking":
+			complete = complete && block.Data != ""
+		case "text":
+		case "tool_use":
+			complete = complete && block.ID != "" && block.Name != "" && json.Valid(block.Input)
+			seenCalls[block.ID] = struct{}{}
+		default:
+			complete = false
+		}
+		content = append(content, *block)
+	}
+	for _, call := range calls {
+		if _, exists := seenCalls[call.ID]; !exists {
+			complete = false
+		}
+	}
+	native := anthropicNativeContext{Type: "anthropic_content", ProviderID: providerID, Model: model, Complete: complete}
+	if complete {
+		native.Content = content
+	} else {
+		native.Blocks = anthropicThinkingFromContent(content)
+		if len(native.Blocks) == 0 {
+			return
+		}
+	}
+	raw, err := json.Marshal(native)
+	if err != nil {
+		return
+	}
+	if len(raw) > MaxAssistantBytes && complete {
+		native.Complete = false
+		native.Content = nil
+		native.Blocks = anthropicThinkingFromContent(content)
+		raw, err = json.Marshal(native)
+	}
+	if err == nil && len(raw) <= MaxAssistantBytes && len(native.Content)+len(native.Blocks) > 0 {
+		calls[0].ProviderData = raw
+	}
+}
+
+func anthropicProviderContent(providerID, model string, calls []ToolCall) ([]map[string]any, bool) {
+	for _, call := range calls {
+		var native anthropicNativeContext
+		if json.Unmarshal(call.ProviderData, &native) != nil || (native.Type != "anthropic_content" && native.Type != "anthropic_thinking") || !providerNativeContextMatches(providerID, model, native.ProviderID, native.Model) {
+			continue
+		}
+		if native.Complete && len(native.Content) > 0 {
+			blocks := make([]map[string]any, 0, len(native.Content))
+			seenCalls := make(map[string]struct{}, len(calls))
+			valid := true
+			for _, block := range native.Content {
+				item, ok := anthropicContentBlockMap(block)
+				if !ok {
+					valid = false
+					break
+				}
+				if block.Type == "tool_use" {
+					seenCalls[block.ID] = struct{}{}
+				}
+				blocks = append(blocks, item)
+			}
+			for _, expected := range calls {
+				if _, exists := seenCalls[expected.ID]; !exists {
+					valid = false
+				}
+			}
+			if valid {
+				return blocks, true
+			}
+		}
+		return anthropicThinkingMaps(native), false
+	}
+	return nil, false
+}
+
+func anthropicContentBlockMap(block anthropicContentBlock) (map[string]any, bool) {
+	switch block.Type {
+	case "thinking":
+		if block.Signature == "" {
+			return nil, false
+		}
+		return map[string]any{"type": block.Type, "thinking": block.Thinking, "signature": block.Signature}, true
+	case "redacted_thinking":
+		if block.Data == "" {
+			return nil, false
+		}
+		return map[string]any{"type": block.Type, "data": block.Data}, true
+	case "text":
+		return map[string]any{"type": block.Type, "text": block.Text}, true
+	case "tool_use":
+		var input any
+		if block.ID == "" || block.Name == "" || json.Unmarshal(block.Input, &input) != nil {
+			return nil, false
+		}
+		return map[string]any{"type": block.Type, "id": block.ID, "name": block.Name, "input": input}, true
+	default:
+		return nil, false
+	}
+}
+
+func anthropicThinkingFromContent(content []anthropicContentBlock) []anthropicThinkingBlock {
+	blocks := make([]anthropicThinkingBlock, 0, len(content))
+	for _, block := range content {
+		switch {
+		case block.Type == "thinking" && block.Signature != "":
+			blocks = append(blocks, anthropicThinkingBlock{Type: block.Type, Thinking: block.Thinking, Signature: block.Signature})
+		case block.Type == "redacted_thinking" && block.Data != "":
+			blocks = append(blocks, anthropicThinkingBlock{Type: block.Type, Data: block.Data})
+		}
+	}
+	return blocks
+}
+
+func anthropicThinkingMaps(native anthropicNativeContext) []map[string]any {
+	blocks := native.Blocks
+	if len(blocks) == 0 {
+		blocks = anthropicThinkingFromContent(native.Content)
+	}
+	result := make([]map[string]any, 0, len(blocks))
+	for _, block := range blocks {
+		switch {
+		case block.Type == "thinking" && block.Signature != "":
+			result = append(result, map[string]any{"type": block.Type, "thinking": block.Thinking, "signature": block.Signature})
+		case block.Type == "redacted_thinking" && block.Data != "":
+			result = append(result, map[string]any{"type": block.Type, "data": block.Data})
+		}
+	}
+	return result
+}
+
 func (c *HTTPModelClient) streamGemini(ctx context.Context, provider Provider, apiKey string, request CompletionRequest, emit func(CompletionEvent) error) error {
 	contents := make([]map[string]any, 0, len(request.Messages))
-	for _, message := range request.Messages {
+	for index := 0; index < len(request.Messages); {
+		message := request.Messages[index]
+		if message.ToolCallID != "" {
+			parts := make([]map[string]any, 0, 1)
+			for index < len(request.Messages) && request.Messages[index].ToolCallID != "" {
+				result := request.Messages[index]
+				parts = append(parts, map[string]any{"functionResponse": map[string]any{"id": result.ToolCallID, "name": result.Name, "response": map[string]any{"content": result.Content}}})
+				index++
+			}
+			contents = append(contents, map[string]any{"role": "user", "parts": parts})
+			continue
+		}
 		role := message.Role
 		if role == "assistant" {
 			role = "model"
 		}
 		parts := make([]map[string]any, 0, 1+len(message.ToolCalls))
-		if message.ToolCallID == "" {
-			if text := chatMessageText(message); text != "" {
-				parts = append(parts, map[string]any{"text": text})
-			}
-			for _, attachment := range message.Attachments {
-				if attachment.Kind == "image" {
-					parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": attachment.MimeType, "data": base64.StdEncoding.EncodeToString(attachment.Data)}})
-				}
+		if text := chatMessageText(message); text != "" {
+			parts = append(parts, map[string]any{"text": text})
+		}
+		for _, attachment := range message.Attachments {
+			if attachment.Kind == "image" {
+				parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": attachment.MimeType, "data": base64.StdEncoding.EncodeToString(attachment.Data)}})
 			}
 		}
 		for _, call := range message.ToolCalls {
 			var args any = map[string]any{}
 			_ = json.Unmarshal(call.Arguments, &args)
-			parts = append(parts, map[string]any{"functionCall": map[string]any{"name": call.Name, "args": args}})
-		}
-		if message.ToolCallID != "" {
-			role = "user"
-			parts = append(parts, map[string]any{"functionResponse": map[string]any{"name": message.Name, "response": map[string]any{"content": message.Content}}})
+			part := map[string]any{"functionCall": map[string]any{"id": call.ID, "name": call.Name, "args": args}}
+			if signature := geminiThoughtSignature(provider.ID, request.Model, call.ProviderData); signature != "" {
+				part["thoughtSignature"] = signature
+			}
+			parts = append(parts, part)
 		}
 		contents = append(contents, map[string]any{"role": role, "parts": parts})
+		index++
 	}
 	payload := map[string]any{"systemInstruction": map[string]any{"parts": []map[string]string{{"text": request.System}}}, "contents": contents}
 	if request.NativeReasoning && request.ThinkingLevel.Valid() {
-		payload["generationConfig"] = map[string]any{"thinkingConfig": map[string]any{"thinkingLevel": request.ThinkingLevel}}
+		payload["generationConfig"] = map[string]any{"thinkingConfig": geminiThinkingConfig(request.Model, request.ThinkingLevel)}
 	}
 	if len(request.Tools) > 0 {
 		declarations := make([]map[string]any, 0, len(request.Tools))
@@ -1005,13 +1416,17 @@ func (c *HTTPModelClient) streamGemini(ctx context.Context, provider Provider, a
 		return err
 	}
 	defer response.Body.Close()
-	return scanSSE(response.Body, func(event, data string) error {
+	thoughtSignatureBytes := 0
+	toolCalls := make([]ToolCall, 0)
+	err = scanSSE(response.Body, func(event, data string) error {
 		var chunk struct {
 			Candidates []struct {
 				Content struct {
 					Parts []struct {
-						Text         string `json:"text"`
-						FunctionCall struct {
+						Text             string `json:"text"`
+						ThoughtSignature string `json:"thoughtSignature"`
+						FunctionCall     struct {
+							ID   string          `json:"id"`
 							Name string          `json:"name"`
 							Args json.RawMessage `json:"args"`
 						} `json:"functionCall"`
@@ -1031,12 +1446,63 @@ func (c *HTTPModelClient) streamGemini(ctx context.Context, provider Provider, a
 			for _, part := range chunk.Candidates[0].Content.Parts {
 				result.Delta += part.Text
 				if part.FunctionCall.Name != "" {
-					result.ToolCalls = append(result.ToolCalls, ToolCall{ID: newID("call"), Name: part.FunctionCall.Name, Arguments: part.FunctionCall.Args})
+					thoughtSignatureBytes += len(part.ThoughtSignature)
+					if thoughtSignatureBytes > MaxAssistantBytes {
+						return errors.New("provider thought signature exceeds 1 MiB")
+					}
+					callID := part.FunctionCall.ID
+					if callID == "" {
+						callID = newID("call")
+					}
+					call := ToolCall{ID: callID, Name: part.FunctionCall.Name, Arguments: part.FunctionCall.Args}
+					attachGeminiThoughtSignature(provider.ID, request.Model, &call, part.ThoughtSignature)
+					toolCalls = append(toolCalls, call)
 				}
 			}
 		}
 		return emit(result)
 	})
+	if err != nil {
+		return err
+	}
+	return emit(CompletionEvent{Done: true, ToolCalls: toolCalls})
+}
+
+func geminiThinkingConfig(model string, level ThinkingLevel) map[string]any {
+	if strings.Contains(strings.ToLower(model), "gemini-2.5") {
+		budget := map[ThinkingLevel]int{ThinkingLow: 1024, ThinkingMedium: 8192, ThinkingHigh: 24576}[level]
+		return map[string]any{"thinkingBudget": budget}
+	}
+	return map[string]any{"thinkingLevel": level}
+}
+
+type geminiNativeContext struct {
+	Type             string `json:"type"`
+	ProviderID       string `json:"providerId"`
+	Model            string `json:"model,omitempty"`
+	ThoughtSignature string `json:"thoughtSignature"`
+}
+
+func attachGeminiThoughtSignature(providerID, model string, call *ToolCall, signature string) {
+	if call == nil || signature == "" {
+		return
+	}
+	raw, err := json.Marshal(geminiNativeContext{Type: "gemini_thought_signature", ProviderID: providerID, Model: model, ThoughtSignature: signature})
+	if err == nil {
+		call.ProviderData = raw
+	}
+}
+
+func geminiThoughtSignature(providerID, model string, raw json.RawMessage) string {
+	var native geminiNativeContext
+	if json.Unmarshal(raw, &native) != nil || native.Type != "gemini_thought_signature" || !providerNativeContextMatches(providerID, model, native.ProviderID, native.Model) {
+		return ""
+	}
+	return native.ThoughtSignature
+}
+
+func providerNativeContextMatches(providerID, model, storedProviderID, storedModel string) bool {
+	return storedProviderID == providerID && (storedModel == "" || storedModel == model)
 }
 
 func (c *HTTPModelClient) Models(ctx context.Context, provider Provider, apiKey string) ([]Model, error) {

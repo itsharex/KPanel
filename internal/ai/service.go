@@ -84,7 +84,7 @@ func (s *Service) SyncModels(ctx context.Context, providerID string) ([]Model, e
 		items[index].ProviderID = provider.ID
 		items[index].Vision = true
 		if previous, ok := known[items[index].ModelID]; ok {
-			items[index].Reasoning = previous.Reasoning
+			items[index].Reasoning = previous.Reasoning || inferredReasoning(provider.Protocol, items[index].ModelID)
 		} else {
 			items[index].Reasoning = inferredReasoning(provider.Protocol, items[index].ModelID)
 		}

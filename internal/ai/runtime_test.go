@@ -265,7 +265,7 @@ func TestCompletionMessagesReconstructToolCallBatch(t *testing.T) {
 	if string(messages[0].ToolCalls[0].ProviderData) != string(providerData) || len(messages[0].ToolCalls[1].ProviderData) != 0 {
 		t.Fatalf("provider context placement changed: %#v", messages[0].ToolCalls)
 	}
-	if reasoning := openAIChatReasoningText(messages[0].ToolCalls, "provider", ""); reasoning != "plan" {
+	if reasoning := openAIChatReasoningText(messages[0].ToolCalls, "provider", "model"); reasoning != "plan" {
 		t.Fatalf("tool batch reasoning=%q, want plan", reasoning)
 	}
 	if messages[1].ID != firstResult.ID || messages[1].ToolCallID != firstCall.ID || messages[2].ID != secondResult.ID || messages[2].ToolCallID != secondCall.ID {
@@ -273,6 +273,46 @@ func TestCompletionMessagesReconstructToolCallBatch(t *testing.T) {
 	}
 	if !messages[0].CurrentRun || !messages[1].CurrentRun || !messages[2].CurrentRun {
 		t.Fatalf("current run markers were not preserved: %#v", messages)
+	}
+}
+
+func TestCompletionMessagesKeepSequentialToolBatchesSeparate(t *testing.T) {
+	store, _, _, _ := runtimeFixture(t)
+	defer store.Close()
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, Session{UserID: "admin", ProviderID: "provider", ModelID: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.CreateRun(ctx, Run{SessionID: session.ID, UserID: "admin", ProviderID: "provider", ModelID: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstCall, err := store.SaveToolCall(ctx, ToolCall{ID: "call_1", RunID: run.ID, SessionID: session.ID, Name: "host_first", Arguments: json.RawMessage(`{}`), Status: ToolCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCall, err := store.SaveToolCall(ctx, ToolCall{ID: "call_2", RunID: run.ID, SessionID: session.ID, Name: "host_second", Arguments: json.RawMessage(`{}`), Status: ToolCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAssistant, _ := store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleAssistant, Content: "first step"})
+	firstResult, _ := store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleTool, ToolCallID: firstCall.ID, Content: `{"first":true}`})
+	secondAssistant, _ := store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleAssistant, Content: "second step"})
+	secondResult, _ := store.AddMessage(ctx, Message{SessionID: session.ID, RunID: run.ID, Role: RoleTool, ToolCallID: secondCall.ID, Content: `{"second":true}`})
+
+	messages := (&NativeRuntime{store: store}).completionMessages(ctx, []Message{firstAssistant, firstResult, secondAssistant, secondResult}, run.ID)
+	if len(messages) != 4 {
+		t.Fatalf("messages=%#v", messages)
+	}
+	if messages[0].ID != firstAssistant.ID || messages[0].Content != "first step" || len(messages[0].ToolCalls) != 1 || messages[0].ToolCalls[0].ID != firstCall.ID {
+		t.Fatalf("first tool batch changed: %#v", messages[0])
+	}
+	if messages[2].ID != secondAssistant.ID || messages[2].Content != "second step" || len(messages[2].ToolCalls) != 1 || messages[2].ToolCalls[0].ID != secondCall.ID {
+		t.Fatalf("second tool batch changed: %#v", messages[2])
+	}
+	if messages[1].ToolCallID != firstCall.ID || messages[3].ToolCallID != secondCall.ID {
+		t.Fatalf("tool results crossed response boundaries: %#v", messages)
 	}
 }
 

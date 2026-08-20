@@ -4,7 +4,11 @@
 
 ### Fixed
 
-- 修复工具调用响应中的可见 assistant 内容与 `reasoning_content`、`tool_calls` 被拆成不同历史消息，导致严格思考模型拒绝后续请求的问题。
+- 修复工具调用响应中的可见 assistant 内容与 reasoning、工具调用被拆成不同历史消息的问题，并严格隔离连续响应批次，避免跨批次复用隐藏思考。
+- Responses 工具续轮按 Provider 原始顺序完整回放 output items，并兼容旧版仅保存 reasoning item 的会话，修复 `reasoning_text` 已保存但因输出顺序错误仍被拒绝的问题。
+- Anthropic 工具续轮按原顺序保留交错 assistant blocks 及 `thinking` / `redacted_thinking` 签名；Gemini 工具续轮保留原始函数调用 ID 和 `thoughtSignature`。原生上下文绑定生成模型，两类协议的并行工具结果按原生单轮结构分组。
+- Gemini 2.5 思考强度改用 `thinkingBudget`，Gemini 3 继续使用 `thinkingLevel`，避免向 2.5 模型发送不支持的参数。
+- 模型同步会向上更新新增的 reasoning 能力识别，旧 Provider 无需删除重建即可识别 DeepSeek V4 等新思考模型。
 
 ## [0.88.1] - 2026-08-20
 

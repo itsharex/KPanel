@@ -72,6 +72,54 @@ func TestInferredReasoningIncludesDeepSeekV4(t *testing.T) {
 	}
 }
 
+func TestSyncModelsUpgradesKnownReasoningCapabilityWithoutReaddingProvider(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := OpenStore(filepath.Join(dir, "ai.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	secrets, err := OpenSecretBox(filepath.Join(dir, "ai-secrets.key"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers, err := NewProviderService(store, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := store.SaveProvider(ctx, Provider{Name: "DeepSeek", Protocol: ProtocolOpenAICompatible, BaseURL: "https://api.deepseek.com", EndpointScope: EndpointPublic, Enabled: true}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveModels(ctx, provider.ID, []Model{
+		{ModelID: "deepseek-v4-flash", ContextWindow: 8192, Reasoning: false, Enabled: true},
+		{ModelID: "plain-existing", ContextWindow: 8192, Reasoning: false, Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Store: store, Providers: providers, client: &syncModelsClient{models: []Model{
+		{ModelID: "deepseek-v4-flash", ContextWindow: 8192, Enabled: true},
+		{ModelID: "plain-existing", ContextWindow: 8192, Enabled: true},
+	}}}
+	models, err := service.SyncModels(ctx, provider.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range models {
+		switch model.ModelID {
+		case "deepseek-v4-flash":
+			if !model.Reasoning {
+				t.Fatal("known reasoning model was not upgraded during sync")
+			}
+		case "plain-existing":
+			if model.Reasoning {
+				t.Fatal("unknown model capability was changed during sync")
+			}
+		}
+	}
+}
+
 func TestDeleteSessionCancelsActiveRun(t *testing.T) {
 	ctx := context.Background()
 	store, err := OpenStore(filepath.Join(t.TempDir(), "ai.db"))

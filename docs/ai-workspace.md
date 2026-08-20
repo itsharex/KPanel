@@ -19,9 +19,10 @@ Vue 三栏工作台 ── REST/SSE ── paneld AgentRuntime
 
 - 固定协议：`openai_compatible`、`anthropic`、`gemini`。
 - `openai_compatible` 必须明确选择 `apiMode`：`responses` 使用 `POST /v1/responses` 语义事件，`chat_completions` 使用 `POST /v1/chat/completions` 数据分片。历史 Provider 自动迁移为 `chat_completions`，避免升级后改变行为；OpenAI 官方预设默认使用 `responses`，其他兼容预设默认保守使用 `chat_completions`。
-- Responses 模式使用 KPanel 持久化的完整会话上下文，并设置 `store=false`。工具调用使用 `function_call` / `function_call_output`；推理模型返回的加密 reasoning item 只保存在内部工具上下文、仅向同一 Provider 回放，不通过 REST、SSE、日志或审计暴露。
+- Responses 模式使用 KPanel 持久化的完整会话上下文，并设置 `store=false`。工具调用使用 `function_call` / `function_call_output`；带工具调用的响应会将 Provider 返回的完整 output item 序列按原顺序保存在内部上下文，并仅向生成它的同一 Provider/模型原样回放。升级前只保存了加密 reasoning item 的旧会话，会先回放 reasoning，再重建同一批 assistant 可见内容和函数调用。原生 output item 不通过 REST、SSE、日志或审计暴露。
 - Responses 首次请求保持标准 OpenAI 载荷；若兼容 Provider 在尚未输出任何内容时明确返回 `messages[n]: missing field id`，Runtime 只重试一次带稳定消息 ID 的兼容载荷，并在当前进程内记住该端点能力。已产生文字或工具调用后禁止回放，其他 4xx 不触发方言猜测。
-- Chat Completions 会捕获 Provider 实际返回的 `reasoning_content`、`reasoning_text` 或 `reasoning`，仅随对应工具调用保存在内部上下文；同一模型响应产生的可见内容、多个工具调用和 reasoning 会重建为一条完整 assistant 批次。标准后续请求不主动猜测方言；只有端点在未输出内容时明确要求补充某一 reasoning 字段，Runtime 才以已保存的原文和指定字段重试并记住当前端点/模型方言。若旧工具历史没有保存原始推理内容，Runtime 不伪造空 reasoning 字段，而将已有工具结果降级为标注为不可信的历史数据后重试。隐藏推理不进入 REST、SSE、日志或审计。
+- Chat Completions 会捕获 Provider 实际返回的 `reasoning_content`、`reasoning_text` 或 `reasoning`，仅随对应工具调用保存在内部上下文；同一模型响应产生的可见内容、多个工具调用和 reasoning 会重建为一条完整 assistant 批次，不跨模型响应复用 reasoning。标准后续请求不主动猜测方言；只有端点在未输出内容时明确要求补充某一 reasoning 字段，Runtime 才以已保存的原文和指定字段重试并记住当前端点/模型方言。若旧工具历史没有保存原始推理内容，Runtime 不伪造空 reasoning 字段，而将已有工具结果降级为标注为不可信的历史数据后重试。该兼容链路由实际响应和端点错误驱动，不依赖 DeepSeek 型号名称；型号推断只控制原生思考强度参数。隐藏推理不进入 REST、SSE、日志或审计。
+- Anthropic 工具调用会将完整 assistant content block 序列及其中的 `thinking` / `redacted_thinking` 签名绑定到原 Provider/模型，包含新版 Claude 在多个工具之间产生的交错 thinking，并在续轮按原顺序回放；同一响应的多个 `tool_result` 合并到下一条 user 消息。Gemini 会保存每个 `functionCall` 实际返回的 ID 和 `thoughtSignature`，仅向生成它的原 Provider/模型对应调用回放，并将带原始 ID 的并行 `functionResponse` 合并到同一 user 内容。两类原生上下文均不通过 REST、SSE、日志或审计暴露；切换模型时不携带旧模型的签名上下文。
 - Responses 的 HTTP SSE 与 Realtime WebSocket 是不同接口；v1 不接入 `/v1/realtime`、音频或语音会话。
 - 公网 Provider 必须使用 HTTPS；拒绝 URL userinfo、query、fragment，以及每次 DNS 解析得到的回环、私网、链路本地、组播、未指定和保留地址。
 - 内网/本地 Provider 必须显式选择 `private`；只有此模式允许 HTTP。
@@ -33,9 +34,10 @@ Vue 三栏工作台 ── REST/SSE ── paneld AgentRuntime
 ## 用户交互
 
 - 首次进入先展示三步引导：选择 API、验证连接、启用模型。新增 API 默认执行“保存 → 测试 → 同步模型”；后两步失败时保留已加密保存的连接，允许修正后单独重试。
+- 再次同步模型时，已有的显式 reasoning 能力不会被降级；代码已识别的新思考模型会从旧的 false 能力向上升级，因此升级 KPanel 后无需删除并重新添加 API。
 - 点击“新建会话”会直接使用管理员设置的默认模型；没有显式默认值时使用第一个可用模型。会话标题由第一条用户消息自动生成，仍可手工重命名。
 - 模型选择器位于输入框右下角，实时包含所有已启用 Provider 的已启用模型。运行中允许切换，但当前 Run 使用启动时快照，新选择明确标记为“下一轮”并只影响后续 Run。
-- 思考强度位于模型选择器旁，提供 `low`、`medium`、`high`。Run 固定启动时快照；模型声明原生 reasoning 能力时映射为 OpenAI `reasoning.effort`/`reasoning_effort`、Anthropic `output_config.effort` 或 Gemini `thinkingConfig.thinkingLevel`，否则只使用通用规划强度提示。界面不暴露隐藏思维链，只展示可审计工具过程。
+- 思考强度位于模型选择器旁，提供 `low`、`medium`、`high`。Run 固定启动时快照；模型声明原生 reasoning 能力时映射为 OpenAI `reasoning.effort`/`reasoning_effort`、Anthropic `output_config.effort`、Gemini 2.5 `thinkingConfig.thinkingBudget` 或 Gemini 3 `thinkingConfig.thinkingLevel`，否则只使用通用规划强度提示。界面不暴露隐藏思维链，只展示可审计工具过程。
 - 会话列表提供搜索、置顶、重命名、归档、恢复和删除；当前与已归档会话有独立视图，移动端通过抽屉管理。
 - 对话在首个模型分片到达前显示规划/重连状态；助手可见说明与紧凑工具行按真实发生时间穿插在同一个助手回合中，工具参数和结果按需展开。最终回答底部依次展示复制、模型和输出时间，代码块提供独立复制按钮。
 - 流式文字使用浏览器帧内轻量缓冲，避免大分片突跳；只有用户停留在底部附近时自动跟随。用户上滚后停止抢夺滚动位置，并显示“回到最新”。
