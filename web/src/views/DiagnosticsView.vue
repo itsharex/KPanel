@@ -2759,9 +2759,10 @@ onBeforeUnmount(() => {
 
 /* Compact report home: total score first, then two readable result groups. */
 .diagnostic-score-hero--simple {
-  grid-template-columns: minmax(170px, .32fr) minmax(0, 1fr);
+  grid-template-columns: minmax(150px, 170px) minmax(280px, 360px);
+  justify-content: center;
   min-height: 150px;
-  gap: 22px;
+  gap: 28px;
   padding: 18px 20px;
 }
 

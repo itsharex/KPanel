@@ -86,6 +86,9 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toContain("summaryValue('ip', 'public_ip')")
     expect(diagnosticsSource).not.toContain('class="diagnostic-score-route"')
     expect(diagnosticsSource).not.toContain('class="diagnostic-score-dimensions"')
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-score-hero--simple\s*\{[^}]*grid-template-columns:\s*minmax\(150px, 170px\) minmax\(280px, 360px\);[^}]*justify-content:\s*center;/,
+    )
   })
 
   it('keeps report metrics visually flat and gives IP risk levels semantic colors', () => {
