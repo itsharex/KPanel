@@ -2,6 +2,8 @@ package diagnostics
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +55,58 @@ func TestNativeSummaryOnlyContainsProbeMetrics(t *testing.T) {
 	}
 	if got := summaryMetricValue(summary, "ip", "public_ip"); got != "203.0.113.10" {
 		t.Fatalf("public ip = %q", got)
+	}
+}
+
+func TestIPingQueryMapsOnlySelectedMetrics(t *testing.T) {
+	var requestedIP string
+	var requestedLanguage string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestedIP = request.URL.Query().Get("ip")
+		requestedLanguage = request.URL.Query().Get("language")
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"code":200,"data":{"ip":"203.0.113.10","isp":"Example ISP","is_proxy":"true","usage_type":"IDC","risk_score":97,"risk_tag":"proxy","asn":"AS64500","as_owner":"Example Network","company":"must-not-map","country":"JP"},"msg":"success"}`))
+	}))
+	defer server.Close()
+
+	data, err := queryIPingEndpoint(context.Background(), "203.0.113.10", server.URL)
+	if err != nil {
+		t.Fatalf("queryIPingEndpoint() error = %v", err)
+	}
+	if requestedIP != "203.0.113.10" || requestedLanguage != "en" {
+		t.Fatalf("IPING query = ip %q, language %q", requestedIP, requestedLanguage)
+	}
+
+	metrics := ipingMetrics(data)
+	values := make(map[string]string, len(metrics))
+	for _, metric := range metrics {
+		values[metric.Key] = metric.Value
+	}
+	want := map[string]string{
+		"isp":        "Example ISP",
+		"is_proxy":   "是",
+		"usage_type": "IDC",
+		"risk_score": "97",
+		"risk_level": "高风险",
+		"risk_tag":   "proxy",
+		"asn":        "AS64500",
+		"as_owner":   "Example Network",
+	}
+	for key, expected := range want {
+		if values[key] != expected {
+			t.Fatalf("metric %s = %q, want %q", key, values[key], expected)
+		}
+	}
+	for _, key := range []string{"company", "country", "ip"} {
+		if _, ok := values[key]; ok {
+			t.Fatalf("unselected metric %s was mapped: %#v", key, values)
+		}
+	}
+}
+
+func TestIPingQueryRejectsIPv6(t *testing.T) {
+	if _, err := queryIPingEndpoint(context.Background(), "2001:db8::1", "http://127.0.0.1"); err == nil {
+		t.Fatal("queryIPingEndpoint() accepted IPv6")
 	}
 }
 

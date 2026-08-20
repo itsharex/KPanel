@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,6 +37,8 @@ const (
 	nativeMemoryBytes        = 32 << 20
 	nativeSpeedDownloadBytes = int64(8 << 20)
 	nativeSpeedUploadBytes   = int64(2 << 20)
+	nativeIPingEndpoint      = "https://api.iping.cc/v1/query"
+	nativeIPingTimeout       = 5 * time.Second
 )
 
 var nativeProbeOrder = []string{
@@ -58,6 +62,22 @@ type nativeProbeResult struct {
 type nativeHTTPTarget struct {
 	Name string
 	URL  string
+}
+
+type ipingResponse struct {
+	Code int        `json:"code"`
+	Data ipingData  `json:"data"`
+	Msg  string     `json:"msg"`
+}
+
+type ipingData struct {
+	ISP        string `json:"isp"`
+	IsProxy    any    `json:"is_proxy"`
+	UsageType  string `json:"usage_type"`
+	RiskScore  any    `json:"risk_score"`
+	RiskTag    string `json:"risk_tag"`
+	ASN        string `json:"asn"`
+	ASOwner    string `json:"as_owner"`
 }
 
 var nativeLatencyTargets = []nativeHTTPTarget{
@@ -605,24 +625,152 @@ func runNativeIPQuality(ctx context.Context) (nativeProbeResult, error) {
 	asn := fields["asn"]
 	location := fields["loc"]
 	colo := fields["colo"]
+	metrics := []DiagnosticSummaryMetric{
+		{Key: "public_ip", Value: publicIP},
+		{Key: "asn", Value: asn},
+		{Key: "country", Value: location},
+		{Key: "colo", Value: colo},
+		{Key: "reverse_dns", Value: reverse},
+		{Key: "ipv4_ipv6", Value: strings.Join(statuses, " · ")},
+		{Key: "quality", Value: "基础信息已采集；IPING 风险信息待查询"},
+	}
+	lines := []string{
+		fmt.Sprintf("公网 IP：%s · ASN：%s · 地区：%s", publicIP, asn, location),
+		fmt.Sprintf("IPv4/IPv6：%s · 反向解析：%s", strings.Join(statuses, " · "), reverse),
+		fmt.Sprintf("边缘节点：%s · 探测响应：%s", colo, formatNativeMilliseconds(elapsed)),
+	}
+	parsedPublicIP := net.ParseIP(publicIP)
+	if parsedPublicIP == nil || parsedPublicIP.To4() == nil {
+		lines = append(lines, "IPING：当前出口不是 IPv4，按接口能力跳过风险与运营商查询")
+		return nativeProbeResult{Dimension: "ip", Metrics: metrics, Lines: lines}, nil
+	}
+	data, queryErr := queryIPing(ctx, publicIP)
+	if queryErr != nil {
+		lines = append(lines, "IPING：查询未完成，已保留 KPanel 原生 IP 数据 · "+safeMessage(queryErr))
+		return nativeProbeResult{Dimension: "ip", Metrics: metrics, Lines: lines}, nil
+	}
+	metrics = append(metrics, ipingMetrics(data)...)
+	metrics = replaceMetric(metrics, "quality", "已接入 IPING 风险与运营商数据")
+	lines = append(lines, formatIPingLine(data))
 	return nativeProbeResult{
 		Dimension: "ip",
-		Metrics: []DiagnosticSummaryMetric{
-			{Key: "public_ip", Value: publicIP},
-			{Key: "asn", Value: asn},
-			{Key: "country", Value: location},
-			{Key: "colo", Value: colo},
-			{Key: "reverse_dns", Value: reverse},
-			{Key: "ipv4_ipv6", Value: strings.Join(statuses, " · ")},
-			{Key: "quality", Value: "基础信息已采集；未接入第三方信誉库"},
-		},
-		Lines: []string{
-			fmt.Sprintf("公网 IP：%s · ASN：%s · 地区：%s", publicIP, asn, location),
-			fmt.Sprintf("IPv4/IPv6：%s · 反向解析：%s", strings.Join(statuses, " · "), reverse),
-			fmt.Sprintf("边缘节点：%s · 探测响应：%s", colo, formatNativeMilliseconds(elapsed)),
-			"信誉判断：基础信息已采集；未接入第三方信誉库，不虚构风险评分",
-		},
+		Metrics:   metrics,
+		Lines:     lines,
 	}, nil
+}
+
+func queryIPing(ctx context.Context, publicIP string) (ipingData, error) {
+	return queryIPingEndpoint(ctx, publicIP, nativeIPingEndpoint)
+}
+
+func queryIPingEndpoint(ctx context.Context, publicIP, endpoint string) (ipingData, error) {
+	parsed := net.ParseIP(publicIP)
+	if parsed == nil || parsed.To4() == nil {
+		return ipingData{}, errors.New("IPING only supports IPv4")
+	}
+	query := url.Values{}
+	query.Set("ip", publicIP)
+	query.Set("language", "en")
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+query.Encode(), nil)
+	if err != nil {
+		return ipingData{}, err
+	}
+	request.Header.Set("Accept", "application/json")
+	requestContext, cancel := context.WithTimeout(ctx, nativeIPingTimeout)
+	defer cancel()
+	request = request.WithContext(requestContext)
+	response, err := nativeHTTPClient.Do(request)
+	if err != nil {
+		return ipingData{}, fmt.Errorf("IPING request failed: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= http.StatusBadRequest {
+		return ipingData{}, fmt.Errorf("IPING returned HTTP %d", response.StatusCode)
+	}
+	var payload ipingResponse
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&payload); err != nil {
+		return ipingData{}, fmt.Errorf("decode IPING response: %w", err)
+	}
+	if payload.Code != http.StatusOK {
+		message := strings.TrimSpace(payload.Msg)
+		if message == "" {
+			message = "接口返回非 success"
+		}
+		return ipingData{}, fmt.Errorf("IPING code %d: %s", payload.Code, message)
+	}
+	return payload.Data, nil
+}
+
+func ipingMetrics(data ipingData) []DiagnosticSummaryMetric {
+	metrics := make([]DiagnosticSummaryMetric, 0, 8)
+	add := func(key, value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			metrics = append(metrics, DiagnosticSummaryMetric{Key: key, Value: value})
+		}
+	}
+	add("isp", data.ISP)
+	add("asn", data.ASN)
+	add("as_owner", data.ASOwner)
+	add("usage_type", data.UsageType)
+	if score, ok := ipingRiskScore(data.RiskScore); ok {
+		add("risk_score", formatSummaryNumber(score))
+		add("risk_level", ipingRiskLevelForScore(score))
+	}
+	add("risk_tag", data.RiskTag)
+	if proxy, ok := jsonBool(data.IsProxy); ok {
+		if proxy {
+			add("is_proxy", "是")
+		} else {
+			add("is_proxy", "否")
+		}
+	} else {
+		add("is_proxy", jsonString(data.IsProxy))
+	}
+	return metrics
+}
+
+func ipingRiskScore(value any) (float64, bool) {
+	score, err := strconv.ParseFloat(strings.TrimSpace(jsonString(value)), 64)
+	if err != nil || score < 0 || score > 100 {
+		return 0, false
+	}
+	return score, true
+}
+
+func ipingRiskLevelForScore(score float64) string {
+	switch {
+	case score >= 80:
+		return "高风险"
+	case score >= 30:
+		return "中风险"
+	default:
+		return "低风险"
+	}
+}
+
+func formatIPingLine(data ipingData) string {
+	parts := []string{"IPING"}
+	if data.ISP != "" {
+		parts = append(parts, "ISP："+data.ISP)
+	}
+	if data.ASN != "" {
+		parts = append(parts, data.ASN)
+	}
+	if score, ok := ipingRiskScore(data.RiskScore); ok {
+		parts = append(parts, "风险分："+formatSummaryNumber(score), ipingRiskLevelForScore(score))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func replaceMetric(metrics []DiagnosticSummaryMetric, key, value string) []DiagnosticSummaryMetric {
+	for index := range metrics {
+		if metrics[index].Key == key {
+			metrics[index].Value = value
+			return metrics
+		}
+	}
+	return append(metrics, DiagnosticSummaryMetric{Key: key, Value: value})
 }
 
 func nativeTrace(ctx context.Context) (map[string]string, float64, error) {

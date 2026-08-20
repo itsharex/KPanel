@@ -365,6 +365,12 @@ function summaryMetricLabel(key: string): string {
     path: '线路',
     isp: '运营商',
     asn: 'ASN',
+    as_owner: 'ASN 归属',
+    usage_type: '使用类型',
+    risk_score: '风险分',
+    risk_level: '风险等级',
+    risk_tag: '风险标签',
+    is_proxy: '代理状态',
     host: '网络归属',
     country: '地区',
     location: '位置',
@@ -475,6 +481,8 @@ function reportMetricScore(id: ReportMetricID): number | undefined {
       boundedScore(upload === undefined ? undefined : upload / 200 * 100),
     ])
   }
+  const risk = numericValue(summaryValue('ip', 'risk_score'))
+  if (risk !== undefined) return boundedScore(100 - risk)
   const fields = [
     summaryValue('ip', 'public_ip'),
     summaryValue('ip', 'asn'),
@@ -491,11 +499,39 @@ function reportScoreLabel(value: number | undefined): string {
 }
 
 function reportIPOperator(): string {
-  return summaryValue('ip', 'operator') || summaryValue('ip', 'isp') || summaryValue('ip', 'asn') || '等待检测'
+  const operator = summaryValue('ip', 'operator') || summaryValue('ip', 'isp') || summaryValue('ip', 'as_owner')
+  const asn = summaryValue('ip', 'asn')
+  return [operator, asn].filter(Boolean).join(' · ') || '等待检测'
 }
 
 function reportIPLocation(): string {
   return summaryValue('ip', 'country') || summaryValue('ip', 'location') || '等待检测'
+}
+
+function reportIPRiskLevel(): string {
+  const value = summaryValue('ip', 'risk_level') || '等待检测'
+  if (i18n.locale.value !== 'en-US') return value
+  return ({
+    '低风险': 'Low risk',
+    '中风险': 'Medium risk',
+    '高风险': 'High risk',
+  } as Record<string, string>)[value] || value
+}
+
+function reportIPRiskDetail(): string {
+  const parts: string[] = []
+  const tag = summaryValue('ip', 'risk_tag')
+  parts.push(tag || '未发现风险标签')
+  const proxy = summaryValue('ip', 'is_proxy')
+  if (proxy) {
+    const proxyLabel = proxy === '是' ? '代理' : '非代理'
+    parts.push(i18n.locale.value === 'en-US'
+      ? (proxy === '是' ? 'Proxy' : 'Not a proxy')
+      : proxyLabel)
+  }
+  const usage = summaryValue('ip', 'usage_type')
+  if (usage) parts.push(usage)
+  return parts.join(' · ')
 }
 
 function dimensionJob(dimension: ScoreDimension): DiagnosticJob | undefined {
@@ -1034,16 +1070,21 @@ onBeforeUnmount(() => {
                     <small v-if="summaryValue('speed', 'upload')">{{ summaryMetricLabel('upload') }} {{ summaryValue('speed', 'upload') }}</small>
                   </article>
                   <article class="diagnostic-report-card">
-                    <header><div class="diagnostic-report-card__heading"><span class="is-ip"><Globe2 :size="17" /></span><div><strong>IP 质量</strong><small>基础信息</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('ip')) }}</strong><span>分</span></div></header>
-                    <p>{{ summaryValue('ip', 'quality') || '等待检测' }}</p>
-                    <small v-if="summaryValue('ip', 'ipv4_ipv6')">{{ summaryValue('ip', 'ipv4_ipv6') }}</small>
+                    <header><div class="diagnostic-report-card__heading"><span class="is-ip"><Globe2 :size="17" /></span><div><strong>IP 质量</strong><small>风险 · ISP · 代理</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('ip')) }}</strong><span>分</span></div></header>
+                    <p v-if="summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_score')">
+                      <span>{{ reportIPRiskLevel() }}</span>
+                      <span v-if="summaryValue('ip', 'risk_score')"><b>风险分</b>{{ summaryValue('ip', 'risk_score') }}/100</span>
+                    </p>
+                    <p v-else>{{ summaryValue('ip', 'quality') || '等待检测' }}</p>
+                    <small v-if="summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_tag') || summaryValue('ip', 'is_proxy') || summaryValue('ip', 'usage_type')">{{ reportIPRiskDetail() }}</small>
+                    <small v-else-if="summaryValue('ip', 'ipv4_ipv6')">{{ summaryValue('ip', 'ipv4_ipv6') }}</small>
                   </article>
                 </div>
               </section>
 
               <section class="diagnostic-report-note">
                 <Activity :size="16" />
-                <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以上分数基于本次实际采集结果生成，IP 质量为基础信息完整度。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : '完成一次核心体检后，这里会显示实际结果与分项分数。' }}</p>
+                <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以上分数基于本次实际采集结果生成，IP 质量优先使用 IPING 风险分反向计算；接口不可用时回退为基础信息完整度。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : '完成一次核心体检后，这里会显示实际结果与分项分数。' }}</p>
                 <a v-if="summaryReportURL" :href="summaryReportURL" target="_blank" rel="noreferrer">查看完整报告 <ExternalLink :size="13" /></a>
                 <button v-else-if="terminalSummaryJobForOverview()" type="button" @click="openSummaryTerminal">打开最近结果 <ExternalLink :size="13" /></button>
               </section>
