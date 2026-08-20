@@ -127,6 +127,15 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/\.desktop-monitor__network-total\s*\{[^}]*padding-top:\s*1px;/)
   })
 
+  it('keeps service status typography readable without hiding truncated details', () => {
+    expect(styles).toMatch(/\.desktop-service-status__header\s*\{[^}]*font-size:\s*13px;/)
+    expect(styles).toMatch(/\.desktop-service-status__hero-copy strong\s*\{[^}]*font-size:\s*14px;/)
+    expect(styles).toMatch(/\.desktop-service-status__hero-copy small\s*\{[^}]*font-size:\s*13px;/)
+    expect(styles).toMatch(/\.desktop-service-status__metric-label\s*\{[^}]*font-size:\s*13px;/)
+    expect(styles).toMatch(/\.desktop-service-status__metric-copy strong\s*\{[^}]*font-size:\s*15px;/)
+    expect(styles).toMatch(/\.desktop-service-status__metric-copy small\s*\{[^}]*font-size:\s*13px;/)
+  })
+
   it('does not reserve a light outer scrollbar gutter around script terminals', () => {
     expect(styles).toMatch(/\.desktop-window__body:has\(> \.app-script-page\)\s*\{[^}]*overflow:\s*hidden;[^}]*background:\s*var\(--terminal-shell-background\);[^}]*scrollbar-gutter:\s*auto;/)
   })

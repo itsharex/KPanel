@@ -37,6 +37,7 @@ describe('DesktopServiceStatus', () => {
     await flushPromises()
 
     expect(wrapper.find('.desktop-service-status__hero-copy strong').text()).toBe('需要关注')
+    expect(wrapper.find('.desktop-service-status__hero-copy small').attributes('title')).toBeTruthy()
     const containerMetric = wrapper.findAll('.desktop-service-status__metric')
       .find((metric) => metric.text().includes('容器'))
     expect(containerMetric?.text()).toContain('5')
@@ -54,6 +55,7 @@ describe('DesktopServiceStatus', () => {
     expect(metrics[1]?.find('.desktop-service-status__metric-icon--blue').exists()).toBe(true)
     expect(metrics[2]?.find('.desktop-service-status__metric-icon--amber').exists()).toBe(true)
     expect(metrics[3]?.find('.desktop-service-status__metric-icon--violet').exists()).toBe(true)
+    expect(metrics.every((metric) => Boolean(metric.find('.desktop-service-status__metric-copy small').attributes('title')))).toBe(true)
 
     await containerMetric?.trigger('click')
     expect(open).toHaveBeenCalledWith('/docker')

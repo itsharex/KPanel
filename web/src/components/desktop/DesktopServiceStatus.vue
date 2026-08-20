@@ -271,7 +271,7 @@ onBeforeUnmount(() => {
       </span>
       <span class="desktop-service-status__hero-copy">
         <strong>{{ overallTitle }}</strong>
-        <small>{{ overallDetail }}</small>
+        <small :title="overallDetail">{{ overallDetail }}</small>
       </span>
       <button
         type="button"
@@ -315,7 +315,7 @@ onBeforeUnmount(() => {
         <span class="desktop-service-status__metric-copy">
           <span class="desktop-service-status__metric-label">{{ metric.label }}</span>
           <strong>{{ metric.value }}</strong>
-          <small>{{ metric.detail }}</small>
+          <small :title="metric.detail">{{ metric.detail }}</small>
           <span class="desktop-service-status__metric-track" aria-hidden="true">
             <i :style="{ width: String(metric.progress) + '%' }" />
           </span>

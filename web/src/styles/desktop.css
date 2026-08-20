@@ -703,7 +703,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-service-status__header {
   justify-content: flex-start;
   gap: 7px;
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: .03em;
 }
 
@@ -799,7 +799,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-service-status__hero-copy small {
   color: color-mix(in srgb, var(--desktop-label) 58%, transparent);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -912,7 +912,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-service-status__metric-label {
   color: color-mix(in srgb, var(--desktop-label) 58%, transparent);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 650;
 }
 
@@ -926,7 +926,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-service-status__metric-copy small {
   color: color-mix(in srgb, var(--desktop-label) 55%, transparent);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 600;
 }
 
