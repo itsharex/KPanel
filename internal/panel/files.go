@@ -34,12 +34,20 @@ const (
 )
 
 type fileDownloadTicket struct {
-	Path      string
-	ExpiresAt time.Time
+	Path             string
+	ArchiveSelection string
+	ArchiveName      string
+	ExpiresAt        time.Time
 }
 
 type fileDownloadTicketRequest struct {
 	Path string `json:"path"`
+}
+
+type fileArchiveDownloadTicketRequest struct {
+	Sources                  []string          `json:"sources"`
+	ExpectedResourceVersions map[string]string `json:"expectedResourceVersions"`
+	Name                     string            `json:"name"`
 }
 
 type fileDownloadTicketResponse struct {
@@ -254,6 +262,47 @@ func (s *Server) handleFileDownloadTicketCreate(w http.ResponseWriter, r *http.R
 	})
 }
 
+func (s *Server) handleFileArchiveDownloadTicketCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		s.writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		s.writeProblem(w, r, http.StatusBadRequest, "file_query_invalid", "文件查询参数无效", "")
+		return
+	}
+	if !s.checkOrigin(w, r) {
+		return
+	}
+	_, session, ok := s.requireSession(w, r)
+	if !ok || !s.checkCSRF(w, r, session) {
+		return
+	}
+	var input fileArchiveDownloadTicketRequest
+	if err := s.decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	selection, field, detail := validateFileArchiveDownloadTicket(input)
+	if detail != "" {
+		s.writeValidationProblem(w, r, field, detail)
+		return
+	}
+	token, expiresAt, err := s.issueFileArchiveDownloadTicket(selection, input.Name)
+	if errors.Is(err, errFileDownloadTicketLimit) {
+		s.writeProblem(w, r, http.StatusTooManyRequests, "file_download_ticket_limit", "下载请求过多，请稍后重试", "")
+		return
+	}
+	if err != nil {
+		s.writeProblem(w, r, http.StatusInternalServerError, "file_download_ticket_unavailable", "无法创建下载链接", "")
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, fileDownloadTicketResponse{
+		DownloadURL: "/api/v1/files/download/" + token,
+		ExpiresAt:   expiresAt,
+	})
+}
+
 func (s *Server) handleFileDownloadTicket(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
@@ -272,6 +321,19 @@ func (s *Server) handleFileDownloadTicket(w http.ResponseWriter, r *http.Request
 	ticket, ok := s.lookupFileDownloadTicket(key)
 	if !ok {
 		s.writeProblem(w, r, http.StatusNotFound, "file_download_not_found", "下载链接无效或已过期", "")
+		return
+	}
+	if ticket.ArchiveSelection != "" {
+		if r.Method == http.MethodHead {
+			writeFileArchiveDownloadHead(w, ticket.ArchiveName)
+			return
+		}
+		query := url.Values{"name": []string{ticket.ArchiveName}}
+		headers := http.Header{"Content-Type": []string{"application/json"}}
+		s.streamFileArchiveDownloadRequest(
+			w, r, http.MethodPost, query.Encode(), strings.NewReader(ticket.ArchiveSelection),
+			headers, int64(len(ticket.ArchiveSelection)),
+		)
 		return
 	}
 	query := url.Values{"path": []string{ticket.Path}, "disposition": []string{"attachment"}}
@@ -321,6 +383,18 @@ func (s *Server) streamFileDownload(w http.ResponseWriter, r *http.Request, rawQ
 }
 
 func (s *Server) streamFileArchiveDownload(w http.ResponseWriter, r *http.Request) {
+	s.streamFileArchiveDownloadRequest(w, r, http.MethodGet, r.URL.RawQuery, http.NoBody, nil, 0)
+}
+
+func (s *Server) streamFileArchiveDownloadRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	method string,
+	rawQuery string,
+	body io.Reader,
+	headers http.Header,
+	contentLength int64,
+) {
 	streamer, ok := s.agent.(agentStreamAPI)
 	if !ok {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_stream_unavailable", "Agent 文件流不可用", "")
@@ -329,8 +403,8 @@ func (s *Server) streamFileArchiveDownload(w http.ResponseWriter, r *http.Reques
 	transferContext, cancel := context.WithTimeout(r.Context(), panelFileTransferMaxDuration)
 	defer cancel()
 	response, err := streamer.OpenStream(
-		transferContext, http.MethodGet, "/v1/files/archive", r.URL.RawQuery,
-		requestID(r), http.NoBody, nil, 0,
+		transferContext, method, "/v1/files/archive", rawQuery,
+		requestID(r), body, headers, contentLength,
 	)
 	if err != nil {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "agent_unavailable", "Agent unavailable", "")
@@ -345,9 +419,62 @@ func (s *Server) streamFileArchiveDownload(w http.ResponseWriter, r *http.Reques
 	_, _ = io.CopyBuffer(writer, response.Body, make([]byte, 64<<10))
 }
 
+func writeFileArchiveDownloadHead(w http.ResponseWriter, name string) {
+	w.Header().Set("Content-Type", "application/zip")
+	if formatted := mime.FormatMediaType("attachment", map[string]string{"filename": name}); formatted != "" {
+		w.Header().Set("Content-Disposition", formatted)
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+}
+
 func validFileDownloadPath(value string) bool {
 	return value != "" && len(value) <= 4096 && strings.HasPrefix(value, "/") &&
 		!strings.ContainsAny(value, "\\\x00") && path.Clean(value) == value
+}
+
+func validateFileArchiveDownloadTicket(input fileArchiveDownloadTicketRequest) (string, string, string) {
+	if len(input.Sources) == 0 || len(input.Sources) > filemanager.MaxBatchItems {
+		return "", "sources", "sources must contain between 1 and 100 paths"
+	}
+	seen := make(map[string]struct{}, len(input.Sources))
+	for _, source := range input.Sources {
+		if !validFileDownloadPath(source) {
+			return "", "sources", "all sources must be canonical absolute paths"
+		}
+		if _, exists := seen[source]; exists {
+			return "", "sources", "duplicate sources are not allowed"
+		}
+		seen[source] = struct{}{}
+	}
+	if len(input.ExpectedResourceVersions) != len(input.Sources) {
+		return "", "expectedResourceVersions", "expected resource versions must exactly match sources"
+	}
+	for _, source := range input.Sources {
+		version, ok := input.ExpectedResourceVersions[source]
+		if !ok || version == "" || len(version) > 256 {
+			return "", "expectedResourceVersions", "each source must have a non-empty resource version up to 256 bytes"
+		}
+	}
+	if !validFileArchiveDownloadName(input.Name) {
+		return "", "name", "name must be a valid ZIP basename"
+	}
+	selection, err := json.Marshal(contract.FileArchiveDownloadRequest{
+		Sources:                  input.Sources,
+		ExpectedResourceVersions: input.ExpectedResourceVersions,
+	})
+	if err != nil || len(selection) == 0 || len(selection) > panelFileArchiveQueryMaxBytes {
+		return "", "selection", "serialized selection must not exceed 256 KiB"
+	}
+	return string(selection), "", ""
+}
+
+func validFileArchiveDownloadName(name string) bool {
+	return name != "" && len(name) <= 1024 && path.Base(name) == name &&
+		!strings.ContainsAny(name, "\\\x00\r\n") && strings.HasSuffix(strings.ToLower(name), ".zip")
 }
 
 func isFileDownloadTicketPath(requestPath string) bool {
@@ -370,6 +497,14 @@ func fileDownloadTicketKey(token string) ([32]byte, bool) {
 }
 
 func (s *Server) issueFileDownloadTicket(filePath string) (string, time.Time, error) {
+	return s.issueDownloadTicket(fileDownloadTicket{Path: filePath})
+}
+
+func (s *Server) issueFileArchiveDownloadTicket(selection, name string) (string, time.Time, error) {
+	return s.issueDownloadTicket(fileDownloadTicket{ArchiveSelection: selection, ArchiveName: name})
+}
+
+func (s *Server) issueDownloadTicket(ticket fileDownloadTicket) (string, time.Time, error) {
 	now := time.Now().UTC()
 	s.downloadTicketMu.Lock()
 	defer s.downloadTicketMu.Unlock()
@@ -395,7 +530,8 @@ func (s *Server) issueFileDownloadTicket(filePath string) (string, time.Time, er
 			continue
 		}
 		expiresAt := now.Add(fileDownloadTicketTTL)
-		s.downloadTickets[key] = fileDownloadTicket{Path: filePath, ExpiresAt: expiresAt}
+		ticket.ExpiresAt = expiresAt
+		s.downloadTickets[key] = ticket
 		return token, expiresAt, nil
 	}
 	return "", time.Time{}, errors.New("file download ticket collision")

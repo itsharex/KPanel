@@ -77,6 +77,20 @@ func TestFileArchiveDownloadStreamsOneZIPAndRejectsStaleSelections(t *testing.T)
 	if strings.Join(names, ",") != "readme.txt,assets/site.css" {
 		t.Fatalf("archive names=%#v", names)
 	}
+	postResponse := fileRequest(
+		server, http.MethodPost, "/v1/files/archive?name=post-release.zip", string(selection),
+	)
+	if postResponse.Code != http.StatusOK || postResponse.Header().Get("Content-Type") != "application/zip" ||
+		!strings.Contains(postResponse.Header().Get("Content-Disposition"), "post-release.zip") {
+		t.Fatalf("POST archive status=%d headers=%#v body=%s", postResponse.Code, postResponse.Header(), postResponse.Body.String())
+	}
+	postArchive, err := zip.NewReader(bytes.NewReader(postResponse.Body.Bytes()), int64(postResponse.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(postArchive.File) == 0 {
+		t.Fatal("POST archive was empty")
+	}
 
 	stale, _ := json.Marshal(contract.FileArchiveDownloadRequest{
 		Sources:                  []string{"/readme.txt"},
@@ -88,6 +102,56 @@ func TestFileArchiveDownloadStreamsOneZIPAndRejectsStaleSelections(t *testing.T)
 	)
 	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), "file_conflict") {
 		t.Fatalf("stale archive status=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+
+	largeSelection := contract.FileArchiveDownloadRequest{
+		Sources:                  []string{"/readme.txt"},
+		ExpectedResourceVersions: map[string]string{"/readme.txt": "sha256:stale"},
+	}
+	for index := 1; index < filemanager.MaxBatchItems; index++ {
+		source := fmt.Sprintf("/missing/%03d-%s", index, strings.Repeat("a", 120))
+		largeSelection.Sources = append(largeSelection.Sources, source)
+		largeSelection.ExpectedResourceVersions[source] = strings.Repeat("v", 64)
+	}
+	largeBody, err := json.Marshal(largeSelection)
+	if err != nil || len(largeBody) <= 16<<10 || len(largeBody) > fileArchiveQueryMaxBytes {
+		t.Fatalf("large POST selection bytes=%d err=%v", len(largeBody), err)
+	}
+	largeResponse := fileRequest(
+		server, http.MethodPost, "/v1/files/archive?name=large.zip", string(largeBody),
+	)
+	if largeResponse.Code != http.StatusConflict || !strings.Contains(largeResponse.Body.String(), "file_conflict") {
+		t.Fatalf("large POST archive status=%d body=%s", largeResponse.Code, largeResponse.Body.String())
+	}
+
+	postWithSelectionQuery := fileRequest(
+		server, http.MethodPost, "/v1/files/archive?name=release.zip&selection=leak", string(selection),
+	)
+	if postWithSelectionQuery.Code != http.StatusBadRequest || !strings.Contains(postWithSelectionQuery.Body.String(), "invalid_query") {
+		t.Fatalf("POST archive query status=%d body=%s", postWithSelectionQuery.Code, postWithSelectionQuery.Body.String())
+	}
+	oversized := fileRequest(
+		server, http.MethodPost, "/v1/files/archive?name=release.zip",
+		strings.Repeat(" ", fileArchiveQueryMaxBytes)+string(selection),
+	)
+	if oversized.Code != http.StatusBadRequest || !strings.Contains(oversized.Body.String(), "invalid_archive_download") {
+		t.Fatalf("oversized POST archive status=%d body=%s", oversized.Code, oversized.Body.String())
+	}
+
+	wrongContentTypeRequest := httptest.NewRequest(
+		http.MethodPost, "/v1/files/archive?name=release.zip", strings.NewReader(string(selection)),
+	)
+	wrongContentTypeRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	wrongContentTypeRequest.Header.Set("Content-Type", "text/plain")
+	wrongContentType := httptest.NewRecorder()
+	server.ServeHTTP(wrongContentType, wrongContentTypeRequest)
+	if wrongContentType.Code != http.StatusUnsupportedMediaType || !strings.Contains(wrongContentType.Body.String(), "json_required") {
+		t.Fatalf("POST archive content type status=%d body=%s", wrongContentType.Code, wrongContentType.Body.String())
+	}
+
+	wrongMethod := fileRequest(server, http.MethodPut, "/v1/files/archive?name=release.zip", string(selection))
+	if wrongMethod.Code != http.StatusMethodNotAllowed || wrongMethod.Header().Get("Allow") != "GET, POST" {
+		t.Fatalf("archive method status=%d allow=%q", wrongMethod.Code, wrongMethod.Header().Get("Allow"))
 	}
 }
 

@@ -7,7 +7,12 @@ import DesktopShortcutDialog from '@/components/desktop/DesktopShortcutDialog.vu
 import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
 import { resetDesktopIconsForTest } from '@/stores/desktopIcons'
 import type { DesktopEntries } from '@/lib/desktopEntries'
-import { beginDesktopFileDrag, clearDesktopFileDrag } from '@/lib/desktopFileShortcuts'
+import {
+  beginDesktopFileDrag,
+  clearDesktopFileDrag,
+  DESKTOP_FILE_DRAG_TYPE,
+  NATIVE_FILE_DOWNLOAD_DRAG_TYPE,
+} from '@/lib/desktopFileShortcuts'
 import { api } from '@/lib/api'
 import type { DesktopWorkspace, DesktopWorkspaceUpdate } from '@/types/api'
 
@@ -41,6 +46,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
         entry: vi.fn(),
         entries: vi.fn(),
         action: vi.fn(),
+        archiveUrl: vi.fn(),
+        createArchiveDownloadTicket: vi.fn(),
+        createDownloadTicket: vi.fn(),
         upload: vi.fn(),
         transferFromPanel: vi.fn(),
       },
@@ -60,6 +68,9 @@ const mockedUploadShortcutIcon = vi.mocked(api.desktop.uploadShortcutIcon)
 const mockedFileEntry = vi.mocked(api.files.entry)
 const mockedFileEntries = vi.mocked(api.files.entries)
 const mockedFileAction = vi.mocked(api.files.action)
+const mockedArchiveUrl = vi.mocked(api.files.archiveUrl)
+const mockedCreateArchiveDownloadTicket = vi.mocked(api.files.createArchiveDownloadTicket)
+const mockedCreateDownloadTicket = vi.mocked(api.files.createDownloadTicket)
 const mockedFileUpload = vi.mocked(api.files.upload)
 const mockedPanelTransfer = vi.mocked(api.files.transferFromPanel)
 const mockedClusterHosts = vi.mocked(api.cluster.hosts)
@@ -145,6 +156,18 @@ describe('DesktopView dynamic entries', () => {
       succeeded: [{ path: `${input.target}/${input.name}` }],
       failed: [],
     }))
+    mockedArchiveUrl.mockReset()
+    mockedArchiveUrl.mockImplementation((_entries, name) => `/api/v1/files/archive?name=${encodeURIComponent(name)}`)
+    mockedCreateArchiveDownloadTicket.mockReset()
+    mockedCreateArchiveDownloadTicket.mockResolvedValue({
+      downloadUrl: '/api/v1/files/archive-download/test-ticket',
+      expiresAt: '2026-08-20T08:00:00Z',
+    })
+    mockedCreateDownloadTicket.mockReset()
+    mockedCreateDownloadTicket.mockResolvedValue({
+      downloadUrl: '/api/v1/files/download/test-ticket',
+      expiresAt: '2026-08-20T08:00:00Z',
+    })
     mockedFileUpload.mockReset()
     mockedFileUpload.mockImplementation(async (path, file, _overwrite, onProgress) => {
       onProgress?.(45)
@@ -654,7 +677,121 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
-  it('natively drags selected desktop file shortcuts across panels and moves them locally as a group', async () => {
+  it('downloads a desktop file shortcut from its context menu', async () => {
+    const shortcutID = 'd'.repeat(32)
+    mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
+      shortcuts: [{
+        id: shortcutID, name: 'nginx.conf', description: '', targetType: 'file', path: '/home/nginx.conf',
+        createdAt: '2026-08-20T00:00:00Z', updatedAt: '2026-08-20T00:00:00Z',
+      }],
+    }))
+    mockedFileEntries.mockResolvedValue({
+      entries: [{
+        name: 'nginx.conf', path: '/home/nginx.conf', kind: 'file', resourceVersion: 'sha256:nginx',
+        sizeBytes: 7, mode: '0644', owner: 'root', group: 'root', modifiedAt: '2026-08-20T00:00:00Z',
+        editable: true, previewable: true,
+      }],
+      unavailable: [],
+    })
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+
+    await wrapper.get(`[data-icon-key="shortcut:${shortcutID}"] button`).trigger('contextmenu', {
+      clientX: 120,
+      clientY: 140,
+    })
+    await nextTick()
+    const menuItems = wrapper.findAll('[role="menuitem"]')
+    expect(menuItems.map((item) => item.text().trim())).toContain('下载')
+    const download = menuItems.find((item) => item.text().trim() === '下载')
+    await download!.trigger('click')
+    await flushPromises()
+
+    expect(mockedCreateDownloadTicket).toHaveBeenCalledWith('/home/nginx.conf')
+    expect(mockedCreateArchiveDownloadTicket).not.toHaveBeenCalled()
+    expect(mockedArchiveUrl).not.toHaveBeenCalled()
+    expect(anchorClick).toHaveBeenCalledOnce()
+    anchorClick.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('downloads a desktop directory through one short-lived archive ticket', async () => {
+    const shortcutID = 'a'.repeat(32)
+    mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
+      shortcuts: [{
+        id: shortcutID, name: 'logs', description: '', targetType: 'directory', path: '/home/logs',
+        createdAt: '2026-08-20T00:00:00Z', updatedAt: '2026-08-20T00:00:00Z',
+      }],
+    }))
+    mockedFileEntries.mockResolvedValue({
+      entries: [{
+        name: 'logs', path: '/home/logs', kind: 'directory', resourceVersion: 'sha256:logs',
+        sizeBytes: 0, mode: '0755', owner: 'root', group: 'root', modifiedAt: '2026-08-20T00:00:00Z',
+        editable: false, previewable: false,
+      }],
+      unavailable: [],
+    })
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+
+    await wrapper.get(`[data-icon-key="shortcut:${shortcutID}"] button`).trigger('contextmenu', {
+      clientX: 120,
+      clientY: 140,
+    })
+    await nextTick()
+    const download = wrapper.findAll('[role="menuitem"]')
+      .find((item) => item.text().trim() === '下载 ZIP')
+    await download!.trigger('click')
+    await flushPromises()
+
+    expect(mockedCreateArchiveDownloadTicket).toHaveBeenCalledWith([
+      expect.objectContaining({ path: '/home/logs', resourceVersion: 'sha256:logs' }),
+    ], 'logs.zip')
+    expect(mockedCreateDownloadTicket).not.toHaveBeenCalled()
+    expect(mockedArchiveUrl).not.toHaveBeenCalled()
+    expect(anchorClick).toHaveBeenCalledOnce()
+    anchorClick.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('does not silently download only part of a mixed desktop selection', async () => {
+    const shortcutID = 'e'.repeat(32)
+    mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
+      shortcuts: [{
+        id: shortcutID, name: 'nginx.conf', description: '', targetType: 'file', path: '/home/nginx.conf',
+        createdAt: '2026-08-20T00:00:00Z', updatedAt: '2026-08-20T00:00:00Z',
+      }],
+    }))
+    mockedFileEntries.mockResolvedValue({
+      entries: [{
+        name: 'nginx.conf', path: '/home/nginx.conf', kind: 'file', resourceVersion: 'sha256:nginx',
+        sizeBytes: 7, mode: '0644', owner: 'root', group: 'root', modifiedAt: '2026-08-20T00:00:00Z',
+        editable: true, previewable: true,
+      }],
+      unavailable: [],
+    })
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+
+    const shortcut = wrapper.get(`[data-icon-key="shortcut:${shortcutID}"] button`)
+    await shortcut.trigger('click')
+    await wrapper.get('button[title="Nginx"]').trigger('click', { ctrlKey: true })
+    await shortcut.trigger('contextmenu', { clientX: 120, clientY: 140 })
+    await nextTick()
+
+    const labels = wrapper.findAll('.desktop__context-menu [role="menuitem"]')
+      .map((item) => item.text().trim())
+    expect(labels).not.toContain('下载')
+    expect(labels).not.toContain('下载 ZIP')
+    expect(mockedCreateDownloadTicket).not.toHaveBeenCalled()
+    expect(mockedCreateArchiveDownloadTicket).not.toHaveBeenCalled()
+    expect(mockedArchiveUrl).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps DownloadURL, cross-panel transfer, and local movement on one desktop drag', async () => {
     const firstID = '1'.repeat(32)
     const secondID = '2'.repeat(32)
     mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
@@ -716,9 +853,22 @@ describe('DesktopView dynamic entries', () => {
         { path: '/home/app', resourceVersion: 'sha256:app' },
       ],
     })
-    expect(values.get('DownloadURL')).toMatch(/^application\/zip:KPanel Desktop\.zip:https?:\/\//)
-    expect(values.get('DownloadURL')).toContain('/api/v1/files/archive?selection=')
-    expect(values.get('DownloadURL')).toContain('name=KPanel+Desktop.zip')
+    expect(types).toEqual(expect.arrayContaining([
+      DESKTOP_FILE_DRAG_TYPE,
+      'application/x-kpanel-cross-panel-files-v2',
+      NATIVE_FILE_DOWNLOAD_DRAG_TYPE,
+    ]))
+    expect(mockedArchiveUrl).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ path: '/home/one.txt' }),
+      expect.objectContaining({ path: '/home/app' }),
+    ]), 'KPanel Desktop.zip')
+    expect(mockedCreateArchiveDownloadTicket).not.toHaveBeenCalled()
+    expect(values.get(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toMatch(
+      /^application\/zip:KPanel Desktop\.zip:https?:\/\//,
+    )
+    expect(values.get(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toContain(
+      '/api/v1/files/archive?name=KPanel%20Desktop.zip',
+    )
 
     const protectedHoverDataTransfer = {
       ...dataTransfer,
@@ -745,7 +895,7 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
-  it('commits a fast local desktop shortcut release when the native drop event is skipped', async () => {
+  it('keeps local desktop shortcut movement available when cluster identity is unavailable', async () => {
     const shortcutID = '3'.repeat(32)
     mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
       shortcuts: [{
@@ -761,6 +911,7 @@ describe('DesktopView dynamic entries', () => {
       }],
       unavailable: [],
     })
+    mockedClusterHosts.mockRejectedValue(new Error('cluster identity unavailable'))
     const wrapper = mount(DesktopView, { attachTo: document.body })
     await flushPromises()
     const shortcut = wrapper.get(`[data-icon-key="shortcut:${shortcutID}"]`)
@@ -774,10 +925,15 @@ describe('DesktopView dynamic entries', () => {
       },
       getData(type: string) { return values.get(type) || '' },
     }
+    const identityAttemptsBeforeDrag = mockedClusterHosts.mock.calls.length
     shortcut.element.dispatchEvent(internalFileDragEvent('dragstart', dataTransfer, 40, 40))
-    expect(values.get('DownloadURL')).toMatch(
+    expect(types).toContain(DESKTOP_FILE_DRAG_TYPE)
+    expect(types).not.toContain('application/x-kpanel-cross-panel-files-v2')
+    expect(types).toContain(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)
+    expect(values.get(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toMatch(
       /^text\/plain:fast\.txt:https?:\/\/[^/]+\/api\/v1\/files\/content\?path=%2Fhome%2Ffast\.txt&disposition=attachment$/,
     )
+    expect(mockedClusterHosts.mock.calls.length).toBeGreaterThan(identityAttemptsBeforeDrag)
     Object.defineProperty(document, 'elementFromPoint', {
       configurable: true,
       value: vi.fn(() => wrapper.element),

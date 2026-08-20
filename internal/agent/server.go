@@ -326,7 +326,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/v1/files/content":
 		s.fileContent(w, r, requestID)
 	case r.URL.Path == "/v1/files/archive":
-		s.requireMethod(w, r, requestID, http.MethodGet, s.fileArchive)
+		s.fileArchive(w, r)
 	case r.URL.Path == "/v1/files/text":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.fileText)
 	case r.URL.Path == "/v1/files/tail":

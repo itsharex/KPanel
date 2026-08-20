@@ -59,15 +59,32 @@ route/grant 只写入独立 `cluster-file-peers-v2.json`，不含任何密钥；
 
 取消或错误进入 `cancelled` / `error`。在 `committing` 前取消会清理临时文件；文件已提交而桌面入口失败时进入 `partial`，保留真实文件并允许用户手动重试“添加到桌面”。
 
-## 与操作系统拖出的边界
+## 与操作系统下载和拖出的边界
 
-- 窗口外拖出能力在 Chromium 桌面端把单个普通文件作为同源流式下载交给 Windows Explorer 或
-  macOS Finder；单个目录或批量选择由来源 Agent 实时生成一个 ZIP 后作为单文件传出。
-- ZIP 下载不改变本协议的跨 KPanel 描述符、授权或复制状态机，不创建持久或临时归档文件；Firefox、
-  Safari 等不支持 Chromium 私有 `DownloadURL` 的浏览器继续使用显式下载或压缩入口。
+- 本协议支持的是 KPanel 页面内、跨标签页、跨窗口和跨 KPanel 的文件复制。目标 KPanel 会重新鉴权、
+  拉取并原子提交文件；该成功状态不依赖 Windows Explorer 或 macOS Finder。
+- 用户把内容保存到本机时，可靠兜底是显式下载：单个普通文件使用短时 download ticket，单个目录或
+  批量选择先用已认证 POST 封存选择和版本，再通过不含路径的短时 ticket 下载受限 ZIP。内部及跨
+  KPanel 拖拽在这些入口之外继续保留。
+- Chromium 私有 `DownloadURL` 作为尽力而为的渐进增强与 KPanel 自定义载荷并存。Windows 实机中，
+  同一远端目标、同一 `127.0.0.1` 发起源的 `text/plain` / `application/octet-stream` A/B 曾同时成功，
+  随后全部载荷失败；全新标签页恢复原文件名和 `no-referrer` 均未改变失败，改用 `localhost` 发起后
+  四种载荷又全部成功。结果因此属于会随 initiator、tab、referrer、navigation 环境翻转的下游安全分类，
+  不是固定 MIME、文件名、custom type 或载荷顺序问题。
+- Chromium 源码已排除 automatic download limiter 是这批 `FILE_BLOCKED` History 记录的机制；当前
+  Google Transparency 公开站点状态也未报告威胁，但它不等于 download protection 对具体下载的 verdict。
+- Web 页面没有 Chromium 下载器或 Explorer 最终落盘结果的回调；HTML `dragend` 不能证明文件已保存，
+  因此操作系统拖出不得进入跨 KPanel 复制的成功状态、失败重试或可靠性承诺；被客户端阻止时只引导
+  使用显式 ticket / ZIP，不影响内部或跨 Panel 拖拽。
+- 候选不应写成已修复 `kpanel.kejilion.eu.org` 的客户端拦截，也不通过伪装文件类型、删除安全响应头、
+  延长 URL 凭据、改用其他下载域或其他方式规避浏览器、操作系统或组织策略。`127.0.0.1` / `localhost`
+  对照改变的是发起 origin，不证明切换下载域有效。
+- 完整现场证据与 KodBox 对照见
+  [`windows-file-download-compatibility.md`](windows-file-download-compatibility.md)。
 
 ## 明确非目标
 
+- 把 KPanel 到 Windows/macOS 的原生拖出作为跨面板复制完成条件或兼容保证。
 - KPanel A 到 B 的移动、双向同步、断点续传、后台任务跨刷新恢复。
 - 未配对面板、Cluster v1 或 light node 的文件传输。
 
@@ -75,5 +92,5 @@ route/grant 只写入独立 `cluster-file-peers-v2.json`，不含任何密钥；
 
 - Go：`internal/agent` 全量测试、新增批量元数据 Agent/Panel 定向测试及 Panel 文件路径定向测试通过；变更范围 `go vet` 通过。Windows 下 Panel 全量测试仍受既有绝对路径与静态资源 fixture 基线限制，不作为本功能失败。
 - Web：Vitest 97 个测试文件、719 项测试通过；i18n 校验、`vue-tsc --noEmit`、Vite 生产构建与预压缩通过。
-- 浏览器：本地生产构建在应用内真实 Chromium 中完成经典页、桌面壳和桌面文件窗口烟测，页面结构正常且控制台无 warning/error。预览 workspace 没有文件快捷方式，且不具备双 Agent 和 Cluster v2 配对，因此没有把该结果记录为桌面跨面板传输 E2E；原生 drag、批量描述符、WebKit 文本回退和本地组选中移动由组件/单元测试覆盖。
+- 浏览器：本地生产构建在应用内真实 Chromium 中完成经典页、桌面壳和桌面文件窗口烟测，页面结构正常且控制台无 warning/error。预览 workspace 没有文件快捷方式，且不具备双 Agent 和 Cluster v2 配对，因此没有把该结果记录为桌面跨面板传输 E2E；跨窗口 HTML5 drag、批量描述符、WebKit 文本回退和本地组选中移动由组件/单元测试覆盖，不代表 Windows/macOS 原生拖出已通过。
 - 待 release writer：在两台已配对 Linux KPanel 上验证文件窗口及桌面快捷方式来源的单项、多选、混合框选分别拖到桌面、文件管理当前目录与目录项；同时验证 Chrome/Safari、双方向授权、同名副本、部分失败、取消、来源变更、旧配对拒绝、断链清理及快捷方式失败保留真实文件。

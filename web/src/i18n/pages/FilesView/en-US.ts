@@ -179,4 +179,6 @@ export default [
   ['视频流响应超时，请检查网络或服务器。', 'The video stream timed out. Check the network or server.'],
   ['重试播放', 'Retry playback'],
   ['下载原文件', 'Download original file'],
+  ['下载 ZIP', 'Download ZIP'],
+  ['只能下载普通文件或文件夹', 'Only regular files and folders can be downloaded.'],
 ] as const satisfies PhraseCatalog

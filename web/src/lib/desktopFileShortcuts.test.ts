@@ -7,8 +7,12 @@ import {
   addFileEntriesToDesktop,
   beginDesktopFileDrag,
   clearDesktopFileDrag,
+  CROSS_PANEL_FILE_DRAG_TYPE,
+  CROSS_PANEL_FILES_DRAG_TYPE,
+  CROSS_PANEL_FILES_TEXT_PREFIX,
   crossPanelFileDragEntries,
   crossPanelFileDragEntry,
+  DESKTOP_FILE_DRAG_TYPE,
   desktopFileDragOrigin,
   desktopFileDragEntries,
   DesktopShortcutLimitError,
@@ -151,7 +155,7 @@ describe('desktop file shortcuts', () => {
     expect(peekDesktopFileDragOrigin(protectedHover)).toBe('desktop-shortcut')
   })
 
-  it('adds one same-origin file as a native Chromium download without changing internal drag data', () => {
+  it('adds one same-origin file DownloadURL alongside the internal drag payload', () => {
     const event = dragEvent()
     expect(beginDesktopFileDrag(event, [{
       name: 'report:Q?.txt', path: '/reports/report:Q?.txt', kind: 'file', mime: 'text/plain',
@@ -161,27 +165,43 @@ describe('desktop file shortcuts', () => {
     const descriptor = event.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE) || ''
     expect(descriptor).toMatch(/^text\/plain:report_Q_\.txt:https?:\/\//)
     expect(descriptor).toContain('/api/v1/files/content?path=%2Freports%2Freport%3AQ%3F.txt&disposition=attachment')
+    expect(event.dataTransfer?.getData(DESKTOP_FILE_DRAG_TYPE)).not.toBe('')
+    expect(event.dataTransfer?.getData('text/plain')).toBe('report:Q?.txt')
     expect(desktopFileDragEntries(event)).toEqual([{
       name: 'report:Q?.txt', path: '/reports/report:Q?.txt', kind: 'file', mime: 'text/plain',
       resourceVersion: 'sha256:report',
     }])
   })
 
-  it('advertises a folder or multi-selection as one same-origin ZIP download', () => {
+  it('advertises a directory ZIP alongside internal and cross-panel payloads', () => {
     const folder = { name: 'photos', path: '/photos', kind: 'directory' as const, resourceVersion: 'sha256:photos' }
     expect(nativeArchiveDownloadName([folder], 'KPanel Desktop')).toBe('photos.zip')
     const event = dragEvent()
     expect(beginDesktopFileDrag(
       event,
       [folder],
-      undefined,
+      'f'.repeat(32),
       'desktop-shortcut',
       '/api/v1/files/archive?selection=photos&name=photos.zip',
       'photos.zip',
     )).toBe(true)
+    expect(event.dataTransfer?.types).toEqual(expect.arrayContaining([
+      DESKTOP_FILE_DRAG_TYPE,
+      CROSS_PANEL_FILES_DRAG_TYPE,
+      CROSS_PANEL_FILE_DRAG_TYPE,
+      NATIVE_FILE_DOWNLOAD_DRAG_TYPE,
+      'text/plain',
+    ]))
     expect(event.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toContain(
       'application/zip:photos.zip:',
     )
+    expect(event.dataTransfer?.getData('text/plain')).toBe(
+      CROSS_PANEL_FILES_TEXT_PREFIX + event.dataTransfer?.getData(CROSS_PANEL_FILES_DRAG_TYPE),
+    )
+    expect(crossPanelFileDragEntries(event)).toEqual({
+      sourceNodeId: 'f'.repeat(32),
+      entries: [folder],
+    })
     expect(desktopFileDragEntries(event)).toEqual([folder])
 
     expect(nativeArchiveDownloadName([
@@ -196,7 +216,7 @@ describe('desktop file shortcuts', () => {
     )).toBeUndefined()
   })
 
-  it('does not advertise directories, selections, or cross-origin URLs as native files', () => {
+  it('does not advertise invalid selections or cross-origin URLs as native files', () => {
     const directory = dragEvent()
     beginDesktopFileDrag(directory, [{ name: 'reports', path: '/reports', kind: 'directory' }],
       undefined, 'file-manager', '/api/v1/files/content?path=%2Freports&disposition=attachment')

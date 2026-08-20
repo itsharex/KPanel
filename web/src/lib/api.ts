@@ -1673,6 +1673,20 @@ export const api = {
         method: 'POST',
         body: { path },
       }),
+    createArchiveDownloadTicket: (
+      entries: readonly Pick<FileEntry, 'path' | 'resourceVersion'>[],
+      name: string,
+    ): Promise<FileDownloadTicket> =>
+      request<FileDownloadTicket>('/files/archive-download-tickets', {
+        method: 'POST',
+        body: {
+          sources: entries.map((entry) => entry.path),
+          expectedResourceVersions: Object.fromEntries(
+            entries.map((entry) => [entry.path, entry.resourceVersion]),
+          ),
+          name,
+        },
+      }),
     transferFromPanel: async (
       input: CrossPanelFileTransferInput,
       onEvent: (event: CrossPanelFileTransferEvent) => void,

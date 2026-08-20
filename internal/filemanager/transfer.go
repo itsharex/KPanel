@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
 )
@@ -30,18 +29,33 @@ func (m *Manager) ExportZIP(
 		return err
 	}
 
+	stripSingleDirectory := len(prepared) == 1 && prepared[0].info.IsDir()
+	walkPrepared := func(budget *copyBudget, writeEntry archiveEntryWriter) error {
+		for _, source := range prepared {
+			archiveName := source.archiveName
+			if stripSingleDirectory {
+				archiveName = ""
+			}
+			if err := m.walkArchive(ctx, source.virtual, archiveName, source.info, budget, writeEntry); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	preflightBudget := &copyBudget{maxEntries: m.maxCopyEntries, maxBytes: m.maxCopyBytes}
+	if err := walkPrepared(preflightBudget, func(context.Context, string, string, os.FileInfo) error {
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := m.verifyArchiveSources(prepared); err != nil {
+		return err
+	}
+
 	writer := zip.NewWriter(output)
 	budget := &copyBudget{maxEntries: m.maxCopyEntries, maxBytes: m.maxCopyBytes}
-	writeEntry := m.zipEntryWriter(writer)
-	stripSingleDirectory := len(prepared) == 1 && prepared[0].info.IsDir()
-	for _, source := range prepared {
-		archiveName := path.Base(source.virtual)
-		if stripSingleDirectory {
-			archiveName = ""
-		}
-		if err := m.walkArchive(ctx, source.virtual, archiveName, source.info, budget, writeEntry); err != nil {
-			return err
-		}
+	if err := walkPrepared(budget, m.zipEntryWriter(writer)); err != nil {
+		return err
 	}
 	if err := m.verifyArchiveSources(prepared); err != nil {
 		return err

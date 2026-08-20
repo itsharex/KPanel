@@ -1076,6 +1076,33 @@ describe('API client', () => {
     expect(JSON.parse(String(init.body))).toEqual({ paths: ['/home/app', '/missing'] })
   })
 
+  it('creates an archive download ticket with paths, resource versions, and name', async () => {
+    const ticket = {
+      downloadUrl: '/api/v1/files/archive-download/test-ticket',
+      expiresAt: '2026-08-20T00:05:00Z',
+    }
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(ticket))
+    vi.stubGlobal('fetch', fetchMock)
+    const entries = [
+      { path: '/home/one.txt', resourceVersion: 'sha256:one' },
+      { path: '/home/logs', resourceVersion: 'sha256:logs' },
+    ]
+
+    await expect(api.files.createArchiveDownloadTicket(entries, 'home.zip')).resolves.toEqual(ticket)
+
+    const [requestURL, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(requestURL).toBe('/api/v1/files/archive-download-tickets')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({
+      sources: ['/home/one.txt', '/home/logs'],
+      expectedResourceVersions: {
+        '/home/one.txt': 'sha256:one',
+        '/home/logs': 'sha256:logs',
+      },
+      name: 'home.zip',
+    })
+  })
+
   it('aborts an in-flight binary file upload through the caller signal', async () => {
     class UploadXHR {
       static latest?: UploadXHR

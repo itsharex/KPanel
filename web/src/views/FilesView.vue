@@ -47,6 +47,7 @@ import {
 import type { CodeLanguage } from '@/lib/code-editor-language'
 import { transferCrossPanelFileBatch } from '@/lib/crossPanelFileTransfer'
 import { fileEntryIcon as entryIcon, fileEntryIconKind as entryIconKind } from '@/lib/fileEntryPresentation'
+import { downloadFileEntries } from '@/lib/fileDownloads'
 import {
   addFileEntriesToDesktop,
   beginDesktopFileDrag,
@@ -267,6 +268,12 @@ const contextBatchEntries = computed(() =>
   contextMenu.value?.entry ? entriesForBatch(contextMenu.value.entry) : [],
 )
 const contextHasMultipleEntries = computed(() => contextBatchEntries.value.length > 1)
+const selectedEntriesDownloadable = computed(() =>
+  selectedEntries.value.length > 0 && selectedEntries.value.every(canAddToDesktop),
+)
+const contextBatchDownloadable = computed(() =>
+  contextBatchEntries.value.length > 0 && contextBatchEntries.value.every(canAddToDesktop),
+)
 const allVisibleSelected = computed(
   () => entries.value.length > 0 && entries.value.every((entry) => selected.value.has(entry.path)),
 )
@@ -1267,14 +1274,7 @@ async function runTrashAction(action: 'trash_restore' | 'trash_delete' | 'trash_
 async function download(entry: FileEntry): Promise<void> {
   contextMenu.value = undefined
   try {
-    const ticket = await api.files.createDownloadTicket(entry.path)
-    const anchor = document.createElement('a')
-    anchor.href = ticket.downloadUrl
-    anchor.download = entry.name
-    anchor.rel = 'noopener'
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
+    await downloadFileEntries([entry], entry.name)
   } catch (error) {
     toast.danger('下载失败', errorMessage(error))
   }
@@ -1282,8 +1282,18 @@ async function download(entry: FileEntry): Promise<void> {
 
 async function downloadSelected(entry?: FileEntry): Promise<void> {
   contextMenu.value = undefined
-  for (const selectedEntry of entriesForBatch(entry)) {
-    if (selectedEntry.kind === 'file') await download(selectedEntry)
+  const targets = entriesForBatch(entry)
+  if (!targets.length || targets.some((target) => !canAddToDesktop(target))) {
+    toast.danger('下载失败', '只能下载普通文件或文件夹')
+    return
+  }
+  try {
+    await downloadFileEntries(
+      targets,
+      currentDirectoryEntry().name,
+    )
+  } catch (error) {
+    toast.danger('下载失败', errorMessage(error))
   }
 }
 
@@ -1857,10 +1867,10 @@ onBeforeUnmount(() => {
       >
         <strong>已选 {{ selected.size }} 项</strong>
         <button
-          v-if="selectedEntries.some((entry) => entry.kind === 'file')"
+          v-if="selectedEntriesDownloadable"
           type="button"
           @click="downloadSelected()"
-        ><Download :size="15" />下载</button>
+        ><Download :size="15" />{{ selectedEntries.length === 1 && selectedEntries[0]?.kind === 'file' ? '下载' : '下载 ZIP' }}</button>
         <button type="button" @click="openDialog('compress')"><Archive :size="15" />压缩</button>
         <button type="button" @click="setClipboard('copy')"><Copy :size="15" />复制</button>
         <button type="button" @click="setClipboard('move')"><Scissors :size="15" />剪切</button>
@@ -1894,11 +1904,11 @@ onBeforeUnmount(() => {
         <Pin :size="15" />将当前文件夹添加到桌面
       </button>
       <button
-        v-if="contextMenu.entry && contextBatchEntries.some((entry) => entry.kind === 'file')"
+        v-if="contextMenu.entry && contextBatchDownloadable"
         type="button"
         @click="downloadSelected(contextMenu.entry)"
       >
-        <Download :size="15" />下载
+        <Download :size="15" />{{ contextBatchEntries.length === 1 && contextBatchEntries[0]?.kind === 'file' ? '下载' : '下载 ZIP' }}
       </button>
       <button
         v-if="contextMenu.entry && !contextHasMultipleEntries && archiveFormat(contextMenu.entry)"

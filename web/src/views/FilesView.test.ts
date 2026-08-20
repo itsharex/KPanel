@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView.vue'
 import { resetDesktopIconsForTest } from '@/stores/desktopIcons'
 import { resetFileWindowTransferForTest } from '@/lib/fileWindowTransfer'
-import { beginDesktopFileDrag, clearDesktopFileDrag } from '@/lib/desktopFileShortcuts'
+import {
+  beginDesktopFileDrag,
+  clearDesktopFileDrag,
+  DESKTOP_FILE_DRAG_TYPE,
+  NATIVE_FILE_DOWNLOAD_DRAG_TYPE,
+} from '@/lib/desktopFileShortcuts'
 import type { DesktopWorkspaceUpdate } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
@@ -16,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   write: vi.fn(),
   contentUrl: vi.fn(),
   archiveUrl: vi.fn(),
+  createArchiveDownloadTicket: vi.fn(),
   createDownloadTicket: vi.fn(),
   thumbnailUrl: vi.fn(),
   desktopWorkspace: vi.fn(),
@@ -44,6 +50,7 @@ vi.mock('@/lib/api', () => ({
       trash: mocks.trash,
       contentUrl: mocks.contentUrl,
       archiveUrl: mocks.archiveUrl,
+      createArchiveDownloadTicket: mocks.createArchiveDownloadTicket,
       createDownloadTicket: mocks.createDownloadTicket,
       thumbnailUrl: mocks.thumbnailUrl,
       text: vi.fn(),
@@ -171,7 +178,7 @@ interface FileBindings {
 interface TestFileEntry {
   name: string
   path: string
-  kind: 'file' | 'directory'
+  kind: 'file' | 'directory' | 'symlink' | 'special'
   mime: string
   sizeBytes: number
   mode: string
@@ -281,6 +288,10 @@ beforeEach(() => {
     downloadUrl: '/api/v1/files/download/test-ticket',
     expiresAt: '2026-07-30T00:05:00Z',
   })
+  mocks.createArchiveDownloadTicket.mockResolvedValue({
+    downloadUrl: '/api/v1/files/archive-download/test-ticket',
+    expiresAt: '2026-07-30T00:05:00Z',
+  })
   mocks.contentUrl.mockImplementation((path: string, disposition: string) => (
     `/api/v1/files/content?path=${encodeURIComponent(path)}&disposition=${disposition}`
   ))
@@ -311,7 +322,7 @@ beforeEach(() => {
 })
 
 describe('FilesView desktop shortcuts', () => {
-  it('drags one file directly and folders or selections as one ZIP download', () => {
+  it('adds native file and ZIP DownloadURL payloads without replacing internal drags', () => {
     const view = setupView()
     const first = testEntry('one.txt')
     const second = testEntry('two.txt')
@@ -320,24 +331,35 @@ describe('FilesView desktop shortcuts', () => {
 
     view.startEntryDrag(single, first)
 
+    expect(single.dataTransfer?.types).toContain(DESKTOP_FILE_DRAG_TYPE)
+    expect(single.dataTransfer?.types).toContain(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)
     expect(mocks.contentUrl).toHaveBeenCalledWith('/one.txt', 'attachment')
-    expect(single.dataTransfer?.getData('DownloadURL')).toContain(
+    expect(single.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toContain(
       '/api/v1/files/content?path=%2Fone.txt&disposition=attachment',
     )
+    expect(mocks.createArchiveDownloadTicket).not.toHaveBeenCalled()
 
     view.selected.value = new Set([first.path, second.path])
     const selection = internalDrag([])
     view.startEntryDrag(selection, first)
+    expect(selection.dataTransfer?.types).toContain(DESKTOP_FILE_DRAG_TYPE)
+    expect(selection.dataTransfer?.types).toContain(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)
     expect(mocks.archiveUrl).toHaveBeenCalledWith([first, second], 'home.zip')
-    expect(selection.dataTransfer?.getData('DownloadURL')).toContain(
+    expect(selection.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toContain(
       'application/zip:home.zip:https://panel.example/api/v1/files/archive',
     )
 
     const folder = { ...testEntry('photos'), kind: 'directory' as const }
     const directory = internalDrag([])
     view.startEntryDrag(directory, folder)
+    expect(directory.dataTransfer?.types).toContain(DESKTOP_FILE_DRAG_TYPE)
+    expect(directory.dataTransfer?.types).toContain(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)
     expect(mocks.archiveUrl).toHaveBeenCalledWith([folder], 'photos.zip')
-    expect(directory.dataTransfer?.getData('DownloadURL')).toContain('application/zip:photos.zip:')
+    expect(directory.dataTransfer?.getData(NATIVE_FILE_DOWNLOAD_DRAG_TYPE)).toContain(
+      'application/zip:photos.zip:https://panel.example/api/v1/files/archive',
+    )
+    expect(mocks.createArchiveDownloadTicket).not.toHaveBeenCalled()
+    expect(mocks.show).not.toHaveBeenCalled()
   })
 
   it('adds the current multi-selection in one desktop workspace update', async () => {
@@ -396,6 +418,8 @@ describe('FilesView downloads', () => {
     await view.download(entry)
 
     expect(mocks.createDownloadTicket).toHaveBeenCalledWith('/hello.txt')
+    expect(mocks.createArchiveDownloadTicket).not.toHaveBeenCalled()
+    expect(mocks.archiveUrl).not.toHaveBeenCalled()
     expect(anchor.href).toBe('/api/v1/files/download/test-ticket')
     expect(anchor.download).toBe('hello.txt')
     expect(appendChild).toHaveBeenCalledWith(anchor)
@@ -498,9 +522,13 @@ describe('FilesView large icon layout', () => {
     const contextMenu = source.match(/class="file-context-menu"[\s\S]*?<ModalDialog/)?.[0] || ''
 
     expect(batchToolbar.indexOf("openDialog('chmod')")).toBeGreaterThan(-1)
+    expect(batchToolbar).toContain('v-if="selectedEntriesDownloadable"')
+    expect(batchToolbar).toContain('@click="downloadSelected()"')
     expect(batchToolbar.indexOf('addEntriesToDesktop()')).toBeGreaterThan(batchToolbar.indexOf("openDialog('chmod')"))
     expect(batchToolbar.indexOf('invertSelection')).toBeGreaterThan(batchToolbar.indexOf('addEntriesToDesktop()'))
     expect(contextMenu.indexOf("openDialog('chmod', contextMenu.entry)")).toBeGreaterThan(-1)
+    expect(contextMenu).toContain('contextBatchDownloadable')
+    expect(contextMenu).toContain('@click="downloadSelected(contextMenu.entry)"')
     expect(contextMenu.indexOf('addEntriesToDesktop(contextMenu.entry)')).toBeGreaterThan(
       contextMenu.indexOf("openDialog('chmod', contextMenu.entry)"),
     )
@@ -1015,7 +1043,7 @@ describe('FilesView directory loading', () => {
     })
   })
 
-  it('downloads every selected file sequentially from a selected entry context menu', async () => {
+  it('downloads a selected batch as one ZIP from a selected entry context menu', async () => {
     const anchors: Array<{ click: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> }> = []
     vi.stubGlobal('document', {
       activeElement: null,
@@ -1031,15 +1059,36 @@ describe('FilesView directory loading', () => {
     const second = testEntry('second.txt')
     view.directory.value = { path: '/', entries: [first, second] }
     view.selected.value = new Set([first.path, second.path])
-    mocks.createDownloadTicket.mockImplementation(async (path: string) => ({
-      downloadUrl: `/download${path}`,
-      expiresAt: '2026-07-30T00:05:00Z',
-    }))
 
-    await view.downloadSelected(second)
+    const downloadPromise = view.downloadSelected(second)
 
-    expect(mocks.createDownloadTicket.mock.calls.map(([path]) => path)).toEqual([first.path, second.path])
-    expect(anchors.map((anchor) => anchor.click.mock.calls.length)).toEqual([1, 1])
+    expect(mocks.createDownloadTicket).not.toHaveBeenCalled()
+    expect(mocks.createArchiveDownloadTicket).toHaveBeenCalledWith([first, second], 'home.zip')
+    expect(mocks.archiveUrl).not.toHaveBeenCalled()
+    expect(anchors).toHaveLength(0)
+    await downloadPromise
+    expect(anchors).toHaveLength(1)
+    expect(anchors[0]).toMatchObject({
+      href: '/api/v1/files/archive-download/test-ticket',
+      download: 'home.zip',
+      rel: 'noopener',
+    })
+    expect(anchors[0]!.click).toHaveBeenCalledOnce()
+  })
+
+  it('does not silently download only the supported part of a mixed selection', async () => {
+    const view = setupView()
+    const file = testEntry('first.txt')
+    const special = { ...testEntry('device'), kind: 'special' as const }
+    view.directory.value = { path: '/', entries: [file, special] }
+    view.selected.value = new Set([file.path, special.path])
+
+    await view.downloadSelected(special)
+
+    expect(mocks.createDownloadTicket).not.toHaveBeenCalled()
+    expect(mocks.createArchiveDownloadTicket).not.toHaveBeenCalled()
+    expect(mocks.archiveUrl).not.toHaveBeenCalled()
+    expect(mocks.danger).toHaveBeenCalledWith('下载失败', '只能下载普通文件或文件夹')
   })
 
   it('uses Windows-style click, control-click, and shift-click selection', () => {

@@ -6,20 +6,24 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/kejilion/kejilion-panel/internal/contract"
+	"github.com/kejilion/kejilion-panel/internal/filemanager"
 	"github.com/kejilion/kejilion-panel/internal/store"
 )
 
 type streamAgentCall struct {
-	method   string
-	path     string
-	rawQuery string
-	headers  http.Header
-	body     []byte
+	method        string
+	path          string
+	rawQuery      string
+	headers       http.Header
+	body          []byte
+	contentLength int64
 }
 
 type fileStubAgent struct {
@@ -36,7 +40,7 @@ func (agent *fileStubAgent) OpenStream(
 	method, path, rawQuery, _ string,
 	body io.Reader,
 	headers http.Header,
-	_ int64,
+	contentLength int64,
 ) (*http.Response, error) {
 	content, err := io.ReadAll(body)
 	if err != nil {
@@ -45,6 +49,7 @@ func (agent *fileStubAgent) OpenStream(
 	agent.mu.Lock()
 	agent.streamCalls = append(agent.streamCalls, streamAgentCall{
 		method: method, path: path, rawQuery: rawQuery, headers: headers.Clone(), body: content,
+		contentLength: contentLength,
 	})
 	agent.mu.Unlock()
 	status := agent.streamStatus
@@ -442,6 +447,275 @@ func TestFileDownloadTicketSupportsCookielessRangeHeadAndSecurityEntrance(t *tes
 	)
 	if limited.Code != http.StatusTooManyRequests || !strings.Contains(limited.Body.String(), "file_download_ticket_limit") {
 		t.Fatalf("ticket limit = %d %s", limited.Code, limited.Body.String())
+	}
+}
+
+func TestFileArchiveDownloadTicketSupportsCookielessGetAndMetadataOnlyHead(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &fileStubAgent{
+		stubAgent:      &stubAgent{},
+		streamStatus:   http.StatusOK,
+		streamResponse: []byte("PK\x03\x04archive"),
+		streamHeaders: http.Header{
+			"Content-Type":        []string{"application/zip"},
+			"Content-Disposition": []string{`attachment; filename="selected.zip"`},
+		},
+	}
+	server.agent = agent
+	body := []byte(`{"sources":["/home/app","/home/readme.txt"],"expectedResourceVersions":{"/home/app":"sha256:app","/home/readme.txt":"sha256:readme"},"name":"selected.zip"}`)
+	headers := map[string]string{
+		"Content-Type": "application/json", "Origin": "http://panel.test",
+		"X-CSRF-Token": csrfCookie.Value,
+	}
+
+	unauthenticated := performRequest(
+		server, http.MethodPost, "/api/v1/files/archive-download-tickets", body,
+		map[string]string{"Content-Type": "application/json", "Origin": "http://panel.test"},
+	)
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated archive ticket = %d %s", unauthenticated.Code, unauthenticated.Body.String())
+	}
+	missingOrigin := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/archive-download-tickets", body,
+		sessionCookie, csrfCookie,
+		map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value},
+	)
+	if missingOrigin.Code != http.StatusForbidden || !strings.Contains(missingOrigin.Body.String(), "origin_validation_failed") {
+		t.Fatalf("missing origin archive ticket = %d %s", missingOrigin.Code, missingOrigin.Body.String())
+	}
+	missingCSRF := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/archive-download-tickets", body,
+		sessionCookie, csrfCookie,
+		map[string]string{"Content-Type": "application/json", "Origin": "http://panel.test"},
+	)
+	if missingCSRF.Code != http.StatusForbidden || !strings.Contains(missingCSRF.Body.String(), "csrf_validation_failed") {
+		t.Fatalf("missing CSRF archive ticket = %d %s", missingCSRF.Code, missingCSRF.Body.String())
+	}
+	invalidQuery := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/archive-download-tickets?selection=leak", body,
+		sessionCookie, csrfCookie, headers,
+	)
+	if invalidQuery.Code != http.StatusBadRequest {
+		t.Fatalf("archive ticket query = %d %s", invalidQuery.Code, invalidQuery.Body.String())
+	}
+	wrongMethod := authenticatedRequest(
+		server, http.MethodGet, "/api/v1/files/archive-download-tickets", nil,
+		sessionCookie, csrfCookie, nil,
+	)
+	if wrongMethod.Code != http.StatusMethodNotAllowed || wrongMethod.Header().Get("Allow") != http.MethodPost {
+		t.Fatalf("archive ticket method = %d allow=%q", wrongMethod.Code, wrongMethod.Header().Get("Allow"))
+	}
+
+	created := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/archive-download-tickets", body,
+		sessionCookie, csrfCookie, headers,
+	)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("archive ticket create = %d %s", created.Code, created.Body.String())
+	}
+	var ticket fileDownloadTicketResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &ticket); err != nil ||
+		ticket.DownloadURL == "" || !ticket.ExpiresAt.After(time.Now()) {
+		t.Fatalf("archive ticket response = %#v err=%v", ticket, err)
+	}
+	downloadURL, err := url.Parse(ticket.DownloadURL)
+	if err != nil || downloadURL.RawQuery != "" || downloadURL.Fragment != "" ||
+		strings.Contains(created.Body.String(), "/home/") || strings.Contains(created.Body.String(), "selected.zip") {
+		t.Fatalf("archive ticket leaked selection: response=%q parsed=%#v err=%v", created.Body.String(), downloadURL, err)
+	}
+
+	_, version := server.store.SecurityEntrance()
+	if err := server.store.ReplaceSecurityEntrance(version, store.SecurityEntrance{Enabled: true, Path: "panel-secure1"}); err != nil {
+		t.Fatal(err)
+	}
+	head := performRequest(server, http.MethodHead, ticket.DownloadURL, nil, nil)
+	if head.Code != http.StatusOK || head.Body.Len() != 0 ||
+		head.Header().Get("Content-Type") != "application/zip" ||
+		!strings.Contains(head.Header().Get("Content-Disposition"), "selected.zip") ||
+		head.Header().Get("Cache-Control") != "private, no-store" ||
+		head.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("archive ticket HEAD = %d headers=%#v body=%q", head.Code, head.Header(), head.Body.String())
+	}
+	if calls := agent.snapshotStreamCalls(); len(calls) != 0 {
+		t.Fatalf("archive HEAD generated content: calls=%#v", calls)
+	}
+
+	download := performRequest(server, http.MethodGet, ticket.DownloadURL, nil, nil)
+	if download.Code != http.StatusOK || download.Body.String() != "PK\x03\x04archive" ||
+		download.Header().Get("Content-Type") != "application/zip" ||
+		download.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("cookieless archive download = %d headers=%#v body=%q", download.Code, download.Header(), download.Body.String())
+	}
+	calls := agent.snapshotStreamCalls()
+	if len(calls) != 1 || calls[0].method != http.MethodPost || calls[0].path != "/v1/files/archive" ||
+		calls[0].headers.Get("Content-Type") != "application/json" ||
+		calls[0].contentLength != int64(len(calls[0].body)) {
+		t.Fatalf("archive ticket Agent call = %#v", calls)
+	}
+	forwardedQuery, err := url.ParseQuery(calls[0].rawQuery)
+	if err != nil || forwardedQuery.Get("name") != "selected.zip" || len(forwardedQuery) != 1 ||
+		forwardedQuery.Has("selection") {
+		t.Fatalf("archive ticket query=%q values=%#v err=%v", calls[0].rawQuery, forwardedQuery, err)
+	}
+	var selection contract.FileArchiveDownloadRequest
+	if err := json.Unmarshal(calls[0].body, &selection); err != nil ||
+		len(selection.Sources) != 2 || selection.Sources[0] != "/home/app" || selection.Sources[1] != "/home/readme.txt" ||
+		selection.ExpectedResourceVersions["/home/app"] != "sha256:app" ||
+		selection.ExpectedResourceVersions["/home/readme.txt"] != "sha256:readme" {
+		t.Fatalf("forwarded archive selection=%#v err=%v", selection, err)
+	}
+
+	queryRejected := performRequest(server, http.MethodGet, ticket.DownloadURL+"?name=leak.zip", nil, nil)
+	if queryRejected.Code != http.StatusNotFound || len(agent.snapshotStreamCalls()) != 1 {
+		t.Fatalf("ticket query rejection=%d calls=%#v", queryRejected.Code, agent.snapshotStreamCalls())
+	}
+	key, ok := fileDownloadTicketKey(strings.TrimPrefix(ticket.DownloadURL, "/api/v1/files/download/"))
+	if !ok {
+		t.Fatal("created archive ticket token was invalid")
+	}
+	server.downloadTicketMu.Lock()
+	expiredTicket := server.downloadTickets[key]
+	expiredTicket.ExpiresAt = time.Now().Add(-time.Second)
+	server.downloadTickets[key] = expiredTicket
+	server.downloadTicketMu.Unlock()
+	expired := performRequest(server, http.MethodGet, ticket.DownloadURL, nil, nil)
+	if expired.Code != http.StatusNotFound || len(agent.snapshotStreamCalls()) != 1 {
+		t.Fatalf("expired archive ticket=%d calls=%#v", expired.Code, agent.snapshotStreamCalls())
+	}
+
+	server.downloadTicketMu.Lock()
+	server.downloadTickets = make(map[[32]byte]fileDownloadTicket, maxFileDownloadTickets)
+	for index := range maxFileDownloadTickets {
+		var itemKey [32]byte
+		itemKey[0] = byte(index)
+		server.downloadTickets[itemKey] = fileDownloadTicket{
+			ArchiveSelection: `{"sources":["/home/app"],"expectedResourceVersions":{"/home/app":"sha256:app"}}`,
+			ArchiveName:      "selected.zip",
+			ExpiresAt:        time.Now().Add(time.Minute),
+		}
+	}
+	server.downloadTicketMu.Unlock()
+	limited := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/archive-download-tickets", body,
+		sessionCookie, csrfCookie, headers,
+	)
+	if limited.Code != http.StatusTooManyRequests || !strings.Contains(limited.Body.String(), "file_download_ticket_limit") {
+		t.Fatalf("archive ticket limit = %d %s", limited.Code, limited.Body.String())
+	}
+	server.downloadTicketMu.Lock()
+	itemKey := [32]byte{}
+	item := server.downloadTickets[itemKey]
+	item.ExpiresAt = time.Now().Add(-time.Second)
+	server.downloadTickets[itemKey] = item
+	server.downloadTicketMu.Unlock()
+	pruned := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/archive-download-tickets", body,
+		sessionCookie, csrfCookie, headers,
+	)
+	if pruned.Code != http.StatusCreated {
+		t.Fatalf("expired capacity was not pruned = %d %s", pruned.Code, pruned.Body.String())
+	}
+}
+
+func TestFileArchiveDownloadTicketRejectsInvalidSelection(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	headers := map[string]string{
+		"Content-Type": "application/json", "Origin": "http://panel.test",
+		"X-CSRF-Token": csrfCookie.Value,
+	}
+	valid := func() fileArchiveDownloadTicketRequest {
+		return fileArchiveDownloadTicketRequest{
+			Sources:                  []string{"/home/app"},
+			ExpectedResourceVersions: map[string]string{"/home/app": "sha256:app"},
+			Name:                     "selected.zip",
+		}
+	}
+
+	tooMany := valid()
+	tooMany.Sources = make([]string, filemanager.MaxBatchItems+1)
+	tooMany.ExpectedResourceVersions = make(map[string]string, len(tooMany.Sources))
+	for index := range tooMany.Sources {
+		source := "/home/item-" + string(rune(0x1000+index))
+		tooMany.Sources[index] = source
+		tooMany.ExpectedResourceVersions[source] = "sha256:item"
+	}
+
+	oversized := valid()
+	oversized.Sources = make([]string, filemanager.MaxBatchItems)
+	oversized.ExpectedResourceVersions = make(map[string]string, len(oversized.Sources))
+	for index := range oversized.Sources {
+		source := "/home/" + strings.Repeat("a", 2700) + string(rune(0x1000+index))
+		oversized.Sources[index] = source
+		oversized.ExpectedResourceVersions[source] = "v"
+	}
+	serialized, err := json.Marshal(contract.FileArchiveDownloadRequest{
+		Sources: oversized.Sources, ExpectedResourceVersions: oversized.ExpectedResourceVersions,
+	})
+	if err != nil || len(serialized) <= panelFileArchiveQueryMaxBytes {
+		t.Fatalf("oversized fixture bytes=%d err=%v", len(serialized), err)
+	}
+
+	nonCanonical := valid()
+	nonCanonical.Sources = []string{"/home//app"}
+	nonCanonical.ExpectedResourceVersions = map[string]string{"/home//app": "v"}
+	duplicate := valid()
+	duplicate.Sources = []string{"/home/app", "/home/app"}
+	missingVersion := valid()
+	missingVersion.ExpectedResourceVersions = map[string]string{}
+	extraVersion := valid()
+	extraVersion.ExpectedResourceVersions["/home/extra"] = "v"
+	emptyVersion := valid()
+	emptyVersion.ExpectedResourceVersions["/home/app"] = ""
+	longVersion := valid()
+	longVersion.ExpectedResourceVersions["/home/app"] = strings.Repeat("v", 257)
+	parentName := valid()
+	parentName.Name = "../selected.zip"
+	wrongExtension := valid()
+	wrongExtension.Name = "selected.tar"
+	longName := valid()
+	longName.Name = strings.Repeat("a", 1021) + ".zip"
+
+	tests := []struct {
+		name  string
+		input fileArchiveDownloadTicketRequest
+	}{
+		{name: "empty sources", input: fileArchiveDownloadTicketRequest{Name: "selected.zip"}},
+		{name: "too many sources", input: tooMany},
+		{name: "non-canonical source", input: nonCanonical},
+		{name: "duplicate source", input: duplicate},
+		{name: "missing version", input: missingVersion},
+		{name: "extra version", input: extraVersion},
+		{name: "empty version", input: emptyVersion},
+		{name: "long version", input: longVersion},
+		{name: "parent name", input: parentName},
+		{name: "wrong extension", input: wrongExtension},
+		{name: "long name", input: longName},
+		{name: "oversized serialized selection", input: oversized},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body, err := json.Marshal(test.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := authenticatedRequest(
+				server, http.MethodPost, "/api/v1/files/archive-download-tickets", body,
+				sessionCookie, csrfCookie, headers,
+			)
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("invalid archive ticket=%d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+	unknown := authenticatedRequest(
+		server, http.MethodPost, "/api/v1/files/archive-download-tickets",
+		[]byte(`{"sources":["/home/app"],"expectedResourceVersions":{"/home/app":"v"},"name":"selected.zip","extra":true}`),
+		sessionCookie, csrfCookie, headers,
+	)
+	if unknown.Code != http.StatusBadRequest {
+		t.Fatalf("unknown archive ticket field=%d %s", unknown.Code, unknown.Body.String())
 	}
 }
 

@@ -24,6 +24,7 @@ import {
   HardDriveUpload,
   LoaderCircle,
   Check,
+  Download,
   Maximize2,
   Minimize2,
   X,
@@ -46,6 +47,7 @@ import {
 } from '@/lib/desktopEntries'
 import { api, ApiError, type SystemResourceSnapshot } from '@/lib/api'
 import { transferCrossPanelFileBatch } from '@/lib/crossPanelFileTransfer'
+import { downloadFileEntries } from '@/lib/fileDownloads'
 import {
   addFileEntriesToDesktop,
   beginDesktopFileDrag,
@@ -528,6 +530,24 @@ const selectedEntries = computed(() => {
   return [...selectedIcons.value]
     .map((key) => byKey.get(key))
     .filter((entry): entry is DesktopEntry => Boolean(entry))
+})
+const menuDownloadEntries = computed(() => {
+  const byKey = new Map(
+    [...visibleDynamicEntries.value, ...shortcutEntries.value].map((entry) => [entry.key, entry]),
+  )
+  const candidates = menuSelectionKeys.value.length > 1
+    ? menuSelectionKeys.value.map((key) => byKey.get(key)).filter((entry): entry is DesktopEntry => Boolean(entry))
+    : menuEntry.value
+      ? [menuEntry.value]
+      : []
+  const entries: FileEntry[] = []
+  for (const entry of candidates) {
+    if (!isTransferableDesktopShortcut(entry) || !entry.path) return []
+    const metadata = desktopFileMetadata.value[entry.path]
+    if (!metadata || metadata.kind !== entry.launch) return []
+    entries.push(metadata)
+  }
+  return entries
 })
 
 async function refreshDesktopFileMetadata(paths: readonly string[], replaceAll = false): Promise<void> {
@@ -1096,7 +1116,7 @@ function startDesktopShortcutDrag(event: DragEvent, entry: DesktopEntry): void {
   const candidates = desktopShortcutDragCandidates(entry)
   const transferable = desktopShortcutTransferEntries(entry)
   const anchorMetadata = desktopFileMetadata.value[entry.path!]
-  if (!localClusterNodeId.value || !anchorMetadata || anchorMetadata.kind !== entry.launch || !transferable.length) {
+  if (!anchorMetadata || anchorMetadata.kind !== entry.launch || !transferable.length) {
     event.preventDefault()
     void loadLocalClusterIdentity()
     void refreshDesktopFileMetadata(candidates.map((candidate) => candidate.path!))
@@ -1105,6 +1125,7 @@ function startDesktopShortcutDrag(event: DragEvent, entry: DesktopEntry): void {
     })
     return
   }
+  if (!localClusterNodeId.value) void loadLocalClusterIdentity()
   const keys = selectedIcons.value.has(entry.key) && selectedIcons.value.size > 1
     ? [...selectedIcons.value].filter((key) => renderedPositionByKey.value.has(key))
     : [entry.key]
@@ -2596,6 +2617,20 @@ function onEntryMenuOpen(): void {
   if (entry) openEntry(entry)
 }
 
+async function onFileMenuDownload(): Promise<void> {
+  const entries = [...menuDownloadEntries.value]
+  closeContextMenu()
+  if (!entries.length) return
+  try {
+    await downloadFileEntries(entries, 'KPanel Desktop')
+  } catch (error) {
+    toast.danger(
+      i18n.t('desktop.fileDownloadErrorTitle'),
+      error instanceof Error ? error.message : i18n.t('desktop.fileDownloadErrorMessage'),
+    )
+  }
+}
+
 function onEntryMenuDetails(): void {
   const entry = menuEntry.value
   closeContextMenu()
@@ -3306,6 +3341,15 @@ function onViewportResize(): void {
       >
         <template v-if="menuSelectionKeys.length > 1">
           <button
+            v-if="menuDownloadEntries.length"
+            type="button"
+            role="menuitem"
+            @click="onFileMenuDownload"
+          >
+            <Download :size="15" aria-hidden="true" />
+            {{ i18n.t('desktop.fileDownloadZip') }}
+          </button>
+          <button
             type="button"
             role="menuitem"
             class="desktop__context-danger"
@@ -3332,6 +3376,17 @@ function onViewportResize(): void {
               : menuEntry.url
                 ? i18n.t('desktop.systemBrowserOpen')
                 : i18n.t('desktop.entryOpen') }}
+          </button>
+          <button
+            v-if="menuDownloadEntries.length"
+            type="button"
+            role="menuitem"
+            @click="onFileMenuDownload"
+          >
+            <Download :size="15" aria-hidden="true" />
+            {{ i18n.t(menuDownloadEntries.length === 1 && menuDownloadEntries[0]?.kind === 'file'
+              ? 'desktop.fileDownload'
+              : 'desktop.fileDownloadZip') }}
           </button>
           <button type="button" role="menuitem" @click="onEntryMenuDetails">
             <Info :size="15" aria-hidden="true" />

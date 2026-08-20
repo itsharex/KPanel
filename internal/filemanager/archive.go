@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -32,8 +33,9 @@ type archiveDirectoryTime struct {
 }
 
 type archiveSourceEntry struct {
-	virtual string
-	info    os.FileInfo
+	virtual     string
+	archiveName string
+	info        os.FileInfo
 }
 
 type archiveEntryWriter func(
@@ -55,7 +57,7 @@ func (m *Manager) prepareArchiveSources(
 		return nil, ErrBatchTooLarge
 	}
 	prepared := make([]archiveSourceEntry, 0, len(sources))
-	seenNames := make(map[string]struct{}, len(sources))
+	seenSources := make(map[string]struct{}, len(sources))
 	for _, source := range sources {
 		_, normalizedSource, err := m.resolveExisting(source)
 		if err != nil {
@@ -80,14 +82,57 @@ func (m *Manager) prepareArchiveSources(
 		if outputVirtual != "" && info.IsDir() && isWithin(outputVirtual, normalizedSource) {
 			return nil, ErrInvalidPath
 		}
-		base := path.Base(normalizedSource)
-		if _, exists := seenNames[base]; exists {
+		if _, exists := seenSources[normalizedSource]; exists {
 			return nil, ErrAlreadyExists
 		}
-		seenNames[base] = struct{}{}
-		prepared = append(prepared, archiveSourceEntry{virtual: normalizedSource, info: info})
+		seenSources[normalizedSource] = struct{}{}
+		prepared = append(prepared, archiveSourceEntry{
+			virtual: normalizedSource, archiveName: path.Base(normalizedSource), info: info,
+		})
 	}
+	assignUniqueArchiveNames(prepared)
 	return prepared, nil
+}
+
+func assignUniqueArchiveNames(prepared []archiveSourceEntry) {
+	reserved := make([]string, 0, len(prepared))
+	for _, source := range prepared {
+		reserved = append(reserved, source.archiveName)
+	}
+	used := make([]string, 0, len(prepared))
+	for index := range prepared {
+		original := prepared[index].archiveName
+		candidate := original
+		if archiveNameExists(used, candidate) {
+			for suffix := 2; ; suffix++ {
+				candidate = suffixedArchiveName(original, suffix)
+				if !archiveNameExists(used, candidate) && !archiveNameExists(reserved, candidate) {
+					break
+				}
+			}
+		}
+		prepared[index].archiveName = candidate
+		used = append(used, candidate)
+	}
+}
+
+func archiveNameExists(names []string, candidate string) bool {
+	for _, name := range names {
+		if strings.EqualFold(name, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func suffixedArchiveName(name string, suffix int) string {
+	extension := path.Ext(name)
+	stem := strings.TrimSuffix(name, extension)
+	if stem == "" {
+		stem = name
+		extension = ""
+	}
+	return fmt.Sprintf("%s (%d)%s", stem, suffix, extension)
 }
 
 func (m *Manager) verifyArchiveSources(prepared []archiveSourceEntry) error {
@@ -184,7 +229,7 @@ func (m *Manager) compressArchive(
 	budget := &copyBudget{maxEntries: m.maxCopyEntries, maxBytes: m.maxCopyBytes}
 	stripSingleDirectory := len(prepared) == 1 && prepared[0].info.IsDir()
 	for _, source := range prepared {
-		archiveName := path.Base(source.virtual)
+		archiveName := source.archiveName
 		if stripSingleDirectory {
 			archiveName = ""
 		}
@@ -273,6 +318,9 @@ func (m *Manager) walkArchive(
 	sort.Slice(entries, func(left, right int) bool { return entries[left].Name() < entries[right].Name() })
 	for _, entry := range entries {
 		childVirtual := joinVirtual(sourceVirtual, entry.Name())
+		if m.isProtected(childVirtual) || isInternalComponent(entry.Name()) {
+			continue
+		}
 		childInfo, statErr := m.rootFS.Lstat(rootName(childVirtual))
 		if statErr != nil {
 			return statErr

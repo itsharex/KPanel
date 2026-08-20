@@ -185,18 +185,50 @@ func (s *Server) fileContent(w http.ResponseWriter, r *http.Request, requestID s
 
 func (s *Server) fileArchive(w http.ResponseWriter, r *http.Request) {
 	requestID := requestIDFrom(w)
-	if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "selection", "name") {
-		writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "压缩下载参数无效", "")
-		return
-	}
-	selection := r.URL.Query().Get("selection")
-	name := r.URL.Query().Get("name")
-	if len(selection) == 0 || len(selection) > fileArchiveQueryMaxBytes || !validArchiveDownloadName(name) {
-		writeProblem(w, requestID, http.StatusBadRequest, "invalid_archive_download", "压缩下载参数无效", "")
-		return
-	}
 	var input contract.FileArchiveDownloadRequest
-	if err := json.Unmarshal([]byte(selection), &input); err != nil {
+	var name string
+	switch r.Method {
+	case http.MethodGet:
+		if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "selection", "name") {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "压缩下载参数无效", "")
+			return
+		}
+		selection := r.URL.Query().Get("selection")
+		name = r.URL.Query().Get("name")
+		if len(selection) == 0 || len(selection) > fileArchiveQueryMaxBytes ||
+			json.Unmarshal([]byte(selection), &input) != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_archive_download", "压缩下载参数无效", "")
+			return
+		}
+	case http.MethodPost:
+		if r.URL.RawPath != "" || !strictQuery(r.URL.Query(), "name") {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_query", "压缩下载参数无效", "")
+			return
+		}
+		name = r.URL.Query().Get("name")
+		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || mediaType != "application/json" {
+			writeProblem(w, requestID, http.StatusUnsupportedMediaType, "json_required", "必须提交 JSON", "")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, fileArchiveQueryMaxBytes)
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_archive_download", "压缩下载参数无效", "")
+			return
+		}
+		var extra any
+		if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+			writeProblem(w, requestID, http.StatusBadRequest, "invalid_archive_download", "压缩下载参数无效", "")
+			return
+		}
+	default:
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+		writeProblem(w, requestID, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不允许", "")
+		return
+	}
+	if !validArchiveDownloadName(name) {
 		writeProblem(w, requestID, http.StatusBadRequest, "invalid_archive_download", "压缩下载参数无效", "")
 		return
 	}
@@ -251,12 +283,17 @@ func validArchiveDownloadSelection(input contract.FileArchiveDownloadRequest) bo
 		len(input.ExpectedResourceVersions) != len(input.Sources) {
 		return false
 	}
+	seen := make(map[string]struct{}, len(input.Sources))
 	for _, source := range input.Sources {
 		version, ok := input.ExpectedResourceVersions[source]
 		if !ok || version == "" || len(version) > 256 || source == "" || len(source) > 4096 ||
 			!strings.HasPrefix(source, "/") || strings.ContainsAny(source, "\\\x00") || path.Clean(source) != source {
 			return false
 		}
+		if _, exists := seen[source]; exists {
+			return false
+		}
+		seen[source] = struct{}{}
 	}
 	return true
 }
