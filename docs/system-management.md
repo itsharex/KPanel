@@ -255,7 +255,7 @@ systemd transient service 执行。Web 请求只能选择 `update/full`、
 - LinuxMirrors 固定到 `649e948763042e485e411be540d21c32cface1c1`，网络参数脚本固定到 `e9c3078eb516b05f9df6d2a9294cf3b226ca02bd`；两者下载后都先校验已登记 SHA-256，再交给 Bash 执行。
 - 2026-08-11 已在 154 的隔离 Ubuntu 24.04 systemd 容器完成固定 12 项状态、Panel typed 选择、Agent 后台运行态与恢复、时区安全项成功、首项失败即停止、后续项不执行、资源版本冲突和审计闭环；生产 KPanel、Agent、Swap、SSH 和防火墙均未改动。
 - 2026-08-17 在全新 `Ubuntu 24.04.4 LTS` WSL2 systemd 实例以固定脚本 `4d7265310cb89d39c09201d99bef213a0e494e3c` 完成 12/12 实机执行和逐项回读，12 项均为 `applied`；随后由当前 KPanel `Manager.RunMaintenance` 对受管授权副本完成 12 步二次闭环，最终状态为 `succeeded/completed/100%`。该证据覆盖新机 OpenSSH 安装、Ubuntu `ssh.socket` 转服务、5522 监听、Fail2Ban、Swap、防火墙、BBR、DNS、Docker 和内核参数；不等同于生产部署或所有发行版矩阵。
-- 2026-08-17 在全新 `AlmaLinux 9.8` WSL2 systemd 实例以固定脚本 `fdb0ac0e1f2b98d27339937e7f8eb0c9299c56a9` 完成 12/12 实机执行和逐项回读：DNF、OpenSSH `sshd.service`/5522、EPEL Fail2Ban、`cronie`/iptables 持久化、BBR、DNS、Docker 与内核网络参数均通过。WSL 文件系统不支持 `/etc/resolv.conf` 的 immutable 标志时写入受管副本，并通过 `/etc/wsl.conf` 与 one-shot systemd 服务跨重启恢复；非 WSL 仍强制该锁定语义。该证据覆盖红帽系新机引导，不等同于 SELinux Enforcing 与 firewalld 默认策略的完整 VM/VPS 矩阵。
+- 2026-08-17 在全新 `AlmaLinux 9.8` WSL2 systemd 实例以固定脚本 `6fa7bcc7c2d15fe09d829cb9664941ff40bf4aaf` 的线性前置功能完成 12/12 实机执行和逐项回读：DNF、OpenSSH `sshd.service`/5522、EPEL Fail2Ban、`cronie`/iptables 持久化、BBR、DNS、Docker 与内核网络参数均通过。WSL 文件系统不支持 `/etc/resolv.conf` 的 immutable 标志时写入受管副本，并通过 `/etc/wsl.conf` 与 one-shot systemd 服务跨重启恢复；非 WSL 仍强制该锁定语义。该证据覆盖红帽系新机引导，不等同于 SELinux Enforcing 与 firewalld 默认策略的完整 VM/VPS 矩阵；自动化 smoke 另覆盖受管联网与外部调优脚本在清除代理环境后的直连执行。
 - 发布顺序门禁仍保持：必须先发布固定的 kejilion.sh 提交，再构建 KPanel 镜像并复核镜像内脚本摘要；未发布脚本提交时 Docker `ADD` 不可用，不能绕过摘要改用分支或浮动地址。
 
 ## v0.6 内核优化
