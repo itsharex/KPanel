@@ -7,11 +7,11 @@
 - **KPanel 核心体检**：由 Agent 内置原生探针完成，默认可用，不依赖 `kejilion.sh`、YABS、NodeQuality 或其他脚本；
 - **第三方增值测试**：继续读取 `kejilion.sh` 登记的脚本，用于解锁、三网回程、报告型 IP 信誉和更细的线路分析，不影响核心体检。
 
-页面首屏默认进入 KPanel 核心综合体检。单项原生检测和第三方脚本仍可在左侧独立选择；同一时间只运行一个任务，避免多个测速或跑分互相污染结果。
+页面首屏默认进入 KPanel 核心综合体检。原生单项保留为综合任务内部的探针 ID，不再拆成终端命令展示；左侧只保留第三方增值脚本，供用户按需进入终端测试。同一时间只运行一个任务，避免多个测速或跑分互相污染结果。
 
 ## 原生检测目录
 
-原生目录由 Agent 直接提供，当前包含：
+原生目录由 Agent 直接提供，当前包含以下内部探针：
 
 | ID | 结果维度 | 检测方式 | 资源边界 |
 | --- | --- | --- | --- |
@@ -48,7 +48,7 @@ KJ_TEST_NONINTERACTIVE=1 k test run <fixed-selector>
 
 ## 执行与恢复
 
-所有任务仍创建 `kejilion-panel-diagnostic-<job-id>` transient systemd unit，再由 root-only `diagnostic-run` 子命令执行。原生任务在 Agent 内置探针分支执行，不启动 Shell；脚本任务沿用可信脚本和 PTY 隔离。
+所有任务仍创建 `kejilion-panel-diagnostic-<job-id>` transient systemd unit，再由 root-only `diagnostic-run` 子命令执行。原生任务在 Agent 内置探针分支执行，不启动 Shell，结果汇总到首屏并保留服务端日志；脚本任务沿用可信脚本和 PTY 隔离，并在左侧独立进入终端。
 
 - 同一时间只运行一个体检；
 - 最长运行 90 分钟；

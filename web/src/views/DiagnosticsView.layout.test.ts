@@ -36,6 +36,14 @@ describe('diagnostics workspace layout', () => {
     )
   })
 
+  it('keeps native probes on the overview instead of presenting them as terminal commands', () => {
+    expect(diagnosticsSource).toContain('const optionalChecks = computed')
+    expect(diagnosticsSource).toContain('items: optionalChecks.value.filter')
+    expect(diagnosticsSource).toContain('v-for="check in optionalChecks"')
+    expect(diagnosticsSource).toContain("if (check.provider === 'native')")
+    expect(diagnosticsSource).toContain("scoreCheck?.provider !== 'native'")
+  })
+
   it('collapses commands into a persistent icon rail', () => {
     expect(diagnosticsSource).toContain("'is-command-panel-collapsed': commandsCollapsed")
     expect(diagnosticsSource).toContain('aria-controls="diagnostic-command-selector"')

@@ -68,11 +68,15 @@ const backgroundPollDelay = 15_000
 const commandsCollapsedStorageKey = 'kpanel:diagnostics:commands-collapsed'
 
 const categories = computed(() => catalog.value?.categories || [])
+const optionalChecks = computed(() =>
+  (catalog.value?.items || []).filter((item) => item.provider !== 'native'),
+)
+const optionalCheckCount = computed(() => optionalChecks.value.length)
 const groupedChecks = computed(() =>
   categories.value
     .map((category) => ({
       ...category,
-      items: (catalog.value?.items || []).filter((item) => item.category === category.id),
+      items: optionalChecks.value.filter((item) => item.category === category.id),
     }))
     .filter((category) => category.items.length),
 )
@@ -217,8 +221,8 @@ const scoreStatusLabel = computed(() => {
     case 'unavailable': return '等待 KPanel 核心体检能力就绪'
     case 'running': return scoreJob.value?.message || '正在采集综合体检数据'
     case 'completed': return scoreSummaryMetricCount.value > 0
-      ? '真实测试结果已汇总，原始结果已保存在终端记录'
-      : '综合测试完成，原始结果已保存在终端记录'
+      ? (scoreJob.value?.provider === 'native' ? '真实结果已汇总' : '真实测试结果已汇总，原始结果已保存在终端记录')
+      : (scoreJob.value?.provider === 'native' ? '原生体检已完成' : '综合测试完成，原始结果已保存在终端记录')
     case 'failed': return scoreJob.value?.message || '上次综合测试未完成'
     case 'busy': return '请先完成当前终端中的体检任务'
     default: return '从性能、路由、延迟、网速和 IP 质量开始检查'
@@ -389,6 +393,11 @@ function summaryJobForOverview(): DiagnosticJob | undefined {
   return undefined
 }
 
+function terminalSummaryJobForOverview(): DiagnosticJob | undefined {
+  const job = summaryJobForOverview()
+  return job?.provider === 'native' ? undefined : job
+}
+
 const summaryReportURL = computed(() => {
   const jobsForSummary = [scoreJob.value, ...scoreDimensions.map((dimension) => dimensionJob(dimension))]
   return jobsForSummary.find((job) => job?.summary?.reportUrl)?.summary?.reportUrl || ''
@@ -413,7 +422,7 @@ function dimensionStateLabel(dimension: ScoreDimension): string {
   if (state === 'failed') return '上次未完成'
   if (state === 'covered') return '综合入口覆盖'
   if (scoreState.value === 'running') return '综合测试中'
-  if (scoreState.value === 'completed') return '已输出到终端'
+  if (scoreState.value === 'completed') return scoreCheck.value?.provider === 'native' ? '已汇总' : '已输出到终端'
   return dimensionCheck(dimension) ? '等待测试' : '脚本未提供'
 }
 
@@ -428,18 +437,18 @@ function selectOverview(): void {
 
 function openDimension(dimension: ScoreDimension): void {
   const check = dimensionCheck(dimension)
-  if (check) selectCheck(check)
+  if (check && check.provider !== 'native') selectCheck(check)
 }
 
 function openScoreTerminal(): void {
   const job = scoreJob.value
-  if (!job) return
+  if (!job || scoreCheck.value?.provider === 'native') return
   openJob(job)
   viewMode.value = 'terminal'
 }
 
 function openSummaryTerminal(): void {
-  const job = summaryJobForOverview()
+  const job = terminalSummaryJobForOverview()
   if (!job) return
   openJob(job)
   viewMode.value = 'terminal'
@@ -545,8 +554,9 @@ async function load(): Promise<void> {
     const active = history.items.find((item) => item.status === 'queued' || item.status === 'running')
     if (active) {
       runningJob.value = active
-      selectedCheck.value = nextCatalog.items.find((item) => item.id === active.checkId)
-      viewMode.value = 'terminal'
+      const activeCheck = nextCatalog.items.find((item) => item.id === active.checkId)
+      selectedCheck.value = activeCheck
+      viewMode.value = activeCheck?.provider === 'native' ? 'overview' : 'terminal'
       startPolling(active)
     } else {
       runningJob.value = undefined
@@ -569,7 +579,7 @@ async function startCheck(check: DiagnosticCheck, keepOverview = false): Promise
     const job = await api.diagnostics.start(check.id)
     jobs.value.unshift(job)
     selectedCheck.value = check
-    if (!keepOverview) viewMode.value = 'terminal'
+    if (!keepOverview && check.provider !== 'native') viewMode.value = 'terminal'
     startPolling(job)
     toast.success(
       keepOverview ? '综合跑分已开始' : `${checkNameLabel(check.name)}已开始`,
@@ -598,8 +608,8 @@ async function confirmStart(): Promise<void> {
 
 function openJob(job: DiagnosticJob): void {
   activeJob.value = job
-  viewMode.value = 'terminal'
   const check = catalog.value?.items.find((item) => item.id === job.checkId)
+  viewMode.value = check?.provider === 'native' || job.provider === 'native' ? 'overview' : 'terminal'
   if (check) {
     selectedCheck.value = check
   }
@@ -611,6 +621,10 @@ function openJob(job: DiagnosticJob): void {
 }
 
 function selectCheck(check: DiagnosticCheck): void {
+  if (check.provider === 'native') {
+    selectOverview()
+    return
+  }
   selectedCheck.value = check
   viewMode.value = 'terminal'
   mobileCommandsOpen.value = false
@@ -787,7 +801,7 @@ onBeforeUnmount(() => {
               <Gauge :size="17" />
             </button>
             <button
-              v-for="check in catalog.items"
+              v-for="check in optionalChecks"
               :key="check.id"
               class="diagnostic-command-rail__item"
               :class="[`is-category-${check.category}`, { 'is-active': viewMode === 'terminal' && selectedCheck?.id === check.id }]"
@@ -799,7 +813,11 @@ onBeforeUnmount(() => {
               <component :is="categoryIcon(check.category)" :size="17" />
             </button>
           </div>
-          <EmptyState v-if="(!commandsCollapsed || mobileCommandsOpen) && !groupedChecks.length" title="暂无体检项目" description="请刷新后重试。" />
+          <EmptyState
+            v-if="(!commandsCollapsed || mobileCommandsOpen) && !groupedChecks.length"
+            title="原生体检已整合到首页"
+            description="暂无第三方增值脚本，可直接从首页开始一键体检。"
+          />
         </aside>
 
         <section class="diagnostic-result" :class="{ 'is-overview': viewMode === 'overview' }">
@@ -814,7 +832,7 @@ onBeforeUnmount(() => {
               <Menu :size="18" />
               <span>{{ viewMode === 'overview' ? '综合跑分' : (selectedCheck ? checkNameLabel(selectedCheck.name) : '选择体检项目') }}</span>
             </button>
-            <small>{{ catalog.items.length }} 个项目</small>
+            <small v-if="optionalCheckCount">{{ optionalCheckCount }} 个项目</small>
           </div>
           <template v-if="viewMode === 'overview'">
             <div class="diagnostic-overview">
@@ -852,11 +870,11 @@ onBeforeUnmount(() => {
                     综合跑分 <span>POWERED BY KPanel</span>
                     <em v-if="scoreSummaryMetricCount">真实结果已汇总</em>
                   </div>
-                  <h3 id="diagnostic-score-title">{{ scoreCheck ? checkNameLabel(scoreCheck.name) : '等待综合评测脚本' }}</h3>
+                  <h3 id="diagnostic-score-title">{{ scoreCheck ? checkNameLabel(scoreCheck.name) : '等待 KPanel 核心体检' }}</h3>
                   <p>{{ scoreStatusLabel }}</p>
                   <div class="diagnostic-score-meta">
                     <span><Timer :size="15" /> 约 {{ scoreCheck?.estimatedMinutes || '—' }} 分钟</span>
-                    <span><Activity :size="15" /> {{ scoreCheck?.provider === 'native' ? '原生结果实时回显' : (scoreCheck ? '实时终端可追踪' : '请更新体检目录') }}</span>
+                    <span><Activity :size="15" /> {{ scoreCheck?.provider === 'native' ? '实时采集' : (scoreCheck ? '实时终端可追踪' : '请更新体检目录') }}</span>
                   </div>
                   <div class="diagnostic-score-actions">
                     <button
@@ -870,7 +888,7 @@ onBeforeUnmount(() => {
                       {{ scoreRunLabel }}
                     </button>
                     <button
-                      v-if="scoreJob"
+                      v-if="scoreJob && scoreCheck?.provider !== 'native'"
                       class="button button--secondary"
                       type="button"
                       @click="openScoreTerminal"
@@ -899,7 +917,8 @@ onBeforeUnmount(() => {
                     <h3 id="diagnostic-score-dimensions-title">体检维度</h3>
                     <p>综合入口统一启动原生检测；需要深挖或补充线路、解锁信息时，再点选第三方脚本。</p>
                   </div>
-                  <span>{{ catalog.items.length }} 个检测项目可用</span>
+                  <span v-if="optionalCheckCount">{{ optionalCheckCount }} 个增值脚本可用</span>
+                  <span v-else>原生体检已整合到首页</span>
                 </header>
                 <div class="diagnostic-score-dimension-grid">
                   <button
@@ -931,7 +950,7 @@ onBeforeUnmount(() => {
                 <div class="diagnostic-score-note__icon"><Activity :size="17" /></div>
                 <div>
                   <strong>{{ scoreSummaryMetricCount ? '真实结果已汇总' : '结果透明，原始输出不丢失' }}</strong>
-                  <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以下指标来自 KPanel 原生探针的实际回显；完整过程仍保留在任务日志中。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : '页面只呈现真实任务状态与进度，不替脚本猜测分数；详细结果和第三方提示都可在终端中查看。' }}</p>
+                  <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以下指标来自 KPanel 原生探针的实际采集结果。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : (scoreCheck?.provider === 'native' ? '结果会直接汇总到本页；第三方脚本仅在需要深度测试时进入终端。' : '页面只呈现真实任务状态与进度，不替脚本猜测分数；详细结果和第三方提示都可在终端中查看。') }}</p>
                 </div>
                 <a
                   v-if="summaryReportURL"
@@ -942,7 +961,7 @@ onBeforeUnmount(() => {
                 >
                   查看完整报告 <ExternalLink :size="14" />
                 </a>
-                <button v-else-if="summaryJobForOverview()" class="diagnostic-score-note__link" type="button" @click="openSummaryTerminal">
+                <button v-else-if="terminalSummaryJobForOverview()" class="diagnostic-score-note__link" type="button" @click="openSummaryTerminal">
                   打开最近结果 <ExternalLink :size="14" />
                 </button>
               </section>
