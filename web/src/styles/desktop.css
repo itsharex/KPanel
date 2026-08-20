@@ -703,6 +703,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-service-status__header {
   justify-content: flex-start;
   gap: 7px;
+  font-size: 12px;
+  letter-spacing: .03em;
 }
 
 .desktop-service-status__header > svg {
@@ -791,13 +793,13 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-service-status__hero-copy strong {
   color: color-mix(in srgb, var(--desktop-label) 94%, transparent);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 760;
 }
 
 .desktop-service-status__hero-copy small {
   color: color-mix(in srgb, var(--desktop-label) 58%, transparent);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
 }
 
@@ -897,7 +899,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .desktop-service-status__metric-label,
@@ -910,21 +912,21 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-service-status__metric-label {
   color: color-mix(in srgb, var(--desktop-label) 58%, transparent);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 650;
 }
 
 .desktop-service-status__metric-copy strong {
   color: color-mix(in srgb, var(--desktop-label) 94%, transparent);
-  font-size: 14px;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
   font-weight: 760;
-  line-height: 1.05;
+  line-height: 1.1;
 }
 
 .desktop-service-status__metric-copy small {
   color: color-mix(in srgb, var(--desktop-label) 55%, transparent);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 600;
 }
 
