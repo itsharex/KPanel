@@ -99,6 +99,19 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toContain('openSummaryTerminal')
   })
 
+  it('keeps terminal output flexible while reserving the bottom status row', () => {
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-interactive-terminal\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-result footer\s*\{[^}]*flex:\s*0 0 auto;[^}]*min-height:\s*42px;/,
+    )
+    expect(desktopStyles).toContain('.desktop-window__body > .diagnostics-page > .diagnostic-workbench')
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body > \.diagnostics-page > \.diagnostic-workbench\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*0;/,
+    )
+  })
+
   it('removes the history block and fills the desktop window with the workbench', () => {
     expect(diagnosticsSource).not.toContain('class="diagnostic-history"')
     expect(diagnosticsSource).not.toContain('class="diagnostic-history__list"')

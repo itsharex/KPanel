@@ -64,6 +64,15 @@ describe('interactive task terminal layout', () => {
     expect(terminalSource).not.toContain('composerInput')
   })
 
+  it('offers safe diagnostic shortcuts for common script confirmations', () => {
+    expect(terminalSource).toContain('diagnosticQuickInputs')
+    expect(terminalSource).toContain('确认 y')
+    expect(terminalSource).toContain('选择 1')
+    expect(terminalSource).toContain('脚本需要选择时：')
+    expect(terminalSource).toContain('sendQuickInput')
+    expect(terminalSource).toContain('class="interactive-terminal__input-area"')
+  })
+
   it('shares the terminal clipboard behavior with host terminals', () => {
     expect(terminalSource).toContain('@contextmenu="clipboardMenu?.open($event)"')
     expect(terminalSource).toContain('@paste.capture="clipboardMenu?.handlePaste($event)"')

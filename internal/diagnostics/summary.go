@@ -11,11 +11,11 @@ import (
 	"strings"
 )
 
-// DiagnosticSummary contains only values explicitly found in script output.
+// DiagnosticSummary contains only values explicitly found in probe or script output.
 // It deliberately has no derived overall score.
 type DiagnosticSummary struct {
-	Parser     string                               `json:"parser,omitempty"`
-	ReportURL  string                               `json:"reportUrl,omitempty"`
+	Parser     string                                `json:"parser,omitempty"`
+	ReportURL  string                                `json:"reportUrl,omitempty"`
 	Dimensions map[string]DiagnosticSummaryDimension `json:"dimensions,omitempty"`
 }
 

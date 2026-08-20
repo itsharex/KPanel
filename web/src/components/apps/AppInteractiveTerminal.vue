@@ -48,6 +48,13 @@ const inputFlushInterval = 24
 
 const { fullscreen, toggleFullscreen } = useTerminalFullscreen(fitTerminal)
 
+const diagnosticQuickInputs = [
+  { label: '确认 y', value: 'y' },
+  { label: '选择 1', value: '1' },
+  { label: '回车', value: '' },
+  { label: '跳过 n', value: 'n' },
+] as const
+
 function terminalThemeColor(name: string, fallback: string): string {
   if (!host.value) return fallback
   return window.getComputedStyle(host.value).getPropertyValue(name).trim() || fallback
@@ -148,6 +155,12 @@ function submitPendingLine(): void {
   const data = terminalLineSubmission(pendingLine.value)
   pendingLine.value = ''
   queueInput(data)
+}
+
+function sendQuickInput(value: string): void {
+  if (!terminalInputOpen.value || disposed) return
+  queueInput(terminalLineSubmission(value))
+  focusTerminal()
 }
 
 async function poll(): Promise<void> {
@@ -352,24 +365,38 @@ onBeforeUnmount(() => {
       @contextmenu="clipboardMenu?.open($event)"
       @paste.capture="clipboardMenu?.handlePaste($event)"
     />
-    <form
-      v-if="terminalInputOpen"
-      class="interactive-terminal__composer"
-      @submit.prevent="submitPendingLine"
-    >
-      <input
-        v-model="pendingLine"
-        type="text"
-        aria-label="预输入终端内容"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-        maxlength="8192"
-        placeholder="在此预输入，按 Enter 整行发送"
-        @keydown.enter.prevent="submitPendingLine"
-      />
-      <button type="submit">发送</button>
-    </form>
+    <div v-if="terminalInputOpen" class="interactive-terminal__input-area">
+      <div v-if="props.kind === 'diagnostic'" class="interactive-terminal__quick-actions" aria-label="体检脚本快捷输入">
+        <span>脚本需要选择时：</span>
+        <button
+          v-for="action in diagnosticQuickInputs"
+          :key="action.label"
+          type="button"
+          :aria-label="`发送${action.label}`"
+          @click="sendQuickInput(action.value)"
+        >
+          {{ action.label }}
+        </button>
+        <small>请按终端当前提示使用</small>
+      </div>
+      <form
+        class="interactive-terminal__composer"
+        @submit.prevent="submitPendingLine"
+      >
+        <input
+          v-model="pendingLine"
+          type="text"
+          aria-label="预输入终端内容"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          maxlength="8192"
+          placeholder="在此预输入，按 Enter 整行发送"
+          @keydown.enter.prevent="submitPendingLine"
+        />
+        <button type="submit">发送</button>
+      </form>
+    </div>
     <TerminalContextMenu
       ref="clipboardMenu"
       :get-terminal="() => terminal"
@@ -502,9 +529,48 @@ onBeforeUnmount(() => {
 .interactive-terminal__composer {
   display: flex;
   gap: 8px;
+  min-width: 0;
+}
+
+.interactive-terminal__input-area {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
   padding: 10px;
   border-top: 1px solid var(--terminal-border);
   background: var(--terminal-panel);
+}
+
+.interactive-terminal__quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.interactive-terminal__quick-actions button {
+  border: 1px solid color-mix(in srgb, var(--terminal-accent) 56%, var(--terminal-border));
+  border-radius: 7px;
+  padding: 5px 9px;
+  color: var(--terminal-accent);
+  background: color-mix(in srgb, var(--terminal-accent) 10%, var(--terminal-panel));
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.interactive-terminal__quick-actions button:hover,
+.interactive-terminal__quick-actions button:focus-visible {
+  color: var(--terminal-background);
+  background: var(--terminal-accent);
+  outline: none;
+}
+
+.interactive-terminal__quick-actions small {
+  color: var(--terminal-muted);
 }
 
 .interactive-terminal__composer input {

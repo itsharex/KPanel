@@ -3,7 +3,7 @@ import { createSSRApp, nextTick, ref, ssrContextKey, type ComputedRef, type Ref 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import DiagnosticsView from './DiagnosticsView.vue'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
-import type { DiagnosticJob } from '@/types/api'
+import type { DiagnosticCheck, DiagnosticJob } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
   job: vi.fn(),
@@ -31,9 +31,14 @@ vi.mock('@/stores/toast', () => ({
 
 interface DiagnosticBindings {
   jobs: Ref<DiagnosticJob[]>
+  activeJob: Ref<DiagnosticJob | undefined>
+  runningJob: Ref<DiagnosticJob | undefined>
+  selectedCheck: Ref<DiagnosticCheck | undefined>
+  hasActiveJob: ComputedRef<boolean>
   testedCheckIDs: ComputedRef<Set<string>>
   refreshJob: (id: string) => Promise<void>
   startPolling: (job: DiagnosticJob) => void
+  selectCheck: (check: DiagnosticCheck) => void
 }
 
 function setupView(windowActive?: Ref<boolean>): DiagnosticBindings {
@@ -114,6 +119,51 @@ describe('DiagnosticsView polling', () => {
     expect(mocks.job).toHaveBeenCalledOnce()
     resolveJob?.(runningJob())
     await Promise.all([first, second])
+  })
+
+  it('keeps a background task from stealing the terminal after another check is selected', async () => {
+    const background = runningJob()
+    const selected: DiagnosticJob = {
+      ...background,
+      id: 'b'.repeat(32),
+      checkId: 'ip-quality',
+      checkName: 'IP 质量体检',
+      status: 'succeeded',
+      progress: 100,
+    }
+    mocks.job.mockResolvedValue({ ...background, progress: 42 })
+    const view = setupView()
+    view.jobs.value = [background]
+    view.runningJob.value = background
+    view.activeJob.value = selected
+
+    await view.refreshJob(background.id)
+
+    expect(view.activeJob.value?.id).toBe(selected.id)
+    expect(view.jobs.value[0]?.progress).toBe(42)
+  })
+
+  it('shows a newly selected check without hiding the background task lock', () => {
+    const view = setupView()
+    const background = runningJob()
+    const check: DiagnosticCheck = {
+      id: 'ip-quality',
+      category: 'access',
+      name: 'IP 质量体检',
+      description: '检查 IP 质量',
+      sourceUrl: 'https://example.com',
+      estimatedMinutes: 1,
+      impact: 'light',
+    }
+    view.jobs.value = [background]
+    view.runningJob.value = background
+    view.activeJob.value = background
+
+    view.selectCheck(check)
+
+    expect(view.selectedCheck.value).toMatchObject(check)
+    expect(view.activeJob.value).toBeUndefined()
+    expect(view.hasActiveJob.value).toBe(true)
   })
 
   it('tolerates two transient failures and reports the third', async () => {

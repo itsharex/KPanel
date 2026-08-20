@@ -58,6 +58,7 @@ type Check struct {
 	Name             string `json:"name"`
 	Description      string `json:"description"`
 	SourceURL        string `json:"sourceUrl"`
+	Provider         string `json:"provider,omitempty"`
 	EstimatedMinutes int    `json:"estimatedMinutes"`
 	Impact           string `json:"impact"`
 }
@@ -68,24 +69,25 @@ type Catalog struct {
 }
 
 type Job struct {
-	ID               string     `json:"id"`
-	CheckID          string     `json:"checkId"`
-	CheckName        string     `json:"checkName"`
-	Category         string     `json:"category"`
-	SourceURL        string     `json:"sourceUrl"`
-	EstimatedMinutes int        `json:"estimatedMinutes"`
-	Impact           string     `json:"impact"`
-	Status           string     `json:"status"`
-	Stage            string     `json:"stage"`
-	Progress         int        `json:"progress"`
-	Message          string     `json:"message,omitempty"`
-	Logs             []string   `json:"logs"`
+	ID               string             `json:"id"`
+	CheckID          string             `json:"checkId"`
+	CheckName        string             `json:"checkName"`
+	Category         string             `json:"category"`
+	SourceURL        string             `json:"sourceUrl"`
+	Provider         string             `json:"provider,omitempty"`
+	EstimatedMinutes int                `json:"estimatedMinutes"`
+	Impact           string             `json:"impact"`
+	Status           string             `json:"status"`
+	Stage            string             `json:"stage"`
+	Progress         int                `json:"progress"`
+	Message          string             `json:"message,omitempty"`
+	Logs             []string           `json:"logs"`
 	Summary          *DiagnosticSummary `json:"summary,omitempty"`
-	CreatedAt        time.Time  `json:"createdAt"`
-	StartedAt        *time.Time `json:"startedAt,omitempty"`
-	FinishedAt       *time.Time `json:"finishedAt,omitempty"`
-	Interactive      bool       `json:"interactive,omitempty"`
-	InputOpen        bool       `json:"inputOpen,omitempty"`
+	CreatedAt        time.Time          `json:"createdAt"`
+	StartedAt        *time.Time         `json:"startedAt,omitempty"`
+	FinishedAt       *time.Time         `json:"finishedAt,omitempty"`
+	Interactive      bool               `json:"interactive,omitempty"`
+	InputOpen        bool               `json:"inputOpen,omitempty"`
 }
 
 type record struct {
@@ -167,13 +169,10 @@ func (s *Service) Available() error {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("%w: diagnostics require Linux", ErrUnsupported)
 	}
-	for _, command := range []string{"env", "bash", "systemd-run"} {
+	for _, command := range []string{"systemd-run"} {
 		if _, err := s.runner.LookPath(command); err != nil {
 			return fmt.Errorf("%w: %s is unavailable", ErrUnsupported, command)
 		}
-	}
-	if _, err := s.scriptFinder(); err != nil {
-		return fmt.Errorf("%w: %v", ErrUnsupported, err)
 	}
 	return nil
 }
@@ -182,15 +181,22 @@ func (s *Service) Catalog(ctx context.Context) (Catalog, error) {
 	if runtime.GOOS != "linux" {
 		return Catalog{}, fmt.Errorf("%w: diagnostics require Linux", ErrUnsupported)
 	}
-	if _, err := s.runner.LookPath("env"); err != nil {
-		return Catalog{}, fmt.Errorf("%w: env is unavailable", ErrUnsupported)
+	if _, err := s.runner.LookPath("systemd-run"); err != nil {
+		return Catalog{}, fmt.Errorf("%w: systemd-run is unavailable", ErrUnsupported)
 	}
-	if _, err := s.runner.LookPath("bash"); err != nil {
-		return Catalog{}, fmt.Errorf("%w: bash is unavailable", ErrUnsupported)
+	result := nativeCatalog()
+	if s.scriptFinder == nil {
+		return result, nil
 	}
 	script, err := s.scriptFinder()
 	if err != nil {
-		return Catalog{}, fmt.Errorf("%w: %v", ErrUnsupported, err)
+		return result, nil
+	}
+	if _, err := s.runner.LookPath("env"); err != nil {
+		return result, nil
+	}
+	if _, err := s.runner.LookPath("bash"); err != nil {
+		return result, nil
 	}
 	catalogContext, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -206,12 +212,16 @@ func (s *Service) Catalog(ctx context.Context) (Catalog, error) {
 		"list",
 	)
 	if err != nil {
-		return Catalog{}, fmt.Errorf("%w: read kejilion.sh test catalog: %v", ErrUnsupported, err)
+		return result, nil
 	}
 	if len(output) > maxCatalogBytes {
-		return Catalog{}, fmt.Errorf("%w: test catalog exceeds the size limit", ErrUnsupported)
+		return result, nil
 	}
-	return parseCatalog(output)
+	scriptCatalog, err := parseCatalog(output)
+	if err != nil {
+		return result, nil
+	}
+	return mergeCatalogs(result, scriptCatalog), nil
 }
 
 func (s *Service) Start(ctx context.Context, checkID string) (Job, error) {
@@ -245,19 +255,24 @@ func (s *Service) Start(ctx context.Context, checkID string) (Job, error) {
 	item := record{Job: Job{
 		ID: newJobID(), CheckID: selected.ID, CheckName: selected.Name,
 		Category: selected.Category, SourceURL: selected.SourceURL,
+		Provider:         selected.Provider,
 		EstimatedMinutes: selected.EstimatedMinutes, Impact: selected.Impact,
 		Status: "queued", Stage: "queued", Progress: 0,
 		Message: "体检任务已提交，正在等待后台执行", Logs: []string{}, CreatedAt: now,
-		Interactive: true,
+		Interactive: selected.Provider != nativeProvider,
 	}, BootID: s.bootID()}
 	if !jobIDPattern.MatchString(item.ID) {
 		return Job{}, errors.New("generate diagnostic job identity")
 	}
-	if err := hostpty.CreateInput(s.inputPath(item.ID)); err != nil {
-		return Job{}, fmt.Errorf("%w: prepare diagnostic terminal input: %v", ErrUnsupported, err)
+	if item.Interactive {
+		if err := hostpty.CreateInput(s.inputPath(item.ID)); err != nil {
+			return Job{}, fmt.Errorf("%w: prepare diagnostic terminal input: %v", ErrUnsupported, err)
+		}
 	}
 	if err := s.putLocked(item); err != nil {
-		_ = hostpty.RemoveInput(s.inputPath(item.ID))
+		if item.Interactive {
+			_ = hostpty.RemoveInput(s.inputPath(item.ID))
+		}
 		return Job{}, err
 	}
 	if err := s.launch(ctx, item); err != nil {
@@ -268,7 +283,9 @@ func (s *Service) Start(ctx context.Context, checkID string) (Job, error) {
 		item.Message = safeMessage(err)
 		item.FinishedAt = &finished
 		_ = s.putLocked(item)
-		_ = hostpty.RemoveInput(s.inputPath(item.ID))
+		if item.Interactive {
+			_ = hostpty.RemoveInput(s.inputPath(item.ID))
+		}
 		return Job{}, fmt.Errorf("%w: %v", ErrUnsupported, err)
 	}
 	return s.publicLocked(item), nil
@@ -430,6 +447,9 @@ func RunJob(ctx context.Context, stateDir, id string) error {
 	service.mu.Unlock()
 	if err != nil || !selectorPattern.MatchString(item.CheckID) {
 		return errors.New("diagnostic job contains an invalid selector")
+	}
+	if isNativeCheck(item.CheckID, item.Provider) {
+		return service.runNativeJob(ctx, item)
 	}
 	script, err := service.scriptFinder()
 	if err != nil {

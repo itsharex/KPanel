@@ -2336,6 +2336,11 @@ body.desktop-mode-open::-webkit-scrollbar {
   scrollbar-gutter: auto;
 }
 
+.desktop-window__body > .diagnostics-page > .diagnostic-workbench {
+  height: auto;
+  min-height: 0;
+}
+
 .desktop-window__body .page-header {
   gap: 12px;
 }

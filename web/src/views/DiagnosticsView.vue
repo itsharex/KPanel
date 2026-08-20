@@ -46,6 +46,7 @@ const jobs = ref<DiagnosticJob[]>([])
 const selectedCheck = ref<DiagnosticCheck>()
 const pendingCheck = ref<DiagnosticCheck>()
 const activeJob = ref<DiagnosticJob>()
+const runningJob = ref<DiagnosticJob>()
 const loading = ref(true)
 const starting = ref(false)
 const error = ref('')
@@ -81,7 +82,9 @@ const testedCheckIDs = computed(() => new Set(
     .map((job) => job.checkId),
 ))
 const hasActiveJob = computed(
-  () => activeJob.value?.status === 'queued' || activeJob.value?.status === 'running',
+  () => [runningJob.value, activeJob.value].some((job) =>
+    job?.status === 'queued' || job?.status === 'running',
+  ),
 )
 const activeLog = computed(() => activeJob.value?.logs.join('\n') || '等待脚本输出…')
 const scoreDimensions = [
@@ -89,6 +92,7 @@ const scoreDimensions = [
     id: 'performance',
     label: '性能',
     detail: 'CPU · 磁盘 · 系统吞吐',
+    nativeID: 'native-cpu',
     category: 'hardware',
     keywords: ['yabs', 'cpu', '性能'],
     icon: Cpu,
@@ -98,6 +102,7 @@ const scoreDimensions = [
     id: 'route',
     label: '路由',
     detail: '三网回程与线路质量',
+    nativeID: 'native-route',
     category: 'network',
     keywords: ['besttrace', 'mtr', 'nxtrace', 'backtrace', '回程', '路由', '线路'],
     icon: Network,
@@ -107,6 +112,7 @@ const scoreDimensions = [
     id: 'latency',
     label: '延迟',
     detail: '往返时延 · 抖动 · 丢包',
+    nativeID: 'native-latency',
     category: 'network',
     keywords: ['net-quality', 'tcp-quality', '网络质量', '延迟', '抖动', '丢包'],
     icon: Activity,
@@ -116,6 +122,7 @@ const scoreDimensions = [
     id: 'speed',
     label: '网速',
     detail: '多节点上下行带宽',
+    nativeID: 'native-speed',
     category: 'network',
     keywords: ['superspeed', 'speedtest', '测速', '带宽', '网速'],
     icon: Gauge,
@@ -125,6 +132,7 @@ const scoreDimensions = [
     id: 'ip',
     label: 'IP 质量',
     detail: '风险 · 信誉 · 解锁能力',
+    nativeID: 'native-ip-quality',
     category: 'access',
     keywords: ['ip-quality', 'IP 质量', '信誉'],
     icon: Globe2,
@@ -136,6 +144,8 @@ type ScoreDimension = (typeof scoreDimensions)[number]
 
 const scoreCheck = computed(() => {
   const items = catalog.value?.items || []
+  const native = items.find((item) => item.id === 'native-comprehensive')
+  if (native) return native
   const comprehensive = items.filter((item) => item.category === 'comprehensive')
   return comprehensive.find((item) => /NodeQuality|融合怪/i.test(item.name)) || comprehensive[0]
 })
@@ -165,7 +175,7 @@ const scoreProgress = computed(() => {
 const scoreRingOffset = computed(() => 351.86 * (1 - scoreProgress.value / 100))
 const scoreRunLabel = computed(() => {
   switch (scoreState.value) {
-    case 'unavailable': return '综合脚本未就绪'
+    case 'unavailable': return '核心体检未就绪'
     case 'running': return '跑分进行中'
     case 'completed': return '再次开始跑分'
     case 'failed': return '重新开始跑分'
@@ -204,7 +214,7 @@ const scoreCenterLabel = computed(() => {
 })
 const scoreStatusLabel = computed(() => {
   switch (scoreState.value) {
-    case 'unavailable': return '等待脚本目录提供综合评测入口'
+    case 'unavailable': return '等待 KPanel 核心体检能力就绪'
     case 'running': return scoreJob.value?.message || '正在采集综合体检数据'
     case 'completed': return scoreSummaryMetricCount.value > 0
       ? '真实测试结果已汇总，原始结果已保存在终端记录'
@@ -222,6 +232,7 @@ function categoryName(id: string): string {
       network: 'Network',
       hardware: 'Hardware',
       benchmark: 'Benchmarks',
+      core: 'KPanel Core',
     }
     return labels[id] || id
   }
@@ -237,9 +248,18 @@ function checkNameLabel(value: string): string {
         '网络质量体检': 'Network quality check',
         'YABS 性能测试': 'YABS benchmark',
         'NodeQuality 综合测评': 'Server health check',
+        'KPanel 核心综合体检': 'KPanel core health check',
+        'CPU 原生跑分': 'Native CPU benchmark',
+        '内存原生跑分': 'Native memory benchmark',
+        '硬盘原生跑分': 'Native disk benchmark',
+        '出口路由基础检测': 'Native egress route check',
+        '延迟原生检测': 'Native latency check',
+        '网速原生测速': 'Native speed test',
+        'IP 基础质量检测': 'Native IP quality check',
       }
     : {
-        'NodeQuality 综合测评': '服务器综合体检',
+      'NodeQuality 综合测评': '服务器综合体检',
+      'KPanel 核心综合体检': 'KPanel 核心综合体检',
       }
   return labels[value] || value
 }
@@ -271,6 +291,8 @@ function sourceHost(value: string): string {
 
 function dimensionCheck(dimension: ScoreDimension): DiagnosticCheck | undefined {
   const items = catalog.value?.items || []
+  const native = items.find((item) => item.id === dimension.nativeID)
+  if (native) return native
   return items.find((item) =>
     item.category === dimension.category &&
     dimension.keywords.some((keyword) => `${item.id} ${item.name} ${item.description}`.toLowerCase().includes(keyword.toLowerCase())),
@@ -289,14 +311,26 @@ function summaryMetrics(dimension: ScoreDimension): DiagnosticSummaryMetric[] {
     }
   }
   const priority = dimension.id === 'ip'
-    ? ['quality', 'unlock', 'asn', 'host', 'country', 'location', 'ipv4_ipv6']
-    : []
+    ? ['public_ip', 'quality', 'asn', 'country', 'location', 'reverse_dns', 'ipv4_ipv6', 'colo', 'unlock', 'host']
+    : dimension.id === 'performance'
+      ? ['cpu_score', 'memory_score', 'disk_read', 'disk_write', 'cpu_model', 'cpu_cores']
+      : dimension.id === 'latency'
+        ? ['average', 'jitter', 'loss', 'min', 'max']
+        : dimension.id === 'speed'
+          ? ['download', 'upload']
+          : dimension.id === 'route'
+            ? ['path', 'edge', 'location', 'average']
+            : []
   metrics.sort((left, right) => {
     const leftIndex = priority.indexOf(left.key)
     const rightIndex = priority.indexOf(right.key)
     return (leftIndex < 0 ? priority.length : leftIndex) - (rightIndex < 0 ? priority.length : rightIndex)
   })
   return metrics
+}
+
+function summaryMetricLimit(dimension: ScoreDimension): number {
+  return dimension.id === 'performance' ? 3 : 2
 }
 
 function summaryMetricLabel(key: string): string {
@@ -326,6 +360,10 @@ function summaryMetricLabel(key: string): string {
     country: '地区',
     location: '位置',
     ipv4_ipv6: 'IP 连通性',
+    public_ip: '公网 IP',
+    reverse_dns: '反向解析',
+    colo: '边缘节点',
+    edge: '探测节点',
     quality: 'IP 质量',
     unlock: '解锁',
     ct_average: '电信',
@@ -433,8 +471,10 @@ async function refreshJob(id: string, generation = pollGeneration): Promise<void
     const next = await api.diagnostics.job(id, requestController.signal)
     if (generation !== pollGeneration || pollController !== requestController) return
     pollFailures = 0
-    const previous = activeJob.value?.status
-    activeJob.value = next
+    const previous = jobs.value.find((item) => item.id === id)?.status
+      || (activeJob.value?.id === id ? activeJob.value.status : undefined)
+    if (runningJob.value?.id === id) runningJob.value = next
+    if (activeJob.value?.id === id) activeJob.value = next
     const index = jobs.value.findIndex((item) => item.id === next.id)
     if (index >= 0) jobs.value.splice(index, 1, next)
     else jobs.value.unshift(next)
@@ -444,6 +484,7 @@ async function refreshJob(id: string, generation = pollGeneration): Promise<void
         if (next.status === 'succeeded') toast.success(`${checkNameLabel(next.checkName)}已完成`)
         else toast.danger(`${checkNameLabel(next.checkName)}执行失败`, next.message)
       }
+      if (runningJob.value?.id === id) runningJob.value = undefined
     }
   } catch (reason) {
     if (
@@ -477,6 +518,7 @@ function startPolling(job: DiagnosticJob, immediate = windowActive.value): void 
   stopPolling()
   pollFailures = 0
   activeJob.value = job
+  if (job.status === 'queued' || job.status === 'running') runningJob.value = job
   pollingJobID = job.id
   const generation = pollGeneration
   if (immediate) void refreshJob(job.id, generation)
@@ -502,10 +544,12 @@ async function load(): Promise<void> {
     if (current) activeJob.value = current
     const active = history.items.find((item) => item.status === 'queued' || item.status === 'running')
     if (active) {
+      runningJob.value = active
       selectedCheck.value = nextCatalog.items.find((item) => item.id === active.checkId)
       viewMode.value = 'terminal'
       startPolling(active)
     } else {
+      runningJob.value = undefined
       viewMode.value = 'overview'
       stopPolling()
     }
@@ -529,7 +573,9 @@ async function startCheck(check: DiagnosticCheck, keepOverview = false): Promise
     startPolling(job)
     toast.success(
       keepOverview ? '综合跑分已开始' : `${checkNameLabel(check.name)}已开始`,
-      '任务已在后台运行；第三方脚本需要确认时可直接在终端输入。',
+      check.provider === 'native'
+        ? 'KPanel 原生探针正在后台运行，结果会实时回显并汇总。'
+        : '任务已在后台运行；第三方脚本需要确认时可直接在终端输入。',
     )
   } catch (reason) {
     toast.danger(
@@ -557,7 +603,11 @@ function openJob(job: DiagnosticJob): void {
   if (check) {
     selectedCheck.value = check
   }
-  if (job.status === 'queued' || job.status === 'running') startPolling(job)
+  if (job.status === 'queued' || job.status === 'running') {
+    if (pollingJobID !== job.id) startPolling(job)
+  } else if (pollingJobID === job.id) {
+    stopPolling()
+  }
 }
 
 function selectCheck(check: DiagnosticCheck): void {
@@ -565,8 +615,13 @@ function selectCheck(check: DiagnosticCheck): void {
   viewMode.value = 'terminal'
   mobileCommandsOpen.value = false
   const matchingJob = jobs.value.find((job) => job.checkId === check.id)
-  if (matchingJob) openJob(matchingJob)
-  else if (!hasActiveJob.value) activeJob.value = undefined
+  if (matchingJob) {
+    openJob(matchingJob)
+  } else {
+    // Keep polling the background task for status/lock purposes, but never
+    // let it keep its terminal focus after the user selected another check.
+    activeJob.value = undefined
+  }
 }
 
 function requestCheck(check: DiagnosticCheck): void {
@@ -623,10 +678,10 @@ onBeforeUnmount(() => {
   <div class="diagnostics-page">
     <PageHeader
       title="体检"
-      description="调用 kejilion.sh 的第三方测试工具，查看网络线路、IP 质量和服务器性能。"
+      description="KPanel 原生探针负责核心跑分，第三方脚本作为可选增值服务补充线路与解锁测试。"
     />
 
-    <LoadingState v-if="loading" title="正在读取体检项目" description="正在检查本机脚本能力与第三方测试来源。" />
+    <LoadingState v-if="loading" title="正在读取体检项目" description="正在准备 KPanel 原生探针与可选脚本目录。" />
     <ErrorState v-else-if="error" title="体检功能暂不可用" :message="error" @retry="load()" />
 
     <template v-else-if="catalog">
@@ -701,7 +756,10 @@ onBeforeUnmount(() => {
                 <button class="diagnostic-command-select" type="button" @click="selectCheck(check)">
                   <span class="diagnostic-card__icon"><component :is="categoryIcon(check.category)" :size="17" /></span>
                   <strong>{{ checkNameLabel(check.name) }}</strong>
-                  <small v-if="testedCheckIDs.has(check.id)" class="diagnostic-command-tested">已测</small>
+                  <span class="diagnostic-command-badges">
+                    <small v-if="check.provider === 'native'" class="diagnostic-command-native">KPanel</small>
+                    <small v-if="testedCheckIDs.has(check.id)" class="diagnostic-command-tested">已测</small>
+                  </span>
                 </button>
                 <button
                   class="diagnostic-command-run"
@@ -764,7 +822,7 @@ onBeforeUnmount(() => {
                 <div>
                   <div class="diagnostic-overview__eyebrow"><span><Gauge :size="15" /></span> 服务器体检工作台</div>
                   <h2>一键综合跑分</h2>
-                  <p>用一套清晰的体检路径，快速了解这台主机的性能底座与网络质量。</p>
+                  <p>先由 KPanel 原生探针完成核心检测，再保留第三方脚本作为可选增值服务。</p>
                 </div>
                 <span class="diagnostic-overview__status" :class="`is-${scoreState}`">
                   <i /> {{ scoreStateLabel }}
@@ -798,7 +856,7 @@ onBeforeUnmount(() => {
                   <p>{{ scoreStatusLabel }}</p>
                   <div class="diagnostic-score-meta">
                     <span><Timer :size="15" /> 约 {{ scoreCheck?.estimatedMinutes || '—' }} 分钟</span>
-                    <span><Activity :size="15" /> {{ scoreCheck ? '实时终端可追踪' : '请更新体检脚本' }}</span>
+                    <span><Activity :size="15" /> {{ scoreCheck?.provider === 'native' ? '原生结果实时回显' : (scoreCheck ? '实时终端可追踪' : '请更新体检目录') }}</span>
                   </div>
                   <div class="diagnostic-score-actions">
                     <button
@@ -839,9 +897,9 @@ onBeforeUnmount(() => {
                 <header>
                   <div>
                     <h3 id="diagnostic-score-dimensions-title">体检维度</h3>
-                    <p>综合入口负责统一启动；需要深挖时，可直接点选对应脚本进入终端。</p>
+                    <p>综合入口统一启动原生检测；需要深挖或补充线路、解锁信息时，再点选第三方脚本。</p>
                   </div>
-                  <span>{{ catalog.items.length }} 个脚本可用</span>
+                  <span>{{ catalog.items.length }} 个检测项目可用</span>
                 </header>
                 <div class="diagnostic-score-dimension-grid">
                   <button
@@ -859,8 +917,8 @@ onBeforeUnmount(() => {
                       <strong>{{ dimension.label }}</strong>
                       <span v-if="!summaryMetrics(dimension).length">{{ dimension.detail }}</span>
                       <span v-else class="is-summary">
-                        <template v-for="(metric, metricIndex) in summaryMetrics(dimension).slice(0, 2)" :key="metric.key">
-                          <b>{{ summaryMetricLabel(metric.key) }}</b> {{ metric.value }}<i v-if="metricIndex < Math.min(summaryMetrics(dimension).length, 2) - 1"> · </i>
+                        <template v-for="(metric, metricIndex) in summaryMetrics(dimension).slice(0, summaryMetricLimit(dimension))" :key="metric.key">
+                          <b>{{ summaryMetricLabel(metric.key) }}</b> {{ metric.value }}<i v-if="metricIndex < Math.min(summaryMetrics(dimension).length, summaryMetricLimit(dimension)) - 1"> · </i>
                         </template>
                       </span>
                     </span>
@@ -873,7 +931,7 @@ onBeforeUnmount(() => {
                 <div class="diagnostic-score-note__icon"><Activity :size="17" /></div>
                 <div>
                   <strong>{{ scoreSummaryMetricCount ? '真实结果已汇总' : '结果透明，原始输出不丢失' }}</strong>
-                  <p>{{ scoreSummaryMetricCount ? '以下指标来自脚本原始输出；未识别项目仍保留在终端中。' : '页面只呈现真实任务状态与进度，不替脚本猜测分数；详细结果、线路明细和第三方提示都可在终端中查看。' }}</p>
+                  <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以下指标来自 KPanel 原生探针的实际回显；完整过程仍保留在任务日志中。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : '页面只呈现真实任务状态与进度，不替脚本猜测分数；详细结果和第三方提示都可在终端中查看。' }}</p>
                 </div>
                 <a
                   v-if="summaryReportURL"
@@ -910,16 +968,18 @@ onBeforeUnmount(() => {
             <footer v-if="activeJob">
               <span><Activity :size="14" /> {{ activeJob.message }}</span>
               <span><Timer :size="14" /> {{ formatDateTime(activeJob.startedAt || activeJob.createdAt) }}</span>
-              <a :href="activeJob.sourceUrl" target="_blank" rel="noopener noreferrer">
+              <a v-if="activeJob.sourceUrl" :href="activeJob.sourceUrl" target="_blank" rel="noopener noreferrer">
                 查看来源 <ExternalLink :size="13" />
               </a>
+              <span v-else class="diagnostic-source">KPanel 原生探针</span>
             </footer>
             <footer v-else-if="selectedCheck">
               <span><Timer :size="14" /> 约 {{ selectedCheck.estimatedMinutes }} 分钟</span>
               <span class="impact-pill" :class="impactClass(selectedCheck.impact)">{{ impactLabel(selectedCheck.impact) }}</span>
-              <a :href="selectedCheck.sourceUrl" target="_blank" rel="noopener noreferrer">
+              <a v-if="selectedCheck.sourceUrl" :href="selectedCheck.sourceUrl" target="_blank" rel="noopener noreferrer">
                 {{ sourceHost(selectedCheck.sourceUrl) }} <ExternalLink :size="13" />
               </a>
+              <span v-else class="diagnostic-source">KPanel 原生探针</span>
             </footer>
           </template>
         </section>
@@ -929,7 +989,7 @@ onBeforeUnmount(() => {
 
     <ModalDialog
       :open="Boolean(pendingCheck || pendingScore)"
-      :title="pendingScore ? '确认开始一键跑分？' : '确认运行第三方体检？'"
+      :title="pendingScore ? '确认开始一键跑分？' : (pendingCheck?.provider === 'native' ? '确认运行 KPanel 原生检测？' : '确认运行第三方体检？')"
       :description="pendingScore ? `${scoreCheck ? checkNameLabel(scoreCheck.name) : '综合评测'} · 预计 ${scoreCheck?.estimatedMinutes || '—'} 分钟` : (pendingCheck ? `${checkNameLabel(pendingCheck.name)} · 预计 ${pendingCheck.estimatedMinutes} 分钟` : '')"
       size="small"
       @close="pendingCheck = undefined; pendingScore = false"
@@ -938,7 +998,7 @@ onBeforeUnmount(() => {
         <Gauge :size="24" />
         <div>
           <p>
-            将调用脚本目录中的综合评测入口，以真实终端输出完成一次多维度体检。测试期间可能消耗较多网络、CPU 或磁盘资源。
+            {{ scoreCheck?.provider === 'native' ? '将使用 KPanel 原生探针完成 CPU、内存、硬盘、路由、延迟、测速和 IP 基础质量检测。测试期间会产生受控的 CPU、磁盘和网络开销。' : '将调用脚本目录中的综合评测入口，以真实终端输出完成一次多维度体检。测试期间可能消耗较多网络、CPU 或磁盘资源。' }}
           </p>
           <div class="diagnostic-score-confirm__list">
             <span v-for="dimension in scoreDimensions" :key="dimension.id"><i /> {{ dimension.label }}</span>
@@ -949,11 +1009,12 @@ onBeforeUnmount(() => {
         <TriangleAlert :size="24" />
         <div>
           <p>
-            此操作将以 root 权限运行 kejilion.sh 中登记的第三方命令，可能安装测试工具并占用较多网络、CPU 或磁盘资源。
+            {{ pendingCheck.provider === 'native' ? '此操作将运行 KPanel 原生探针，不安装第三方测试工具；硬盘和测速项目会产生受控的 I/O 或网络流量。' : '此操作将以 root 权限运行 kejilion.sh 中登记的第三方命令，可能安装测试工具并占用较多网络、CPU 或磁盘资源。' }}
           </p>
-          <a :href="pendingCheck.sourceUrl" target="_blank" rel="noopener noreferrer">
+          <a v-if="pendingCheck.sourceUrl" :href="pendingCheck.sourceUrl" target="_blank" rel="noopener noreferrer">
             {{ pendingCheck.sourceUrl }} <ExternalLink :size="13" />
           </a>
+          <span v-else class="diagnostic-source">KPanel 原生探针 · 不依赖第三方脚本</span>
         </div>
       </div>
       <template #footer>
@@ -974,6 +1035,7 @@ onBeforeUnmount(() => {
 .diagnostics-page {
   display: grid;
   gap: 16px;
+  min-height: 0;
 }
 
 .diagnostic-card p,
@@ -1238,6 +1300,9 @@ onBeforeUnmount(() => {
 .diagnostic-command-group.is-category-comprehensive,
 .diagnostic-command-row.is-category-comprehensive,
 .diagnostic-command-rail__item.is-category-comprehensive { --diagnostic-category: #7546c8; }
+.diagnostic-command-group.is-category-core,
+.diagnostic-command-row.is-category-core,
+.diagnostic-command-rail__item.is-category-core { --diagnostic-category: #15b8a6; }
 
 :global(:root[data-theme='dark'] .diagnostic-command-group.is-category-access),
 :global(:root[data-theme='dark'] .diagnostic-command-row.is-category-access),
@@ -1254,6 +1319,9 @@ onBeforeUnmount(() => {
 :global(:root[data-theme='dark'] .diagnostic-command-group.is-category-comprehensive),
 :global(:root[data-theme='dark'] .diagnostic-command-row.is-category-comprehensive),
 :global(:root[data-theme='dark'] .diagnostic-command-rail__item.is-category-comprehensive) { --diagnostic-category: #b58cff; }
+:global(:root[data-theme='dark'] .diagnostic-command-group.is-category-core),
+:global(:root[data-theme='dark'] .diagnostic-command-row.is-category-core),
+:global(:root[data-theme='dark'] .diagnostic-command-rail__item.is-category-core) { --diagnostic-category: #49d5c1; }
 
 .diagnostic-command-select {
   display: grid;
@@ -1283,6 +1351,28 @@ onBeforeUnmount(() => {
   font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.diagnostic-command-badges {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.diagnostic-command-native,
+.diagnostic-command-tested {
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.diagnostic-command-native {
+  color: var(--diagnostic-category);
+  background: color-mix(in srgb, var(--diagnostic-category) 14%, var(--surface));
 }
 
 .diagnostic-command-tested {
@@ -1796,8 +1886,14 @@ onBeforeUnmount(() => {
 }
 
 .diagnostic-score-dimension__copy > span.is-summary {
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--text-soft);
   font-weight: 650;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-height: 1.35;
 }
 
 .diagnostic-score-dimension__state {
@@ -1954,6 +2050,7 @@ onBeforeUnmount(() => {
 }
 
 .diagnostic-progress {
+  flex: 0 0 auto;
   height: 4px;
   background: var(--surface-muted);
 }
@@ -1969,6 +2066,7 @@ onBeforeUnmount(() => {
 
 .diagnostic-terminal-bar {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   min-height: 42px;
@@ -2017,6 +2115,7 @@ onBeforeUnmount(() => {
   grid-template-rows: auto minmax(0, 1fr) auto;
   flex: 1 1 0;
   min-height: 0;
+  overflow: hidden;
   border: 0;
   border-radius: 0;
 }
@@ -2028,8 +2127,11 @@ onBeforeUnmount(() => {
 
 .diagnostic-result footer {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   gap: 10px 18px;
+  box-sizing: border-box;
+  min-height: 42px;
   padding: 12px 20px;
   color: var(--text-tertiary);
   font-size: 13px;
@@ -2169,6 +2271,10 @@ onBeforeUnmount(() => {
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-height: 1.35;
+  }
+
+  .diagnostic-score-dimension__copy > span.is-summary {
+    -webkit-line-clamp: 3;
   }
 }
 

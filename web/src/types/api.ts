@@ -963,6 +963,7 @@ export interface DiagnosticCheck {
   name: string
   description: string
   sourceUrl: string
+  provider?: 'native' | 'script'
   estimatedMinutes: number
   impact: 'light' | 'network' | 'intensive'
 }
@@ -993,6 +994,7 @@ export interface DiagnosticJob {
   checkName: string
   category: string
   sourceUrl: string
+  provider?: 'native' | 'script'
   estimatedMinutes: number
   impact: 'light' | 'network' | 'intensive'
   status: 'queued' | 'running' | 'succeeded' | 'failed'

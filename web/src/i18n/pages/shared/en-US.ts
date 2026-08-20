@@ -461,4 +461,11 @@ export default [
   ['行 · 第', 'line · column'],
   ['列', 'column'],
   ['语法问题', 'Syntax issues'],
+  ['确认 y', 'Confirm y'],
+  ['选择 1', 'Choose 1'],
+  ['回车', 'Enter'],
+  ['跳过 n', 'Skip n'],
+  ['脚本需要选择时：', 'When the script asks for a choice:'],
+  ['请按终端当前提示使用', 'Follow the prompt currently shown in the terminal'],
+  ['体检脚本快捷输入', 'Diagnostic script quick input'],
 ] as const satisfies PhraseCatalog

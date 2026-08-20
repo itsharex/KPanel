@@ -24,12 +24,93 @@ const appJobs = new Map()
 const diagnosticJobs = new Map()
 const diagnosticCatalog = {
   categories: [
+    { id: 'core', name: 'KPanel 核心体检' },
     { id: 'access', name: 'IP 与解锁' },
     { id: 'network', name: '网络线路' },
     { id: 'hardware', name: '硬件性能' },
     { id: 'comprehensive', name: '综合评测' },
   ],
   items: [
+    {
+      id: 'native-comprehensive',
+      category: 'core',
+      name: 'KPanel 核心综合体检',
+      description: '由 KPanel 原生探针完成 CPU、内存、硬盘、路由、延迟、测速和 IP 基础质量检测',
+      sourceUrl: '',
+      provider: 'native',
+      estimatedMinutes: 3,
+      impact: 'network',
+    },
+    {
+      id: 'native-cpu',
+      category: 'core',
+      name: 'CPU 原生跑分',
+      description: '固定时长本地运算，回显实际 CPU 吞吐',
+      sourceUrl: '',
+      provider: 'native',
+      estimatedMinutes: 1,
+      impact: 'light',
+    },
+    {
+      id: 'native-memory',
+      category: 'core',
+      name: '内存原生跑分',
+      description: '受控内存复制吞吐测试',
+      sourceUrl: '',
+      provider: 'native',
+      estimatedMinutes: 1,
+      impact: 'light',
+    },
+    {
+      id: 'native-disk',
+      category: 'core',
+      name: '硬盘原生跑分',
+      description: '受控临时文件顺序读写测试',
+      sourceUrl: '',
+      provider: 'native',
+      estimatedMinutes: 1,
+      impact: 'intensive',
+    },
+    {
+      id: 'native-route',
+      category: 'core',
+      name: '出口路由基础检测',
+      description: '回显出口 ASN、地区和边缘节点',
+      sourceUrl: '',
+      provider: 'native',
+      estimatedMinutes: 1,
+      impact: 'network',
+    },
+    {
+      id: 'native-latency',
+      category: 'core',
+      name: '延迟原生检测',
+      description: '多探测点回显平均延迟、抖动和失败率',
+      sourceUrl: '',
+      provider: 'native',
+      estimatedMinutes: 1,
+      impact: 'network',
+    },
+    {
+      id: 'native-speed',
+      category: 'core',
+      name: '网速原生测速',
+      description: '固定体积下载与上传吞吐测试',
+      sourceUrl: '',
+      provider: 'native',
+      estimatedMinutes: 1,
+      impact: 'network',
+    },
+    {
+      id: 'native-ip-quality',
+      category: 'core',
+      name: 'IP 基础质量检测',
+      description: '回显公网 IP、ASN、IPv4/IPv6 和反向解析',
+      sourceUrl: '',
+      provider: 'native',
+      estimatedMinutes: 1,
+      impact: 'network',
+    },
     {
       id: 'chatgpt',
       category: 'access',
@@ -185,27 +266,68 @@ function materializeJob(job) {
 function materializeDiagnosticJob(job) {
   const elapsed = Date.now() - job.created
   const progress = Math.min(100, Math.max(10, Math.floor(elapsed / 80)))
+  const native = job.check.provider === 'native'
   return {
     id: job.id,
     checkId: job.check.id,
     checkName: job.check.name,
     category: job.check.category,
     sourceUrl: job.check.sourceUrl,
+    ...(job.check.provider ? { provider: job.check.provider } : {}),
     estimatedMinutes: job.check.estimatedMinutes,
     impact: job.check.impact,
     status: progress >= 100 ? 'succeeded' : 'running',
     stage: progress >= 100 ? 'completed' : 'running',
     progress,
-    message: progress >= 100 ? '体检完成，完整跑分结果已保存在任务日志' : '第三方体检脚本正在运行，结果将持续写入日志',
+    message: progress >= 100
+      ? (native ? '原生体检完成，真实结果已汇总' : '体检完成，完整跑分结果已保存在任务日志')
+      : (native ? 'KPanel 原生探针正在运行，结果将持续回显' : '第三方体检脚本正在运行，结果将持续写入日志'),
     logs: [
       `KPanel 体检：${job.check.name}`,
-      `来源：${job.check.sourceUrl}`,
+      ...(native ? ['检测引擎：KPanel Native Diagnostics v1'] : [`来源：${job.check.sourceUrl}`]),
       '',
-      '正在检测系统与网络环境…',
-      progress >= 40 ? 'CPU benchmark score: 8241' : '',
-      progress >= 70 ? 'Disk 4k read: 118.4 MB/s' : '',
-      progress >= 100 ? 'KPANEL_TEST_RESULT succeeded ' + job.check.id : '',
+      native ? '正在执行原生探针…' : '正在检测系统与网络环境…',
+      progress >= 20 && native ? 'CPU：AMD EPYC 7B12 · 原生运算吞吐：1842 K ops/s' : '',
+      progress >= 35 && native ? '内存复制吞吐：18.42 GiB/s · 测试块：32.00 MiB' : '',
+      progress >= 50 && native ? '顺序写入：486.00 MiB/s · 顺序读取：1.12 GiB/s' : '',
+      progress >= 65 && native ? '延迟：平均 38.24 ms · 抖动 7.81 ms · 丢包 0.0%' : '',
+      progress >= 80 && native ? '测速：↓ 682.40 Mbps · ↑ 94.70 Mbps' : '',
+      progress >= 90 && native ? '公网 IP：203.0.113.10 · ASN：AS64500 · IPv4 已连接 · IPv6 已连接' : '',
+      progress >= 40 && !native ? 'CPU benchmark score: 8241' : '',
+      progress >= 70 && !native ? 'Disk 4k read: 118.4 MB/s' : '',
+      progress >= 100 && !native ? 'KPANEL_TEST_RESULT succeeded ' + job.check.id : '',
     ].filter((line) => line !== ''),
+    ...(progress >= 100 && native
+      ? {
+          summary: {
+            parser: 'kpanel-native-v1',
+            dimensions: {
+              performance: { metrics: [
+                { key: 'cpu_model', value: 'AMD EPYC 7B12' },
+                { key: 'cpu_cores', value: '4' },
+                { key: 'cpu_score', value: '1842 KPS' },
+                { key: 'memory_score', value: '18.42 GiB/s' },
+                { key: 'disk_write', value: '486.00 MiB/s' },
+                { key: 'disk_read', value: '1.12 GiB/s' },
+              ] },
+              route: { metrics: [{ key: 'path', value: 'AS64500 · SIN' }, { key: 'edge', value: 'SIN' }] },
+              latency: { metrics: [
+                { key: 'average', value: '38.24 ms' },
+                { key: 'jitter', value: '7.81 ms' },
+                { key: 'loss', value: '0.0%' },
+              ] },
+              speed: { metrics: [{ key: 'download', value: '682.40 Mbps' }, { key: 'upload', value: '94.70 Mbps' }] },
+              ip: { metrics: [
+                { key: 'public_ip', value: '203.0.113.10' },
+                { key: 'asn', value: 'AS64500' },
+                { key: 'country', value: 'CN' },
+                { key: 'ipv4_ipv6', value: 'IPv4 已连接 · IPv6 已连接' },
+                { key: 'quality', value: '基础信息已采集；未接入第三方信誉库' },
+              ] },
+            },
+          },
+        }
+      : {}),
     createdAt: new Date(job.created).toISOString(),
     startedAt: new Date(job.created + 100).toISOString(),
     ...(progress >= 100 ? { finishedAt: new Date().toISOString() } : {}),
@@ -549,7 +671,7 @@ createServer(async (request, response) => {
   }
   if (request.method === 'POST' && url.pathname === '/api/v1/diagnostic-jobs') {
     const id = `${Date.now().toString(16).padStart(16, '0')}${'d'.repeat(16)}`.slice(-32)
-    const job = { id, check: diagnosticCatalog.items[4], created: Date.now() }
+    const job = { id, check: diagnosticCatalog.items.find((item) => item.id === 'native-comprehensive'), created: Date.now() }
     diagnosticJobs.set(id, job)
     send(response, 202, materializeDiagnosticJob(job))
     return
