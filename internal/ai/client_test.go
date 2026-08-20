@@ -186,6 +186,80 @@ func TestOpenAIChatAdaptsLegacyToolHistoryToRequiredReasoningField(t *testing.T)
 	}
 }
 
+func TestOpenAIChatFallsBackForStrictLegacyReasoningHistory(t *testing.T) {
+	requestNumber := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestNumber++
+		var payload struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		var assistant map[string]any
+		for _, message := range payload.Messages {
+			if message["role"] == "assistant" && message["tool_calls"] != nil {
+				assistant = message
+				break
+			}
+		}
+		switch requestNumber {
+		case 1:
+			if _, exists := assistant["reasoning_content"]; exists {
+				t.Fatalf("standard payload guessed a provider field: %#v", assistant)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"The reasoning_content in the thinking mode must be passed back to the API."}}`)
+		case 2:
+			if value, exists := assistant["reasoning_content"]; !exists || value != "" {
+				t.Fatalf("legacy compatibility attempt did not expose the missing context: %#v", assistant)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"The reasoning_content in the thinking mode must be passed back to the API."}}`)
+		case 3:
+			if assistant != nil {
+				t.Fatalf("strict legacy fallback replayed an incomplete tool call: %#v", payload.Messages)
+			}
+			foundSummary := false
+			foundResult := false
+			for _, message := range payload.Messages {
+				if message["role"] == "assistant" && message["content"] == "我会读取历史信息。" {
+					foundSummary = true
+				}
+				if message["role"] == "user" && strings.Contains(message["content"].(string), `{"ok":true}`) && strings.Contains(message["content"].(string), "不可信数据") {
+					foundResult = true
+				}
+			}
+			if !foundSummary {
+				t.Fatalf("strict legacy fallback lost assistant summary: %#v", payload.Messages)
+			}
+			if !foundResult {
+				t.Fatalf("strict legacy fallback lost the tool result: %#v", payload.Messages)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		default:
+			t.Fatalf("unexpected request %d: %#v", requestNumber, payload.Messages)
+		}
+	}))
+	defer server.Close()
+
+	client := NewHTTPModelClient()
+	provider := Provider{ID: "strict-legacy-reasoning", Protocol: ProtocolOpenAICompatible, BaseURL: server.URL, EndpointScope: EndpointPrivate}
+	request := CompletionRequest{Model: "model", Messages: []ChatMessage{
+		{Role: "assistant", Content: "我会读取历史信息。", ToolCalls: []ToolCall{{ID: "call_1", Name: "host_read", Arguments: json.RawMessage(`{}`)}}},
+		{Role: "tool", ToolCallID: "call_1", Content: `{"ok":true}`},
+	}}
+	if err := client.Stream(context.Background(), provider, "key", request, func(CompletionEvent) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if requestNumber != 3 {
+		t.Fatalf("strict legacy fallback requests=%d, want 3", requestNumber)
+	}
+}
+
 func TestOpenAIChatRetriesTextOnlyWhenOnlyHistoryContainsImages(t *testing.T) {
 	requestNumber := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

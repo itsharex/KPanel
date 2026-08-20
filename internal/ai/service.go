@@ -128,7 +128,7 @@ func inferredReasoning(protocol ProviderProtocol, modelID string) bool {
 	if protocol == ProtocolGemini {
 		return strings.Contains(name, "2.5") || strings.Contains(name, "gemini-3")
 	}
-	return strings.Contains(name, "gpt-5") || strings.HasPrefix(name, "o1") || strings.HasPrefix(name, "o3") || strings.HasPrefix(name, "o4") || strings.Contains(name, "claude-") || strings.Contains(name, "gemini-2.5") || strings.Contains(name, "gemini-3") || strings.Contains(name, "deepseek-r1") || strings.Contains(name, "qwen3")
+	return strings.Contains(name, "gpt-5") || strings.HasPrefix(name, "o1") || strings.HasPrefix(name, "o3") || strings.HasPrefix(name, "o4") || strings.Contains(name, "claude-") || strings.Contains(name, "gemini-2.5") || strings.Contains(name, "gemini-3") || strings.Contains(name, "deepseek-r1") || strings.Contains(name, "deepseek-v4") || strings.Contains(name, "qwen3")
 }
 
 func (s *Service) CreateSession(ctx context.Context, userID, providerID, modelID, title string) (Session, error) {

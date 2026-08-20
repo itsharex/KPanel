@@ -61,6 +61,17 @@ func TestSyncModelsDefaultsAllModelsToVision(t *testing.T) {
 	}
 }
 
+func TestInferredReasoningIncludesDeepSeekV4(t *testing.T) {
+	for _, modelID := range []string{"deepseek-v4-flash", "deepseek-v4-pro", "deepseek-r1"} {
+		if !inferredReasoning(ProtocolOpenAICompatible, modelID) {
+			t.Fatalf("model %q was not recognized as a reasoning model", modelID)
+		}
+	}
+	if inferredReasoning(ProtocolOpenAICompatible, "deepseek-chat") {
+		t.Fatal("non-reasoning DeepSeek chat model was inferred as reasoning")
+	}
+}
+
 func TestDeleteSessionCancelsActiveRun(t *testing.T) {
 	ctx := context.Background()
 	store, err := OpenStore(filepath.Join(t.TempDir(), "ai.db"))
