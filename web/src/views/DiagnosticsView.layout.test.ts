@@ -75,9 +75,17 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toMatch(
       /@container desktop-window \(max-width: 820px\)[\s\S]*?\.diagnostic-workbench,[\s\S]*?grid-template-columns: minmax\(0, 1fr\) !important;[\s\S]*?height: 100% !important;/,
     )
-    expect(diagnosticsSource).toContain('const scoreRouteStatusLabel = computed')
-    expect(diagnosticsSource).toContain("return 'covered'")
     expect(diagnosticsSource).toContain("viewMode === 'terminal' && selectedCheck?.id === check.id")
+  })
+
+  it('presents a compact total score with performance and network report groups', () => {
+    expect(diagnosticsSource).toContain('class="diagnostic-score-total"')
+    expect(diagnosticsSource).toContain('class="diagnostic-report-section is-performance"')
+    expect(diagnosticsSource).toContain('class="diagnostic-report-section is-network"')
+    expect(diagnosticsSource).toContain("summaryValue('performance', 'cpu_model')")
+    expect(diagnosticsSource).toContain("summaryValue('ip', 'public_ip')")
+    expect(diagnosticsSource).not.toContain('class="diagnostic-score-route"')
+    expect(diagnosticsSource).not.toContain('class="diagnostic-score-dimensions"')
   })
 
   it('reserves a dedicated home row above the scrollable command list', () => {

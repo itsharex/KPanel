@@ -12,8 +12,10 @@ import {
   ExternalLink,
   Gauge,
   Globe2,
+  HardDrive,
   LoaderCircle,
   Menu,
+  MemoryStick,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -176,7 +178,6 @@ const scoreProgress = computed(() => {
   if (scoreState.value === 'running') return Math.max(0, Math.min(100, scoreJob.value?.progress || 0))
   return 0
 })
-const scoreRingOffset = computed(() => 351.86 * (1 - scoreProgress.value / 100))
 const scoreRunLabel = computed(() => {
   switch (scoreState.value) {
     case 'unavailable': return '核心体检未就绪'
@@ -197,25 +198,6 @@ const scoreStateLabel = computed(() => {
     default: return '待开始'
   }
 })
-const scoreRouteStatusLabel = computed(() => {
-  switch (scoreState.value) {
-    case 'unavailable': return '未就绪'
-    case 'running': return '实时采集'
-    case 'completed': return '已完成'
-    case 'failed': return '需要重试'
-    case 'busy': return '单项测试中'
-    default: return '待开始'
-  }
-})
-const scoreCenterLabel = computed(() => {
-  switch (scoreState.value) {
-    case 'running': return `${scoreProgress.value}%`
-    case 'completed': return '完成'
-    case 'failed': return '重试'
-    case 'busy': return '—'
-    default: return '—'
-  }
-})
 const scoreStatusLabel = computed(() => {
   switch (scoreState.value) {
     case 'unavailable': return '等待 KPanel 核心体检能力就绪'
@@ -227,6 +209,33 @@ const scoreStatusLabel = computed(() => {
     case 'busy': return '请先完成当前终端中的体检任务'
     default: return '从性能、路由、延迟、网速和 IP 质量开始检查'
   }
+})
+const performanceScore = computed(() => reportCategoryScore([
+  reportMetricScore('cpu'),
+  reportMetricScore('memory'),
+  reportMetricScore('disk'),
+]))
+const networkScore = computed(() => reportCategoryScore([
+  reportMetricScore('latency'),
+  reportMetricScore('speed'),
+  reportMetricScore('ip'),
+]))
+const overallScore = computed(() => {
+  if (scoreState.value !== 'completed') return undefined
+  if (performanceScore.value === undefined && networkScore.value === undefined) return undefined
+  if (performanceScore.value === undefined) return networkScore.value
+  if (networkScore.value === undefined) return performanceScore.value
+  return Math.round(performanceScore.value * 0.45 + networkScore.value * 0.55)
+})
+const scoreTotalValue = computed(() => {
+  if (scoreState.value === 'running') return `${scoreProgress.value}`
+  return overallScore.value === undefined ? '—' : `${overallScore.value}`
+})
+const scoreTotalCaption = computed(() => {
+  if (scoreState.value === 'running') return '实时计算'
+  if (overallScore.value !== undefined) return 'KPanel 体检分 · v1'
+  if (scoreState.value === 'failed') return '本次检测未完成'
+  return '完成检测后生成'
 })
 
 function categoryName(id: string): string {
@@ -333,10 +342,6 @@ function summaryMetrics(dimension: ScoreDimension): DiagnosticSummaryMetric[] {
   return metrics
 }
 
-function summaryMetricLimit(dimension: ScoreDimension): number {
-  return dimension.id === 'performance' ? 3 : 2
-}
-
 function summaryMetricLabel(key: string): string {
   const labels: Record<string, string> = {
     cpu_model: 'CPU',
@@ -377,6 +382,122 @@ function summaryMetricLabel(key: string): string {
   return labels[key] || key
 }
 
+type ReportMetricID = 'cpu' | 'memory' | 'disk' | 'latency' | 'speed' | 'ip'
+
+function summaryValue(dimensionID: ScoreDimension['id'], key: string): string {
+  const dimension = scoreDimensions.find((item) => item.id === dimensionID)
+  return dimension ? summaryMetrics(dimension).find((metric) => metric.key === key)?.value || '' : ''
+}
+
+function numericValue(value: string): number | undefined {
+  const match = value.replaceAll(',', '').match(/-?\d+(?:\.\d+)?/)
+  if (!match) return undefined
+  const number = Number(match[0])
+  return Number.isFinite(number) ? number : undefined
+}
+
+function rateBytes(value: string): number | undefined {
+  const match = value.trim().match(/([\d.]+)\s*(B\/s|KB\/s|KiB\/s|MB\/s|MiB\/s|GB\/s|GiB\/s|TB\/s|TiB\/s)/i)
+  if (!match) return undefined
+  const units: Record<string, number> = {
+    'b/s': 1,
+    'kb/s': 1024,
+    'kib/s': 1024,
+    'mb/s': 1024 ** 2,
+    'mib/s': 1024 ** 2,
+    'gb/s': 1024 ** 3,
+    'gib/s': 1024 ** 3,
+    'tb/s': 1024 ** 4,
+    'tib/s': 1024 ** 4,
+  }
+  const number = Number(match[1])
+  const unit = match[2]?.toLowerCase()
+  const multiplier = unit ? units[unit] : undefined
+  return Number.isFinite(number) && multiplier ? number * multiplier : undefined
+}
+
+function rateMbps(value: string): number | undefined {
+  const match = value.trim().match(/([\d.]+)\s*(bps|Kbps|Mbps|Gbps|Tbps)/i)
+  if (match) {
+    const units: Record<string, number> = {
+      bps: 1 / 1_000_000,
+      kbps: 1 / 1_000,
+      mbps: 1,
+      gbps: 1_000,
+      tbps: 1_000_000,
+    }
+    const number = Number(match[1])
+    const unit = match[2]?.toLowerCase()
+    const multiplier = unit ? units[unit] : undefined
+    return Number.isFinite(number) && multiplier ? number * multiplier : undefined
+  }
+  const bytes = rateBytes(value)
+  return bytes === undefined ? undefined : bytes * 8 / 1_000_000
+}
+
+function boundedScore(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined
+  return Math.round(Math.max(0, Math.min(100, value)))
+}
+
+function reportCategoryScore(values: Array<number | undefined>): number | undefined {
+  const available = values.filter((value): value is number => value !== undefined)
+  if (!available.length) return undefined
+  return Math.round(available.reduce((total, value) => total + value, 0) / available.length)
+}
+
+function reportMetricScore(id: ReportMetricID): number | undefined {
+  if (id === 'cpu') {
+    const cpu = numericValue(summaryValue('performance', 'cpu_score'))
+    return boundedScore(cpu === undefined ? undefined : cpu / 3000 * 100)
+  }
+  if (id === 'memory') {
+    const memory = rateBytes(summaryValue('performance', 'memory_score'))
+    return boundedScore(memory === undefined ? undefined : memory / (20 * 1024 ** 3) * 100)
+  }
+  if (id === 'disk') {
+    const rates = [
+      rateBytes(summaryValue('performance', 'disk_read')),
+      rateBytes(summaryValue('performance', 'disk_write')),
+    ].filter((value): value is number => value !== undefined)
+    return boundedScore(rates.length ? rates.reduce((total, value) => total + value, 0) / rates.length / (1024 ** 3) * 100 : undefined)
+  }
+  if (id === 'latency') {
+    const average = numericValue(summaryValue('latency', 'average'))
+    const jitter = numericValue(summaryValue('latency', 'jitter')) || 0
+    return boundedScore(average === undefined ? undefined : 100 - average * 0.7 - jitter * 0.3)
+  }
+  if (id === 'speed') {
+    const download = rateMbps(summaryValue('speed', 'download'))
+    const upload = rateMbps(summaryValue('speed', 'upload'))
+    return reportCategoryScore([
+      boundedScore(download === undefined ? undefined : download / 1000 * 100),
+      boundedScore(upload === undefined ? undefined : upload / 200 * 100),
+    ])
+  }
+  const fields = [
+    summaryValue('ip', 'public_ip'),
+    summaryValue('ip', 'asn'),
+    summaryValue('ip', 'country') || summaryValue('ip', 'location'),
+    summaryValue('ip', 'ipv4_ipv6'),
+    summaryValue('ip', 'reverse_dns'),
+    summaryValue('route', 'path'),
+  ].filter(Boolean)
+  return boundedScore(fields.length ? 35 + fields.length * 8 : undefined)
+}
+
+function reportScoreLabel(value: number | undefined): string {
+  return value === undefined ? '—' : `${value}`
+}
+
+function reportIPOperator(): string {
+  return summaryValue('ip', 'operator') || summaryValue('ip', 'isp') || summaryValue('ip', 'asn') || '等待检测'
+}
+
+function reportIPLocation(): string {
+  return summaryValue('ip', 'country') || summaryValue('ip', 'location') || '等待检测'
+}
+
 function dimensionJob(dimension: ScoreDimension): DiagnosticJob | undefined {
   const check = dimensionCheck(dimension)
   if (!check) return undefined
@@ -403,41 +524,9 @@ const summaryReportURL = computed(() => {
   return jobsForSummary.find((job) => job?.summary?.reportUrl)?.summary?.reportUrl || ''
 })
 
-function dimensionState(dimension: ScoreDimension): 'idle' | 'running' | 'completed' | 'failed' | 'covered' {
-  const job = dimensionJob(dimension)
-  if (job?.status === 'queued' || job?.status === 'running') return 'running'
-  if (job?.status === 'succeeded') return 'completed'
-  if (job?.status === 'failed') return 'failed'
-  if (scoreState.value === 'running') return 'running'
-  if (scoreState.value === 'completed') return 'completed'
-  if (scoreState.value === 'failed') return 'failed'
-  if (!dimensionCheck(dimension) && scoreCheck.value) return 'covered'
-  return 'idle'
-}
-
-function dimensionStateLabel(dimension: ScoreDimension): string {
-  const state = dimensionState(dimension)
-  if (state === 'running') return '单项测试中'
-  if (state === 'completed') return summaryMetrics(dimension).length > 0 ? '已汇总' : '单项已完成'
-  if (state === 'failed') return '上次未完成'
-  if (state === 'covered') return '综合入口覆盖'
-  if (scoreState.value === 'running') return '综合测试中'
-  if (scoreState.value === 'completed') return scoreCheck.value?.provider === 'native' ? '已汇总' : '已输出到终端'
-  return dimensionCheck(dimension) ? '等待测试' : '脚本未提供'
-}
-
-function dimensionStateClass(dimension: ScoreDimension): string {
-  return `is-${dimensionState(dimension)}`
-}
-
 function selectOverview(): void {
   viewMode.value = 'overview'
   mobileCommandsOpen.value = false
-}
-
-function openDimension(dimension: ScoreDimension): void {
-  const check = dimensionCheck(dimension)
-  if (check && check.provider !== 'native') selectCheck(check)
 }
 
 function openScoreTerminal(): void {
@@ -838,38 +927,24 @@ onBeforeUnmount(() => {
             <div class="diagnostic-overview">
               <header class="diagnostic-overview__header">
                 <div>
-                  <div class="diagnostic-overview__eyebrow"><span><Gauge :size="15" /></span> 服务器体检工作台</div>
-                  <h2>一键综合跑分</h2>
-                  <p>先由 KPanel 原生探针完成核心检测，再保留第三方脚本作为可选增值服务。</p>
+                  <div class="diagnostic-overview__eyebrow"><span><Gauge :size="15" /></span> KPanel 核心体检</div>
+                  <h2>服务器体检报告</h2>
+                  <p>原生探针直接采集本机性能与网络质量，结果按性能和网络两大类呈现。</p>
                 </div>
                 <span class="diagnostic-overview__status" :class="`is-${scoreState}`">
                   <i /> {{ scoreStateLabel }}
                 </span>
               </header>
 
-              <section class="diagnostic-score-hero" aria-labelledby="diagnostic-score-title">
-                <div class="diagnostic-score-ring" :class="`is-${scoreState}`" aria-label="综合跑分进度">
-                  <svg viewBox="0 0 140 140" aria-hidden="true">
-                    <circle class="diagnostic-score-ring__track" cx="70" cy="70" r="56" />
-                    <circle
-                      class="diagnostic-score-ring__progress"
-                      cx="70"
-                      cy="70"
-                      r="56"
-                      :style="{ strokeDashoffset: scoreRingOffset }"
-                    />
-                  </svg>
-                  <div class="diagnostic-score-ring__center">
-                    <strong>{{ scoreCenterLabel }}</strong>
-                    <span>{{ scoreState === 'running' ? '实时进度' : '综合状态' }}</span>
-                  </div>
+              <section class="diagnostic-score-hero diagnostic-score-hero--simple" aria-labelledby="diagnostic-score-title">
+                <div class="diagnostic-score-total" :class="`is-${scoreState}`" aria-label="KPanel 综合评分">
+                  <span>综合评分</span>
+                  <div><strong>{{ scoreTotalValue }}</strong><em>/100</em></div>
+                  <small>{{ scoreTotalCaption }}</small>
                 </div>
 
                 <div class="diagnostic-score-hero__copy">
-                  <div class="diagnostic-score-hero__label">
-                    综合跑分 <span>POWERED BY KPanel</span>
-                    <em v-if="scoreSummaryMetricCount">真实结果已汇总</em>
-                  </div>
+                  <div class="diagnostic-score-hero__label">一键综合体检 <span>POWERED BY KPanel</span></div>
                   <h3 id="diagnostic-score-title">{{ scoreCheck ? checkNameLabel(scoreCheck.name) : '等待 KPanel 核心体检' }}</h3>
                   <p>{{ scoreStatusLabel }}</p>
                   <div class="diagnostic-score-meta">
@@ -897,73 +972,80 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </div>
-
-                <div class="diagnostic-score-route" aria-label="综合跑分路径">
-                  <div class="diagnostic-score-route__header">
-                    <strong>五维体检路径</strong>
-                    <span>{{ scoreRouteStatusLabel }}</span>
-                  </div>
-                  <div v-for="(dimension, index) in scoreDimensions" :key="dimension.id" class="diagnostic-score-route__item">
-                    <span class="diagnostic-score-route__index">0{{ index + 1 }}</span>
-                    <span>{{ dimension.label }}</span>
-                    <i :class="dimensionStateClass(dimension)" />
-                  </div>
-                </div>
               </section>
 
-              <section class="diagnostic-score-dimensions" aria-labelledby="diagnostic-score-dimensions-title">
-                <header>
-                  <div>
-                    <h3 id="diagnostic-score-dimensions-title">体检维度</h3>
-                    <p>综合入口统一启动原生检测；需要深挖或补充线路、解锁信息时，再点选第三方脚本。</p>
+              <section class="diagnostic-report-section is-performance" aria-labelledby="diagnostic-performance-title">
+                <header class="diagnostic-report-section__header">
+                  <div class="diagnostic-report-section__title">
+                    <span class="diagnostic-report-section__icon"><Cpu :size="18" /></span>
+                    <div><h3 id="diagnostic-performance-title">性能</h3><p>型号 · CPU · 内存 · 硬盘</p></div>
                   </div>
-                  <span v-if="optionalCheckCount">{{ optionalCheckCount }} 个增值脚本可用</span>
-                  <span v-else>原生体检已整合到首页</span>
+                  <div class="diagnostic-report-section__score"><strong>{{ reportScoreLabel(performanceScore) }}</strong><span>/100</span></div>
                 </header>
-                <div class="diagnostic-score-dimension-grid">
-                  <button
-                    v-for="dimension in scoreDimensions"
-                    :key="dimension.id"
-                    class="diagnostic-score-dimension"
-                    :class="[`is-tone-${dimension.tone}`, dimensionStateClass(dimension)]"
-                    type="button"
-                    :disabled="!dimensionCheck(dimension)"
-                    :aria-label="dimensionCheck(dimension) ? `查看${dimension.label}测试` : `${dimension.label}脚本未提供`"
-                    @click="openDimension(dimension)"
-                  >
-                    <span class="diagnostic-score-dimension__icon"><component :is="dimension.icon" :size="19" /></span>
-                    <span class="diagnostic-score-dimension__copy">
-                      <strong>{{ dimension.label }}</strong>
-                      <span v-if="!summaryMetrics(dimension).length">{{ dimension.detail }}</span>
-                      <span v-else class="is-summary">
-                        <template v-for="(metric, metricIndex) in summaryMetrics(dimension).slice(0, summaryMetricLimit(dimension))" :key="metric.key">
-                          <b>{{ summaryMetricLabel(metric.key) }}</b> {{ metric.value }}<i v-if="metricIndex < Math.min(summaryMetrics(dimension).length, summaryMetricLimit(dimension)) - 1"> · </i>
-                        </template>
-                      </span>
-                    </span>
-                    <span class="diagnostic-score-dimension__state"><i />{{ dimensionStateLabel(dimension) }}</span>
-                  </button>
+                <div class="diagnostic-report-model">
+                  <span>型号</span>
+                  <strong>{{ summaryValue('performance', 'cpu_model') || '等待检测' }}</strong>
+                  <small v-if="summaryValue('performance', 'cpu_cores')">{{ summaryValue('performance', 'cpu_cores') }} 核</small>
+                  <small v-else>基础信息待采集</small>
+                </div>
+                <div class="diagnostic-report-card-grid diagnostic-report-card-grid--performance">
+                  <article class="diagnostic-report-card">
+                    <header><div class="diagnostic-report-card__heading"><span class="is-cpu"><Cpu :size="17" /></span><div><strong>CPU</strong><small>运算性能</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('cpu')) }}</strong><span>分</span></div></header>
+                    <p>{{ summaryValue('performance', 'cpu_score') || '等待检测' }}</p>
+                  </article>
+                  <article class="diagnostic-report-card">
+                    <header><div class="diagnostic-report-card__heading"><span class="is-memory"><MemoryStick :size="17" /></span><div><strong>内存</strong><small>复制吞吐</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('memory')) }}</strong><span>分</span></div></header>
+                    <p>{{ summaryValue('performance', 'memory_score') || '等待检测' }}</p>
+                  </article>
+                  <article class="diagnostic-report-card">
+                    <header><div class="diagnostic-report-card__heading"><span class="is-disk"><HardDrive :size="17" /></span><div><strong>硬盘</strong><small>顺序读写</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('disk')) }}</strong><span>分</span></div></header>
+                    <p>
+                      <span v-if="summaryValue('performance', 'disk_read')"><b>{{ summaryMetricLabel('disk_read') }}</b> {{ summaryValue('performance', 'disk_read') }}</span>
+                      <span v-if="summaryValue('performance', 'disk_write')"><b>{{ summaryMetricLabel('disk_write') }}</b> {{ summaryValue('performance', 'disk_write') }}</span>
+                      <span v-if="!summaryValue('performance', 'disk_read') && !summaryValue('performance', 'disk_write')">等待检测</span>
+                    </p>
+                  </article>
                 </div>
               </section>
 
-              <section class="diagnostic-score-note">
-                <div class="diagnostic-score-note__icon"><Activity :size="17" /></div>
-                <div>
-                  <strong>{{ scoreSummaryMetricCount ? '真实结果已汇总' : '结果透明，原始输出不丢失' }}</strong>
-                  <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以下指标来自 KPanel 原生探针的实际采集结果。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : (scoreCheck?.provider === 'native' ? '结果会直接汇总到本页；第三方脚本仅在需要深度测试时进入终端。' : '页面只呈现真实任务状态与进度，不替脚本猜测分数；详细结果和第三方提示都可在终端中查看。') }}</p>
+              <section class="diagnostic-report-section is-network" aria-labelledby="diagnostic-network-title">
+                <header class="diagnostic-report-section__header">
+                  <div class="diagnostic-report-section__title">
+                    <span class="diagnostic-report-section__icon"><Network :size="18" /></span>
+                    <div><h3 id="diagnostic-network-title">网络</h3><p>IP · 运营商 · 延迟 · 测速 · IP 质量</p></div>
+                  </div>
+                  <div class="diagnostic-report-section__score"><strong>{{ reportScoreLabel(networkScore) }}</strong><span>/100</span></div>
+                </header>
+                <div class="diagnostic-report-identity">
+                  <div><span>IP 地址</span><strong>{{ summaryValue('ip', 'public_ip') || '等待检测' }}</strong></div>
+                  <div><span>运营商 / ASN</span><strong>{{ reportIPOperator() }}</strong></div>
+                  <div><span>地区</span><strong>{{ reportIPLocation() }}</strong></div>
+                  <div><span>线路</span><strong>{{ summaryValue('route', 'path') || '等待检测' }}</strong></div>
                 </div>
-                <a
-                  v-if="summaryReportURL"
-                  class="diagnostic-score-note__link"
-                  :href="summaryReportURL"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  查看完整报告 <ExternalLink :size="14" />
-                </a>
-                <button v-else-if="terminalSummaryJobForOverview()" class="diagnostic-score-note__link" type="button" @click="openSummaryTerminal">
-                  打开最近结果 <ExternalLink :size="14" />
-                </button>
+                <div class="diagnostic-report-card-grid diagnostic-report-card-grid--network">
+                  <article class="diagnostic-report-card">
+                    <header><div class="diagnostic-report-card__heading"><span class="is-latency"><Activity :size="17" /></span><div><strong>延迟</strong><small>往返质量</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('latency')) }}</strong><span>分</span></div></header>
+                    <p>{{ summaryValue('latency', 'average') || '等待检测' }}</p>
+                    <small v-if="summaryValue('latency', 'jitter') || summaryValue('latency', 'loss')">{{ summaryValue('latency', 'jitter') }} · {{ summaryValue('latency', 'loss') }}</small>
+                  </article>
+                  <article class="diagnostic-report-card">
+                    <header><div class="diagnostic-report-card__heading"><span class="is-speed"><Gauge :size="17" /></span><div><strong>测速</strong><small>上下行带宽</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('speed')) }}</strong><span>分</span></div></header>
+                    <p>{{ summaryValue('speed', 'download') || '等待检测' }}</p>
+                    <small v-if="summaryValue('speed', 'upload')">{{ summaryMetricLabel('upload') }} {{ summaryValue('speed', 'upload') }}</small>
+                  </article>
+                  <article class="diagnostic-report-card">
+                    <header><div class="diagnostic-report-card__heading"><span class="is-ip"><Globe2 :size="17" /></span><div><strong>IP 质量</strong><small>基础信息</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('ip')) }}</strong><span>分</span></div></header>
+                    <p>{{ summaryValue('ip', 'quality') || '等待检测' }}</p>
+                    <small v-if="summaryValue('ip', 'ipv4_ipv6')">{{ summaryValue('ip', 'ipv4_ipv6') }}</small>
+                  </article>
+                </div>
+              </section>
+
+              <section class="diagnostic-report-note">
+                <Activity :size="16" />
+                <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以上分数基于本次实际采集结果生成，IP 质量为基础信息完整度。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : '完成一次核心体检后，这里会显示实际结果与分项分数。' }}</p>
+                <a v-if="summaryReportURL" :href="summaryReportURL" target="_blank" rel="noreferrer">查看完整报告 <ExternalLink :size="13" /></a>
+                <button v-else-if="terminalSummaryJobForOverview()" type="button" @click="openSummaryTerminal">打开最近结果 <ExternalLink :size="13" /></button>
               </section>
             </div>
           </template>
@@ -2608,6 +2690,468 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .diagnostic-command-panel {
     transition: none;
+  }
+}
+
+/* Compact report home: total score first, then two readable result groups. */
+.diagnostic-score-hero--simple {
+  grid-template-columns: minmax(170px, .32fr) minmax(0, 1fr);
+  min-height: 150px;
+  gap: 22px;
+  padding: 18px 20px;
+}
+
+.diagnostic-overview {
+  grid-auto-rows: max-content;
+}
+
+.diagnostic-score-total {
+  display: grid;
+  align-content: center;
+  min-height: 116px;
+  padding: 14px 20px;
+  border-right: 1px solid var(--border);
+}
+
+.diagnostic-score-total > span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.diagnostic-score-total > div {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 3px;
+}
+
+.diagnostic-score-total strong {
+  color: var(--text);
+  font-size: clamp(46px, 6vw, 72px);
+  font-weight: 780;
+  letter-spacing: -.06em;
+  line-height: .95;
+}
+
+.diagnostic-score-total em {
+  color: var(--muted);
+  font-size: 16px;
+  font-style: normal;
+}
+
+.diagnostic-score-total small {
+  margin-top: 9px;
+  color: var(--brand-strong);
+  font-size: 12px;
+}
+
+.diagnostic-score-total.is-running strong {
+  color: var(--brand);
+}
+
+.diagnostic-score-total.is-failed strong {
+  color: var(--danger);
+}
+
+.diagnostic-report-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.diagnostic-report-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diagnostic-report-section__title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.diagnostic-report-section__icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-muted);
+  border-radius: 10px;
+}
+
+.diagnostic-report-section.is-performance .diagnostic-report-section__icon {
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: color-mix(in srgb, var(--amber) 28%, var(--border));
+}
+
+.diagnostic-report-section.is-network .diagnostic-report-section__icon {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+}
+
+.diagnostic-report-section__title h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.diagnostic-report-section__title p {
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-report-section__score {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 3px;
+  color: var(--muted);
+}
+
+.diagnostic-report-section__score strong {
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 780;
+  line-height: 1;
+}
+
+.diagnostic-report-section__score span {
+  font-size: 12px;
+}
+
+.diagnostic-report-model {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--surface-subtle) 54%, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.diagnostic-report-model > span,
+.diagnostic-report-identity span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.diagnostic-report-model > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-report-model > small {
+  padding: 3px 7px;
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.diagnostic-report-card-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.diagnostic-report-card-grid--performance,
+.diagnostic-report-card-grid--network {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.diagnostic-report-card {
+  min-width: 0;
+  padding: 13px 14px;
+  background: color-mix(in srgb, var(--surface-subtle) 42%, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.diagnostic-report-card > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.diagnostic-report-card__heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnostic-report-card__heading > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-muted);
+  border-radius: 9px;
+}
+
+.diagnostic-report-card__heading > span.is-cpu,
+.diagnostic-report-card__heading > span.is-disk {
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: color-mix(in srgb, var(--amber) 28%, var(--border));
+}
+
+.diagnostic-report-card__heading > span.is-memory {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+}
+
+.diagnostic-report-card__heading > span.is-latency {
+  color: var(--brand-strong);
+}
+
+.diagnostic-report-card__heading > span.is-speed {
+  color: #8c62de;
+  background: color-mix(in srgb, #8c62de 12%, var(--surface));
+  border-color: color-mix(in srgb, #8c62de 28%, var(--border));
+}
+
+.diagnostic-report-card__heading > span.is-ip {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+}
+
+.diagnostic-report-card__heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.diagnostic-report-card__heading strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-report-card__heading small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-report-card__score {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 2px;
+  color: var(--muted);
+}
+
+.diagnostic-report-card__score strong {
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 780;
+  line-height: 1;
+}
+
+.diagnostic-report-card__score span {
+  font-size: 11px;
+}
+
+.diagnostic-report-card > p {
+  min-height: 42px;
+  margin: 12px 0 0;
+  color: var(--text-soft);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-report-card > p span {
+  display: inline-block;
+  margin-right: 10px;
+}
+
+.diagnostic-report-card > p b {
+  margin-right: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.diagnostic-report-card > small {
+  display: block;
+  min-height: 16px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-report-identity {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.diagnostic-report-identity > div {
+  min-width: 0;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--surface-subtle) 42%, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.diagnostic-report-identity span {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.diagnostic-report-identity strong {
+  display: block;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-report-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diagnostic-report-note > svg {
+  flex: 0 0 auto;
+  color: var(--brand-strong);
+}
+
+.diagnostic-report-note p {
+  flex: 1 1 auto;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.diagnostic-report-note a,
+.diagnostic-report-note button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--brand-strong);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.diagnostic-report-note button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+@container diagnostic-result (max-width: 760px) {
+  .diagnostic-score-hero--simple {
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+    gap: 10px;
+    align-items: start;
+    align-self: start;
+  }
+
+  .diagnostic-score-total {
+    min-height: 0;
+    padding: 0 0 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .diagnostic-report-card-grid--performance,
+  .diagnostic-report-card-grid--network {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .diagnostic-report-identity {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container diagnostic-result (max-width: 520px) {
+  .diagnostic-overview {
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .diagnostic-report-section {
+    padding: 14px;
+  }
+
+  .diagnostic-report-card-grid--performance,
+  .diagnostic-report-card-grid--network,
+  .diagnostic-report-identity {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .diagnostic-report-model {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .diagnostic-report-model > strong {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .diagnostic-report-note {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .diagnostic-report-note p {
+    min-width: calc(100% - 28px);
+  }
+
+  .diagnostic-report-note a,
+  .diagnostic-report-note button {
+    margin-left: 24px;
   }
 }
 </style>
