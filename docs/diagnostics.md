@@ -71,6 +71,6 @@ KJ_TEST_NONINTERACTIVE=1 k test run <fixed-selector>
 ## 验收状态
 
 - **已实现**：原生目录、原生任务分支、CPU/内存/磁盘/路由/延迟/测速/IP 基础探针、IPING 选定字段增强、统一 `summary`、原生优先综合入口、首屏综合评分与“性能/网络”分组、第三方脚本可选降级、前端区分原生与脚本。
-- **已验证**：前端 i18n 校验、类型检查、101 个测试文件/783 个测试、生产构建、首屏布局回归，以及 mock 预览中的原生综合结果汇总；已补充 IPING 响应选定字段映射与 IPv6 跳过测试。
-- **环境限制**：当前 Windows 工作站及 WSL 未安装 Go，本次 IPING 后端改动尚未在本地执行 `gofmt`/`go test`，需在目标机或 Go 环境补跑；完整 `go test ./...` 还涉及 Docker、Panel、SystemManage 等 Linux 专属测试。真实 `systemd-run` 隔离、测速、公网 IP 和 IPv4/IPv6 结果仍需在 Linux 目标机验收。
+- **已验证**：前端 i18n 校验、类型检查、101 个测试文件/783 个测试、生产构建、首屏布局回归，以及 mock 预览中的原生综合结果汇总；已补充 IPING 响应选定字段映射与 IPv6 跳过测试；在 WSL Ubuntu 24.04 的临时 Go 1.26.6 环境通过 `gofmt`、`go test ./internal/diagnostics`，并完成 Agent API → `systemd-run` → `diagnostic-run` → `summary` 的真实原生综合链路验收。
+- **环境限制**：本次 WSL 外网访问受代理/网络策略影响，综合体检中的 IPING 风险细项未取得实时响应，按设计回退为 KPanel 原生 IP 基础信息；真实公网 IP、测速、IPv4/IPv6 和 IPING 结果仍需在网络可达的 Linux 目标机复验。完整 `go test ./...` 还涉及 Docker、Panel、SystemManage 等 Linux 专属测试。
 - **明确不做**：自定义测试命令、任意 URL、并行跑分、把 IPING 完整响应透传到页面或日志、从基础探测结果推断流媒体解锁结论。

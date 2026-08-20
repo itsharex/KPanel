@@ -65,19 +65,19 @@ type nativeHTTPTarget struct {
 }
 
 type ipingResponse struct {
-	Code int        `json:"code"`
-	Data ipingData  `json:"data"`
-	Msg  string     `json:"msg"`
+	Code int       `json:"code"`
+	Data ipingData `json:"data"`
+	Msg  string    `json:"msg"`
 }
 
 type ipingData struct {
-	ISP        string `json:"isp"`
-	IsProxy    any    `json:"is_proxy"`
-	UsageType  string `json:"usage_type"`
-	RiskScore  any    `json:"risk_score"`
-	RiskTag    string `json:"risk_tag"`
-	ASN        string `json:"asn"`
-	ASOwner    string `json:"as_owner"`
+	ISP       string `json:"isp"`
+	IsProxy   any    `json:"is_proxy"`
+	UsageType string `json:"usage_type"`
+	RiskScore any    `json:"risk_score"`
+	RiskTag   string `json:"risk_tag"`
+	ASN       string `json:"asn"`
+	ASOwner   string `json:"as_owner"`
 }
 
 var nativeLatencyTargets = []nativeHTTPTarget{

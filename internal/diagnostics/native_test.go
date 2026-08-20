@@ -2,12 +2,18 @@ package diagnostics
 
 import (
 	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+type testRoundTripper func(*http.Request) (*http.Response, error)
+
+func (roundTripper testRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return roundTripper(request)
+}
 
 func TestNativeCatalogIsIndependentFromScripts(t *testing.T) {
 	catalog := nativeCatalog()
@@ -59,17 +65,26 @@ func TestNativeSummaryOnlyContainsProbeMetrics(t *testing.T) {
 }
 
 func TestIPingQueryMapsOnlySelectedMetrics(t *testing.T) {
+	previousHTTPClient := nativeHTTPClient
+	t.Cleanup(func() {
+		nativeHTTPClient = previousHTTPClient
+	})
+
 	var requestedIP string
 	var requestedLanguage string
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	nativeHTTPClient = &http.Client{Timeout: 20 * time.Second, Transport: testRoundTripper(func(request *http.Request) (*http.Response, error) {
 		requestedIP = request.URL.Query().Get("ip")
 		requestedLanguage = request.URL.Query().Get("language")
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"code":200,"data":{"ip":"203.0.113.10","isp":"Example ISP","is_proxy":"true","usage_type":"IDC","risk_score":97,"risk_tag":"proxy","asn":"AS64500","as_owner":"Example Network","company":"must-not-map","country":"JP"},"msg":"success"}`))
-	}))
-	defer server.Close()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"code":200,"data":{"ip":"203.0.113.10","isp":"Example ISP","is_proxy":"true","usage_type":"IDC","risk_score":97,"risk_tag":"proxy","asn":"AS64500","as_owner":"Example Network","company":"must-not-map","country":"JP"},"msg":"success"}`)),
+			Request:    request,
+		}, nil
+	})}
 
-	data, err := queryIPingEndpoint(context.Background(), "203.0.113.10", server.URL)
+	data, err := queryIPingEndpoint(context.Background(), "203.0.113.10", "http://iping.test/v1/query")
 	if err != nil {
 		t.Fatalf("queryIPingEndpoint() error = %v", err)
 	}
