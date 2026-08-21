@@ -53,6 +53,8 @@ interface SitesBindings {
   installProgress: Ref<SiteInstallationProgress | undefined>
   editorOpen: Ref<boolean>
   recentCreatedDomain: Ref<string>
+  deletingSite: Ref<Site | undefined>
+  deleteOpen: Ref<boolean>
   webTerminalOpen: Ref<boolean>
   webTerminalSession: Ref<{ sessionId: string } | undefined>
   capabilitiesLoaded: Ref<boolean>
@@ -68,6 +70,8 @@ interface SitesBindings {
   stopInstallationMonitor: () => void
   openWebTerminal: () => Promise<void>
   closeWebTerminal: () => void
+  openDelete: (site: Site) => void
+  deleteSite: () => Promise<void>
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -195,6 +199,37 @@ describe('SitesView creation experience', () => {
       'redirect',
     ])
     expect(view.recipeOptions).toHaveLength(10)
+  })
+
+  it('requires confirmation and then submits only the site identity for k web del', async () => {
+    const target = site('delete.example.com')
+    vi.mocked(api.sites.remove).mockResolvedValue({
+      id: target.id,
+      primaryDomain: target.primaryDomain,
+      status: 'deleted',
+      mode: 'full',
+      resourceVersion: target.resourceVersion,
+      removed: ['nginx_config', 'document_root'],
+      databaseDropped: false,
+    })
+    vi.mocked(api.sites.list).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(api.sites.installations).mockResolvedValue([])
+    vi.mocked(api.agent.capabilities).mockResolvedValue([])
+    vi.mocked(api.system.publicNetwork).mockRejectedValue(new Error('public network unavailable'))
+    const view = setupView()
+
+    view.openDelete(target)
+
+    expect(api.sites.remove).not.toHaveBeenCalled()
+    expect(view.deleteOpen.value).toBe(true)
+    expect(view.deletingSite.value).toEqual(target)
+
+    await view.deleteSite()
+
+    expect(api.sites.remove).toHaveBeenCalledOnce()
+    expect(api.sites.remove).toHaveBeenCalledWith(target.id, target.primaryDomain)
+    expect(view.deleteOpen.value).toBe(false)
+    expect(view.deletingSite.value).toBeUndefined()
   })
 
   it('returns to the list and highlights the newly created website first', async () => {

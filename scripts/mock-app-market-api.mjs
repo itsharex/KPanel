@@ -22,6 +22,7 @@ const installed = new Map([
 const adapted = new Set(['speedtest', 'it-tools', 'dosgame'])
 const appJobs = new Map()
 const diagnosticJobs = new Map()
+let domainSiteDeleted = false
 const diagnosticCatalog = {
   categories: [
     { id: 'core', name: 'KPanel 核心体检' },
@@ -715,7 +716,7 @@ createServer(async (request, response) => {
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/sites') {
     send(response, 200, {
-      items: [
+      items: domainSiteDeleted ? [] : [
         {
           id: 'c'.repeat(32),
           primaryDomain: 'tools.example.com',
@@ -727,9 +728,27 @@ createServer(async (request, response) => {
           origin: 'web',
           target: 'http://127.0.0.1:8064',
           resourceVersion: `sha256:${'d'.repeat(64)}`,
-          allowedActions: ['update'],
+          allowedActions: ['update', 'delete'],
         },
       ],
+    })
+    return
+  }
+  if (request.method === 'DELETE' && url.pathname === `/api/v1/sites/${'c'.repeat(32)}`) {
+    const input = await readJSON(request)
+    if (input.primaryDomain !== 'tools.example.com' || Object.keys(input).length !== 1) {
+      send(response, 422, { title: '站点域名无效', code: 'validation_failed' })
+      return
+    }
+    domainSiteDeleted = true
+    send(response, 200, {
+      id: 'c'.repeat(32),
+      primaryDomain: 'tools.example.com',
+      status: 'deleted',
+      mode: 'full',
+      resourceVersion: `sha256:${'d'.repeat(64)}`,
+      removed: ['nginx_config'],
+      databaseDropped: false,
     })
     return
   }
@@ -841,6 +860,7 @@ createServer(async (request, response) => {
     send(response, 200, {
       items: [
         { id: 'apps.install', enabled: true, methods: ['POST'] },
+        { id: 'sites.delete', enabled: true, methods: ['DELETE'] },
         { id: 'diagnostics.run', enabled: true, methods: ['GET', 'POST'] },
         { id: 'web.environment.read', enabled: true, methods: ['GET'] },
         { id: 'web.environment.install', enabled: true, methods: ['POST'] },

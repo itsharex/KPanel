@@ -25,12 +25,37 @@ type siteScriptDeleter interface {
 
 type kejilionSiteScriptDeleter struct{}
 
+func (kejilionSiteScriptDeleter) Available() error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("kejilion.sh website deletion requires Linux")
+	}
+	if _, err := findTrustedKejilionScript(
+		"web_del()",
+		`web_del "$@"`,
+		"KPANEL_DELETE_SITE",
+	); err != nil {
+		return err
+	}
+	_, err := findSystemdRun()
+	return err
+}
+
+func (m *Manager) DeleteWritable() error {
+	if m.scriptDeleter == nil {
+		return fmt.Errorf("k web del adapter is unavailable")
+	}
+	if checker, ok := m.scriptDeleter.(interface{ Available() error }); ok {
+		return checker.Available()
+	}
+	return nil
+}
+
 func (kejilionSiteScriptDeleter) Delete(
 	ctx context.Context,
 	domain string,
 ) (scriptDeleteOutcome, error) {
-	if runtime.GOOS != "linux" {
-		return scriptDeleteOutcome{}, fmt.Errorf("%w: kejilion.sh website deletion requires Linux", ErrUnavailable)
+	if err := (kejilionSiteScriptDeleter{}).Available(); err != nil {
+		return scriptDeleteOutcome{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	script, err := findTrustedKejilionScript(
 		"web_del()",
@@ -184,6 +209,8 @@ func parseScriptDeleteOutcome(output string) scriptDeleteOutcome {
 			result.warnings = append(result.warnings, "未检测到 MySQL 运行环境，数据库清理已跳过")
 		case line == "KPANEL_DELETE_WARNING nginx_unavailable":
 			result.warnings = append(result.warnings, "未检测到 Nginx 容器，站点产物已删除但无需执行重载")
+		case line == "Nginx 配置验证或重载失败":
+			result.warnings = append(result.warnings, "站点产物已删除，但 Nginx 配置验证或重载失败；请检查 Nginx 当前状态")
 		}
 	}
 	return result

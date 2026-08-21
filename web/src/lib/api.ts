@@ -1490,21 +1490,12 @@ export const api = {
       }),
     update: async (id: string, body: SiteInput): Promise<Site> =>
       normalizeSite(await request<RawSite>(`/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body })),
-    remove: (
-      id: string,
-      expectedResourceVersion: string | undefined,
-      mode: 'configuration' | 'full',
-      primaryDomain?: string,
-    ) =>
+    remove: (id: string, primaryDomain: string) =>
       request<SiteDeleteResult>(
         `/sites/${encodeURIComponent(id)}`,
         {
           method: 'DELETE',
-          body: {
-            ...(expectedResourceVersion ? { expectedResourceVersion } : {}),
-            mode,
-            ...(primaryDomain ? { primaryDomain } : {}),
-          },
+          body: { primaryDomain },
         },
       ),
   },

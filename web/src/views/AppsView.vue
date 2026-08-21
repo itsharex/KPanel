@@ -37,6 +37,7 @@ import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
 import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import AppInteractiveTerminal from '@/components/apps/AppInteractiveTerminal.vue'
+import SiteDeleteDialog from '@/components/sites/SiteDeleteDialog.vue'
 import { ApiError, api } from '@/lib/api'
 import { appAccessURL, matchingAppProxySites } from '@/lib/appAccess'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
@@ -69,6 +70,7 @@ const domain = ref('')
 const domainError = ref('')
 const domainWarning = ref('')
 const sitesWarning = ref('')
+const deletingDomainSite = ref<Site>()
 const operation = ref('')
 const confirmAction = ref<ConfirmAction>()
 const checkedUpdates = ref<Record<string, 'available' | 'current'>>({})
@@ -911,35 +913,35 @@ async function addDomain(): Promise<void> {
   }
 }
 
-async function removeDomain(site: Site): Promise<void> {
+function openDomainDelete(site: Site): void {
+  domainError.value = ''
+  deletingDomainSite.value = site
+}
+
+function closeDomainDelete(): void {
+  if (operation.value.startsWith('remove_domain:')) return
+  domainError.value = ''
+  deletingDomainSite.value = undefined
+}
+
+async function removeDomain(): Promise<void> {
+  const site = deletingDomainSite.value
+  if (!site) return
   if (applicationTaskActive.value) return
   operation.value = `remove_domain:${site.id}`
   domainError.value = ''
   domainWarning.value = ''
   try {
-    let removed = false
-    try {
-      await api.sites.remove(site.id, site.resourceVersion, 'configuration')
-      removed = true
-    } catch (reason) {
-      if (!(reason instanceof ApiError) || reason.code !== 'resource_conflict') throw reason
-      const refreshed = await api.sites.list()
-      sites.value = refreshed.items
-      const current = refreshed.items.find(
-        (candidate) =>
-          candidate.id === site.id ||
-          candidate.primaryDomain === site.primaryDomain,
-      )
-      if (current) {
-        await api.sites.remove(current.id, current.resourceVersion, 'configuration')
-      }
-      removed = true
-    }
-    if (!removed) return
-    toast.success('域名已解绑', `${site.primaryDomain} 的反向代理已移除。`)
+    const result = await api.sites.remove(site.id, site.primaryDomain)
+    deletingDomainSite.value = undefined
+    toast.success(
+      result.warnings?.length ? '域名站点已删除，存在残留项' : '域名站点已删除',
+      `${result.primaryDomain} 已通过 k web del 删除。` +
+        (result.warnings?.length ? ` ${result.warnings.join('；')}` : ''),
+    )
     await load(true)
   } catch (reason) {
-    domainError.value = reason instanceof ApiError ? reason.message : '域名解绑失败，原配置保持不变。'
+    domainError.value = reason instanceof ApiError ? reason.message : '域名站点删除失败，请核对 kejilion.sh 原始站点产物。'
   } finally {
     operation.value = ''
   }
@@ -1205,7 +1207,7 @@ watch(windowActive, syncJobPollingForWindow)
     </footer>
 
     <ModalDialog
-      :open="Boolean(selected) && !installOpen && !confirmAction"
+      :open="Boolean(selected) && !installOpen && !confirmAction && !deletingDomainSite"
       :title="selected ? appName(selected) : '应用详情'"
       :description="selected ? appDescription(selected) : ''"
       size="wide"
@@ -1362,7 +1364,7 @@ watch(windowActive, syncJobPollingForWindow)
                   type="button"
                   :disabled="Boolean(operation) || applicationTaskActive"
                   aria-label="解绑域名"
-                  @click="removeDomain(site)"
+                  @click="openDomainDelete(site)"
                 >
                   <LoaderCircle v-if="operation === `remove_domain:${site.id}`" class="spin" :size="14" />
                   <Trash2 v-else :size="14" />
@@ -1446,6 +1448,15 @@ watch(windowActive, syncJobPollingForWindow)
         </section>
       </template>
     </ModalDialog>
+
+    <SiteDeleteDialog
+      :open="Boolean(deletingDomainSite)"
+      :site="deletingDomainSite"
+      :deleting="Boolean(deletingDomainSite && operation === `remove_domain:${deletingDomainSite.id}`)"
+      :error="domainError"
+      @close="closeDomainDelete"
+      @confirm="removeDomain"
+    />
 
     <ModalDialog
       :open="installOpen && Boolean(selected)"

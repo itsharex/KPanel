@@ -309,6 +309,30 @@ func TestSystemWriteCapabilitiesRemainExplicitlyDisabled(t *testing.T) {
 	}
 }
 
+func TestSiteDeleteCapabilityUsesDedicatedDeleteMethod(t *testing.T) {
+	server := testServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var result contract.PageResult[contract.Capability]
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range result.Items {
+		if capability.ID == "sites.delete" {
+			if len(capability.Methods) != 1 || capability.Methods[0] != http.MethodDelete {
+				t.Fatalf("unexpected site deletion methods: %#v", capability)
+			}
+			return
+		}
+	}
+	t.Fatal("sites.delete capability not reported")
+}
+
 func TestSystemProcessesRejectsUnboundedQueriesBeforeCollection(t *testing.T) {
 	server := testServer(t)
 	for _, target := range []string{

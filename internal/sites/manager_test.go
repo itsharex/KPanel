@@ -211,18 +211,18 @@ func TestCreateAllSupportedSiteServices(t *testing.T) {
 	}
 }
 
-func TestDeleteManagedProxyRemovesOnlyCanonicalConfig(t *testing.T) {
-	manager, nginx, root := newTestManager(t)
+func TestDeleteManagedProxyUsesKWebDel(t *testing.T) {
+	manager, _, root := newTestManager(t)
 	created, err := manager.Create(context.Background(), SiteInput{
 		PrimaryDomain: "app.example.com", Type: "proxy", Upstream: "http://127.0.0.1:8064",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	runner := &fakeSiteScriptDeleter{root: root}
+	manager.scriptDeleter = runner
 	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
-		ExpectedResourceVersion: created.ResourceVersion,
-		Mode:                    "configuration",
-		PrimaryDomain:           created.PrimaryDomain,
+		PrimaryDomain: created.PrimaryDomain,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -233,12 +233,12 @@ func TestDeleteManagedProxyRemovesOnlyCanonicalConfig(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "conf.d", "app.example.com.conf")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("proxy config still exists: %v", err)
 	}
-	if nginx.tests != 3 || nginx.reloads != 2 {
-		t.Fatalf("nginx calls tests=%d reloads=%d, want 3/2", nginx.tests, nginx.reloads)
+	if runner.domain != created.PrimaryDomain || result.Mode != "full" {
+		t.Fatalf("proxy delete bypassed k web del: result=%#v runner=%#v", result, runner)
 	}
 }
 
-func TestDeleteManagedStaticConfigurationPreservesContent(t *testing.T) {
+func TestDeleteManagedStaticRemovesCompleteKWebSite(t *testing.T) {
 	manager, _, root := newTestManager(t)
 	created, err := manager.Create(context.Background(), SiteInput{
 		PrimaryDomain: "static-delete.example.com", Type: "static",
@@ -246,23 +246,19 @@ func TestDeleteManagedStaticConfigurationPreservesContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
-		ExpectedResourceVersion: created.ResourceVersion,
-		Mode:                    "configuration",
-		PrimaryDomain:           created.PrimaryDomain,
-	})
+	manager.scriptDeleter = &fakeSiteScriptDeleter{root: root}
+	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{PrimaryDomain: created.PrimaryDomain})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Mode != "configuration" || len(result.Removed) != 1 ||
-		result.Removed[0] != "nginx_config" {
+	if result.Mode != "full" || len(result.Removed) != 2 {
 		t.Fatalf("unexpected delete result: %#v", result)
 	}
 	if _, err := os.Stat(filepath.Join(root, "conf.d", "static-delete.example.com.conf")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("static config still exists: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "html", "static-delete.example.com", "index.html")); err != nil {
-		t.Fatalf("configuration-only delete removed content: %v", err)
+	if _, err := os.Stat(filepath.Join(root, "html", "static-delete.example.com")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("k web del left static content: %v", err)
 	}
 }
 
@@ -284,7 +280,6 @@ func TestFullDeleteWithoutResourceVersionUsesKWebDel(t *testing.T) {
 	manager.scriptDeleter = runner
 
 	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
-		Mode:          "full",
 		PrimaryDomain: created.PrimaryDomain,
 	})
 	if err != nil {
@@ -314,7 +309,6 @@ func TestFullDeleteWithoutResourceVersionRejectsDomainMismatch(t *testing.T) {
 	manager.scriptDeleter = runner
 
 	_, err = manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
-		Mode:          "full",
 		PrimaryDomain: "other.example.com",
 	})
 	if !errors.Is(err, ErrConflict) {
@@ -325,9 +319,8 @@ func TestFullDeleteWithoutResourceVersionRejectsDomainMismatch(t *testing.T) {
 	}
 }
 
-func TestDeleteManagedPHPFullRemovesKWebArtifactsAndDatabase(t *testing.T) {
-	manager, nginx, root := newTestManager(t)
-	nginx.dropResult = true
+func TestDeleteManagedPHPUsesScriptDatabaseOutcome(t *testing.T) {
+	manager, _, root := newTestManager(t)
 	created, err := manager.Create(context.Background(), SiteInput{
 		PrimaryDomain: "php-delete.example.com", Type: "php", PHPVersion: "latest",
 	})
@@ -343,17 +336,14 @@ func TestDeleteManagedPHPFullRemovesKWebArtifactsAndDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
-		ExpectedResourceVersion: created.ResourceVersion,
-		Mode:                    "full",
-		PrimaryDomain:           created.PrimaryDomain,
-	})
+	runner := &fakeSiteScriptDeleter{root: root, outcome: scriptDeleteOutcome{databaseDropped: true}}
+	manager.scriptDeleter = runner
+	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{PrimaryDomain: created.PrimaryDomain})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Mode != "full" || !result.DatabaseDropped ||
-		nginx.dropDomain != created.PrimaryDomain || len(result.Removed) != 4 {
-		t.Fatalf("unexpected full delete result: result=%#v runtime=%#v", result, nginx)
+	if result.Mode != "full" || !result.DatabaseDropped || runner.domain != created.PrimaryDomain || len(result.Removed) != 4 {
+		t.Fatalf("unexpected script delete result: result=%#v runner=%#v", result, runner)
 	}
 	for _, path := range []string{
 		filepath.Join(root, "conf.d", created.PrimaryDomain+".conf"),
@@ -376,10 +366,8 @@ func TestFullDeleteDoesNotRequireDatabaseAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
-		ExpectedResourceVersion: created.ResourceVersion,
-		Mode:                    "full",
-	})
+	manager.scriptDeleter = &fakeSiteScriptDeleter{root: root}
+	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{PrimaryDomain: created.PrimaryDomain})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,23 +379,23 @@ func TestFullDeleteDoesNotRequireDatabaseAdapter(t *testing.T) {
 	}
 }
 
-func TestFullDeleteReportsDatabaseFailureWithoutRestoringSite(t *testing.T) {
-	manager, nginx, root := newTestManager(t)
-	nginx.dropErr = errors.New("database offline")
+func TestScriptDeleteReportsDatabaseFailureWithoutRestoringSite(t *testing.T) {
+	manager, _, root := newTestManager(t)
 	created, err := manager.Create(context.Background(), SiteInput{
 		PrimaryDomain: "db-warning.example.com", Type: "php", PHPVersion: "latest",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
-		ExpectedResourceVersion: created.ResourceVersion,
-		Mode:                    "full",
-	})
+	manager.scriptDeleter = &fakeSiteScriptDeleter{
+		root:    root,
+		outcome: scriptDeleteOutcome{warnings: []string{"站点已删除，但同名数据库删除失败"}},
+	}
+	result, err := manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{PrimaryDomain: created.PrimaryDomain})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "database offline") {
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "数据库删除失败") {
 		t.Fatalf("database cleanup warning = %#v", result.Warnings)
 	}
 	for _, path := range []string{
@@ -436,6 +424,18 @@ func TestParseScriptDeleteOutcomeTreatsDeletedSiteWithDatabaseFailureAsPartialSu
 	}
 }
 
+func TestParseScriptDeleteOutcomeReportsNginxReloadFailure(t *testing.T) {
+	outcome := parseScriptDeleteOutcome(strings.Join([]string{
+		"KPANEL_DELETE_SITE deleted reload.example.com",
+		"Nginx 配置验证或重载失败",
+	}, "\n"))
+
+	if !outcome.siteDeleted || len(outcome.warnings) != 1 ||
+		!strings.Contains(outcome.warnings[0], "Nginx 配置验证或重载失败") {
+		t.Fatalf("Nginx partial delete outcome = %#v", outcome)
+	}
+}
+
 func TestOrphanWebsiteArtifactCanBeDeleted(t *testing.T) {
 	manager, nginx, root := newTestManager(t)
 	orphanRoot := filepath.Join(root, "html", "orphan.example.com")
@@ -459,10 +459,8 @@ func TestOrphanWebsiteArtifactCanBeDeleted(t *testing.T) {
 	if orphan.ID == "" || !containsString(orphan.AllowedActions, "delete") {
 		t.Fatalf("orphan artifact was not actionable: %#v", orphan)
 	}
-	if _, err := manager.DeleteWithOptions(context.Background(), orphan.ID, DeleteInput{
-		ExpectedResourceVersion: orphan.ResourceVersion,
-		Mode:                    "full",
-	}); err != nil {
+	manager.scriptDeleter = &fakeSiteScriptDeleter{root: root}
+	if _, err := manager.DeleteWithOptions(context.Background(), orphan.ID, DeleteInput{PrimaryDomain: orphan.PrimaryDomain}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(orphanRoot); !errors.Is(err, os.ErrNotExist) {
@@ -473,8 +471,8 @@ func TestOrphanWebsiteArtifactCanBeDeleted(t *testing.T) {
 	}
 }
 
-func TestDeleteDoesNotRequireTypedConfirmationAndRollsBackFailedCandidate(t *testing.T) {
-	manager, nginx, root := newTestManager(t)
+func TestDeleteScriptFailurePreservesExistingSite(t *testing.T) {
+	manager, _, root := newTestManager(t)
 	created, err := manager.Create(context.Background(), SiteInput{
 		PrimaryDomain: "rollback-delete.example.com", Type: "static",
 	})
@@ -484,16 +482,10 @@ func TestDeleteDoesNotRequireTypedConfirmationAndRollsBackFailedCandidate(t *tes
 	configPath := filepath.Join(root, "conf.d", created.PrimaryDomain+".conf")
 	indexPath := filepath.Join(root, "html", created.PrimaryDomain, "index.html")
 
-	nginx.mu.Lock()
-	nginx.testErrs = make([]error, nginx.tests+1)
-	nginx.testErrs[nginx.tests] = errors.New("candidate rejected")
-	nginx.mu.Unlock()
-	_, err = manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{
-		ExpectedResourceVersion: created.ResourceVersion,
-		Mode:                    "full",
-	})
-	if !errors.Is(err, ErrUnprocessable) {
-		t.Fatalf("candidate failure error = %v, want ErrUnprocessable", err)
+	manager.scriptDeleter = &fakeSiteScriptDeleter{err: errors.New("script rejected deletion")}
+	_, err = manager.DeleteWithOptions(context.Background(), created.ID, DeleteInput{PrimaryDomain: created.PrimaryDomain})
+	if err == nil || !strings.Contains(err.Error(), "script rejected deletion") {
+		t.Fatalf("script failure error = %v", err)
 	}
 	for _, path := range []string{configPath, indexPath} {
 		if _, statErr := os.Stat(path); statErr != nil {

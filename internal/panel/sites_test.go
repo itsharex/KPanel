@@ -145,7 +145,7 @@ func TestSiteCreateProxiesAgentProblemAndAuditsSafeMetadata(t *testing.T) {
 	}
 }
 
-func TestSiteDeleteRequiresExplicitScopeWithoutConfirmationGate(t *testing.T) {
+func TestSiteDeleteRequiresDomainAndForwardsOnlyKWebDelIdentity(t *testing.T) {
 	server, tokenPath := newTestServer(t)
 	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
 	version := "sha256:" + strings.Repeat("b", 64)
@@ -171,7 +171,7 @@ func TestSiteDeleteRequiresExplicitScopeWithoutConfirmationGate(t *testing.T) {
 		csrfCookie,
 		http.MethodDelete,
 		"/api/v1/sites/"+id,
-		[]byte(`{"expectedResourceVersion":"`+version+`"}`),
+		[]byte(`{}`),
 		true,
 	)
 	if invalid.Code != http.StatusUnprocessableEntity {
@@ -187,10 +187,7 @@ func TestSiteDeleteRequiresExplicitScopeWithoutConfirmationGate(t *testing.T) {
 		csrfCookie,
 		http.MethodDelete,
 		"/api/v1/sites/"+id,
-		[]byte(`{
-			"mode":"full",
-			"primaryDomain":"example.com"
-		}`),
+		[]byte(`{"primaryDomain":"example.com"}`),
 		true,
 	)
 	if response.Code != http.StatusOK {
@@ -205,23 +202,16 @@ func TestSiteDeleteRequiresExplicitScopeWithoutConfirmationGate(t *testing.T) {
 	if err := json.Unmarshal(calls[0].body, &forwarded); err != nil {
 		t.Fatal(err)
 	}
-	if forwarded["mode"] != "full" ||
-		forwarded["primaryDomain"] != "example.com" {
+	if forwarded["primaryDomain"] != "example.com" || len(forwarded) != 1 {
 		t.Fatalf("unexpected delete payload: %#v", forwarded)
-	}
-	if _, present := forwarded["expectedResourceVersion"]; present {
-		t.Fatalf("script-backed full delete unexpectedly required a resource version: %#v", forwarded)
-	}
-	if _, present := forwarded["confirmDomain"]; present {
-		t.Fatalf("delete payload still requires a typed confirmation: %#v", forwarded)
 	}
 	events, _ := server.store.ListAudit(20, "")
 	for _, event := range events {
 		if event.Action != "site.delete" {
 			continue
 		}
-		if _, leaked := event.Change["confirmDomain"]; leaked {
-			t.Fatalf("confirmation domain leaked into audit metadata: %#v", event.Change)
+		if event.Change["primaryDomain"] != "example.com" || len(event.Change) != 1 {
+			t.Fatalf("unexpected deletion audit metadata: %#v", event.Change)
 		}
 	}
 }

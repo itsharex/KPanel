@@ -40,6 +40,7 @@ import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import SitesSectionTabs from '@/components/sites/SitesSectionTabs.vue'
 import SiteFavicon from '@/components/sites/SiteFavicon.vue'
 import SiteAppearanceName from '@/components/sites/SiteAppearanceName.vue'
+import SiteDeleteDialog from '@/components/sites/SiteDeleteDialog.vue'
 import { ApiError, api, isTransientAgentError } from '@/lib/api'
 import { formatDateTime, relativeTime, shortId } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
@@ -73,7 +74,6 @@ const installationPanel = ref<HTMLElement>()
 const recentCreatedDomain = ref('')
 const deleteOpen = ref(false)
 const deletingSite = ref<Site>()
-const deleteMode = ref<'configuration' | 'full'>('configuration')
 const deleteError = ref('')
 const deleting = ref(false)
 const webTerminalOpen = ref(false)
@@ -327,7 +327,11 @@ const recipeCapability = computed(() =>
 const templateCapability = computed(() =>
   capabilities.value.find((capability) => capability.id === 'sites.templates.install'),
 )
+const deleteCapability = computed(() =>
+  capabilities.value.find((capability) => capability.id === 'sites.delete'),
+)
 const canCreate = computed(() => siteWriteCapability.value?.enabled === true)
+const canDelete = computed(() => deleteCapability.value?.enabled === true)
 const canInstallWordPress = computed(() => wordPressCapability.value?.enabled === true)
 const canInstallProxy = computed(() => proxyCapability.value?.enabled === true)
 const canInstallRecipes = computed(() => recipeCapability.value?.enabled === true)
@@ -351,6 +355,13 @@ const siteWriteReason = computed(
     (siteWriteCapability.value
       ? 'Agent 当前缺少网站写入依赖。'
       : '未从 Agent 获取网站写入能力状态，请检查 Agent 连接与版本。'),
+)
+const siteDeleteReason = computed(
+  () =>
+    deleteCapability.value?.reason?.trim() ||
+    (deleteCapability.value
+      ? 'Agent 当前无法调用 kejilion.sh 网站删除协议。'
+      : '未从 Agent 获取网站删除能力状态，请检查 Agent 连接与版本。'),
 )
 
 const filteredSites = computed(() => {
@@ -813,7 +824,6 @@ async function submitSite(): Promise<void> {
 
 function openDelete(site: Site): void {
   deletingSite.value = site
-  deleteMode.value = 'configuration'
   deleteError.value = ''
   selectedSite.value = undefined
   deleteOpen.value = true
@@ -825,46 +835,17 @@ async function deleteSite(): Promise<void> {
   deleting.value = true
   deleteError.value = ''
   try {
-    let resourceVersion: string | undefined
-    if (deleteMode.value === 'configuration') {
-      resourceVersion = site.resourceVersion
-      if (!/^sha256:[a-f0-9]{64}$/.test(resourceVersion)) {
-        const refreshed = await api.sites.list()
-        const current = refreshed.items.find((item) => item.id === site.id)
-        resourceVersion = current?.resourceVersion || ''
-      }
-      if (!/^sha256:[a-f0-9]{64}$/.test(resourceVersion)) {
-        throw new ApiError('无法读取站点当前版本，请刷新页面后重试。', 422, 'site_version_unavailable')
-      }
-    }
-    const result = await api.sites.remove(
-      site.id,
-      resourceVersion,
-      deleteMode.value,
-      deleteMode.value === 'full' ? site.primaryDomain : undefined,
-    )
+    const result = await api.sites.remove(site.id, site.primaryDomain)
     deleteOpen.value = false
     deletingSite.value = undefined
     toast.success(
-      deleteMode.value === 'full'
-        ? result.warnings?.length
-          ? '站点已删除，存在残留项'
-          : '站点数据已删除'
-        : '网站配置已移除',
-      (deleteMode.value === 'full'
-        ? `${result.primaryDomain} 已按 k web 业务清理。`
-        : `${result.primaryDomain} 的 Nginx 访问配置已移除，网站目录、证书和数据库均已保留。`) +
+      result.warnings?.length ? '站点已删除，存在残留项' : '站点数据已删除',
+      `${result.primaryDomain} 已通过 k web del 删除。` +
         (result.warnings?.length ? ` ${result.warnings.join('；')}` : ''),
     )
     await load(true)
   } catch (reason) {
-    const message = reason instanceof ApiError ? reason.message : '删除失败，原网站产物已尽可能恢复。'
-    if (deleteMode.value === 'full' && message.includes('KPANEL_DELETE_SITE deleted')) {
-      deleteError.value = '站点文件已删除，但数据库清理失败；站点列表已刷新，请在数据库中核对并手动清理残留。'
-      await load(true)
-    } else {
-      deleteError.value = message
-    }
+    deleteError.value = reason instanceof ApiError ? reason.message : '删除失败，请核对 kejilion.sh 原始站点产物。'
   } finally {
     deleting.value = false
   }
@@ -1099,8 +1080,8 @@ onBeforeUnmount(() => {
                   v-if="site.allowedActions?.includes('delete')"
                   class="button button--ghost button--small button--danger-text"
                   type="button"
-                  :disabled="panel.isReadOnly.value || !canCreate"
-                  :title="!canCreate ? siteWriteReason : ''"
+                  :disabled="panel.isReadOnly.value || !canDelete"
+                  :title="!canDelete ? siteDeleteReason : ''"
                   @click="openDelete(site)"
                 >
                   删除
@@ -1219,8 +1200,8 @@ onBeforeUnmount(() => {
           v-if="selectedSite?.allowedActions?.includes('delete')"
           class="button button--ghost button--danger-text"
           type="button"
-          :disabled="panel.isReadOnly.value || !canCreate"
-          :title="!canCreate ? siteWriteReason : ''"
+          :disabled="panel.isReadOnly.value || !canDelete"
+          :title="!canDelete ? siteDeleteReason : ''"
           @click="openDelete(selectedSite)"
         >
           <Trash2 :size="16" /> 删除站点
@@ -1239,58 +1220,14 @@ onBeforeUnmount(() => {
       </template>
     </ModalDialog>
 
-    <ModalDialog
-      :open="deleteOpen && Boolean(deletingSite)"
-      :title="`删除 ${deletingSite?.primaryDomain || ''}`"
-      description="按当前实际配置文件执行；提交后先撤下配置，通过 nginx -t 后再 reload，失败自动恢复。"
-      size="small"
-      @close="!deleting && (deleteOpen = false)"
-    >
-      <form id="site-delete-form" class="form-stack" @submit.prevent="deleteSite">
-        <div v-if="deleteError" class="inline-alert inline-alert--danger" role="alert">{{ deleteError }}</div>
-
-        <fieldset class="delete-mode-grid">
-          <legend>删除范围</legend>
-          <button
-            type="button"
-            :class="{ 'is-active': deleteMode === 'configuration' }"
-            @click="deleteMode = 'configuration'"
-          >
-            <strong>仅移除网站配置</strong>
-            <small>删除 Nginx 入口；保留网站目录、证书和数据库，便于重新绑定。</small>
-          </button>
-          <button
-            type="button"
-            :class="{ 'is-active': deleteMode === 'full' }"
-            @click="deleteMode = 'full'"
-          >
-            <strong>按 k web 完整删除</strong>
-            <small>同时删除该域名的网站目录、证书和同名数据库（若存在），与 k web 删除产物一致。</small>
-          </button>
-        </fieldset>
-
-        <div v-if="deleteMode === 'full'" class="inline-alert inline-alert--danger">
-          <TriangleAlert :size="17" />
-          <span>完整删除不可从面板撤销。请先确认网站数据已有独立备份。</span>
-        </div>
-
-      </form>
-      <template #footer>
-        <button class="button button--secondary" type="button" :disabled="deleting" @click="deleteOpen = false">
-          取消
-        </button>
-        <button
-          class="button button--danger"
-          type="submit"
-          form="site-delete-form"
-          :disabled="deleting"
-        >
-          <LoaderCircle v-if="deleting" class="spin" :size="16" />
-          <Trash2 v-else :size="16" />
-          {{ deleting ? '正在删除…' : deleteMode === 'full' ? '完整删除站点' : '移除网站配置' }}
-        </button>
-      </template>
-    </ModalDialog>
+    <SiteDeleteDialog
+      :open="deleteOpen"
+      :site="deletingSite"
+      :deleting="deleting"
+      :error="deleteError"
+      @close="deleteOpen = false"
+      @confirm="deleteSite"
+    />
 
     <ModalDialog
       :open="editorOpen"

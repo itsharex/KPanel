@@ -1082,7 +1082,7 @@ export interface SiteDeleteResult {
   id: string
   primaryDomain: string
   status: 'deleted'
-  mode: 'configuration' | 'full'
+  mode: 'full'
   resourceVersion: string
   removed: string[]
   databaseDropped: boolean

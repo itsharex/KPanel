@@ -288,7 +288,7 @@ describe('API client', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(api.sites.remove(id, undefined, 'full', 'example.com')).resolves.toMatchObject({
+    await expect(api.sites.remove(id, 'example.com')).resolves.toMatchObject({
       status: 'deleted',
       mode: 'full',
       primaryDomain: 'example.com',
@@ -297,7 +297,6 @@ describe('API client', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/sites/${id}`)
     expect(requestInit.method).toBe('DELETE')
     expect(JSON.parse(String(requestInit.body))).toEqual({
-      mode: 'full',
       primaryDomain: 'example.com',
     })
   })
@@ -312,7 +311,7 @@ describe('API client', () => {
             status: 422,
             code: 'validation_failed',
             fieldErrors: {
-              expectedResourceVersion: '站点状态已变化，请刷新后重试。',
+              primaryDomain: '站点域名无效，请刷新后重试。',
             },
           },
           { status: 422 },
@@ -320,8 +319,8 @@ describe('API client', () => {
       ),
     )
 
-    await expect(api.sites.remove('a'.repeat(32), '', 'full')).rejects.toMatchObject({
-      message: '站点状态已变化，请刷新后重试。',
+    await expect(api.sites.remove('a'.repeat(32), 'example.com')).rejects.toMatchObject({
+      message: '站点域名无效，请刷新后重试。',
     })
   })
 

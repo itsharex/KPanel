@@ -249,60 +249,28 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		ExpectedResourceVersion optionalString `json:"expectedResourceVersion"`
-		Mode                    optionalString `json:"mode"`
-		PrimaryDomain           optionalString `json:"primaryDomain"`
+		PrimaryDomain optionalString `json:"primaryDomain"`
 	}
 	if err := s.decodeJSON(w, r, &input); err != nil {
 		return
 	}
-	if input.ExpectedResourceVersion.Set &&
-		!resourceVersionPattern.MatchString(input.ExpectedResourceVersion.Value) {
-		s.writeValidationProblem(w, r, "expectedResourceVersion", "a valid expectedResourceVersion is required")
+	if !input.PrimaryDomain.Set {
+		s.writeValidationProblem(w, r, "primaryDomain", "primaryDomain is required for site deletion")
 		return
 	}
-	if !input.Mode.Set ||
-		(input.Mode.Value != "configuration" && input.Mode.Value != "full") {
-		s.writeValidationProblem(w, r, "mode", "mode must be configuration or full")
+	normalized, valid := normalizePanelSiteDomain(input.PrimaryDomain.Value)
+	if !valid {
+		s.writeValidationProblem(w, r, "primaryDomain", "primaryDomain must be a valid ASCII domain")
 		return
 	}
-	if input.Mode.Value == "configuration" && !input.ExpectedResourceVersion.Set {
-		s.writeValidationProblem(w, r, "expectedResourceVersion", "expectedResourceVersion is required for configuration deletion")
-		return
-	}
-	if input.Mode.Value == "full" {
-		if !input.PrimaryDomain.Set {
-			s.writeValidationProblem(w, r, "primaryDomain", "primaryDomain is required for full deletion")
-			return
-		}
-		normalized, valid := normalizePanelSiteDomain(input.PrimaryDomain.Value)
-		if !valid {
-			s.writeValidationProblem(w, r, "primaryDomain", "primaryDomain must be a valid ASCII domain")
-			return
-		}
-		input.PrimaryDomain.Value = normalized
-	}
-	payload := map[string]string{"mode": input.Mode.Value}
-	if input.ExpectedResourceVersion.Set {
-		payload["expectedResourceVersion"] = input.ExpectedResourceVersion.Value
-	}
-	if input.PrimaryDomain.Set {
-		payload["primaryDomain"] = input.PrimaryDomain.Value
-	}
+	input.PrimaryDomain.Value = normalized
+	payload := map[string]string{"primaryDomain": input.PrimaryDomain.Value}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		s.writeProblem(w, r, http.StatusInternalServerError, "request_encoding_failed", "Request encoding failed", "")
 		return
 	}
-	change := map[string]any{
-		"mode": input.Mode.Value,
-	}
-	if input.ExpectedResourceVersion.Set {
-		change["resourceVersion"] = input.ExpectedResourceVersion.Value
-	}
-	if input.PrimaryDomain.Set {
-		change["primaryDomain"] = input.PrimaryDomain.Value
-	}
+	change := map[string]any{"primaryDomain": input.PrimaryDomain.Value}
 	if err := s.audit(r, session.User.ID, "site.delete", "site", siteID, "intent", change); err != nil {
 		s.writeProblem(w, r, http.StatusServiceUnavailable, "audit_unavailable", "Audit storage unavailable", "")
 		return

@@ -12,6 +12,7 @@
 | ID | 业务与 KPanel 入口 | `kejilion.sh` 权威来源 | 当前方式 | 状态与发布要求 |
 | --- | --- | --- | --- | --- |
 | `website-nginx-create` | 静态站、PHP、域名反代、负载均衡、跳转的新建入口 | `k static-site`、`k php-site`、`k domain-proxy`、`k loadbalance-site`、`k redirect-site`；分别固定映射 `k web` 的 30、20、24、28、22 | 面板只提交首个域名；后台 PTY 直接执行可信脚本，源码、入口路径、上游和跳转目标继续由脚本原生交互询问 | **已合规（代码链路）**：关闭窗口不终止任务；完成状态以脚本凭据、Nginx 配置和真实产物对账共同确认，发布前仍需目标机逐模板实测 |
+| `website-delete` | 网站管理删除站点、应用市场解绑域名 | `k web del <域名>`；`web_del()` 与 `KPANEL_DELETE_SITE` / `KPANEL_DELETE_DATABASE` 机器回执 | 两个入口只提交实际站点 ID 与规范化主域名；Agent 核对身份后通过受限 systemd 单元固定调用可信脚本，并在返回后复核站点目录、Nginx 配置和证书均已移除 | **已合规（代码链路，待隔离 L2）**：不保留仅删 Nginx 的第二路径；数据库失败按脚本回执报告部分成功，正式发布前须在隔离主机验证静态站、PHP 站和应用反代域名闭环 |
 | `website-nginx-edit` | 已有静态站、PHP、域名反代、负载均衡、跳转的结构化编辑；`internal/sites/managed_template.go` | `k web` 与脚本官方模板 | KPanel 历史 `renderManagedConfig()` 自行拼接，仅保留旧站兼容维护 | **不合规/冻结**：本次不扩展；后续须迁移到脚本同源编辑协议 |
 | `reverse-proxy-ip-port` | IP+端口反向代理；网站页热门入口 | `k fd <domain> <host> <port>`；`ldnmp_Proxy` 与 `reverse-proxy-backend.conf` | Go 后台 PTY 任务直接执行本机可信脚本命令，域名和固定上游参数由面板传入，其余提示可交互输入；完成后发现 `/home/web` 产物 | **已合规（代码链路）**：发布前仍需目标机实测创建、脚本管理、面板管理与删除 |
 | `wordpress-flow` | WordPress；网站页热门入口 | `k wp <domain>`；`ldnmp_wp`、LDNMP、证书、数据库、`wordpress.com.conf` 和脚本源码地址 | Go 后台 PTY 任务直接执行本机可信脚本命令，KPanel 不再先进入 `k web` 菜单，也不维护第二套 WordPress 安装器 | **已合规（代码链路）**：发布前仍需目标机实测创建、脚本管理、面板管理与删除 |

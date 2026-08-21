@@ -106,6 +106,7 @@ interface AppsBindings {
   domainError: Ref<string>
   domainWarning: Ref<string>
   sitesWarning: Ref<string>
+  deletingDomainSite: Ref<Site | undefined>
   checkedUpdates: Ref<Record<string, 'available' | 'current'>>
   activeJob: Ref<AppInstallJob | undefined>
   jobDetailsOpen: Ref<boolean>
@@ -123,7 +124,8 @@ interface AppsBindings {
   syncJobPollingForWindow: (active: boolean) => void
   revealInstalledApp: (appID: string) => Promise<void>
   addDomain: () => Promise<void>
-  removeDomain: (site: Site) => Promise<void>
+  openDomainDelete: (site: Site) => void
+  removeDomain: () => Promise<void>
   toggleAccess: () => Promise<void>
   openScriptManage: () => Promise<void>
   requestCancelJob: () => void
@@ -612,36 +614,27 @@ describe('AppsView domain binding', () => {
     expect(view.sitesWarning.value).toContain('当前显示上次成功读取的结果')
   })
 
-  it('refreshes a stale site version and retries domain removal once', async () => {
-    const stale = proxySite()
-    const fresh = { ...stale, resourceVersion: 'fresh-site-version' }
-    mocks.removeSite
-      .mockRejectedValueOnce(new ApiError('site resourceVersion changed', 409, 'resource_conflict'))
-      .mockResolvedValueOnce({ primaryDomain: stale.primaryDomain })
-    mocks.listSites
-      .mockResolvedValueOnce({ items: [fresh], total: 1 })
-      .mockResolvedValueOnce({ items: [], total: 0 })
+  it('requires confirmation before deleting an application domain through k web del', async () => {
+    const bound = proxySite()
+    mocks.removeSite.mockResolvedValueOnce({ primaryDomain: bound.primaryDomain, warnings: [] })
+    mocks.listSites.mockResolvedValueOnce({ items: [], total: 0 })
     mocks.inventory.mockResolvedValueOnce(inventory('current-version'))
     mocks.publicNetwork.mockResolvedValueOnce(undefined)
     const view = setupView()
     view.inventory.value = inventory('current-version')
     view.selectedID.value = 'builtin-13'
-    view.sites.value = [stale]
+    view.sites.value = [bound]
 
-    await view.removeDomain(stale)
+    view.openDomainDelete(bound)
 
-    expect(mocks.removeSite).toHaveBeenNthCalledWith(
-      1,
-      stale.id,
-      'site-version',
-      'configuration',
-    )
-    expect(mocks.removeSite).toHaveBeenNthCalledWith(
-      2,
-      fresh.id,
-      'fresh-site-version',
-      'configuration',
-    )
+    expect(mocks.removeSite).not.toHaveBeenCalled()
+    expect(view.deletingDomainSite.value).toEqual(bound)
+
+    await view.removeDomain()
+
+    expect(mocks.removeSite).toHaveBeenCalledOnce()
+    expect(mocks.removeSite).toHaveBeenCalledWith(bound.id, bound.primaryDomain)
+    expect(view.deletingDomainSite.value).toBeUndefined()
     expect(view.domainError.value).toBe('')
   })
 

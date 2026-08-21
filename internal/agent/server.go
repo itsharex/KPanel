@@ -429,13 +429,14 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		proxyWriteErr      error
 		recipeWriteErr     error
 		templateWriteErr   error
+		siteDeleteErr      error
 		diagnosticErr      = errors.New("体检服务未配置")
 		environmentReadErr = errors.New("LDNMP 环境读取服务未配置")
 		environmentErr     = errors.New("LDNMP 环境服务未配置")
 		fileErr            = errors.New("文件管理服务未配置")
 	)
 	var checks sync.WaitGroup
-	checks.Add(10)
+	checks.Add(11)
 	go func() {
 		defer checks.Done()
 		pingContext, pingCancel := context.WithTimeout(ctx, 800*time.Millisecond)
@@ -465,6 +466,10 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer checks.Done()
 		templateWriteErr = s.sitesManager.TemplateWritable()
+	}()
+	go func() {
+		defer checks.Done()
+		siteDeleteErr = s.sitesManager.DeleteWritable()
 	}()
 	go func() {
 		defer checks.Done()
@@ -503,6 +508,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		{ID: "nginx.validate", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"GET"}},
 		{ID: "nginx.reload", Enabled: dockerAvailable, Reason: reasonUnless(dockerAvailable, "Docker Engine 不可用"), Methods: []string{"POST"}},
 		{ID: "sites.write", Enabled: siteWriteErr == nil, Reason: reasonIf(siteWriteErr, "网站写入依赖未就绪"), Methods: []string{"POST", "PATCH"}},
+		{ID: "sites.delete", Enabled: siteDeleteErr == nil, Reason: reasonIf(siteDeleteErr, "kejilion.sh 网站删除协议不可用"), Methods: []string{"DELETE"}},
 		{ID: "sites.wordpress.install", Enabled: wordPressWriteErr == nil, Reason: reasonIf(wordPressWriteErr, "WordPress 一键搭建条件不满足"), Methods: []string{"POST"}},
 		{ID: "sites.proxy.install", Enabled: proxyWriteErr == nil, Reason: reasonIf(proxyWriteErr, "kejilion.sh IP+端口反向代理命令不可用"), Methods: []string{"POST"}},
 		{ID: "sites.recipes.install", Enabled: recipeWriteErr == nil, Reason: reasonIf(recipeWriteErr, "kejilion.sh 一键建站协议不可用"), Methods: []string{"POST"}},
