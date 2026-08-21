@@ -25,6 +25,15 @@ describe('interactive task terminal layout', () => {
     )
   })
 
+  it('keeps fit padding on xterm so the bottom row stays inside the screen', () => {
+    expect(terminalSource).toMatch(
+      /\.interactive-terminal__screen\s*\{[^}]*padding:\s*0;/,
+    )
+    expect(terminalSource).toMatch(
+      /\.interactive-terminal__screen :deep\(\.xterm\)\s*\{[^}]*height:\s*100%;[^}]*padding:\s*10px;/,
+    )
+  })
+
   it('lets the dedicated desktop shell shrink while keeping the composer visible', () => {
     expect(appScriptSource).toMatch(
       /\.app-script-page__terminal\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*flex:\s*1 1 0;/,

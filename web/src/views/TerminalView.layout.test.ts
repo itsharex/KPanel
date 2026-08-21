@@ -62,6 +62,15 @@ describe('multi-host terminal workspace layout', () => {
     )
   })
 
+  it('keeps fit padding on xterm so the bottom row stays inside the screen', () => {
+    expect(hostTerminalSource).toMatch(
+      /\.host-terminal__screen\s*\{[^}]*padding:0;/,
+    )
+    expect(hostTerminalSource).toMatch(
+      /\.host-terminal__screen :deep\(\.xterm\)\s*\{[^}]*height:100%;[^}]*padding:10px 7px;/,
+    )
+  })
+
   it('fits the terminal workspace to the desktop window instead of scrolling the outer page', () => {
     expect(desktopStyles).toMatch(
       /\.desktop-window__body:has\(> \.terminal-page\),[\s\S]*?overflow:\s*hidden;[\s\S]*?scrollbar-gutter:\s*auto;/,

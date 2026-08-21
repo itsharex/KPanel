@@ -268,8 +268,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .host-terminal { display:grid; height:100%; grid-template-rows:minmax(0,1fr) auto; min-height:0; overflow:hidden; border:1px solid var(--terminal-shell-border,#29383a); border-radius:var(--terminal-shell-radius,12px); background:var(--terminal-shell-background,#0b1214); box-shadow:var(--terminal-shell-shadow); }
-.host-terminal__screen { position:relative; min-width:0; min-height:0; overflow:hidden; overscroll-behavior:contain; padding:10px 7px; }
-.host-terminal__screen :deep(.xterm) { height:100%; touch-action:none; }
+.host-terminal__screen { position:relative; min-width:0; min-height:0; overflow:hidden; overscroll-behavior:contain; padding:0; }
+/* FitAddon subtracts padding from the xterm element, not its parent. */
+.host-terminal__screen :deep(.xterm) { height:100%; padding:10px 7px; touch-action:none; }
 .host-terminal__screen :deep(.xterm-viewport) { overflow-y:scroll !important; overscroll-behavior:contain; }
 .host-terminal__screen :deep(.xterm-scrollable-element) { overscroll-behavior:contain; }
 .host-terminal__composer { position:relative; z-index:2; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:9px 10px; border-top:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }

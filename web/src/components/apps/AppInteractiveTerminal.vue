@@ -498,11 +498,13 @@ onBeforeUnmount(() => {
   min-height: 320px;
   overflow: hidden;
   overscroll-behavior: contain;
-  padding: 10px;
+  padding: 0;
 }
 
+/* FitAddon subtracts padding from the xterm element, not its parent. */
 .interactive-terminal__screen :deep(.xterm) {
   height: 100%;
+  padding: 10px;
   touch-action: none;
 }
 
