@@ -100,8 +100,8 @@
 <!-- kpanel-release-metrics:end -->
 
 <!-- kpanel-release-process-metrics:start -->
-- 已记录发布流程异常或无效证据拦截次数：15
-- 其中生产写操作开始后异常次数：5
+- 已记录发布流程异常或无效证据拦截次数：16
+- 其中生产写操作开始后异常次数：6
 <!-- kpanel-release-process-metrics:end -->
 
 ### 流程异常明细
@@ -219,10 +219,10 @@
   {
     "fingerprint": "production-verification/ssh/powershell-variable-expansion",
     "position": "after-production-write",
-    "count": 1,
-    "impact": "内联 OCI/SQLite 复核再次受本机 PowerShell 嵌套命令展开影响，部分证据无效。",
-    "recoveryEvidence": "改用 verify-production-v0902.sh，全部健康、数据与日志门禁通过。",
-    "permanentAction": "生产多项核验只运行已做 bash -n 和 SHA 记录的远端受限脚本。",
+    "count": 2,
+    "impact": "内联 OCI/SQLite 复核及首次远端清理命令受本机 PowerShell 嵌套命令展开影响，两批证据无效且未执行删除。",
+    "recoveryEvidence": "改用 verify-production-v0902.sh 与 cleanup-arena154-v0902.sh；健康、数据、日志和精确清理全部通过。",
+    "permanentAction": "生产多项核验和清理只运行已做 bash -n、固定绝对目标并记录 SHA 的远端受限脚本。",
     "historicalReleases": []
   },
   {
