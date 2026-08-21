@@ -461,13 +461,6 @@ export default [
   ['行 · 第', 'line · column'],
   ['列', 'column'],
   ['语法问题', 'Syntax issues'],
-  ['确认 y', 'Confirm y'],
-  ['选择 1', 'Choose 1'],
-  ['回车', 'Enter'],
-  ['跳过 n', 'Skip n'],
-  ['脚本需要选择时：', 'When the script asks for a choice:'],
-  ['请按终端当前提示使用', 'Follow the prompt currently shown in the terminal'],
-  ['体检脚本快捷输入', 'Diagnostic script quick input'],
   ['将删除该域名的网站目录、Nginx 配置、证书和同名数据库（若存在），此操作无法从面板撤销。', "This deletes the domain's site directory, Nginx configuration, certificates, and same-named database when present. The action cannot be undone from KPanel."],
   ['确认后将严格调用 kejilion.sh 的 k web del 删除该域名站点。', 'After confirmation, KPanel strictly runs kejilion.sh k web del to delete this domain site.'],
 ] as const satisfies PhraseCatalog

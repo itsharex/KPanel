@@ -101,6 +101,45 @@ describe('TerminalContextMenu', () => {
     expect(copyEvent.defaultPrevented).toBe(true)
   })
 
+  it.each([
+    { name: 'Ctrl+Shift+V', init: { key: 'v', ctrlKey: true, shiftKey: true } },
+    { name: 'Shift+Insert', init: { key: 'Insert', shiftKey: true } },
+  ])('pastes with $name while leaving native Ctrl+V to the paste event', async ({ init }) => {
+    const menu = wrapper.vm as unknown as ExposedMenu
+    const pasteEvent = new KeyboardEvent('keydown', { ...init, cancelable: true })
+
+    expect(menu.handleKeyEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }))).toBe(true)
+    expect(menu.handleKeyEvent(pasteEvent)).toBe(false)
+    await flushPromises()
+
+    expect(readText).toHaveBeenCalledTimes(1)
+    expect(terminal.paste).toHaveBeenCalledWith('pasted command')
+    expect(pasteEvent.defaultPrevented).toBe(true)
+  })
+
+  it('does not intercept terminal paste shortcuts after input has closed', () => {
+    wrapper.unmount()
+    wrapper = mount(TerminalContextMenu, {
+      attachTo: document.body,
+      props: {
+        getTerminal: () => terminal as unknown as Terminal,
+        canPaste: false,
+      },
+    })
+
+    const menu = wrapper.vm as unknown as ExposedMenu
+    const pasteEvent = new KeyboardEvent('keydown', {
+      key: 'v',
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true,
+    })
+
+    expect(menu.handleKeyEvent(pasteEvent)).toBe(true)
+    expect(readText).not.toHaveBeenCalled()
+    expect(pasteEvent.defaultPrevented).toBe(false)
+  })
+
   it('closes on Escape without also closing a parent modal', async () => {
     await openMenu()
     const parentEscape = vi.fn()

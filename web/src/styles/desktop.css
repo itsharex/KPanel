@@ -2416,10 +2416,17 @@ body.desktop-mode-open::-webkit-scrollbar {
   overflow: hidden;
 }
 
-.desktop-window__body .terminal-workspace {
+.desktop-window__body > .terminal-page {
+  padding: 0;
+}
+
+.desktop-window__body > .terminal-page > .terminal-workspace {
   height: auto !important;
   min-height: 0 !important;
   flex: 1 1 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .desktop-window__body .diagnostic-workbench {
@@ -3609,16 +3616,75 @@ body.desktop-mode-open::-webkit-scrollbar {
 
   .desktop-window__body .terminal-workspace {
     grid-template-columns: minmax(0, 1fr) !important;
-    grid-template-rows: minmax(88px, 28%) minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) !important;
   }
 
   .desktop-window__body .terminal-workspace.is-connections-collapsed {
-    grid-template-rows: 56px minmax(0, 1fr) !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) !important;
   }
 
   .desktop-window__body .terminal-connections {
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
+    position: absolute;
+    z-index: 22;
+    inset: 0 auto 0 0;
+    width: min(276px, calc(100% - 44px));
+    border-right: 1px solid var(--terminal-shell-border, #29383a);
+    border-bottom: 0;
+    box-shadow: var(--shadow-md);
+    transform: translateX(-105%);
+    transition: transform .2s ease;
+  }
+
+  .desktop-window__body .terminal-workspace.is-connections-drawer-open .terminal-connections {
+    transform: translateX(0);
+  }
+
+  .desktop-window__body .terminal-connections-overlay {
+    position: absolute;
+    z-index: 21;
+    inset: 0;
+    display: block !important;
+    border: 0;
+    background: rgb(5 16 13 / 42%);
+  }
+
+  .desktop-window__body .terminal-connections__collapse {
+    display: none !important;
+  }
+
+  .desktop-window__body .terminal-connections__mobile-close {
+    display: grid !important;
+  }
+
+  .desktop-window__body .terminal-page .terminal-workspace.is-connections-drawer-open .terminal-connections > header {
+    min-height: 42px;
+    justify-content: flex-end;
+    padding: 6px 8px 0;
+  }
+
+  .desktop-window__body .terminal-page .terminal-workspace.is-connections-drawer-open .terminal-connections__heading,
+  .desktop-window__body .terminal-page .terminal-workspace.is-connections-drawer-open .terminal-connections__refresh {
+    display: none;
+  }
+
+  .desktop-window__body .terminal-stage {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .desktop-window__body .terminal-stage__mobile-selector {
+    display: flex !important;
+  }
+
+  .desktop-window__body .terminal-tabs-bar__connections {
+    display: grid !important;
+  }
+
+  .desktop-window__body .terminal-stage.is-fullscreen :is(
+    .terminal-stage__mobile-selector,
+    .terminal-tabs-bar__connections
+  ) {
+    display: none !important;
   }
 
   .desktop-window__body .file-row--header,
@@ -3641,6 +3707,10 @@ body.desktop-mode-open::-webkit-scrollbar {
 @container desktop-window (max-width: 580px) {
   .desktop-window__body > :is(.page, .page-content, .files-page, .diagnostics-page, .monitoring-page) {
     padding: 12px;
+  }
+
+  .desktop-window__body > .terminal-page {
+    padding: 0;
   }
 
   .desktop-window__body .page-header,
@@ -3820,6 +3890,7 @@ body.desktop-mode-open::-webkit-scrollbar {
      keep the narrow desktop-window row that was reserved for the inline list. */
   .desktop-window__body .terminal-workspace,
   .desktop-window__body .terminal-workspace.is-connections-collapsed {
+    grid-template-columns: minmax(0, 1fr) !important;
     grid-template-rows: minmax(0, 1fr) !important;
   }
 

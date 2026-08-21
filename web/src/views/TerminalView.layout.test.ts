@@ -6,6 +6,13 @@ const hostTerminalSource = readFileSync(new URL('../components/terminal/HostTerm
 const desktopStyles = readFileSync(new URL('../styles/desktop.css', import.meta.url), 'utf8')
 
 describe('multi-host terminal workspace layout', () => {
+  it('opens the available local host after the first successful inventory load', () => {
+    expect(terminalSource).toContain('let initialHostLoad = true')
+    expect(terminalSource).toContain('if (initialHostLoad) {')
+    expect(terminalSource).toContain('const localHost = inventory.value.items.find((host) => host.isLocal && host.terminalAvailable)')
+    expect(terminalSource).toContain('if (localHost) await openHost(localHost)')
+  })
+
   it('keeps a large connection inventory in its own scroll region', () => {
     expect(terminalSource).toContain('class="terminal-connections__list"')
     expect(terminalSource).toMatch(
@@ -29,14 +36,39 @@ describe('multi-host terminal workspace layout', () => {
       /\.terminal-workspace\.is-connections-collapsed\s*\{[^}]*grid-template-columns:52px minmax\(0,1fr\);/,
     )
     expect(terminalSource).toMatch(
-      /\.terminal-workspace\.is-connections-collapsed \.terminal-connections__heading,[^}]*\.terminal-connections__refresh\s*\{\s*display:none;/,
+      /\.terminal-workspace\.is-connections-collapsed \.terminal-connections__heading,\.terminal-workspace\.is-connections-collapsed \.terminal-connections__refresh\s*\{\s*display:none;/,
     )
   })
 
   it('reserves the remaining stage height for the terminal and composer', () => {
     expect(terminalSource).toMatch(
-      /\.terminal-stage\s*\{[^}]*grid-template-rows:auto auto minmax\(0,1fr\);[^}]*min-height:0;[^}]*overflow:hidden;/,
+      /\.terminal-stage\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\);[^}]*min-height:0;[^}]*overflow:hidden;/,
     )
+    expect(terminalSource).toMatch(
+      /@media \(max-width: 900px\)[\s\S]*?\.terminal-stage\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\);/,
+    )
+    expect(terminalSource).toMatch(
+      /\.terminal-stage\.is-fullscreen\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\);/,
+    )
+  })
+
+  it('uses one continuous terminal surface without nested frame gutters', () => {
+    expect(terminalSource).toMatch(
+      /\.terminal-stage\s*\{[^}]*padding:0;[^}]*background:var\(--terminal-shell-background/,
+    )
+    expect(terminalSource).toMatch(
+      /\.terminal-tabs-bar\s*\{[^}]*border:0;[^}]*border-bottom:1px solid var\(--terminal-shell-border/,
+    )
+    expect(terminalSource).toMatch(
+      /\.terminal-stage :deep\(\.host-terminal\)\s*\{[^}]*border:0;[^}]*border-radius:0;[^}]*box-shadow:none;/,
+    )
+  })
+
+  it('keeps the host selector dark and uses a lighter internal border in light mode', () => {
+    expect(terminalSource).toMatch(
+      /\.terminal-connections\s*\{[^}]*border-right:1px solid var\(--terminal-shell-border,#29383a\);[^}]*background:var\(--terminal-shell-panel,#111a1d\);/,
+    )
+    expect(terminalSource).toContain(":global(:root:not([data-theme='dark'])) .terminal-workspace { --terminal-shell-border:rgb(255 255 255 / 18%); }")
   })
 
   it('uses an overlay drawer for host selection on mobile', () => {
@@ -62,12 +94,15 @@ describe('multi-host terminal workspace layout', () => {
     )
   })
 
-  it('keeps fit padding on xterm so the bottom row stays inside the screen', () => {
+  it('keeps the outer screen edge-to-edge and uses fit-aware xterm content padding', () => {
     expect(hostTerminalSource).toMatch(
       /\.host-terminal__screen\s*\{[^}]*padding:0;/,
     )
     expect(hostTerminalSource).toMatch(
-      /\.host-terminal__screen :deep\(\.xterm\)\s*\{[^}]*height:100%;[^}]*padding:10px 7px;/,
+      /\.host-terminal__screen :deep\(\.xterm\)\s*\{[^}]*box-sizing:border-box;[^}]*height:100%;[^}]*padding:6px 8px 4px;[^}]*touch-action:none;/,
+    )
+    expect(hostTerminalSource).toMatch(
+      /\.host-terminal__screen :deep\(\.xterm-viewport\)\s*\{[^}]*background:var\(--terminal-shell-background,#0b1214\);/,
     )
   })
 
@@ -79,13 +114,46 @@ describe('multi-host terminal workspace layout', () => {
       /\.desktop-window__body \.terminal-page\s*\{[^}]*height:\s*100% !important;[^}]*min-height:\s*0 !important;[^}]*overflow:\s*hidden;/,
     )
     expect(desktopStyles).toMatch(
-      /\.desktop-window__body \.terminal-workspace\s*\{[^}]*height:\s*auto !important;[^}]*min-height:\s*0 !important;[^}]*flex:\s*1 1 0;/,
+      /\.desktop-window__body > \.terminal-page > \.terminal-workspace\s*\{[^}]*height:\s*auto !important;[^}]*min-height:\s*0 !important;[^}]*flex:\s*1 1 0;/,
     )
+  })
+
+  it('lets the terminal workspace use the full desktop window body', () => {
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body > \.terminal-page\s*\{[^}]*padding:\s*0;/,
+    )
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body > \.terminal-page > \.terminal-workspace\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*box-shadow:\s*none;/,
+    )
+  })
+
+  it('turns the host selector into an overlay drawer in a narrow desktop window', () => {
+    expect(desktopStyles).toMatch(
+      /@container desktop-window \(max-width: 820px\)[\s\S]*?\.desktop-window__body \.terminal-connections\s*\{[^}]*position:\s*absolute;[^}]*transform:\s*translateX\(-105%\);/,
+    )
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body \.terminal-workspace\.is-connections-drawer-open \.terminal-connections\s*\{[^}]*transform:\s*translateX\(0\);/,
+    )
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body \.terminal-stage__mobile-selector\s*\{[^}]*display:\s*flex !important;/,
+    )
+    expect(terminalSource).toContain('v-if="!sessions.length" class="terminal-stage__mobile-selector"')
+    expect(terminalSource).toContain('class="terminal-tabs-bar__connections"')
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body \.terminal-tabs-bar__connections\s*\{[^}]*display:\s*grid !important;/,
+    )
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body \.terminal-page \.terminal-workspace\.is-connections-drawer-open \.terminal-connections > header\s*\{[^}]*min-height:\s*42px;[^}]*justify-content:\s*flex-end;[^}]*padding:\s*6px 8px 0;/,
+    )
+    expect(desktopStyles).toMatch(
+      /\.desktop-window__body \.terminal-page \.terminal-workspace\.is-connections-drawer-open \.terminal-connections__heading,[\s\S]*?\.desktop-window__body \.terminal-page \.terminal-workspace\.is-connections-drawer-open \.terminal-connections__refresh\s*\{[^}]*display:\s*none;/,
+    )
+    expect(terminalSource).toContain('<X :size="17" />')
   })
 
   it('does not reserve an inline host-list row in mobile desktop mode', () => {
     expect(desktopStyles).toMatch(
-      /@media \(max-width: 900px\)[\s\S]*?\.desktop-window__body \.terminal-workspace,[\s\S]*?\.desktop-window__body \.terminal-workspace\.is-connections-collapsed\s*\{[^}]*grid-template-rows:\s*minmax\(0, 1fr\) !important;/,
+      /@media \(max-width: 900px\)[\s\S]*?\.desktop-window__body \.terminal-workspace,[\s\S]*?\.desktop-window__body \.terminal-workspace\.is-connections-collapsed\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) !important;[^}]*grid-template-rows:\s*minmax\(0, 1fr\) !important;/,
     )
     expect(desktopStyles).toMatch(
       /@media \(max-width: 900px\)[\s\S]*?\.desktop-window__body \.terminal-connections\s*\{[^}]*border-right:\s*1px solid var\(--border\);[^}]*border-bottom:\s*0;/,
@@ -133,12 +201,32 @@ describe('multi-host terminal workspace layout', () => {
     )
   })
 
+  it('centers the empty state consistently across window sizes', () => {
+    expect(terminalSource).toMatch(
+      /\.terminal-stage\s*\{[^}]*grid-template-columns:minmax\(0,1fr\);[^}]*grid-template-rows:auto minmax\(0,1fr\);/,
+    )
+    expect(terminalSource).toMatch(
+      /\.terminal-stage__mobile-selector\s*\{[^}]*grid-row:1;[^}]*grid-column:1;/,
+    )
+    expect(terminalSource).toMatch(
+      /\.terminal-empty\s*\{[^}]*grid-row:2;[^}]*grid-column:1;[^}]*place-content:center;[^}]*padding:32px;/,
+    )
+    expect(terminalSource).not.toContain('.terminal-stage.is-fullscreen .terminal-empty')
+    expect(terminalSource).not.toContain('padding:32px 32px clamp(72px,12vh,120px)')
+  })
+
+  it('keeps the terminal edge-to-edge at the smallest desktop window width', () => {
+    expect(desktopStyles).toMatch(
+      /@container desktop-window \(max-width: 580px\)[\s\S]*?\.desktop-window__body > \.terminal-page\s*\{[^}]*padding:\s*0;/,
+    )
+  })
+
   it('fills the whole terminal stage so tabs remain switchable', () => {
     expect(terminalSource).not.toContain('terminal-fullscreen-toggle')
     expect(terminalSource).toContain("'is-fullscreen': workspaceFullscreen")
     expect(terminalSource).toContain('@click="selectSession(item.id)"')
     expect(terminalSource).toMatch(
-      /\.terminal-stage\.is-fullscreen\s*\{[^}]*position:fixed;[^}]*inset:0;[^}]*height:100dvh;/,
+      /\.terminal-stage\.is-fullscreen\s*\{[^}]*position:fixed;[^}]*inset:0;[^}]*height:100dvh;[^}]*grid-template-rows:auto minmax\(0,1fr\);/,
     )
     expect(hostTerminalSource).toContain('defineExpose({ focusTerminal, scrollToTop, scheduleResize })')
   })

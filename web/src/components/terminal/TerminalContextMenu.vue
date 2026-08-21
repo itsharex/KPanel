@@ -130,6 +130,14 @@ function handleKeyEvent(event: KeyboardEvent): boolean {
     void copySelection()
     return false
   }
+  const isTerminalPaste = event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'v'
+  const isInsertPaste = event.shiftKey && event.key === 'Insert'
+  if ((isTerminalPaste || isInsertPaste) && props.canPaste) {
+    event.preventDefault()
+    event.stopPropagation()
+    void pasteClipboard()
+    return false
+  }
   return true
 }
 

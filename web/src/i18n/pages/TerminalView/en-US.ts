@@ -18,7 +18,7 @@ export default [
   ['轻量监控节点', 'Monitoring-only node'],
   ['需要重新配对', 'Pair again to enable'],
   ['已打开终端', 'Open terminals'],
-  ['选择一台主机开始', 'Select a host to begin'],
-  ['左侧会明确标记本机、可加密直连的 KPanel，以及仅提供监控的轻量节点。', 'The list distinguishes the local host, encrypted KPanel connections, and monitoring-only lightweight nodes.'],
+  ['选择主机，打开终端', 'Select a host and open a terminal'],
+  ['从连接列表选择一台可用主机，开始加密终端会话。', 'Choose an available host from the connection list to start an encrypted terminal session.'],
   ['关闭窗口将断开 {0} 个终端会话，是否继续？', 'Closing this window will disconnect {0} terminal session(s). Continue?'],
 ] satisfies PhraseCatalog

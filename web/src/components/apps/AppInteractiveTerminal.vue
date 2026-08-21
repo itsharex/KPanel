@@ -12,6 +12,7 @@ import { useI18n } from '@/i18n'
 import { openTerminalURL } from '@/lib/terminalLinks'
 import { containWheelScroll } from '@/lib/scroll'
 import { createTerminalTouchScroll } from '@/lib/terminalTouchScroll'
+import { TerminalOutputNormalizer } from '@/lib/terminalOutput'
 import {
   drainTerminalInputQueue,
   TerminalInputQueue,
@@ -46,15 +47,9 @@ let inputSending = false
 let offset = 0
 let disposed = false
 let polling = false
+const outputNormalizer = new TerminalOutputNormalizer()
 
 const { fullscreen, toggleFullscreen } = useTerminalFullscreen(fitTerminal)
-
-const diagnosticQuickInputs = [
-  { label: '确认 y', value: 'y' },
-  { label: '选择 1', value: '1' },
-  { label: '回车', value: '' },
-  { label: '跳过 n', value: 'n' },
-] as const
 
 function terminalThemeColor(name: string, fallback: string): string {
   if (!host.value) return fallback
@@ -75,11 +70,20 @@ function isFollowingOutput(): boolean {
   return !buffer || buffer.viewportY >= buffer.baseY
 }
 
-function writeTerminalOutput(data: string | Uint8Array): void {
+function writeNormalizedTerminalOutput(data: Uint8Array): void {
+  if (data.length === 0) return
   const follow = isFollowingOutput()
   terminal?.write(data, () => {
     if (follow) terminal?.scrollToBottom()
   })
+}
+
+function writeTerminalOutput(data: string | Uint8Array): void {
+  writeNormalizedTerminalOutput(outputNormalizer.transform(data))
+}
+
+function flushTerminalOutput(): void {
+  writeNormalizedTerminalOutput(outputNormalizer.flush())
 }
 
 function scrollToTop(): void {
@@ -173,12 +177,6 @@ function handlePendingLineEnter(event: KeyboardEvent): void {
   submitPendingLine()
 }
 
-function sendQuickInput(value: string): void {
-  if (!terminalInputOpen.value || disposed) return
-  queueInput(terminalLineSubmission(value))
-  focusTerminal()
-}
-
 async function poll(): Promise<void> {
   if (polling || disposed) return
   polling = true
@@ -214,6 +212,7 @@ async function poll(): Promise<void> {
           )
     const data = chunk.dataBase64 ? decodeBase64(chunk.dataBase64) : undefined
     if (data) writeTerminalOutput(data)
+    if (chunk.finished) flushTerminalOutput()
     offset = chunk.nextOffset
     terminalInputOpen.value = chunk.inputOpen
     connectionState.value = chunk.finished ? 'finished' : 'connected'
@@ -235,6 +234,7 @@ function resetTerminal(): void {
   polling = false
   offset = 0
   inputQueue = new TerminalInputQueue()
+  outputNormalizer.reset()
   terminal?.reset()
   pendingLine.value = ''
   terminalInputOpen.value = Boolean(props.inputOpen)
@@ -383,19 +383,6 @@ onBeforeUnmount(() => {
       @paste.capture="clipboardMenu?.handlePaste($event)"
     />
     <div v-if="terminalInputOpen" class="interactive-terminal__input-area">
-      <div v-if="props.kind === 'diagnostic'" class="interactive-terminal__quick-actions" aria-label="体检脚本快捷输入">
-        <span>脚本需要选择时：</span>
-        <button
-          v-for="action in diagnosticQuickInputs"
-          :key="action.label"
-          type="button"
-          :aria-label="`发送${action.label}`"
-          @click="sendQuickInput(action.value)"
-        >
-          {{ action.label }}
-        </button>
-        <small>请按终端当前提示使用</small>
-      </div>
       <form
         class="interactive-terminal__composer"
         @submit.prevent="submitPendingLine"
@@ -518,16 +505,17 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
-/* FitAddon subtracts padding from the xterm element, not its parent. */
 .interactive-terminal__screen :deep(.xterm) {
+  box-sizing: border-box;
   height: 100%;
-  padding: 10px;
+  padding: 6px 8px 4px;
   touch-action: none;
 }
 
 .interactive-terminal__screen :deep(.xterm-viewport) {
   overflow-y: scroll !important;
   overscroll-behavior: contain;
+  background: var(--terminal-background);
 }
 
 .interactive-terminal__screen :deep(.xterm-scrollable-element) {
@@ -558,38 +546,6 @@ onBeforeUnmount(() => {
   padding: 10px;
   border-top: 1px solid var(--terminal-border);
   background: var(--terminal-panel);
-}
-
-.interactive-terminal__quick-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--terminal-muted);
-  font-size: 11px;
-}
-
-.interactive-terminal__quick-actions button {
-  border: 1px solid color-mix(in srgb, var(--terminal-accent) 56%, var(--terminal-border));
-  border-radius: 7px;
-  padding: 5px 9px;
-  color: var(--terminal-accent);
-  background: color-mix(in srgb, var(--terminal-accent) 10%, var(--terminal-panel));
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.interactive-terminal__quick-actions button:hover,
-.interactive-terminal__quick-actions button:focus-visible {
-  color: var(--terminal-background);
-  background: var(--terminal-accent);
-  outline: none;
-}
-
-.interactive-terminal__quick-actions small {
-  color: var(--terminal-muted);
 }
 
 .interactive-terminal__composer input {

@@ -25,12 +25,15 @@ describe('interactive task terminal layout', () => {
     )
   })
 
-  it('keeps fit padding on xterm so the bottom row stays inside the screen', () => {
+  it('keeps the outer screen edge-to-edge and uses fit-aware xterm content padding', () => {
     expect(terminalSource).toMatch(
       /\.interactive-terminal__screen\s*\{[^}]*padding:\s*0;/,
     )
     expect(terminalSource).toMatch(
-      /\.interactive-terminal__screen :deep\(\.xterm\)\s*\{[^}]*height:\s*100%;[^}]*padding:\s*10px;/,
+      /\.interactive-terminal__screen :deep\(\.xterm\)\s*\{[^}]*box-sizing:\s*border-box;[^}]*height:\s*100%;[^}]*padding:\s*6px 8px 4px;[^}]*touch-action:\s*none;/,
+    )
+    expect(terminalSource).toMatch(
+      /\.interactive-terminal__screen :deep\(\.xterm-viewport\)\s*\{[^}]*background:\s*var\(--terminal-background\);/,
     )
   })
 
@@ -73,12 +76,10 @@ describe('interactive task terminal layout', () => {
     expect(terminalSource).not.toContain('composerInput')
   })
 
-  it('offers safe diagnostic shortcuts for common script confirmations', () => {
-    expect(terminalSource).toContain('diagnosticQuickInputs')
-    expect(terminalSource).toContain('确认 y')
-    expect(terminalSource).toContain('选择 1')
-    expect(terminalSource).toContain('脚本需要选择时：')
-    expect(terminalSource).toContain('sendQuickInput')
+  it('keeps diagnostic input manual without preset choices', () => {
+    expect(terminalSource).not.toContain('diagnosticQuickInputs')
+    expect(terminalSource).not.toContain('interactive-terminal__quick-actions')
+    expect(terminalSource).not.toContain('sendQuickInput')
     expect(terminalSource).toContain('class="interactive-terminal__input-area"')
   })
 
