@@ -127,13 +127,16 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/\.desktop-monitor__network-total\s*\{[^}]*padding-top:\s*1px;/)
   })
 
-  it('keeps service status typography readable without hiding truncated details', () => {
+  it('keeps service status cards to two readable text rows inside the widget', () => {
     expect(styles).toMatch(/\.desktop-service-status__header\s*\{[^}]*font-size:\s*13px;/)
     expect(styles).toMatch(/\.desktop-service-status__hero-copy strong\s*\{[^}]*font-size:\s*14px;/)
     expect(styles).toMatch(/\.desktop-service-status__hero-copy small\s*\{[^}]*font-size:\s*13px;/)
+    expect(styles).toMatch(/\.desktop-service-status__metric-copy\s*\{[^}]*display:\s*grid;[^}]*align-self:\s*stretch;[^}]*grid-template-rows:\s*auto auto minmax\(3px, 1fr\);/)
     expect(styles).toMatch(/\.desktop-service-status__metric-label\s*\{[^}]*font-size:\s*13px;/)
-    expect(styles).toMatch(/\.desktop-service-status__metric-copy strong\s*\{[^}]*font-size:\s*15px;/)
-    expect(styles).toMatch(/\.desktop-service-status__metric-copy small\s*\{[^}]*font-size:\s*13px;/)
+    expect(styles).toMatch(/\.desktop-service-status__metric-summary strong\s*\{[^}]*font-size:\s*15px;/)
+    expect(styles).toMatch(/\.desktop-service-status__metric-summary small\s*\{[^}]*font-size:\s*13px;/)
+    expect(styles).toMatch(/\.desktop-service-status__metric-summary small\s*\{[^}]*padding-left:\s*8px;[^}]*border-left:\s*1px solid/)
+    expect(styles).toMatch(/\.desktop-service-status__metric-track\s*\{[^}]*align-self:\s*end;/)
   })
 
   it('does not reserve a light outer scrollbar gutter around script terminals', () => {

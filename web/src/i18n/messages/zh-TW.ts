@@ -408,7 +408,8 @@ export const zhTWMessages = {
   "desktop.serviceStatusNoItems": "暫無資源",
   "desktop.serviceStatusUnavailable": "暫不可用",
   "desktop.serviceStatusNotConnected": "未接入節點",
-  "desktop.serviceStatusDriftCount": "{value} 個待核對",
-  "desktop.serviceStatusRunningCount": "{value} 個執行中",
+  "desktop.serviceStatusDriftCount": "待核對 {value}",
+  "desktop.serviceStatusRunningCount": "執行中 {value}",
   "desktop.serviceStatusOnlineCount": "{value} 個在線",
+  "desktop.serviceStatusOnlineState": "在線",
 } as const satisfies LocaleMessages

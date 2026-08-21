@@ -414,9 +414,10 @@ export const zhCNMessages = {
   'desktop.serviceStatusNoItems': '暂无资源',
   'desktop.serviceStatusUnavailable': '暂不可用',
   'desktop.serviceStatusNotConnected': '未接入节点',
-  'desktop.serviceStatusDriftCount': '{value} 个待核对',
-  'desktop.serviceStatusRunningCount': '{value} 个运行中',
+  'desktop.serviceStatusDriftCount': '待核对 {value}',
+  'desktop.serviceStatusRunningCount': '运行中 {value}',
   'desktop.serviceStatusOnlineCount': '{value} 个在线',
+  'desktop.serviceStatusOnlineState': '在线',
 } as const
 
 export type MessageKey = keyof typeof zhCNMessages

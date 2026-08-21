@@ -16,7 +16,7 @@ const overview = {
   agent: { connected: true, readOnly: false, compatible: true },
   sites: { total: 3, healthy: 3, drifted: 0 },
   containers: { total: 5, running: 4, stopped: 1 },
-  apps: { total: 2, installed: 2, running: 2, updateAvailable: 0 },
+  apps: { total: 11, installed: 2, running: 2, updateAvailable: 0 },
   services: [{ id: 'docker', name: 'Docker Engine', state: 'running' }],
 } as unknown as SystemOverview
 
@@ -41,7 +41,7 @@ describe('DesktopServiceStatus', () => {
     const containerMetric = wrapper.findAll('.desktop-service-status__metric')
       .find((metric) => metric.text().includes('容器'))
     expect(containerMetric?.text()).toContain('5')
-    expect(containerMetric?.text()).toContain('4 个运行中')
+    expect(containerMetric?.text()).toContain('运行中 4')
     expect(wrapper.findAll('.desktop-service-status__metric')).toHaveLength(4)
     expect(wrapper.find('.desktop-service-status__footer').exists()).toBe(false)
 
@@ -49,8 +49,13 @@ describe('DesktopServiceStatus', () => {
     expect(metrics[0]?.text()).toContain('网站')
     expect(metrics[1]?.text()).toContain('容器')
     expect(metrics[2]?.text()).toContain('已安装应用')
-    expect(metrics[2]?.text()).toContain('2 个运行中 · 共 2 个')
+    expect(metrics[2]?.text()).toContain('运行中 2')
+    expect(metrics[2]?.text()).not.toContain('共 11 个')
     expect(metrics[3]?.text()).toContain('集群')
+    expect(metrics[3]?.text()).toContain('1/2')
+    expect(metrics[3]?.text()).toContain('在线')
+    expect(metrics[3]?.text()).not.toContain('1 个在线')
+    expect(metrics.every((metric) => metric.find('.desktop-service-status__metric-summary').exists())).toBe(true)
     expect(metrics[0]?.find('.desktop-service-status__metric-icon--brand').exists()).toBe(true)
     expect(metrics[1]?.find('.desktop-service-status__metric-icon--blue').exists()).toBe(true)
     expect(metrics[2]?.find('.desktop-service-status__metric-icon--amber').exists()).toBe(true)
@@ -72,7 +77,7 @@ describe('DesktopServiceStatus', () => {
     await flushPromises()
 
     expect(wrapper.find('.desktop-service-status__metric').text()).toContain('3')
-    expect(wrapper.find('.desktop-service-status__metric').text()).toContain('0 个待核对')
+    expect(wrapper.find('.desktop-service-status__metric').text()).toContain('待核对 0')
     expect(wrapper.find('.desktop-service-status__metric--unknown').text()).toContain('—')
     wrapper.unmount()
   })

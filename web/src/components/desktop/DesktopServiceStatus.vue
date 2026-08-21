@@ -127,7 +127,7 @@ const metrics = computed<ServiceMetric[]>(() => {
       apps?.installed === 0 && ready
         ? i18n.t('desktop.serviceStatusNoItems')
         : apps
-          ? i18n.t('desktop.serviceStatusAppsDetail', { running: apps.running, total: apps.total })
+          ? i18n.t('desktop.serviceStatusRunningCount', { value: apps.running })
           : i18n.t('desktop.serviceStatusUnavailable'),
       '/apps',
       Boxes,
@@ -144,7 +144,7 @@ const metrics = computed<ServiceMetric[]>(() => {
       clusterTotal === 0
         ? i18n.t('desktop.serviceStatusNotConnected')
         : cluster.value
-          ? i18n.t('desktop.serviceStatusOnlineCount', { value: clusterOnline || 0 })
+          ? i18n.t('desktop.serviceStatusOnlineState')
           : i18n.t('desktop.serviceStatusUnavailable'),
       '/cluster',
       Network,
@@ -314,8 +314,10 @@ onBeforeUnmount(() => {
         </span>
         <span class="desktop-service-status__metric-copy">
           <span class="desktop-service-status__metric-label">{{ metric.label }}</span>
-          <strong>{{ metric.value }}</strong>
-          <small :title="metric.detail">{{ metric.detail }}</small>
+          <span class="desktop-service-status__metric-summary">
+            <strong>{{ metric.value }}</strong>
+            <small :title="metric.detail">{{ metric.detail }}</small>
+          </span>
           <span class="desktop-service-status__metric-track" aria-hidden="true">
             <i :style="{ width: String(metric.progress) + '%' }" />
           </span>

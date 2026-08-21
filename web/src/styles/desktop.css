@@ -781,7 +781,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .desktop-service-status__hero-copy strong,
@@ -801,6 +801,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: color-mix(in srgb, var(--desktop-label) 58%, transparent);
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.35;
 }
 
 .desktop-service-status__refresh {
@@ -840,7 +841,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   min-width: 0;
   align-items: flex-start;
   gap: 7px;
-  padding: 8px;
+  padding: 8px 8px 7px;
   color: color-mix(in srgb, var(--desktop-label) 88%, transparent);
   background: color-mix(in srgb, var(--desktop-label) 4%, transparent);
   border: 1px solid color-mix(in srgb, var(--desktop-label) 8%, transparent);
@@ -895,16 +896,17 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-service-status__metric-copy {
-  display: flex;
+  display: grid;
   min-width: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 3px;
+  align-self: stretch;
+  gap: 4px;
+  grid-template-rows: auto auto minmax(3px, 1fr);
 }
 
 .desktop-service-status__metric-label,
-.desktop-service-status__metric-copy strong,
-.desktop-service-status__metric-copy small {
+.desktop-service-status__metric-summary,
+.desktop-service-status__metric-summary small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -914,26 +916,39 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: color-mix(in srgb, var(--desktop-label) 58%, transparent);
   font-size: 13px;
   font-weight: 650;
+  line-height: 1.35;
 }
 
-.desktop-service-status__metric-copy strong {
+.desktop-service-status__metric-summary {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.desktop-service-status__metric-summary strong {
+  flex: 0 0 auto;
   color: color-mix(in srgb, var(--desktop-label) 94%, transparent);
   font-size: 15px;
   font-variant-numeric: tabular-nums;
   font-weight: 760;
-  line-height: 1.1;
+  line-height: 1.2;
 }
 
-.desktop-service-status__metric-copy small {
+.desktop-service-status__metric-summary small {
+  min-width: 0;
+  padding-left: 8px;
   color: color-mix(in srgb, var(--desktop-label) 55%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--desktop-label) 16%, transparent);
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.35;
 }
 
 .desktop-service-status__metric-track {
   height: 3px;
   overflow: hidden;
-  margin-top: 2px;
+  align-self: end;
   background: color-mix(in srgb, var(--desktop-label) 12%, transparent);
   border-radius: 999px;
 }
