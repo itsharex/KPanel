@@ -80,6 +80,21 @@ describe('diagnostics workspace layout', () => {
     )
   })
 
+  it('keeps the mobile selector on the page theme instead of the terminal palette', () => {
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-mobile-selector\s*\{[^}]*border-bottom:\s*1px solid var\(--border\);[^}]*color:\s*var\(--text\);[^}]*background:\s*var\(--surface-subtle\);/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-mobile-selector button\s*\{[^}]*color:\s*inherit;/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-mobile-selector small\s*\{[^}]*color:\s*var\(--muted\);/,
+    )
+    expect(diagnosticsSource).not.toMatch(
+      /\.diagnostic-mobile-selector\s*\{[^}]*background:\s*var\(--terminal-shell-panel/,
+    )
+  })
+
   it('keeps bounded desktop windows in drawer mode instead of stacking the result below commands', () => {
     expect(diagnosticsSource).toContain('@container desktop-window (max-width: 820px)')
     expect(diagnosticsSource).toMatch(
