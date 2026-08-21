@@ -19,6 +19,8 @@ const ACCEPTANCE_BLOCK_START = '<!-- kpanel-release-metrics:start -->';
 const ACCEPTANCE_BLOCK_END = '<!-- kpanel-release-metrics:end -->';
 const PROCESS_BLOCK_START = '<!-- kpanel-release-process-metrics:start -->';
 const PROCESS_BLOCK_END = '<!-- kpanel-release-process-metrics:end -->';
+const PROCESS_INCIDENTS_BLOCK_START = '<!-- kpanel-release-process-incidents:start -->';
+const PROCESS_INCIDENTS_BLOCK_END = '<!-- kpanel-release-process-incidents:end -->';
 const ACCEPTANCE_FIELD_NAMES = [
   '首个纳入提交时间',
   '候选冻结时间',
@@ -227,6 +229,87 @@ test('process metrics are separate, explicit, and required from v0.81.2', () => 
     '- 已记录发布流程异常或无效证据拦截次数：0\n' + PROCESS_BLOCK_END,
   ));
   assert.match(duplicate.join('\n'), /exactly two rows|duplicate structured field/);
+});
+
+test('process incident details are closed, count-consistent, and required from v0.90.2', () => {
+  const acceptanceRows = [
+    ACCEPTANCE_BLOCK_START,
+    '- 首个纳入提交时间：未记录',
+    '- 候选冻结时间：未记录',
+    '- 生产完成时间：未记录',
+    '- 提交到生产用时：未记录',
+    '- 是否回滚、紧急热修复或重复发布：否',
+    '- 若发生失败，发现时间、恢复时间和逃逸门禁：不适用',
+    ACCEPTANCE_BLOCK_END,
+  ];
+  const processRows = [
+    PROCESS_BLOCK_START,
+    '- 已记录发布流程异常或无效证据拦截次数：2',
+    '- 其中生产写操作开始后异常次数：0',
+    PROCESS_BLOCK_END,
+  ];
+  const incident = {
+    fingerprint: 'l3-bundle/release-gate/missing-base-tag',
+    position: 'before-production-write',
+    count: 2,
+    impact: 'L3 stopped before candidate execution',
+    recoveryEvidence: 'bundle verification and base-tag check passed after rebuild',
+    permanentAction: 'release workflow now includes all stable tags and verifies the rollback tag',
+    historicalReleases: ['v0.89.1'],
+  };
+  const incidentRows = [
+    PROCESS_INCIDENTS_BLOCK_START,
+    JSON.stringify([incident], null, 2),
+    PROCESS_INCIDENTS_BLOCK_END,
+  ];
+  const base = ['# KPanel v0.90.2 发布验收记录', ...acceptanceRows, ...processRows];
+  const valid = [...base, ...incidentRows].join('\n');
+
+  assert.deepEqual(validateAcceptanceMetricsRaw(valid), []);
+  assert.deepEqual(extractAcceptanceMetricsRaw(valid).processIncidents, [incident]);
+  assert.match(validateAcceptanceMetricsRaw(base.join('\n')).join('\n'), /requires release-process-incidents evidence/);
+
+  const oldRecord = ['# KPanel v0.90.1 发布验收记录', ...acceptanceRows, ...processRows].join('\n');
+  assert.deepEqual(validateAcceptanceMetricsRaw(oldRecord), []);
+
+  const zero = [
+    '# KPanel v0.90.2 发布验收记录',
+    ...acceptanceRows,
+    PROCESS_BLOCK_START,
+    '- 已记录发布流程异常或无效证据拦截次数：0',
+    '- 其中生产写操作开始后异常次数：0',
+    PROCESS_BLOCK_END,
+    PROCESS_INCIDENTS_BLOCK_START,
+    '[]',
+    PROCESS_INCIDENTS_BLOCK_END,
+  ].join('\n');
+  assert.deepEqual(validateAcceptanceMetricsRaw(zero), []);
+  const unreported = zero
+    .replace('拦截次数：0', '拦截次数：未记录')
+    .replace('后异常次数：0', '后异常次数：未记录');
+  assert.deepEqual(validateAcceptanceMetricsRaw(unreported), []);
+
+  const wrongTotal = valid.replace('"count": 2', '"count": 1');
+  assert.match(validateAcceptanceMetricsRaw(wrongTotal).join('\n'), /counts must equal the reported process incident total/);
+  const wrongPosition = valid.replace('"position": "before-production-write"', '"position": "after-production-write"');
+  assert.match(validateAcceptanceMetricsRaw(wrongPosition).join('\n'), /after-production-write incident counts must equal/);
+  const invalidFingerprint = valid.replace(
+    'l3-bundle/release-gate/missing-base-tag',
+    'L3 bundle / release gate / missing tag',
+  );
+  assert.match(validateAcceptanceMetricsRaw(invalidFingerprint).join('\n'), /fingerprint must use/);
+  const missingEvidence = valid.replace(
+    '"permanentAction": "release workflow now includes all stable tags and verifies the rollback tag",\n',
+    '',
+  );
+  assert.match(validateAcceptanceMetricsRaw(missingEvidence).join('\n'), /exactly the canonical fields/);
+  const placeholderEvidence = valid.replace(
+    'release workflow now includes all stable tags and verifies the rollback tag',
+    '<script, runner, fixture, or preflight change>',
+  );
+  assert.match(validateAcceptanceMetricsRaw(placeholderEvidence).join('\n'), /must contain explicit evidence/);
+  const malformedJson = valid.replace('"count": 2', '"count":');
+  assert.match(validateAcceptanceMetricsRaw(malformedJson).join('\n'), /must contain valid JSON/);
 });
 
 test('argument parser rejects invalid windows', () => {

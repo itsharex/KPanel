@@ -32,6 +32,8 @@ flowchart LR
 所有工具共同读取 `PROJECT_RULES.md` 和 `docs/project-management.md`，共同执行仓库的 Make、测试、
 CI 和发布入口。规范分层、Definition of Ready/Done、任务契约和交付包只在
 `docs/project-management.md` 定义，本手册不维护平行版本。
+Windows 没有 Make 时使用 `node scripts/run-repo-bash.mjs <script>` 调用同一 Bash 门禁；该适配器从
+当前 Git for Windows 安装定位解释器，避免 PATH 中的 WSL `bash.exe` 误读 Windows linked worktree。
 
 ## 标准协作流程
 

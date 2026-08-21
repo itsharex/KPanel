@@ -17,14 +17,14 @@ test-web:
 	cd web && $(NPM) run typecheck && $(NPM) test
 
 test-deploy:
-	bash scripts/verify-deploy.sh
+	node scripts/run-repo-bash.mjs scripts/verify-deploy.sh
 
 security-audit:
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 	$(NPM) audit --prefix web --audit-level=high
 
 governance-check:
-	bash scripts/verify-governance.sh
+	node scripts/run-repo-bash.mjs scripts/verify-governance.sh
 
 environment-policy-check:
 	node scripts/check-environment-policy.mjs --validate-only
@@ -40,13 +40,13 @@ dependency-report:
 	node scripts/report-dependency-freshness.mjs --format markdown
 
 verify-change:
-	bash scripts/verify-change.sh
+	node scripts/run-repo-bash.mjs scripts/verify-change.sh
 
 verify-l2:
-	VERIFY_LEVEL=l2 bash scripts/verify-change.sh
+	node scripts/run-repo-bash.mjs --env VERIFY_LEVEL=l2 -- scripts/verify-change.sh
 
 verify-release:
-	VERIFY_LEVEL=release bash scripts/verify-change.sh
+	node scripts/run-repo-bash.mjs --env VERIFY_LEVEL=release -- scripts/verify-change.sh
 
 build: build-web
 	mkdir -p dist

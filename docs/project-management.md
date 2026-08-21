@@ -207,6 +207,13 @@ git worktree list
    `scripts/verify-governance.sh`；该脚本由 `make governance-check` 和变更感知入口共同复用，禁止再维护
    第三份命令清单。
 
+Windows linked worktree 不直接调用 PATH 中含义不明的 `bash`。Make 可用时，`make governance-check`、
+`make verify-change`、`make verify-l2` 和 `make verify-release` 统一通过 `scripts/run-repo-bash.mjs`；没有 Make
+时直接执行 `node scripts/run-repo-bash.mjs scripts/verify-change.sh <exact-base>`，L2/Release 通过
+`--env VERIFY_LEVEL=<level> --` 传入。适配器在 Windows 定位 Git for Windows Bash，Linux 仍使用系统
+Bash；失败时先修复解释器入口，不改 `.git` 指针、不把工作树复制到共享 `main`，也不把“换 Shell 后
+退出 0”解释为门禁已经执行完整。
+
 每项任务向协调中心回传同一结构的交付包：
 
 ```text

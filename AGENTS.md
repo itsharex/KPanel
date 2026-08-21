@@ -59,6 +59,8 @@ git worktree list
 - 修改使用最小、可回滚补丁。新网络入口、宿主机写操作、终端、归档、身份或迁移先覆盖失败边界。
 - 日常运行 `make verify-change`；L2 使用 `make verify-l2`；发布使用 `make verify-release`。定向测试用于
   快速反馈，不替代对应等级门禁；完整门禁也不替代实机、浏览器、性能或业务互通证据。
+- Windows 没有 Make 时使用同一门禁的适配入口：`node scripts/run-repo-bash.mjs scripts/verify-change.sh`
+  （L2/Release 通过 `--env VERIFY_LEVEL=<level> --` 传入）；不得直接调用可能指向 WSL 的裸 `bash`。
 - 证据只对精确提交、环境、工具和参数有效。组合未变化时可复用已有 CI，不机械重复全量测试；变化时
   从受影响层重跑。
 - 本地或远程长时间浏览器验收使用 `background-browser-validation` 工作流后台运行；先通过

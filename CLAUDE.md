@@ -30,6 +30,8 @@
 - 先使用 `rg` 定位直接相关代码、测试和文档，已有精确证据足够时不重复全仓扫描。
 - 使用 `PROJECT_RULES.md` 的 L0-L3 和 `make verify-change`、`make verify-l2`、`make verify-release`
   权威入口，不创建 Claude 专属平行命令。
+- Windows 没有 Make 时通过 `node scripts/run-repo-bash.mjs scripts/verify-change.sh` 调用同一门禁；
+  L2/Release 使用 `--env VERIFY_LEVEL=<level> --`，不得让裸 `bash` 落到 WSL linked-worktree 语义。
 - 定向测试用于反馈，不能替代对应等级门禁；门禁不能替代受影响业务互通、实机、浏览器、性能或回滚证据。
 - 本地或远程长时间浏览器验收复用仓库的后台浏览器入口和环境策略；不得把 `prod-108` 用作测试目标，
   也不得依赖前台会话持续打开来维持作业。

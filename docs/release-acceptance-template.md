@@ -126,17 +126,29 @@ Markdown code 或 HTML 注释控制符；值不得留空，未知事实必须明
 
 ### 流程异常明细
 
-计数为 0 或“未记录”时填写“不适用”。计数大于零时，按实际事件逐项或按同一根因批次记录：
+自 `v0.90.2` 起固定保留下列 marker。计数为 0 或“未记录”时区块内容写 `[]`；计数大于零时，按实际
+事件或同一根因批次增加对象。`fingerprint` 固定为三个小写 slug，`position` 只能使用
+`before-production-write` 或 `after-production-write`，所有 `count` 之和必须分别等于上方两项计数：
 
-```text
-- 指纹：<阶段>/<权威入口>/<根因类别>；位置：生产写前 / 生产写后；次数：<n>；影响：<事实>；
-  恢复依据：<日志或状态>；永久处置：<脚本/Runner/夹具/预检提交，或有期限上游例外>；历史复发：<版本或无>
-```
+<!-- kpanel-release-process-incidents:start -->
+[
+  {
+    "fingerprint": "<stage-slug>/<authoritative-entry-slug>/<root-cause-slug>",
+    "position": "before-production-write",
+    "count": 1,
+    "impact": "<实际影响>",
+    "recoveryEvidence": "<日志、状态或产物证据>",
+    "permanentAction": "<脚本、Runner、夹具、预检提交；或含负责人、复核日期和退出条件的上游例外>",
+    "historicalReleases": []
+  }
+]
+<!-- kpanel-release-process-incidents:end -->
 
 指纹用于发现重复根因，不替代两行机器计数，也不得把不同事件合并以降低数量。同一指纹在滚动 5 个
 正式版本内出现 2 次，必须在下一次 L3 生产写前修复唯一入口并补回归；确认是不可控上游瞬时故障时
 记录负责人、复核日期和退出条件。一次现场绕行不能直接写成永久处置。机器不判断指纹、根因和处置
-真实性；发布复核者必须读取原始日志并比较最近 5 个验收记录。
+真实性，只校验 JSON 结构、稳定 Tag 格式和计数一致性；发布复核者必须读取原始日志并比较最近 5 个
+验收记录。`v0.90.1` 及更早历史记录不追溯改写。
 
 ```text
 发现时间：<ISO 时间>；恢复时间：<ISO 时间>；逃逸门禁：已逃逸：<遗漏门禁和原因>

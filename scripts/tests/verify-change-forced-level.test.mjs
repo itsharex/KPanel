@@ -27,6 +27,8 @@ test('change routing includes deletions and every GitHub workflow', () => {
   assert.match(script, /\.github\/workflows\/\*\.yml\|\.github\/workflows\/\*\.yaml/);
   assert.match(script, /scripts\/check-collaboration-state\.mjs/);
   assert.match(script, /scripts\/tests\/collaboration-state\.test\.mjs/);
+  assert.match(script, /scripts\/run-repo-bash\.mjs/);
+  assert.match(script, /scripts\/tests\/run-repo-bash\.test\.mjs/);
 });
 
 function executable(path, body) {

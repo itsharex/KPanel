@@ -26,6 +26,10 @@ KPanel 的研发、复核和发布可以由 Codex、Claude 及其他经授权的
 8. KPanel 源码远端统一通过 SSH 访问，规范地址为 `git@github.com:kejilion/KPanel.git`。开发流程不得
    把 GitHub App、Issue、PR、REST/GraphQL API 或 `gh` 登录作为创建 worktree、提交、验证和推送的
    前置条件；私钥及本机 `core.sshCommand`/SSH config 只存在于本机，不得提交到仓库。
+9. 仓库 Bash 门禁统一由 `scripts/run-repo-bash.mjs` 选择解释器；Make 目标调用该适配器，Windows 没有
+   Make 时可直接调用同一适配器。Windows 必须使用当前 Git for Windows 自带的 Bash，不得让 PATH 中的
+   WSL `bash.exe` 解释 Windows linked worktree；Linux 继续使用系统 Bash。解释器适配只解决路径和环境，
+   不得改变门禁参数、忽略退出码或修改 Git 元数据。
 
 ## 1. 生态与业务真源
 
@@ -257,7 +261,9 @@ SSH 或单个 AI 会话持续存在。后台化不降低断言或门禁。普通
    指标。同一指纹在滚动 5 个正式版本内出现 2 次，视为重复流程缺陷：下一次 L3 生产写操作前必须修复
    唯一仓库脚本、Runner、夹具或预检并补回归。确认属于不可控上游瞬时故障时可以建立有期限的例外，
    但仍保留原始证据和复核日期，不能降低 fail-closed 门禁。机器只校验计数和必需结构；流程复核者
-   必须读取原始日志并比较最近 5 个验收记录，不能把格式通过解释为根因和永久处置真实。
+   必须读取原始日志并比较最近 5 个验收记录，不能把格式通过解释为根因和永久处置真实。自 `v0.90.2`
+   起，明细使用 `kpanel-release-process-incidents:start/end` 封闭 JSON 区块；机器必须核对明细次数总和、
+   生产写后次数总和与两项流程指标一致，旧记录不追溯改写。
 8. 候选冻结后必须同时冻结发布执行方案。首次生产写操作前应在非生产环境核对 SSH 身份、所需运行时、
    固定脚本、跨 Shell 参数传递和证据解析；生产写操作开始后不得临时拼接新的多层 PowerShell/SSH/Shell
    命令或首次引入未预检工具。若冻结入口不可用，先停止、保持或恢复服务健康，在非生产环境修复唯一

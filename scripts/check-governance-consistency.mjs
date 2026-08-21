@@ -27,6 +27,8 @@ const requiredFiles = [
   'scripts/tests/check-environment-policy.test.mjs',
   'scripts/check-collaboration-state.mjs',
   'scripts/tests/collaboration-state.test.mjs',
+  'scripts/run-repo-bash.mjs',
+  'scripts/tests/run-repo-bash.test.mjs',
   'scripts/background-browser-test.mjs',
   'scripts/tests/background-browser-test.test.mjs',
   'scripts/local-feature-preview.mjs',
@@ -138,6 +140,7 @@ const adapterTokens = [
   'docs/ui-visual-language.md',
   'docs/product-quality-review-current.md',
   'scripts/check-collaboration-state.mjs',
+  'scripts/run-repo-bash.mjs',
 ];
 requireText('AGENTS.md', adapterTokens);
 requireText('CLAUDE.md', adapterTokens);
@@ -167,6 +170,7 @@ requireText('PROJECT_RULES.md', [
   '停止条件',
   '首次生产写操作前被拦截的流程异常不计变更失败',
   '流程异常指纹',
+  'kpanel-release-process-incidents:start/end',
   'scripts/check-collaboration-state.mjs',
 ]);
 requireText('docs/development-quality-standard.md', [
@@ -238,7 +242,16 @@ requireText('scripts/local-feature-preview.mjs', [
 ]);
 requireText('Makefile', [
   'governance-check:',
-  'bash scripts/verify-governance.sh',
+  'node scripts/run-repo-bash.mjs scripts/verify-governance.sh',
+  'node scripts/run-repo-bash.mjs scripts/verify-change.sh',
+]);
+requireText('scripts/run-repo-bash.mjs', [
+  'Git for Windows Bash was not found',
+  "startsWith('GIT_')",
+  'spawnSync',
+]);
+requireText('scripts/verify-governance.sh', [
+  'scripts/tests/run-repo-bash.test.mjs',
 ]);
 requireText('scripts/verify-change.sh', [
   'needs_governance=false',
@@ -249,6 +262,8 @@ requireText('scripts/verify-change.sh', [
   'scripts/tests/local-feature-preview.test.mjs',
   'scripts/check-collaboration-state.mjs',
   'scripts/tests/collaboration-state.test.mjs',
+  'scripts/run-repo-bash.mjs',
+  'scripts/tests/run-repo-bash.test.mjs',
   '--validate-acceptance',
   '--diff-filter=ACMRTD',
   '.github/workflows/*.yml|.github/workflows/*.yaml',
@@ -315,7 +330,9 @@ requireText('docs/release-acceptance-template.md', [
   '已记录发布流程异常或无效证据拦截次数',
   '两类同时计入',
   '### 流程异常明细',
-  '<阶段>/<权威入口>/<根因类别>',
+  '<!-- kpanel-release-process-incidents:start -->',
+  '<!-- kpanel-release-process-incidents:end -->',
+  'before-production-write',
   '## 遗留风险与后续准入',
 ]);
 requireText('docs/quality-improvement-proposal-template.md', [

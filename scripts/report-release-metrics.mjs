@@ -159,6 +159,21 @@ const PROCESS_FIELDS = [
   '其中生产写操作开始后异常次数',
 ];
 const PROCESS_METRICS_REQUIRED_FROM = [0, 81, 2];
+const PROCESS_INCIDENTS_BLOCK_START = '<!-- kpanel-release-process-incidents:start -->';
+const PROCESS_INCIDENTS_BLOCK_END = '<!-- kpanel-release-process-incidents:end -->';
+const PROCESS_INCIDENTS_REQUIRED_FROM = [0, 90, 2];
+const PROCESS_INCIDENT_FIELDS = [
+  'fingerprint',
+  'position',
+  'count',
+  'impact',
+  'recoveryEvidence',
+  'permanentAction',
+  'historicalReleases',
+];
+const PROCESS_INCIDENT_FINGERPRINT = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*){2}$/;
+const PROCESS_INCIDENT_POSITIONS = new Set(['before-production-write', 'after-production-write']);
+const PROCESS_INCIDENT_PLACEHOLDER = /^(?:<.*>|无|未知|未记录|未验证|不适用|待.*|n\/?a|none|null|unknown|tbd|todo)$/i;
 
 function acceptanceFields(markdown) {
   const fields = new Map();
@@ -273,6 +288,85 @@ function processFields(markdown) {
   return { fields, duplicates, structureErrors, defaultIgnorables, present };
 }
 
+function processIncidentDetails(markdown) {
+  const incidents = [];
+  const structureErrors = [];
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const starts = lines.flatMap((line, index) => line === PROCESS_INCIDENTS_BLOCK_START ? [index] : []);
+  const ends = lines.flatMap((line, index) => line === PROCESS_INCIDENTS_BLOCK_END ? [index] : []);
+  const present = starts.length > 0 || ends.length > 0;
+  if (!present) return { incidents, structureErrors, present };
+  if (starts.length !== 1 || ends.length !== 1 || ends[0] <= starts[0]) {
+    structureErrors.push('requires exactly one ordered release-process-incidents marker pair');
+    return { incidents, structureErrors, present };
+  }
+
+  const source = lines.slice(starts[0] + 1, ends[0]).join('\n').trim();
+  if (source === '') {
+    structureErrors.push('release-process-incidents block must contain a JSON array');
+    return { incidents, structureErrors, present };
+  }
+  if (DEFAULT_IGNORABLE.test(source)) {
+    structureErrors.push('release-process-incidents evidence must not contain default-ignorable characters');
+    return { incidents, structureErrors, present };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    structureErrors.push('release-process-incidents block must contain valid JSON');
+    return { incidents, structureErrors, present };
+  }
+  if (!Array.isArray(parsed)) {
+    structureErrors.push('release-process-incidents JSON must be an array');
+    return { incidents, structureErrors, present };
+  }
+
+  const fingerprints = new Set();
+  for (const [index, incident] of parsed.entries()) {
+    const prefix = 'release-process-incidents item ' + (index + 1);
+    if (incident === null || Array.isArray(incident) || typeof incident !== 'object') {
+      structureErrors.push(prefix + ' must be an object');
+      continue;
+    }
+    const keys = Object.keys(incident).sort();
+    const expectedKeys = [...PROCESS_INCIDENT_FIELDS].sort();
+    if (keys.length !== expectedKeys.length || keys.some((key, keyIndex) => key !== expectedKeys[keyIndex])) {
+      structureErrors.push(prefix + ' must contain exactly the canonical fields');
+      continue;
+    }
+
+    const fingerprint = typeof incident.fingerprint === 'string' ? incident.fingerprint.trim() : '';
+    if (!PROCESS_INCIDENT_FINGERPRINT.test(fingerprint)) {
+      structureErrors.push(prefix + ' fingerprint must use "stage/authoritative-entry/root-cause" slug syntax');
+    } else if (fingerprints.has(fingerprint)) {
+      structureErrors.push(prefix + ' duplicates fingerprint "' + fingerprint + '"');
+    } else {
+      fingerprints.add(fingerprint);
+    }
+    if (!PROCESS_INCIDENT_POSITIONS.has(incident.position)) {
+      structureErrors.push(prefix + ' position must be before-production-write or after-production-write');
+    }
+    if (!Number.isSafeInteger(incident.count) || incident.count < 1) {
+      structureErrors.push(prefix + ' count must be a positive safe integer');
+    }
+    for (const field of ['impact', 'recoveryEvidence', 'permanentAction']) {
+      const value = typeof incident[field] === 'string' ? incident[field].trim().normalize('NFKC') : '';
+      if (value.length < 4 || PROCESS_INCIDENT_PLACEHOLDER.test(value) || DEFAULT_IGNORABLE.test(value)) {
+        structureErrors.push(prefix + ' ' + field + ' must contain explicit evidence');
+      }
+    }
+    if (!Array.isArray(incident.historicalReleases) ||
+        incident.historicalReleases.some((tag) => typeof tag !== 'string' || !isStableReleaseTag(tag)) ||
+        new Set(incident.historicalReleases).size !== incident.historicalReleases.length) {
+      structureErrors.push(prefix + ' historicalReleases must be a unique array of stable release tags');
+    }
+    incidents.push(incident);
+  }
+  return { incidents, structureErrors, present };
+}
+
 function explicitCount(value) {
   const normalized = validValue(value);
   if (normalized === null || !/^\d+$/.test(normalized)) return null;
@@ -289,6 +383,10 @@ export function extractProcessMetrics(markdown) {
   };
 }
 
+export function extractProcessIncidents(markdown) {
+  return processIncidentDetails(markdown).incidents;
+}
+
 export function extractAcceptanceMetrics(markdown) {
   const { fields } = acceptanceFields(markdown);
   const field = (name) => fields.get(normalizedFieldName(name));
@@ -301,6 +399,7 @@ export function extractAcceptanceMetrics(markdown) {
     changeFailure: validValue(field('是否回滚、紧急热修复或重复发布')),
     recovery: validValue(field('若发生失败，发现时间、恢复时间和逃逸门禁')),
     ...extractProcessMetrics(markdown),
+    processIncidents: extractProcessIncidents(markdown),
   };
 }
 
@@ -360,10 +459,15 @@ export function validateAcceptanceMetrics(markdown, label = 'acceptance record')
   }
   const acceptanceVersion = versions.filename ?? versions.title;
   const process = processFields(markdown);
+  const processIncidents = processIncidentDetails(markdown);
   if (versionAtLeast(acceptanceVersion, PROCESS_METRICS_REQUIRED_FROM) && !process.present) {
     errors.push(label + ': release v0.81.2 and later requires release-process-metrics evidence');
   }
+  if (versionAtLeast(acceptanceVersion, PROCESS_INCIDENTS_REQUIRED_FROM) && !processIncidents.present) {
+    errors.push(label + ': release v0.90.2 and later requires release-process-incidents evidence');
+  }
   for (const error of process.structureErrors) errors.push(label + ': ' + error);
+  for (const error of processIncidents.structureErrors) errors.push(label + ': ' + error);
   if (process.defaultIgnorables) {
     errors.push(label + ': structured process evidence must not contain default-ignorable characters');
   }
@@ -376,11 +480,15 @@ export function validateAcceptanceMetrics(markdown, label = 'acceptance record')
   }
   if (errors.length > 0) return errors;
 
+  let processIncidentCount = null;
+  let postProductionProcessIncidentCount = null;
   if (process.present) {
     const totalValue = process.fields.get(normalizedFieldName(PROCESS_FIELDS[0]));
     const postProductionValue = process.fields.get(normalizedFieldName(PROCESS_FIELDS[1]));
     const total = explicitCount(totalValue);
     const postProduction = explicitCount(postProductionValue);
+    processIncidentCount = total;
+    postProductionProcessIncidentCount = postProduction;
     const totalUnreported = validValue(totalValue) === null;
     const postProductionUnreported = validValue(postProductionValue) === null;
     if (!totalUnreported && total === null) {
@@ -395,6 +503,21 @@ export function validateAcceptanceMetrics(markdown, label = 'acceptance record')
     if (total !== null && postProduction !== null && postProduction > total) {
       errors.push(label + ': 生产写操作开始后异常次数 cannot exceed total process incidents');
     }
+  }
+
+  if (processIncidents.present && processIncidentCount !== null && postProductionProcessIncidentCount !== null) {
+    const detailedTotal = processIncidents.incidents.reduce((sum, incident) => sum + incident.count, 0);
+    const detailedPostProduction = processIncidents.incidents
+      .filter((incident) => incident.position === 'after-production-write')
+      .reduce((sum, incident) => sum + incident.count, 0);
+    if (detailedTotal !== processIncidentCount) {
+      errors.push(label + ': release-process-incidents counts must equal the reported process incident total');
+    }
+    if (detailedPostProduction !== postProductionProcessIncidentCount) {
+      errors.push(label + ': after-production-write incident counts must equal the reported post-production total');
+    }
+  } else if (processIncidents.present && processIncidents.incidents.length > 0) {
+    errors.push(label + ': unreported process incident counts require an empty release-process-incidents array');
   }
 
   const metrics = extractAcceptanceMetrics(markdown);

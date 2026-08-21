@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
 description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产部署安全核对和回滚记录"
-version: "2.7"
+version: "2.8"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, runner_image, apps_repo, validation_environment, production_environment]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-20T19:30:00+08:00"
+updated: "2026-08-21T07:59:27Z"
 ---
 
 # Release KPanel
@@ -344,6 +344,8 @@ node scripts/check-environment-policy.mjs \
 稳定指纹，记录生产写前后位置、实际影响、恢复证据、历史复发和永久处置。同一指纹在滚动 5 个正式
 版本内出现 2 次，或生产写后发生可由预检发现的本地流程异常，下一次 L3 生产写前必须修复唯一脚本、
 Runner、夹具或预检并补回归；不可控上游瞬时故障只能使用有负责人、复核日期和退出条件的期限例外。
+`v0.90.2` 起按模板填写 `kpanel-release-process-incidents:start/end` JSON 区块；即使计数为 0 或未记录也
+保留空数组，使校验器能够核对明细总数和生产写后总数。
 
 提交验收记录前执行机器校验；同一命令既校验六个交付字段和两个流程指标，也核对时间顺序、十进制用时、计数和失败恢复
 语义，禁止使用语义相近的自由文本代替字段。发生失败时必须按模板分别填写“发现时间”“恢复时间”
