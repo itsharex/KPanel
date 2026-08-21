@@ -123,6 +123,23 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).not.toContain('<strong>上传 / 下载</strong>')
     expect(diagnosticsSource).toContain('class="diagnostic-report-pair diagnostic-report-pair--speed"')
     expect(diagnosticsSource).toContain('`is-${reportIPRiskTone()}`')
+    expect(diagnosticsSource).toContain("'is-isp': hasIPISP()")
+    expect(diagnosticsSource).toContain("ip_type: 'IP 类型'")
+    expect(diagnosticsSource).toContain('reportIPType()')
+    expect(diagnosticsSource).toContain('reportIPQualityScore()')
+    expect(diagnosticsSource).toContain('riskSafety * 0.8')
+    expect(diagnosticsSource).toContain('reportIPTypeScore() * 0.1')
+    expect(diagnosticsSource).toContain('reportIPProxyScore() * 0.05')
+    expect(diagnosticsSource).toContain('reportIPMetadataScore() * 0.05')
+    expect(diagnosticsSource).toContain('reportIPRiskTags()')
+    expect(diagnosticsSource).toContain('reportIPAttributeDetails()')
+    expect(diagnosticsSource).toContain("'is-native-ip': detail.isNativeIP")
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-report-identity strong\.is-isp\s*\{[^}]*color:\s*var\(--brand-strong\);/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-report-risk \.is-isp,[\s\S]*?\.diagnostic-report-card__meta \.is-native-ip\s*\{[^}]*color:\s*var\(--brand-strong\);/,
+    )
     expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-low')
     expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-medium')
     expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-high')

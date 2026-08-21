@@ -79,7 +79,7 @@ func TestIPingQueryMapsOnlySelectedMetrics(t *testing.T) {
 			StatusCode: http.StatusOK,
 			Status:     "200 OK",
 			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"code":200,"data":{"ip":"203.0.113.10","isp":"Example ISP","is_proxy":"true","usage_type":"IDC","risk_score":97,"risk_tag":"proxy","asn":"AS64500","as_owner":"Example Network","company":"must-not-map","country":"JP"},"msg":"success"}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"code":200,"data":{"ip":"203.0.113.10","isp":"Example ISP","is_proxy":"true","usage_type":"IDC","type":"native","risk_score":97,"risk_tag":"proxy","asn":"AS64500","as_owner":"Example Network","company":"must-not-map","country":"JP"},"msg":"success"}`)),
 			Request:    request,
 		}, nil
 	})}
@@ -101,6 +101,7 @@ func TestIPingQueryMapsOnlySelectedMetrics(t *testing.T) {
 		"isp":        "Example ISP",
 		"is_proxy":   "是",
 		"usage_type": "IDC",
+		"ip_type":    "native",
 		"risk_score": "97",
 		"risk_level": "高风险",
 		"risk_tag":   "proxy",

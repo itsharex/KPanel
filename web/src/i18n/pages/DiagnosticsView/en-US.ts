@@ -104,6 +104,8 @@ export default [
   ['运营商', 'ISP'],
   ['ASN 归属', 'ASN owner'],
   ['使用类型', 'Usage type'],
+  ['IP 类型', 'IP type'],
+  ['原生 IP', 'Native IP'],
   ['风险分', 'Risk score'],
   ['风险等级', 'Risk level'],
   ['风险标签', 'Risk tag'],
@@ -185,6 +187,6 @@ export default [
   ['丢包', 'Packet loss'],
   ['服务器出口风险', 'Server egress risk'],
   ['基础信息', 'Basic information'],
-  ['以上分数均来自服务器本机与服务器出口实测，不包含当前浏览器到服务器的访问质量。IP 质量优先使用 IPING 风险分反向计算；接口不可用时回退为基础信息完整度。', 'All scores use measurements from the server host and its egress; the current browser-to-server path is excluded. IP quality prefers the inverse of the IPING risk score and falls back to basic-information completeness when unavailable.'],
+  ['以上分数均来自服务器本机与服务器出口实测，不包含当前浏览器到服务器的访问质量。IP 质量按 IPING 风险分、IP 类型、代理状态和信息完整度加权计算；接口不可用时回退为基础信息完整度。', 'All scores use measurements from the server host and its egress; the current browser-to-server path is excluded. IP quality combines the IPING risk score, IP type, proxy status, and information completeness with explicit weights, then falls back to basic-information completeness when unavailable.'],
   ['完成一次核心体检后，这里会显示实际结果与分项分数。', 'Run a core diagnostic to see actual results and per-item scores.'],
 ] as const satisfies PhraseCatalog

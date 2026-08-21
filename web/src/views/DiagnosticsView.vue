@@ -367,6 +367,7 @@ function summaryMetricLabel(key: string): string {
     asn: 'ASN',
     as_owner: 'ASN 归属',
     usage_type: '使用类型',
+    ip_type: 'IP 类型',
     risk_score: '风险分',
     risk_level: '风险等级',
     risk_tag: '风险标签',
@@ -452,6 +453,50 @@ function reportCategoryScore(values: Array<number | undefined>): number | undefi
   return Math.round(available.reduce((total, value) => total + value, 0) / available.length)
 }
 
+function reportIPTypeScore(): number {
+  const value = summaryValue('ip', 'ip_type').trim().toLowerCase()
+  if (!value) return 50
+  return value === 'native' ? 100 : 70
+}
+
+function reportIPProxyScore(): number {
+  const value = summaryValue('ip', 'is_proxy').trim().toLowerCase()
+  if (['否', 'no', 'false', 'not a proxy'].includes(value)) return 100
+  if (['是', 'yes', 'true', 'proxy'].includes(value)) return 0
+  return 50
+}
+
+function reportIPMetadataScore(): number {
+  const fields = [
+    summaryValue('ip', 'operator') || summaryValue('ip', 'isp') || summaryValue('ip', 'as_owner'),
+    summaryValue('ip', 'asn'),
+    summaryValue('ip', 'usage_type'),
+  ]
+  return fields.filter(Boolean).length / fields.length * 100
+}
+
+function reportIPQualityScore(): number | undefined {
+  const risk = numericValue(summaryValue('ip', 'risk_score'))
+  if (risk !== undefined) {
+    const riskSafety = 100 - Math.max(0, Math.min(100, risk))
+    return boundedScore(
+      riskSafety * 0.8 +
+      reportIPTypeScore() * 0.1 +
+      reportIPProxyScore() * 0.05 +
+      reportIPMetadataScore() * 0.05,
+    )
+  }
+  const fields = [
+    summaryValue('ip', 'public_ip'),
+    summaryValue('ip', 'asn'),
+    summaryValue('ip', 'country') || summaryValue('ip', 'location'),
+    summaryValue('ip', 'ipv4_ipv6'),
+    summaryValue('ip', 'reverse_dns'),
+    summaryValue('route', 'path'),
+  ].filter(Boolean)
+  return boundedScore(fields.length ? 35 + fields.length * 8 : undefined)
+}
+
 function reportMetricScore(id: ReportMetricID): number | undefined {
   if (id === 'cpu') {
     const cpu = numericValue(summaryValue('performance', 'cpu_score'))
@@ -481,17 +526,7 @@ function reportMetricScore(id: ReportMetricID): number | undefined {
       boundedScore(upload === undefined ? undefined : upload / 200 * 100),
     ])
   }
-  const risk = numericValue(summaryValue('ip', 'risk_score'))
-  if (risk !== undefined) return boundedScore(100 - risk)
-  const fields = [
-    summaryValue('ip', 'public_ip'),
-    summaryValue('ip', 'asn'),
-    summaryValue('ip', 'country') || summaryValue('ip', 'location'),
-    summaryValue('ip', 'ipv4_ipv6'),
-    summaryValue('ip', 'reverse_dns'),
-    summaryValue('route', 'path'),
-  ].filter(Boolean)
-  return boundedScore(fields.length ? 35 + fields.length * 8 : undefined)
+  return reportIPQualityScore()
 }
 
 function reportScoreLabel(value: number | undefined): string {
@@ -502,6 +537,10 @@ function reportIPOperator(): string {
   const operator = summaryValue('ip', 'operator') || summaryValue('ip', 'isp') || summaryValue('ip', 'as_owner')
   const asn = summaryValue('ip', 'asn')
   return [operator, asn].filter(Boolean).join(' · ') || '等待检测'
+}
+
+function hasIPISP(): boolean {
+  return Boolean(summaryValue('ip', 'operator') || summaryValue('ip', 'isp') || summaryValue('ip', 'as_owner'))
 }
 
 function reportIPLocation(): string {
@@ -518,20 +557,46 @@ function reportIPRiskLevel(): string {
   } as Record<string, string>)[value] || value
 }
 
-function reportIPRiskDetail(): string {
-  const parts: string[] = []
-  const tag = summaryValue('ip', 'risk_tag')
-  parts.push(tag || '未发现风险标签')
+function reportIPType(): string {
+  const value = summaryValue('ip', 'ip_type').trim()
+  if (!value) return ''
+  const labels = i18n.locale.value === 'en-US'
+    ? { native: 'Native IP' }
+    : { native: '原生 IP' }
+  return labels[value.toLowerCase() as keyof typeof labels] || value
+}
+
+function reportIPRiskTags(): Array<{ value: string; isISP: boolean }> {
+  const tag = summaryValue('ip', 'risk_tag') || '未发现风险标签'
+  return tag
+    .split(/\s*·\s*/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => ({ value, isISP: value.toLowerCase() === 'isp' }))
+}
+
+function reportIPAttributeDetails(): Array<{ value: string; isNativeIP: boolean }> {
+  const parts: Array<{ value: string; isNativeIP: boolean }> = []
+  const ipType = reportIPType()
+  if (ipType) {
+    parts.push({
+      value: ipType,
+      isNativeIP: summaryValue('ip', 'ip_type').trim().toLowerCase() === 'native',
+    })
+  }
+  const usage = summaryValue('ip', 'usage_type')
+  if (usage) parts.push({ value: usage, isNativeIP: false })
   const proxy = summaryValue('ip', 'is_proxy')
   if (proxy) {
     const proxyLabel = proxy === '是' ? '代理' : '非代理'
-    parts.push(i18n.locale.value === 'en-US'
-      ? (proxy === '是' ? 'Proxy' : 'Not a proxy')
-      : proxyLabel)
+    parts.push({
+      value: i18n.locale.value === 'en-US'
+        ? (proxy === '是' ? 'Proxy' : 'Not a proxy')
+        : proxyLabel,
+      isNativeIP: false,
+    })
   }
-  const usage = summaryValue('ip', 'usage_type')
-  if (usage) parts.push(usage)
-  return parts.join(' · ')
+  return parts
 }
 
 function reportIPRiskTone(): 'low' | 'medium' | 'high' | 'neutral' {
@@ -1070,7 +1135,7 @@ onBeforeUnmount(() => {
                 </header>
                 <div class="diagnostic-report-identity">
                   <div><span>出口 IP</span><strong>{{ summaryValue('ip', 'public_ip') || '等待检测' }}</strong></div>
-                  <div><span>出口运营商 / ASN</span><strong>{{ reportIPOperator() }}</strong></div>
+                  <div><span>出口运营商 / ASN</span><strong :class="{ 'is-isp': hasIPISP() }">{{ reportIPOperator() }}</strong></div>
                   <div><span>出口地区</span><strong>{{ reportIPLocation() }}</strong></div>
                   <div><span>出口线路</span><strong>{{ summaryValue('route', 'path') || '等待检测' }}</strong></div>
                 </div>
@@ -1092,13 +1157,21 @@ onBeforeUnmount(() => {
                   </article>
                   <article class="diagnostic-report-card">
                     <header><div class="diagnostic-report-card__heading"><span class="is-ip"><Globe2 :size="17" /></span><div><strong>IP 质量</strong><small>服务器出口风险</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('ip')) }}</strong><span>分</span></div></header>
-                    <div v-if="summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_score')" class="diagnostic-report-risk">
-                      <span class="diagnostic-report-risk__level" :class="`is-${reportIPRiskTone()}`">{{ reportIPRiskLevel() }}</span>
-                      <span v-if="summaryValue('ip', 'risk_score')"><b>风险分</b>{{ summaryValue('ip', 'risk_score') }}/100</span>
+                    <div v-if="summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_score') || summaryValue('ip', 'risk_tag')" class="diagnostic-report-risk">
+                      <span v-if="summaryValue('ip', 'risk_level')" class="diagnostic-report-risk__level" :class="`is-${reportIPRiskTone()}`">{{ reportIPRiskLevel() }}</span>
+                      <span v-if="summaryValue('ip', 'risk_score')" class="diagnostic-report-risk__score"><b>风险分</b>{{ summaryValue('ip', 'risk_score') }}%</span>
+                      <template v-for="(detail, index) in reportIPRiskTags()" :key="`${detail.value}-${index}`">
+                        <span v-if="index || summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_score')" aria-hidden="true">·</span>
+                        <span :class="{ 'is-isp': detail.isISP }">{{ detail.value }}</span>
+                      </template>
                     </div>
                     <strong v-else class="diagnostic-report-card__value diagnostic-report-card__value--text">{{ reportIPQualitySummary() }}</strong>
                     <div class="diagnostic-report-card__meta">
-                      <span v-if="summaryValue('ip', 'risk_level') || summaryValue('ip', 'risk_tag') || summaryValue('ip', 'is_proxy') || summaryValue('ip', 'usage_type')">{{ reportIPRiskDetail() }}</span>
+                      <span v-if="summaryValue('ip', 'is_proxy') || summaryValue('ip', 'usage_type') || summaryValue('ip', 'ip_type')">
+                        <template v-for="(detail, index) in reportIPAttributeDetails()" :key="`${detail.value}-${index}`">
+                          <span v-if="index" aria-hidden="true"> · </span><span :class="{ 'is-native-ip': detail.isNativeIP }">{{ detail.value }}</span>
+                        </template>
+                      </span>
                       <span v-else-if="reportIPQualityDetail()">{{ reportIPQualityDetail() }}</span>
                     </div>
                   </article>
@@ -1107,7 +1180,7 @@ onBeforeUnmount(() => {
 
               <section class="diagnostic-report-note">
                 <Activity :size="16" />
-                <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以上分数均来自服务器本机与服务器出口实测，不包含当前浏览器到服务器的访问质量。IP 质量优先使用 IPING 风险分反向计算；接口不可用时回退为基础信息完整度。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : '完成一次核心体检后，这里会显示实际结果与分项分数。' }}</p>
+                <p>{{ scoreSummaryMetricCount ? (scoreCheck?.provider === 'native' ? '以上分数均来自服务器本机与服务器出口实测，不包含当前浏览器到服务器的访问质量。IP 质量按 IPING 风险分、IP 类型、代理状态和信息完整度加权计算；接口不可用时回退为基础信息完整度。' : '以下指标来自脚本原始输出；未识别项目仍保留在终端中。') : '完成一次核心体检后，这里会显示实际结果与分项分数。' }}</p>
                 <a v-if="summaryReportURL" :href="summaryReportURL" target="_blank" rel="noreferrer">查看完整报告 <ExternalLink :size="13" /></a>
                 <button v-else-if="terminalSummaryJobForOverview()" type="button" @click="openSummaryTerminal">打开最近结果 <ExternalLink :size="13" /></button>
               </section>
@@ -3091,6 +3164,13 @@ onBeforeUnmount(() => {
   font-weight: 650;
 }
 
+.diagnostic-report-risk .is-isp,
+.diagnostic-report-card__meta .is-isp,
+.diagnostic-report-card__meta .is-native-ip {
+  color: var(--brand-strong);
+  font-weight: 750;
+}
+
 .diagnostic-report-pair {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3161,6 +3241,10 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.diagnostic-report-identity strong.is-isp {
+  color: var(--brand-strong);
+}
+
 .diagnostic-report-risk {
   display: flex;
   min-height: 34px;
@@ -3171,7 +3255,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
-.diagnostic-report-risk > span:last-child b {
+.diagnostic-report-risk__score b {
   margin-right: 4px;
   font-weight: 650;
 }

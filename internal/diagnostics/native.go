@@ -74,6 +74,7 @@ type ipingData struct {
 	ISP       string `json:"isp"`
 	IsProxy   any    `json:"is_proxy"`
 	UsageType string `json:"usage_type"`
+	Type      string `json:"type"`
 	RiskScore any    `json:"risk_score"`
 	RiskTag   string `json:"risk_tag"`
 	ASN       string `json:"asn"`
@@ -713,6 +714,7 @@ func ipingMetrics(data ipingData) []DiagnosticSummaryMetric {
 	add("asn", data.ASN)
 	add("as_owner", data.ASOwner)
 	add("usage_type", data.UsageType)
+	add("ip_type", data.Type)
 	if score, ok := ipingRiskScore(data.RiskScore); ok {
 		add("risk_score", formatSummaryNumber(score))
 		add("risk_level", ipingRiskLevelForScore(score))
@@ -758,7 +760,7 @@ func formatIPingLine(data ipingData) string {
 		parts = append(parts, data.ASN)
 	}
 	if score, ok := ipingRiskScore(data.RiskScore); ok {
-		parts = append(parts, "风险分："+formatSummaryNumber(score), ipingRiskLevelForScore(score))
+		parts = append(parts, "风险分："+formatSummaryNumber(score)+"%", ipingRiskLevelForScore(score))
 	}
 	return strings.Join(parts, " · ")
 }
