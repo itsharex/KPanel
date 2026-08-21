@@ -126,8 +126,8 @@ const scoreDimensions = [
   },
   {
     id: 'speed',
-    label: '网速',
-    detail: '服务器公网上下行测速',
+    label: '带宽',
+    detail: '服务器公网上下行带宽',
     nativeID: 'native-speed',
     category: 'network',
     keywords: ['superspeed', 'speedtest', '测速', '带宽', '网速'],
@@ -1064,7 +1064,7 @@ onBeforeUnmount(() => {
                 <header class="diagnostic-report-section__header">
                   <div class="diagnostic-report-section__title">
                     <span class="diagnostic-report-section__icon"><Network :size="18" /></span>
-                    <div><h3 id="diagnostic-network-title">网络</h3><p>服务器出口 IP · 运营商 · 延迟 · 测速 · IP 质量</p></div>
+                    <div><h3 id="diagnostic-network-title">网络</h3><p>服务器出口 IP · 运营商 · 延迟 · 带宽 · IP 质量</p></div>
                   </div>
                   <div class="diagnostic-report-section__score"><small>网络分</small><div><strong>{{ reportScoreLabel(networkScore) }}</strong><span>/100</span></div></div>
                 </header>
@@ -1084,7 +1084,7 @@ onBeforeUnmount(() => {
                     </div>
                   </article>
                   <article class="diagnostic-report-card">
-                    <header><div class="diagnostic-report-card__heading"><span class="is-speed"><Gauge :size="17" /></span><div><strong>测速</strong><small>服务器公网上下行测速</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('speed')) }}</strong><span>分</span></div></header>
+                    <header><div class="diagnostic-report-card__heading"><span class="is-speed"><Gauge :size="17" /></span><div><strong>带宽</strong><small>服务器公网上下行带宽</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('speed')) }}</strong><span>分</span></div></header>
                     <div class="diagnostic-report-pair diagnostic-report-pair--speed">
                       <div><span>{{ summaryMetricLabel('download') }}</span><strong>{{ summaryValue('speed', 'download') || '等待检测' }}</strong></div>
                       <div><span>{{ summaryMetricLabel('upload') }}</span><strong>{{ summaryValue('speed', 'upload') || '等待检测' }}</strong></div>
@@ -1163,7 +1163,7 @@ onBeforeUnmount(() => {
         <Gauge :size="24" />
         <div>
           <p>
-            {{ scoreCheck?.provider === 'native' ? '将使用 KPanel 原生探针在服务器本机完成 CPU、内存、硬盘测试，并由服务器出口执行路由、延迟、测速和 IP 基础质量检测。浏览器仅展示结果；测试期间会产生受控的 CPU、磁盘和网络开销。' : '将调用脚本目录中的综合评测入口，以真实终端输出完成一次多维度体检。测试期间可能消耗较多网络、CPU 或磁盘资源。' }}
+            {{ scoreCheck?.provider === 'native' ? '将使用 KPanel 原生探针在服务器本机完成 CPU、内存、硬盘测试，并由服务器出口执行路由、延迟、带宽和 IP 基础质量检测。浏览器仅展示结果；测试期间会产生受控的 CPU、磁盘和网络开销。' : '将调用脚本目录中的综合评测入口，以真实终端输出完成一次多维度体检。测试期间可能消耗较多网络、CPU 或磁盘资源。' }}
           </p>
           <div class="diagnostic-score-confirm__list">
             <span v-for="dimension in scoreDimensions" :key="dimension.id"><i /> {{ dimension.label }}</span>
@@ -1174,7 +1174,7 @@ onBeforeUnmount(() => {
         <TriangleAlert :size="24" />
         <div>
           <p>
-            {{ pendingCheck.provider === 'native' ? '此操作将运行 KPanel 原生探针，不安装第三方测试工具；硬盘和测速项目会产生受控的 I/O 或网络流量。' : '此操作将以 root 权限运行 kejilion.sh 中登记的第三方命令，可能安装测试工具并占用较多网络、CPU 或磁盘资源。' }}
+            {{ pendingCheck.provider === 'native' ? '此操作将运行 KPanel 原生探针，不安装第三方测试工具；硬盘和带宽项目会产生受控的 I/O 或网络流量。' : '此操作将以 root 权限运行 kejilion.sh 中登记的第三方命令，可能安装测试工具并占用较多网络、CPU 或磁盘资源。' }}
           </p>
           <a v-if="pendingCheck.sourceUrl" :href="pendingCheck.sourceUrl" target="_blank" rel="noopener noreferrer">
             {{ pendingCheck.sourceUrl }} <ExternalLink :size="13" />
@@ -2774,7 +2774,7 @@ onBeforeUnmount(() => {
   display: grid;
   align-content: center;
   min-height: 116px;
-  padding: 14px 20px;
+  padding: 14px 0 14px 50px;
   border-right: 1px solid var(--border);
 }
 
@@ -3277,14 +3277,28 @@ onBeforeUnmount(() => {
 
 @container diagnostic-result (max-width: 560px) {
   .diagnostic-score-hero--simple {
-    display: flex;
-    flex-direction: column;
-    grid-template-columns: 1fr;
+    display: grid;
+    grid-template-columns: minmax(170px, .42fr) minmax(0, .58fr);
     height: auto;
-    min-height: 0;
-    gap: 10px;
-    align-items: start;
-    align-self: start;
+    min-height: 150px;
+    gap: 14px;
+    padding: 16px;
+    justify-content: stretch;
+    align-items: stretch;
+    align-self: stretch;
+  }
+
+  .diagnostic-score-total {
+    min-height: 116px;
+    padding: 14px 0 14px 42px;
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+  }
+}
+
+@container diagnostic-result (max-width: 420px) {
+  .diagnostic-score-hero--simple {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .diagnostic-score-total {

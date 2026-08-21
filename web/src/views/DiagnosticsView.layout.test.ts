@@ -101,9 +101,25 @@ describe('diagnostics workspace layout', () => {
     )
   })
 
+  it('keeps score and copy side by side on narrow result surfaces', () => {
+    expect(diagnosticsSource).toMatch(
+      /@container diagnostic-result \(max-width: 560px\)[\s\S]*?\.diagnostic-score-hero--simple\s*\{[\s\S]*?grid-template-columns:\s*minmax\(170px, \.42fr\) minmax\(0, \.58fr\);[\s\S]*?justify-content:\s*stretch;/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-score-total\s*\{[^}]*padding:\s*14px 0 14px 50px;/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /@container diagnostic-result \(max-width: 560px\)[\s\S]*?\.diagnostic-score-total\s*\{[\s\S]*?padding:\s*14px 0 14px 42px;/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /@container diagnostic-result \(max-width: 420px\)[\s\S]*?\.diagnostic-score-hero--simple\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\);/,
+    )
+  })
+
   it('keeps report metrics visually flat and gives IP risk levels semantic colors', () => {
     expect(diagnosticsSource).not.toContain('class="diagnostic-report-model"')
-    expect(diagnosticsSource).toContain('<strong>测速</strong>')
+    expect(diagnosticsSource).toContain('<strong>带宽</strong>')
+    expect(diagnosticsSource).not.toContain('<strong>测速</strong>')
     expect(diagnosticsSource).not.toContain('<strong>上传 / 下载</strong>')
     expect(diagnosticsSource).toContain('class="diagnostic-report-pair diagnostic-report-pair--speed"')
     expect(diagnosticsSource).toContain('`is-${reportIPRiskTone()}`')
@@ -121,7 +137,7 @@ describe('diagnostics workspace layout', () => {
   it('states that native network scores measure the server rather than the browser link', () => {
     expect(diagnosticsSource).toContain('原生探针由服务器本机执行')
     expect(diagnosticsSource).toContain('服务器至探测节点')
-    expect(diagnosticsSource).toContain('服务器公网上下行测速')
+    expect(diagnosticsSource).toContain('服务器公网上下行带宽')
     expect(diagnosticsSource).toContain("summaryMetricLabel('download')")
     expect(diagnosticsSource).toContain("summaryMetricLabel('upload')")
     expect(diagnosticsSource).toContain('不包含当前浏览器到服务器的访问质量')
