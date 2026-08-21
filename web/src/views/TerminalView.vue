@@ -293,19 +293,19 @@ onBeforeUnmount(() => {
       </aside>
 
       <main class="terminal-stage" :class="{ 'is-fullscreen': workspaceFullscreen }">
-        <div v-if="!sessions.length" class="terminal-stage__mobile-selector">
-          <button
-            type="button"
-            aria-controls="terminal-connections-drawer"
-            :aria-expanded="mobileConnectionsOpen"
-            aria-label="打开主机选择"
-            @click="mobileConnectionsOpen = true"
-          >
-            <Menu :size="18" />
-            <span>{{ activeSession?.hostName || '选择主机' }}</span>
-          </button>
+        <button
+          v-if="!sessions.length"
+          class="terminal-stage__mobile-selector"
+          type="button"
+          aria-controls="terminal-connections-drawer"
+          :aria-expanded="mobileConnectionsOpen"
+          aria-label="打开主机选择"
+          @click="mobileConnectionsOpen = true"
+        >
+          <Menu :size="18" />
+          <span>{{ activeSession?.hostName || '选择主机' }}</span>
           <small>{{ sessions.length ? `${sessions.length} 个终端会话` : `${hosts.length} 台主机` }}</small>
-        </div>
+        </button>
         <div v-if="sessions.length" class="terminal-tabs-bar">
           <button
             class="terminal-tabs-bar__connections"
@@ -354,10 +354,10 @@ onBeforeUnmount(() => {
 .terminal-connections__toggle { display:grid; width:30px; height:30px; flex:0 0 auto; place-items:center; border:1px solid var(--terminal-shell-border,#29383a); border-radius:8px; color:var(--terminal-shell-muted,#8a9695); background:var(--terminal-shell-background,#0b1214); cursor:pointer; transition:border-color .16s ease,color .16s ease,background-color .16s ease; }
 .terminal-connections__toggle:hover,.terminal-connections__toggle:focus-visible { border-color:color-mix(in srgb,var(--brand) 62%,var(--terminal-shell-border,#29383a)); color:var(--brand); outline:none; }
 .terminal-connections__mobile-close,.terminal-connections-overlay,.terminal-stage__mobile-selector { display:none; }
-.terminal-stage__mobile-selector { min-width:0; grid-row:1; grid-column:1; align-items:center; justify-content:space-between; gap:10px; min-height:48px; padding:7px 10px; border-bottom:1px solid var(--terminal-shell-border,#29383a); background:var(--terminal-shell-panel,#111a1d); }
-.terminal-stage__mobile-selector button { display:flex; min-width:0; align-items:center; gap:8px; border:0; padding:7px 8px; color:var(--terminal-shell-text,#d8dddc); background:transparent; font-weight:700; cursor:pointer; }
-.terminal-stage__mobile-selector button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.terminal-stage__mobile-selector small { flex:0 0 auto; color:var(--terminal-shell-muted,#8a9695); }
+.terminal-stage__mobile-selector { width:100%; min-width:0; grid-row:1; grid-column:1; align-items:center; gap:8px; min-height:48px; border:0; border-bottom:1px solid var(--terminal-shell-border,#29383a); padding:7px 18px; color:var(--terminal-shell-text,#d8dddc); background:var(--terminal-shell-panel,#111a1d); font:inherit; font-weight:700; text-align:left; cursor:pointer; }
+.terminal-stage__mobile-selector:hover,.terminal-stage__mobile-selector:focus-visible { color:var(--brand); background:color-mix(in srgb,var(--brand) 7%,var(--terminal-shell-panel,#111a1d)); outline:none; }
+.terminal-stage__mobile-selector span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.terminal-stage__mobile-selector small { flex:0 0 auto; margin-left:auto; color:var(--terminal-shell-muted,#8a9695); font-weight:500; }
 .terminal-workspace.is-connections-collapsed .terminal-connections>header { justify-content:center; padding:12px 9px; }
 .terminal-workspace.is-connections-collapsed .terminal-connections__heading,.terminal-workspace.is-connections-collapsed .terminal-connections__refresh { display:none; }
 .terminal-search { position:relative; display:block; padding:0 10px 8px; color:var(--terminal-shell-muted,#8a9695); }

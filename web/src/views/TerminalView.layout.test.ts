@@ -137,7 +137,10 @@ describe('multi-host terminal workspace layout', () => {
     expect(desktopStyles).toMatch(
       /\.desktop-window__body \.terminal-stage__mobile-selector\s*\{[^}]*display:\s*flex !important;/,
     )
-    expect(terminalSource).toContain('v-if="!sessions.length" class="terminal-stage__mobile-selector"')
+    expect(terminalSource).toMatch(
+      /<button\s+v-if="!sessions\.length"\s+class="terminal-stage__mobile-selector"[\s\S]*?aria-label="打开主机选择"/,
+    )
+    expect(terminalSource).not.toContain('<div v-if="!sessions.length" class="terminal-stage__mobile-selector">')
     expect(terminalSource).toContain('class="terminal-tabs-bar__connections"')
     expect(desktopStyles).toMatch(
       /\.desktop-window__body \.terminal-tabs-bar__connections\s*\{[^}]*display:\s*grid !important;/,
@@ -206,7 +209,7 @@ describe('multi-host terminal workspace layout', () => {
       /\.terminal-stage\s*\{[^}]*grid-template-columns:minmax\(0,1fr\);[^}]*grid-template-rows:auto minmax\(0,1fr\);/,
     )
     expect(terminalSource).toMatch(
-      /\.terminal-stage__mobile-selector\s*\{[^}]*grid-row:1;[^}]*grid-column:1;/,
+      /\.terminal-stage__mobile-selector\s*\{[^}]*width:100%;[^}]*grid-row:1;[^}]*grid-column:1;[^}]*color:var\(--terminal-shell-text/,
     )
     expect(terminalSource).toMatch(
       /\.terminal-empty\s*\{[^}]*grid-row:2;[^}]*grid-column:1;[^}]*place-content:center;[^}]*padding:32px;/,
