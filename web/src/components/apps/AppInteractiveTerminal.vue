@@ -13,7 +13,10 @@ import { openTerminalURL } from '@/lib/terminalLinks'
 import { containWheelScroll } from '@/lib/scroll'
 import { createTerminalTouchScroll } from '@/lib/terminalTouchScroll'
 import {
-  takeTerminalInputChunk,
+  drainTerminalInputQueue,
+  TerminalInputQueue,
+  terminalEnterShouldSubmit,
+  terminalInputFlushInterval,
   terminalInputShouldFlushImmediately,
   terminalLineSubmission,
 } from '@/lib/terminalInput'
@@ -38,13 +41,11 @@ let resizeObserver: ResizeObserver | undefined
 let pollController: AbortController | undefined
 let pollTimer: number | undefined
 let inputTimer: number | undefined
-let inputQueue = ''
+let inputQueue = new TerminalInputQueue()
 let inputSending = false
 let offset = 0
 let disposed = false
 let polling = false
-
-const inputFlushInterval = 24
 
 const { fullscreen, toggleFullscreen } = useTerminalFullscreen(fitTerminal)
 
@@ -114,39 +115,48 @@ async function flushInput(): Promise<void> {
   if (inputTimer) window.clearTimeout(inputTimer)
   inputTimer = undefined
   inputSending = true
+  const queue = inputQueue
   try {
-    while (inputQueue && terminalInputOpen.value && !disposed) {
-      const { chunk: data, rest } = takeTerminalInputChunk(inputQueue)
-      if (props.kind === 'site') {
-        await api.sites.terminalInput(props.jobId, data)
-      } else if (props.kind === 'diagnostic') {
-        await api.diagnostics.terminalInput(props.jobId, data)
-      } else if (props.kind === 'environment') {
-        await api.webEnvironment.terminalInput(props.jobId, data)
-      } else {
-        await api.apps.terminalInput(props.jobId, data)
-      }
-      inputQueue = rest
-    }
+    await drainTerminalInputQueue(
+      queue,
+      () => queue === inputQueue && terminalInputOpen.value && !disposed,
+      async (data) => {
+        if (props.kind === 'site') {
+          await api.sites.terminalInput(props.jobId, data)
+        } else if (props.kind === 'diagnostic') {
+          await api.diagnostics.terminalInput(props.jobId, data)
+        } else if (props.kind === 'environment') {
+          await api.webEnvironment.terminalInput(props.jobId, data)
+        } else {
+          await api.apps.terminalInput(props.jobId, data)
+        }
+      },
+    )
   } catch {
-    writeTerminalOutput(`\r\n\x1b[31m[KPanel] ${t('terminal.taskInputFailed')}\x1b[0m\r\n`)
+    if (queue === inputQueue) {
+      connectionState.value = 'error'
+      writeTerminalOutput(`\r\n\x1b[31m[KPanel] ${t('terminal.taskInputFailed')}\x1b[0m\r\n`)
+    }
   } finally {
     inputSending = false
+    if (queue !== inputQueue && !inputQueue.empty && terminalInputOpen.value && !disposed) {
+      void flushInput()
+    }
   }
 }
 
 function queueInput(data: string): void {
   if (!terminalInputOpen.value || disposed) return
-  inputQueue += data
+  inputQueue.append(data)
   if (
     terminalInputShouldFlushImmediately(data) ||
-    new TextEncoder().encode(inputQueue).byteLength >= 2048
+    inputQueue.byteLength >= 2048
   ) {
     void flushInput()
     return
   }
   if (!inputTimer) {
-    inputTimer = window.setTimeout(() => void flushInput(), inputFlushInterval)
+    inputTimer = window.setTimeout(() => void flushInput(), terminalInputFlushInterval)
   }
 }
 
@@ -155,6 +165,12 @@ function submitPendingLine(): void {
   const data = terminalLineSubmission(pendingLine.value)
   pendingLine.value = ''
   queueInput(data)
+}
+
+function handlePendingLineEnter(event: KeyboardEvent): void {
+  if (!terminalEnterShouldSubmit(event)) return
+  event.preventDefault()
+  submitPendingLine()
 }
 
 function sendQuickInput(value: string): void {
@@ -201,7 +217,7 @@ async function poll(): Promise<void> {
     offset = chunk.nextOffset
     terminalInputOpen.value = chunk.inputOpen
     connectionState.value = chunk.finished ? 'finished' : 'connected'
-    if (terminalInputOpen.value && inputQueue) void flushInput()
+    if (terminalInputOpen.value && !inputQueue.empty) void flushInput()
     if (!chunk.finished && !disposed) {
       pollTimer = window.setTimeout(() => void poll(), 0)
     }
@@ -218,6 +234,7 @@ function resetTerminal(): void {
   pollController?.abort()
   polling = false
   offset = 0
+  inputQueue = new TerminalInputQueue()
   terminal?.reset()
   pendingLine.value = ''
   terminalInputOpen.value = Boolean(props.inputOpen)
@@ -392,7 +409,7 @@ onBeforeUnmount(() => {
           spellcheck="false"
           maxlength="8192"
           placeholder="在此预输入，按 Enter 整行发送"
-          @keydown.enter.prevent="submitPendingLine"
+          @keydown.enter="handlePendingLineEnter"
         />
         <button type="submit">发送</button>
       </form>

@@ -8,7 +8,14 @@ import TerminalContextMenu from '@/components/terminal/TerminalContextMenu.vue'
 import { api, ApiError } from '@/lib/api'
 import { openTerminalURL } from '@/lib/terminalLinks'
 import { containWheelScroll } from '@/lib/scroll'
-import { takeTerminalInputChunk, terminalInputShouldFlushImmediately, terminalLineSubmission } from '@/lib/terminalInput'
+import {
+  drainTerminalInputQueue,
+  TerminalInputQueue,
+  terminalEnterShouldSubmit,
+  terminalInputFlushInterval,
+  terminalInputShouldFlushImmediately,
+  terminalLineSubmission,
+} from '@/lib/terminalInput'
 import { createTerminalTouchScroll } from '@/lib/terminalTouchScroll'
 import { useI18n } from '@/i18n'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
@@ -37,7 +44,7 @@ let pollController: AbortController | undefined
 let pollTimer: number | undefined
 let inputTimer: number | undefined
 let resizeTimer: number | undefined
-let inputQueue = ''
+const inputQueue = new TerminalInputQueue()
 let inputSending = false
 // A freshly opened terminal starts at offset 0. Keep the client resilient to
 // older Panel responses that did not include the initial offset field.
@@ -47,7 +54,6 @@ let mounted = false
 let lastRows = 0
 let lastColumns = 0
 let reconnectAttempts = 0
-const inputFlushInterval = 24
 
 watch(state, (value) => emit('stateChange', value), { immediate: true })
 
@@ -104,11 +110,11 @@ async function flushInput(): Promise<void> {
   inputTimer = undefined
   inputSending = true
   try {
-    while (inputQueue && !disposed) {
-      const { chunk, rest } = takeTerminalInputChunk(inputQueue)
-      await api.terminals.input(props.sessionId, encodeBase64(chunk))
-      inputQueue = rest
-    }
+    await drainTerminalInputQueue(
+      inputQueue,
+      () => !disposed,
+      (chunk) => api.terminals.input(props.sessionId, encodeBase64(chunk)).then(() => undefined),
+    )
   } catch {
     writeTerminalOutput(`\r\n\x1b[31m[KPanel] ${t('terminal.inputFailed')}\x1b[0m\r\n`)
     state.value = 'reconnecting'
@@ -119,11 +125,11 @@ async function flushInput(): Promise<void> {
 
 function queueInput(data: string): void {
   if (disposed || state.value === 'finished') return
-  inputQueue += data
-  if (terminalInputShouldFlushImmediately(data) || new TextEncoder().encode(inputQueue).byteLength >= 2048) {
+  inputQueue.append(data)
+  if (terminalInputShouldFlushImmediately(data) || inputQueue.byteLength >= 2048) {
     void flushInput()
   } else if (!inputTimer) {
-    inputTimer = window.setTimeout(() => void flushInput(), inputFlushInterval)
+    inputTimer = window.setTimeout(() => void flushInput(), terminalInputFlushInterval)
   }
 }
 
@@ -132,6 +138,12 @@ function submitPendingLine(): void {
   const value = terminalLineSubmission(pendingLine.value)
   pendingLine.value = ''
   queueInput(value)
+}
+
+function handlePendingLineEnter(event: KeyboardEvent): void {
+  if (!terminalEnterShouldSubmit(event)) return
+  event.preventDefault()
+  submitPendingLine()
 }
 
 async function poll(): Promise<void> {
@@ -146,7 +158,7 @@ async function poll(): Promise<void> {
     offset = chunk.nextOffset
     state.value = chunk.closed || chunk.exitedAt ? 'finished' : 'connected'
     reconnectAttempts = 0
-    if (state.value === 'connected' && inputQueue) void flushInput()
+    if (state.value === 'connected' && !inputQueue.empty) void flushInput()
     if (chunk.exitError) writeTerminalOutput(`\r\n\x1b[31m[KPanel] ${chunk.exitError}\x1b[0m\r\n`)
     if (desktopWindowActive.value && state.value !== 'finished') pollTimer = window.setTimeout(() => void poll(), 0)
   } catch (reason) {
@@ -255,7 +267,17 @@ onBeforeUnmount(() => {
     >
     </div>
     <form class="host-terminal__composer" @submit.prevent="submitPendingLine">
-      <input v-model="pendingLine" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="8192" :placeholder="t('terminal.inputPlaceholder')" :disabled="state === 'finished'" />
+      <input
+        v-model="pendingLine"
+        type="text"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        maxlength="8192"
+        :placeholder="t('terminal.inputPlaceholder')"
+        :disabled="state === 'finished'"
+        @keydown.enter="handlePendingLineEnter"
+      />
       <button type="submit" :disabled="state === 'finished'">{{ t('terminal.send') }}</button>
     </form>
     <TerminalContextMenu
