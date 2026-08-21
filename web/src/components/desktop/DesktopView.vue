@@ -309,6 +309,7 @@ const widgetLayoutVisible = ref(window.innerWidth > 900)
 const localPositions = ref<Record<string, DesktopIconPosition>>({})
 const localWidgetPositions = ref<Record<string, DesktopIconPosition>>({})
 const dragPreviews = ref<Record<string, { left: number; top: number }>>({})
+const iconDragSurfaceHeight = ref(0)
 const draggingIcons = ref<Set<string>>(new Set())
 const draggingWidgets = ref<Set<string>>(new Set())
 const nativeDragHiddenIcons = ref<Set<string>>(new Set())
@@ -449,7 +450,7 @@ const iconOverflowStartTop = computed(() => (
   renderedIconLayout.value.contentHeight
   + (renderedIconLayout.value.overflowKeys.length ? 44 : 0)
 ))
-const iconScrollHeight = computed(() => {
+const baseIconScrollHeight = computed(() => {
   const layout = renderedDesktopLayout.value
   const overflowCount = layout.overflowKeys.length
   if (!overflowCount) return Math.ceil(layout.contentHeight)
@@ -460,6 +461,10 @@ const iconScrollHeight = computed(() => {
     + layout.grid.metrics.height,
   )
 })
+const iconScrollHeight = computed(() => Math.max(
+  baseIconScrollHeight.value,
+  iconDragSurfaceHeight.value,
+))
 
 watch(() => [workspace.value.positions, workspace.value.widgetPositions], ([positions, widgetPositions]) => {
   if (draggingIcons.value.size || draggingWidgets.value.size || pendingPositionWrites > 0) return
@@ -960,6 +965,29 @@ function measureIconWorkArea(): void {
   widgetLayoutVisible.value = widgetsVisible
 }
 
+function expandIconDragSurface(): boolean {
+  const element = iconsElement.value
+  const grid = renderedIconLayout.value.grid
+  const pageHeight = Math.max(grid.verticalUnit, grid.stepY)
+  const currentHeight = Math.max(
+    baseIconScrollHeight.value,
+    iconDragSurfaceHeight.value,
+    element?.scrollHeight || 0,
+  )
+  const maximumHeight = Math.max(
+    grid.bounds.height,
+    grid.maxRow * grid.stepY + grid.metrics.height,
+  )
+  const nextHeight = Math.min(maximumHeight, currentHeight + pageHeight)
+  if (!Number.isFinite(nextHeight) || nextHeight <= currentHeight) return false
+  iconDragSurfaceHeight.value = nextHeight
+  return true
+}
+
+function resetIconDragSurface(): void {
+  iconDragSurfaceHeight.value = 0
+}
+
 function iconSlotStyle(key: string): Record<string, string> {
   const preview = dragPreviews.value[key]
   if (preview) {
@@ -1180,6 +1208,7 @@ function startDesktopShortcutDrag(event: DragEvent, entry: DesktopEntry): void {
     localDropHandled: false,
     outsideDesktop: false,
   }
+  resetIconDragSurface()
   draggingIcons.value = new Set(keys)
   nativeDragHiddenIcons.value = new Set()
   closeContextMenu(false)
@@ -1215,6 +1244,7 @@ function finishDesktopShortcutDrag(event: DragEvent): void {
   desktopShortcutNativeDrag = undefined
   draggingIcons.value = new Set()
   nativeDragHiddenIcons.value = new Set()
+  resetIconDragSurface()
   clearDesktopFileDrag()
   if (drag?.paths.length) void refreshDesktopFileMetadata(drag.paths)
 }
@@ -1382,7 +1412,7 @@ function updateIconDragPreview(drag: IconDragState): void {
 function iconAutoScrollVelocity(clientY: number): number {
   const element = iconsElement.value
   const rect = element?.getBoundingClientRect()
-  if (!element || !rect || rect.height <= 0 || element.scrollHeight <= element.clientHeight) return 0
+  if (!element || !rect || rect.height <= 0) return 0
   const edge = Math.min(56, Math.max(32, rect.height * 0.12))
   if (clientY < rect.top + edge) {
     return -Math.ceil(Math.min(1, (rect.top + edge - clientY) / edge) * 18)
@@ -1415,15 +1445,23 @@ function scheduleIconAutoScroll(): void {
     const velocity = iconAutoScrollVelocity(activeClientY)
     if (!velocity) return
     const before = element.scrollTop
+    const currentMaxScroll = Math.max(0, element.scrollHeight - element.clientHeight)
+    const expanded = velocity > 0
+      && before >= currentMaxScroll - 1
+      ? expandIconDragSurface()
+      : false
+    const maxScroll = Math.max(0, element.scrollHeight - element.clientHeight)
     element.scrollTop = Math.max(
       0,
-      Math.min(element.scrollHeight - element.clientHeight, before + velocity),
+      Math.min(maxScroll, before + velocity),
     )
-    if (element.scrollTop === before) return
-    if (activePointer) updateIconDragPreview(activePointer)
-    else if (activeNative) updateDesktopShortcutNativeDragPreview(activeNative.lastX, activeNative.lastY)
-    else if (activeWidget) updateWidgetDragPreview(activeWidget)
-    scheduleIconAutoScroll()
+    const scrolled = element.scrollTop !== before
+    if (scrolled) {
+      if (activePointer) updateIconDragPreview(activePointer)
+      else if (activeNative) updateDesktopShortcutNativeDragPreview(activeNative.lastX, activeNative.lastY)
+      else if (activeWidget) updateWidgetDragPreview(activeWidget)
+    }
+    if (expanded || scrolled) scheduleIconAutoScroll()
   })
 }
 
@@ -1685,6 +1723,7 @@ function onIconDragMove(event: PointerEvent): void {
   if (!drag.moved) {
     captureIconDragPointer(drag)
     drag.moved = true
+    resetIconDragSurface()
     draggingIcons.value = new Set(drag.keys)
     if (!selectedIcons.value.has(drag.key)) setIconSelection([drag.key])
     closeContextMenu(false)
@@ -1703,6 +1742,7 @@ function finishIconDrag(): IconDragState | undefined {
   if (drag) releaseIconDragPointer(drag)
   document.body.classList.remove('desktop-icon-dragging')
   draggingIcons.value = new Set()
+  resetIconDragSurface()
   return drag
 }
 
@@ -3018,6 +3058,7 @@ onBeforeUnmount(() => {
   cancelWidgetDrag()
   cancelSelectionFrame()
   desktopShortcutNativeDrag = undefined
+  resetIconDragSurface()
   clearDesktopFileDrag()
   fileDropActive.value = false
   suppressActivationAfterDrag.clear()

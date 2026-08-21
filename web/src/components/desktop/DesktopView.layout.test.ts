@@ -398,6 +398,53 @@ describe('DesktopView icon layout interaction', () => {
     wrapper.unmount()
   })
 
+  it('holds a newly expanded drag surface while the pointer returns from the bottom edge', async () => {
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const workArea = wrapper.find<HTMLElement>('.desktop__icons').element
+    const slot = wrapper.find('[data-icon-key="nav:/overview"]')
+    let frameCallback: FrameRequestCallback | undefined
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frameCallback = callback
+      return 72
+    })
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    Object.defineProperties(workArea, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 300 },
+    })
+    vi.spyOn(workArea, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, right: 600, bottom: 300, left: 0,
+      width: 600, height: 300, toJSON: () => ({}),
+    })
+
+    const heightOf = () => Number.parseFloat(
+      (wrapper.find('.desktop__icons-scroll-space').attributes('style') || '')
+        .match(/height:\s*([\d.]+)px/)?.[1] || '0',
+    )
+    const initialHeight = heightOf()
+
+    slot.element.dispatchEvent(pointer('pointerdown', 30, 100))
+    window.dispatchEvent(pointer('pointermove', 30, 290))
+    frameCallback?.(performance.now())
+    await flushPromises()
+    const expandedHeight = heightOf()
+
+    expect(expandedHeight).toBeGreaterThan(initialHeight)
+
+    window.dispatchEvent(pointer('pointermove', 30, 150))
+    await flushPromises()
+    expect(heightOf()).toBe(expandedHeight)
+
+    window.dispatchEvent(pointer('pointerup', 30, 150))
+    await flushPromises()
+    expect(heightOf()).toBeLessThan(expandedHeight)
+
+    requestFrame.mockRestore()
+    cancelFrame.mockRestore()
+    wrapper.unmount()
+  })
+
   it('cancels and restores the saved position when pointer capture is lost', async () => {
     const wrapper = mount(DesktopView, { attachTo: document.body })
     await flushPromises()
