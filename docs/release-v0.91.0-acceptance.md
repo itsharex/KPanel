@@ -92,8 +92,8 @@
 <!-- kpanel-release-metrics:end -->
 
 <!-- kpanel-release-process-metrics:start -->
-- 已记录发布流程异常或无效证据拦截次数：10
-- 其中生产写操作开始后异常次数：1
+- 已记录发布流程异常或无效证据拦截次数：11
+- 其中生产写操作开始后异常次数：2
 <!-- kpanel-release-process-metrics:end -->
 
 ### 流程异常明细
@@ -166,10 +166,10 @@
   {
     "fingerprint": "candidate-cleanup/powershell-git/boolean-exit-misread",
     "position": "after-production-write",
-    "count": 1,
-    "impact": "候选清理时把 git merge-base 成功且无标准输出误解释为布尔假，安全地停在远端删除前。",
-    "recoveryEvidence": "改为显式检查 LASTEXITCODE 后确认候选已被 Tag 和最终 main 包含，并正常删除远端候选分支；生产未受影响。",
-    "permanentAction": "PowerShell 调用只用进程退出码判定 Git 布尔命令，不以标准输出是否为空判定成功。",
+    "count": 2,
+    "impact": "候选清理时先把 git merge-base 成功且无标准输出误解释为布尔假，随后又把 Select-String 无匹配与上一条 Git 命令的旧退出码混用；两次均只造成清理核对误报。",
+    "recoveryEvidence": "改为显式检查 Git 退出码和 PowerShell 匹配集合长度后，确认候选已被 Tag/main 包含、远端候选已删除、本地临时 worktree 为零；生产未受影响。",
+    "permanentAction": "PowerShell 调用按命令类型分别使用即时进程退出码或显式集合长度，禁止跨命令复用 LASTEXITCODE。",
     "historicalReleases": []
   }
 ]
