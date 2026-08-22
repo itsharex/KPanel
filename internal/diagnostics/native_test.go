@@ -126,6 +126,95 @@ func TestIPingQueryRejectsIPv6(t *testing.T) {
 	}
 }
 
+func TestIPingPageRiskScoreOverridesConflictingAPIValue(t *testing.T) {
+	previousHTTPClient := nativeHTTPClient
+	t.Cleanup(func() {
+		nativeHTTPClient = previousHTTPClient
+	})
+
+	var requestedPagePath string
+	nativeHTTPClient = &http.Client{Timeout: 20 * time.Second, Transport: testRoundTripper(func(request *http.Request) (*http.Response, error) {
+		body := `{"code":200,"data":{"risk_score":0,"isp":"Example ISP"},"msg":"success"}`
+		contentType := "application/json"
+		if request.URL.Host == "www.iping.test" {
+			body = `<span>IP Threat Level:</span><div class="right"><div class="tag green"><div>7%</div>No Risk</div></div>`
+			contentType = "text/html"
+			requestedPagePath = request.URL.Path
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{contentType}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    request,
+		}, nil
+	})}
+
+	data, err := queryIPingEndpoints(
+		context.Background(),
+		"158.179.20.115",
+		"https://api.iping.test/v1/query",
+		"https://www.iping.test/ip/",
+	)
+	if err != nil {
+		t.Fatalf("queryIPingEndpoints() error = %v", err)
+	}
+	if requestedPagePath != "/ip/158.179.20.115" {
+		t.Fatalf("IPING page path = %q", requestedPagePath)
+	}
+	if score, ok := ipingRiskScore(data.RiskScore); !ok || score != 7 {
+		t.Fatalf("IPING risk score = %#v, want 7", data.RiskScore)
+	}
+	if data.ISP != "Example ISP" {
+		t.Fatalf("IPING API metadata was not retained: %#v", data)
+	}
+}
+
+func TestIPingPageFailureKeepsAPIRiskScore(t *testing.T) {
+	previousHTTPClient := nativeHTTPClient
+	t.Cleanup(func() {
+		nativeHTTPClient = previousHTTPClient
+	})
+
+	nativeHTTPClient = &http.Client{Timeout: 20 * time.Second, Transport: testRoundTripper(func(request *http.Request) (*http.Response, error) {
+		body := `{"code":200,"data":{"risk_score":23},"msg":"success"}`
+		contentType := "application/json"
+		if request.URL.Host == "www.iping.test" {
+			body = `<html><body>risk temporarily unavailable</body></html>`
+			contentType = "text/html"
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{contentType}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    request,
+		}, nil
+	})}
+
+	data, err := queryIPingEndpoints(
+		context.Background(),
+		"203.0.113.10",
+		"https://api.iping.test/v1/query",
+		"https://www.iping.test/ip/",
+	)
+	if err != nil {
+		t.Fatalf("queryIPingEndpoints() error = %v", err)
+	}
+	if score, ok := ipingRiskScore(data.RiskScore); !ok || score != 23 {
+		t.Fatalf("IPING fallback risk score = %#v, want 23", data.RiskScore)
+	}
+}
+
+func TestParseIPingPageRiskScoreRejectsUnrelatedPercentages(t *testing.T) {
+	if score, ok := parseIPingPageRiskScore(`<style>body { width: 100% }</style><p>No risk result</p>`); ok {
+		t.Fatalf("unrelated percentage parsed as risk score %v", score)
+	}
+	if score, ok := parseIPingPageRiskScore(`<span>风险等级：</span><div><b>7%</b> 无风险</div>`); !ok || score != 7 {
+		t.Fatalf("localized IPING page risk score = %v, %v", score, ok)
+	}
+}
+
 func TestNativeLocalProbesReturnMeasuredMetrics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

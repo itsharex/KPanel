@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -38,7 +39,9 @@ const (
 	nativeSpeedDownloadBytes = int64(8 << 20)
 	nativeSpeedUploadBytes   = int64(2 << 20)
 	nativeIPingEndpoint      = "https://api.iping.cc/v1/query"
+	nativeIPingPageEndpoint  = "https://www.iping.cc/ip/"
 	nativeIPingTimeout       = 5 * time.Second
+	nativeIPingPageMaxBytes  = int64(512 << 10)
 )
 
 var nativeProbeOrder = []string{
@@ -52,6 +55,8 @@ var nativeProbeOrder = []string{
 }
 
 var nativeHTTPClient = &http.Client{Timeout: 20 * time.Second}
+
+var nativeIPingPageRiskPattern = regexp.MustCompile(`(?i)([0-9]{1,3}(?:\.[0-9]+)?)\s*%`)
 
 type nativeProbeResult struct {
 	Dimension string
@@ -661,7 +666,37 @@ func runNativeIPQuality(ctx context.Context) (nativeProbeResult, error) {
 }
 
 func queryIPing(ctx context.Context, publicIP string) (ipingData, error) {
-	return queryIPingEndpoint(ctx, publicIP, nativeIPingEndpoint)
+	return queryIPingEndpoints(ctx, publicIP, nativeIPingEndpoint, nativeIPingPageEndpoint)
+}
+
+func queryIPingEndpoints(ctx context.Context, publicIP, apiEndpoint, pageEndpoint string) (ipingData, error) {
+	type apiResult struct {
+		data ipingData
+		err  error
+	}
+	type pageResult struct {
+		score float64
+		err   error
+	}
+
+	apiResults := make(chan apiResult, 1)
+	pageResults := make(chan pageResult, 1)
+	go func() {
+		data, err := queryIPingEndpoint(ctx, publicIP, apiEndpoint)
+		apiResults <- apiResult{data: data, err: err}
+	}()
+	go func() {
+		score, err := queryIPingPageRiskScore(ctx, publicIP, pageEndpoint)
+		pageResults <- pageResult{score: score, err: err}
+	}()
+
+	api := <-apiResults
+	page := <-pageResults
+	if page.err == nil {
+		api.data.RiskScore = page.score
+		return api.data, nil
+	}
+	return api.data, api.err
 }
 
 func queryIPingEndpoint(ctx context.Context, publicIP, endpoint string) (ipingData, error) {
@@ -700,6 +735,64 @@ func queryIPingEndpoint(ctx context.Context, publicIP, endpoint string) (ipingDa
 		return ipingData{}, fmt.Errorf("IPING code %d: %s", payload.Code, message)
 	}
 	return payload.Data, nil
+}
+
+func queryIPingPageRiskScore(ctx context.Context, publicIP, endpoint string) (float64, error) {
+	parsed := net.ParseIP(publicIP)
+	if parsed == nil || parsed.To4() == nil {
+		return 0, errors.New("IPING only supports IPv4")
+	}
+	requestContext, cancel := context.WithTimeout(ctx, nativeIPingTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(
+		requestContext,
+		http.MethodGet,
+		strings.TrimRight(endpoint, "/")+"/"+url.PathEscape(publicIP),
+		nil,
+	)
+	if err != nil {
+		return 0, err
+	}
+	request.Header.Set("Accept", "text/html")
+	request.Header.Set("Accept-Language", "en")
+	response, err := nativeHTTPClient.Do(request)
+	if err != nil {
+		return 0, fmt.Errorf("IPING page request failed: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= http.StatusBadRequest {
+		return 0, fmt.Errorf("IPING page returned HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, nativeIPingPageMaxBytes+1))
+	if err != nil {
+		return 0, fmt.Errorf("read IPING page: %w", err)
+	}
+	if int64(len(body)) > nativeIPingPageMaxBytes {
+		return 0, errors.New("IPING page response exceeded 512 KiB")
+	}
+	if score, ok := parseIPingPageRiskScore(string(body)); ok {
+		return score, nil
+	}
+	return 0, errors.New("IPING page did not include a risk score")
+}
+
+func parseIPingPageRiskScore(document string) (float64, bool) {
+	normalized := strings.ToLower(document)
+	for _, marker := range []string{"ip threat level", "risk rating", "风险等级", "風險等級"} {
+		start := strings.Index(normalized, marker)
+		if start < 0 {
+			continue
+		}
+		end := min(len(document), start+2048)
+		match := nativeIPingPageRiskPattern.FindStringSubmatch(document[start:end])
+		if len(match) != 2 {
+			continue
+		}
+		if score, ok := ipingRiskScore(match[1]); ok {
+			return score, true
+		}
+	}
+	return 0, false
 }
 
 func ipingMetrics(data ipingData) []DiagnosticSummaryMetric {
