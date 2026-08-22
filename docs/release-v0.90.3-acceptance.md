@@ -67,8 +67,8 @@
 <!-- kpanel-release-metrics:end -->
 
 <!-- kpanel-release-process-metrics:start -->
-- 已记录发布流程异常或无效证据拦截次数：10
-- 其中生产写操作开始后异常次数：3
+- 已记录发布流程异常或无效证据拦截次数：11
+- 其中生产写操作开始后异常次数：4
 <!-- kpanel-release-process-metrics:end -->
 
 ### 流程异常明细
@@ -159,9 +159,9 @@
   {
     "fingerprint": "production-cleanup/ssh/powershell-variable-expansion",
     "position": "after-production-write",
-    "count": 1,
-    "impact": "首次内联清理命令的 realpath 子表达式被本机 PowerShell 提前求值，远端在删除前停止。",
-    "recoveryEvidence": "改用已做 bash -n 且 SHA 固定的远端脚本，精确清理本轮工作目录、验证副本和 bundle，备份与证据保留，服务复核 healthy。",
+    "count": 2,
+    "impact": "首次内联清理命令的 realpath 子表达式被本机 PowerShell 提前求值，远端在删除前停止；后续冗余健康复核的 Go template 又因双层转义失效。",
+    "recoveryEvidence": "改用已做 bash -n 且 SHA 固定的远端脚本，精确清理本轮工作目录、验证副本和 bundle，并已输出 v0.90.3 healthy、Agent active、0 restart/OOM；备份与证据保留。",
     "permanentAction": "生产清理只运行固定绝对目标的受检远端脚本，不再从 PowerShell 内联 Bash 子表达式。",
     "historicalReleases": []
   }
