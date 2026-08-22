@@ -56,7 +56,6 @@ export const enUSMessages = {
   'terminal.refreshConnections': 'Refresh connections',
   'terminal.collapseConnections': 'Collapse host selector',
   'terminal.expandConnections': 'Expand host selector',
-  'terminal.loadingHosts': 'Loading hosts…',
   'terminal.currentPanel': 'Current KPanel',
   'terminal.contextMenu': 'Terminal context menu',
   'terminal.copy': 'Copy',

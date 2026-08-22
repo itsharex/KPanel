@@ -54,7 +54,6 @@ export const zhCNMessages = {
   'terminal.refreshConnections': '刷新连接',
   'terminal.collapseConnections': '收起主机选择',
   'terminal.expandConnections': '展开主机选择',
-  'terminal.loadingHosts': '正在读取主机…',
   'terminal.currentPanel': '当前 KPanel',
   'terminal.contextMenu': '终端右键菜单',
   'terminal.copy': '复制',

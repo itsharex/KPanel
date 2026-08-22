@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance } from 'vue'
-import { Circle, Laptop, LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Search, Server, SquareTerminal, X } from '@lucide/vue'
+import { Circle, LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Search, SquareTerminal, X } from '@lucide/vue'
 import HostTerminal from '@/components/terminal/HostTerminal.vue'
 import TerminalToolbar from '@/components/terminal/TerminalToolbar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import OperatingSystemIcon from '@/components/overview/OperatingSystemIcon.vue'
 import { useTerminalFullscreen } from '@/composables/useTerminalFullscreen'
 import { api, ApiError } from '@/lib/api'
+import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import type { ClusterHost, ClusterHostList } from '@/types/api'
 import { usePhraseCatalog } from '@/i18n/phrase'
 import { useI18n } from '@/i18n'
@@ -66,6 +68,9 @@ const hosts = computed(() => {
 })
 
 const activeSession = computed(() => sessions.value.find((item) => item.id === activeSessionId.value))
+
+const hostOperatingSystemIdentity = (host: ClusterHost) =>
+  detectOperatingSystemIdentity(host.lastSnapshot?.telemetry)
 
 async function loadHosts(): Promise<void> {
   controller?.abort()
@@ -264,10 +269,13 @@ onBeforeUnmount(() => {
           <input v-model="search" type="search" placeholder="搜索主机" />
         </label>
         <div id="terminal-connection-selector" v-show="!connectionsCollapsed || mobileConnectionsOpen" class="terminal-connections__list">
-          <div v-if="loading" class="terminal-connections__empty"><LoaderCircle class="spin" :size="22" /> {{ t('terminal.loadingHosts') }}</div>
-          <div v-else-if="!hosts.length" class="terminal-connections__empty">暂无可显示主机</div>
+          <div v-if="!loading && !hosts.length" class="terminal-connections__empty">暂无可显示主机</div>
           <button v-for="host in hosts" :key="host.id" class="terminal-host" :class="{ 'is-active': activeSession?.hostId === host.id }" type="button" :disabled="openingHostId === host.id" @click="openHost(host)">
-            <span class="terminal-host__icon"><Laptop v-if="host.isLocal" :size="19" /><Server v-else :size="19" /></span>
+            <OperatingSystemIcon
+              class="terminal-host__os"
+              :distro="hostOperatingSystemIdentity(host).key"
+              :label="hostOperatingSystemIdentity(host).label"
+            />
             <span><strong>{{ host.name }}</strong><small>{{ host.origin || t('terminal.currentPanel') }}</small><em :class="{ 'is-ready': host.terminalAvailable }"><Circle :size="8" fill="currentColor" /> {{ hostStateLabel(host) }}</em></span>
             <LoaderCircle v-if="openingHostId === host.id" class="spin" :size="17" />
             <Plus v-else-if="host.terminalAvailable && !sessions.some((item) => item.hostId === host.id)" :size="17" />
@@ -285,8 +293,11 @@ onBeforeUnmount(() => {
             :aria-label="`${host.name} · ${hostStateLabel(host)}`"
             @click="openHost(host)"
           >
-            <Laptop v-if="host.isLocal" :size="18" />
-            <Server v-else :size="18" />
+            <OperatingSystemIcon
+              class="terminal-host-rail__os"
+              :distro="hostOperatingSystemIdentity(host).key"
+              :label="hostOperatingSystemIdentity(host).label"
+            />
             <i :class="{ 'is-ready': host.terminalAvailable }" aria-hidden="true" />
           </button>
         </div>
@@ -365,19 +376,22 @@ onBeforeUnmount(() => {
 .terminal-search input { width:100%; border:1px solid var(--terminal-shell-border,#29383a); border-radius:9px; padding:8px 10px 8px 34px; color:var(--terminal-shell-text,#d8dddc); background:var(--terminal-shell-background,#0b1214); transition:border-color .16s ease,box-shadow .16s ease; }
 .terminal-search input::placeholder { color:var(--terminal-shell-muted,#8a9695); }
 .terminal-search input:focus { border-color:color-mix(in srgb,var(--brand) 62%,var(--terminal-shell-border,#29383a)); outline:none; box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 10%,transparent); }
-.terminal-connections__list { min-height:0; overflow-y:auto; overscroll-behavior:contain; padding-bottom:8px; scrollbar-gutter:stable; }
+.terminal-connections__list { --scrollbar-size:8px; --scrollbar-track:var(--terminal-shell-panel,#111a1d); --scrollbar-thumb:var(--terminal-shell-scrollbar,#35474a); --scrollbar-thumb-hover:var(--terminal-shell-scrollbar-hover,#506367); --scrollbar-thumb-active:var(--brand); min-height:0; overflow-y:auto; overscroll-behavior:contain; padding-bottom:8px; scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track); scrollbar-width:thin; scrollbar-gutter:stable; }
 .terminal-connections__rail { display:grid; grid-row:2 / -1; min-height:0; align-content:start; justify-items:center; gap:6px; overflow-y:auto; overscroll-behavior:contain; padding:7px 6px 10px; scrollbar-width:none; }
 .terminal-connections__rail::-webkit-scrollbar { display:none; }
 .terminal-host-rail { position:relative; display:grid; width:36px; height:36px; flex:0 0 auto; place-items:center; border:1px solid transparent; border-radius:9px; color:var(--terminal-shell-muted,#8a9695); background:transparent; cursor:pointer; }
 .terminal-host-rail:hover,.terminal-host-rail:focus-visible,.terminal-host-rail.is-active { border-color:color-mix(in srgb,var(--brand) 58%,var(--terminal-shell-border,#29383a)); color:var(--brand); background:color-mix(in srgb,var(--brand) 12%,var(--terminal-shell-panel,#111a1d)); outline:none; }
 .terminal-host-rail:disabled { cursor:wait; opacity:.55; }
+.terminal-host-rail :deep(.terminal-host-rail__os) { width:26px; height:26px; border-radius:8px; box-shadow:none; }
+.terminal-host-rail :deep(.terminal-host-rail__os svg) { width:16px; height:16px; }
+.terminal-host-rail :deep(.terminal-host-rail__os img) { width:19px; height:19px; }
 .terminal-host-rail i { position:absolute; right:3px; bottom:3px; width:7px; height:7px; border:1px solid var(--terminal-shell-panel,#111a1d); border-radius:50%; background:var(--terminal-shell-muted,#8a9695); }
 .terminal-host-rail i.is-ready { background:var(--success); }
 .terminal-host { position:relative; display:grid; width:calc(100% - 12px); grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:9px; margin:2px 6px; border:1px solid transparent; border-radius:10px; padding:9px; text-align:left; color:var(--terminal-shell-text,#d8dddc); background:transparent; cursor:pointer; transition:border-color .16s ease,background-color .16s ease; }
 .terminal-host:hover,.terminal-host:focus-visible,.terminal-host.is-active { border-color:color-mix(in srgb,var(--brand) 48%,var(--terminal-shell-border,#29383a)); background:color-mix(in srgb,var(--brand) 9%,var(--terminal-shell-panel,#111a1d)); outline:none; }
 .terminal-host.is-active { box-shadow:inset 3px 0 0 var(--brand); }
 .terminal-host:disabled { cursor:wait; opacity:.64; }
-.terminal-host__icon { display:grid; width:34px; height:34px; place-items:center; border-radius:9px; color:var(--brand); background:color-mix(in srgb,var(--brand) 11%,var(--terminal-shell-panel-raised,#182326)); }
+.terminal-host :deep(.terminal-host__os) { width:34px; height:34px; flex:0 0 auto; border-radius:9px; box-shadow:none; }
 .terminal-host>span:nth-child(2) { display:grid; min-width:0; gap:2px; }
 .terminal-host strong,.terminal-host small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .terminal-host small { color:var(--terminal-shell-muted,#8a9695); font-size:11px; }

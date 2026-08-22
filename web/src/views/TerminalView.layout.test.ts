@@ -21,6 +21,21 @@ describe('multi-host terminal workspace layout', () => {
     expect(terminalSource).toMatch(
       /\.terminal-connections__list\s*\{[^}]*min-height:0;[^}]*overflow-y:auto;/,
     )
+    expect(terminalSource).toMatch(
+      /\.terminal-connections__list\s*\{[^}]*--scrollbar-size:8px;[^}]*--scrollbar-track:var\(--terminal-shell-panel,#111a1d\);[^}]*--scrollbar-thumb:var\(--terminal-shell-scrollbar,#35474a\);[^}]*scrollbar-color:var\(--scrollbar-thumb\) var\(--scrollbar-track\);[^}]*scrollbar-width:thin;/,
+    )
+    expect(terminalSource).toContain('v-if="!loading && !hosts.length" class="terminal-connections__empty"')
+    expect(terminalSource).not.toContain('v-if="loading" class="terminal-connections__empty"')
+    expect(terminalSource).not.toContain("t('terminal.loadingHosts')")
+  })
+
+  it('uses each cluster host operating system identity in both selector layouts', () => {
+    expect(terminalSource).toContain("import OperatingSystemIcon from '@/components/overview/OperatingSystemIcon.vue'")
+    expect(terminalSource).toContain("import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'")
+    expect(terminalSource).toContain('detectOperatingSystemIdentity(host.lastSnapshot?.telemetry)')
+    expect(terminalSource.match(/:distro="hostOperatingSystemIdentity\(host\)\.key"/g)).toHaveLength(2)
+    expect(terminalSource.match(/:label="hostOperatingSystemIdentity\(host\)\.label"/g)).toHaveLength(2)
+    expect(terminalSource).not.toContain('<Server v-else')
   })
 
   it('collapses the host selector into a persistent narrow rail', () => {

@@ -54,7 +54,6 @@ export const zhTWMessages = {
   "terminal.refreshConnections": "重新整理連線",
   "terminal.collapseConnections": "收起主機選擇",
   "terminal.expandConnections": "展開主機選擇",
-  "terminal.loadingHosts": "正在讀取主機…",
   "terminal.currentPanel": "目前 KPanel",
   "terminal.contextMenu": "終端右鍵選單",
   "terminal.copy": "複製",
