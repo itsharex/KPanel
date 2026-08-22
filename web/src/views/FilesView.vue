@@ -151,6 +151,17 @@ const remoteDownloadURL = ref('')
 const remoteDownloadName = ref('')
 const remoteDownloadTarget = ref('/home')
 const remoteDownloadFormErrorCode = ref<'url' | 'name'>()
+const remoteDownloadHTTPWarningID = 'remote-download-http-warning'
+const remoteDownloadFormErrorID = 'remote-download-form-error'
+const remoteDownloadUsesPlainHTTP = computed(() =>
+  remoteDownloadURL.value.trim().toLowerCase().startsWith('http://'),
+)
+const remoteDownloadURLDescription = computed(() => {
+  const descriptions = []
+  if (remoteDownloadUsesPlainHTTP.value) descriptions.push(remoteDownloadHTTPWarningID)
+  if (remoteDownloadFormErrorCode.value === 'url') descriptions.push(remoteDownloadFormErrorID)
+  return descriptions.join(' ') || undefined
+})
 const remoteDownloadFormError = computed(() => {
   if (remoteDownloadFormErrorCode.value === 'url') return i18n.t('files.remoteDownload.urlInvalid')
   if (remoteDownloadFormErrorCode.value === 'name') return i18n.t('files.remoteDownload.nameInvalid')
@@ -2447,11 +2458,18 @@ onBeforeUnmount(() => {
             spellcheck="false"
             placeholder="https://example.com/archive.tar.gz"
             :aria-invalid="remoteDownloadFormErrorCode === 'url'"
-            :aria-describedby="remoteDownloadFormErrorCode === 'url' ? 'remote-download-form-error' : undefined"
+            :aria-describedby="remoteDownloadURLDescription"
             required
           />
         </label>
-        <p v-if="remoteDownloadURL.trim().toLowerCase().startsWith('http://')" class="remote-download-warning">
+        <p
+          v-if="remoteDownloadUsesPlainHTTP"
+          :id="remoteDownloadHTTPWarningID"
+          class="remote-download-warning"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
           {{ i18n.t('files.remoteDownload.httpWarning') }}
         </p>
         <label>
@@ -2461,14 +2479,14 @@ onBeforeUnmount(() => {
             autocomplete="off"
             :placeholder="i18n.t('files.remoteDownload.namePlaceholder')"
             :aria-invalid="remoteDownloadFormErrorCode === 'name'"
-            :aria-describedby="remoteDownloadFormErrorCode === 'name' ? 'remote-download-form-error' : undefined"
+            :aria-describedby="remoteDownloadFormErrorCode === 'name' ? remoteDownloadFormErrorID : undefined"
           />
         </label>
         <div class="remote-download-note">
           <ShieldCheck :size="18" aria-hidden="true" />
           <span>{{ i18n.t('files.remoteDownload.note') }}</span>
         </div>
-        <p v-if="remoteDownloadFormError" id="remote-download-form-error" class="remote-download-error" role="alert">
+        <p v-if="remoteDownloadFormError" :id="remoteDownloadFormErrorID" class="remote-download-error" role="alert">
           {{ remoteDownloadFormError }}
         </p>
         <div class="dialog-actions">

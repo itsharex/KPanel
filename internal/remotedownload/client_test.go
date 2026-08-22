@@ -1,6 +1,7 @@
 package remotedownload
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -66,16 +68,114 @@ func TestResolveRejectsEveryRestrictedOrMixedDNSAnswer(t *testing.T) {
 		{name: "IPv4 mapped", addresses: []netip.Addr{netip.MustParseAddr("::ffff:127.0.0.1")}},
 		{name: "NAT64", addresses: []netip.Addr{netip.MustParseAddr("64:ff9b::808:808")}},
 		{name: "mixed", addresses: []netip.Addr{netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("10.0.0.8")}},
+		{name: "Azure WireServer", addresses: []netip.Addr{netip.MustParseAddr("168.63.129.16")}},
+		{name: "mixed public and Azure WireServer", addresses: []netip.Addr{netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("168.63.129.16")}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			client := NewClient(Config{Resolver: resolverFunc(func(context.Context, string, string) ([]netip.Addr, error) {
-				return test.addresses, nil
-			})})
-			if _, err := client.resolve(context.Background(), "downloads.example.com"); !errors.Is(err, ErrAddressBlocked) {
-				t.Fatalf("resolve error = %v, want ErrAddressBlocked", err)
+			var dialCalls atomic.Int32
+			client := NewClient(Config{
+				Resolver: resolverFunc(func(context.Context, string, string) ([]netip.Addr, error) {
+					return test.addresses, nil
+				}),
+				Dialer: func(context.Context, string, string) (net.Conn, error) {
+					dialCalls.Add(1)
+					return nil, errors.New("restricted DNS answer reached underlying dialer")
+				},
+			})
+			if _, err := client.dialContext(context.Background(), "tcp", "downloads.example.com:80"); !errors.Is(err, ErrAddressBlocked) {
+				t.Fatalf("dialContext error = %v, want ErrAddressBlocked", err)
+			}
+			if calls := dialCalls.Load(); calls != 0 {
+				t.Fatalf("underlying dial calls = %d, want 0", calls)
 			}
 		})
+	}
+}
+
+func TestOpenRejectsSpecialUseLiteralBeforeDialing(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "Azure WireServer", raw: "http://168.63.129.16/metadata"},
+		{name: "AS112 v4", raw: "http://192.31.196.1/file"},
+		{name: "AMT", raw: "http://192.52.193.1/file"},
+		{name: "deprecated 6to4 relay", raw: "http://192.88.99.1/file"},
+		{name: "direct delegation AS112 v4", raw: "http://192.175.48.1/file"},
+		{name: "dummy IPv6 prefix", raw: "http://[100:0:0:1::1]/file"},
+		{name: "IETF protocol assignments", raw: "http://[2001:100::1]/file"},
+		{name: "direct delegation AS112 v6", raw: "http://[2620:4f:8000::1]/file"},
+		{name: "documentation v6", raw: "http://[3fff::1]/file"},
+		{name: "SRv6 SIDs", raw: "http://[5f00::1]/file"},
+		{name: "IPv4-mapped Azure WireServer", raw: "http://[::ffff:168.63.129.16]/metadata"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var dialCalls atomic.Int32
+			client := NewClient(Config{Dialer: func(context.Context, string, string) (net.Conn, error) {
+				dialCalls.Add(1)
+				return nil, errors.New("restricted literal reached underlying dialer")
+			}})
+			response, err := client.Open(context.Background(), test.raw)
+			if response != nil {
+				response.Body.Close()
+			}
+			if !errors.Is(err, ErrAddressBlocked) {
+				t.Fatalf("Open error = %v, want ErrAddressBlocked", err)
+			}
+			if calls := dialCalls.Load(); calls != 0 {
+				t.Fatalf("underlying dial calls = %d, want 0", calls)
+			}
+		})
+	}
+}
+
+func TestOpenRejectsSpecialUseRedirectBeforeSecondDial(t *testing.T) {
+	var dialCalls atomic.Int32
+	serverResult := make(chan error, 1)
+	client := NewClient(Config{
+		ConnectTimeout: time.Second,
+		Resolver: resolverFunc(func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+		}),
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			if call := dialCalls.Add(1); call != 1 {
+				return nil, errors.New("unexpected second underlying dial")
+			}
+			clientConnection, serverConnection := net.Pipe()
+			deadline := time.Now().Add(time.Second)
+			_ = clientConnection.SetDeadline(deadline)
+			_ = serverConnection.SetDeadline(deadline)
+			go func() {
+				defer serverConnection.Close()
+				request, err := http.ReadRequest(bufio.NewReader(serverConnection))
+				if err == nil {
+					err = request.Body.Close()
+				}
+				if err == nil {
+					_, err = io.WriteString(serverConnection, "HTTP/1.1 302 Found\r\nLocation: http://168.63.129.16/metadata\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+				}
+				serverResult <- err
+			}()
+			return clientConnection, nil
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	response, err := client.Open(ctx, "http://downloads.example.com/file")
+	if response != nil {
+		response.Body.Close()
+	}
+	if !errors.Is(err, ErrAddressBlocked) {
+		t.Fatalf("Open error = %v, want ErrAddressBlocked", err)
+	}
+	if calls := dialCalls.Load(); calls != 1 {
+		t.Fatalf("underlying dial calls = %d, want only the public first hop", calls)
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatalf("first-hop server error: %v", err)
 	}
 }
 

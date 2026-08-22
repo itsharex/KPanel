@@ -123,6 +123,7 @@ interface FileBindings {
   cancelFileTransfer: () => void
   openRemoteDownloadDialog: () => void
   closeRemoteDownloadDialog: () => void
+  validRemoteDownloadForm: () => boolean
   submitRemoteDownload: () => Promise<void>
   cancelRemoteDownload: () => void
   addEntriesToDesktop: (entry?: TestFileEntry, currentDirectory?: boolean) => Promise<void>
@@ -178,6 +179,10 @@ interface FileBindings {
   remoteDownloadURL: { value: string }
   remoteDownloadName: { value: string }
   remoteDownloadTarget: { value: string }
+  remoteDownloadHTTPWarningID: string
+  remoteDownloadFormErrorID: string
+  remoteDownloadUsesPlainHTTP: { value: boolean }
+  remoteDownloadURLDescription: { value?: string }
   remoteDownloadFormError: { value: string }
   remoteDownloadState: {
     value?: {
@@ -411,6 +416,32 @@ describe('FilesView remote download', () => {
     expect(view.remoteDownloadFormError.value).toContain('HTTP 或 HTTPS')
     await setLocale('en-US', false)
     expect(view.remoteDownloadFormError.value).toBe('Enter a complete HTTP or HTTPS download URL.')
+  })
+
+  it('keeps the plaintext HTTP warning and URL error descriptions synchronized', () => {
+    const view = setupView()
+    expect(view.remoteDownloadURLDescription.value).toBeUndefined()
+
+    view.remoteDownloadURL.value = 'http://downloads.example.com/file.bin'
+    expect(view.remoteDownloadUsesPlainHTTP.value).toBe(true)
+    expect(view.remoteDownloadURLDescription.value).toBe(view.remoteDownloadHTTPWarningID)
+
+    view.remoteDownloadURL.value = 'http://'
+    expect(view.validRemoteDownloadForm()).toBe(false)
+    expect(view.remoteDownloadURLDescription.value).toBe(
+      `${view.remoteDownloadHTTPWarningID} ${view.remoteDownloadFormErrorID}`,
+    )
+
+    view.remoteDownloadURL.value = 'https://downloads.example.com/file.bin'
+    expect(view.remoteDownloadUsesPlainHTTP.value).toBe(false)
+    expect(view.remoteDownloadURLDescription.value).toBe(view.remoteDownloadFormErrorID)
+    expect(view.validRemoteDownloadForm()).toBe(true)
+    expect(view.remoteDownloadURLDescription.value).toBeUndefined()
+
+    const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
+    expect(source).toContain(':aria-describedby="remoteDownloadURLDescription"')
+    expect(source).toContain(':id="remoteDownloadHTTPWarningID"')
+    expect(source).toMatch(/remote-download-warning[\s\S]*?role="status"[\s\S]*?aria-live="polite"/)
   })
 
   it('cancels the request without claiming success', async () => {
