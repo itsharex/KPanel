@@ -38,6 +38,11 @@ describe('multi-host terminal workspace layout', () => {
     expect(terminalSource).not.toContain('<Server v-else')
   })
 
+  it('keeps connection metadata and status at the visual language minimums', () => {
+    expect(terminalSource).toMatch(/\.terminal-host small\s*\{[^}]*font-size:13px;/)
+    expect(terminalSource).toMatch(/\.terminal-host em\s*\{[^}]*font-size:12px;/)
+  })
+
   it('collapses the host selector into a persistent narrow rail', () => {
     expect(terminalSource).toContain("'is-connections-collapsed': connectionsCollapsed")
     expect(terminalSource).toContain('aria-controls="terminal-connection-selector"')

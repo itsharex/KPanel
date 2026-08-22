@@ -394,8 +394,8 @@ onBeforeUnmount(() => {
 .terminal-host :deep(.terminal-host__os) { width:34px; height:34px; flex:0 0 auto; border-radius:9px; box-shadow:none; }
 .terminal-host>span:nth-child(2) { display:grid; min-width:0; gap:2px; }
 .terminal-host strong,.terminal-host small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.terminal-host small { color:var(--terminal-shell-muted,#8a9695); font-size:11px; }
-.terminal-host em { display:flex; align-items:center; gap:5px; color:var(--terminal-shell-muted,#8a9695); font-size:10px; font-style:normal; }
+.terminal-host small { color:var(--terminal-shell-muted,#8a9695); font-size:13px; }
+.terminal-host em { display:flex; align-items:center; gap:5px; color:var(--terminal-shell-muted,#8a9695); font-size:12px; font-style:normal; }
 .terminal-host em.is-ready { color:var(--success); }
 .terminal-connections__empty { display:flex; align-items:center; justify-content:center; gap:8px; min-height:180px; padding:20px; color:var(--terminal-shell-muted,#8a9695); text-align:center; }
 .terminal-stage { display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); min-width:0; min-height:0; overflow:hidden; padding:0; background:var(--terminal-shell-background,#0b1214); }
