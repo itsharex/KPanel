@@ -92,8 +92,8 @@
 <!-- kpanel-release-metrics:end -->
 
 <!-- kpanel-release-process-metrics:start -->
-- 已记录发布流程异常或无效证据拦截次数：9
-- 其中生产写操作开始后异常次数：0
+- 已记录发布流程异常或无效证据拦截次数：10
+- 其中生产写操作开始后异常次数：1
 <!-- kpanel-release-process-metrics:end -->
 
 ### 流程异常明细
@@ -161,6 +161,15 @@
     "impact": "一次本地 bash -n 实际调用 WSL Bash，不能访问 C: 风格路径，该次本地语法证据无效。",
     "recoveryEvidence": "改用精确 Git for Windows bash 路径完成 bash -n，远端 Bash 执行也成功。",
     "permanentAction": "Windows 发布脚本预检固定调用 Git Bash 绝对路径并立即检查退出码。",
+    "historicalReleases": []
+  },
+  {
+    "fingerprint": "candidate-cleanup/powershell-git/boolean-exit-misread",
+    "position": "after-production-write",
+    "count": 1,
+    "impact": "候选清理时把 git merge-base 成功且无标准输出误解释为布尔假，安全地停在远端删除前。",
+    "recoveryEvidence": "改为显式检查 LASTEXITCODE 后确认候选已被 Tag 和最终 main 包含，并正常删除远端候选分支；生产未受影响。",
+    "permanentAction": "PowerShell 调用只用进程退出码判定 Git 布尔命令，不以标准输出是否为空判定成功。",
     "historicalReleases": []
   }
 ]
