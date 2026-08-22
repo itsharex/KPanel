@@ -63,8 +63,8 @@
 <!-- kpanel-release-metrics:end -->
 
 <!-- kpanel-release-process-metrics:start -->
-- 已记录发布流程异常或无效证据拦截次数：9
-- 其中生产写操作开始后异常次数：0
+- 已记录发布流程异常或无效证据拦截次数：10
+- 其中生产写操作开始后异常次数：1
 <!-- kpanel-release-process-metrics:end -->
 
 ### 流程异常明细
@@ -132,6 +132,15 @@
     "impact": "一次只读生产预检中的 jq 标签键引号被双层 Shell 吞掉，标签输出无效。",
     "recoveryEvidence": "受检备份、部署与生产验证脚本使用固定 jq 表达式，version/revision/脚本摘要均通过。",
     "permanentAction": "生产复杂 jq 表达式不再内联到 PowerShell SSH 字符串。",
+    "historicalReleases": []
+  },
+  {
+    "fingerprint": "acceptance-ci/github-api/anonymous-rate-limit",
+    "position": "after-production-write",
+    "count": 1,
+    "impact": "轮询验收记录 CI 时 GitHub 匿名 REST API 达到速率限制；生产服务未受影响。",
+    "recoveryEvidence": "改用已连接的 GitHub connector 核对 run 32552638529 completed/success，head SHA 精确为 046d901。",
+    "permanentAction": "CI 轮询优先使用已认证连接，匿名 REST 仅作低频只读补充。",
     "historicalReleases": []
   }
 ]
