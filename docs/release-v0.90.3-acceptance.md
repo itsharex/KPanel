@@ -52,6 +52,7 @@
 - 备份已独立校验归档摘要、解包、SQLite、JSON、Compose 和旧 OCI，并实际恢复 v0.90.2 healthy 后才升级；备份摘要=`98f409d5887ce70a4a1bdc90cb127771bd228ac4ea114700711fa41c55ff06fc`。
 - 通过标准 `kejilion.sh app kpanel` 非交互更新入口升级，日志 SHA-256=`a2325acd3ff47d4c6a51be0cc895a24c97441bb348fe1a7cba36003431fba3d3`。
 - 部署后 Panel v0.90.3 healthy、Agent active，restart=0、OOM=false、systemd NRestarts=0；公网 HTTPS health 返回 200/version 0.90.3；SQLite、JSON、Compose 和日志检查通过。
+- 本轮临时工作目录、恢复验证副本和传入 bundle 已由受检脚本精确清理；脚本 SHA-256=`d65d98f4e3d58d4dd405bd0b065edd0510bc846e41c445f7c4160426429b3c10`，生产备份与发布证据保留。
 - 回滚必须停写后成套恢复备份中的镜像、Compose、`.env`、数据与 systemd unit；旧 OCI 为 `sha256:1e2b387b0d06450c74086fb88c905f43fdeca600cff1e55bd1c915cff695c4e3`，禁止只换镜像。
 
 ## 交付节奏数据
@@ -66,8 +67,8 @@
 <!-- kpanel-release-metrics:end -->
 
 <!-- kpanel-release-process-metrics:start -->
-- 已记录发布流程异常或无效证据拦截次数：9
-- 其中生产写操作开始后异常次数：2
+- 已记录发布流程异常或无效证据拦截次数：10
+- 其中生产写操作开始后异常次数：3
 <!-- kpanel-release-process-metrics:end -->
 
 ### 流程异常明细
@@ -153,6 +154,15 @@
     "impact": "生产页面首次浏览器导航超时，控制会话重置，未影响服务。",
     "recoveryEvidence": "重连后登录页 DOM 完整、readyState=complete、1280px 横向溢出为 0；健康 API 与候选真实终端旅程均已通过。",
     "permanentAction": "生产浏览器复核先使用健康接口确认服务，再以新会话采集页面证据。",
+    "historicalReleases": []
+  },
+  {
+    "fingerprint": "production-cleanup/ssh/powershell-variable-expansion",
+    "position": "after-production-write",
+    "count": 1,
+    "impact": "首次内联清理命令的 realpath 子表达式被本机 PowerShell 提前求值，远端在删除前停止。",
+    "recoveryEvidence": "改用已做 bash -n 且 SHA 固定的远端脚本，精确清理本轮工作目录、验证副本和 bundle，备份与证据保留，服务复核 healthy。",
+    "permanentAction": "生产清理只运行固定绝对目标的受检远端脚本，不再从 PowerShell 内联 Bash 子表达式。",
     "historicalReleases": []
   }
 ]
