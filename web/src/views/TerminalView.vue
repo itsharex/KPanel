@@ -297,6 +297,7 @@ onBeforeUnmount(() => {
               class="terminal-host-rail__os"
               :distro="hostOperatingSystemIdentity(host).key"
               :label="hostOperatingSystemIdentity(host).label"
+              :show-tooltip="false"
             />
             <i :class="{ 'is-ready': host.terminalAvailable }" aria-hidden="true" />
           </button>

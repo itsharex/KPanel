@@ -53,6 +53,9 @@ describe('multi-host terminal workspace layout', () => {
     expect(terminalSource).toContain('class="terminal-host-rail"')
     expect(terminalSource).toContain(':title="`${host.name} · ${hostStateLabel(host)}`"')
     expect(terminalSource).toMatch(
+      /class="terminal-host-rail__os"[\s\S]*?:show-tooltip="false"/,
+    )
+    expect(terminalSource).toMatch(
       /\.terminal-workspace\.is-connections-collapsed\s*\{[^}]*grid-template-columns:52px minmax\(0,1fr\);/,
     )
     expect(terminalSource).toMatch(

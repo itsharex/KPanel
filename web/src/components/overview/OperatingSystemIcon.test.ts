@@ -3,8 +3,8 @@ import { renderToString } from 'vue/server-renderer'
 import { describe, expect, it } from 'vitest'
 import OperatingSystemIcon from './OperatingSystemIcon.vue'
 
-async function render(distro: string, label: string): Promise<string> {
-  return renderToString(createSSRApp(OperatingSystemIcon, { distro, label }))
+async function render(distro: string, label: string, showTooltip?: boolean): Promise<string> {
+  return renderToString(createSSRApp(OperatingSystemIcon, { distro, label, showTooltip }))
 }
 
 describe('OperatingSystemIcon', () => {
@@ -28,6 +28,14 @@ describe('OperatingSystemIcon', () => {
     expect(html).toContain('aria-hidden="true"')
     expect(html).toContain('--os-accent:#FCC624')
     expect(html).toContain('--os-foreground:#141816')
+  })
+
+  it('can omit its tooltip when a parent control provides the accessible host label', async () => {
+    const html = await render('rocky', 'Rocky Linux', false)
+
+    expect(html).not.toContain('title=')
+    expect(html).toContain('aria-hidden="true"')
+    expect(html).toContain('--os-accent:#10B981')
   })
 
   it.each(['__proto__', 'constructor'])(

@@ -18,6 +18,7 @@ import oracleIcon from '@/assets/os/oracle.png'
 const props = defineProps<{
   distro: string
   label: string
+  showTooltip?: boolean
 }>()
 
 interface OperatingSystemMark {
@@ -69,7 +70,7 @@ const style = computed(() => ({
 <template>
   <span
     class="os-identity__mark"
-    :title="props.label"
+    :title="props.showTooltip === false ? undefined : props.label"
     :style="style"
     aria-hidden="true"
   >
