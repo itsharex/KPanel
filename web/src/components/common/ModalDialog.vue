@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { Maximize2, Minimize2, X } from '@lucide/vue'
 import { useI18n } from '@/i18n'
 import { activateModal, deactivateModal, isTopModal } from './modalStack'
@@ -25,6 +25,9 @@ const emit = defineEmits<{
 const fullscreen = ref(false)
 const panel = ref<HTMLElement>()
 const modalID = Symbol('modal-dialog')
+const ariaBaseID = `modal-dialog-${useId()}`
+const titleID = `${ariaBaseID}-title`
+const descriptionID = `${ariaBaseID}-description`
 const i18n = useI18n()
 let active = false
 let activationSequence = 0
@@ -173,13 +176,14 @@ onBeforeUnmount(() => {
         :class="[`modal-panel--${size}`, { 'modal-panel--fullscreen': fullscreen }]"
         role="dialog"
         aria-modal="true"
-        :aria-label="title"
+        :aria-labelledby="titleID"
+        :aria-describedby="description ? descriptionID : undefined"
         tabindex="-1"
       >
         <header class="modal-panel__header">
           <div>
-            <h2>{{ title }}</h2>
-            <p v-if="description">{{ description }}</p>
+            <h2 :id="titleID">{{ title }}</h2>
+            <p v-if="description" :id="descriptionID">{{ description }}</p>
           </div>
           <div class="modal-panel__actions">
             <button

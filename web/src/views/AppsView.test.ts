@@ -718,7 +718,9 @@ describe('AppsView stopped applications', () => {
     const html = await renderView(stopped, item.id)
 
     expect(html).toContain('role="dialog"')
-    expect(html).toContain('aria-label="Cloudreve"')
+    const labelledBy = html.match(/aria-labelledby="([^"]+)"/)?.[1]
+    expect(labelledBy).toBeTruthy()
+    expect(html).toContain(`<h2 id="${labelledBy}">Cloudreve</h2>`)
     expect(html).toContain(label)
     expect(html).toContain('没有可用 HTTP 端口')
   })

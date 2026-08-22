@@ -30,6 +30,7 @@ import (
 	"github.com/kejilion/kejilion-panel/internal/contract"
 	"github.com/kejilion/kejilion-panel/internal/desktopworkspace"
 	"github.com/kejilion/kejilion-panel/internal/dockerx"
+	"github.com/kejilion/kejilion-panel/internal/remotedownload"
 	"github.com/kejilion/kejilion-panel/internal/store"
 	"github.com/kejilion/kejilion-panel/internal/version"
 )
@@ -77,6 +78,8 @@ type Server struct {
 	terminalOpeningUser   map[string]int
 	downloadTicketMu      sync.Mutex
 	downloadTickets       map[[32]byte]fileDownloadTicket
+	remoteDownloadOpen    func(context.Context, string) (*http.Response, error)
+	remoteDownloadGate    chan struct{}
 	ai                    *ai.Service
 	aiError               string
 	desktopWorkspace      *desktopworkspace.Store
@@ -141,6 +144,8 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		desktopWorkspace:      desktopWorkspace,
 		fileShareStreamGate:   make(chan struct{}, maxPublicFileShareStreams),
 		fileShareMetadataGate: make(chan struct{}, maxFileShareMetadataReads),
+		remoteDownloadOpen:    remotedownload.NewClient(remotedownload.Config{}).Open,
+		remoteDownloadGate:    make(chan struct{}, maxPanelRemoteDownloads),
 	}
 	server.hostOps = newHostOperationService(server)
 	return server, nil
@@ -307,6 +312,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleFileUpload(w, r)
 	case r.URL.Path == "/api/v1/files/transfers":
 		s.handleFileTransfer(w, r)
+	case r.URL.Path == "/api/v1/files/remote-downloads":
+		s.handleFileRemoteDownload(w, r)
 	case r.URL.Path == "/api/v1/files/actions":
 		s.handleFileAction(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/") &&

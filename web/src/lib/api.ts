@@ -41,6 +41,8 @@ import type {
   FileDownloadTicket,
   FileEntry,
   FileEntryBatchResult,
+  FileRemoteDownloadEvent,
+  FileRemoteDownloadInput,
   FileShareAdminView,
   FileShareCreateInput,
   FileShareList,
@@ -668,6 +670,128 @@ async function request<T>(
     return (payload as ApiEnvelope<T>).data as T
   }
   return payload as T
+}
+
+interface FileEntryStreamEvent {
+  state: string
+  entry?: FileEntry
+  code?: string
+  detail?: string
+}
+
+interface FileEntryStreamMessages {
+  failed: string
+  failedCode: string
+  invalid: string
+  invalidCode: string
+  incomplete: string
+  incompleteCode: string
+}
+
+const crossPanelFileEntryStreamStates = new Set(['connecting', 'transferring', 'committing', 'complete', 'error'])
+const remoteDownloadStreamStates = new Set(['connecting', 'transferring', 'confirming', 'complete', 'error'])
+
+function isStreamFileEntry(value: unknown): value is FileEntry {
+  if (!value || typeof value !== 'object') return false
+  const entry = value as Record<string, unknown>
+  return typeof entry.name === 'string'
+    && typeof entry.path === 'string'
+    && (entry.kind === 'file' || entry.kind === 'directory' || entry.kind === 'symlink' || entry.kind === 'special')
+    && typeof entry.sizeBytes === 'number'
+    && Number.isFinite(entry.sizeBytes)
+    && entry.sizeBytes >= 0
+    && typeof entry.mode === 'string'
+    && typeof entry.owner === 'string'
+    && typeof entry.group === 'string'
+    && typeof entry.modifiedAt === 'string'
+    && typeof entry.resourceVersion === 'string'
+    && typeof entry.editable === 'boolean'
+    && typeof entry.previewable === 'boolean'
+    && (entry.mime === undefined || typeof entry.mime === 'string')
+}
+
+async function streamFileEntry<TInput, TEvent extends FileEntryStreamEvent>(
+  path: string,
+  input: TInput,
+  onEvent: (event: TEvent) => void,
+  signal: AbortSignal | undefined,
+  messages: FileEntryStreamMessages,
+  allowedStates: ReadonlySet<string>,
+): Promise<FileEntry> {
+  const headers = new Headers({ Accept: 'application/x-ndjson', 'Content-Type': 'application/json' })
+  if (csrfToken) headers.set('X-CSRF-Token', csrfToken)
+  let response: Response
+  try {
+    response = await fetch(buildUrl(path), {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store', headers,
+      body: JSON.stringify(input), signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new ApiError('无法连接到面板服务，请检查服务状态后重试。', 0, 'network_error', error)
+  }
+  if (!response.ok) {
+    const payload = await parsePayload(response)
+    const problem = payload && typeof payload === 'object' ? payload as ProblemPayload : undefined
+    throw new ApiError(
+      problem?.detail || problem?.title || messages.failed,
+      response.status, problem?.code || messages.failedCode, payload, problem?.requestId,
+    )
+  }
+  if (!response.body) throw new ApiError('浏览器不支持流式传输状态。', 0, 'stream_unavailable')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffered = ''
+  let completed: FileEntry | undefined
+  const consume = (line: string): void => {
+    if (!line.trim()) return
+    let decoded: unknown
+    try {
+      decoded = JSON.parse(line) as unknown
+    } catch {
+      throw new ApiError(messages.invalid, 0, messages.invalidCode)
+    }
+    if (
+      !decoded || typeof decoded !== 'object'
+      || !('state' in decoded) || typeof decoded.state !== 'string'
+      || !allowedStates.has(decoded.state)
+      || ('detail' in decoded && decoded.detail !== undefined && typeof decoded.detail !== 'string')
+      || ('code' in decoded && decoded.code !== undefined && typeof decoded.code !== 'string')
+      || ('name' in decoded && decoded.name !== undefined && typeof decoded.name !== 'string')
+      || ('loadedBytes' in decoded && decoded.loadedBytes !== undefined && (
+        typeof decoded.loadedBytes !== 'number' || !Number.isFinite(decoded.loadedBytes) || decoded.loadedBytes < 0
+      ))
+      || ('totalBytes' in decoded && decoded.totalBytes !== undefined && (
+        typeof decoded.totalBytes !== 'number' || !Number.isFinite(decoded.totalBytes) || decoded.totalBytes < 0
+      ))
+      || ('entry' in decoded && decoded.entry !== undefined && !isStreamFileEntry(decoded.entry))
+      || (decoded.state === 'complete' && !('entry' in decoded && isStreamFileEntry(decoded.entry)))
+    ) {
+      throw new ApiError(messages.invalid, 0, messages.invalidCode)
+    }
+    const event = decoded as TEvent
+    onEvent(event)
+    if (event.state === 'error') {
+      throw new ApiError(event.detail || messages.failed, 0, event.code || messages.failedCode)
+    }
+    if (event.state === 'complete' && event.entry) completed = event.entry
+  }
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      buffered += decoder.decode(value, { stream: !done })
+      const lines = buffered.split('\n')
+      buffered = lines.pop() || ''
+      for (const line of lines) consume(line)
+      if (done) break
+    }
+    consume(buffered)
+  } catch (error) {
+    await reader.cancel().catch(() => undefined)
+    throw error
+  }
+  if (!completed) throw new ApiError(messages.incomplete, 0, messages.incompleteCode)
+  return completed
 }
 
 export function normalizeList<T>(value: ApiList<T> | T[] | null | undefined): ApiList<T> {
@@ -1709,61 +1833,28 @@ export const api = {
       input: CrossPanelFileTransferInput,
       onEvent: (event: CrossPanelFileTransferEvent) => void,
       signal?: AbortSignal,
-    ): Promise<FileEntry> => {
-      const headers = new Headers({ Accept: 'application/x-ndjson', 'Content-Type': 'application/json' })
-      if (csrfToken) headers.set('X-CSRF-Token', csrfToken)
-      let response: Response
-      try {
-        response = await fetch(buildUrl('/files/transfers'), {
-          method: 'POST', credentials: 'same-origin', cache: 'no-store', headers,
-          body: JSON.stringify(input), signal,
-        })
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') throw error
-        throw new ApiError('无法连接到面板服务，请检查服务状态后重试。', 0, 'network_error', error)
-      }
-      if (!response.ok) {
-        const payload = await parsePayload(response)
-        const problem = payload && typeof payload === 'object' ? payload as ProblemPayload : undefined
-        throw new ApiError(
-          problem?.detail || problem?.title || '跨面板复制失败。',
-          response.status, problem?.code || 'file_transfer_failed', payload, problem?.requestId,
-        )
-      }
-      if (!response.body) throw new ApiError('浏览器不支持流式传输状态。', 0, 'stream_unavailable')
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffered = ''
-      let completed: FileEntry | undefined
-      const consume = (line: string): void => {
-        if (!line.trim()) return
-        let event: CrossPanelFileTransferEvent
-        try {
-          event = JSON.parse(line) as CrossPanelFileTransferEvent
-        } catch {
-          throw new ApiError('面板返回了无效的传输状态。', 0, 'file_transfer_response_invalid')
-        }
-        onEvent(event)
-        if (event.state === 'error') throw new ApiError(event.detail || '跨面板复制失败。', 0, 'file_transfer_failed')
-        if (event.state === 'complete' && event.entry) completed = event.entry
-      }
-      try {
-        while (true) {
-          const { value, done } = await reader.read()
-          buffered += decoder.decode(value, { stream: !done })
-          const lines = buffered.split('\n')
-          buffered = lines.pop() || ''
-          for (const line of lines) consume(line)
-          if (done) break
-        }
-        consume(buffered)
-      } catch (error) {
-        await reader.cancel().catch(() => undefined)
-        throw error
-      }
-      if (!completed) throw new ApiError('跨面板复制未正常结束。', 0, 'file_transfer_incomplete')
-      return completed
-    },
+    ): Promise<FileEntry> => streamFileEntry(
+      '/files/transfers', input, onEvent, signal,
+      {
+        failed: '跨面板复制失败。', failedCode: 'file_transfer_failed',
+        invalid: '面板返回了无效的传输状态。', invalidCode: 'file_transfer_response_invalid',
+        incomplete: '跨面板复制未正常结束。', incompleteCode: 'file_transfer_incomplete',
+      },
+      crossPanelFileEntryStreamStates,
+    ),
+    remoteDownload: async (
+      input: FileRemoteDownloadInput,
+      onEvent: (event: FileRemoteDownloadEvent) => void,
+      signal?: AbortSignal,
+    ): Promise<FileEntry> => streamFileEntry(
+      '/files/remote-downloads', input, onEvent, signal,
+      {
+        failed: '远程下载失败。', failedCode: 'remote_download_failed',
+        invalid: '面板返回了无效的下载状态。', invalidCode: 'remote_download_response_invalid',
+        incomplete: '远程下载未正常结束。', incompleteCode: 'remote_download_incomplete',
+      },
+      remoteDownloadStreamStates,
+    ),
     thumbnailUrl: (path: string, version: string): string =>
       buildUrl('/files/content', { path, disposition: 'inline', mode: 'thumbnail', version }),
     text: async (path: string): Promise<string> =>

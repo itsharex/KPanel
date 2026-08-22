@@ -641,6 +641,34 @@ function sendBinary(response, status, body, contentType, disposition = 'inline')
   response.end(body)
 }
 
+function wait(milliseconds) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))
+}
+
+function mockFileParent(filePath) {
+  const separator = filePath.lastIndexOf('/')
+  return separator <= 0 ? '/' : filePath.slice(0, separator)
+}
+
+function mockFilePath(directory, name) {
+  return `${directory === '/' ? '' : directory}/${name}`
+}
+
+function mockRemoteDownloadName(directory, requestedName) {
+  let name = String(requestedName || '').trim()
+  if (!name || name === '.' || name === '..' || name.length > 255 || /[/\\\u0000-\u001f\u007f]/.test(name)) {
+    name = 'download'
+  }
+  const dot = name.lastIndexOf('.')
+  const stem = dot > 0 ? name.slice(0, dot) : name
+  const extension = dot > 0 ? name.slice(dot) : ''
+  let candidate = name
+  for (let attempt = 1; mockFiles.some((entry) => entry.path === mockFilePath(directory, candidate)); attempt += 1) {
+    candidate = `${stem} (${attempt})${extension}`
+  }
+  return candidate
+}
+
 function fileShareAdminView(record, token = '') {
   return {
     id: record.id,
@@ -703,9 +731,10 @@ createServer(async (request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/v1/files') {
     const requestedPath = url.searchParams.get('path') || '/'
     const search = (url.searchParams.get('search') || '').trim().toLowerCase()
-    const entries = requestedPath === '/'
-      ? mockFiles.filter((entry) => !search || entry.name.toLowerCase().includes(search))
-      : []
+    const entries = mockFiles.filter((entry) => (
+      mockFileParent(entry.path) === requestedPath
+      && (!search || entry.name.toLowerCase().includes(search))
+    ))
     send(response, 200, {
       path: requestedPath, entries, offset: 0, total: entries.length, totalKnown: true,
       truncated: false, scanTruncated: false, readAt: new Date().toISOString(),
@@ -723,6 +752,47 @@ createServer(async (request, response) => {
     } else {
       send(response, 404, { title: '文件不存在', status: 404, code: 'not_found' })
     }
+    return
+  }
+  if (request.method === 'POST' && url.pathname === '/api/v1/files/remote-downloads') {
+    const input = await readJSON(request)
+    response.writeHead(200, {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Cache-Control': 'no-store',
+    })
+    const writeEvent = (event) => {
+      if (!response.destroyed && !response.writableEnded) response.write(`${JSON.stringify(event)}\n`)
+    }
+    writeEvent({ state: 'connecting' })
+    await wait(280)
+    if (String(input.url || '').includes('blocked') || String(input.url || '').includes('fail')) {
+      writeEvent({
+        state: 'error', code: 'remote_download_address_blocked',
+        detail: '模拟失败：该地址不符合公开网络下载策略。',
+      })
+      response.end()
+      return
+    }
+    const directory = typeof input.targetDirectory === 'string' ? input.targetDirectory : '/home'
+    const name = mockRemoteDownloadName(directory, input.name)
+    const totalBytes = 8 * 1024 * 1024
+    for (const loadedBytes of [512 * 1024, 2 * 1024 * 1024, 5 * 1024 * 1024, totalBytes]) {
+      if (response.destroyed || response.writableEnded) return
+      writeEvent({ state: 'transferring', loadedBytes, totalBytes, name })
+      await wait(320)
+    }
+    writeEvent({ state: 'confirming', loadedBytes: totalBytes, totalBytes, name })
+    await wait(240)
+    if (response.destroyed || response.writableEnded) return
+    const entry = {
+      name, path: mockFilePath(directory, name), kind: 'file',
+      mime: 'application/octet-stream', sizeBytes: totalBytes, mode: '-rw-r--r--',
+      owner: 'root', group: 'root', modifiedAt: new Date().toISOString(),
+      resourceVersion: `sha256:${'d'.repeat(64)}`, editable: false, previewable: false,
+    }
+    mockFiles.push(entry)
+    writeEvent({ state: 'complete', loadedBytes: totalBytes, totalBytes, name, entry })
+    response.end()
     return
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/files/shares') {

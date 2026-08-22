@@ -34,6 +34,15 @@ kejilion-agent（宿主机 systemd 服务）
 
 `paneld` 负责认证、公开 API 和前端静态资源。`kejilion-agent` 是唯一宿主机管理入口，只监听 `/run/kejilion-panel/agent.sock`，不开放 TCP。
 
+### 文件远程下载边界
+
+远程下载是进程边界中的窄化例外，不改变 Agent 权限模型：浏览器提交 URL 后，由非 root
+`paneld` 使用只允许公开 HTTP/HTTPS 的专用客户端抓取；DNS 的全部结果在拨号前校验并固定到
+已验证 IP，每次重定向重新复核。`paneld` 随后把有界字节流通过既有 Unix Socket 上传接口交给
+Agent，由文件管理器在目标目录内暂存、`fsync` 并原子发布。Agent 从不接收 URL，也不新增公网
+出站能力。取消会立即停止读取并清理尚未提交的暂存文件；若恰逢原子提交窗口，结果可能已经发布，
+调用方必须刷新目标目录确认。无论哪种结果，目录中都不会出现可见的半文件。
+
 ## 集群监控边界
 
 每台 KPanel 都可以同时作为中心端和被控端。中心端通过 HTTPS，或在无域名时通过 Noise

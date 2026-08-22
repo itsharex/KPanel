@@ -116,7 +116,8 @@ describe('FileShareManagerDialog', () => {
     mountDialog()
     await flushPromises()
 
-    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('Share management')
+    const labelledBy = document.querySelector('[role="dialog"]')?.getAttribute('aria-labelledby') || ''
+    expect(document.getElementById(labelledBy)?.textContent).toBe('Share management')
     expect(document.body.textContent).toContain('Manage file shares in one place.')
     expect(document.body.textContent).toContain('Never expires')
     expect(document.body.textContent).not.toContain('集中管理文件分享。')

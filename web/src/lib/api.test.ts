@@ -45,6 +45,91 @@ describe('API client', () => {
     }))
   })
 
+  it('streams remote download progress without putting the signed URL in the request URL', async () => {
+    const entry = {
+      name: 'release.zip', path: '/home/release.zip', kind: 'file' as const,
+      sizeBytes: 7, mode: '-rw-r--r--', owner: 'root', group: 'root',
+      modifiedAt: '2026-08-22T00:00:00Z', resourceVersion: `sha256:${'b'.repeat(64)}`,
+      editable: false, previewable: false,
+    }
+    const encoder = new TextEncoder()
+    const chunks = [
+      '{"state":"connecting"}\n{"state":"transferring","loadedBytes":3,',
+      '"totalBytes":7,"name":"release.zip"}\n',
+      JSON.stringify({ state: 'complete', loadedBytes: 7, totalBytes: 7, name: 'release.zip', entry }),
+    ]
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+        controller.close()
+      },
+    })
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(stream, {
+      status: 200, headers: { 'content-type': 'application/x-ndjson' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const events: string[] = []
+    const signedURL = 'https://downloads.example.com/release.zip?token=secret'
+
+    await expect(api.files.remoteDownload({
+      url: signedURL, targetDirectory: '/home', name: 'release.zip',
+    }, (event) => events.push(event.state))).resolves.toEqual(entry)
+
+    expect(events).toEqual(['connecting', 'transferring', 'complete'])
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/files/remote-downloads')
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('secret')
+    const options = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(options).toEqual(expect.objectContaining({
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    }))
+    expect(JSON.parse(String(options.body))).toEqual({
+      url: signedURL, targetDirectory: '/home', name: 'release.zip',
+    })
+  })
+
+  it('surfaces a remote download error event and rejects an incomplete stream', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        '{"state":"error","code":"remote_download_address_blocked","detail":"地址被阻止"}\n',
+        { status: 200, headers: { 'content-type': 'application/x-ndjson' } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        '{"state":"connecting"}\n',
+        { status: 200, headers: { 'content-type': 'application/x-ndjson' } },
+      ))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.files.remoteDownload({
+      url: 'https://downloads.example.com/file', targetDirectory: '/home',
+    }, () => undefined)).rejects.toMatchObject({ code: 'remote_download_address_blocked' })
+    await expect(api.files.remoteDownload({
+      url: 'https://downloads.example.com/file', targetDirectory: '/home',
+    }, () => undefined)).rejects.toMatchObject({ code: 'remote_download_incomplete' })
+  })
+
+  it('rejects invalid remote download progress and incomplete entry shapes', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        '{"state":"transferring","loadedBytes":-1}\n',
+        { status: 200, headers: { 'content-type': 'application/x-ndjson' } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        '{"state":"complete","entry":{}}',
+        { status: 200, headers: { 'content-type': 'application/x-ndjson' } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        '{"state":"committing"}\n',
+        { status: 200, headers: { 'content-type': 'application/x-ndjson' } },
+      ))
+    vi.stubGlobal('fetch', fetchMock)
+
+    for (let index = 0; index < 3; index += 1) {
+      await expect(api.files.remoteDownload({
+        url: 'https://downloads.example.com/file', targetDirectory: '/home',
+      }, () => undefined)).rejects.toMatchObject({ code: 'remote_download_response_invalid' })
+    }
+  })
+
   it('builds a same-origin, path-safe site icon URL', () => {
     expect(api.sites.iconURL('a'.repeat(32))).toBe(
       `/api/v1/sites/${'a'.repeat(32)}/icon`,

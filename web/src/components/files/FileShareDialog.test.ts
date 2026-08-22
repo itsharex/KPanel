@@ -372,7 +372,8 @@ describe('FileShareDialog hash-only sharing', () => {
     mountDialog()
     await flushPromises()
 
-    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('File sharing')
+    const labelledBy = document.querySelector('[role="dialog"]')?.getAttribute('aria-labelledby') || ''
+    expect(document.getElementById(labelledBy)?.textContent).toBe('File sharing')
     expect(document.body.textContent).toContain('Anyone with the link can access this file.')
     expect(document.body.textContent).toContain('Create share')
     expect(document.body.textContent).not.toContain('任何持有链接的人都可以访问此文件。')

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView.vue'
 import { resetDesktopIconsForTest } from '@/stores/desktopIcons'
 import { resetFileWindowTransferForTest } from '@/lib/fileWindowTransfer'
+import { resetLocaleForTest, setLocale } from '@/i18n'
 import {
   beginDesktopFileDrag,
   clearDesktopFileDrag,
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   entry: vi.fn(),
   action: vi.fn(),
   transferFromPanel: vi.fn(),
+  remoteDownload: vi.fn(),
   trash: vi.fn(),
   write: vi.fn(),
   contentUrl: vi.fn(),
@@ -40,13 +42,23 @@ vi.mock('vue-router', async (importOriginal) => ({
 }))
 
 vi.mock('@/lib/api', () => ({
-  ApiError: class MockApiError extends Error {},
+  ApiError: class MockApiError extends Error {
+    readonly status: number
+    readonly code: string
+
+    constructor(message: string, status = 0, code = 'request_failed') {
+      super(message)
+      this.status = status
+      this.code = code
+    }
+  },
   api: {
     files: {
       entry: mocks.entry,
       list: mocks.list,
       action: mocks.action,
       transferFromPanel: mocks.transferFromPanel,
+      remoteDownload: mocks.remoteDownload,
       trash: mocks.trash,
       contentUrl: mocks.contentUrl,
       archiveUrl: mocks.archiveUrl,
@@ -109,6 +121,10 @@ interface FileBindings {
   transferInternalFileDrop: (event: DragEvent, target: string) => Promise<void>
   transferCrossPanelFileDrop: (event: DragEvent, target: string) => Promise<void>
   cancelFileTransfer: () => void
+  openRemoteDownloadDialog: () => void
+  closeRemoteDownloadDialog: () => void
+  submitRemoteDownload: () => Promise<void>
+  cancelRemoteDownload: () => void
   addEntriesToDesktop: (entry?: TestFileEntry, currentDirectory?: boolean) => Promise<void>
   startEntryDrag: (event: DragEvent, entry: TestFileEntry) => void
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
@@ -158,6 +174,24 @@ interface FileBindings {
       phase: 'running' | 'success' | 'partial' | 'cancelled' | 'error'
     }
   }
+  remoteDownloadDialogOpen: { value: boolean }
+  remoteDownloadURL: { value: string }
+  remoteDownloadName: { value: string }
+  remoteDownloadTarget: { value: string }
+  remoteDownloadFormError: { value: string }
+  remoteDownloadState: {
+    value?: {
+      operation: number
+      phase: 'connecting' | 'transferring' | 'confirming' | 'success' | 'cancelled' | 'error'
+      target: string
+      name?: string
+      loadedBytes: number
+      totalBytes?: number
+      detail?: string
+      detailCode?: string
+    }
+  }
+  remoteDownloadDetail: { value: string }
   contextMenu: { value?: { entry?: TestFileEntry; x: number; y: number } }
   shareEntry: { value?: TestFileEntry }
   shareManagerOpen: { value: boolean }
@@ -258,6 +292,7 @@ function setupView(): FileBindings {
 }
 
 beforeEach(() => {
+  resetLocaleForTest()
   vi.clearAllMocks()
   resetDesktopIconsForTest()
   resetFileWindowTransferForTest()
@@ -278,13 +313,25 @@ beforeEach(() => {
     },
   })
   vi.stubGlobal('location', { href: 'https://panel.example/files' })
-  vi.stubGlobal('document', { activeElement: null })
+  vi.stubGlobal('document', { activeElement: null, documentElement: { lang: '', dir: '' } })
   mocks.list.mockResolvedValue(testDirectory('/web'))
   mocks.action.mockResolvedValue({ action: 'trash', succeeded: [], failed: [] })
   mocks.transferFromPanel.mockImplementation(async (input: { path: string; targetDirectory: string }, onEvent: (event: unknown) => void) => {
     onEvent({ state: 'complete' })
     const source = input.path.slice(input.path.lastIndexOf('/') + 1)
     return { ...testEntry(source), path: `${input.targetDirectory}/${source}` }
+  })
+  mocks.remoteDownload.mockImplementation(async (
+    input: { name?: string; targetDirectory: string },
+    onEvent: (event: unknown) => void,
+  ) => {
+    const name = input.name || 'download'
+    const entry = { ...testEntry(name), path: `${input.targetDirectory}/${name}`, sizeBytes: 7 }
+    onEvent({ state: 'connecting' })
+    onEvent({ state: 'transferring', loadedBytes: 7, totalBytes: 7, name })
+    onEvent({ state: 'confirming', loadedBytes: 7, totalBytes: 7, name })
+    onEvent({ state: 'complete', loadedBytes: 7, totalBytes: 7, name, entry })
+    return entry
   })
   mocks.trash.mockResolvedValue({ entries: [], total: 0, readAt: '2026-07-30T00:00:00Z' })
   mocks.write.mockImplementation(async (_path: string, _content: string, _version: string) => ({
@@ -325,6 +372,162 @@ beforeEach(() => {
       updatedAt: '2026-08-14T00:00:00Z',
     })),
   }))
+})
+
+describe('FilesView remote download', () => {
+  it('snapshots the target directory, streams safe status, and clears the signed URL from view state', async () => {
+    const view = setupView()
+    view.currentPath.value = '/home/releases'
+    view.openRemoteDownloadDialog()
+    expect(view.remoteDownloadTarget.value).toBe('/home/releases')
+    view.remoteDownloadURL.value = 'https://downloads.example.com/release.zip?token=secret'
+    view.remoteDownloadName.value = 'release.zip'
+    view.currentPath.value = '/etc'
+
+    await view.submitRemoteDownload()
+
+    expect(mocks.remoteDownload).toHaveBeenCalledWith({
+      url: 'https://downloads.example.com/release.zip?token=secret',
+      targetDirectory: '/home/releases',
+      name: 'release.zip',
+    }, expect.any(Function), expect.any(AbortSignal))
+    expect(view.remoteDownloadDialogOpen.value).toBe(false)
+    expect(view.remoteDownloadURL.value).toBe('')
+    expect(view.remoteDownloadState.value).toMatchObject({
+      phase: 'success', target: '/home/releases', name: 'release.zip', loadedBytes: 7, totalBytes: 7,
+    })
+    expect(JSON.stringify(view.remoteDownloadState.value)).not.toContain('secret')
+  })
+
+  it('rejects an unsupported URL before calling the API', async () => {
+    const view = setupView()
+    view.openRemoteDownloadDialog()
+    view.remoteDownloadURL.value = 'file:///etc/passwd'
+
+    await view.submitRemoteDownload()
+
+    expect(mocks.remoteDownload).not.toHaveBeenCalled()
+    expect(view.remoteDownloadDialogOpen.value).toBe(true)
+    expect(view.remoteDownloadFormError.value).toContain('HTTP 或 HTTPS')
+    await setLocale('en-US', false)
+    expect(view.remoteDownloadFormError.value).toBe('Enter a complete HTTP or HTTPS download URL.')
+  })
+
+  it('cancels the request without claiming success', async () => {
+    const view = setupView()
+    mocks.remoteDownload.mockImplementationOnce((
+      _input: unknown,
+      _onEvent: (event: unknown) => void,
+      signal?: AbortSignal,
+    ) => new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    }))
+    view.openRemoteDownloadDialog()
+    view.remoteDownloadURL.value = 'https://downloads.example.com/large.iso'
+
+    const download = view.submitRemoteDownload()
+    expect(view.remoteDownloadState.value?.phase).toBe('connecting')
+    view.cancelRemoteDownload()
+    await download
+
+    expect(view.remoteDownloadState.value).toMatchObject({
+      phase: 'cancelled', detailCode: 'remote_download_cancelled',
+    })
+    expect(view.remoteDownloadDetail.value).toContain('原子提交窗口')
+    await setLocale('en-US', false)
+    expect(view.remoteDownloadDetail.value).toContain('atomic commit window')
+    expect(mocks.success).not.toHaveBeenCalled()
+  })
+
+  it('keeps remote download in the file command bar with semantic progress', () => {
+    const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
+    const commandBar = source.slice(
+      source.indexOf('<div class="file-command-bar__actions">'),
+      source.indexOf('</div>', source.indexOf('<div class="file-command-bar__actions">')),
+    )
+    expect(commandBar).toContain("files.remoteDownload.label")
+    expect(source).toContain('<progress')
+    expect(source).toContain('role="alert"')
+    expect(source).toContain("files.remoteDownload.note")
+  })
+
+  it('does not let a completion refresh abort an active directory navigation', async () => {
+    const view = setupView()
+    view.currentPath.value = '/home/releases'
+    view.openRemoteDownloadDialog()
+    view.remoteDownloadURL.value = 'https://downloads.example.com/release.zip'
+    let resolveNavigation!: (directory: FileDirectoryResult) => void
+    let navigationSignal: AbortSignal | undefined
+    mocks.list.mockImplementationOnce((_path: string, _options: unknown, signal?: AbortSignal) => {
+      navigationSignal = signal
+      return new Promise<FileDirectoryResult>((resolve) => {
+        resolveNavigation = resolve
+      })
+    })
+
+    const navigation = view.navigateDirectory('/etc')
+    await view.submitRemoteDownload()
+
+    expect(navigationSignal?.aborted).toBe(false)
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+    resolveNavigation(testDirectory('/etc'))
+    await navigation
+    expect(view.currentPath.value).toBe('/etc')
+  })
+
+  it('queues a final refresh behind an active read of the same target directory', async () => {
+    const view = setupView()
+    view.currentPath.value = '/home/releases'
+    view.openRemoteDownloadDialog()
+    view.remoteDownloadURL.value = 'https://downloads.example.com/release.zip'
+    let resolveCurrentRead!: (directory: FileDirectoryResult) => void
+    let currentReadSignal: AbortSignal | undefined
+    mocks.list
+      .mockImplementationOnce((_path: string, _options: unknown, signal?: AbortSignal) => {
+        currentReadSignal = signal
+        return new Promise<FileDirectoryResult>((resolve) => {
+          resolveCurrentRead = resolve
+        })
+      })
+      .mockResolvedValueOnce(testDirectory('/home/releases'))
+
+    const currentRead = view.loadDirectory('/home/releases')
+    await view.submitRemoteDownload()
+
+    expect(currentReadSignal?.aborted).toBe(false)
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+    resolveCurrentRead(testDirectory('/home/releases'))
+    await currentRead
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2))
+    expect(mocks.list.mock.calls[1]?.[0]).toBe('/home/releases')
+  })
+
+  it('does not let an earlier success timer clear a later download state', async () => {
+    const view = setupView()
+    view.currentPath.value = '/home'
+    view.openRemoteDownloadDialog()
+    view.remoteDownloadURL.value = 'https://downloads.example.com/first.zip'
+    view.currentPath.value = '/etc'
+    await view.submitRemoteDownload()
+    const oldTimer = vi.mocked(window.setTimeout).mock.calls.at(-1)?.[0]
+
+    mocks.remoteDownload.mockImplementationOnce((
+      _input: unknown,
+      _onEvent: (event: unknown) => void,
+      signal?: AbortSignal,
+    ) => new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    }))
+    view.openRemoteDownloadDialog()
+    view.remoteDownloadURL.value = 'https://downloads.example.com/second.zip'
+    view.currentPath.value = '/var'
+    const secondDownload = view.submitRemoteDownload()
+
+    if (typeof oldTimer === 'function') oldTimer()
+    expect(view.remoteDownloadState.value?.phase).toBe('connecting')
+    view.cancelRemoteDownload()
+    await secondDownload
+  })
 })
 
 describe('FilesView desktop shortcuts', () => {

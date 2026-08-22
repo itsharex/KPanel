@@ -10,6 +10,7 @@ interface DialogMountOptions {
   props?: {
     open: boolean
     title: string
+    description?: string
   }
   slots?: Record<string, () => ReturnType<typeof h>>
 }
@@ -40,6 +41,18 @@ afterEach(async () => {
 })
 
 describe('ModalDialog focus management', () => {
+  it('associates its visible title and description with the dialog', () => {
+    mountDialog({
+      props: { open: true, title: 'Remote download', description: 'Save into /home.' },
+    })
+
+    const dialog = panelAt()
+    const title = document.getElementById(dialog.getAttribute('aria-labelledby') || '')
+    const description = document.getElementById(dialog.getAttribute('aria-describedby') || '')
+    expect(title?.textContent).toBe('Remote download')
+    expect(description?.textContent).toBe('Save into /home.')
+  })
+
   it('focuses the first operable element when opened and restores its opener when closed', async () => {
     const opener = document.createElement('button')
     document.body.append(opener)

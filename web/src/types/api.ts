@@ -1745,7 +1745,32 @@ export interface CrossPanelFileTransferEvent {
   state: CrossPanelFileTransferState
   loadedBytes?: number
   totalBytes?: number
+  name?: string
   entry?: FileEntry
+  code?: string
+  detail?: string
+}
+
+export interface FileRemoteDownloadInput {
+  url: string
+  targetDirectory: string
+  name?: string
+}
+
+export type FileRemoteDownloadState =
+  | 'connecting'
+  | 'transferring'
+  | 'confirming'
+  | 'complete'
+  | 'error'
+
+export interface FileRemoteDownloadEvent {
+  state: FileRemoteDownloadState
+  loadedBytes?: number
+  totalBytes?: number
+  name?: string
+  entry?: FileEntry
+  code?: string
   detail?: string
 }
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from '@/i18n'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog((locale) => locale === 'en-US'
@@ -77,7 +78,14 @@ import {
   type FileTransferOperation,
 } from '@/lib/fileWindowTransfer'
 import { useToast } from '@/stores/toast'
-import type { FileActionInput, FileActionResult, FileDirectory, FileEntry, FileTrashEntry } from '@/types/api'
+import type {
+  FileActionInput,
+  FileActionResult,
+  FileDirectory,
+  FileEntry,
+  FileRemoteDownloadEvent,
+  FileTrashEntry,
+} from '@/types/api'
 
 const CodeEditor = defineAsyncComponent(() => import('@/components/files/CodeEditor.vue'))
 const route = useRoute()
@@ -124,6 +132,7 @@ interface CodeEditorStatus {
 }
 
 const toast = useToast()
+const i18n = useI18n()
 const directory = ref<FileDirectory>()
 const currentPath = ref('/home')
 const search = ref('')
@@ -136,6 +145,27 @@ const selected = ref(new Set<string>())
 const selectionAnchor = ref<string>()
 const uploadInput = ref<HTMLInputElement>()
 const uploadProgress = ref<Record<string, number>>({})
+const remoteDownloadURLInput = ref<HTMLInputElement>()
+const remoteDownloadDialogOpen = ref(false)
+const remoteDownloadURL = ref('')
+const remoteDownloadName = ref('')
+const remoteDownloadTarget = ref('/home')
+const remoteDownloadFormErrorCode = ref<'url' | 'name'>()
+const remoteDownloadFormError = computed(() => {
+  if (remoteDownloadFormErrorCode.value === 'url') return i18n.t('files.remoteDownload.urlInvalid')
+  if (remoteDownloadFormErrorCode.value === 'name') return i18n.t('files.remoteDownload.nameInvalid')
+  return ''
+})
+const remoteDownloadState = ref<{
+  operation: number
+  phase: 'connecting' | 'transferring' | 'confirming' | 'success' | 'cancelled' | 'error'
+  target: string
+  name?: string
+  loadedBytes: number
+  totalBytes?: number
+  detail?: string
+  detailCode?: string
+}>()
 const dialogAction = ref<DialogAction>()
 const dialogValue = ref('')
 const dialogFormat = ref<ArchiveFormat>('tar.gz')
@@ -185,9 +215,14 @@ const trashTruncated = ref(false)
 const selectedTrash = ref(new Set<string>())
 const thumbnailFailures = ref(new Set<string>())
 let directoryController: AbortController | undefined
+let directoryRequestPath = ''
+let queuedRemoteDownloadRefresh = ''
 let archiveController: AbortController | undefined
 let fileTransferController: AbortController | undefined
 let fileTransferClearTimer: number | undefined
+let remoteDownloadController: AbortController | undefined
+let remoteDownloadClearTimer: number | undefined
+let remoteDownloadOperationSequence = 0
 let unsubscribeFileDirectoryChanges: (() => void) | undefined
 let searchTimer: number | undefined
 let mediaLoadTimer: number | undefined
@@ -199,6 +234,42 @@ const fileWindowChangeOrigin = Symbol('file-window')
 const fileViewStorageKey = 'kpanel:files:view:v1'
 const thumbnailSourceMaxBytes = 12 * 1024 * 1024
 const mediaLoadTimeoutMs = 20_000
+
+const remoteDownloadRunning = computed(() => {
+  const phase = remoteDownloadState.value?.phase
+  return phase === 'connecting' || phase === 'transferring' || phase === 'confirming'
+})
+
+const remoteDownloadTitle = computed(() => {
+  const state = remoteDownloadState.value
+  if (!state) return ''
+  if (state.phase === 'connecting') return i18n.t('files.remoteDownload.phaseConnecting')
+  if (state.phase === 'transferring') {
+    return state.name
+      ? i18n.t('files.remoteDownload.phaseTransferringName', { name: state.name })
+      : i18n.t('files.remoteDownload.phaseTransferring')
+  }
+  if (state.phase === 'confirming') return i18n.t('files.remoteDownload.phaseConfirming')
+  if (state.phase === 'success') {
+    return state.name
+      ? i18n.t('files.remoteDownload.phaseSuccessName', { name: state.name })
+      : i18n.t('files.remoteDownload.phaseSuccess')
+  }
+  if (state.phase === 'cancelled') return i18n.t('files.remoteDownload.phaseCancelled')
+  return i18n.t('files.remoteDownload.phaseError')
+})
+
+const remoteDownloadProgress = computed(() => {
+  const state = remoteDownloadState.value
+  if (!state?.totalBytes || state.totalBytes <= 0) return undefined
+  return Math.min(100, Math.round((state.loadedBytes / state.totalBytes) * 100))
+})
+
+const remoteDownloadDetail = computed(() => {
+  const state = remoteDownloadState.value
+  if (!state) return ''
+  return state.detailCode ? remoteDownloadErrorDetail(state.detailCode) : state.detail || ''
+})
 
 const fileTransferTitle = computed(() => {
   const state = fileTransferState.value
@@ -331,6 +402,57 @@ function errorMessage(error: unknown): string {
   return '操作未完成，请稍后重试。'
 }
 
+function remoteDownloadErrorDetail(code?: string): string {
+  switch (code) {
+    case 'remote_download_invalid':
+      return i18n.t('files.remoteDownload.error.invalid')
+    case 'remote_download_busy':
+      return i18n.t('files.remoteDownload.error.busy')
+    case 'remote_download_address_blocked':
+      return i18n.t('files.remoteDownload.error.addressBlocked')
+    case 'remote_download_redirect_rejected':
+      return i18n.t('files.remoteDownload.error.redirectRejected')
+    case 'remote_download_tls_failed':
+      return i18n.t('files.remoteDownload.error.tlsFailed')
+    case 'remote_download_encoding_unsupported':
+    case 'remote_download_partial_unsupported':
+      return i18n.t('files.remoteDownload.error.responseUnsupported')
+    case 'remote_download_timeout':
+    case 'remote_download_idle_timeout':
+      return i18n.t('files.remoteDownload.error.timeout')
+    case 'remote_download_too_large':
+      return i18n.t('files.remoteDownload.error.tooLarge')
+    case 'target_unavailable':
+    case 'target_name_unavailable':
+    case 'target_permission_denied':
+      return i18n.t('files.remoteDownload.error.targetUnavailable')
+    case 'target_conflict':
+      return i18n.t('files.remoteDownload.error.targetConflict')
+    case 'target_storage_full':
+      return i18n.t('files.remoteDownload.error.storageFull')
+    case 'agent_write_busy':
+      return i18n.t('files.remoteDownload.error.agentBusy')
+    case 'remote_download_upstream_status':
+      return i18n.t('files.remoteDownload.error.upstreamRejected')
+    case 'remote_download_cancelled':
+      return i18n.t('files.remoteDownload.cancelledDetail')
+    case 'agent_write_interrupted':
+    case 'agent_write_failed':
+    case 'agent_result_invalid':
+    case 'remote_download_response_invalid':
+    case 'remote_download_incomplete':
+      return i18n.t('files.remoteDownload.error.resultUnknown')
+    case 'remote_download_unavailable':
+    case 'agent_stream_unavailable':
+    case 'remote_download_unreachable':
+    case 'network_error':
+    case 'stream_unavailable':
+      return i18n.t('files.remoteDownload.error.unavailable')
+    default:
+      return i18n.t('files.remoteDownload.error.generic')
+  }
+}
+
 function archiveFormat(entry: FileEntry): ArchiveFormat | undefined {
   if (entry.kind !== 'file') return undefined
   const name = entry.name.toLocaleLowerCase()
@@ -354,9 +476,11 @@ function normalizedArchiveName(name: string, format: ArchiveFormat): string {
 
 async function loadDirectory(path = currentPath.value, append = false): Promise<string | undefined> {
   if (append && !directory.value?.nextOffset) return undefined
+  if (queuedRemoteDownloadRefresh && queuedRemoteDownloadRefresh !== path) queuedRemoteDownloadRefresh = ''
   directoryController?.abort()
   const controller = new AbortController()
   directoryController = controller
+  directoryRequestPath = path
   loading.value = true
   contextMenu.value = undefined
   try {
@@ -396,6 +520,11 @@ async function loadDirectory(path = currentPath.value, append = false): Promise<
     if (directoryController === controller) {
       loading.value = false
       directoryController = undefined
+      directoryRequestPath = ''
+      const refreshQueued = queuedRemoteDownloadRefresh === path
+      const shouldRefresh = refreshQueued && currentPath.value === path && !unmounted
+      if (refreshQueued) queuedRemoteDownloadRefresh = ''
+      if (shouldRefresh) void loadDirectory(path)
     }
   }
 }
@@ -1392,6 +1521,154 @@ function setSort(key: 'name' | 'size' | 'modified'): void {
   }
 }
 
+function openRemoteDownloadDialog(): void {
+  if (remoteDownloadRunning.value) return
+  if (remoteDownloadClearTimer !== undefined) window.clearTimeout(remoteDownloadClearTimer)
+  remoteDownloadClearTimer = undefined
+  if (remoteDownloadState.value?.phase === 'success') remoteDownloadState.value = undefined
+  remoteDownloadTarget.value = currentPath.value
+  remoteDownloadURL.value = ''
+  remoteDownloadName.value = ''
+  remoteDownloadFormErrorCode.value = undefined
+  remoteDownloadDialogOpen.value = true
+  void nextTick().then(() => nextTick()).then(() => remoteDownloadURLInput.value?.focus({ preventScroll: true }))
+}
+
+function closeRemoteDownloadDialog(): void {
+  remoteDownloadDialogOpen.value = false
+  remoteDownloadURL.value = ''
+  remoteDownloadName.value = ''
+  remoteDownloadFormErrorCode.value = undefined
+}
+
+function validRemoteDownloadForm(): boolean {
+  const rawURL = remoteDownloadURL.value.trim()
+  try {
+    const parsed = new URL(rawURL)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('scheme')
+  } catch {
+    remoteDownloadFormErrorCode.value = 'url'
+    return false
+  }
+  const name = remoteDownloadName.value.trim()
+  if (
+    name && (
+      name === '.' || name === '..' || /[/\\\u0000-\u001f\u007f]/.test(name)
+      || new TextEncoder().encode(name).length > 255
+    )
+  ) {
+    remoteDownloadFormErrorCode.value = 'name'
+    return false
+  }
+  remoteDownloadFormErrorCode.value = undefined
+  return true
+}
+
+function applyRemoteDownloadEvent(
+  controller: AbortController,
+  operation: number,
+  event: FileRemoteDownloadEvent,
+): void {
+  if (unmounted || remoteDownloadController !== controller || controller.signal.aborted) return
+  const previous = remoteDownloadState.value
+  const phase = event.state === 'complete' ? 'success' : event.state
+  remoteDownloadState.value = {
+    operation,
+    phase,
+    target: previous?.target || remoteDownloadTarget.value,
+    name: event.name || event.entry?.name || previous?.name,
+    loadedBytes: event.loadedBytes ?? previous?.loadedBytes ?? 0,
+    totalBytes: event.totalBytes && event.totalBytes > 0
+      ? event.totalBytes
+      : previous?.totalBytes,
+    detail: event.state === 'error' ? undefined : previous?.detail,
+    detailCode: event.state === 'error' ? event.code || 'remote_download_failed' : previous?.detailCode,
+  }
+}
+
+function reconcileRemoteDownloadTarget(target: string): void {
+  notifyFileDirectoriesChanged([target], fileWindowChangeOrigin)
+  if (unmounted || currentPath.value !== target) return
+  if (directoryController) {
+    if (directoryRequestPath === target) queuedRemoteDownloadRefresh = target
+    return
+  }
+  void loadDirectory(target)
+}
+
+async function submitRemoteDownload(): Promise<void> {
+  if (remoteDownloadRunning.value || !validRemoteDownloadForm()) return
+  const sourceURL = remoteDownloadURL.value.trim()
+  const requestedName = remoteDownloadName.value.trim()
+  const target = remoteDownloadTarget.value
+  const controller = new AbortController()
+  const operation = ++remoteDownloadOperationSequence
+  if (remoteDownloadClearTimer !== undefined) window.clearTimeout(remoteDownloadClearTimer)
+  remoteDownloadClearTimer = undefined
+  remoteDownloadController = controller
+  remoteDownloadState.value = {
+    operation, phase: 'connecting', target, name: requestedName || undefined, loadedBytes: 0,
+  }
+  closeRemoteDownloadDialog()
+  try {
+    const entry = await api.files.remoteDownload(
+      { url: sourceURL, targetDirectory: target, ...(requestedName ? { name: requestedName } : {}) },
+      (event) => applyRemoteDownloadEvent(controller, operation, event),
+      controller.signal,
+    )
+    if (unmounted || remoteDownloadController !== controller || controller.signal.aborted) return
+    const previous = remoteDownloadState.value
+    remoteDownloadState.value = {
+      operation, phase: 'success', target, name: entry.name,
+      loadedBytes: previous?.loadedBytes || entry.sizeBytes,
+      totalBytes: previous?.totalBytes || entry.sizeBytes,
+    }
+    reconcileRemoteDownloadTarget(target)
+    const clearTimer = window.setTimeout(() => {
+      if (
+        !unmounted
+        && remoteDownloadState.value?.operation === operation
+        && remoteDownloadState.value.phase === 'success'
+      ) remoteDownloadState.value = undefined
+      if (remoteDownloadClearTimer === clearTimer) remoteDownloadClearTimer = undefined
+    }, 4200)
+    remoteDownloadClearTimer = clearTimer
+  } catch (error) {
+    if (remoteDownloadController !== controller) return
+    const previous = remoteDownloadState.value
+    if (controller.signal.aborted) {
+      if (!unmounted) {
+        remoteDownloadState.value = {
+          operation, phase: 'cancelled', target, name: previous?.name,
+          loadedBytes: previous?.loadedBytes || 0, totalBytes: previous?.totalBytes,
+          detailCode: 'remote_download_cancelled',
+        }
+      }
+      reconcileRemoteDownloadTarget(target)
+    } else if (!unmounted) {
+      remoteDownloadState.value = {
+        operation, phase: 'error', target, name: previous?.name,
+        loadedBytes: previous?.loadedBytes || 0, totalBytes: previous?.totalBytes,
+        detail: previous?.detail,
+        detailCode: previous?.detailCode || (error instanceof ApiError ? error.code : 'remote_download_failed'),
+      }
+    }
+  } finally {
+    if (remoteDownloadController === controller) remoteDownloadController = undefined
+  }
+}
+
+function cancelRemoteDownload(): void {
+  remoteDownloadController?.abort()
+}
+
+function dismissRemoteDownloadState(): void {
+  if (remoteDownloadRunning.value) return
+  if (remoteDownloadClearTimer !== undefined) window.clearTimeout(remoteDownloadClearTimer)
+  remoteDownloadClearTimer = undefined
+  remoteDownloadState.value = undefined
+}
+
 async function uploadFiles(files: FileList | File[]): Promise<void> {
   const values = Array.from(files)
   if (!values.length) return
@@ -1595,10 +1872,15 @@ onBeforeUnmount(() => {
   unsubscribeFileDirectoryChanges?.()
   clearDesktopFileDrag()
   unmounted = true
+  remoteDownloadOperationSequence += 1
+  queuedRemoteDownloadRefresh = ''
   directoryController?.abort()
   archiveController?.abort()
   fileTransferController?.abort()
+  remoteDownloadController?.abort()
   if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
+  if (remoteDownloadClearTimer !== undefined) window.clearTimeout(remoteDownloadClearTimer)
+  remoteDownloadClearTimer = undefined
   if (searchTimer !== undefined) window.clearTimeout(searchTimer)
   clearMediaLoadTimer()
   window.removeEventListener('click', handleWindowClick)
@@ -1628,6 +1910,16 @@ onBeforeUnmount(() => {
         </button>
         <button class="button button--secondary button--small" type="button" title="新建文件夹" aria-label="新建文件夹" @click="openDialog('mkdir')">
           <Plus :size="15" /> 新建文件夹
+        </button>
+        <button
+          class="button button--secondary button--small"
+          type="button"
+          :title="i18n.t('files.remoteDownload.tooltip')"
+          :aria-label="i18n.t('files.remoteDownload.tooltip')"
+          :disabled="remoteDownloadRunning"
+          @click="openRemoteDownloadDialog"
+        >
+          <Download :size="15" /> {{ i18n.t('files.remoteDownload.label') }}
         </button>
         <button class="button button--primary button--small" type="button" @click="uploadInput?.click()">
           <Upload :size="15" /> 上传文件
@@ -1728,6 +2020,72 @@ onBeforeUnmount(() => {
             <ClipboardPaste :size="15" />{{ pasteBusy ? '粘贴中…' : `粘贴到 ${currentPath}` }}
           </button>
           <button type="button" :disabled="pasteBusy" @click="clearClipboard">取消</button>
+        </div>
+      </Transition>
+
+      <Transition name="slide">
+        <div
+          v-if="remoteDownloadState"
+          class="remote-download-status"
+          :class="`remote-download-status--${remoteDownloadState.phase}`"
+        >
+          <span class="remote-download-status__icon" aria-hidden="true">
+            <RefreshCw
+              v-if="remoteDownloadState.phase === 'connecting' || remoteDownloadState.phase === 'transferring'"
+              :size="18"
+              class="spinning"
+            />
+            <Save v-else-if="remoteDownloadState.phase === 'confirming'" :size="18" />
+            <Download v-else :size="18" />
+          </span>
+          <div class="remote-download-status__body">
+            <strong
+              :role="remoteDownloadState.phase === 'error' || remoteDownloadState.phase === 'cancelled' ? undefined : 'status'"
+              :aria-live="remoteDownloadState.phase === 'error' || remoteDownloadState.phase === 'cancelled' ? undefined : 'polite'"
+              aria-atomic="true"
+            >{{ remoteDownloadTitle }}</strong>
+            <span
+              :role="remoteDownloadState.phase === 'error' ? 'alert' : remoteDownloadState.phase === 'cancelled' ? 'status' : undefined"
+              :aria-live="remoteDownloadState.phase === 'cancelled' ? 'polite' : undefined"
+              :aria-atomic="remoteDownloadState.phase === 'error' || remoteDownloadState.phase === 'cancelled' ? 'true' : undefined"
+            >
+              <template v-if="remoteDownloadState.phase === 'transferring'">
+                {{ i18n.t('files.remoteDownload.received', { bytes: formatBytes(remoteDownloadState.loadedBytes) }) }}<template v-if="remoteDownloadState.totalBytes">
+                  / {{ formatBytes(remoteDownloadState.totalBytes) }}</template>
+                · {{ remoteDownloadState.target }}
+              </template>
+              <template v-else-if="remoteDownloadDetail">{{ remoteDownloadDetail }}</template>
+              <template v-else>{{ remoteDownloadState.target }}</template>
+            </span>
+            <progress
+              v-if="remoteDownloadState.phase === 'transferring'"
+              :max="remoteDownloadState.totalBytes || 1"
+              :value="remoteDownloadState.totalBytes ? remoteDownloadState.loadedBytes : undefined"
+              :aria-label="remoteDownloadProgress === undefined
+                ? i18n.t('files.remoteDownload.receivedAria', { bytes: formatBytes(remoteDownloadState.loadedBytes) })
+                : i18n.t('files.remoteDownload.progressAria', { progress: remoteDownloadProgress })"
+            />
+          </div>
+          <div class="remote-download-status__actions">
+            <button
+              v-if="remoteDownloadState.phase === 'connecting' || remoteDownloadState.phase === 'transferring'"
+              type="button"
+              @click="cancelRemoteDownload"
+            >{{ i18n.t('files.remoteDownload.stop') }}</button>
+            <button
+              v-else-if="remoteDownloadState.phase === 'error' || remoteDownloadState.phase === 'cancelled'"
+              type="button"
+              @click="openRemoteDownloadDialog"
+            >{{ i18n.t('files.remoteDownload.retry') }}</button>
+            <button
+              v-if="!remoteDownloadRunning"
+              type="button"
+              :aria-label="i18n.t('files.remoteDownload.closeStatus')"
+              @click="dismissRemoteDownloadState"
+            >
+              {{ i18n.t('files.remoteDownload.close') }}
+            </button>
+          </div>
         </div>
       </Transition>
 
@@ -2070,6 +2428,57 @@ onBeforeUnmount(() => {
     <FileShareManagerDialog v-if="shareManagerOpen" @close="closeShareManager" />
 
     <ModalDialog
+      :open="remoteDownloadDialogOpen"
+      :title="i18n.t('files.remoteDownload.label')"
+      :description="i18n.t('files.remoteDownload.dialogDescription', { target: remoteDownloadTarget })"
+      size="small"
+      @close="closeRemoteDownloadDialog"
+    >
+      <form class="operation-form remote-download-form" @submit.prevent="submitRemoteDownload">
+        <label>
+          <span>{{ i18n.t('files.remoteDownload.urlLabel') }}</span>
+          <input
+            ref="remoteDownloadURLInput"
+            v-model="remoteDownloadURL"
+            type="url"
+            inputmode="url"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="https://example.com/archive.tar.gz"
+            :aria-invalid="remoteDownloadFormErrorCode === 'url'"
+            :aria-describedby="remoteDownloadFormErrorCode === 'url' ? 'remote-download-form-error' : undefined"
+            required
+          />
+        </label>
+        <p v-if="remoteDownloadURL.trim().toLowerCase().startsWith('http://')" class="remote-download-warning">
+          {{ i18n.t('files.remoteDownload.httpWarning') }}
+        </p>
+        <label>
+          <span>{{ i18n.t('files.remoteDownload.nameLabel') }} <small>{{ i18n.t('files.remoteDownload.optional') }}</small></span>
+          <input
+            v-model="remoteDownloadName"
+            autocomplete="off"
+            :placeholder="i18n.t('files.remoteDownload.namePlaceholder')"
+            :aria-invalid="remoteDownloadFormErrorCode === 'name'"
+            :aria-describedby="remoteDownloadFormErrorCode === 'name' ? 'remote-download-form-error' : undefined"
+          />
+        </label>
+        <div class="remote-download-note">
+          <ShieldCheck :size="18" aria-hidden="true" />
+          <span>{{ i18n.t('files.remoteDownload.note') }}</span>
+        </div>
+        <p v-if="remoteDownloadFormError" id="remote-download-form-error" class="remote-download-error" role="alert">
+          {{ remoteDownloadFormError }}
+        </p>
+        <div class="dialog-actions">
+          <button class="button button--secondary" type="button" @click="closeRemoteDownloadDialog">{{ i18n.t('common.cancel') }}</button>
+          <button class="button button--primary" type="submit" :disabled="!remoteDownloadURL.trim()">{{ i18n.t('files.remoteDownload.start') }}</button>
+        </div>
+      </form>
+    </ModalDialog>
+
+    <ModalDialog
       :open="Boolean(dialogAction)"
       :title="dialogTitle"
       :description="
@@ -2386,6 +2795,11 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   align-items: center;
   gap: 7px;
+}
+
+.file-command-bar__actions .button {
+  min-height: 40px;
+  font-size: 14px;
 }
 
 .file-browser {
@@ -2739,6 +3153,95 @@ onBeforeUnmount(() => {
   color: var(--text);
   background: var(--surface);
   cursor: pointer;
+}
+
+.remote-download-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 10px 15px;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border));
+  background: color-mix(in srgb, var(--brand) 7%, var(--surface));
+}
+
+.remote-download-status--error,
+.remote-download-status--cancelled {
+  border-bottom-color: color-mix(in srgb, var(--amber) 32%, var(--border));
+  background: color-mix(in srgb, var(--amber) 7%, var(--surface));
+}
+
+.remote-download-status__icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 14%, var(--surface));
+}
+
+.remote-download-status--error .remote-download-status__icon,
+.remote-download-status--cancelled .remote-download-status__icon {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 14%, var(--surface));
+}
+
+.remote-download-status__body {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.remote-download-status__body strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-download-status__body > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-download-status--error .remote-download-status__body > span,
+.remote-download-status--cancelled .remote-download-status__body > span {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.remote-download-status progress {
+  width: min(420px, 100%);
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 99px;
+  accent-color: var(--brand);
+}
+
+.remote-download-status__actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.remote-download-status__actions button {
+  min-height: 40px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 14px;
 }
 
 .danger-link {
@@ -3238,6 +3741,47 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 13%, transparent);
 }
 
+.remote-download-form label > span small {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.remote-download-note {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--brand) 20%, var(--border));
+  border-radius: 10px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--brand) 5%, var(--surface));
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.remote-download-note svg {
+  margin-top: 2px;
+  color: var(--brand);
+}
+
+.remote-download-warning,
+.remote-download-error {
+  margin: -5px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.remote-download-warning {
+  color: var(--amber);
+}
+
+.remote-download-error {
+  color: var(--danger);
+}
+
 .archive-hint {
   color: var(--muted);
   line-height: 1.6;
@@ -3668,7 +4212,20 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 920px) {
+@media (max-width: 1100px) {
+  .file-command-bar {
+    flex-wrap: wrap;
+  }
+
+  .file-command-bar__actions {
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
   .batch-bar {
     left: 50%;
     width: calc(100vw - 32px);
@@ -3683,6 +4240,7 @@ onBeforeUnmount(() => {
   .file-command-bar {
     align-items: stretch;
     flex-direction: column;
+    flex-wrap: nowrap;
   }
 
   .file-shortcuts {
@@ -3811,6 +4369,19 @@ onBeforeUnmount(() => {
     grid-column: 1 / -1;
     justify-content: center;
     grid-row: 2;
+  }
+
+  .remote-download-status {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .remote-download-status__actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .remote-download-status__actions button {
+    min-height: 44px;
   }
 
   .file-row {

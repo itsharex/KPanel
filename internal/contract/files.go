@@ -132,10 +132,18 @@ type FileTransferRequest struct {
 	TargetDirectory string `json:"targetDirectory"`
 }
 
+type FileRemoteDownloadRequest struct {
+	URL             string `json:"url"`
+	TargetDirectory string `json:"targetDirectory"`
+	Name            string `json:"name,omitempty"`
+}
+
 type FileTransferEvent struct {
 	State       string     `json:"state"`
 	LoadedBytes int64      `json:"loadedBytes,omitempty"`
 	TotalBytes  int64      `json:"totalBytes,omitempty"`
+	Name        string     `json:"name,omitempty"`
 	Entry       *FileEntry `json:"entry,omitempty"`
+	Code        string     `json:"code,omitempty"`
 	Detail      string     `json:"detail,omitempty"`
 }
