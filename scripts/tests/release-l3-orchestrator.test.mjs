@@ -47,6 +47,7 @@ function createFixture() {
   const candidate = git(repo, 'rev-parse', 'HEAD');
   git(repo, 'remote', 'add', 'origin', remote);
   git(repo, 'push', 'origin', 'main', 'refs/tags/v1.0.0');
+  git(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main');
   git(repo, 'fetch', 'origin', '--no-tags', 'refs/heads/main:refs/remotes/origin/main');
   return { root, repo, candidate };
 }
