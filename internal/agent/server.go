@@ -261,6 +261,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemSSHDefense)
 	case r.URL.Path == "/v1/system/system-tuning":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemTuning)
+	case r.URL.Path == "/v1/system/disk-partitions":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.diskPartitions)
 	case r.URL.Path == "/v1/monitoring/history":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.monitoringHistory)
 	case r.URL.Path == "/v1/system/actions":
@@ -275,6 +277,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodPost, s.systemSSHDefenseAction)
 	case r.URL.Path == "/v1/system/system-tuning/actions":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.systemTuningAction)
+	case r.URL.Path == "/v1/system/disk-partition-actions":
+		s.requireMethod(w, r, requestID, http.MethodPost, s.diskPartitionAction)
 	case r.URL.Path == "/v1/terminals":
 		s.requireMethod(w, r, requestID, http.MethodPost, s.terminalOpen)
 	case strings.HasPrefix(r.URL.Path, "/v1/terminals/"):

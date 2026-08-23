@@ -18,7 +18,8 @@ func isSystemResourcePublicPath(path string) bool {
 	switch path {
 	case "/api/v1/system/hosts", "/api/v1/system/cron",
 		"/api/v1/system/network-interfaces", "/api/v1/system/firewall",
-		"/api/v1/system/port-usage", "/api/v1/system/traffic-shutdown", "/api/v1/system/accounts":
+		"/api/v1/system/port-usage", "/api/v1/system/traffic-shutdown", "/api/v1/system/accounts",
+		"/api/v1/system/disk-partitions":
 		return true
 	default:
 		return false

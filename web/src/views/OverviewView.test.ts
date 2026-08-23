@@ -124,6 +124,7 @@ describe('OverviewView refresh stability', () => {
       'ssh-defense',
       'timezone',
       'swap',
+	  'disk-partitions',
       'mirror',
 	  'system-tuning',
 	  'accounts',
@@ -166,7 +167,7 @@ describe('OverviewView refresh stability', () => {
       })),
     ).toEqual([
       { id: 'maintenance', tools: ['system-update', 'system-cleanup', 'system-reboot'] },
-      { id: 'basic', tools: ['swap', 'hostname', 'timezone', 'mirror', 'cron'] },
+      { id: 'basic', tools: ['swap', 'disk-partitions', 'hostname', 'timezone', 'mirror', 'cron'] },
       { id: 'security', tools: ['ssh-port', 'ssh-defense', 'accounts', 'firewall'] },
       {
         id: 'network',
@@ -190,5 +191,7 @@ describe('OverviewView refresh stability', () => {
 
     view.openTool({ id: 'hosts' })
     expect(view.selectedResourceDialog.value).toBe('hosts')
+    view.openTool({ id: 'disk-partitions' })
+    expect(view.selectedResourceDialog.value).toBe('disk-partitions')
   })
 })

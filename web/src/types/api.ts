@@ -726,6 +726,87 @@ export interface SystemTuningActionResult {
 	acceptedAt: string
 }
 
+export type DiskManagementAction = 'mount' | 'unmount' | 'format' | 'check' | 'repair'
+export type DiskFilesystem = 'ext4' | 'xfs' | 'ntfs' | 'vfat'
+
+export interface DiskOperationAvailability {
+	enabled: boolean
+	reason?: string
+}
+
+export interface DiskMount {
+	path: string
+	persistent: boolean
+	totalBytes?: number
+	usedBytes?: number
+	availableBytes?: number
+	usagePercent?: number
+}
+
+export interface DiskDevice {
+	id: string
+	path: string
+	name: string
+	type: string
+	parentId?: string
+	sizeBytes: number
+	readOnly: boolean
+	removable: boolean
+	virtual: boolean
+	model?: string
+	serial?: string
+	transport?: string
+	filesystem?: {
+		type: string
+		version?: string
+		label?: string
+		uuid?: string
+		partUuid?: string
+	}
+	mounts: DiskMount[]
+	protected: boolean
+	protectionReasons: string[]
+	operations: Record<DiskManagementAction, DiskOperationAvailability>
+}
+
+export interface DiskManagementJob {
+	id: string
+	action: DiskManagementAction
+	deviceId: string
+	devicePath: string
+	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'needs_attention'
+	stage: string
+	progress: number
+	message: string
+	recoveryPath?: string
+	createdAt: string
+	startedAt?: string
+	finishedAt?: string
+}
+
+export interface DiskManagementSnapshot {
+	resourceVersion: string
+	platform: {
+		kind: 'linux' | 'wsl1' | 'wsl2' | 'container' | 'unknown'
+		label: string
+		writable: boolean
+		reason?: string
+	}
+	devices: DiskDevice[]
+	job?: DiskManagementJob
+	observedAt: string
+}
+
+export interface DiskManagementActionInput {
+	action: DiskManagementAction
+	deviceId: string
+	expectedResourceVersion: string
+	mountPoint?: string
+	persist?: boolean
+	removePersistence?: boolean
+	filesystem?: DiskFilesystem
+}
+
 export interface SSHAuthorizedKey {
 	id: string
 	type: string

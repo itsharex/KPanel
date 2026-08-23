@@ -54,3 +54,18 @@ func TestValidateAgentHealthRejectsReadOnlyAgent(t *testing.T) {
 		t.Fatal("validateAgentHealth() accepted a read-only Agent")
 	}
 }
+
+func TestDiskWorkerSubcommandsAcceptOnlyFixedFlags(t *testing.T) {
+	for name, arguments := range map[string][]string{
+		"inspect positional": {"disk-inspect", "--state-dir", "/tmp/state", "unexpected"},
+		"inspect device":     {"disk-inspect", "--device", "/dev/sdb"},
+		"run missing id":     {"disk-run", "--state-dir", "/tmp/state"},
+		"run device":         {"disk-run", "--state-dir", "/tmp/state", "--id", strings.Repeat("a", 32), "--device", "/dev/sdb"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := run(arguments); err == nil {
+				t.Fatal("unsafe or incomplete worker arguments were accepted")
+			}
+		})
+	}
+}

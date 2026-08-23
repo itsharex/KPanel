@@ -95,6 +95,7 @@ type Config struct {
 	EffectiveUID    func() int
 	DNSScript       KejilionScriptFinder
 	ResourceScript  KejilionScriptFinder
+	DiskScript      KejilionScriptFinder
 	F2BScript       KejilionScriptFinder
 	BBRv3Script     KejilionScriptFinder
 	ProcessSignaler ProcessSignaler
@@ -115,6 +116,7 @@ type Manager struct {
 	effectiveUID    func() int
 	dnsScript       KejilionScriptFinder
 	resourceScript  KejilionScriptFinder
+	diskScript      KejilionScriptFinder
 	f2bScript       KejilionScriptFinder
 	bbrv3Script     KejilionScriptFinder
 	processSignaler ProcessSignaler
@@ -162,6 +164,9 @@ func NewManager(config Config) *Manager {
 	if config.ResourceScript == nil {
 		config.ResourceScript = findKejilionSystemResourceScript
 	}
+	if config.DiskScript == nil {
+		config.DiskScript = findKejilionDiskScript
+	}
 	if config.F2BScript == nil {
 		config.F2BScript = findKejilionF2BScript
 	}
@@ -180,6 +185,7 @@ func NewManager(config Config) *Manager {
 		now:        config.Now, runner: config.Runner, country: config.Country,
 		effectiveUID: config.EffectiveUID, dnsScript: config.DNSScript,
 		resourceScript: config.ResourceScript,
+		diskScript:     config.DiskScript,
 		f2bScript:      config.F2BScript, bbrv3Script: config.BBRv3Script,
 		processSignaler: config.ProcessSignaler,
 	}
@@ -328,7 +334,8 @@ func (m *Manager) Capabilities() []contract.Capability {
 	capabilities = append(capabilities, m.NetworkOperationsCapabilities()...)
 	capabilities = append(capabilities, m.AccountManagementCapabilities()...)
 	capabilities = append(capabilities, m.SSHDefenseManagementCapabilities()...)
-	return append(capabilities, m.SystemTuningCapabilities()...)
+	capabilities = append(capabilities, m.SystemTuningCapabilities()...)
+	return append(capabilities, m.DiskPartitionCapabilities()...)
 }
 
 func (m *Manager) Execute(ctx context.Context, input contract.SystemActionRequest) (contract.SystemActionResult, error) {

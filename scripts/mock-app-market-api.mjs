@@ -441,6 +441,131 @@ const systemSummary = {
   collectedAt: new Date().toISOString(),
 }
 
+let diskRevision = 1
+let diskVisualJob
+let diskVisualJobInput
+const diskVisualIDs = {
+  systemDisk: '1'.repeat(64),
+  systemRoot: '2'.repeat(64),
+  dataDisk: '3'.repeat(64),
+  dataPartition: '4'.repeat(64),
+  raid: '5'.repeat(64),
+}
+const diskBaseOperations = {
+  mount: { enabled: false, reason: '当前设备状态不支持挂载' },
+  unmount: { enabled: false, reason: '当前设备尚未挂载' },
+  format: { enabled: false, reason: '设备正在使用' },
+  check: { enabled: false, reason: '设备正在使用' },
+  repair: { enabled: false, reason: '设备正在使用' },
+}
+const diskDevices = [
+  {
+    id: diskVisualIDs.systemDisk, path: '/dev/vda', name: 'vda', type: 'disk', sizeBytes: 80 * 1024 ** 3,
+    readOnly: false, removable: false, virtual: false, model: 'QEMU Virtual Disk', serial: 'visual-system-disk', transport: 'virtio',
+    mounts: [], protected: true, protectionReasons: ['承载系统根目录'], operations: { ...diskBaseOperations },
+  },
+  {
+    id: diskVisualIDs.systemRoot, parentId: diskVisualIDs.systemDisk, path: '/dev/vda1', name: 'vda1', type: 'part', sizeBytes: 80 * 1024 ** 3,
+    readOnly: false, removable: false, virtual: false, filesystem: { type: 'ext4', version: '1.0', label: 'system', uuid: 'visual-root-uuid', partUuid: 'visual-root-partuuid' },
+    mounts: [{ path: '/', persistent: true, totalBytes: 80 * 1024 ** 3, usedBytes: 27 * 1024 ** 3, availableBytes: 53 * 1024 ** 3, usagePercent: 34 }],
+    protected: true, protectionReasons: ['承载系统根目录', '开机挂载配置正在使用'], operations: { ...diskBaseOperations },
+  },
+  {
+    id: diskVisualIDs.dataDisk, path: '/dev/nvme1n1', name: 'nvme1n1', type: 'disk', sizeBytes: 512 * 1024 ** 3,
+    readOnly: false, removable: false, virtual: false, model: 'KPanel NVMe Data Volume with a deliberately long model name', serial: 'visual-nvme-data', transport: 'nvme',
+    mounts: [], protected: false, protectionReasons: [], operations: { ...diskBaseOperations },
+  },
+  {
+    id: diskVisualIDs.dataPartition, parentId: diskVisualIDs.dataDisk, path: '/dev/nvme1n1p1', name: 'nvme1n1p1', type: 'part', sizeBytes: 480 * 1024 ** 3,
+    readOnly: false, removable: false, virtual: false, filesystem: { type: 'ext4', version: '1.0', label: 'archive', uuid: 'visual-data-uuid', partUuid: 'visual-data-partuuid' },
+    mounts: [], protected: false, protectionReasons: [],
+    operations: {
+      mount: { enabled: true }, unmount: { enabled: false, reason: '当前设备尚未挂载' },
+      format: { enabled: true }, check: { enabled: true }, repair: { enabled: true },
+    },
+  },
+  {
+    id: diskVisualIDs.raid, path: '/dev/md0', name: 'md0', type: 'raid1', sizeBytes: 200 * 1024 ** 3,
+    readOnly: false, removable: false, virtual: true, model: 'Linux software RAID', filesystem: { type: 'xfs', label: 'backups', uuid: 'visual-raid-uuid' },
+    mounts: [{ path: '/srv/backups', persistent: true, totalBytes: 200 * 1024 ** 3, usedBytes: 91 * 1024 ** 3, availableBytes: 109 * 1024 ** 3, usagePercent: 46 }],
+    protected: false, protectionReasons: [],
+    operations: {
+      mount: { enabled: false, reason: '文件系统已经挂载' }, unmount: { enabled: true },
+      format: { enabled: false, reason: '设备正在使用' }, check: { enabled: false, reason: '请先卸载文件系统' }, repair: { enabled: false, reason: '请先卸载文件系统' },
+    },
+  },
+]
+
+function currentDiskVersion() {
+  return String(diskRevision).padStart(64, 'd').slice(-64)
+}
+
+function materializeDiskSnapshot() {
+  if (diskVisualJob) {
+    const elapsed = Date.now() - diskVisualJob.created
+    if (elapsed > 1_600 && diskVisualJob.status !== 'succeeded') {
+      diskVisualJob.status = 'succeeded'
+      diskVisualJob.stage = 'verified'
+      diskVisualJob.progress = 100
+      diskVisualJob.finishedAt = new Date().toISOString()
+      const device = diskDevices.find((item) => item.id === diskVisualJobInput?.deviceId)
+      if (diskVisualJobInput?.action === 'mount') {
+        if (device) {
+          device.mounts = [{ path: diskVisualJobInput.mountPoint, persistent: Boolean(diskVisualJobInput.persist), usagePercent: 0 }]
+          device.operations = {
+            mount: { enabled: false, reason: '设备已挂载' }, unmount: { enabled: true },
+            format: { enabled: false, reason: '请先卸载设备' }, check: { enabled: false, reason: '请先卸载设备' }, repair: { enabled: false, reason: '请先卸载设备' },
+          }
+        }
+        diskVisualJob.message = '设备已挂载并完成状态回读'
+      } else if (diskVisualJobInput?.action === 'unmount') {
+        if (device) {
+          device.mounts = device.mounts.filter((mount) => mount.path !== diskVisualJobInput.mountPoint)
+          device.operations = {
+            mount: { enabled: true }, unmount: { enabled: false, reason: '设备尚未挂载' },
+            format: { enabled: true }, check: { enabled: true }, repair: { enabled: true },
+          }
+        }
+        diskVisualJob.message = '设备已从指定目标卸载'
+      } else if (diskVisualJobInput?.action === 'format') {
+        if (device) {
+          device.filesystem = {
+            type: diskVisualJobInput.filesystem,
+            version: '1.0',
+            label: '',
+            uuid: `visual-formatted-${diskRevision}`,
+          }
+          device.operations = {
+            mount: { enabled: true }, unmount: { enabled: false, reason: '设备尚未挂载' },
+            format: { enabled: true }, check: { enabled: true }, repair: { enabled: true },
+          }
+        }
+        diskVisualJob.message = '格式化已完成并通过文件系统类型回读'
+      } else if (diskVisualJobInput?.action === 'check') {
+        diskVisualJob.message = '只读文件系统检查完成，未执行修复'
+      } else if (diskVisualJobInput?.action === 'repair') {
+        diskVisualJob.message = '文件系统修复命令已成功完成'
+      } else {
+        diskVisualJob.message = '模拟任务已完成并回读真实状态'
+      }
+      diskRevision += 1
+    } else if (elapsed > 350 && diskVisualJob.status === 'queued') {
+      diskVisualJob.status = 'running'
+      diskVisualJob.stage = 'applying'
+      diskVisualJob.progress = 58
+      diskVisualJob.message = '正在通过受限 worker 执行并回读'
+      diskVisualJob.startedAt = new Date().toISOString()
+    }
+  }
+  return {
+    resourceVersion: currentDiskVersion(),
+    platform: { kind: 'linux', label: 'Linux · visual mock', writable: true },
+    devices: diskDevices,
+    ...(diskVisualJob ? { job: diskVisualJob } : {}),
+    observedAt: new Date().toISOString(),
+  }
+}
+
 let desktopWorkspaceRevision = 1
 let desktopWorkspace = {
   schemaVersion: 3,
@@ -1226,6 +1351,8 @@ createServer(async (request, response) => {
         { id: 'web.environment.restore', enabled: true, methods: ['POST'] },
         { id: 'web.environment.uninstall', enabled: true, methods: ['POST'] },
         ...systemCapabilities,
+        { id: 'system.disk-partitions.read', enabled: true, methods: ['GET'] },
+        { id: 'system.disk-partitions.write', enabled: true, methods: ['POST'] },
         { id: 'system.reinstall', enabled: false, reason: '需要带外控制台' },
       ],
     })
@@ -1288,6 +1415,37 @@ createServer(async (request, response) => {
       sampleDuration: 302_000_000,
       collectedAt: new Date().toISOString(),
     })
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/system/disk-partitions') {
+    send(response, 200, materializeDiskSnapshot())
+    return
+  }
+  if (request.method === 'POST' && url.pathname === '/api/v1/system/disk-partition-actions') {
+    const input = await readJSON(request)
+    const device = diskDevices.find((item) => item.id === input.deviceId)
+    if (!device || input.expectedResourceVersion !== currentDiskVersion()) {
+      send(response, 409, { title: '磁盘状态已变化', status: 409, code: 'disk_partition_conflict', detail: '请刷新后重新确认操作。' })
+      return
+    }
+    if (diskVisualJob && (diskVisualJob.status === 'queued' || diskVisualJob.status === 'running')) {
+      send(response, 409, { title: '磁盘任务冲突', status: 409, code: 'disk_partition_conflict', detail: '已有磁盘任务正在执行。' })
+      return
+    }
+    diskVisualJobInput = input
+    diskVisualJob = {
+      id: Date.now().toString(16).padStart(32, '0').slice(-32),
+      action: input.action,
+      deviceId: device.id,
+      devicePath: device.path,
+      status: 'queued',
+      stage: 'queued',
+      progress: 2,
+      message: '模拟任务已进入受限 worker 队列',
+      createdAt: new Date().toISOString(),
+      created: Date.now(),
+    }
+    send(response, 202, diskVisualJob)
     return
   }
   if (request.method === 'POST' && url.pathname === '/api/v1/system/actions') {

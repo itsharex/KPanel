@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -54,6 +55,12 @@ func run(arguments []string) error {
 	}
 	if len(arguments) > 0 && arguments[0] == "swap-run" {
 		return runSwap(arguments[1:])
+	}
+	if len(arguments) > 0 && arguments[0] == "disk-inspect" {
+		return runDiskInspect(arguments[1:])
+	}
+	if len(arguments) > 0 && arguments[0] == "disk-run" {
+		return runDiskJob(arguments[1:])
 	}
 	if len(arguments) > 0 && arguments[0] == "app-run" {
 		return runAppJob(arguments[1:], false)
@@ -232,6 +239,79 @@ func runMaintenance(arguments []string) error {
 		StateDir: *stateDir,
 	})
 	return manager.RunMaintenance(ctx, flags.Arg(0))
+}
+
+func runDiskInspect(arguments []string) error {
+	flags := flag.NewFlagSet("kejilion-agent disk-inspect", flag.ContinueOnError)
+	stateDir := flags.String(
+		"state-dir",
+		env("KEJILION_AGENT_STATE_DIR", "/var/lib/kejilion-panel/system"),
+		"system disk state directory",
+	)
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("disk-inspect does not accept positional arguments")
+	}
+	if !filepath.IsAbs(*stateDir) || filepath.Clean(*stateDir) != *stateDir {
+		return errors.New("disk-inspect state directory must be a canonical absolute path")
+	}
+	if os.Geteuid() != 0 {
+		return errors.New("disk-inspect requires root")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve disk-inspect executable: %w", err)
+	}
+	manager := systemmanage.NewManager(systemmanage.Config{Enabled: true, StateDir: *stateDir, Executable: executable})
+	envelope, err := manager.InspectDiskPartitionsDirect(ctx)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
+	return encoder.Encode(envelope)
+}
+
+func runDiskJob(arguments []string) error {
+	flags := flag.NewFlagSet("kejilion-agent disk-run", flag.ContinueOnError)
+	stateDir := flags.String(
+		"state-dir",
+		env("KEJILION_AGENT_STATE_DIR", "/var/lib/kejilion-panel/system"),
+		"system disk state directory",
+	)
+	id := flags.String("id", "", "persisted disk job id")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *id == "" {
+		return errors.New("disk-run requires only --state-dir and --id")
+	}
+	if !filepath.IsAbs(*stateDir) || filepath.Clean(*stateDir) != *stateDir {
+		return errors.New("disk-run state directory must be a canonical absolute path")
+	}
+	if len(*id) != 32 {
+		return errors.New("disk-run id must be 32 lowercase hexadecimal characters")
+	}
+	if decoded, err := hex.DecodeString(*id); err != nil || len(decoded) != 16 || *id != strings.ToLower(*id) {
+		return errors.New("disk-run id must be 32 lowercase hexadecimal characters")
+	}
+	if os.Geteuid() != 0 {
+		return errors.New("disk-run requires root")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve disk-run executable: %w", err)
+	}
+	manager := systemmanage.NewManager(systemmanage.Config{Enabled: true, StateDir: *stateDir, Executable: executable})
+	return manager.RunDiskJob(ctx, *id)
 }
 
 func runSwap(arguments []string) error {

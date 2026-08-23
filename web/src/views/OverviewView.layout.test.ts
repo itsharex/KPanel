@@ -65,6 +65,7 @@ describe('OverviewView service status layout', () => {
     expect(source).not.toContain('<h2>基础系统设置</h2>')
     expect(source).not.toContain('<h2>网络工具</h2>')
     expect(source).toContain('<SystemTuningDialog')
+    expect(source).toContain('<DiskPartitionDialog')
     expect(systemCenterSource).toContain('<OverviewView system-center-only />')
     expect(styles).toMatch(/\.overview-system-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,/)
     expect(styles).toMatch(/\.system-center-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,/)

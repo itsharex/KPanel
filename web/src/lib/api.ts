@@ -83,6 +83,9 @@ import type {
 	SystemTuningActionInput,
 	SystemTuningActionResult,
 	SystemTuningSnapshot,
+	DiskManagementActionInput,
+	DiskManagementJob,
+	DiskManagementSnapshot,
 	TrafficShutdownActionInput,
 	TrafficShutdownActionResult,
 	TrafficShutdownSnapshot,
@@ -1573,6 +1576,10 @@ export const api = {
 		request<SystemTuningSnapshot>('/system/system-tuning', { signal }),
 	systemTuningAction: (body: SystemTuningActionInput): Promise<SystemTuningActionResult> =>
 		request<SystemTuningActionResult>('/system/system-tuning/actions', { method: 'POST', body }),
+	disks: (signal?: AbortSignal): Promise<DiskManagementSnapshot> =>
+		request<DiskManagementSnapshot>('/system/disk-partitions', { signal }),
+	diskAction: (body: DiskManagementActionInput): Promise<DiskManagementJob> =>
+		request<DiskManagementJob>('/system/disk-partition-actions', { method: 'POST', body }),
     resourceAction: (body: SystemResourceActionInput): Promise<SystemResourceActionResult> =>
       request<SystemResourceActionResult>('/system/resource-actions', { method: 'POST', body }),
     maintenance: async (

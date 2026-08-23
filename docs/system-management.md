@@ -7,7 +7,7 @@ KPanel 的系统管理业务以 `kejilion.sh` 为功能基准，但不把整个 
 ## 状态一致性
 
 - 首页状态直接读取宿主机当前配置，不以 KPanel 数据库代替系统事实。
-- `kejilion.sh` 或人工修改产生的 SSH、DNS、时区、Swap、更新源、Hosts、
+- `kejilion.sh` 或人工修改产生的 SSH、DNS、时区、Swap、磁盘挂载、更新源、Hosts、
   root Crontab、网卡、iptables、`gai.conf`、内核优化和 BBR 状态，刷新后应被
   Agent 重新识别。
 - Web 后续执行变更后必须回读同一状态接口；回读不一致时任务不得标记成功。
@@ -46,6 +46,7 @@ IPinfo IPv4/IPv6 HTTPS 端点，成功结果缓存 30 分钟；外部查询超�
 | DNS | `resolv.conf`、systemd-resolved 与脚本 DNS 协议 | 调用本机可信 `kejilion.sh` 固定非交互入口；systemd-resolved 使用原生配置，其他管理器沿用脚本的 `resolv.conf` 写入与锁定语义 |
 | 时区 | `/etc/timezone` 或 `localtime` | 有效 IANA 时区名称、回读 |
 | 虚拟内存 | `/proc/meminfo`、`/proc/swaps`、`/swapfile` | 与 `kejilion.sh` 共用 `/swapfile`；合并旧版 KPanel Swap，不清除现有分区或第三方 swapfile |
+| 磁盘与分区 | `lsblk`、`findmnt`、`blkid`、`fstab` 与 sysfs | 展示真实块设备拓扑；固定协议完成挂载、普通卸载、格式化及文件系统检查，保护系统盘、Swap、holder、非叶子设备与关键路径；详见[磁盘与分区管理](disk-partition-management.md) |
 | 系统更新源 | APT/RPM/APK/Pacman/Zypper 源地址 | Debian/Ubuntu 对齐脚本四种区域模式；第三方源不修改，隔离 `apt-get update` 失败回滚 |
 | 本地 Hosts | `/etc/hosts` 原始内容 | 按精确行管理；写入前后校验整文件资源版本，保留注释、权限和属主，失败回滚 |
 | 定时任务 | root 用户实际 Crontab | 命令只作为 Crontab 数据写入，并通过有界 stdin 帧传给可信脚本，不出现在特权进程 argv；按精确行新增、修改或删除，保留注释、环境变量和未知行 |
@@ -68,7 +69,8 @@ Agent 根据宿主机命令、配置管理器和 root/sandbox 条件动态返回
 
 已开放：主机名、`kejilion.sh` 同源 SSH 单端口切换、同源 SSH 防御、DNS、时区、脚本兼容
 `/swapfile`、Debian/Ubuntu APT 四种区域镜像预设、地址优先级、KPanel 内核调优预设和
-BBR、BBRv3、本地 Hosts、root 定时任务、网卡即时启停、固定防火墙动作，以及普通确认的服务器重启。
+BBR、BBRv3、本地 Hosts、root 定时任务、网卡即时启停、固定防火墙动作、受保护边界内的磁盘文件系统动作，
+以及普通确认的服务器重启。
 重装系统、其他发行版换源和通用
 sysctl 编辑目前缺少适配器；这不是永久产品限制。
 
@@ -78,7 +80,7 @@ sysctl 编辑目前缺少适配器；这不是永久产品限制。
 “更多设置”进入完整系统中心。系统中心按操作目的分成六个顺序稳定的区块：
 
 - 日常维护：系统更新、系统清理和服务器重启；
-- 基础配置：虚拟内存、主机名、时区、系统更新源和定时任务；
+- 基础配置：虚拟内存、磁盘与分区、主机名、时区、系统更新源和定时任务；
 - 登录与安全：SSH 端口、SSH 防御、账户管理和防火墙；
 - 网络与流量：DNS、端口占用、网卡、V4/V6 优先、本地 Hosts 和限流自动关机；
 - 性能优化：一条龙优化、BBR 管理、内核调优和 BBRv3；
@@ -90,6 +92,10 @@ Hosts、定时任务、网卡和防火墙使用独立类型化资源接口。概
 用户打开相应管理器时才读取有界列表；旧 Agent 没有对应 capability 时显示升级或适配器原因，
 不会构造空数据冒充真实状态。每次写入携带当前 `resourceVersion`，脚本在互斥锁内再次比对，
 成功后 Web 重新读取同一资源。
+
+磁盘管理同样只在用户打开弹窗时读取真实拓扑，不增加概览首页请求。它使用独立的持久化任务槽、
+opaque 设备标识、整表资源版本和受限 transient worker；浏览器不能提交设备路径或 Shell。
+首版范围、`fstab` 事务、保护规则、三语交互及发布顺序见[磁盘与分区管理](disk-partition-management.md)。
 
 四类写操作统一调用可信 `kejilion.sh` 的
 `KJ_SYSTEM_RESOURCE_NONINTERACTIVE=1 k kpanel system-resource` 固定协议。Agent 仅信任包含

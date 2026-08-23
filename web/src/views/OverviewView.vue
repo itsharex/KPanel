@@ -53,6 +53,7 @@ import TrafficShutdownDialog from '@/components/overview/TrafficShutdownDialog.v
 import AccountManagementDialog from '@/components/overview/AccountManagementDialog.vue'
 import SSHDefenseDialog from '@/components/overview/SSHDefenseDialog.vue'
 import SystemTuningDialog from '@/components/overview/SystemTuningDialog.vue'
+import DiskPartitionDialog from '@/components/overview/DiskPartitionDialog.vue'
 import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import { ApiError, api } from '@/lib/api'
@@ -125,7 +126,7 @@ interface SystemCenterSection {
 
 type KernelProfile = 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
 type BBRv3Policy = 'install' | 'update' | 'uninstall'
-type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall' | 'port-usage' | 'traffic-shutdown' | 'accounts' | 'ssh-defense' | 'system-tuning'
+type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall' | 'port-usage' | 'traffic-shutdown' | 'accounts' | 'ssh-defense' | 'system-tuning' | 'disk-partitions'
 
 const mirrorPresets: Array<{
   value: MirrorPreset
@@ -321,6 +322,17 @@ const basicSettings = computed<ManagementTool[]>(() => {
       safety: '与 kejilion.sh 统一管理 /swapfile；调整时自动合并旧版 KPanel Swap，不清除 Swap 分区或第三方 swapfile。',
       icon: MemoryStick,
       tone: management.swap.legacyExists || management.swap.legacyActive ? 'amber' : undefined,
+    },
+    {
+      id: 'disk-partitions',
+      title: '磁盘与分区',
+      description: '查看块设备拓扑，并管理挂载、格式化与文件系统检查。',
+      value: capabilityState('system.disk-partitions.read').enabled ? '打开后读取真实设备' : '适配器未就绪',
+      detail: '识别物理盘、虚拟盘、分区、LVM、RAID 与设备映射关系',
+      capability: 'system.disk-partitions.read',
+      safety: '主 Agent 保持设备隔离；固定参数 worker 按真实设备身份执行，所有写入带资源版本并在完成后回读。',
+      icon: HardDrive,
+      tone: 'blue',
     },
     {
       id: 'mirror',
@@ -698,7 +710,7 @@ const systemCenterSections = computed<SystemCenterSection[]>(() => {
       title: '基础配置',
       description: '主机身份、资源与常用系统参数',
       icon: Wrench,
-      tools: select(['swap', 'hostname', 'timezone', 'mirror', 'cron']),
+      tools: select(['swap', 'disk-partitions', 'hostname', 'timezone', 'mirror', 'cron']),
     },
     {
       id: 'security',
@@ -736,7 +748,8 @@ const resourceCapabilityNames: Record<ResourceDialogID, string> = {
 		'traffic-shutdown': 'system.traffic-shutdown',
 		accounts: 'system.accounts',
 		'ssh-defense': 'system.ssh-defense',
-		'system-tuning': 'system.tuning',
+	'system-tuning': 'system.tuning',
+	'disk-partitions': 'system.disk-partitions',
 }
 
 const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
@@ -748,7 +761,8 @@ const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
 		'traffic-shutdown': '当前 Agent 的限流关机适配器未就绪。',
 		accounts: '当前 Agent 的账户管理适配器未就绪。',
 		'ssh-defense': '当前 Agent 的 SSH 防御适配器未就绪。',
-		'system-tuning': '当前 Agent 的系统综合调优能力尚未就绪。',
+	'system-tuning': '当前 Agent 的系统综合调优能力尚未就绪。',
+	'disk-partitions': '当前 Agent 的磁盘管理 worker 尚未就绪。',
 }
 
 function isResourceDialogID(id: string): id is ResourceDialogID {
@@ -1834,6 +1848,13 @@ onBeforeUnmount(() => {
 		:readable="resourceCapability('system-tuning', 'read').enabled"
 		:writable="resourceCapability('system-tuning', 'write').enabled"
 		:unavailable-reason="resourceCapability('system-tuning', 'read').reason"
+		@close="closeResourceDialog"
+	/>
+	<DiskPartitionDialog
+		:open="selectedResourceDialog === 'disk-partitions'"
+		:readable="resourceCapability('disk-partitions', 'read').enabled"
+		:writable="resourceCapability('disk-partitions', 'write').enabled"
+		:unavailable-reason="resourceCapability('disk-partitions', 'read').reason"
 		@close="closeResourceDialog"
 	/>
   </div>
