@@ -557,7 +557,7 @@ func (m *Manager) diskWriteAvailability() error {
 		return fmt.Errorf("trusted kejilion.sh disk protocol path must be absolute")
 	}
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || info.Size() <= 0 || info.Size() > resourceScriptMaxBytes || !dnsScriptOwnerTrusted(info) {
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || info.Size() <= 0 || info.Size() > resourceScriptMaxBytes || !m.diskScriptOwnerTrusted(info) {
 		return fmt.Errorf("trusted kejilion.sh disk protocol is unavailable")
 	}
 	content, err := readResourceFile(path, resourceScriptMaxBytes)

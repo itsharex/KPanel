@@ -102,26 +102,27 @@ type Config struct {
 }
 
 type Manager struct {
-	enabled         bool
-	etcRoot         string
-	procRoot        string
-	sysRoot         string
-	runRoot         string
-	stateDir        string
-	swapPath        string
-	executable      string
-	now             func() time.Time
-	runner          Runner
-	country         CountryResolver
-	effectiveUID    func() int
-	dnsScript       KejilionScriptFinder
-	resourceScript  KejilionScriptFinder
-	diskScript      KejilionScriptFinder
-	f2bScript       KejilionScriptFinder
-	bbrv3Script     KejilionScriptFinder
-	processSignaler ProcessSignaler
-	rebootScheduled bool
-	mu              sync.Mutex
+	enabled                bool
+	etcRoot                string
+	procRoot               string
+	sysRoot                string
+	runRoot                string
+	stateDir               string
+	swapPath               string
+	executable             string
+	now                    func() time.Time
+	runner                 Runner
+	country                CountryResolver
+	effectiveUID           func() int
+	dnsScript              KejilionScriptFinder
+	resourceScript         KejilionScriptFinder
+	diskScript             KejilionScriptFinder
+	diskScriptOwnerTrusted func(os.FileInfo) bool
+	f2bScript              KejilionScriptFinder
+	bbrv3Script            KejilionScriptFinder
+	processSignaler        ProcessSignaler
+	rebootScheduled        bool
+	mu                     sync.Mutex
 }
 
 func NewManager(config Config) *Manager {
@@ -184,9 +185,10 @@ func NewManager(config Config) *Manager {
 		executable: filepath.Clean(config.Executable),
 		now:        config.Now, runner: config.Runner, country: config.Country,
 		effectiveUID: config.EffectiveUID, dnsScript: config.DNSScript,
-		resourceScript: config.ResourceScript,
-		diskScript:     config.DiskScript,
-		f2bScript:      config.F2BScript, bbrv3Script: config.BBRv3Script,
+		resourceScript:         config.ResourceScript,
+		diskScript:             config.DiskScript,
+		diskScriptOwnerTrusted: dnsScriptOwnerTrusted,
+		f2bScript:              config.F2BScript, bbrv3Script: config.BBRv3Script,
 		processSignaler: config.ProcessSignaler,
 	}
 }

@@ -320,6 +320,10 @@ func TestDiskScriptTrustRejectsWritableAndSymlinkedProtocol(t *testing.T) {
 	}
 	runner := &fakeRunner{}
 	manager := NewManager(Config{Enabled: true, Executable: filepath.Join(t.TempDir(), "agent"), Runner: runner, EffectiveUID: func() int { return 0 }, DiskScript: func() (string, error) { return script, nil }})
+	if err := manager.diskWriteAvailability(); (os.Geteuid() == 0) != (err == nil) {
+		t.Fatalf("default owner trust did not follow the real file owner: euid=%d err=%v", os.Geteuid(), err)
+	}
+	manager.diskScriptOwnerTrusted = func(os.FileInfo) bool { return true }
 	if err := manager.diskWriteAvailability(); err != nil {
 		t.Fatalf("trusted protocol rejected: %v", err)
 	}
@@ -350,6 +354,7 @@ func TestStartDiskPartitionActionConflictsAndPersistsBeforeLaunch(t *testing.T) 
 		t.Run(scenario, func(t *testing.T) {
 			runner := &fakeRunner{}
 			manager, _, _, stateDir := testManager(t, runner)
+			manager.diskScriptOwnerTrusted = func(os.FileInfo) bool { return true }
 			manager.diskScript = trustedDiskTestScript(t)
 			manager.executable = filepath.Join(t.TempDir(), "agent")
 			deviceID, version := strings.Repeat("a", 64), strings.Repeat("b", 64)
@@ -416,6 +421,7 @@ func TestRunDiskJobVerifiesRealStateAndPersistsTerminalReceipt(t *testing.T) {
 		t.Run(scriptStatus, func(t *testing.T) {
 			runner := &fakeRunner{}
 			manager, _, _, _ := testManager(t, runner)
+			manager.diskScriptOwnerTrusted = func(os.FileInfo) bool { return true }
 			manager.diskScript = trustedDiskTestScript(t)
 			manager.executable = filepath.Join(t.TempDir(), "agent")
 			lsblk := []byte(`{"blockdevices":[{"name":"/dev/sde","kname":"/dev/sde","path":"/dev/sde","type":"disk","pkname":null,"size":1073741824,"ro":0,"rm":0,"model":"Disk","serial":"disk-sde","tran":null,"wwn":"wwn-sde","fstype":"ext4","fsver":"1.0","label":null,"uuid":"12345678-1234-1234-1234-123456789abc","partuuid":null,"maj:min":"8:64","mountpoints":[]}]}`)
