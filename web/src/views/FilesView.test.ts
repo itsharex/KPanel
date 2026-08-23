@@ -235,6 +235,15 @@ interface FileBindings {
   previewEntry: { value?: TestFileEntry }
   previewContent: { value: string }
   previewDirty: { value: boolean }
+  mediaLoading: { value: boolean }
+  mediaReady: { value: boolean }
+  mediaError: { value: boolean }
+  mediaErrorMessage: { value: string }
+  mediaErrorDetail: { value: string }
+  mediaRetryable: { value: boolean }
+  handleMediaLoadStart: () => void
+  handleMediaMetadata: () => void
+  handleVideoFrameReady: (event: Event) => void
   codeEditorRef: {
     value?: {
       getValue: () => string
@@ -1203,12 +1212,40 @@ describe('FilesView large icon layout', () => {
   it('uses metadata-first streaming and a stable responsive video stage', () => {
     const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
 
-    expect(source).toMatch(/<video[\s\S]*preload="metadata"[\s\S]*playsinline[\s\S]*@loadedmetadata="handleMediaReady"/)
+    expect(source).toMatch(
+      /<video[\s\S]*preload="metadata"[\s\S]*playsinline[\s\S]*@loadedmetadata="handleMediaMetadata"[\s\S]*@loadeddata="handleVideoFrameReady"/,
+    )
     expect(source).toContain('<source :src="previewURL" :type="previewEntry.mime || undefined" />')
     expect(source).toContain('视频流响应超时，请检查网络或服务器。')
+    expect(source).toContain('浏览器只能播放音轨，无法解码视频画面。')
     expect(source).toMatch(/\.media-player\s*\{[^}]*aspect-ratio:\s*16 \/ 9;/)
     expect(source).toMatch(/\.media-player video\s*\{[^}]*width:\s*100%;[^}]*height:\s*100%;/)
     expect(source).toContain('支持边缓冲边播放')
+  })
+
+  it('requires decoded video dimensions instead of treating container metadata as visual readiness', () => {
+    const view = setupView()
+
+    view.handleMediaLoadStart()
+    view.handleMediaMetadata()
+    expect(view.mediaReady.value).toBe(false)
+    expect(view.mediaLoading.value).toBe(false)
+
+    const pause = vi.fn()
+    view.handleVideoFrameReady({
+      currentTarget: { videoWidth: 0, videoHeight: 0, pause },
+    } as unknown as Event)
+    expect(pause).toHaveBeenCalledOnce()
+    expect(view.mediaError.value).toBe(true)
+    expect(view.mediaRetryable.value).toBe(false)
+    expect(view.mediaErrorMessage.value).toBe('浏览器只能播放音轨，无法解码视频画面。')
+    expect(view.mediaErrorDetail.value).toContain('H.264 + AAC')
+
+    view.handleVideoFrameReady({
+      currentTarget: { videoWidth: 1920, videoHeight: 1080, pause: vi.fn() },
+    } as unknown as Event)
+    expect(view.mediaReady.value).toBe(true)
+    expect(view.mediaError.value).toBe(false)
   })
 
   it('keeps the desktop shortcut action behind permissions without wrapping batch labels', () => {

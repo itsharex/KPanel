@@ -244,6 +244,8 @@ const mediaLoading = ref(false)
 const mediaReady = ref(false)
 const mediaError = ref(false)
 const mediaErrorMessage = ref('')
+const mediaErrorDetail = ref('')
+const mediaRetryable = ref(false)
 const mediaReloadKey = ref(0)
 const editorInfo = ref<Pick<CodeLanguage, 'label' | 'highlighted' | 'reason'> & { loadMs: number }>()
 const codeEditorRef = ref<CodeEditorHandle>()
@@ -677,12 +679,16 @@ function resetMediaState(entry?: FileEntry): void {
   mediaReady.value = false
   mediaError.value = false
   mediaErrorMessage.value = ''
+  mediaErrorDetail.value = ''
+  mediaRetryable.value = false
   if (!isVideo) return
   mediaLoadTimer = window.setTimeout(() => {
     if (!mediaReady.value && !mediaError.value && previewEntry.value?.path === entry?.path) {
       mediaLoading.value = false
       mediaError.value = true
       mediaErrorMessage.value = '视频流响应超时，请检查网络或服务器。'
+      mediaErrorDetail.value = '请检查网络或服务器后重试。'
+      mediaRetryable.value = true
     }
     mediaLoadTimer = undefined
   }, mediaLoadTimeoutMs)
@@ -714,20 +720,45 @@ function handleMediaLoadStart(): void {
   mediaReady.value = false
   mediaError.value = false
   mediaErrorMessage.value = ''
+  mediaErrorDetail.value = ''
+  mediaRetryable.value = false
+}
+
+function handleMediaMetadata(): void {
+  mediaLoading.value = false
+  clearMediaLoadTimer()
 }
 
 function handleMediaReady(): void {
   mediaReady.value = true
   mediaLoading.value = false
   mediaError.value = false
+  mediaErrorMessage.value = ''
+  mediaErrorDetail.value = ''
+  mediaRetryable.value = false
   clearMediaLoadTimer()
 }
 
-function handleMediaCanPlay(): void {
+function handleVideoFrameReady(event: Event): void {
+  const video = event.currentTarget as HTMLVideoElement | null
+  // A playable audio track can make loadeddata/canplay succeed even when the
+  // browser cannot decode any video frame, so media events alone are not enough.
+  if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+    video?.pause()
+    mediaLoading.value = false
+    mediaReady.value = false
+    mediaError.value = true
+    mediaErrorMessage.value = '浏览器只能播放音轨，无法解码视频画面。'
+    mediaErrorDetail.value = '请下载原文件，或转换为 H.264 + AAC 的 MP4 后重试。'
+    mediaRetryable.value = false
+    clearMediaLoadTimer()
+    return
+  }
   handleMediaReady()
 }
 
 function handleMediaWaiting(): void {
+  if (mediaError.value) return
   mediaLoading.value = true
 }
 
@@ -739,6 +770,10 @@ function handleMediaError(event: Event): void {
   mediaErrorMessage.value = video?.error?.code === 4
     ? '浏览器不支持该视频编码或格式。'
     : ''
+  mediaErrorDetail.value = video?.error?.code === 4
+    ? '请下载原文件，或转换为 H.264 + AAC 的 MP4 后重试。'
+    : '请检查文件编码、网络或服务器后重试。'
+  mediaRetryable.value = video?.error?.code !== 4
   clearMediaLoadTimer()
 }
 
@@ -759,6 +794,8 @@ function closePreview(): void {
   mediaReady.value = false
   mediaError.value = false
   mediaErrorMessage.value = ''
+  mediaErrorDetail.value = ''
+  mediaRetryable.value = false
   editorInfo.value = undefined
   editorStatus.value = undefined
   editorLineWrap.value = false
@@ -3185,9 +3222,10 @@ onBeforeUnmount(() => {
             preload="metadata"
             playsinline
             @loadstart="handleMediaLoadStart"
-            @loadedmetadata="handleMediaReady"
-            @canplay="handleMediaCanPlay"
-            @playing="handleMediaCanPlay"
+            @loadedmetadata="handleMediaMetadata"
+            @loadeddata="handleVideoFrameReady"
+            @canplay="handleVideoFrameReady"
+            @playing="handleVideoFrameReady"
             @waiting="handleMediaWaiting"
             @error="handleMediaError"
           >
@@ -3199,8 +3237,15 @@ onBeforeUnmount(() => {
           </div>
           <div v-else-if="mediaError" class="media-player__error" role="alert">
             <strong>{{ mediaErrorMessage || '视频暂时无法播放' }}</strong>
-            <span>请检查文件编码或服务器是否支持该格式。</span>
-            <button class="button button--secondary button--small" type="button" @click.stop="retryMedia">重试播放</button>
+            <span>{{ mediaErrorDetail || '请检查文件编码或服务器是否支持该格式。' }}</span>
+            <button
+              v-if="mediaRetryable"
+              class="button button--secondary button--small"
+              type="button"
+              @click.stop="retryMedia"
+            >
+              重试播放
+            </button>
           </div>
         </div>
         <img v-else-if="previewMode === 'image'" :src="previewURL" :alt="previewEntry.name" decoding="async" />
@@ -4688,7 +4733,7 @@ onBeforeUnmount(() => {
 
 .media-player__error span {
   color: rgb(255 231 231 / 72%);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .media-player__error .button {
@@ -4734,7 +4779,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 12px;
   color: var(--terminal-shell-muted, #8a9695);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .media-viewer__status {
