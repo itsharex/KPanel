@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   deleteRemoteDownloadJob: vi.fn(),
   trash: vi.fn(),
   write: vi.fn(),
+  upload: vi.fn(),
   contentUrl: vi.fn(),
   archiveUrl: vi.fn(),
   createArchiveDownloadTicket: vi.fn(),
@@ -77,7 +78,7 @@ vi.mock('@/lib/api', () => ({
       thumbnailUrl: mocks.thumbnailUrl,
       text: vi.fn(),
       write: mocks.write,
-      upload: vi.fn(),
+      upload: mocks.upload,
     },
     desktop: {
       workspace: mocks.desktopWorkspace,
@@ -130,6 +131,7 @@ interface FileBindings {
   pasteClipboard: (target?: string) => Promise<void>
   transferInternalFileDrop: (event: DragEvent, target: string) => Promise<void>
   transferCrossPanelFileDrop: (event: DragEvent, target: string) => Promise<void>
+  onDrop: (event: DragEvent) => Promise<void>
   cancelFileTransfer: () => void
   openRemoteDownloadDialog: () => void
   closeRemoteDownloadDialog: () => void
@@ -303,6 +305,59 @@ function crossPanelDrag(entries: TestFileEntry[]): DragEvent {
   return event
 }
 
+function externalFileEntry(name: string, content: string) {
+  return {
+    name,
+    isFile: true,
+    isDirectory: false,
+    file(success: (value: File) => void) {
+      success(new File([content], name, { type: 'text/plain' }))
+    },
+  }
+}
+
+function externalDirectoryEntry(name: string, children: unknown[]) {
+  return {
+    name,
+    isFile: false,
+    isDirectory: true,
+    createReader() {
+      let read = false
+      return {
+        readEntries(success: (values: unknown[]) => void) {
+          if (read) success([])
+          else {
+            read = true
+            success(children)
+          }
+        },
+      }
+    },
+  }
+}
+
+function externalDirectoryDrop(entry: ReturnType<typeof externalDirectoryEntry>): DragEvent {
+  return {
+    dataTransfer: {
+      types: ['Files'],
+      items: [{ kind: 'file', webkitGetAsEntry: () => entry }],
+      // Chromium exposes a top-level directory placeholder here. Treating this
+      // value as a readable File reproduces the interrupted-upload regression.
+      files: [new File([], entry.name)],
+    },
+  } as unknown as DragEvent
+}
+
+function externalFileDrop(entry: ReturnType<typeof externalFileEntry>): DragEvent {
+  return {
+    dataTransfer: {
+      types: ['Files'],
+      items: [{ kind: 'file', webkitGetAsEntry: () => entry }],
+      files: [new File(['fallback'], entry.name, { type: 'text/plain' })],
+    },
+  } as unknown as DragEvent
+}
+
 function setupView(): FileBindings {
   const component = FilesView as unknown as {
     setup: (props: Record<string, never>, context: { expose: () => void }) => FileBindings
@@ -404,6 +459,67 @@ beforeEach(() => {
       updatedAt: '2026-08-14T00:00:00Z',
     })),
   }))
+})
+
+describe('FilesView external upload', () => {
+  it('keeps an ordinary operating-system file drop on the existing direct upload path', async () => {
+    const view = setupView()
+    view.currentPath.value = '/srv'
+    mocks.list.mockResolvedValue(testDirectory('/srv'))
+    mocks.upload.mockImplementation(async (path: string, file: File) => ({
+      ...testEntry(file.name),
+      path: `${path}/${file.name}`,
+    }))
+
+    await view.onDrop(externalFileDrop(externalFileEntry('notes.txt', 'hello')))
+
+    expect(mocks.upload).toHaveBeenCalledWith('/srv', expect.objectContaining({ name: 'notes.txt' }), false, expect.any(Function))
+    expect(mocks.entry).not.toHaveBeenCalled()
+    expect(mocks.action).not.toHaveBeenCalled()
+    expect(mocks.danger).not.toHaveBeenCalled()
+  })
+
+  it('uses the recursive desktop upload path for an operating-system directory drop', async () => {
+    const view = setupView()
+    const directories = new Set(['/srv'])
+    view.currentPath.value = '/srv'
+    mocks.list.mockResolvedValue(testDirectory('/srv'))
+    mocks.entry.mockImplementation(async (path: string) => {
+      if (directories.has(path)) {
+        return { ...testEntry(path.split('/').at(-1) || '/'), path, kind: 'directory' }
+      }
+      throw Object.assign(new Error('not found'), { status: 404 })
+    })
+    mocks.action.mockImplementation(async (input: { action: string; target?: string; name?: string }) => {
+      const path = `${input.target === '/' ? '' : input.target}/${input.name}`
+      directories.add(path)
+      return { action: input.action, succeeded: [{ path }], failed: [] }
+    })
+    mocks.upload.mockImplementation(async (path: string, file: File, _overwrite: boolean, onProgress?: (value: number) => void) => {
+      onProgress?.(100)
+      return { ...testEntry(file.name), path: `${path}/${file.name}` }
+    })
+    const event = externalDirectoryDrop(externalDirectoryEntry('project', [
+      externalFileEntry('README.md', 'hello'),
+      externalDirectoryEntry('empty', []),
+      externalDirectoryEntry('src', [externalFileEntry('main.ts', 'export {}')]),
+    ]))
+
+    await view.onDrop(event)
+
+    expect(mocks.action.mock.calls.map(([input]) => input)).toEqual([
+      { action: 'mkdir', target: '/srv', name: 'project' },
+      { action: 'mkdir', target: '/srv/project', name: 'empty' },
+      { action: 'mkdir', target: '/srv/project', name: 'src' },
+    ])
+    expect(mocks.upload.mock.calls.map(([path, file]) => ({ path, name: file.name }))).toEqual(expect.arrayContaining([
+      { path: '/srv/project', name: 'README.md' },
+      { path: '/srv/project/src', name: 'main.ts' },
+    ]))
+    expect(mocks.upload).not.toHaveBeenCalledWith('/srv', expect.objectContaining({ name: 'project' }), expect.anything(), expect.anything())
+    expect(mocks.danger).not.toHaveBeenCalled()
+    expect(mocks.list).toHaveBeenCalledWith('/srv', expect.anything(), expect.anything())
+  })
 })
 
 describe('FilesView remote download', () => {

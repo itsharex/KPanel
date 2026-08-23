@@ -50,6 +50,12 @@ import {
 } from '@/lib/desktopRouteKeys'
 import type { CodeLanguage } from '@/lib/code-editor-language'
 import { transferCrossPanelFileBatch } from '@/lib/crossPanelFileTransfer'
+import {
+  collectExternalDrop,
+  DesktopExternalDropError,
+  uploadExternalDrop,
+  type ExternalDropManifest,
+} from '@/lib/desktopExternalDrop'
 import { fileEntryIcon as entryIcon, fileEntryIconKind as entryIconKind } from '@/lib/fileEntryPresentation'
 import { downloadFileEntries } from '@/lib/fileDownloads'
 import {
@@ -228,6 +234,7 @@ const thumbnailFailures = ref(new Set<string>())
 let directoryController: AbortController | undefined
 let queuedRemoteDownloadRefreshes = new Set<string>()
 let archiveController: AbortController | undefined
+let externalUploadController: AbortController | undefined
 let fileTransferController: AbortController | undefined
 let fileTransferClearTimer: number | undefined
 let remoteDownloadJobsController: AbortController | undefined
@@ -1858,7 +1865,56 @@ async function uploadFiles(files: FileList | File[]): Promise<void> {
   }, 1800)
 }
 
-function onDrop(event: DragEvent): void {
+function externalUploadErrorMessage(error: unknown): string {
+  if (!(error instanceof DesktopExternalDropError)) return errorMessage(error)
+  switch (error.code) {
+    case 'too_many': return i18n.t('desktop.externalDropErrorTooMany')
+    case 'too_large': return i18n.t('desktop.externalDropErrorTooLarge')
+    case 'too_deep': return i18n.t('desktop.externalDropErrorTooDeep')
+    case 'invalid': return i18n.t('desktop.externalDropErrorInvalid')
+    default: return i18n.t('desktop.externalDropErrorUnsupported')
+  }
+}
+
+async function uploadDirectoryManifest(
+  manifest: ExternalDropManifest,
+  target: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const label = manifest.roots.length === 1 ? manifest.roots[0]!.name : `${manifest.roots.length} 项`
+  uploadProgress.value = { ...uploadProgress.value, [label]: 0 }
+  try {
+    const result = await uploadExternalDrop(manifest, api.files, signal, (progress) => {
+      const percent = progress.totalBytes > 0
+        ? Math.round(progress.loadedBytes / progress.totalBytes * 100)
+        : progress.totalFiles > 0
+          ? Math.round(progress.completedFiles / progress.totalFiles * 100)
+          : 100
+      uploadProgress.value = { ...uploadProgress.value, [label]: Math.max(0, Math.min(100, percent)) }
+    }, target)
+    if (signal.aborted || unmounted) return
+    if (result.failed.length) {
+      toast.danger(`${label} 上传失败`, result.failed[0]!.detail)
+    } else {
+      uploadProgress.value = { ...uploadProgress.value, [label]: 100 }
+    }
+  } catch (error) {
+    if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
+    toast.danger(`${label} 上传失败`, externalUploadErrorMessage(error))
+  } finally {
+    if (!unmounted) {
+      if (currentPath.value === target) await loadDirectory(target)
+      notifyFileDirectoriesChanged([target], fileWindowChangeOrigin)
+      window.setTimeout(() => {
+        const next = { ...uploadProgress.value }
+        delete next[label]
+        uploadProgress.value = next
+      }, 1800)
+    }
+  }
+}
+
+async function onDrop(event: DragEvent): Promise<void> {
   dragging.value = false
   if (hasDesktopFileDrag(event)) {
     if (desktopFileDragOrigin(event) === 'desktop-shortcut') {
@@ -1873,7 +1929,29 @@ function onDrop(event: DragEvent): void {
     return
   }
   clearInternalDropTarget()
-  if (event.dataTransfer?.files?.length) void uploadFiles(event.dataTransfer.files)
+  const dataTransfer = event.dataTransfer
+  if (!dataTransfer) return
+  if (externalUploadController) {
+    toast.show('已有文件操作正在进行')
+    return
+  }
+  const controller = new AbortController()
+  externalUploadController = controller
+  try {
+    const manifest = await collectExternalDrop(dataTransfer, controller.signal)
+    if (manifest.roots.every((root) => root.kind === 'file')) {
+      externalUploadController = undefined
+      await uploadFiles(manifest.files.map((item) => item.file))
+      return
+    }
+    await uploadDirectoryManifest(manifest, currentPath.value, controller.signal)
+  } catch (error) {
+    if (!controller.signal.aborted && !(error instanceof DOMException && error.name === 'AbortError')) {
+      toast.danger('文件上传失败', externalUploadErrorMessage(error))
+    }
+  } finally {
+    if (externalUploadController === controller) externalUploadController = undefined
+  }
 }
 
 function onUploadDragEnter(event: DragEvent): void {
@@ -2027,6 +2105,7 @@ onBeforeUnmount(() => {
   stopRemoteDownloadPolling()
   directoryController?.abort()
   archiveController?.abort()
+  externalUploadController?.abort()
   fileTransferController?.abort()
   if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
   if (searchTimer !== undefined) window.clearTimeout(searchTimer)

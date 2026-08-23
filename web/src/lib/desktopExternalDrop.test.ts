@@ -123,6 +123,22 @@ describe('desktop external drop', () => {
     expect(manifest.totalBytes).toBe(3)
   })
 
+  it('reconstructs a selected directory from webkitRelativePath when entry APIs are unavailable', async () => {
+    const readme = new File(['hello'], 'README.md')
+    const source = new File(['export {}'], 'main.ts')
+    Object.defineProperty(readme, 'webkitRelativePath', { value: 'project/README.md' })
+    Object.defineProperty(source, 'webkitRelativePath', { value: 'project/src/main.ts' })
+
+    const manifest = await collectExternalDrop(transfer([], [readme, source]))
+
+    expect(manifest.roots).toEqual([{ name: 'project', kind: 'directory' }])
+    expect(manifest.directories).toEqual([['project'], ['project', 'src']])
+    expect(manifest.files.map((value) => value.segments)).toEqual([
+      ['project', 'README.md'],
+      ['project', 'src', 'main.ts'],
+    ])
+  })
+
   it('rejects invalid path components before any upload', async () => {
     await expect(collectExternalDrop(transfer([fileSystemFile('../secret', 'x')]))).rejects.toBeInstanceOf(
       DesktopExternalDropError,
