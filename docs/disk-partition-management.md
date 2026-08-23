@@ -156,7 +156,7 @@ SELinux/AppArmor、异常断电及 XFS/NTFS/VFAT 真写仍属于发布前扩展�
 发布必须按以下顺序：
 
 1. 先合入并发布含 `KPANEL_DISK_MANAGEMENT_PROTOCOL_VERSION="1"` 的 `kejilion.sh`；
-2. 将 KPanel 的可信脚本 commit/SHA-256 pin 更新到该版本；
+2. 将 KPanel 的可信脚本固定到 `kejilion/sh@9fec61b50cc6ef798dfac1edf11c2ec60ca6b0d1`，LF SHA-256 为 `54ceb0e72c4c342382500fc35da636fa436c484a12c4766fb9c7f806a23ae8fa`；
 3. 再构建 KPanel 候选并执行 Linux/WSL、浏览器和回滚验收；
 4. 最后才允许部署。
 
