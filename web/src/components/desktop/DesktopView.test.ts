@@ -11,6 +11,20 @@ function setupViewport(width: number, height: number): void {
   Object.defineProperty(window, 'innerHeight', { value: height, configurable: true })
 }
 
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  }
+}
+
 function touchPointer(type: string, x = 40, y = 50, id = 1): PointerEvent {
   const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent
   Object.defineProperties(event, {
@@ -417,6 +431,28 @@ describe('DesktopView', () => {
     })
     expect(wrapper.find('.desktop__context-menu').exists()).toBe(false)
     wrapper.unmount()
+  })
+
+  it('opens desktop and taskbar menus above the real taskbar boundary', async () => {
+    const originalBounds = HTMLElement.prototype.getBoundingClientRect
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.matches('.desktop')) return rect(0, 0, 1280, 800)
+      if (this.matches('.desktop__taskbar')) return rect(8, 736, 1264, 56)
+      if (this.matches('.desktop__context-menu')) return rect(0, 0, 196, 360)
+      return originalBounds.call(this)
+    })
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+
+    await wrapper.find('.desktop__taskbar').trigger('contextmenu', { clientX: 1250, clientY: 780 })
+    await flushPromises()
+
+    const menu = wrapper.get<HTMLElement>('.desktop__context-menu')
+    expect(menu.element.style.left).toBe('1074px')
+    expect(menu.element.style.top).toBe('366px')
+    expect(Number.parseFloat(menu.element.style.top) + 360).toBeLessThanOrEqual(726)
+    expect(menu.element.style.getPropertyValue('--context-menu-max-height')).toBe('716px')
+    wrapper.unmount()
+    boundsSpy.mockRestore()
   })
 
   it('keeps the context menu stable while the right mouse button is held', async () => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
 usePhraseCatalog((locale) => locale === 'en-US'
@@ -39,6 +39,7 @@ import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import DockerDeploymentEditor from '@/components/docker/DockerDeploymentEditor.vue'
 import { localizeError } from '@/i18n/errors'
 import { ApiError, api } from '@/lib/api'
+import { moveContextMenuFocus, placeContextMenu } from '@/lib/contextMenu'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import { analyzeDockerDeployment, composeEnvironmentVariables } from '@/lib/dockerDeployment'
 import { dockerComposeGroupAccent, groupDockerContainers, type DockerContainerGroup } from '@/lib/dockerComposeGroups'
@@ -69,11 +70,12 @@ import type {
 
 type DockerTab = 'environment' | 'containers' | 'images' | 'networks' | 'volumes'
 type ContainerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause' | 'remove'
-type DockerContextMenu =
-  | { kind: 'container'; item: DockerContainer; x: number; y: number }
-  | { kind: 'image'; item: DockerInventory['images'][number]; x: number; y: number }
-  | { kind: 'network'; item: DockerInventory['networks'][number]; x: number; y: number }
-  | { kind: 'volume'; item: DockerInventory['volumes'][number]; x: number; y: number }
+type DockerContextMenuItem =
+  | { kind: 'container'; item: DockerContainer }
+  | { kind: 'image'; item: DockerInventory['images'][number] }
+  | { kind: 'network'; item: DockerInventory['networks'][number] }
+  | { kind: 'volume'; item: DockerInventory['volumes'][number] }
+type DockerContextMenu = DockerContextMenuItem & { x: number; y: number }
 
 interface CreatePortRow {
   publicPort: string
@@ -123,7 +125,9 @@ const selectedContainer = ref<DockerContainer>()
 const pendingAction = ref<ContainerAction>()
 const actionRunning = ref(false)
 const contextMenu = ref<DockerContextMenu>()
+const contextMenuElement = ref<HTMLElement>()
 const collapsedContainerGroups = ref(new Set<string>())
+let contextMenuOpener: HTMLElement | null = null
 
 const backups = ref<DockerBackup[]>([])
 const environment = ref<DockerEnvironment>()
@@ -403,39 +407,46 @@ function permits(container: DockerContainer, action: string): boolean {
   )
 }
 
-function contextPosition(event: MouseEvent): { x: number; y: number } {
+function contextMenuPoint(event: MouseEvent): { x: number; y: number } {
   const target = event.currentTarget as HTMLElement | null
   const bounds = target?.getBoundingClientRect()
-  const x = event.clientX || bounds?.right || 16
-  const y = event.clientY || bounds?.bottom || 16
-  return {
-    x: Math.max(8, Math.min(x, window.innerWidth - 226)),
-    y: Math.max(8, Math.min(y, window.innerHeight - 430)),
-  }
+  if (event.clientX || event.clientY) return { x: event.clientX, y: event.clientY }
+  return { x: bounds?.right || 16, y: bounds?.bottom || 16 }
+}
+
+async function settleContextMenu(): Promise<void> {
+  await nextTick()
+  const menu = contextMenuElement.value
+  const current = contextMenu.value
+  if (!menu || !current) return
+  const placed = placeContextMenu(menu, { x: current.x, y: current.y }, contextMenuOpener)
+  contextMenu.value = { ...current, x: placed.x, y: placed.y }
+  await nextTick()
+  menu.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true })
+}
+
+function openContextMenu(event: MouseEvent, item: DockerContextMenuItem): void {
+  event.preventDefault()
+  event.stopPropagation()
+  contextMenuOpener = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  contextMenu.value = { ...item, ...contextMenuPoint(event) } as DockerContextMenu
+  void settleContextMenu()
 }
 
 function showContainerContext(event: MouseEvent, item: DockerContainer): void {
-  event.preventDefault()
-  event.stopPropagation()
-  contextMenu.value = { kind: 'container', item, ...contextPosition(event) }
+  openContextMenu(event, { kind: 'container', item })
 }
 
 function showImageContext(event: MouseEvent, item: DockerInventory['images'][number]): void {
-  event.preventDefault()
-  event.stopPropagation()
-  contextMenu.value = { kind: 'image', item, ...contextPosition(event) }
+  openContextMenu(event, { kind: 'image', item })
 }
 
 function showNetworkContext(event: MouseEvent, item: DockerInventory['networks'][number]): void {
-  event.preventDefault()
-  event.stopPropagation()
-  contextMenu.value = { kind: 'network', item, ...contextPosition(event) }
+  openContextMenu(event, { kind: 'network', item })
 }
 
 function showVolumeContext(event: MouseEvent, item: DockerInventory['volumes'][number]): void {
-  event.preventDefault()
-  event.stopPropagation()
-  contextMenu.value = { kind: 'volume', item, ...contextPosition(event) }
+  openContextMenu(event, { kind: 'volume', item })
 }
 
 async function copyResourceValue(value: string, label: string): Promise<void> {
@@ -476,12 +487,34 @@ function manageNetworkMembership(network: DockerInventory['networks'][number]): 
 function closeContextMenuOnOutsideClick(event: MouseEvent): void {
   const target = event.target as HTMLElement
   if (!target.closest('.docker-context-menu') && !target.closest('.docker-context-trigger')) {
-    contextMenu.value = undefined
+    closeContextMenu()
   }
 }
 
-function closeContextMenu(): void {
+function closeContextMenu(restoreFocus = false): void {
   contextMenu.value = undefined
+  const opener = contextMenuOpener
+  contextMenuOpener = null
+  if (restoreFocus && opener?.isConnected) {
+    void nextTick(() => opener.focus({ preventScroll: true }))
+  }
+}
+
+function handleContextMenuKeydown(event: KeyboardEvent): void {
+  const menu = contextMenuElement.value
+  if (!menu || moveContextMenuFocus(menu, event)) return
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  closeContextMenu(true)
+}
+
+function closeContextMenuOnScroll(event: Event): void {
+  if (contextMenuElement.value?.contains(event.target as Node)) return
+  closeContextMenu()
+}
+
+function closeContextMenuOnViewportChange(): void {
+  closeContextMenu()
 }
 
 async function load(silent = false): Promise<void> {
@@ -1269,8 +1302,10 @@ function askMigration(): void {
 
 onMounted(() => {
   window.addEventListener('click', closeContextMenuOnOutsideClick)
-  window.addEventListener('resize', closeContextMenu)
-  window.addEventListener('scroll', closeContextMenu, true)
+  window.addEventListener('resize', closeContextMenuOnViewportChange)
+  window.addEventListener('scroll', closeContextMenuOnScroll, true)
+  window.visualViewport?.addEventListener?.('resize', closeContextMenuOnViewportChange)
+  window.visualViewport?.addEventListener?.('scroll', closeContextMenuOnViewportChange)
   void load()
   void loadBackups()
   void loadEnvironment()
@@ -1288,6 +1323,7 @@ watch(windowActive, (active) => {
   }
 
   if (!active) {
+    closeContextMenu()
     stopStatsPolling()
     return
   }
@@ -1299,8 +1335,10 @@ watch(windowActive, (active) => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('click', closeContextMenuOnOutsideClick)
-  window.removeEventListener('resize', closeContextMenu)
-  window.removeEventListener('scroll', closeContextMenu, true)
+  window.removeEventListener('resize', closeContextMenuOnViewportChange)
+  window.removeEventListener('scroll', closeContextMenuOnScroll, true)
+  window.visualViewport?.removeEventListener?.('resize', closeContextMenuOnViewportChange)
+  window.visualViewport?.removeEventListener?.('scroll', closeContextMenuOnViewportChange)
   controller?.abort()
   logController?.abort()
   stopStatsPolling()
@@ -1729,104 +1767,108 @@ onBeforeUnmount(() => {
       </template>
     </template>
 
-    <div
-      v-if="contextMenu"
-      class="docker-context-menu"
-      :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
-      role="menu"
-      @click.stop
-      @contextmenu.prevent
-    >
+    <Teleport to="body">
+      <div
+        v-if="contextMenu"
+        ref="contextMenuElement"
+        class="docker-context-menu"
+        :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+        role="menu"
+        @click.stop
+        @contextmenu.prevent
+        @keydown.stop="handleContextMenuKeydown"
+      >
       <template v-if="contextContainer">
         <strong class="docker-context-menu__title">{{ contextContainer.name }}</strong>
-        <button v-if="permits(contextContainer, 'logs')" type="button" @click="showLogs(contextContainer)">
+        <button v-if="permits(contextContainer, 'logs')" type="button" role="menuitem" @click="showLogs(contextContainer)">
           <FileText :size="15" />查看日志
         </button>
-        <button v-if="permits(contextContainer, 'stats')" type="button" @click="showStats(contextContainer)">
+        <button v-if="permits(contextContainer, 'stats')" type="button" role="menuitem" @click="showStats(contextContainer)">
           <Waypoints :size="15" />性能占用
         </button>
-        <button v-if="permits(contextContainer, 'exec')" type="button" @click="openConsole(contextContainer)">
+        <button v-if="permits(contextContainer, 'exec')" type="button" role="menuitem" @click="openConsole(contextContainer)">
           <Wrench :size="15" />容器控制台
         </button>
-        <button v-if="permits(contextContainer, 'access')" type="button" @click="openAccess(contextContainer)">
+        <button v-if="permits(contextContainer, 'access')" type="button" role="menuitem" @click="openAccess(contextContainer)">
           <ShieldCheck :size="15" />外部访问
         </button>
         <hr />
-        <button v-if="permits(contextContainer, 'start')" type="button" @click="askAction(contextContainer, 'start')">
+        <button v-if="permits(contextContainer, 'start')" type="button" role="menuitem" @click="askAction(contextContainer, 'start')">
           <Play :size="15" />启动
         </button>
-        <button v-if="permits(contextContainer, 'unpause')" type="button" @click="askAction(contextContainer, 'unpause')">
+        <button v-if="permits(contextContainer, 'unpause')" type="button" role="menuitem" @click="askAction(contextContainer, 'unpause')">
           <Play :size="15" />继续运行
         </button>
-        <button v-if="permits(contextContainer, 'restart')" type="button" @click="askAction(contextContainer, 'restart')">
+        <button v-if="permits(contextContainer, 'restart')" type="button" role="menuitem" @click="askAction(contextContainer, 'restart')">
           <RotateCw :size="15" />重启
         </button>
-        <button v-if="permits(contextContainer, 'pause')" type="button" @click="askAction(contextContainer, 'pause')">
+        <button v-if="permits(contextContainer, 'pause')" type="button" role="menuitem" @click="askAction(contextContainer, 'pause')">
           <Pause :size="15" />暂停
         </button>
-        <button v-if="permits(contextContainer, 'stop')" type="button" @click="askAction(contextContainer, 'stop')">
+        <button v-if="permits(contextContainer, 'stop')" type="button" role="menuitem" @click="askAction(contextContainer, 'stop')">
           <CircleStop :size="15" />停止
         </button>
         <hr />
-        <button type="button" @click="copyResourceValue(contextContainer.id, '容器 ID')">
+        <button type="button" role="menuitem" @click="copyResourceValue(contextContainer.id, '容器 ID')">
           <Copy :size="15" />复制容器 ID
         </button>
-        <button type="button" @click="copyResourceValue(contextContainer.image, '镜像名称')">
+        <button type="button" role="menuitem" @click="copyResourceValue(contextContainer.image, '镜像名称')">
           <Copy :size="15" />复制镜像名称
         </button>
-        <button v-if="permits(contextContainer, 'remove')" class="danger-link" type="button" @click="askAction(contextContainer, 'remove')">
+        <button v-if="permits(contextContainer, 'remove')" class="danger-link" type="button" role="menuitem" @click="askAction(contextContainer, 'remove')">
           <Trash2 :size="15" />删除容器
         </button>
       </template>
 
       <template v-else-if="contextImage">
         <strong class="docker-context-menu__title">{{ contextImage.tags[0] || shortId(contextImage.id) }}</strong>
-        <button v-if="contextImage.tags.length" type="button" @click="updateImage(contextImage)">
+        <button v-if="contextImage.tags.length" type="button" role="menuitem" @click="updateImage(contextImage)">
           <RefreshCw :size="15" />拉取最新版本
         </button>
-        <button type="button" @click="copyResourceValue(contextImage.tags[0] || contextImage.id, '镜像引用')">
+        <button type="button" role="menuitem" @click="copyResourceValue(contextImage.tags[0] || contextImage.id, '镜像引用')">
           <Copy :size="15" />复制镜像引用
         </button>
-        <button type="button" @click="copyResourceValue(contextImage.id, '镜像 ID')">
+        <button type="button" role="menuitem" @click="copyResourceValue(contextImage.id, '镜像 ID')">
           <Copy :size="15" />复制镜像 ID
         </button>
         <hr />
-        <button class="danger-link" type="button" :disabled="!contextImage.resourceVersion" @click="askImageRemoval(contextImage)">
+        <button class="danger-link" type="button" role="menuitem" :disabled="!contextImage.resourceVersion" @click="askImageRemoval(contextImage)">
           <Trash2 :size="15" />删除镜像
         </button>
       </template>
 
       <template v-else-if="contextNetwork">
         <strong class="docker-context-menu__title">{{ contextNetwork.name }}</strong>
-        <button type="button" @click="manageNetworkMembership(contextNetwork)">
+        <button type="button" role="menuitem" @click="manageNetworkMembership(contextNetwork)">
           <Network :size="15" />管理容器成员
         </button>
-        <button type="button" @click="copyResourceValue(contextNetwork.name, '网络名称')">
+        <button type="button" role="menuitem" @click="copyResourceValue(contextNetwork.name, '网络名称')">
           <Copy :size="15" />复制网络名称
         </button>
-        <button type="button" @click="copyResourceValue(contextNetwork.id, '网络 ID')">
+        <button type="button" role="menuitem" @click="copyResourceValue(contextNetwork.id, '网络 ID')">
           <Copy :size="15" />复制网络 ID
         </button>
         <hr />
-        <button class="danger-link" type="button" :disabled="!contextNetwork.resourceVersion" @click="askNetworkRemoval(contextNetwork)">
+        <button class="danger-link" type="button" role="menuitem" :disabled="!contextNetwork.resourceVersion" @click="askNetworkRemoval(contextNetwork)">
           <Trash2 :size="15" />删除网络
         </button>
       </template>
 
       <template v-else-if="contextVolume">
         <strong class="docker-context-menu__title">{{ contextVolume.name }}</strong>
-        <button type="button" @click="copyResourceValue(contextVolume.name, '存储卷名称')">
+        <button type="button" role="menuitem" @click="copyResourceValue(contextVolume.name, '存储卷名称')">
           <Copy :size="15" />复制存储卷名称
         </button>
-        <button v-if="contextVolume.mountpoint" type="button" @click="copyResourceValue(contextVolume.mountpoint, '挂载点')">
+        <button v-if="contextVolume.mountpoint" type="button" role="menuitem" @click="copyResourceValue(contextVolume.mountpoint, '挂载点')">
           <Copy :size="15" />复制挂载点
         </button>
         <hr />
-        <button class="danger-link" type="button" :disabled="!contextVolume.resourceVersion" @click="askVolumeRemoval(contextVolume)">
+        <button class="danger-link" type="button" role="menuitem" :disabled="!contextVolume.resourceVersion" @click="askVolumeRemoval(contextVolume)">
           <Trash2 :size="15" />删除存储卷
         </button>
       </template>
-    </div>
+      </div>
+    </Teleport>
 
     <ModalDialog :open="createOpen" title="部署 Docker 应用" description="粘贴现成内容即可，KPanel 会自动识别 Docker Run 或 Docker Compose。" size="large" @close="createOpen = false">
       <section v-if="!createManualMode" class="deployment-input-card">
@@ -2170,9 +2212,13 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 110;
   display: grid;
+  box-sizing: border-box;
   width: 218px;
-  max-height: calc(100vh - 16px);
+  max-width: var(--context-menu-max-width, calc(100vw - 16px));
+  max-height: var(--context-menu-max-height, calc(100dvh - 16px));
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -2199,8 +2245,13 @@ onBeforeUnmount(() => {
   text-align: left;
   background: transparent;
   cursor: pointer;
+  font-size: 14px;
 }
-.docker-context-menu button:hover { background: var(--surface-subtle); }
+.docker-context-menu button:hover,
+.docker-context-menu button:focus-visible {
+  outline: 0;
+  background: var(--surface-subtle);
+}
 .docker-context-menu button:disabled { opacity: .42; cursor: not-allowed; }
 .docker-context-menu button.danger-link { color: var(--danger); }
 .docker-context-menu hr {

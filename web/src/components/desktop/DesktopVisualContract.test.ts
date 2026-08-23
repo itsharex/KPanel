@@ -10,8 +10,17 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/\.desktop\s*\{[^}]*z-index:\s*1000;/)
     expect(styles).toContain('z-index: 1200;')
     expect(styles).toContain('z-index: 2800 !important;')
+    expect(styles).toMatch(/\.desktop-mode-open :is\(\.file-context-menu, \.docker-context-menu, \.terminal-context-menu\)\s*\{[^}]*z-index:\s*4500 !important;/)
     expect(styles).toContain('z-index: 5000 !important;')
     expect(styles).toContain('z-index: 5200 !important;')
+  })
+
+  it('keeps desktop menus scrollable inside their measured safe area', () => {
+    expect(styles).toMatch(/\.desktop__context-menu\s*\{[^}]*max-height:\s*var\(--context-menu-max-height,[^;]+;[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;/)
+    expect(styles).toMatch(/\.desktop__context-menu button\s*\{[^}]*font-size:\s*14px;/)
+    expect(desktopViewSource).toContain("document.addEventListener('scroll', closeContextMenuOnScroll, true)")
+    expect(desktopViewSource).toContain("window.visualViewport?.addEventListener?.('resize', closeContextMenuOnViewportChange)")
+    expect(desktopViewSource).toMatch(/function onViewportResize\(\): void \{\s*closeContextMenu\(false\)/)
   })
 
   it('removes the root scrollbar gutter while desktop mode owns the viewport', () => {

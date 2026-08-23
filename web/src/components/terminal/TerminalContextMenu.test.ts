@@ -11,6 +11,20 @@ interface ExposedMenu {
   handleKeyEvent: (event: KeyboardEvent) => boolean
 }
 
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  }
+}
+
 describe('TerminalContextMenu', () => {
   const terminal = {
     focus: vi.fn(),
@@ -40,6 +54,7 @@ describe('TerminalContextMenu', () => {
 
   afterEach(() => {
     wrapper.unmount()
+    vi.restoreAllMocks()
   })
 
   async function openMenu(): Promise<HTMLElement> {
@@ -157,5 +172,44 @@ describe('TerminalContextMenu', () => {
     menu.querySelectorAll<HTMLButtonElement>('button')[2]!.click()
 
     expect(terminal.selectAll).toHaveBeenCalled()
+  })
+
+  it('keeps the teleported menu inside its desktop window and above the taskbar', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+    const desktop = document.createElement('div')
+    desktop.className = 'desktop'
+    const windowBody = document.createElement('div')
+    windowBody.className = 'desktop-window__body'
+    const anchor = document.createElement('div')
+    windowBody.append(anchor)
+    const taskbar = document.createElement('div')
+    taskbar.className = 'desktop__taskbar'
+    desktop.append(windowBody, taskbar)
+    document.body.append(desktop)
+    const originalBounds = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this === desktop) return rect(0, 0, 1280, 800)
+      if (this === windowBody) return rect(100, 80, 1080, 660)
+      if (this === taskbar) return rect(8, 728, 1264, 56)
+      if (this.matches('.terminal-context-menu')) return rect(0, 0, 228, 140)
+      return originalBounds.call(this)
+    })
+
+    ;(wrapper.vm as unknown as ExposedMenu).open({
+      clientX: 1200,
+      clientY: 760,
+      currentTarget: anchor,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as MouseEvent)
+    await flushPromises()
+
+    const menu = document.body.querySelector<HTMLElement>('.terminal-context-menu')!
+    expect(menu.style.left).toBe('944px')
+    expect(menu.style.top).toBe('580px')
+    expect(Number.parseFloat(menu.style.top) + 140).toBeLessThanOrEqual(720)
+    expect(menu.style.getPropertyValue('--context-menu-max-height')).toBe('632px')
+    desktop.remove()
   })
 })

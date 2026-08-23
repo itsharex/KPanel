@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ClipboardPaste, Copy, TextSelect } from '@lucide/vue'
 import type { Terminal } from '@xterm/xterm'
 import { useI18n } from '@/i18n'
+import { moveContextMenuFocus, placeContextMenu } from '@/lib/contextMenu'
 
 const props = defineProps<{
   getTerminal: () => Terminal | undefined
@@ -17,21 +18,22 @@ const left = ref(0)
 const top = ref(0)
 const selection = ref('')
 const feedback = ref<'copyFailed' | 'pasteBlocked'>()
+let contextMenuAnchor: Element | null = null
 
 function close(focusTerminal = false): void {
   visible.value = false
   feedback.value = undefined
+  contextMenuAnchor = null
   if (focusTerminal) props.getTerminal()?.focus()
 }
 
 async function positionMenu(): Promise<void> {
   await nextTick()
   if (!menu.value) return
-  const padding = 8
-  const bounds = menu.value.getBoundingClientRect()
-  left.value = Math.max(padding, Math.min(left.value, window.innerWidth - bounds.width - padding))
-  top.value = Math.max(padding, Math.min(top.value, window.innerHeight - bounds.height - padding))
-  menu.value.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+  const placed = placeContextMenu(menu.value, { x: left.value, y: top.value }, contextMenuAnchor)
+  left.value = placed.x
+  top.value = placed.y
+  menu.value.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true })
 }
 
 function open(event: MouseEvent): void {
@@ -39,6 +41,7 @@ function open(event: MouseEvent): void {
   event.stopPropagation()
   selection.value = props.getTerminal()?.getSelection() || ''
   feedback.value = undefined
+  contextMenuAnchor = event.currentTarget instanceof Element ? event.currentTarget : null
   left.value = event.clientX
   top.value = event.clientY
   visible.value = true
@@ -152,7 +155,20 @@ function handleEscape(event: KeyboardEvent): void {
   close(true)
 }
 
+function handleMenuKeydown(event: KeyboardEvent): void {
+  if (!menu.value || moveContextMenuFocus(menu.value, event)) return
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  event.stopPropagation()
+  close(true)
+}
+
 function handleViewportChange(): void {
+  close()
+}
+
+function handleViewportScroll(event: Event): void {
+  if (menu.value?.contains(event.target as Node)) return
   close()
 }
 
@@ -161,7 +177,9 @@ onMounted(() => {
   document.addEventListener('keydown', handleEscape, true)
   window.addEventListener('resize', handleViewportChange)
   window.addEventListener('blur', handleViewportChange)
-  document.addEventListener('scroll', handleViewportChange, true)
+  document.addEventListener('scroll', handleViewportScroll, true)
+  window.visualViewport?.addEventListener?.('resize', handleViewportChange)
+  window.visualViewport?.addEventListener?.('scroll', handleViewportChange)
 })
 
 onBeforeUnmount(() => {
@@ -169,7 +187,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleEscape, true)
   window.removeEventListener('resize', handleViewportChange)
   window.removeEventListener('blur', handleViewportChange)
-  document.removeEventListener('scroll', handleViewportChange, true)
+  document.removeEventListener('scroll', handleViewportScroll, true)
+  window.visualViewport?.removeEventListener?.('resize', handleViewportChange)
+  window.visualViewport?.removeEventListener?.('scroll', handleViewportChange)
 })
 
 defineExpose({ open, handlePaste, handleKeyEvent })
@@ -185,6 +205,7 @@ defineExpose({ open, handlePaste, handleKeyEvent })
       :aria-label="t('terminal.contextMenu')"
       :style="{ left: `${left}px`, top: `${top}px` }"
       @contextmenu.prevent
+      @keydown.stop="handleMenuKeydown"
     >
       <button type="button" role="menuitem" :disabled="!selection" @click="copySelection">
         <Copy :size="15" />
@@ -213,7 +234,13 @@ defineExpose({ open, handlePaste, handleKeyEvent })
   position: fixed;
   z-index: 7000;
   display: grid;
+  box-sizing: border-box;
   width: 228px;
+  max-width: var(--context-menu-max-width, calc(100vw - 16px));
+  max-height: var(--context-menu-max-height, calc(100dvh - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 6px;
   border: 1px solid var(--border-strong, #3a4b4e);
   border-radius: 10px;
@@ -235,6 +262,8 @@ defineExpose({ open, handlePaste, handleKeyEvent })
   background: transparent;
   text-align: left;
   cursor: pointer;
+  font: inherit;
+  font-size: 14px;
 }
 
 .terminal-context-menu button:hover:not(:disabled),
@@ -250,7 +279,7 @@ defineExpose({ open, handlePaste, handleKeyEvent })
 
 .terminal-context-menu kbd {
   color: var(--muted, #91a09e);
-  font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .terminal-context-menu hr {
@@ -264,7 +293,7 @@ defineExpose({ open, handlePaste, handleKeyEvent })
 .terminal-context-menu p {
   margin: 5px 7px 3px;
   color: var(--warning, #d5ae62);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.45;
 }
 </style>

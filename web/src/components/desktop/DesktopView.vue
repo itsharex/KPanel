@@ -46,6 +46,7 @@ import {
   type DesktopEntry,
 } from '@/lib/desktopEntries'
 import { api, ApiError, type SystemResourceSnapshot } from '@/lib/api'
+import { moveContextMenuFocus, placeContextMenu } from '@/lib/contextMenu'
 import { transferCrossPanelFileBatch } from '@/lib/crossPanelFileTransfer'
 import { downloadFileEntries } from '@/lib/fileDownloads'
 import {
@@ -896,14 +897,13 @@ async function showContextMenu(
 
   const menu = contextMenuElement.value
   if (!menu) return
-  const rect = menu.getBoundingClientRect()
-  const margin = 10
+  const placed = placeContextMenu(menu, { x: event.clientX, y: event.clientY }, contextMenuOpener, 10)
   contextMenu.value = {
     open: true,
-    x: Math.min(Math.max(margin, event.clientX), Math.max(margin, window.innerWidth - rect.width - margin)),
-    y: Math.min(Math.max(margin, event.clientY), Math.max(margin, window.innerHeight - rect.height - margin)),
+    x: placed.x,
+    y: placed.y,
   }
-  menu.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
+  menu.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true })
 }
 
 function onContextMenu(event: MouseEvent): void {
@@ -946,6 +946,15 @@ function closeContextMenu(restoreFocus = true): void {
   if (restoreFocus && opener?.isConnected) {
     void nextTick(() => opener.focus({ preventScroll: true }))
   }
+}
+
+function closeContextMenuOnScroll(event: Event): void {
+  if (contextMenuElement.value?.contains(event.target as Node)) return
+  closeContextMenu(false)
+}
+
+function closeContextMenuOnViewportChange(): void {
+  closeContextMenu(false)
 }
 
 function measureIconWorkArea(): void {
@@ -2036,19 +2045,8 @@ function onGlobalKeyDown(event: KeyboardEvent): void {
 }
 
 function onContextMenuKeyDown(event: KeyboardEvent): void {
-  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-  const items = Array.from(contextMenuElement.value?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || [])
-  if (!items.length) return
-  event.preventDefault()
-  const current = items.indexOf(document.activeElement as HTMLButtonElement)
-  const index = event.key === 'Home'
-    ? 0
-    : event.key === 'End'
-      ? items.length - 1
-      : event.key === 'ArrowDown'
-        ? (current + 1 + items.length) % items.length
-        : (current - 1 + items.length) % items.length
-  items[index]?.focus({ preventScroll: true })
+  const menu = contextMenuElement.value
+  if (menu) moveContextMenuFocus(menu, event)
 }
 
 function onDesktopPointerDown(event: PointerEvent): void {
@@ -3030,6 +3028,9 @@ onMounted(() => {
   window.addEventListener('pointerdown', onGlobalPointerDown)
   window.addEventListener('keydown', onGlobalKeyDown)
   window.addEventListener('resize', onViewportResize)
+  document.addEventListener('scroll', closeContextMenuOnScroll, true)
+  window.visualViewport?.addEventListener?.('resize', closeContextMenuOnViewportChange)
+  window.visualViewport?.addEventListener?.('scroll', closeContextMenuOnViewportChange)
   void loadEntries()
   void loadWorkspace()
   void loadLocalClusterIdentity()
@@ -3049,6 +3050,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('keydown', onGlobalKeyDown)
   window.removeEventListener('resize', onViewportResize)
+  document.removeEventListener('scroll', closeContextMenuOnScroll, true)
+  window.visualViewport?.removeEventListener?.('resize', closeContextMenuOnViewportChange)
+  window.visualViewport?.removeEventListener?.('scroll', closeContextMenuOnViewportChange)
   entriesAbort?.abort()
   workspaceAbort?.abort()
   desktopFileMetadataAbort?.abort()
@@ -3076,6 +3080,7 @@ onBeforeUnmount(() => {
 })
 
 function onViewportResize(): void {
+  closeContextMenu(false)
   if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
   resizeFrame = window.requestAnimationFrame(() => {
     resizeFrame = undefined

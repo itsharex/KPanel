@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { flushPromises, mount, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView.vue'
 
@@ -67,6 +67,20 @@ function directory(path: string) {
     truncated: false,
     scanTruncated: false,
     readAt: '2026-08-22T00:00:00Z',
+  }
+}
+
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
   }
 }
 
@@ -203,5 +217,73 @@ describe('FilesView remote download lifecycle', () => {
 
     expect(jobsSignal?.aborted).toBe(true)
     expect(mocks.cancelRemoteDownloadJob).not.toHaveBeenCalled()
+  })
+})
+
+describe('FilesView context menu', () => {
+  it('keeps the full file menu inside its desktop window and above the taskbar', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+    mocks.list.mockResolvedValue({
+      ...directory('/'),
+      total: 1,
+      entries: [{
+        name: 'nginx.conf',
+        path: '/nginx.conf',
+        kind: 'file',
+        mode: '-rw-r--r--',
+        owner: 'root',
+        group: 'root',
+        sizeBytes: 1024,
+        modifiedAt: '2026-08-23T00:00:00Z',
+        resourceVersion: 'sha256:file',
+        mimeType: 'text/plain',
+      }],
+    })
+    const desktop = document.createElement('div')
+    desktop.className = 'desktop'
+    const windowBody = document.createElement('div')
+    windowBody.className = 'desktop-window__body'
+    const taskbar = document.createElement('div')
+    taskbar.className = 'desktop__taskbar'
+    desktop.append(windowBody, taskbar)
+    document.body.append(desktop)
+    const wrapper = mount(FilesView, {
+      attachTo: windowBody,
+      global: {
+        stubs: {
+          ModalDialog: {
+            props: ['open'],
+            template: '<div v-if="open"><slot /></div>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+    const originalBounds = HTMLElement.prototype.getBoundingClientRect
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this === desktop) return rect(0, 0, 1280, 800)
+      if (this === windowBody) return rect(100, 80, 1080, 660)
+      if (this === taskbar) return rect(8, 728, 1264, 56)
+      if (this.matches('.file-context-menu')) return rect(0, 0, 196, 408)
+      return originalBounds.call(this)
+    })
+
+    try {
+      await wrapper.get('.file-row--entry').trigger('contextmenu', { clientX: 1200, clientY: 760 })
+      await flushPromises()
+
+      const menu = document.body.querySelector<HTMLElement>('.file-context-menu')!
+      expect(menu).not.toBeNull()
+      expect(menu.style.left).toBe('976px')
+      expect(menu.style.top).toBe('312px')
+      expect(Number.parseFloat(menu.style.top) + 408).toBeLessThanOrEqual(720)
+      expect(menu.style.getPropertyValue('--context-menu-max-height')).toBe('632px')
+      expect(document.activeElement).toBe(menu.querySelector('[role="menuitem"]:not(:disabled)'))
+    } finally {
+      wrapper.unmount()
+      desktop.remove()
+      boundsSpy.mockRestore()
+    }
   })
 })

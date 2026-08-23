@@ -171,6 +171,13 @@ describe('Docker resource toolbar layout', () => {
     expect(dockerSource).toContain('@contextmenu="showVolumeContext($event, volume)"')
     expect(dockerSource).toContain('class="docker-context-menu"')
     expect(dockerSource).toContain('role="menu"')
+    expect(dockerSource).toContain('<Teleport to="body">')
+    expect(dockerSource).toContain('ref="contextMenuElement"')
+    expect(dockerSource).toContain('placeContextMenu(menu, { x: current.x, y: current.y }, contextMenuOpener)')
+    expect(dockerSource).toContain("window.visualViewport?.addEventListener?.('resize', closeContextMenuOnViewportChange)")
+    expect(dockerSource).toContain("window.visualViewport?.addEventListener?.('scroll', closeContextMenuOnViewportChange)")
+    expect(dockerSource).toContain('role="menuitem"')
+    expect(dockerSource).not.toContain('window.innerHeight - 430')
   })
 
   it('groups Compose containers and exposes project configuration management', () => {

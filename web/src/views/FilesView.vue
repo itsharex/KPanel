@@ -43,6 +43,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import FileShareDialog from '@/components/files/FileShareDialog.vue'
 import FileShareManagerDialog from '@/components/files/FileShareManagerDialog.vue'
 import { ApiError, api } from '@/lib/api'
+import { moveContextMenuFocus, placeContextMenu } from '@/lib/contextMenu'
 import {
   desktopCloseGuardCoordinator,
   desktopWindowActiveKey,
@@ -1191,11 +1192,11 @@ async function settleContextMenu(): Promise<void> {
   const menu = contextMenuElement.value
   const current = contextMenu.value
   if (!menu || !current) return
-  const bounds = menu.getBoundingClientRect()
+  const placed = placeContextMenu(menu, { x: current.x, y: current.y }, contextMenuOpener)
   contextMenu.value = {
     ...current,
-    x: Math.max(8, Math.min(current.x, window.innerWidth - bounds.width - 8)),
-    y: Math.max(8, Math.min(current.y, window.innerHeight - bounds.height - 8)),
+    x: placed.x,
+    y: placed.y,
   }
   await nextTick()
   menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
@@ -1248,24 +1249,12 @@ function showDirectoryContext(event: MouseEvent): void {
 function handleContextMenuKeydown(event: KeyboardEvent): void {
   const menu = contextMenuElement.value
   if (!menu) return
-  const items = [...menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
-  if (!items.length) return
-  const current = document.activeElement instanceof HTMLButtonElement
-    ? items.indexOf(document.activeElement)
-    : -1
-  let target: HTMLButtonElement | undefined
-  if (event.key === 'ArrowDown') target = items[(current + 1 + items.length) % items.length]
-  else if (event.key === 'ArrowUp') target = items[(current - 1 + items.length) % items.length]
-  else if (event.key === 'Home') target = items[0]
-  else if (event.key === 'End') target = items[items.length - 1]
-  else if (event.key === 'Escape') {
+  if (moveContextMenuFocus(menu, event)) return
+  if (event.key === 'Escape') {
     event.preventDefault()
     contextMenu.value = undefined
     contextMenuOpener?.focus({ preventScroll: true })
-    return
-  } else return
-  event.preventDefault()
-  target?.focus({ preventScroll: true })
+  }
 }
 
 function openDialog(action: DialogAction, entry?: FileEntry): void {
@@ -2140,6 +2129,15 @@ function handleWindowClick(event: MouseEvent): void {
   if (!target.closest('.file-context-menu')) contextMenu.value = undefined
 }
 
+function closeContextMenuOnViewportChange(): void {
+  contextMenu.value = undefined
+}
+
+function closeContextMenuOnScroll(event: Event): void {
+  if (contextMenuElement.value?.contains(event.target as Node)) return
+  contextMenu.value = undefined
+}
+
 function handleFileShortcut(event: KeyboardEvent): void {
   if (!desktopWindowActive.value) return
   const target = event.target as HTMLElement | null
@@ -2179,6 +2177,10 @@ function focusFilesPage(event: PointerEvent): void {
   filesPage.value?.focus({ preventScroll: true })
 }
 
+watch(desktopWindowActive, (active) => {
+  if (!active) contextMenu.value = undefined
+})
+
 onMounted(() => {
   const guard = () => !previewDirty.value || window.confirm('文件尚未保存，确认关闭窗口吗？')
   unregisterWindowCloseGuard = desktopWindowCloseGuards
@@ -2186,6 +2188,10 @@ onMounted(() => {
     : desktopCloseGuardCoordinator.register('classic-files', guard)
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleFileShortcut)
+  window.addEventListener('resize', closeContextMenuOnViewportChange)
+  document.addEventListener('scroll', closeContextMenuOnScroll, true)
+  window.visualViewport?.addEventListener?.('resize', closeContextMenuOnViewportChange)
+  window.visualViewport?.addEventListener?.('scroll', closeContextMenuOnViewportChange)
   unsubscribeFileDirectoryChanges = subscribeFileDirectoryChanges((directories, origin, moves = []) => {
     if (origin === fileWindowChangeOrigin) return
     const relocatedPath = remapMovedFilePath(currentPath.value, moves)
@@ -2246,6 +2252,10 @@ onBeforeUnmount(() => {
   clearMediaLoadTimer()
   window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleFileShortcut)
+  window.removeEventListener('resize', closeContextMenuOnViewportChange)
+  document.removeEventListener('scroll', closeContextMenuOnScroll, true)
+  window.visualViewport?.removeEventListener?.('resize', closeContextMenuOnViewportChange)
+  window.visualViewport?.removeEventListener?.('scroll', closeContextMenuOnViewportChange)
 })
 </script>
 
@@ -2790,16 +2800,17 @@ onBeforeUnmount(() => {
       </div>
     </Transition>
 
-    <div
-      v-if="contextMenu"
-      id="file-context-menu"
-      ref="contextMenuElement"
-      class="file-context-menu"
-      :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
-      role="menu"
-      aria-label="文件操作"
-      @keydown.stop="handleContextMenuKeydown"
-    >
+    <Teleport to="body">
+      <div
+        v-if="contextMenu"
+        id="file-context-menu"
+        ref="contextMenuElement"
+        class="file-context-menu"
+        :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+        role="menu"
+        aria-label="文件操作"
+        @keydown.stop="handleContextMenuKeydown"
+      >
       <button v-if="contextMenu.entry" role="menuitem" type="button" @click="openEntry(contextMenu.entry)">
         <Eye :size="15" />{{ contextMenu.entry.kind === 'directory' ? '打开' : '查看' }}
       </button>
@@ -2867,7 +2878,8 @@ onBeforeUnmount(() => {
       <button v-if="contextMenu.entry" class="danger-link" role="menuitem" type="button" @click="openDialog('trash', contextMenu.entry)">
         <Trash2 :size="15" />移入回收站
       </button>
-    </div>
+      </div>
+    </Teleport>
 
     <FileShareDialog v-if="shareEntry" :entry="shareEntry" @close="closeFileShare" />
     <FileShareManagerDialog v-if="shareManagerOpen" @close="closeShareManager" />
@@ -4277,10 +4289,13 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 90;
   display: grid;
+  box-sizing: border-box;
   width: 196px;
-  max-height: calc(100vh - 16px);
+  max-width: var(--context-menu-max-width, calc(100vw - 16px));
+  max-height: var(--context-menu-max-height, calc(100dvh - 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 11px;
@@ -5042,11 +5057,11 @@ onBeforeUnmount(() => {
 
   .file-context-menu {
     top: auto !important;
-    right: 10px;
-    bottom: max(10px, env(safe-area-inset-bottom));
-    left: 10px !important;
+    right: max(10px, var(--context-menu-safe-right, 10px), env(safe-area-inset-right));
+    bottom: max(10px, var(--context-menu-safe-bottom, 10px), env(safe-area-inset-bottom));
+    left: max(10px, var(--context-menu-safe-left, 10px), env(safe-area-inset-left)) !important;
     width: auto;
-    max-height: min(66dvh, 520px);
+    max-height: min(66dvh, 520px, var(--context-menu-max-height, 66dvh));
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 3px;
     overflow-y: auto;
@@ -5169,9 +5184,9 @@ onBeforeUnmount(() => {
   }
 
   .file-context-menu {
-    right: 8px;
-    bottom: max(8px, env(safe-area-inset-bottom));
-    left: 8px !important;
+    right: max(8px, var(--context-menu-safe-right, 8px), env(safe-area-inset-right));
+    bottom: max(8px, var(--context-menu-safe-bottom, 8px), env(safe-area-inset-bottom));
+    left: max(8px, var(--context-menu-safe-left, 8px), env(safe-area-inset-left)) !important;
   }
 }
 </style>

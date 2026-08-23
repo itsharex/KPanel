@@ -2646,8 +2646,14 @@ body.desktop-mode-open::-webkit-scrollbar {
   position: fixed;
   z-index: 2200;
   display: flex;
+  box-sizing: border-box;
   min-width: 196px;
+  max-width: var(--context-menu-max-width, calc(100vw - 20px));
+  max-height: var(--context-menu-max-height, calc(100dvh - 20px));
   flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 6px;
   color: var(--text);
   background: var(--desktop-glass-strong);
@@ -2670,7 +2676,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   border-radius: 8px;
   cursor: default;
   font: inherit;
-  font-size: 11px;
+  font-size: 14px;
   text-align: left;
 }
 
@@ -4182,7 +4188,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   z-index: 5200 !important;
 }
 
-.desktop-mode-open .terminal-context-menu {
+.desktop-mode-open :is(.file-context-menu, .docker-context-menu, .terminal-context-menu) {
   z-index: 4500 !important;
 }
 
