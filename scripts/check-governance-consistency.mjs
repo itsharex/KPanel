@@ -23,8 +23,10 @@ const requiredFiles = [
   'dependency-policy.json',
   'environment-policy.json',
   'scripts/check-environment-policy.mjs',
+  'scripts/check-governance-candidate-ci.mjs',
   'scripts/verify-governance.sh',
   'scripts/tests/check-environment-policy.test.mjs',
+  'scripts/tests/governance-candidate-ci.test.mjs',
   'scripts/check-collaboration-state.mjs',
   'scripts/tests/collaboration-state.test.mjs',
   'scripts/run-repo-bash.mjs',
@@ -176,6 +178,7 @@ requireText('PROJECT_RULES.md', [
   'kpanel-release-process-incidents:start/end',
   'scripts/check-collaboration-state.mjs',
   'scripts/run-release-l3.mjs',
+  '候选分支保留到同一 SHA 的主线 CI 成功',
 ]);
 requireText('docs/development-quality-standard.md', [
   'ui-visual-language.md',
@@ -210,6 +213,7 @@ requireText('docs/project-management.md', [
   'kpanel-release-process-metrics:start/end',
   'scripts/check-collaboration-state.mjs',
   '流程异常指纹',
+  'scripts/check-governance-candidate-ci.mjs',
 ]);
 requireText('docs/multi-agent-collaboration.md', [
   'scripts/check-collaboration-state.mjs',
@@ -255,11 +259,13 @@ requireText('scripts/run-repo-bash.mjs', [
   'spawnSync',
 ]);
 requireText('scripts/verify-governance.sh', [
+  'scripts/tests/governance-candidate-ci.test.mjs',
   'scripts/tests/run-repo-bash.test.mjs',
   'scripts/tests/release-l3-orchestrator.test.mjs',
 ]);
 requireText('scripts/verify-change.sh', [
   'needs_governance=false',
+  'node scripts/check-governance-candidate-ci.mjs',
   'bash scripts/verify-governance.sh',
   'node scripts/check-governance-consistency.mjs',
   'node scripts/check-business-context-freshness.mjs',
@@ -272,6 +278,7 @@ requireText('scripts/verify-change.sh', [
   'scripts/run-release-l3.mjs',
   'scripts/run-release-l3-remote.sh',
   'scripts/tests/release-l3-orchestrator.test.mjs',
+  'scripts/tests/governance-candidate-ci.test.mjs',
   '--validate-acceptance',
   '--diff-filter=ACMRTD',
   '.github/workflows/*.yml|.github/workflows/*.yaml',
@@ -333,6 +340,12 @@ requireText('.codex-workflows/evolve-kpanel.workflow.yaml', [
   'PASS WITH FOLLOW-UP',
   '停止条件',
   '禁止重新开启无界全量探索',
+  'scripts/check-governance-candidate-ci.mjs',
+  '候选分支保留到主线 CI 成功',
+]);
+requireText('.github/workflows/ci.yml', [
+  'actions: read',
+  'GITHUB_TOKEN: ${{ github.token }}',
 ]);
 
 requireText('docs/release-acceptance-template.md', [

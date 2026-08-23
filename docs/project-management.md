@@ -206,6 +206,10 @@ git worktree list
 4. 只有修改永久规范、工作流、环境/依赖策略或治理入口时才完整运行
    `scripts/verify-governance.sh`；该脚本由 `make governance-check` 和变更感知入口共同复用，禁止再维护
    第三份命令清单。
+5. 上述治理变更通过本地门禁后仍只形成治理候选；获得推送和主线授权时，先推送专用非 `main` 分支并
+   等待同一精确 SHA 的 Linux `CI` 成功，再由唯一集成任务快进 `main`。`scripts/verify-change.sh` 在主线
+   CI 对治理路径自动调用 `scripts/check-governance-candidate-ci.mjs`；没有候选证据时不得把主线首轮
+   失败当作候选测试。候选分支在主线 CI 成功前不得删除。
 
 Windows linked worktree 不直接调用 PATH 中含义不明的 `bash`。Make 可用时，`make governance-check`、
 `make verify-change`、`make verify-l2` 和 `make verify-release` 统一通过 `scripts/run-repo-bash.mjs`；没有 Make
@@ -301,6 +305,8 @@ git push origin HEAD:refs/heads/<task-branch>
 3. 集成任务从最新 `origin/main` 建立干净 worktree，逐项重放批准提交；发生冲突时回到原开发任务修复或由集成任务记录解决，不在共享主工作树试错。
 4. 每加入一项变更就核对 `git diff`、提交列表和对应测试；全部进入后再执行版本号、Changelog 和 L3。
 5. 候选分支只包含当前版本批准内容；下一版本功能继续开发，但留在自己的分支和 worktree。
+6. 永久规范、CI 和发布工具使用同样的精确提交集成纪律，但属于治理候选而不是产品版本：本地治理
+   门禁、候选 Linux CI、主线快进和主线 CI 依次完成，不创建版本号、Tag、Release、镜像或生产变更。
 
 ## 10. 发布通道和冻结规则
 
@@ -377,6 +383,7 @@ KPanel 允许智能体持续优化规范、自动门禁和协作流程，但“�
 3. **准入**：由独立复核者读取原始证据并完成 Definition of Ready，排除指标投机、规则自我弱化和
    与产品核心思想冲突的方案；
 4. **试行**：在专用 branch/worktree 实施最小可回滚差异，按风险执行 L0-L3 和受影响实机/浏览器验收；
+   永久治理变更在本地门禁后先通过同一精确 SHA 的候选 Linux CI，再允许快进主线；
 5. **决策**：根据相同环境、样本和参数的对比结果选择采纳、继续试行、拒绝或回滚；
 6. **观察窗口**：采纳后继续核对复发、误报、人工成本及六维质量，恶化时按预设条件回滚。
 

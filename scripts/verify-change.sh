@@ -79,14 +79,14 @@ for path in "${changed_files[@]}"; do
     .codex-workflows/*|docs/project-management.md|docs/multi-agent-collaboration.md|\
     docs/development-quality-standard.md|docs/release-acceptance-template.md|\
     docs/quality-improvement-proposal-template.md|docs/product-quality-review-*.md|\
-    scripts/check-governance-consistency.mjs|scripts/check-environment-policy.mjs|\
+    scripts/check-governance-consistency.mjs|scripts/check-governance-candidate-ci.mjs|scripts/check-environment-policy.mjs|\
     scripts/check-collaboration-state.mjs|\
     scripts/run-repo-bash.mjs|\
     scripts/run-release-gate.sh|scripts/run-release-l3.mjs|scripts/run-release-l3-remote.sh|\
     scripts/background-browser-test.mjs|scripts/local-feature-preview.mjs|scripts/mock-app-market-api.mjs|\
     scripts/report-release-metrics.mjs|scripts/check-business-context-freshness.mjs|\
     scripts/report-dependency-freshness.mjs|scripts/verify-governance.sh|scripts/verify-change.sh|\
-    scripts/tests/check-environment-policy.test.mjs|scripts/tests/background-browser-test.test.mjs|\
+    scripts/tests/check-environment-policy.test.mjs|scripts/tests/governance-candidate-ci.test.mjs|scripts/tests/background-browser-test.test.mjs|\
     scripts/tests/collaboration-state.test.mjs|\
     scripts/tests/run-repo-bash.test.mjs|\
     scripts/tests/release-gate-runner.test.mjs|scripts/tests/release-l3-orchestrator.test.mjs|\
@@ -98,6 +98,10 @@ for path in "${changed_files[@]}"; do
       ;;
   esac
 done
+
+if [[ "$needs_governance" == true && "${CI:-}" == "true" && "${GITHUB_REF_NAME:-}" == "main" ]]; then
+  node scripts/check-governance-candidate-ci.mjs
+fi
 
 if [[ "$needs_governance" == true || "$requested_level" == "3" || "$requested_level" == "l3" || "$requested_level" == "release" ]]; then
   bash scripts/verify-governance.sh
