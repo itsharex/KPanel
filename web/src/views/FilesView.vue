@@ -138,6 +138,21 @@ interface CodeEditorStatus {
   lines: number
 }
 
+type UploadTaskPhase = 'running' | 'success' | 'error'
+
+interface UploadTask {
+  id: string
+  name: string
+  target: string
+  progress: number
+  phase: UploadTaskPhase
+  detail?: string
+}
+
+type UploadTaskSource =
+  | { kind: 'file'; file: File; target: string }
+  | { kind: 'directory'; manifest: ExternalDropManifest; target: string }
+
 const toast = useToast()
 const i18n = useI18n()
 const directory = ref<FileDirectory>()
@@ -151,7 +166,7 @@ const dragging = ref(false)
 const selected = ref(new Set<string>())
 const selectionAnchor = ref<string>()
 const uploadInput = ref<HTMLInputElement>()
-const uploadProgress = ref<Record<string, number>>({})
+const uploadTasks = ref<UploadTask[]>([])
 const remoteDownloadURLInput = ref<HTMLInputElement>()
 const remoteDownloadDialogOpen = ref(false)
 const remoteDownloadURL = ref('')
@@ -210,7 +225,14 @@ const fileTransferState = ref<{
   remote?: boolean
   completed?: number
   currentName?: string
+  detail?: string
 }>()
+const fileStatusStackVisible = computed(() => Boolean(
+  clipboard.value?.entries.length
+  || remoteDownloadTasksVisible.value
+  || fileTransferState.value
+  || uploadTasks.value.length,
+))
 const desktopAdding = ref(false)
 const previewEntry = ref<FileEntry>()
 const previewContent = ref('')
@@ -240,6 +262,9 @@ let archiveController: AbortController | undefined
 let externalUploadController: AbortController | undefined
 let fileTransferController: AbortController | undefined
 let fileTransferClearTimer: number | undefined
+const uploadTaskSources = new Map<string, UploadTaskSource>()
+const uploadTaskClearTimers = new Map<string, number>()
+let uploadTaskSequence = 0
 let remoteDownloadJobsController: AbortController | undefined
 let remoteDownloadPollTimer: number | undefined
 let remoteDownloadJobsInitialized = false
@@ -994,11 +1019,23 @@ function onEntryDragLeave(event: DragEvent, entry: FileEntry): void {
 }
 
 function scheduleFileTransferClear(): void {
-  if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
+  if (fileTransferClearTimer !== undefined) {
+    window.clearTimeout(fileTransferClearTimer)
+    fileTransferClearTimer = undefined
+  }
+  if (!['success', 'cancelled'].includes(fileTransferState.value?.phase || '')) return
   fileTransferClearTimer = window.setTimeout(() => {
     fileTransferState.value = undefined
     fileTransferClearTimer = undefined
   }, 2200)
+}
+
+function dismissFileTransfer(): void {
+  if (fileTransferClearTimer !== undefined) {
+    window.clearTimeout(fileTransferClearTimer)
+    fileTransferClearTimer = undefined
+  }
+  fileTransferState.value = undefined
 }
 
 function cancelFileTransfer(): void {
@@ -1016,7 +1053,10 @@ async function transferInternalFileDrop(event: DragEvent, target: string): Promi
     return
   }
 
-  if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
+  if (fileTransferClearTimer !== undefined) {
+    window.clearTimeout(fileTransferClearTimer)
+    fileTransferClearTimer = undefined
+  }
   // Copies may be cancelled safely because they never change desktop shortcut
   // targets. A move must run to a server result so successful path mappings can
   // be applied to desktop shortcuts without leaving stale references behind.
@@ -1039,24 +1079,29 @@ async function transferInternalFileDrop(event: DragEvent, target: string): Promi
       target,
       count: result.succeeded.length,
       phase: partial ? 'partial' : 'success',
-    }
-    if (partial) {
-      toast.danger(
-        operation === 'copy' ? '部分文件未复制' : '部分文件未移动',
-        shortcutSyncFailed
+      detail: partial
+        ? shortcutSyncFailed
           ? '真实文件已移动，但桌面快捷方式路径同步失败，请刷新后重试。'
-          : `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`,
-      )
-    } else {
-      toast.success(operation === 'copy' ? '复制完成' : '移动完成', `${result.succeeded.length} 项已传输到 ${target}`)
+          : `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`
+        : undefined,
     }
   } catch (error) {
     if (controller?.signal.aborted) {
-      fileTransferState.value = { mode: operation, target, count: entries.length, phase: 'cancelled' }
-      toast.show('复制已取消', { message: '已经复制完成的项目会保留在目标目录。' })
+      fileTransferState.value = {
+        mode: operation,
+        target,
+        count: entries.length,
+        phase: 'cancelled',
+        detail: '已经复制完成的项目会保留在目标目录。',
+      }
     } else {
-      fileTransferState.value = { mode: operation, target, count: entries.length, phase: 'error' }
-      toast.danger(operation === 'copy' ? '复制失败' : '移动失败', errorMessage(error))
+      fileTransferState.value = {
+        mode: operation,
+        target,
+        count: entries.length,
+        phase: 'error',
+        detail: errorMessage(error),
+      }
     }
     if (!unmounted) await loadDirectory()
   } finally {
@@ -1080,7 +1125,10 @@ async function transferCrossPanelFileDrop(event: DragEvent, target: string): Pro
     toast.show('已有文件操作正在进行')
     return
   }
-  if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
+  if (fileTransferClearTimer !== undefined) {
+    window.clearTimeout(fileTransferClearTimer)
+    fileTransferClearTimer = undefined
+  }
   const controller = new AbortController()
   fileTransferController = controller
   const total = payload.entries.length
@@ -1110,22 +1158,15 @@ async function transferCrossPanelFileDrop(event: DragEvent, target: string): Pro
     fileTransferState.value = {
       mode: 'copy', target, count: total, phase, remote: true,
       completed, currentName: result.succeeded.at(-1)?.entry.name,
+      detail: result.cancelled
+        ? `已完成的 ${result.succeeded.length} 项会保留在目标目录。`
+        : phase === 'success'
+          ? undefined
+          : `${result.succeeded.length} 项成功，${result.failed.length} 项失败${result.failed[0]?.detail ? `：${result.failed[0].detail}` : ''}`,
     }
     if (result.succeeded.length) {
       if (!unmounted) await loadDirectory()
       notifyFileDirectoriesChanged([target, currentPath.value], fileWindowChangeOrigin)
-    }
-    if (result.cancelled) {
-      toast.show('跨面板复制已取消', {
-        message: `已完成的 ${result.succeeded.length} 项会保留在目标目录。`,
-      })
-    } else if (phase === 'success') {
-      toast.success('跨面板复制完成', `${result.succeeded.length} 项已复制到 ${target}`)
-    } else {
-      toast.danger(
-        phase === 'error' ? '跨面板复制失败' : '跨面板复制部分完成',
-        `${result.succeeded.length} 项成功，${result.failed.length} 项失败${result.failed[0]?.detail ? `：${result.failed[0].detail}` : ''}`,
-      )
     }
   } finally {
     if (fileTransferController === controller) fileTransferController = undefined
@@ -1187,7 +1228,7 @@ function showDirectoryContext(event: MouseEvent): void {
   const target = event.target as HTMLElement
   if (
     target.closest(
-      '.file-row--entry, .file-grid-card, .file-toolbar, .clipboard-bar, .upload-strip, .file-limit, .drop-overlay',
+      '.file-row--entry, .file-grid-card, .file-toolbar, .file-status-stack, .file-limit, .drop-overlay',
     )
   ) {
     return
@@ -1291,10 +1332,6 @@ function setClipboard(mode: FileTransferOperation, entry?: FileEntry): void {
   if (!entriesToStore.length) return
   fileClipboard.set(mode, entriesToStore)
   clearSelection()
-  toast.success(
-    mode === 'copy' ? '已复制到文件剪贴板' : '已剪切到文件剪贴板',
-    `${entriesToStore.length} 项，进入目标文件夹后点击“粘贴”`,
-  )
 }
 
 function clearClipboard(): void {
@@ -1322,8 +1359,19 @@ async function applySuccessfulFileChanges(
 async function pasteClipboard(target = currentPath.value): Promise<void> {
   const stored = clipboard.value
   if (!stored?.entries.length || pasteBusy.value) return
+  if (fileTransferState.value?.phase === 'running') {
+    toast.show('已有文件操作正在进行')
+    return
+  }
   contextMenu.value = undefined
+  dismissFileTransfer()
   pasteBusy.value = true
+  fileTransferState.value = {
+    mode: stored.mode,
+    target,
+    count: stored.entries.length,
+    phase: 'running',
+  }
   try {
     const result = await api.files.action({
       action: stored.mode,
@@ -1340,24 +1388,30 @@ async function pasteClipboard(target = currentPath.value): Promise<void> {
       else fileClipboard.clear()
     }
     const shortcutSyncFailed = await applySuccessfulFileChanges(result, target)
-    if (result.failed.length || shortcutSyncFailed) {
-      toast.danger(
-        result.succeeded.length ? '部分文件未粘贴' : '粘贴未完成',
-        shortcutSyncFailed
+    const partial = Boolean(result.failed.length || shortcutSyncFailed)
+    fileTransferState.value = {
+      mode: stored.mode,
+      target,
+      count: result.succeeded.length,
+      phase: partial ? 'partial' : 'success',
+      detail: partial
+        ? shortcutSyncFailed
           ? '文件已移动，但桌面快捷方式路径同步失败，请刷新后重试。'
-          : `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`,
-      )
-    } else {
-      toast.success(
-        stored.mode === 'copy' ? '复制完成' : '移动完成',
-        `${result.succeeded.length} 项已粘贴到 ${target}`,
-      )
+          : `${result.succeeded.length} 项成功，${result.failed.length} 项失败：${result.failed[0]?.detail || '请刷新后重试'}`
+        : undefined,
     }
   } catch (error) {
-    toast.danger('粘贴失败', errorMessage(error))
+    fileTransferState.value = {
+      mode: stored.mode,
+      target,
+      count: stored.entries.length,
+      phase: 'error',
+      detail: errorMessage(error),
+    }
     await loadDirectory()
   } finally {
     pasteBusy.value = false
+    if (!unmounted) scheduleFileTransferClear()
   }
 }
 
@@ -1828,44 +1882,90 @@ async function deleteRemoteDownloadJob(job: FileRemoteDownloadJob): Promise<void
   }
 }
 
+function uploadTaskName(source: UploadTaskSource): string {
+  if (source.kind === 'file') return source.file.name
+  return source.manifest.roots.length === 1
+    ? source.manifest.roots[0]!.name
+    : `${source.manifest.roots.length} 项`
+}
+
+function createUploadTask(source: UploadTaskSource): UploadTask {
+  uploadTaskSequence += 1
+  const task: UploadTask = {
+    id: `upload-${uploadTaskSequence}`,
+    name: uploadTaskName(source),
+    target: source.target,
+    progress: 0,
+    phase: 'running',
+  }
+  uploadTaskSources.set(task.id, source)
+  uploadTasks.value = [...uploadTasks.value, task]
+  return task
+}
+
+function updateUploadTask(id: string, update: Partial<Omit<UploadTask, 'id'>>): void {
+  uploadTasks.value = uploadTasks.value.map((task) => task.id === id ? { ...task, ...update } : task)
+}
+
+function dismissUploadTask(id: string): void {
+  const timer = uploadTaskClearTimers.get(id)
+  if (timer !== undefined) window.clearTimeout(timer)
+  uploadTaskClearTimers.delete(id)
+  uploadTaskSources.delete(id)
+  uploadTasks.value = uploadTasks.value.filter((task) => task.id !== id)
+}
+
+function scheduleUploadTaskClear(id: string): void {
+  const previous = uploadTaskClearTimers.get(id)
+  if (previous !== undefined) window.clearTimeout(previous)
+  uploadTaskClearTimers.set(id, window.setTimeout(() => dismissUploadTask(id), 1800))
+}
+
+function uploadTaskStatus(task: UploadTask): string {
+  if (task.phase === 'running') return '上传中'
+  if (task.phase === 'success') return '上传完成'
+  return '上传失败'
+}
+
+async function runFileUploadTask(id: string, source: Extract<UploadTaskSource, { kind: 'file' }>): Promise<void> {
+  updateUploadTask(id, { phase: 'running', progress: 0, detail: undefined })
+  const onProgress = (progress: number): void => updateUploadTask(id, {
+    progress: Math.max(0, Math.min(100, progress)),
+  })
+  try {
+    await api.files.upload(source.target, source.file, false, onProgress)
+  } catch (error) {
+    if (
+      error instanceof ApiError
+      && error.status === 409
+      && window.confirm(`${source.file.name} 已存在，是否覆盖？`)
+    ) {
+      try {
+        await api.files.upload(source.target, source.file, true, onProgress)
+      } catch (overwriteError) {
+        updateUploadTask(id, { phase: 'error', detail: errorMessage(overwriteError) })
+        return
+      }
+    } else {
+      updateUploadTask(id, { phase: 'error', detail: errorMessage(error) })
+      return
+    }
+  }
+  updateUploadTask(id, { phase: 'success', progress: 100, detail: undefined })
+  scheduleUploadTaskClear(id)
+}
+
 async function uploadFiles(files: FileList | File[]): Promise<void> {
   const values = Array.from(files)
   if (!values.length) return
+  const target = currentPath.value
   for (const file of values) {
-    uploadProgress.value = { ...uploadProgress.value, [file.name]: 0 }
-    try {
-      await api.files.upload(currentPath.value, file, false, (progress) => {
-        uploadProgress.value = { ...uploadProgress.value, [file.name]: progress }
-      })
-      uploadProgress.value = { ...uploadProgress.value, [file.name]: 100 }
-    } catch (error) {
-      if (
-        error instanceof ApiError &&
-        error.status === 409 &&
-        window.confirm(`${file.name} 已存在，是否覆盖？`)
-      ) {
-        try {
-          await api.files.upload(currentPath.value, file, true, (progress) => {
-            uploadProgress.value = { ...uploadProgress.value, [file.name]: progress }
-          })
-          uploadProgress.value = { ...uploadProgress.value, [file.name]: 100 }
-          continue
-        } catch (overwriteError) {
-          toast.danger(`${file.name} 覆盖失败`, errorMessage(overwriteError))
-        }
-      } else {
-        toast.danger(`${file.name} 上传失败`, errorMessage(error))
-      }
-      const next = { ...uploadProgress.value }
-      delete next[file.name]
-      uploadProgress.value = next
-    }
+    const source = { kind: 'file', file, target } as const
+    const task = createUploadTask(source)
+    await runFileUploadTask(task.id, source)
   }
   if (uploadInput.value) uploadInput.value.value = ''
-  await loadDirectory()
-  window.setTimeout(() => {
-    uploadProgress.value = {}
-  }, 1800)
+  if (!unmounted && currentPath.value === target) await loadDirectory(target)
 }
 
 function externalUploadErrorMessage(error: unknown): string {
@@ -1879,13 +1979,13 @@ function externalUploadErrorMessage(error: unknown): string {
   }
 }
 
-async function uploadDirectoryManifest(
+async function runDirectoryUploadTask(
+  id: string,
   manifest: ExternalDropManifest,
   target: string,
   signal: AbortSignal,
 ): Promise<void> {
-  const label = manifest.roots.length === 1 ? manifest.roots[0]!.name : `${manifest.roots.length} 项`
-  uploadProgress.value = { ...uploadProgress.value, [label]: 0 }
+  updateUploadTask(id, { phase: 'running', progress: 0, detail: undefined })
   try {
     const result = await uploadExternalDrop(manifest, api.files, signal, (progress) => {
       const percent = progress.totalBytes > 0
@@ -1893,27 +1993,55 @@ async function uploadDirectoryManifest(
         : progress.totalFiles > 0
           ? Math.round(progress.completedFiles / progress.totalFiles * 100)
           : 100
-      uploadProgress.value = { ...uploadProgress.value, [label]: Math.max(0, Math.min(100, percent)) }
+      updateUploadTask(id, { progress: Math.max(0, Math.min(100, percent)) })
     }, target)
     if (signal.aborted || unmounted) return
     if (result.failed.length) {
-      toast.danger(`${label} 上传失败`, result.failed[0]!.detail)
+      updateUploadTask(id, { phase: 'error', detail: result.failed[0]!.detail })
     } else {
-      uploadProgress.value = { ...uploadProgress.value, [label]: 100 }
+      updateUploadTask(id, { phase: 'success', progress: 100, detail: undefined })
+      scheduleUploadTaskClear(id)
     }
   } catch (error) {
     if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
-    toast.danger(`${label} 上传失败`, externalUploadErrorMessage(error))
+    updateUploadTask(id, { phase: 'error', detail: externalUploadErrorMessage(error) })
   } finally {
     if (!unmounted) {
       if (currentPath.value === target) await loadDirectory(target)
       notifyFileDirectoriesChanged([target], fileWindowChangeOrigin)
-      window.setTimeout(() => {
-        const next = { ...uploadProgress.value }
-        delete next[label]
-        uploadProgress.value = next
-      }, 1800)
     }
+  }
+}
+
+async function uploadDirectoryManifest(
+  manifest: ExternalDropManifest,
+  target: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const source = { kind: 'directory', manifest, target } as const
+  const task = createUploadTask(source)
+  await runDirectoryUploadTask(task.id, manifest, target, signal)
+}
+
+async function retryUploadTask(id: string): Promise<void> {
+  const task = uploadTasks.value.find((item) => item.id === id)
+  const source = uploadTaskSources.get(id)
+  if (!task || task.phase !== 'error' || !source) return
+  if (source.kind === 'file') {
+    await runFileUploadTask(id, source)
+    if (!unmounted && currentPath.value === source.target) await loadDirectory(source.target)
+    return
+  }
+  if (externalUploadController) {
+    toast.show('已有文件操作正在进行')
+    return
+  }
+  const controller = new AbortController()
+  externalUploadController = controller
+  try {
+    await runDirectoryUploadTask(id, source.manifest, source.target, controller.signal)
+  } finally {
+    if (externalUploadController === controller) externalUploadController = undefined
   }
 }
 
@@ -2111,6 +2239,9 @@ onBeforeUnmount(() => {
   externalUploadController?.abort()
   fileTransferController?.abort()
   if (fileTransferClearTimer !== undefined) window.clearTimeout(fileTransferClearTimer)
+  uploadTaskClearTimers.forEach((timer) => window.clearTimeout(timer))
+  uploadTaskClearTimers.clear()
+  uploadTaskSources.clear()
   if (searchTimer !== undefined) window.clearTimeout(searchTimer)
   clearMediaLoadTimer()
   window.removeEventListener('click', handleWindowClick)
@@ -2233,6 +2364,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
+      <div v-if="fileStatusStackVisible" class="file-status-stack">
       <Transition name="slide">
         <div v-if="clipboard?.entries.length" class="clipboard-bar">
           <span class="clipboard-bar__icon">
@@ -2356,48 +2488,85 @@ onBeforeUnmount(() => {
       </Transition>
 
       <Transition name="slide">
-        <div
-          v-if="fileTransferState"
-          class="file-transfer-status"
-          :class="`file-transfer-status--${fileTransferState.phase}`"
-          role="status"
-          aria-live="polite"
+        <section
+          v-if="fileTransferState || uploadTasks.length"
+          class="file-activity-stack"
+          aria-label="文件操作状态"
         >
-          <span class="file-transfer-status__icon">
-            <RefreshCw v-if="fileTransferState.phase === 'running'" :size="17" class="spinning" />
-            <Copy v-else-if="fileTransferState.mode === 'copy'" :size="17" />
-            <Scissors v-else :size="17" />
-          </span>
-          <span>
-            <strong>{{ fileTransferTitle }}</strong>
-            <small>{{ fileTransferState.currentName
-              ? `${fileTransferState.currentName} → ${fileTransferState.target}`
-              : fileTransferState.target }}</small>
-          </span>
-          <button
-            v-if="fileTransferState.phase === 'running' && fileTransferState.mode === 'copy'"
-            type="button"
-            @click="cancelFileTransfer"
-          >取消</button>
-        </div>
-      </Transition>
-
-      <div v-if="Object.keys(uploadProgress).length" class="upload-strip">
-        <div v-for="(progress, name) in uploadProgress" :key="name" class="upload-strip__item">
-          <span class="upload-strip__icon" aria-hidden="true"><Upload :size="16" /></span>
-          <div class="upload-strip__body">
-            <span class="upload-strip__name" :title="name">{{ name }}</span>
-            <div
-              class="upload-strip__track"
-              role="progressbar"
-              :aria-label="i18n.t('files.upload.progressLabel', { name, progress })"
-              aria-valuemin="0"
-              aria-valuemax="100"
-              :aria-valuenow="progress"
-            ><i :style="{ width: `${progress}%` }" /></div>
+          <div
+            v-if="fileTransferState"
+            class="file-activity-row file-transfer-status"
+            :class="`file-activity-row--${fileTransferState.phase}`"
+            :role="['partial', 'error'].includes(fileTransferState.phase) ? 'alert' : 'status'"
+            aria-live="polite"
+          >
+            <span class="file-activity-row__icon" aria-hidden="true">
+              <RefreshCw v-if="fileTransferState.phase === 'running'" :size="17" class="spinning" />
+              <Copy v-else-if="fileTransferState.mode === 'copy'" :size="17" />
+              <Scissors v-else :size="17" />
+            </span>
+            <span class="file-activity-row__body">
+              <strong>{{ fileTransferTitle }}</strong>
+              <small :title="fileTransferState.currentName
+                ? `${fileTransferState.currentName} → ${fileTransferState.target}`
+                : fileTransferState.target">
+                {{ fileTransferState.currentName
+                  ? `${fileTransferState.currentName} → ${fileTransferState.target}`
+                  : fileTransferState.target }}
+              </small>
+              <small v-if="fileTransferState.detail" class="file-activity-row__detail" :title="fileTransferState.detail">
+                {{ fileTransferState.detail }}
+              </small>
+            </span>
+            <span class="file-activity-row__actions">
+              <button
+                v-if="fileTransferState.phase === 'running' && fileTransferState.mode === 'copy'"
+                type="button"
+                @click="cancelFileTransfer"
+              >取消</button>
+              <button
+                v-else-if="!['running', 'success'].includes(fileTransferState.phase)"
+                type="button"
+                @click="dismissFileTransfer"
+              >关闭</button>
+            </span>
           </div>
-          <strong aria-hidden="true">{{ progress }}%</strong>
-        </div>
+
+          <div
+            v-for="task in uploadTasks"
+            :key="task.id"
+            class="file-activity-row upload-task"
+            :class="`file-activity-row--${task.phase}`"
+            :role="task.phase === 'error' ? 'alert' : 'status'"
+            aria-live="polite"
+          >
+            <span class="file-activity-row__icon" aria-hidden="true">
+              <RefreshCw v-if="task.phase === 'running'" :size="17" class="spinning" />
+              <Upload v-else :size="17" />
+            </span>
+            <span class="file-activity-row__body">
+              <strong :title="task.name">{{ task.name }}</strong>
+              <small>{{ uploadTaskStatus(task) }} · {{ task.target }}</small>
+              <small v-if="task.detail" class="file-activity-row__detail" :title="task.detail">{{ task.detail }}</small>
+              <span
+                class="file-activity-row__track"
+                role="progressbar"
+                :aria-label="i18n.t('files.upload.progressLabel', { name: task.name, progress: task.progress })"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-valuenow="task.progress"
+              ><i :style="{ width: `${task.progress}%` }" /></span>
+            </span>
+            <span class="file-activity-row__actions">
+              <strong v-if="task.phase !== 'error'" aria-hidden="true">{{ task.progress }}%</strong>
+              <template v-else>
+                <button type="button" @click="retryUploadTask(task.id)">重试</button>
+                <button type="button" @click="dismissUploadTask(task.id)">关闭</button>
+              </template>
+            </span>
+          </div>
+        </section>
+      </Transition>
       </div>
 
       <div
@@ -3318,6 +3487,14 @@ onBeforeUnmount(() => {
   padding-inline: 7px;
 }
 
+.file-status-stack {
+  display: grid;
+  max-height: min(420px, 46dvh);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+
 .clipboard-bar {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
@@ -3385,72 +3562,130 @@ onBeforeUnmount(() => {
   cursor: wait;
 }
 
-.file-transfer-status {
+.file-activity-stack {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.file-activity-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 50px;
-  padding: 8px 15px;
-  border-bottom: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border));
-  background: color-mix(in srgb, var(--brand) 7%, var(--surface));
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-subtle);
 }
 
-.file-transfer-status--partial,
-.file-transfer-status--error,
-.file-transfer-status--cancelled {
-  border-bottom-color: color-mix(in srgb, var(--amber) 30%, var(--border));
-  background: color-mix(in srgb, var(--amber) 7%, var(--surface));
+.file-activity-row--partial,
+.file-activity-row--cancelled {
+  border-color: color-mix(in srgb, var(--amber) 32%, var(--border));
 }
 
-.file-transfer-status__icon {
+.file-activity-row--error {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
+}
+
+.file-activity-row__icon {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   place-items: center;
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--brand);
-  background: color-mix(in srgb, var(--brand) 14%, var(--surface));
+  background: color-mix(in srgb, var(--brand) 12%, var(--surface));
 }
 
-.file-transfer-status--partial .file-transfer-status__icon,
-.file-transfer-status--error .file-transfer-status__icon,
-.file-transfer-status--cancelled .file-transfer-status__icon {
+.file-activity-row--partial .file-activity-row__icon,
+.file-activity-row--cancelled .file-activity-row__icon {
   color: var(--amber);
   background: color-mix(in srgb, var(--amber) 13%, var(--surface));
 }
 
-.file-transfer-status > span:nth-child(2) {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
+.file-activity-row--error .file-activity-row__icon {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
 }
 
-.file-transfer-status strong,
-.file-transfer-status small {
+.file-activity-row__body {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.file-activity-row strong,
+.file-activity-row small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.file-transfer-status strong {
+.file-activity-row strong {
   color: var(--text);
-  font-size: 12px;
+  font-size: 14px;
 }
 
-.file-transfer-status small {
+.file-activity-row small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
-.file-transfer-status button {
-  min-height: 30px;
-  padding: 5px 10px;
+.file-activity-row .file-activity-row__detail {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--amber);
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.file-activity-row--error .file-activity-row__detail {
+  color: var(--danger);
+}
+
+.file-activity-row__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.file-activity-row__actions > strong {
+  min-width: 38px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+
+.file-activity-row__actions button {
+  min-height: 40px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
   background: var(--surface);
   cursor: pointer;
+  font-size: 14px;
+}
+
+.file-activity-row__track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--border) 72%, var(--surface));
+}
+
+.file-activity-row__track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand);
 }
 
 .remote-download-tasks {
@@ -3651,66 +3886,6 @@ onBeforeUnmount(() => {
 
 .danger-link {
   color: var(--danger) !important;
-}
-
-.upload-strip {
-  display: grid;
-  gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.upload-strip__item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 42px;
-  align-items: center;
-  gap: 8px;
-}
-
-.upload-strip__icon {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border-radius: 8px;
-  color: var(--brand);
-  background: color-mix(in srgb, var(--brand) 12%, var(--surface));
-}
-
-.upload-strip__body {
-  display: grid;
-  min-width: 0;
-  gap: 5px;
-}
-
-.upload-strip__name {
-  overflow: hidden;
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.upload-strip__track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 99px;
-  background: var(--surface-subtle);
-}
-
-.upload-strip__track i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--brand);
-}
-
-.upload-strip__item > strong {
-  color: var(--muted);
-  font-size: 13px;
-  text-align: right;
 }
 
 .file-table {
@@ -4090,12 +4265,12 @@ onBeforeUnmount(() => {
 }
 
 .file-internal-drop-hint strong {
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .file-internal-drop-hint small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: 13px;
 }
 
 .file-context-menu {

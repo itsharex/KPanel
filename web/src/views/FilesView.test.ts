@@ -129,10 +129,14 @@ interface FileBindings {
   toggleAllTrash: () => void
   runTrashAction: (action: 'trash_restore' | 'trash_delete' | 'trash_empty') => Promise<void>
   pasteClipboard: (target?: string) => Promise<void>
+  uploadFiles: (files: FileList | File[]) => Promise<void>
+  retryUploadTask: (id: string) => Promise<void>
+  dismissUploadTask: (id: string) => void
   transferInternalFileDrop: (event: DragEvent, target: string) => Promise<void>
   transferCrossPanelFileDrop: (event: DragEvent, target: string) => Promise<void>
   onDrop: (event: DragEvent) => Promise<void>
   cancelFileTransfer: () => void
+  dismissFileTransfer: () => void
   openRemoteDownloadDialog: () => void
   closeRemoteDownloadDialog: () => void
   validRemoteDownloadForm: () => boolean
@@ -189,7 +193,18 @@ interface FileBindings {
       target: string
       count: number
       phase: 'running' | 'success' | 'partial' | 'cancelled' | 'error'
+      detail?: string
     }
+  }
+  uploadTasks: {
+    value: Array<{
+      id: string
+      name: string
+      target: string
+      progress: number
+      phase: 'running' | 'success' | 'error'
+      detail?: string
+    }>
   }
   remoteDownloadDialogOpen: { value: boolean }
   remoteDownloadURL: { value: string }
@@ -521,6 +536,35 @@ describe('FilesView external upload', () => {
     expect(mocks.danger).not.toHaveBeenCalled()
     expect(mocks.list).toHaveBeenCalledWith('/srv', expect.anything(), expect.anything())
   })
+
+  it('retains a failed direct upload for inline retry without a duplicate toast', async () => {
+    const view = setupView()
+    const file = new File(['hello'], 'notes.txt', { type: 'text/plain' })
+    view.currentPath.value = '/srv'
+    mocks.list.mockResolvedValue(testDirectory('/srv'))
+    mocks.upload
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockImplementationOnce(async (path: string, uploaded: File, _overwrite: boolean, onProgress?: (value: number) => void) => {
+        onProgress?.(100)
+        return { ...testEntry(uploaded.name), path: `${path}/${uploaded.name}` }
+      })
+
+    await view.uploadFiles([file])
+
+    expect(view.uploadTasks.value).toHaveLength(1)
+    expect(view.uploadTasks.value[0]).toMatchObject({
+      name: 'notes.txt', target: '/srv', progress: 0, phase: 'error', detail: 'connection reset',
+    })
+    expect(mocks.danger).not.toHaveBeenCalled()
+
+    await view.retryUploadTask(view.uploadTasks.value[0]!.id)
+
+    expect(mocks.upload).toHaveBeenCalledTimes(2)
+    expect(view.uploadTasks.value[0]).toMatchObject({ progress: 100, phase: 'success' })
+    expect(mocks.danger).not.toHaveBeenCalled()
+    view.dismissUploadTask(view.uploadTasks.value[0]!.id)
+    expect(view.uploadTasks.value).toEqual([])
+  })
 })
 
 describe('FilesView remote download', () => {
@@ -732,7 +776,7 @@ describe('FilesView remote download', () => {
     expect(source).toContain("files.remoteDownload.note")
   })
 
-  it('uses a compact persistent task card beside a transient upload strip', () => {
+  it('uses one bounded readable activity stack for uploads and file transfers', () => {
     const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
     const narrowStyles = source.slice(
       source.indexOf('@media (max-width: 720px)'),
@@ -743,12 +787,21 @@ describe('FilesView remote download', () => {
     expect(source).not.toContain('class="remote-download-tasks__privacy"')
     expect(source).toMatch(/\.remote-download-tasks\s*\{[^}]*background:\s*var\(--surface\);/)
     expect(source).toMatch(/\.remote-download-task\s*\{[^}]*background:\s*var\(--surface-subtle\);/)
-    expect(source).toContain('class="upload-strip__item"')
-    expect(source).toContain('class="upload-strip__icon"')
+    expect(source).toContain('class="file-status-stack"')
+    expect(source).toContain('class="file-activity-stack"')
+    expect(source).toContain('file-activity-row upload-task')
+    expect(source).toContain('@click="retryUploadTask(task.id)"')
+    expect(source).toContain('@click="dismissUploadTask(task.id)"')
     expect(source).toContain('role="progressbar"')
-    expect(source).toContain(':aria-valuenow="progress"')
+    expect(source).toContain(':aria-valuenow="task.progress"')
     expect(source).toContain("files.upload.progressLabel")
-    expect(source).toMatch(/\.upload-strip__item\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\) 42px;/)
+    expect(source).toMatch(/\.file-status-stack\s*\{[^}]*max-height:\s*min\(420px, 46dvh\);[^}]*overflow-y:\s*auto;/)
+    expect(source).toMatch(/\.file-activity-row\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto;/)
+    expect(source).toMatch(/\.file-activity-row strong\s*\{[^}]*font-size:\s*14px;/)
+    expect(source).toMatch(/\.file-activity-row small\s*\{[^}]*font-size:\s*13px;/)
+    expect(source).toMatch(/\.file-activity-row__actions button\s*\{[^}]*min-height:\s*40px;/)
+    expect(source).toMatch(/\.file-internal-drop-hint strong\s*\{[^}]*font-size:\s*14px;/)
+    expect(source).toMatch(/\.file-internal-drop-hint small\s*\{[^}]*font-size:\s*13px;/)
     expect(narrowStyles).toMatch(/\.remote-download-task\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto;/)
     expect(narrowStyles).toMatch(/\.remote-download-tasks__refresh\s*\{[^}]*width:\s*44px;[^}]*min-width:\s*44px;/)
   })
@@ -1961,6 +2014,7 @@ describe('FilesView directory loading', () => {
     })
     expect(view.clipboard.value?.entries).toEqual([entry])
     expect(mocks.list).toHaveBeenCalled()
+    expect(mocks.success).not.toHaveBeenCalled()
   })
 
   it('keeps only failed entries after a partial cut paste', async () => {
@@ -1980,10 +2034,11 @@ describe('FilesView directory loading', () => {
 
     expect(view.clipboard.value?.mode).toBe('move')
     expect(view.clipboard.value?.entries.map((entry) => entry.path)).toEqual([failed.path])
-    expect(mocks.danger).toHaveBeenCalledWith(
-      '部分文件未粘贴',
-      '1 项成功，1 项失败：目标已存在',
-    )
+    expect(view.fileTransferState.value).toMatchObject({
+      mode: 'move', target: '/target', count: 1, phase: 'partial',
+      detail: '1 项成功，1 项失败：目标已存在',
+    })
+    expect(mocks.danger).not.toHaveBeenCalled()
   })
 
   it('moves a native file-window drag with version protection and completion feedback', async () => {
@@ -2008,7 +2063,8 @@ describe('FilesView directory loading', () => {
     expect(view.fileTransferState.value).toMatchObject({
       mode: 'move', target: '/target', count: 1, phase: 'success',
     })
-    expect(mocks.success).toHaveBeenCalledWith('移动完成', '1 项已传输到 /target')
+    expect(mocks.success).not.toHaveBeenCalled()
+    expect(window.setTimeout).toHaveBeenCalledWith(expect.any(Function), 2200)
   })
 
   it('allows a copy to be cancelled without claiming that completed copies were removed', async () => {
@@ -2025,9 +2081,8 @@ describe('FilesView directory loading', () => {
     await transfer
 
     expect(view.fileTransferState.value).toMatchObject({ mode: 'copy', phase: 'cancelled' })
-    expect(mocks.show).toHaveBeenCalledWith('复制已取消', {
-      message: '已经复制完成的项目会保留在目标目录。',
-    })
+    expect(view.fileTransferState.value?.detail).toBe('已经复制完成的项目会保留在目标目录。')
+    expect(mocks.show).not.toHaveBeenCalled()
   })
 
   it('copies a multi-selection from another KPanel into the dropped directory', async () => {
@@ -2049,10 +2104,10 @@ describe('FilesView directory loading', () => {
     expect(view.fileTransferState.value).toMatchObject({
       mode: 'copy', target: '/target', count: 2, completed: 2, phase: 'partial', remote: true,
     })
-    expect(mocks.danger).toHaveBeenCalledWith(
-      '跨面板复制部分完成',
-      '1 项成功，1 项失败：source changed',
-    )
+    expect(view.fileTransferState.value?.detail).toBe('1 项成功，1 项失败：source changed')
+    expect(mocks.danger).not.toHaveBeenCalled()
+    view.dismissFileTransfer()
+    expect(view.fileTransferState.value).toBeUndefined()
     expect(mocks.list).toHaveBeenCalled()
   })
 })
