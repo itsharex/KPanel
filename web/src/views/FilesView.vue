@@ -183,6 +183,9 @@ const remoteDownloadJobsErrorMessage = computed(() => {
   const error = remoteDownloadJobsError.value
   return error ? remoteDownloadErrorDetail(error.code, error.detail) : ''
 })
+const remoteDownloadTasksVisible = computed(() => (
+  remoteDownloadJobs.value.length > 0 || Boolean(remoteDownloadJobsErrorMessage.value)
+))
 const dialogAction = ref<DialogAction>()
 const dialogValue = ref('')
 const dialogFormat = ref<ArchiveFormat>('tar.gz')
@@ -2252,7 +2255,7 @@ onBeforeUnmount(() => {
 
       <Transition name="slide">
         <section
-          v-if="remoteDownloadJobsLoading || remoteDownloadJobsErrorMessage || remoteDownloadJobs.length"
+          v-if="remoteDownloadTasksVisible"
           class="remote-download-tasks"
           aria-labelledby="remote-download-tasks-title"
         >

@@ -202,6 +202,7 @@ interface FileBindings {
   remoteDownloadFormError: { value: string }
   remoteDownloadJobs: { value: FileRemoteDownloadJob[] }
   remoteDownloadJobsLoading: { value: boolean }
+  remoteDownloadTasksVisible: { value: boolean }
   remoteDownloadSubmitting: { value: boolean }
   remoteDownloadPendingActions: { value: Set<string> }
   remoteDownloadJobsErrorMessage: { value: string }
@@ -523,6 +524,34 @@ describe('FilesView external upload', () => {
 })
 
 describe('FilesView remote download', () => {
+  it('keeps an empty initial task refresh hidden until there is useful status to show', () => {
+    const view = setupView()
+
+    expect(view.remoteDownloadTasksVisible.value).toBe(false)
+    view.remoteDownloadJobsLoading.value = true
+    expect(view.remoteDownloadTasksVisible.value).toBe(false)
+
+    view.remoteDownloadJobs.value = [testRemoteDownloadJob()]
+    expect(view.remoteDownloadTasksVisible.value).toBe(true)
+  })
+
+  it('presents the feature as a regular remote download in every locale', () => {
+    const remoteDownloadCopy = (locale: string) => locale
+      .split('\n')
+      .filter((line) => line.includes('files.remoteDownload.'))
+      .join('\n')
+    const zhCN = remoteDownloadCopy(readFileSync(new URL('../i18n/messages/zh-CN.ts', import.meta.url), 'utf8'))
+    const zhTW = remoteDownloadCopy(readFileSync(new URL('../i18n/messages/zh-TW.ts', import.meta.url), 'utf8'))
+    const enUS = remoteDownloadCopy(readFileSync(new URL('../i18n/messages/en-US.ts', import.meta.url), 'utf8'))
+
+    expect(zhCN).toContain("'files.remoteDownload.label': '远程下载'")
+    expect(zhCN).not.toMatch(/离线下载|后台任务|后台下载/)
+    expect(zhTW).toContain('"files.remoteDownload.label": "遠端下載"')
+    expect(zhTW).not.toMatch(/離線下載|背景任務|背景下載/)
+    expect(enUS).toContain("'files.remoteDownload.label': 'Remote download'")
+    expect(enUS).not.toMatch(/offline download|background task|background download/i)
+  })
+
   it('creates a background job for the snapshotted target and clears the signed URL from view state', async () => {
     const view = setupView()
     mocks.createRemoteDownloadJob.mockResolvedValueOnce(testRemoteDownloadJob({
