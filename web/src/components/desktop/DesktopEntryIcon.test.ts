@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { FileText, FolderOpen } from '@lucide/vue'
 import DesktopEntryIcon from './DesktopEntryIcon.vue'
 
 function pointer(
@@ -32,6 +33,57 @@ describe('DesktopEntryIcon touch interaction', () => {
   afterEach(() => {
     vi.useRealTimers()
     document.body.innerHTML = ''
+  })
+
+  it('prefers native navigation artwork and falls back when it cannot load', async () => {
+    const wrapper = mount(DesktopEntryIcon, {
+      props: {
+        label: '概览',
+        gradient: 'linear-gradient(#0aa, #066)',
+        navIconURL: '/desktop-icons/overview-ios27-kpanel.webp',
+        entry: {
+          key: 'app:market-app',
+          id: 'market-app',
+          kind: 'app',
+          name: '市场应用',
+          launch: 'external',
+          iconURL: '/market-icon.webp',
+        },
+      },
+    })
+
+    const image = wrapper.get('img')
+    expect(image.attributes('src')).toBe('/desktop-icons/overview-ios27-kpanel.webp')
+    expect(image.classes()).toContain('desktop__icon-img--native')
+
+    await image.trigger('error')
+    expect(wrapper.find('img').exists()).toBe(false)
+    expect(wrapper.get('.desktop__icon-monogram').text()).toBe('概')
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['file', FileText],
+    ['directory', FolderOpen],
+  ] as const)('renders %s shortcuts with native document artwork', (launch, icon) => {
+    const wrapper = mount(DesktopEntryIcon, {
+      props: {
+        label: launch === 'file' ? 'README.md' : '项目',
+        gradient: 'linear-gradient(#facc15, #ca8a04)',
+        entry: {
+          key: `shortcut:${launch}`,
+          id: launch,
+          kind: 'shortcut',
+          name: launch,
+          launch,
+          icon,
+        },
+      },
+    })
+
+    expect(wrapper.get('.desktop__shortcut-artwork').classes())
+      .toContain(`desktop__shortcut-artwork--${launch}`)
+    wrapper.unmount()
   })
 
   it('keeps Windows mouse selection and double-click activation', async () => {

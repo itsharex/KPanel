@@ -25,6 +25,8 @@ export interface DesktopApp {
   path: string
   labelKey: MessageKey
   icon: Component
+  /** Native artwork used by desktop tiles, windows, and the taskbar. */
+  desktopIconURL?: string
   allowMultiple: boolean
   /** App-tile gradient so each icon reads like a distinct application. */
   gradient: [string, string]
@@ -35,6 +37,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/overview',
     labelKey: 'route.overview',
     icon: LayoutDashboard,
+    desktopIconURL: '/desktop-icons/overview-ios27-kpanel-v3.webp',
     allowMultiple: false,
     gradient: ['#2dd4bf', '#0f766e'],
   },
@@ -42,6 +45,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/ai',
     labelKey: 'route.ai',
     icon: Bot,
+    desktopIconURL: '/desktop-icons/ai-ios27-kpanel-v4.webp',
     allowMultiple: true,
     gradient: ['#a78bfa', '#6d28d9'],
   },
@@ -49,6 +53,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/sites',
     labelKey: 'route.sites',
     icon: Boxes,
+    desktopIconURL: '/desktop-icons/sites-ios27-kpanel-v3.webp',
     allowMultiple: false,
     gradient: ['#60a5fa', '#1d4ed8'],
   },
@@ -56,6 +61,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/apps',
     labelKey: 'route.apps',
     icon: Store,
+    desktopIconURL: '/desktop-icons/apps-ios27-kpanel-v6.webp',
     allowMultiple: false,
     gradient: ['#fbbf24', '#d97706'],
   },
@@ -63,6 +69,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/docker',
     labelKey: 'route.docker',
     icon: Container,
+    desktopIconURL: '/desktop-icons/docker-ios27-kpanel-v2.webp',
     allowMultiple: false,
     gradient: ['#22d3ee', '#0369a1'],
   },
@@ -70,6 +77,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/files',
     labelKey: 'route.files',
     icon: Folder,
+    desktopIconURL: '/desktop-icons/files-ios27-kpanel-v4.webp',
     allowMultiple: false,
     gradient: ['#facc15', '#ca8a04'],
   },
@@ -77,6 +85,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/terminal',
     labelKey: 'route.terminal',
     icon: SquareTerminal,
+    desktopIconURL: '/desktop-icons/terminal-ios27-kpanel-v3.webp',
     allowMultiple: false,
     gradient: ['#94a3b8', '#1e293b'],
   },
@@ -84,6 +93,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/diagnostics',
     labelKey: 'route.diagnostics',
     icon: HeartPulse,
+    desktopIconURL: '/desktop-icons/diagnostics-ios27-kpanel-v3.webp',
     allowMultiple: false,
     gradient: ['#fb7185', '#be123c'],
   },
@@ -91,6 +101,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/cluster',
     labelKey: 'route.cluster',
     icon: Network,
+    desktopIconURL: '/desktop-icons/cluster-ios27-kpanel-v7.webp',
     allowMultiple: false,
     gradient: ['#818cf8', '#4338ca'],
   },
@@ -98,6 +109,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/system',
     labelKey: 'route.systemCenter',
     icon: SystemCenterIcon,
+    desktopIconURL: '/desktop-icons/system-ios27-kpanel-v4.webp',
     allowMultiple: false,
     gradient: ['#8b5cf6', '#4338ca'],
   },
@@ -105,6 +117,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/activity',
     labelKey: 'route.activity',
     icon: ClipboardList,
+    desktopIconURL: '/desktop-icons/activity-ios27-kpanel-v9.webp',
     allowMultiple: false,
     gradient: ['#34d399', '#047857'],
   },
@@ -112,6 +125,7 @@ export const desktopApps: DesktopApp[] = [
     path: '/settings',
     labelKey: 'route.settings',
     icon: Settings,
+    desktopIconURL: '/desktop-icons/settings-ios27-kpanel-v2.webp',
     allowMultiple: false,
     gradient: ['#cbd5e1', '#64748b'],
   },

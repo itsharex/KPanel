@@ -91,7 +91,7 @@ describe('DesktopView', () => {
     desktop.enterDesktop()
     const wrapper = mount(DesktopView)
     const icon = wrapper.findAll('.desktop__icon')
-      .find((entry) => entry.find('.system-center-icon').exists())
+      .find((entry) => entry.attributes('aria-label') === '系统中心')
 
     expect(icon).toBeDefined()
     await icon!.trigger('dblclick')
@@ -102,6 +102,10 @@ describe('DesktopView', () => {
       path: '/system',
       titleKey: 'route.systemCenter',
     })
+    expect(wrapper.get('.desktop-window__app-glyph img').attributes('src'))
+      .toBe('/desktop-icons/system-ios27-kpanel-v4.webp')
+    expect(wrapper.get('.desktop__taskbar-glyph img').attributes('src'))
+      .toBe('/desktop-icons/system-ios27-kpanel-v4.webp')
     wrapper.unmount()
   })
 

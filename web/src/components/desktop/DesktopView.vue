@@ -856,7 +856,20 @@ function scriptWindowEntry(path: string): DesktopEntry | undefined {
 }
 
 function windowIconURL(path: string): string | undefined {
-  return scriptWindowEntry(path)?.iconURL
+  return findDesktopApp(path)?.desktopIconURL ?? scriptWindowEntry(path)?.iconURL
+}
+
+const failedTaskbarIconURLs = ref(new Set<string>())
+
+function taskbarIconURL(path: string): string | undefined {
+  const iconURL = windowIconURL(path)
+  return iconURL && !failedTaskbarIconURLs.value.has(iconURL) ? iconURL : undefined
+}
+
+function onTaskbarIconError(path: string): void {
+  const iconURL = windowIconURL(path)
+  if (!iconURL) return
+  failedTaskbarIconURLs.value = new Set([...failedTaskbarIconURLs.value, iconURL])
 }
 
 function windowTitle(titleKey: string, path?: string): string {
@@ -3281,6 +3294,7 @@ function onViewportResize(): void {
         <DesktopEntryIcon
           :label="i18n.t(app.labelKey)"
           :nav-icon="app.icon"
+          :nav-icon-u-r-l="app.desktopIconURL"
           :gradient="gradientFor(app.path)"
           :active="bouncingIcon === app.path"
           :selected="selectedIcons.has(`nav:${app.path}`)"
@@ -3645,9 +3659,20 @@ function onViewportResize(): void {
         >
           <span
             class="desktop__taskbar-glyph"
-            :style="{ background: gradientFor(windowState.path) }"
+            :class="{ 'desktop__taskbar-glyph--image': Boolean(taskbarIconURL(windowState.path)) }"
+            :style="taskbarIconURL(windowState.path)
+              ? undefined
+              : { background: gradientFor(windowState.path) }"
           >
+            <img
+              v-if="taskbarIconURL(windowState.path)"
+              :src="taskbarIconURL(windowState.path)"
+              alt=""
+              draggable="false"
+              @error="onTaskbarIconError(windowState.path)"
+            >
             <component
+              v-else
               :is="findDesktopApp(windowState.path)?.icon || AppWindow"
               :size="19"
               :stroke-width="1.9"

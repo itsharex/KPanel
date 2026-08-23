@@ -1897,7 +1897,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   place-items: center;
   overflow: hidden;
   color: #fff;
-  border: 1px solid rgb(255 255 255 / 18%);
+  border: 1px solid rgb(126 121 143 / 62%);
   border-radius: 17px;
   box-shadow:
     0 10px 24px rgb(1 11 14 / 28%),
@@ -1932,6 +1932,76 @@ body.desktop-mode-open::-webkit-scrollbar {
   border-radius: 16px;
 }
 
+.desktop__icon-img--native {
+  background: transparent;
+}
+
+.desktop__icon-glyph--shortcut::before {
+  display: none;
+}
+
+.desktop__shortcut-artwork {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  color: #334155;
+  filter: drop-shadow(0 5px 5px rgb(15 23 42 / 24%));
+}
+
+.desktop__shortcut-artwork::before,
+.desktop__shortcut-artwork::after {
+  position: absolute;
+  content: '';
+}
+
+.desktop__shortcut-artwork svg {
+  position: relative;
+  z-index: 2;
+  filter: drop-shadow(0 1px 0 rgb(255 255 255 / 70%));
+}
+
+.desktop__shortcut-artwork--file::before {
+  inset: 2px 6px;
+  background: linear-gradient(150deg, #fff 0%, #f5f7fa 72%, #dce4ec 100%);
+  border: 1px solid rgb(255 255 255 / 78%);
+  border-radius: 9px;
+  box-shadow: inset 0 1px 0 #fff, inset 0 -2px 5px rgb(51 65 85 / 12%);
+  clip-path: polygon(0 0, 70% 0, 100% 30%, 100% 100%, 0 100%);
+}
+
+.desktop__shortcut-artwork--file::after {
+  top: 3px;
+  right: 7px;
+  width: 12px;
+  height: 12px;
+  background: linear-gradient(135deg, #dbeafe, #fff);
+  border-radius: 0 7px 0 4px;
+  box-shadow: -1px 1px 2px rgb(51 65 85 / 14%);
+}
+
+.desktop__shortcut-artwork--directory::before {
+  inset: 12px 2px 3px;
+  background: linear-gradient(155deg, #fff 0%, #f6f4ed 65%, #e6dcc1 100%);
+  border: 1px solid rgb(255 255 255 / 84%);
+  border-radius: 9px 10px 11px 11px;
+  box-shadow: inset 0 1px 0 #fff, inset 0 -3px 6px rgb(120 83 26 / 14%);
+  transform: perspective(50px) rotateX(-4deg);
+}
+
+.desktop__shortcut-artwork--directory::after {
+  top: 5px;
+  left: 5px;
+  width: 25px;
+  height: 15px;
+  background: linear-gradient(150deg, #fff, #f1ead7);
+  border: 1px solid rgb(255 255 255 / 82%);
+  border-radius: 8px 8px 3px 3px;
+  box-shadow: inset 0 1px 0 #fff;
+}
+
 .desktop__icon-glyph--dynamic {
   border-color: rgb(255 255 255 / 28%);
   box-shadow:
@@ -1947,12 +2017,24 @@ body.desktop-mode-open::-webkit-scrollbar {
   position: relative;
   z-index: 1;
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   place-items: center;
-  color: #fff;
-  font-size: 18px;
+  color: #334155;
+  background:
+    radial-gradient(circle at 30% 22%, rgb(255 255 255 / 96%), transparent 34%),
+    linear-gradient(145deg, #fff 0%, #eef2f7 66%, #d6dee8 100%);
+  border: 1px solid rgb(255 255 255 / 76%);
+  border-radius: 13px;
+  box-shadow:
+    0 5px 10px rgb(15 23 42 / 25%),
+    inset 0 1px 0 #fff,
+    inset 0 -2px 5px rgb(51 65 85 / 10%);
+  font-size: 21px;
   font-weight: 850;
+  letter-spacing: -.04em;
+  line-height: 1;
+  text-shadow: 0 1px 0 #fff;
   text-transform: uppercase;
 }
 
@@ -1966,12 +2048,22 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop__site-fallback-letter {
-  color: #fff;
-  font-size: 25px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  color: #334155;
+  background:
+    radial-gradient(circle at 30% 22%, rgb(255 255 255 / 96%), transparent 34%),
+    linear-gradient(145deg, #fff 0%, #eef2f7 66%, #d6dee8 100%);
+  border: 1px solid rgb(255 255 255 / 76%);
+  border-radius: 13px;
+  box-shadow: 0 5px 10px rgb(15 23 42 / 25%), inset 0 1px 0 #fff;
+  font-size: 23px;
   font-weight: 850;
   letter-spacing: -.04em;
   line-height: 1;
-  text-shadow: 0 2px 8px rgb(0 0 0 / 24%);
+  text-shadow: 0 1px 0 #fff;
   text-transform: uppercase;
 }
 
@@ -2580,6 +2672,18 @@ body.desktop-mode-open::-webkit-scrollbar {
   border-radius: 11px;
   box-shadow: 0 6px 15px rgb(0 0 0 / 22%), inset 0 1px 0 rgb(255 255 255 / 24%);
   transition: filter .16s ease, transform .16s ease;
+}
+
+.desktop__taskbar-glyph--image {
+  overflow: hidden;
+  background: transparent;
+}
+
+.desktop__taskbar-glyph--image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .desktop__taskbar-item--minimized .desktop__taskbar-glyph {

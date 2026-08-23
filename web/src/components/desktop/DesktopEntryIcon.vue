@@ -5,16 +5,18 @@ import { Copy, Globe2, LoaderCircle } from '@lucide/vue'
 import type { DesktopEntry } from '@/lib/desktopEntries'
 
 /**
- * One desktop icon tile. A static navigation app renders a lucide icon; an
- * app-market app renders its market icon image; a site renders its favicon or
- * a globe fallback. Windows-style interaction is intentional: single-click
- * selects and double-click opens. Touch/pen opens on one tap and exposes the
- * same parent-owned context menu through a cancellable long press.
+ * One desktop icon tile. A static navigation app prefers its native artwork
+ * and falls back to its vector icon; an app-market app renders its market icon
+ * image; a site renders its favicon or a globe fallback. Windows-style
+ * interaction is intentional: single-click selects and double-click opens.
+ * Touch/pen opens on one tap and exposes the same parent-owned context menu
+ * through a cancellable long press.
  */
 
 const props = defineProps<{
   label: string
   navIcon?: Component
+  navIconURL?: string
   entry?: DesktopEntry
   gradient: string
   active?: boolean
@@ -50,13 +52,19 @@ let touchOpenUntil = 0
 let dispatchingCustomContext = false
 
 watch(
-  () => props.entry?.iconURL,
+  () => props.navIconURL || props.entry?.iconURL,
   () => {
     imageFailed.value = false
   },
 )
 
 const monogram = computed(() => props.label.trim().slice(0, 1).toLocaleUpperCase() || 'K')
+const fileShortcutKind = computed<'file' | 'directory' | undefined>(() => {
+  if (props.entry?.kind !== 'shortcut') return undefined
+  return props.entry.launch === 'file' || props.entry.launch === 'directory'
+    ? props.entry.launch
+    : undefined
+})
 const accessibleLabel = computed(() => {
   const domain = props.entry?.kind === 'site' ? props.entry.site?.primaryDomain : undefined
   const label = domain && domain !== props.label ? `${props.label} · ${domain}` : props.label
@@ -237,13 +245,17 @@ onBeforeUnmount(clearLongPress)
   >
     <span
       class="desktop__icon-glyph"
-      :class="{ 'desktop__icon-glyph--dynamic': Boolean(entry) }"
+      :class="{
+        'desktop__icon-glyph--dynamic': Boolean(entry),
+        'desktop__icon-glyph--shortcut': Boolean(fileShortcutKind),
+      }"
       :style="{ background: gradient }"
     >
       <img
-        v-if="entry?.iconURL && !imageFailed"
+        v-if="(navIconURL || entry?.iconURL) && !imageFailed"
         class="desktop__icon-img"
-        :src="entry.iconURL"
+        :class="{ 'desktop__icon-img--native': Boolean(navIconURL) }"
+        :src="navIconURL || entry?.iconURL"
         alt=""
         draggable="false"
         loading="lazy"
@@ -253,6 +265,14 @@ onBeforeUnmount(clearLongPress)
         height="38"
         @error="onImageError"
       />
+      <span
+        v-else-if="fileShortcutKind && (navIcon || entry?.icon)"
+        class="desktop__shortcut-artwork"
+        :class="`desktop__shortcut-artwork--${fileShortcutKind}`"
+        aria-hidden="true"
+      >
+        <component :is="navIcon || entry?.icon" :size="27" :stroke-width="1.8" />
+      </span>
       <component
         v-else-if="navIcon || entry?.icon"
         :is="navIcon || entry?.icon"
