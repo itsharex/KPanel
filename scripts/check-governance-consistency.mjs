@@ -36,6 +36,9 @@ const requiredFiles = [
   'scripts/tests/local-feature-preview.test.mjs',
   'scripts/run-release-gate.sh',
   'scripts/tests/release-gate-runner.test.mjs',
+  'scripts/run-release-l3.mjs',
+  'scripts/run-release-l3-remote.sh',
+  'scripts/tests/release-l3-orchestrator.test.mjs',
   'scripts/report-release-metrics.mjs',
   'scripts/tests/report-release-metrics.test.mjs',
   'scripts/check-business-context-freshness.mjs',
@@ -172,6 +175,7 @@ requireText('PROJECT_RULES.md', [
   '流程异常指纹',
   'kpanel-release-process-incidents:start/end',
   'scripts/check-collaboration-state.mjs',
+  'scripts/run-release-l3.mjs',
 ]);
 requireText('docs/development-quality-standard.md', [
   'ui-visual-language.md',
@@ -252,6 +256,7 @@ requireText('scripts/run-repo-bash.mjs', [
 ]);
 requireText('scripts/verify-governance.sh', [
   'scripts/tests/run-repo-bash.test.mjs',
+  'scripts/tests/release-l3-orchestrator.test.mjs',
 ]);
 requireText('scripts/verify-change.sh', [
   'needs_governance=false',
@@ -264,6 +269,9 @@ requireText('scripts/verify-change.sh', [
   'scripts/tests/collaboration-state.test.mjs',
   'scripts/run-repo-bash.mjs',
   'scripts/tests/run-repo-bash.test.mjs',
+  'scripts/run-release-l3.mjs',
+  'scripts/run-release-l3-remote.sh',
+  'scripts/tests/release-l3-orchestrator.test.mjs',
   '--validate-acceptance',
   '--diff-filter=ACMRTD',
   '.github/workflows/*.yml|.github/workflows/*.yaml',
@@ -271,8 +279,9 @@ requireText('scripts/verify-change.sh', [
 requireText('.codex-workflows/release-kpanel.workflow.yaml', [
   'scripts/check-collaboration-state.mjs',
   'scripts/run-release-gate.sh',
-  'git bundle create',
-  '--entrypoint sh',
+  'scripts/run-release-l3.mjs',
+  '--artifact-dir',
+  '--target',
   'Docker 自动分配',
   '持久业务结果',
   'evidence_dir=<本次唯一持久化证据目录>',
@@ -283,6 +292,24 @@ requireText('.codex-workflows/release-kpanel.workflow.yaml', [
   '有生产完成证据的部署频率',
   '流程异常指纹',
   '冻结执行方案',
+]);
+if (read('.codex-workflows/release-kpanel.workflow.yaml').includes('git fetch origin --tags')) {
+  failures.push('.codex-workflows/release-kpanel.workflow.yaml: unbounded tag fetch is forbidden');
+}
+requireText('scripts/run-release-l3.mjs', [
+  'shell: false',
+  'bundle',
+  'check-business-context-freshness.mjs',
+  'check-environment-policy.mjs',
+  'candidate worktree must be clean',
+  'retries require a new run ID',
+]);
+requireText('scripts/run-release-l3-remote.sh', [
+  'git init --bare',
+  'bundle verify',
+  'run-release-gate.sh',
+  'PIPESTATUS[0]',
+  'use a new run ID for every attempt',
 ]);
 requireText('.codex-workflows/quality-audit-kpanel.workflow.yaml', [
   'docs/product-quality-review-current.md',
@@ -333,6 +360,7 @@ requireText('docs/release-acceptance-template.md', [
   '<!-- kpanel-release-process-incidents:start -->',
   '<!-- kpanel-release-process-incidents:end -->',
   'before-production-write',
+  'L3 外层入口 run ID',
   '## 遗留风险与后续准入',
 ]);
 requireText('docs/quality-improvement-proposal-template.md', [

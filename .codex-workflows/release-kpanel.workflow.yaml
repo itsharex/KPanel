@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
 description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产部署安全核对和回滚记录"
-version: "2.8"
+version: "2.9"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, runner_image, apps_repo, validation_environment, production_environment]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-21T07:59:27Z"
+updated: "2026-08-23T08:00:00Z"
 ---
 
 # Release KPanel
@@ -48,7 +48,8 @@ updated: "2026-08-21T07:59:27Z"
 并记录回滚点：
 
 ```bash
-git fetch origin --tags
+git fetch origin --no-tags refs/heads/main:refs/remotes/origin/main
+git ls-remote origin refs/heads/main "refs/tags/v${{version}}" "refs/tags/v${{previous_version}}"
 git status --short
 git rev-parse HEAD
 git rev-parse origin/main
@@ -115,33 +116,26 @@ bash scripts/check-version-consistency.sh
 跨 Shell 参数格式。入口失效时先停止并保持/恢复服务健康，在非生产环境修复唯一入口和回归测试后，
 从受影响层重跑；一次现场绕行不构成可复用流程。
 
-远程 L3 必须从包含完整 Git 元数据和稳定 Tag 的候选重建，禁止用 `git archive` 代替 Git 仓库。
-生成 bundle 时同时携带候选历史和 Tag；克隆后先固定 detached SHA 并确认回滚 Tag 存在：
+远程 L3 只使用仓库外层入口 `scripts/run-release-l3.mjs`。它以无 Shell 拼接的进程参数完成：候选
+SHA/干净状态、`origin` 稳定 Tag 与业务基线核对；自包含 bundle 的本地验证和离线克隆；固定摘要的
+计划、bundle 与受检远端脚本上传；在临时 bare repository 内执行远端 bundle verify；解析不可变
+Runner image ID，并调用内部唯一门禁 `scripts/run-release-gate.sh`。禁止另写本地 PowerShell/SSH
+包装器或远端 L3 脚本：
 
 ```bash
-git bundle create "../kpanel-v${{version}}.bundle" HEAD --tags
-git bundle verify "../kpanel-v${{version}}.bundle"
-git clone "../kpanel-v${{version}}.bundle" "../kpanel-v${{version}}-l3"
-git -C "../kpanel-v${{version}}-l3" checkout --detach <冻结的完整提交>
-git -C "../kpanel-v${{version}}-l3" show-ref --verify "refs/tags/v${{previous_version}}"
+node scripts/run-release-l3.mjs \
+  --repo "${{project_dir}}" \
+  --candidate <冻结的完整提交> \
+  --base-tag "v${{previous_version}}" \
+  --runner-image "${{runner_image}}" \
+  --run-id "v${{version}}-<短SHA>-l3-r1" \
+  --artifact-dir "<仓库外绝对路径>/v${{version}}-<短SHA>-l3-r1" \
+  --target "${{validation_environment}}"
 ```
 
-在 Linux 验证主机调用仓库标准 Runner。它会一次完成精确 SHA、干净工作树、稳定基线 Tag、Docker
-socket、Runner 镜像 ID、固定 `--entrypoint sh`、宿主与 Runner 相同绝对路径挂载、完整
-`make verify-release` 和嵌套应用生命周期门禁：
-
-```bash
-cd "../kpanel-v${{version}}-l3"
-bash scripts/run-release-gate.sh \
-  <冻结的完整提交> \
-  "v${{previous_version}}" \
-  "${{runner_image}}" \
-  2>&1 | tee "<仓库外受限证据目录>/l3-verify-release.log"
-```
-
-不得为同一发布临时重写多份 L2/L3 wrapper；Runner 预检失败视为“验收基础设施失败”，候选代码未执行时
-不得记为产品失败，但仍必须 fail-closed。修复 Runner 后从同一冻结 SHA 完整重跑，旧日志保留并在验收
-记录中注明发现、修复和未触碰生产。Runner 镜像 tag 必须在日志中解析为不可变 image ID。
+每次尝试使用新 `run-id` 和新证据目录，旧计划、日志和失败状态原样保留；不得覆盖后重写成首轮成功。
+入口在任何前置条件失败时 fail-closed，候选代码未执行时记为流程异常而非产品失败。入口脚本自身需要
+修复时先形成仓库提交与回归，再对新候选从受影响层重跑；不能在候选外现场改一份 wrapper 继续发布。
 
 `make verify-release` 必须实际覆盖核心特权包 race、固定摘要 Trivy 源码/最终镜像扫描，以及
 最终镜像构建；Release 工作流还必须在 `256 MiB`、`1 CPU`、`128 PID`、非 root、只读根、
@@ -370,6 +364,7 @@ node scripts/report-release-metrics.mjs \
 - 生产部署安全核对动作与仅在隔离真机验证的动作；
 - 发布节奏、产品变更失败和独立流程异常数据，以及重复发布原因（如有）；
 - 流程异常指纹、复发判断和永久处置（计数大于零时）；
+- L3 外层入口的 run ID、计划/脚本/bundle 摘要、不可变 Runner ID、终态与证据目录；
 - 保留的无关本地改动；
 - `${{previous_version}}` 回滚点及任何未验证风险。
 

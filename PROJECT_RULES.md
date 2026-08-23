@@ -268,6 +268,10 @@ SSH 或单个 AI 会话持续存在。后台化不降低断言或门禁。普通
    固定脚本、跨 Shell 参数传递和证据解析；生产写操作开始后不得临时拼接新的多层 PowerShell/SSH/Shell
    命令或首次引入未预检工具。若冻结入口不可用，先停止、保持或恢复服务健康，在非生产环境修复唯一
    入口并重跑受影响门禁；不把一次成功的现场绕行直接当作永久流程。
+9. 远程 L3 的外层权威入口是 `scripts/run-release-l3.mjs`，内部质量入口仍是
+   `scripts/run-release-gate.sh` / `make verify-release`。外层入口负责精确 Tag、bundle、固定远端脚本、
+   不可变 Runner ID、唯一 run ID 和证据终态；不得为单次发布另写 PowerShell/SSH/远端 wrapper。
+   每次重试必须使用新 run ID 并保留旧证据，不能覆盖失败后将其报告为首轮成功。
 
 ### 5.2 受控自我改进
 

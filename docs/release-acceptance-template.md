@@ -40,6 +40,7 @@
 
 - 定向测试及结果：
 - `make verify-release` 环境和结果：
+- L3 外层入口 run ID、计划/脚本/bundle SHA-256、不可变 Runner ID、终态与证据目录：
 - 候选 CI：
 - 主线 CI：
 - Release workflow：

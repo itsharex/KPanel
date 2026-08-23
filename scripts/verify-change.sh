@@ -82,12 +82,14 @@ for path in "${changed_files[@]}"; do
     scripts/check-governance-consistency.mjs|scripts/check-environment-policy.mjs|\
     scripts/check-collaboration-state.mjs|\
     scripts/run-repo-bash.mjs|\
+    scripts/run-release-gate.sh|scripts/run-release-l3.mjs|scripts/run-release-l3-remote.sh|\
     scripts/background-browser-test.mjs|scripts/local-feature-preview.mjs|scripts/mock-app-market-api.mjs|\
     scripts/report-release-metrics.mjs|scripts/check-business-context-freshness.mjs|\
     scripts/report-dependency-freshness.mjs|scripts/verify-governance.sh|scripts/verify-change.sh|\
     scripts/tests/check-environment-policy.test.mjs|scripts/tests/background-browser-test.test.mjs|\
     scripts/tests/collaboration-state.test.mjs|\
     scripts/tests/run-repo-bash.test.mjs|\
+    scripts/tests/release-gate-runner.test.mjs|scripts/tests/release-l3-orchestrator.test.mjs|\
     scripts/tests/local-feature-preview.test.mjs|\
     scripts/tests/verify-change-forced-level.test.mjs|scripts/tests/business-context-freshness.test.mjs|\
     scripts/tests/report-release-metrics.test.mjs|scripts/tests/report-dependency-freshness.test.mjs|\
