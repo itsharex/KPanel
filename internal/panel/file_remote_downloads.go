@@ -7,13 +7,11 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
 	"path"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -47,9 +45,16 @@ func (s *Server) handleFileRemoteDownload(w http.ResponseWriter, r *http.Request
 		return
 	}
 	parsedURL, err := remotedownload.ValidateURL(input.URL)
-	if err != nil || !validFileDownloadPath(input.TargetDirectory) ||
+	if err != nil || !validFileRemoteDownloadTarget(input.TargetDirectory) ||
 		(input.Name != "" && !validFileRemoteDownloadName(input.Name)) {
 		s.writeProblem(w, r, http.StatusUnprocessableEntity, "remote_download_invalid", "请检查下载地址、目标目录和保存名称。", "")
+		return
+	}
+	// Pass the validated canonical URL to both execution modes. The URL stays in
+	// Panel memory only; background persistence receives SourceDisplay instead.
+	input.URL = parsedURL.String()
+	if input.Background {
+		s.startFileRemoteDownloadJob(w, r, input, remotedownload.SourceDisplay(parsedURL), session.User.ID)
 		return
 	}
 	select {
@@ -99,197 +104,34 @@ func (s *Server) handleFileRemoteDownload(w http.ResponseWriter, r *http.Request
 		}
 		return true
 	}
-	fail := func(code, detail string, loaded, total int64) {
-		failure := cloneRemoteDownloadChange(change)
-		failure["errorCode"] = code
-		failure["bytes"] = loaded
-		_ = s.audit(r, session.User.ID, "file.remote_download", "directory", input.TargetDirectory, "failure", failure)
-		_ = writeEvent(contract.FileTransferEvent{
-			State: "error", LoadedBytes: loaded, TotalBytes: total, Code: code, Detail: detail,
-		})
-	}
 
-	if err := s.ensureFileTransferDirectory(transferContext, input.TargetDirectory, requestID(r)); err != nil {
-		fail("target_unavailable", "目标目录不存在或不可写。", 0, 0)
+	result := s.executeFileRemoteDownload(transferContext, input, requestID(r), writeEvent)
+	completed := cloneRemoteDownloadChange(change)
+	completed["bytes"] = result.LoadedBytes
+	if result.Name != "" {
+		completed["targetName"] = result.Name
+	}
+	if result.TotalBytes > 0 {
+		completed["expectedBytes"] = result.TotalBytes
+	}
+	if result.State == "complete" && result.Entry != nil {
+		_ = s.audit(r, session.User.ID, "file.remote_download", "file", result.Entry.Path, "success", completed)
 		return
 	}
-	if s.remoteDownloadOpen == nil {
-		fail("remote_download_unavailable", "远程下载服务不可用。", 0, 0)
-		return
-	}
-	response, err := s.remoteDownloadOpen(transferContext, parsedURL.String())
-	if err != nil {
-		code, detail := fileRemoteDownloadError(err)
-		fail(code, detail, 0, 0)
-		return
-	}
-	if response == nil || response.Body == nil {
-		fail("remote_download_unavailable", "远程下载服务不可用。", 0, 0)
-		return
-	}
-	limited := &fileRemoteDownloadLimitReader{
-		source: response.Body, remaining: filemanager.MaxUploadBytes,
-	}
-	var loaded atomic.Int64
-	uploadBody := &fileRemoteDownloadUploadBody{
-		source: limited, closer: response.Body, loaded: &loaded,
-	}
-	defer uploadBody.Close()
-	if response.ContentLength > filemanager.MaxUploadBytes {
-		fail("remote_download_too_large", "远程文件超过 512 MiB。", 0, response.ContentLength)
-		return
-	}
-	totalBytes := response.ContentLength
-	if totalBytes < 0 {
-		totalBytes = 0
-	}
-	name := fileRemoteDownloadName(input.Name, response)
-	name, err = s.uniqueFileTransferName(transferContext, input.TargetDirectory, name, requestID(r))
-	if err != nil {
-		fail("target_name_unavailable", "无法确定可用的保存名称。", 0, totalBytes)
-		return
-	}
-	change["targetName"] = name
-	if response.ContentLength >= 0 {
-		change["expectedBytes"] = response.ContentLength
-	}
-	if !writeEvent(contract.FileTransferEvent{State: "connecting"}) {
-		return
-	}
-	if !writeEvent(contract.FileTransferEvent{
-		State: "transferring", TotalBytes: totalBytes, Name: name,
-	}) {
-		return
-	}
+	completed["errorCode"] = result.Code
+	_ = s.audit(r, session.User.ID, "file.remote_download", "directory", input.TargetDirectory, "failure", completed)
+}
 
-	streamer, ok := s.agent.(agentStreamAPI)
-	if !ok {
-		fail("agent_stream_unavailable", "Agent 文件流不可用。", 0, totalBytes)
-		return
+func validFileRemoteDownloadTarget(value string) bool {
+	if !validFileDownloadPath(value) {
+		return false
 	}
-	query := url.Values{
-		"path": []string{input.TargetDirectory}, "name": []string{name}, "overwrite": []string{"false"},
-	}
-	headers := make(http.Header)
-	headers.Set("Content-Type", "application/octet-stream")
-	agentContentLength := response.ContentLength
-	if agentContentLength < 0 {
-		agentContentLength = -1
-	}
-	type streamResult struct {
-		response *http.Response
-		err      error
-	}
-	resultChannel := make(chan streamResult)
-	go func() {
-		agentResponse, streamError := streamer.OpenStream(
-			transferContext, http.MethodPost, "/v1/files/upload", query.Encode(), requestID(r),
-			uploadBody, headers, agentContentLength,
-		)
-		result := streamResult{response: agentResponse, err: streamError}
-		select {
-		case resultChannel <- result:
-		case <-transferContext.Done():
-			if result.response != nil && result.response.Body != nil {
-				_ = result.response.Body.Close()
-			}
-		}
-	}()
-
-	progressTicker := time.NewTicker(180 * time.Millisecond)
-	defer progressTicker.Stop()
-	reportedBytes := int64(0)
-	lastProgressEvent := time.Now()
-	var agentResponse *http.Response
-	streamFinished := false
-	for !streamFinished {
-		select {
-		case result := <-resultChannel:
-			agentResponse, err = result.response, result.err
-			streamFinished = true
-			// An Agent may reject the upload from response headers before the
-			// Transport has finished reading the request body. Closing the body
-			// makes that read stop without letting it write stream events.
-			_ = uploadBody.Close()
-		case <-progressTicker.C:
-			current := loaded.Load()
-			if current != reportedBytes || time.Since(lastProgressEvent) >= 10*time.Second {
-				if !writeEvent(contract.FileTransferEvent{
-					State: "transferring", LoadedBytes: current, TotalBytes: totalBytes, Name: name,
-				}) {
-					_ = uploadBody.Close()
-					return
-				}
-				reportedBytes = current
-				lastProgressEvent = time.Now()
-			}
-		case <-transferContext.Done():
-			_ = uploadBody.Close()
-			current := loaded.Load()
-			code, detail := fileRemoteDownloadError(transferContext.Err())
-			fail(code, detail, current, totalBytes)
-			return
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
 		}
 	}
-	loadedBytes := loaded.Load()
-	if err != nil {
-		if limited.exceeded.Load() {
-			fail("remote_download_too_large", "远程文件超过 512 MiB，传输已停止；请刷新目录确认结果。", loadedBytes, totalBytes)
-		} else {
-			code, detail := fileRemoteDownloadError(err)
-			if code == "remote_download_unreachable" {
-				code = "agent_write_interrupted"
-				detail = "目标 Agent 写入中断；请刷新目录确认结果。"
-			}
-			fail(code, detail, loadedBytes, totalBytes)
-		}
-		return
-	}
-	if agentResponse == nil {
-		fail("agent_write_failed", "目标文件写入结果未知；请刷新目录确认。", loadedBytes, totalBytes)
-		return
-	}
-	defer agentResponse.Body.Close()
-	if agentResponse.StatusCode < http.StatusOK || agentResponse.StatusCode >= http.StatusMultipleChoices {
-		_, _ = io.Copy(io.Discard, io.LimitReader(agentResponse.Body, 1<<20))
-		if limited.exceeded.Load() || agentResponse.StatusCode == http.StatusRequestEntityTooLarge {
-			fail("remote_download_too_large", "远程文件超过 512 MiB，传输已停止；请刷新目录确认结果。", loadedBytes, totalBytes)
-		} else if agentResponse.StatusCode == http.StatusConflict {
-			fail("target_conflict", "保存名称刚被占用，请重试。", loadedBytes, totalBytes)
-		} else if agentResponse.StatusCode == http.StatusTooManyRequests {
-			fail("agent_write_busy", "目标 Agent 当前繁忙，请稍后重试。", loadedBytes, totalBytes)
-		} else if agentResponse.StatusCode == http.StatusForbidden {
-			fail("target_permission_denied", "目标目录不再允许写入；请刷新目录确认结果。", loadedBytes, totalBytes)
-		} else if agentResponse.StatusCode == http.StatusNotFound {
-			fail("target_unavailable", "目标目录已不存在；请刷新目录确认结果。", loadedBytes, totalBytes)
-		} else if agentResponse.StatusCode == http.StatusInsufficientStorage {
-			fail("target_storage_full", "目标磁盘空间或配额不足；请刷新目录确认结果。", loadedBytes, totalBytes)
-		} else {
-			fail("agent_write_failed", "目标文件写入失败；请刷新目录确认结果。", loadedBytes, totalBytes)
-		}
-		return
-	}
-	if !writeEvent(contract.FileTransferEvent{
-		State: "confirming", LoadedBytes: loadedBytes, TotalBytes: totalBytes, Name: name,
-	}) {
-		return
-	}
-	var entry contract.FileEntry
-	decoder := json.NewDecoder(io.LimitReader(agentResponse.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	var extra any
-	if err := decoder.Decode(&entry); err != nil ||
-		!errors.Is(decoder.Decode(&extra), io.EOF) ||
-		!validFileRemoteDownloadEntry(entry, input.TargetDirectory, name, loadedBytes) {
-		fail("agent_result_invalid", "目标 Agent 返回无效结果，请刷新目录确认。", loadedBytes, totalBytes)
-		return
-	}
-	success := cloneRemoteDownloadChange(change)
-	success["bytes"] = loadedBytes
-	_ = s.audit(r, session.User.ID, "file.remote_download", "file", entry.Path, "success", success)
-	_ = writeEvent(contract.FileTransferEvent{
-		State: "complete", LoadedBytes: loadedBytes, TotalBytes: totalBytes, Name: name, Entry: &entry,
-	})
+	return true
 }
 
 func validFileRemoteDownloadName(name string) bool {
@@ -306,12 +148,7 @@ func validFileRemoteDownloadName(name string) bool {
 	return true
 }
 
-func validFileRemoteDownloadEntry(
-	entry contract.FileEntry,
-	directory string,
-	name string,
-	loadedBytes int64,
-) bool {
+func validFileRemoteDownloadEntry(entry contract.FileEntry, directory, name string, loadedBytes int64) bool {
 	return entry.Kind == "file" && entry.Name == name && entry.Path == path.Join(directory, name) &&
 		entry.SizeBytes == loadedBytes && entry.ResourceVersion != ""
 }

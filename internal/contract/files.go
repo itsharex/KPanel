@@ -136,6 +136,26 @@ type FileRemoteDownloadRequest struct {
 	URL             string `json:"url"`
 	TargetDirectory string `json:"targetDirectory"`
 	Name            string `json:"name,omitempty"`
+	Background      bool   `json:"background,omitempty"`
+}
+
+type FileRemoteDownloadJob struct {
+	ID              string     `json:"id"`
+	State           string     `json:"state"`
+	Source          string     `json:"source"`
+	TargetDirectory string     `json:"targetDirectory"`
+	Name            string     `json:"name,omitempty"`
+	LoadedBytes     int64      `json:"loadedBytes,omitempty"`
+	TotalBytes      int64      `json:"totalBytes,omitempty"`
+	Entry           *FileEntry `json:"entry,omitempty"`
+	Code            string     `json:"code,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+	FinishedAt      *time.Time `json:"finishedAt,omitempty"`
+}
+
+type FileRemoteDownloadJobList struct {
+	Items []FileRemoteDownloadJob `json:"items"`
 }
 
 type FileTransferEvent struct {

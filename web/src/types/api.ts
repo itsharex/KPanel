@@ -1774,6 +1774,35 @@ export interface FileRemoteDownloadEvent {
   detail?: string
 }
 
+export type FileRemoteDownloadJobState =
+  | 'queued'
+  | 'connecting'
+  | 'transferring'
+  | 'confirming'
+  | 'complete'
+  | 'cancelled'
+  | 'error'
+  | 'interrupted'
+
+export interface FileRemoteDownloadJob {
+  id: string
+  state: FileRemoteDownloadJobState
+  source: string
+  targetDirectory: string
+  name?: string
+  loadedBytes?: number
+  totalBytes?: number
+  entry?: FileEntry
+  code?: string
+  createdAt: string
+  updatedAt: string
+  finishedAt?: string
+}
+
+export interface FileRemoteDownloadJobList {
+  items: FileRemoteDownloadJob[]
+}
+
 export type FileAction =
   | 'mkdir'
   | 'rename'

@@ -11,7 +11,7 @@ import {
   DESKTOP_FILE_DRAG_TYPE,
   NATIVE_FILE_DOWNLOAD_DRAG_TYPE,
 } from '@/lib/desktopFileShortcuts'
-import type { DesktopWorkspaceUpdate } from '@/types/api'
+import type { DesktopWorkspaceUpdate, FileRemoteDownloadJob } from '@/types/api'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -19,6 +19,11 @@ const mocks = vi.hoisted(() => ({
   action: vi.fn(),
   transferFromPanel: vi.fn(),
   remoteDownload: vi.fn(),
+  createRemoteDownloadJob: vi.fn(),
+  remoteDownloadJobs: vi.fn(),
+  remoteDownloadJob: vi.fn(),
+  cancelRemoteDownloadJob: vi.fn(),
+  deleteRemoteDownloadJob: vi.fn(),
   trash: vi.fn(),
   write: vi.fn(),
   contentUrl: vi.fn(),
@@ -59,6 +64,11 @@ vi.mock('@/lib/api', () => ({
       action: mocks.action,
       transferFromPanel: mocks.transferFromPanel,
       remoteDownload: mocks.remoteDownload,
+      createRemoteDownloadJob: mocks.createRemoteDownloadJob,
+      remoteDownloadJobs: mocks.remoteDownloadJobs,
+      remoteDownloadJob: mocks.remoteDownloadJob,
+      cancelRemoteDownloadJob: mocks.cancelRemoteDownloadJob,
+      deleteRemoteDownloadJob: mocks.deleteRemoteDownloadJob,
       trash: mocks.trash,
       contentUrl: mocks.contentUrl,
       archiveUrl: mocks.archiveUrl,
@@ -125,7 +135,11 @@ interface FileBindings {
   closeRemoteDownloadDialog: () => void
   validRemoteDownloadForm: () => boolean
   submitRemoteDownload: () => Promise<void>
-  cancelRemoteDownload: () => void
+  loadRemoteDownloadJobs: (silent?: boolean) => Promise<void>
+  cancelRemoteDownloadJob: (job: FileRemoteDownloadJob) => Promise<void>
+  deleteRemoteDownloadJob: (job: FileRemoteDownloadJob) => Promise<void>
+  isRemoteDownloadJobActive: (job: FileRemoteDownloadJob) => boolean
+  remoteDownloadJobDetail: (job: FileRemoteDownloadJob) => string
   addEntriesToDesktop: (entry?: TestFileEntry, currentDirectory?: boolean) => Promise<void>
   startEntryDrag: (event: DragEvent, entry: TestFileEntry) => void
   setClipboard: (mode: 'copy' | 'move', entry?: TestFileEntry) => void
@@ -184,19 +198,12 @@ interface FileBindings {
   remoteDownloadUsesPlainHTTP: { value: boolean }
   remoteDownloadURLDescription: { value?: string }
   remoteDownloadFormError: { value: string }
-  remoteDownloadState: {
-    value?: {
-      operation: number
-      phase: 'connecting' | 'transferring' | 'confirming' | 'success' | 'cancelled' | 'error'
-      target: string
-      name?: string
-      loadedBytes: number
-      totalBytes?: number
-      detail?: string
-      detailCode?: string
-    }
-  }
-  remoteDownloadDetail: { value: string }
+  remoteDownloadJobs: { value: FileRemoteDownloadJob[] }
+  remoteDownloadJobsLoading: { value: boolean }
+  remoteDownloadSubmitting: { value: boolean }
+  remoteDownloadPendingActions: { value: Set<string> }
+  remoteDownloadJobsErrorMessage: { value: string }
+  activeRemoteDownloadCount: { value: number }
   contextMenu: { value?: { entry?: TestFileEntry; x: number; y: number } }
   shareEntry: { value?: TestFileEntry }
   shareManagerOpen: { value: boolean }
@@ -249,6 +256,20 @@ function testEntry(name: string): TestFileEntry {
     resourceVersion: `sha256:${name}`,
     editable: true,
     previewable: true,
+  }
+}
+
+function testRemoteDownloadJob(
+  overrides: Partial<FileRemoteDownloadJob> = {},
+): FileRemoteDownloadJob {
+  return {
+    id: 'a'.repeat(32),
+    state: 'queued',
+    source: 'https://downloads.example.com',
+    targetDirectory: '/home/releases',
+    createdAt: '2026-08-23T00:00:00Z',
+    updatedAt: '2026-08-23T00:00:00Z',
+    ...overrides,
   }
 }
 
@@ -338,6 +359,12 @@ beforeEach(() => {
     onEvent({ state: 'complete', loadedBytes: 7, totalBytes: 7, name, entry })
     return entry
   })
+  const remoteDownloadJob = testRemoteDownloadJob()
+  mocks.createRemoteDownloadJob.mockResolvedValue(remoteDownloadJob)
+  mocks.remoteDownloadJobs.mockResolvedValue({ items: [] })
+  mocks.remoteDownloadJob.mockResolvedValue(remoteDownloadJob)
+  mocks.cancelRemoteDownloadJob.mockResolvedValue(remoteDownloadJob)
+  mocks.deleteRemoteDownloadJob.mockResolvedValue(undefined)
   mocks.trash.mockResolvedValue({ entries: [], total: 0, readAt: '2026-07-30T00:00:00Z' })
   mocks.write.mockImplementation(async (_path: string, _content: string, _version: string) => ({
     entry: testEntry('saved.txt'),
@@ -380,8 +407,12 @@ beforeEach(() => {
 })
 
 describe('FilesView remote download', () => {
-  it('snapshots the target directory, streams safe status, and clears the signed URL from view state', async () => {
+  it('creates a background job for the snapshotted target and clears the signed URL from view state', async () => {
     const view = setupView()
+    mocks.createRemoteDownloadJob.mockResolvedValueOnce(testRemoteDownloadJob({
+      name: 'release.zip',
+      targetDirectory: '/home/releases',
+    }))
     view.currentPath.value = '/home/releases'
     view.openRemoteDownloadDialog()
     expect(view.remoteDownloadTarget.value).toBe('/home/releases')
@@ -391,17 +422,72 @@ describe('FilesView remote download', () => {
 
     await view.submitRemoteDownload()
 
-    expect(mocks.remoteDownload).toHaveBeenCalledWith({
+    expect(mocks.createRemoteDownloadJob).toHaveBeenCalledWith({
       url: 'https://downloads.example.com/release.zip?token=secret',
       targetDirectory: '/home/releases',
       name: 'release.zip',
-    }, expect.any(Function), expect.any(AbortSignal))
+    })
+    expect(mocks.remoteDownload).not.toHaveBeenCalled()
     expect(view.remoteDownloadDialogOpen.value).toBe(false)
     expect(view.remoteDownloadURL.value).toBe('')
-    expect(view.remoteDownloadState.value).toMatchObject({
-      phase: 'success', target: '/home/releases', name: 'release.zip', loadedBytes: 7, totalBytes: 7,
+    expect(view.remoteDownloadJobs.value[0]).toMatchObject({
+      state: 'queued', targetDirectory: '/home/releases', name: 'release.zip',
     })
-    expect(JSON.stringify(view.remoteDownloadState.value)).not.toContain('secret')
+    expect(JSON.stringify(view.remoteDownloadJobs.value)).not.toContain('secret')
+    expect(view.remoteDownloadSubmitting.value).toBe(false)
+  })
+
+  it('reconciles a newly created matching job after the create response is lost', async () => {
+    const view = setupView()
+    const known = testRemoteDownloadJob({ name: 'release.zip' })
+    const recovered = testRemoteDownloadJob({
+      id: 'b'.repeat(32),
+      name: 'release.zip',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    view.remoteDownloadJobs.value = [known]
+    mocks.createRemoteDownloadJob.mockRejectedValueOnce(new Error('connection reset'))
+    mocks.remoteDownloadJobs.mockResolvedValueOnce({ items: [recovered, known] })
+    view.currentPath.value = '/home/releases'
+    view.openRemoteDownloadDialog()
+    view.remoteDownloadURL.value = 'https://downloads.example.com/release.zip?token=secret'
+    view.remoteDownloadName.value = 'release.zip'
+
+    await view.submitRemoteDownload()
+
+    expect(mocks.remoteDownloadJobs).toHaveBeenCalledOnce()
+    expect(mocks.createRemoteDownloadJob.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.remoteDownloadJobs.mock.invocationCallOrder[0]!,
+    )
+    expect(view.remoteDownloadJobs.value.map((job) => job.id)).toContain(recovered.id)
+    expect(view.remoteDownloadDialogOpen.value).toBe(false)
+    expect(view.remoteDownloadURL.value).toBe('')
+    expect(view.remoteDownloadJobsErrorMessage.value).toBe('')
+    expect(mocks.danger).not.toHaveBeenCalled()
+  })
+
+  it('keeps the original create error and form when no matching submitted job is found', async () => {
+    const view = setupView()
+    const unrelated = testRemoteDownloadJob({
+      id: 'b'.repeat(32),
+      name: 'other.zip',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    mocks.createRemoteDownloadJob.mockRejectedValueOnce(new Error('connection reset'))
+    mocks.remoteDownloadJobs.mockResolvedValueOnce({ items: [unrelated] })
+    view.currentPath.value = '/home/releases'
+    view.openRemoteDownloadDialog()
+    view.remoteDownloadURL.value = 'https://downloads.example.com/release.zip?token=secret'
+    view.remoteDownloadName.value = 'release.zip'
+
+    await view.submitRemoteDownload()
+
+    expect(view.remoteDownloadDialogOpen.value).toBe(true)
+    expect(view.remoteDownloadURL.value).toContain('token=secret')
+    expect(view.remoteDownloadJobsErrorMessage.value).toBe('connection reset')
+    expect(mocks.danger).toHaveBeenCalledOnce()
   })
 
   it('rejects an unsupported URL before calling the API', async () => {
@@ -411,7 +497,7 @@ describe('FilesView remote download', () => {
 
     await view.submitRemoteDownload()
 
-    expect(mocks.remoteDownload).not.toHaveBeenCalled()
+    expect(mocks.createRemoteDownloadJob).not.toHaveBeenCalled()
     expect(view.remoteDownloadDialogOpen.value).toBe(true)
     expect(view.remoteDownloadFormError.value).toContain('HTTP 或 HTTPS')
     await setLocale('en-US', false)
@@ -444,39 +530,46 @@ describe('FilesView remote download', () => {
     expect(source).toMatch(/remote-download-warning[\s\S]*?role="status"[\s\S]*?aria-live="polite"/)
   })
 
-  it('cancels the request without claiming success', async () => {
+  it('requests cancellation, then keeps polling until the server reports a terminal state', async () => {
     const view = setupView()
-    mocks.remoteDownload.mockImplementationOnce((
-      _input: unknown,
-      _onEvent: (event: unknown) => void,
-      signal?: AbortSignal,
-    ) => new Promise((_resolve, reject) => {
-      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
-    }))
-    view.openRemoteDownloadDialog()
-    view.remoteDownloadURL.value = 'https://downloads.example.com/large.iso'
-
-    const download = view.submitRemoteDownload()
-    expect(view.remoteDownloadState.value?.phase).toBe('connecting')
-    view.cancelRemoteDownload()
-    await download
-
-    expect(view.remoteDownloadState.value).toMatchObject({
-      phase: 'cancelled', detailCode: 'remote_download_cancelled',
+    const active = testRemoteDownloadJob({ state: 'transferring', loadedBytes: 1024 })
+    const cancelled = testRemoteDownloadJob({
+      state: 'cancelled', loadedBytes: 1024, finishedAt: '2026-08-23T00:00:10Z',
     })
-    expect(view.remoteDownloadDetail.value).toContain('原子提交窗口')
+    view.remoteDownloadJobs.value = [active]
+    mocks.cancelRemoteDownloadJob.mockResolvedValueOnce(active)
+    mocks.remoteDownloadJobs.mockResolvedValueOnce({ items: [cancelled] })
+
+    await view.cancelRemoteDownloadJob(active)
+
+    expect(mocks.cancelRemoteDownloadJob).toHaveBeenCalledWith(active.id)
+    expect(mocks.remoteDownloadJobs).toHaveBeenCalledOnce()
+    expect(view.remoteDownloadJobs.value[0]?.state).toBe('cancelled')
+    expect(view.remoteDownloadJobDetail(cancelled)).toContain('原子提交窗口')
     await setLocale('en-US', false)
-    expect(view.remoteDownloadDetail.value).toContain('atomic commit window')
+    expect(view.remoteDownloadJobDetail(cancelled)).toContain('atomic commit window')
     expect(mocks.success).not.toHaveBeenCalled()
   })
 
-  it('keeps remote download in the file command bar with semantic progress', () => {
+  it('keeps offline download in the file command bar with a labelled task region and semantic progress', () => {
     const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
     const commandBar = source.slice(
       source.indexOf('<div class="file-command-bar__actions">'),
       source.indexOf('</div>', source.indexOf('<div class="file-command-bar__actions">')),
     )
     expect(commandBar).toContain("files.remoteDownload.label")
+    expect(source).toContain('aria-labelledby="remote-download-tasks-title"')
+    expect(source).toContain('aria-live="polite"')
+    const phaseMarkup = source.slice(
+      source.indexOf('class="remote-download-task__phase"'),
+      source.indexOf('</span>', source.indexOf('class="remote-download-task__phase"')),
+    )
+    expect(phaseMarkup).toContain('role="status"')
+    expect(phaseMarkup).toContain('aria-live="polite"')
+    expect(phaseMarkup).toContain('aria-atomic="true"')
+    expect(phaseMarkup).not.toContain('files.remoteDownload.received')
+    expect(source).toContain('class="remote-download-task__bytes"')
+    expect(source).not.toMatch(/class="remote-download-task__bytes"[^>]*(?:role|aria-live)=/)
     expect(source).toContain('<progress')
     expect(source).toContain('role="alert"')
     expect(source).toContain("files.remoteDownload.note")
@@ -484,9 +577,14 @@ describe('FilesView remote download', () => {
 
   it('does not let a completion refresh abort an active directory navigation', async () => {
     const view = setupView()
+    const active = testRemoteDownloadJob({ targetDirectory: '/home/releases' })
+    const complete = testRemoteDownloadJob({
+      state: 'complete', targetDirectory: '/home/releases',
+      finishedAt: '2026-08-23T00:00:10Z',
+    })
+    view.remoteDownloadJobs.value = [active]
     view.currentPath.value = '/home/releases'
-    view.openRemoteDownloadDialog()
-    view.remoteDownloadURL.value = 'https://downloads.example.com/release.zip'
+    mocks.remoteDownloadJobs.mockResolvedValueOnce({ items: [complete] })
     let resolveNavigation!: (directory: FileDirectoryResult) => void
     let navigationSignal: AbortSignal | undefined
     mocks.list.mockImplementationOnce((_path: string, _options: unknown, signal?: AbortSignal) => {
@@ -497,20 +595,109 @@ describe('FilesView remote download', () => {
     })
 
     const navigation = view.navigateDirectory('/etc')
-    await view.submitRemoteDownload()
+    await view.loadRemoteDownloadJobs()
 
     expect(navigationSignal?.aborted).toBe(false)
     expect(mocks.list).toHaveBeenCalledTimes(1)
     resolveNavigation(testDirectory('/etc'))
     await navigation
     expect(view.currentPath.value).toBe('/etc')
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes a target that completes while navigation into that target is still reading', async () => {
+    const view = setupView()
+    const active = testRemoteDownloadJob({ targetDirectory: '/etc' })
+    const complete = testRemoteDownloadJob({
+      state: 'complete', targetDirectory: '/etc',
+      finishedAt: '2026-08-23T00:00:10Z',
+    })
+    view.remoteDownloadJobs.value = [active]
+    view.currentPath.value = '/home'
+    mocks.remoteDownloadJobs.mockResolvedValueOnce({ items: [complete] })
+    let resolveNavigation!: (directory: FileDirectoryResult) => void
+    mocks.list
+      .mockImplementationOnce(() => new Promise<FileDirectoryResult>((resolve) => {
+        resolveNavigation = resolve
+      }))
+      .mockResolvedValueOnce(testDirectory('/etc'))
+
+    const navigation = view.navigateDirectory('/etc')
+    await view.loadRemoteDownloadJobs()
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+    resolveNavigation(testDirectory('/etc'))
+    await navigation
+
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2))
+    expect(mocks.list.mock.calls[1]?.[0]).toBe('/etc')
+    expect(view.currentPath.value).toBe('/etc')
+  })
+
+  it('keeps a requested-target refresh when an unrelated target completes concurrently', async () => {
+    const view = setupView()
+    const targetActive = testRemoteDownloadJob({ id: 'a'.repeat(32), targetDirectory: '/etc' })
+    const unrelatedActive = testRemoteDownloadJob({ id: 'b'.repeat(32), targetDirectory: '/var' })
+    const targetComplete = { ...targetActive, state: 'complete' as const, finishedAt: '2026-08-23T00:00:10Z' }
+    const unrelatedComplete = {
+      ...unrelatedActive, state: 'complete' as const, finishedAt: '2026-08-23T00:00:10Z',
+    }
+    view.remoteDownloadJobs.value = [targetActive, unrelatedActive]
+    view.currentPath.value = '/home'
+    mocks.remoteDownloadJobs.mockResolvedValueOnce({ items: [targetComplete, unrelatedComplete] })
+    let resolveNavigation!: (directory: FileDirectoryResult) => void
+    mocks.list
+      .mockImplementationOnce(() => new Promise<FileDirectoryResult>((resolve) => {
+        resolveNavigation = resolve
+      }))
+      .mockResolvedValueOnce(testDirectory('/etc'))
+
+    const navigation = view.navigateDirectory('/etc')
+    await view.loadRemoteDownloadJobs()
+    resolveNavigation(testDirectory('/etc'))
+    await navigation
+
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2))
+    expect(mocks.list.mock.calls.map((call) => call[0])).toEqual(['/etc', '/etc'])
+    expect(mocks.list.mock.calls.some((call) => call[0] === '/var')).toBe(false)
+  })
+
+  it('refreshes the original target when a navigation fails after a job completes', async () => {
+    const view = setupView()
+    const active = testRemoteDownloadJob({ targetDirectory: '/home/releases' })
+    const complete = testRemoteDownloadJob({
+      state: 'complete', targetDirectory: '/home/releases',
+      finishedAt: '2026-08-23T00:00:10Z',
+    })
+    view.remoteDownloadJobs.value = [active]
+    view.currentPath.value = '/home/releases'
+    mocks.remoteDownloadJobs.mockResolvedValueOnce({ items: [complete] })
+    let rejectNavigation!: (error: Error) => void
+    mocks.list
+      .mockImplementationOnce(() => new Promise<FileDirectoryResult>((_resolve, reject) => {
+        rejectNavigation = reject
+      }))
+      .mockResolvedValueOnce(testDirectory('/home/releases'))
+
+    const navigation = view.navigateDirectory('/etc')
+    await view.loadRemoteDownloadJobs()
+    rejectNavigation(new Error('navigation failed'))
+    await navigation
+
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2))
+    expect(mocks.list.mock.calls[1]?.[0]).toBe('/home/releases')
+    expect(view.currentPath.value).toBe('/home/releases')
   })
 
   it('queues a final refresh behind an active read of the same target directory', async () => {
     const view = setupView()
+    const active = testRemoteDownloadJob({ targetDirectory: '/home/releases' })
+    const complete = testRemoteDownloadJob({
+      state: 'complete', targetDirectory: '/home/releases',
+      finishedAt: '2026-08-23T00:00:10Z',
+    })
+    view.remoteDownloadJobs.value = [active]
     view.currentPath.value = '/home/releases'
-    view.openRemoteDownloadDialog()
-    view.remoteDownloadURL.value = 'https://downloads.example.com/release.zip'
+    mocks.remoteDownloadJobs.mockResolvedValueOnce({ items: [complete] })
     let resolveCurrentRead!: (directory: FileDirectoryResult) => void
     let currentReadSignal: AbortSignal | undefined
     mocks.list
@@ -523,7 +710,7 @@ describe('FilesView remote download', () => {
       .mockResolvedValueOnce(testDirectory('/home/releases'))
 
     const currentRead = view.loadDirectory('/home/releases')
-    await view.submitRemoteDownload()
+    await view.loadRemoteDownloadJobs()
 
     expect(currentReadSignal?.aborted).toBe(false)
     expect(mocks.list).toHaveBeenCalledTimes(1)
@@ -533,31 +720,54 @@ describe('FilesView remote download', () => {
     expect(mocks.list.mock.calls[1]?.[0]).toBe('/home/releases')
   })
 
-  it('does not let an earlier success timer clear a later download state', async () => {
+  it('refreshes a directory when the first restored terminal job is newer than its snapshot', async () => {
     const view = setupView()
-    view.currentPath.value = '/home'
-    view.openRemoteDownloadDialog()
-    view.remoteDownloadURL.value = 'https://downloads.example.com/first.zip'
-    view.currentPath.value = '/etc'
-    await view.submitRemoteDownload()
-    const oldTimer = vi.mocked(window.setTimeout).mock.calls.at(-1)?.[0]
+    view.currentPath.value = '/home/releases'
+    view.directory.value = testDirectory('/home/releases')
+    mocks.remoteDownloadJobs.mockResolvedValueOnce({
+      items: [testRemoteDownloadJob({
+        state: 'complete',
+        finishedAt: '2026-08-23T00:00:10Z',
+        updatedAt: '2026-08-23T00:00:10Z',
+      })],
+    })
+    mocks.list.mockResolvedValueOnce({
+      ...testDirectory('/home/releases'), readAt: '2026-08-23T00:00:11Z',
+    })
 
-    mocks.remoteDownload.mockImplementationOnce((
-      _input: unknown,
-      _onEvent: (event: unknown) => void,
-      signal?: AbortSignal,
-    ) => new Promise((_resolve, reject) => {
-      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
-    }))
-    view.openRemoteDownloadDialog()
-    view.remoteDownloadURL.value = 'https://downloads.example.com/second.zip'
-    view.currentPath.value = '/var'
-    const secondDownload = view.submitRemoteDownload()
+    await view.loadRemoteDownloadJobs()
 
-    if (typeof oldTimer === 'function') oldTimer()
-    expect(view.remoteDownloadState.value?.phase).toBe('connecting')
-    view.cancelRemoteDownload()
-    await secondDownload
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalledOnce())
+    expect(mocks.list.mock.calls[0]?.[0]).toBe('/home/releases')
+  })
+
+  it('aborts a stale task-list request before clearing a terminal job so it cannot reappear', async () => {
+    const view = setupView()
+    const complete = testRemoteDownloadJob({
+      state: 'complete', finishedAt: '2026-08-23T00:00:10Z',
+    })
+    view.remoteDownloadJobs.value = [complete]
+    let staleSignal: AbortSignal | undefined
+    mocks.remoteDownloadJobs
+      .mockImplementationOnce((signal?: AbortSignal) => new Promise((_resolve, reject) => {
+        staleSignal = signal
+        signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('Aborted', 'AbortError')),
+          { once: true },
+        )
+      }))
+      .mockResolvedValueOnce({ items: [] })
+
+    const staleLoad = view.loadRemoteDownloadJobs(true)
+    await vi.waitFor(() => expect(staleSignal).toBeDefined())
+    await view.deleteRemoteDownloadJob(complete)
+    await staleLoad
+
+    expect(staleSignal?.aborted).toBe(true)
+    expect(mocks.deleteRemoteDownloadJob).toHaveBeenCalledWith(complete.id)
+    expect(mocks.remoteDownloadJobs).toHaveBeenCalledTimes(2)
+    expect(view.remoteDownloadJobs.value).toEqual([])
   })
 })
 

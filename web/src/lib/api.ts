@@ -43,6 +43,8 @@ import type {
   FileEntryBatchResult,
   FileRemoteDownloadEvent,
   FileRemoteDownloadInput,
+  FileRemoteDownloadJob,
+  FileRemoteDownloadJobList,
   FileShareAdminView,
   FileShareCreateInput,
   FileShareList,
@@ -1855,6 +1857,21 @@ export const api = {
       },
       remoteDownloadStreamStates,
     ),
+    createRemoteDownloadJob: (input: FileRemoteDownloadInput): Promise<FileRemoteDownloadJob> =>
+      request<FileRemoteDownloadJob>('/files/remote-downloads', {
+        method: 'POST',
+        body: { ...input, background: true },
+      }),
+    remoteDownloadJobs: (signal?: AbortSignal): Promise<FileRemoteDownloadJobList> =>
+      request<FileRemoteDownloadJobList>('/files/remote-downloads', { signal }),
+    remoteDownloadJob: (id: string, signal?: AbortSignal): Promise<FileRemoteDownloadJob> =>
+      request<FileRemoteDownloadJob>(`/files/remote-downloads/${encodeURIComponent(id)}`, { signal }),
+    cancelRemoteDownloadJob: (id: string): Promise<FileRemoteDownloadJob> =>
+      request<FileRemoteDownloadJob>(`/files/remote-downloads/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+      }),
+    deleteRemoteDownloadJob: (id: string): Promise<void> =>
+      request<void>(`/files/remote-downloads/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     thumbnailUrl: (path: string, version: string): string =>
       buildUrl('/files/content', { path, disposition: 'inline', mode: 'thumbnail', version }),
     text: async (path: string): Promise<string> =>

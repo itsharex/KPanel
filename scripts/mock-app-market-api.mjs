@@ -25,6 +25,8 @@ const diagnosticJobs = new Map()
 let domainSiteDeleted = false
 const mockSharedImage = await readFile(join(root, 'web', 'public', 'wallpapers', 'kpanel-desktop.webp'))
 const mockFileVersion = `sha256:${'a'.repeat(64)}`
+const mockRemoteDownloadJobs = new Map()
+let mockRemoteDownloadJobCounter = 0
 const mockFiles = [
   {
     name: 'kpanel-desktop.webp', path: '/kpanel-desktop.webp', kind: 'file', mime: 'image/webp',
@@ -669,6 +671,56 @@ function mockRemoteDownloadName(directory, requestedName) {
   return candidate
 }
 
+function mockRemoteDownloadJobActive(job) {
+  return ['queued', 'connecting', 'transferring', 'confirming'].includes(job?.state)
+}
+
+function updateMockRemoteDownloadJob(id, changes) {
+  const current = mockRemoteDownloadJobs.get(id)
+  if (!current) return undefined
+  const now = new Date().toISOString()
+  const updated = { ...current, ...changes, updatedAt: now }
+  if (!mockRemoteDownloadJobActive(updated) && !updated.finishedAt) updated.finishedAt = now
+  mockRemoteDownloadJobs.set(id, updated)
+  return updated
+}
+
+function startMockRemoteDownloadJob(id, input, rawURL) {
+  void (async () => {
+    await wait(280)
+    if (!mockRemoteDownloadJobActive(mockRemoteDownloadJobs.get(id))) return
+    updateMockRemoteDownloadJob(id, { state: 'connecting' })
+    if (rawURL.includes('blocked') || rawURL.includes('fail')) {
+      await wait(420)
+      if (!mockRemoteDownloadJobActive(mockRemoteDownloadJobs.get(id))) return
+      updateMockRemoteDownloadJob(id, { state: 'error', code: 'remote_download_address_blocked' })
+      return
+    }
+    const directory = typeof input.targetDirectory === 'string' ? input.targetDirectory : '/home'
+    const name = mockRemoteDownloadName(directory, input.name)
+    const totalBytes = 8 * 1024 * 1024
+    updateMockRemoteDownloadJob(id, { state: 'transferring', name, totalBytes })
+    for (const loadedBytes of [512 * 1024, 2 * 1024 * 1024, 5 * 1024 * 1024, totalBytes]) {
+      await wait(520)
+      if (!mockRemoteDownloadJobActive(mockRemoteDownloadJobs.get(id))) return
+      updateMockRemoteDownloadJob(id, { state: 'transferring', name, loadedBytes, totalBytes })
+    }
+    updateMockRemoteDownloadJob(id, { state: 'confirming', name, loadedBytes: totalBytes, totalBytes })
+    await wait(620)
+    if (!mockRemoteDownloadJobActive(mockRemoteDownloadJobs.get(id))) return
+    const entry = {
+      name, path: mockFilePath(directory, name), kind: 'file',
+      mime: 'application/octet-stream', sizeBytes: totalBytes, mode: '-rw-r--r--',
+      owner: 'root', group: 'root', modifiedAt: new Date().toISOString(),
+      resourceVersion: `sha256:${'d'.repeat(64)}`, editable: false, previewable: false,
+    }
+    mockFiles.push(entry)
+    updateMockRemoteDownloadJob(id, {
+      state: 'complete', code: undefined, name, loadedBytes: totalBytes, totalBytes, entry,
+    })
+  })()
+}
+
 function fileShareAdminView(record, token = '') {
   return {
     id: record.id,
@@ -754,8 +806,69 @@ createServer(async (request, response) => {
     }
     return
   }
+  if (request.method === 'GET' && url.pathname === '/api/v1/files/remote-downloads') {
+    const items = [...mockRemoteDownloadJobs.values()]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    send(response, 200, { items })
+    return
+  }
+  const remoteDownloadJobMatch = url.pathname.match(/^\/api\/v1\/files\/remote-downloads\/([a-f0-9]{32})$/)
+  if (request.method === 'GET' && remoteDownloadJobMatch) {
+    const job = mockRemoteDownloadJobs.get(remoteDownloadJobMatch[1])
+    send(response, job ? 200 : 404, job || { title: '离线下载任务不存在', status: 404, code: 'remote_download_job_not_found' })
+    return
+  }
+  const remoteDownloadCancelMatch = url.pathname.match(/^\/api\/v1\/files\/remote-downloads\/([a-f0-9]{32})\/cancel$/)
+  if (request.method === 'POST' && remoteDownloadCancelMatch) {
+    const job = mockRemoteDownloadJobs.get(remoteDownloadCancelMatch[1])
+    if (!job) {
+      send(response, 404, { title: '离线下载任务不存在', status: 404, code: 'remote_download_job_not_found' })
+    } else if (!mockRemoteDownloadJobActive(job)) {
+      send(response, 409, { title: '离线下载任务已经结束', status: 409, code: 'remote_download_job_finished' })
+    } else {
+      send(response, 202, updateMockRemoteDownloadJob(job.id, {
+        state: 'cancelled', code: 'remote_download_cancelled',
+      }))
+    }
+    return
+  }
+  if (request.method === 'DELETE' && remoteDownloadJobMatch) {
+    const job = mockRemoteDownloadJobs.get(remoteDownloadJobMatch[1])
+    if (!job) {
+      send(response, 404, { title: '离线下载任务不存在', status: 404, code: 'remote_download_job_not_found' })
+    } else if (mockRemoteDownloadJobActive(job)) {
+      send(response, 409, { title: '请先停止离线下载任务', status: 409, code: 'remote_download_job_active' })
+    } else {
+      mockRemoteDownloadJobs.delete(job.id)
+      response.writeHead(204, { 'Cache-Control': 'no-store' })
+      response.end()
+    }
+    return
+  }
   if (request.method === 'POST' && url.pathname === '/api/v1/files/remote-downloads') {
     const input = await readJSON(request)
+    if (input.background === true) {
+      let source
+      try {
+        source = new URL(String(input.url || '')).origin
+      } catch {
+        send(response, 422, { title: '请检查下载地址', status: 422, code: 'remote_download_invalid' })
+        return
+      }
+      mockRemoteDownloadJobCounter += 1
+      const id = mockRemoteDownloadJobCounter.toString(16).padStart(32, '0')
+      const now = new Date().toISOString()
+      const job = {
+        id, state: 'queued', source,
+        targetDirectory: typeof input.targetDirectory === 'string' ? input.targetDirectory : '/home',
+        ...(typeof input.name === 'string' && input.name.trim() ? { name: input.name.trim() } : {}),
+        createdAt: now, updatedAt: now,
+      }
+      mockRemoteDownloadJobs.set(id, job)
+      send(response, 202, job)
+      startMockRemoteDownloadJob(id, input, String(input.url || ''))
+      return
+    }
     response.writeHead(200, {
       'Content-Type': 'application/x-ndjson; charset=utf-8',
       'Cache-Control': 'no-store',

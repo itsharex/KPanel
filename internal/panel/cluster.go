@@ -52,6 +52,7 @@ func (s *Server) StartBackground(ctx context.Context) {
 }
 
 func (s *Server) Close() error {
+	s.closeRemoteDownloadJobs()
 	s.closeTerminalSessions()
 	s.closeFileShareStreams()
 	var aiErr error

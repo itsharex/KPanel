@@ -80,6 +80,12 @@ type Server struct {
 	downloadTickets       map[[32]byte]fileDownloadTicket
 	remoteDownloadOpen    func(context.Context, string) (*http.Response, error)
 	remoteDownloadGate    chan struct{}
+	remoteDownloadJobs    *remotedownload.JobStore
+	remoteDownloadMu      sync.Mutex
+	remoteDownloadCancels map[string]context.CancelCauseFunc
+	remoteDownloadPending int
+	remoteDownloadClosing bool
+	remoteDownloadWG      sync.WaitGroup
 	ai                    *ai.Service
 	aiError               string
 	desktopWorkspace      *desktopworkspace.Store
@@ -134,6 +140,10 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 	if err != nil {
 		return nil, fmt.Errorf("initialize desktop workspace: %w", err)
 	}
+	remoteDownloadJobs, err := remotedownload.OpenJobStore(filepath.Join(config.DataDir, "remote-downloads"))
+	if err != nil {
+		return nil, fmt.Errorf("initialize remote download jobs: %w", err)
+	}
 	server := &Server{
 		config: config, auth: authService, store: storage, agent: agent,
 		cluster:               clusterService,
@@ -146,6 +156,8 @@ func NewServer(config Config, authService *auth.Service, storage *store.Store, a
 		fileShareMetadataGate: make(chan struct{}, maxFileShareMetadataReads),
 		remoteDownloadOpen:    remotedownload.NewClient(remotedownload.Config{}).Open,
 		remoteDownloadGate:    make(chan struct{}, maxPanelRemoteDownloads),
+		remoteDownloadJobs:    remoteDownloadJobs,
+		remoteDownloadCancels: make(map[string]context.CancelCauseFunc),
 	}
 	server.hostOps = newHostOperationService(server)
 	return server, nil
@@ -312,8 +324,12 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleFileUpload(w, r)
 	case r.URL.Path == "/api/v1/files/transfers":
 		s.handleFileTransfer(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/files/remote-downloads":
+		s.handleFileRemoteDownloadJobs(w, r)
 	case r.URL.Path == "/api/v1/files/remote-downloads":
 		s.handleFileRemoteDownload(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/v1/files/remote-downloads/"):
+		s.handleFileRemoteDownloadJob(w, r)
 	case r.URL.Path == "/api/v1/files/actions":
 		s.handleFileAction(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/docker/containers/") &&

@@ -87,6 +87,46 @@ describe('API client', () => {
     })
   })
 
+  it('creates and manages background remote download jobs without changing the streaming API', async () => {
+    const job = {
+      id: 'a'.repeat(32), state: 'queued', source: 'https://downloads.example.com',
+      targetDirectory: '/home', name: 'release.zip', loadedBytes: 0,
+      createdAt: '2026-08-23T00:00:00Z', updatedAt: '2026-08-23T00:00:00Z',
+    }
+    const running = { ...job, state: 'transferring', loadedBytes: 1024 }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(job, { status: 202 }))
+      .mockResolvedValueOnce(jsonResponse({ items: [running] }))
+      .mockResolvedValueOnce(jsonResponse(running))
+      .mockResolvedValueOnce(jsonResponse(running, { status: 202 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const signedURL = 'https://downloads.example.com/release.zip?token=secret'
+
+    await expect(api.files.createRemoteDownloadJob({
+      url: signedURL, targetDirectory: '/home', name: 'release.zip',
+    })).resolves.toEqual(job)
+    await expect(api.files.remoteDownloadJobs()).resolves.toEqual({ items: [running] })
+    await expect(api.files.remoteDownloadJob(job.id)).resolves.toEqual(running)
+    await expect(api.files.cancelRemoteDownloadJob(job.id)).resolves.toEqual(running)
+    await expect(api.files.deleteRemoteDownloadJob(job.id)).resolves.toBeUndefined()
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      '/api/v1/files/remote-downloads',
+      '/api/v1/files/remote-downloads',
+      `/api/v1/files/remote-downloads/${job.id}`,
+      `/api/v1/files/remote-downloads/${job.id}/cancel`,
+      `/api/v1/files/remote-downloads/${job.id}`,
+    ])
+    const createOptions = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(JSON.parse(String(createOptions.body))).toEqual({
+      url: signedURL, targetDirectory: '/home', name: 'release.zip', background: true,
+    })
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('secret')
+    expect(fetchMock.mock.calls[3]?.[1]).toEqual(expect.objectContaining({ method: 'POST' }))
+    expect(fetchMock.mock.calls[4]?.[1]).toEqual(expect.objectContaining({ method: 'DELETE' }))
+  })
+
   it('surfaces a remote download error event and rejects an incomplete stream', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(
