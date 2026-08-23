@@ -29,6 +29,8 @@ test('change routing includes deletions and every GitHub workflow', () => {
   assert.match(script, /scripts\/tests\/collaboration-state\.test\.mjs/);
   assert.match(script, /scripts\/run-repo-bash\.mjs/);
   assert.match(script, /scripts\/tests\/run-repo-bash\.test\.mjs/);
+  assert.match(script, /unset GOVERNANCE_CI_TOKEN GITHUB_TOKEN/);
+  assert.match(script, /GITHUB_TOKEN="\$governance_ci_token" node scripts\/check-governance-candidate-ci\.mjs/);
 });
 
 function executable(path, body) {

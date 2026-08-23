@@ -44,7 +44,7 @@ jobs:
 
       - name: Run change-aware verification
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GOVERNANCE_CI_TOKEN: ${{ github.token }}
           VERIFY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: make verify-change
 

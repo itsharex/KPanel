@@ -31,8 +31,9 @@
 
 - 不改变业务真源、双端互通、运行资源或用户能力。
 - 只在治理路径增加一次既有 Linux CI，不增加常驻服务、生产依赖或第二状态源。
-- API 查询只发生在 GitHub 主线 CI，使用仓库临时 Token 和只读 `actions: read`；本地 Git 开发仍不依赖
-  GitHub API 或 `gh` 登录。
+- API 查询只发生在 GitHub 主线 CI，使用仓库临时 Token 和只读 `actions: read`；Token 在
+  `verify-change.sh` 入口从通用环境删除，只临时注入候选查询子进程。本地 Git 开发仍不依赖 GitHub API
+  或 `gh` 登录。
 
 ## 基线、目标与观察窗口
 

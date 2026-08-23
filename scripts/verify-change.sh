@@ -7,6 +7,8 @@ cd "$repo_root"
 requested_level="${VERIFY_LEVEL:-auto}"
 base_ref="${VERIFY_BASE_REF:-${1:-}}"
 forced_verification=false
+governance_ci_token="${GOVERNANCE_CI_TOKEN:-${GITHUB_TOKEN:-}}"
+unset GOVERNANCE_CI_TOKEN GITHUB_TOKEN
 
 case "$requested_level" in
   2|l2|3|l3|release)
@@ -100,7 +102,8 @@ for path in "${changed_files[@]}"; do
 done
 
 if [[ "$needs_governance" == true && "${CI:-}" == "true" && "${GITHUB_REF_NAME:-}" == "main" ]]; then
-  node scripts/check-governance-candidate-ci.mjs
+  GITHUB_TOKEN="$governance_ci_token" node scripts/check-governance-candidate-ci.mjs
+  governance_ci_token=""
 fi
 
 if [[ "$needs_governance" == true || "$requested_level" == "3" || "$requested_level" == "l3" || "$requested_level" == "release" ]]; then

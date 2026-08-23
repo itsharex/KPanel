@@ -265,7 +265,8 @@ requireText('scripts/verify-governance.sh', [
 ]);
 requireText('scripts/verify-change.sh', [
   'needs_governance=false',
-  'node scripts/check-governance-candidate-ci.mjs',
+  'GITHUB_TOKEN="$governance_ci_token" node scripts/check-governance-candidate-ci.mjs',
+  'unset GOVERNANCE_CI_TOKEN GITHUB_TOKEN',
   'bash scripts/verify-governance.sh',
   'node scripts/check-governance-consistency.mjs',
   'node scripts/check-business-context-freshness.mjs',
@@ -345,7 +346,7 @@ requireText('.codex-workflows/evolve-kpanel.workflow.yaml', [
 ]);
 requireText('.github/workflows/ci.yml', [
   'actions: read',
-  'GITHUB_TOKEN: ${{ github.token }}',
+  'GOVERNANCE_CI_TOKEN: ${{ github.token }}',
 ]);
 
 requireText('docs/release-acceptance-template.md', [
