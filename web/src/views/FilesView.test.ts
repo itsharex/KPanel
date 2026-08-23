@@ -708,7 +708,7 @@ describe('FilesView remote download', () => {
     expect(mocks.success).not.toHaveBeenCalled()
   })
 
-  it('keeps offline download in the file command bar with a labelled task region and semantic progress', () => {
+  it('keeps remote download in the file command bar with a labelled task region and semantic progress', () => {
     const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
     const commandBar = source.slice(
       source.indexOf('<div class="file-command-bar__actions">'),
@@ -730,6 +730,27 @@ describe('FilesView remote download', () => {
     expect(source).toContain('<progress')
     expect(source).toContain('role="alert"')
     expect(source).toContain("files.remoteDownload.note")
+  })
+
+  it('uses a compact persistent task card beside a transient upload strip', () => {
+    const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
+    const narrowStyles = source.slice(
+      source.indexOf('@media (max-width: 720px)'),
+      source.indexOf('@media (max-width: 480px)'),
+    )
+
+    expect(source).toContain('class="remote-download-task__summary"')
+    expect(source).not.toContain('class="remote-download-tasks__privacy"')
+    expect(source).toMatch(/\.remote-download-tasks\s*\{[^}]*background:\s*var\(--surface\);/)
+    expect(source).toMatch(/\.remote-download-task\s*\{[^}]*background:\s*var\(--surface-subtle\);/)
+    expect(source).toContain('class="upload-strip__item"')
+    expect(source).toContain('class="upload-strip__icon"')
+    expect(source).toContain('role="progressbar"')
+    expect(source).toContain(':aria-valuenow="progress"')
+    expect(source).toContain("files.upload.progressLabel")
+    expect(source).toMatch(/\.upload-strip__item\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\) 42px;/)
+    expect(narrowStyles).toMatch(/\.remote-download-task\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto;/)
+    expect(narrowStyles).toMatch(/\.remote-download-tasks__refresh\s*\{[^}]*width:\s*44px;[^}]*min-width:\s*44px;/)
   })
 
   it('keeps the file command bar compact with an accessible icon refresh and directory wording', () => {

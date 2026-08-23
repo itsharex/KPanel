@@ -2266,12 +2266,13 @@ onBeforeUnmount(() => {
             </div>
             <button
               type="button"
+              class="remote-download-tasks__refresh"
               :disabled="remoteDownloadJobsLoading"
+              :title="i18n.t('files.remoteDownload.refreshTasks')"
               :aria-label="i18n.t('files.remoteDownload.refreshTasks')"
               @click="loadRemoteDownloadJobs()"
             >
               <RefreshCw :size="15" :class="{ spinning: remoteDownloadJobsLoading }" />
-              {{ i18n.t('files.remoteDownload.refreshTasks') }}
             </button>
           </header>
           <p v-if="remoteDownloadJobsErrorMessage" class="remote-download-tasks__error" role="alert">
@@ -2297,8 +2298,14 @@ onBeforeUnmount(() => {
                 <Download v-else :size="17" />
               </span>
               <div class="remote-download-task__body">
-                <strong>{{ job.name || i18n.t('files.remoteDownload.unnamedTask') }}</strong>
-                <small>{{ job.source }} · {{ job.targetDirectory }}</small>
+                <div class="remote-download-task__summary">
+                  <strong :title="job.name || i18n.t('files.remoteDownload.unnamedTask')">
+                    {{ job.name || i18n.t('files.remoteDownload.unnamedTask') }}
+                  </strong>
+                  <small :title="`${job.source} · ${job.targetDirectory}`">
+                    {{ job.source }} · {{ job.targetDirectory }}
+                  </small>
+                </div>
                 <div class="remote-download-task__status-line">
                   <span
                     class="remote-download-task__phase"
@@ -2345,12 +2352,6 @@ onBeforeUnmount(() => {
               </div>
             </li>
           </ul>
-          <p class="remote-download-tasks__privacy">
-            {{ i18n.t('files.remoteDownload.historyPrivacy') }}
-            <template v-if="activeRemoteDownloadCount">
-              {{ i18n.t('files.remoteDownload.activeCount', { count: activeRemoteDownloadCount }) }}
-            </template>
-          </p>
         </section>
       </Transition>
 
@@ -2382,10 +2383,20 @@ onBeforeUnmount(() => {
       </Transition>
 
       <div v-if="Object.keys(uploadProgress).length" class="upload-strip">
-        <div v-for="(progress, name) in uploadProgress" :key="name">
-          <span>{{ name }}</span>
-          <div><i :style="{ width: `${progress}%` }" /></div>
-          <strong>{{ progress }}%</strong>
+        <div v-for="(progress, name) in uploadProgress" :key="name" class="upload-strip__item">
+          <span class="upload-strip__icon" aria-hidden="true"><Upload :size="16" /></span>
+          <div class="upload-strip__body">
+            <span class="upload-strip__name" :title="name">{{ name }}</span>
+            <div
+              class="upload-strip__track"
+              role="progressbar"
+              :aria-label="i18n.t('files.upload.progressLabel', { name, progress })"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              :aria-valuenow="progress"
+            ><i :style="{ width: `${progress}%` }" /></div>
+          </div>
+          <strong aria-hidden="true">{{ progress }}%</strong>
         </div>
       </div>
 
@@ -3444,31 +3455,32 @@ onBeforeUnmount(() => {
 
 .remote-download-tasks {
   display: grid;
-  border-bottom: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border));
-  background: color-mix(in srgb, var(--brand) 7%, var(--surface));
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .remote-download-tasks__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 15px;
+  gap: 8px;
+  padding: 8px 12px 6px;
 }
 
 .remote-download-tasks__header > div {
-  display: grid;
+  display: flex;
   min-width: 0;
-  gap: 3px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 10px;
 }
 
 .remote-download-tasks__header strong {
   color: var(--text);
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .remote-download-tasks__header span,
-.remote-download-tasks__privacy,
 .remote-download-tasks__loading {
   color: var(--muted);
   font-size: 13px;
@@ -3491,6 +3503,12 @@ onBeforeUnmount(() => {
   font-size: 14px;
 }
 
+.remote-download-tasks__refresh {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+}
+
 .remote-download-tasks__header button:disabled,
 .remote-download-task__actions button:disabled {
   cursor: not-allowed;
@@ -3498,10 +3516,9 @@ onBeforeUnmount(() => {
 }
 
 .remote-download-tasks__error,
-.remote-download-tasks__loading,
-.remote-download-tasks__privacy {
+.remote-download-tasks__loading {
   margin: 0;
-  padding: 0 15px 12px;
+  padding: 0 12px 8px;
 }
 
 .remote-download-tasks__error {
@@ -3512,11 +3529,11 @@ onBeforeUnmount(() => {
 
 .remote-download-task-list {
   display: grid;
-  max-height: 360px;
-  gap: 8px;
+  max-height: 264px;
+  gap: 6px;
   overflow-y: auto;
   margin: 0;
-  padding: 0 12px 12px;
+  padding: 0 12px 8px;
   list-style: none;
 }
 
@@ -3524,11 +3541,11 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 11px;
-  padding: 10px 11px;
+  gap: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 11px;
-  background: var(--surface);
+  border-radius: 9px;
+  background: var(--surface-subtle);
 }
 
 .remote-download-task--error {
@@ -3542,10 +3559,10 @@ onBeforeUnmount(() => {
 
 .remote-download-task__icon {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   place-items: center;
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--brand);
   background: color-mix(in srgb, var(--brand) 14%, var(--surface));
 }
@@ -3567,7 +3584,15 @@ onBeforeUnmount(() => {
   gap: 3px;
 }
 
-.remote-download-task__body strong {
+.remote-download-task__summary {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.remote-download-task__summary strong {
+  flex: 0 1 auto;
   overflow: hidden;
   color: var(--text);
   font-size: 14px;
@@ -3575,11 +3600,15 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.remote-download-task__body small {
-  overflow-wrap: anywhere;
+.remote-download-task__summary small {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .remote-download-task__status-line {
@@ -3612,16 +3641,12 @@ onBeforeUnmount(() => {
 }
 
 .remote-download-task progress {
-  width: min(420px, 100%);
+  width: 100%;
   height: 6px;
   overflow: hidden;
   border: 0;
   border-radius: 99px;
   accent-color: var(--brand);
-}
-
-.remote-download-tasks__privacy {
-  padding-top: 1px;
 }
 
 .danger-link {
@@ -3630,31 +3655,62 @@ onBeforeUnmount(() => {
 
 .upload-strip {
   display: grid;
-  gap: 7px;
-  padding: 10px 15px;
+  gap: 6px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
-.upload-strip > div {
+.upload-strip__item {
   display: grid;
-  grid-template-columns: minmax(120px, 220px) 1fr 42px;
+  grid-template-columns: auto minmax(0, 1fr) 42px;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
+  gap: 8px;
 }
 
-.upload-strip > div > div {
-  height: 4px;
+.upload-strip__icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, var(--surface));
+}
+
+.upload-strip__body {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.upload-strip__name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-strip__track {
+  height: 6px;
   overflow: hidden;
   border-radius: 99px;
   background: var(--surface-subtle);
 }
 
-.upload-strip i {
+.upload-strip__track i {
   display: block;
   height: 100%;
   border-radius: inherit;
   background: var(--brand);
+}
+
+.upload-strip__item > strong {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
 }
 
 .file-table {
@@ -4757,19 +4813,21 @@ onBeforeUnmount(() => {
   }
 
   .remote-download-task {
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: start;
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
   .remote-download-task__actions {
-    grid-column: 1 / -1;
-    display: flex;
-    justify-content: flex-end;
+    grid-column: auto;
   }
 
   .remote-download-task__actions button,
   .remote-download-tasks__header button {
     min-height: 44px;
+  }
+
+  .remote-download-tasks__refresh {
+    width: 44px;
+    min-width: 44px;
   }
 
   .file-row {
@@ -4909,15 +4967,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 480px) {
-  .remote-download-tasks__header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .remote-download-tasks__header button {
-    align-self: flex-end;
-  }
-
   .file-command-bar__actions,
   .batch-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));

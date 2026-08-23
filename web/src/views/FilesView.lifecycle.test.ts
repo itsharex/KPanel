@@ -157,7 +157,7 @@ describe('FilesView remote download lifecycle', () => {
 
     expect(mocks.remoteDownloadJobs).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain('file.bin')
-    expect(wrapper.text()).toContain('下载记录只显示来源站点')
+    expect(wrapper.text()).toContain('关闭页面后仍会继续')
     const phase = wrapper.get('.remote-download-task__phase')
     expect(phase.attributes()).toMatchObject({
       role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true',

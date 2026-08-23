@@ -39,6 +39,7 @@ export const enUSMessages = {
   'route.activity': 'Activity',
   'route.settings': 'Settings',
 
+  'files.upload.progressLabel': 'Upload progress: {name}, {progress}%',
   'files.remoteDownload.label': 'Remote download',
   'files.remoteDownload.tooltip': 'Download from a link; it continues after you close this page',
   'files.remoteDownload.dialogDescription': 'Download from a link to {target}; it continues after you close this page.',
@@ -58,8 +59,6 @@ export const enUSMessages = {
   'files.remoteDownload.tasksDescription': 'Downloads continue after you close this page.',
   'files.remoteDownload.refreshTasks': 'Refresh tasks',
   'files.remoteDownload.loadingTasks': 'Loading download progress…',
-  'files.remoteDownload.historyPrivacy': 'Download history shows only the source site and never stores the full download URL.',
-  'files.remoteDownload.activeCount': 'Active downloads: {count}.',
   'files.remoteDownload.unnamedTask': 'Waiting for filename',
   'files.remoteDownload.createFailed': 'Remote download failed',
   'files.remoteDownload.retry': 'Download again',

@@ -37,6 +37,7 @@ export const zhCNMessages = {
   'route.activity': '活动记录',
   'route.settings': '设置',
 
+  'files.upload.progressLabel': '上传进度：{name}，{progress}%',
   'files.remoteDownload.label': '远程下载',
   'files.remoteDownload.tooltip': '从链接下载，关闭页面后仍会继续',
   'files.remoteDownload.dialogDescription': '从链接下载到 {target}，关闭页面后仍会继续。',
@@ -56,8 +57,6 @@ export const zhCNMessages = {
   'files.remoteDownload.tasksDescription': '关闭页面后仍会继续。',
   'files.remoteDownload.refreshTasks': '刷新任务',
   'files.remoteDownload.loadingTasks': '正在读取下载进度…',
-  'files.remoteDownload.historyPrivacy': '下载记录只显示来源站点，不保存完整下载 URL。',
-  'files.remoteDownload.activeCount': '仍有 {count} 个下载正在进行。',
   'files.remoteDownload.unnamedTask': '等待识别文件名',
   'files.remoteDownload.createFailed': '远程下载失败',
   'files.remoteDownload.retry': '重新下载',
