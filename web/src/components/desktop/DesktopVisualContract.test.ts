@@ -148,6 +148,13 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/@container desktop-window \(max-width: 680px\)[\s\S]*?\.desktop-window__body \.app-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) !important;/)
   })
 
+  it('stacks file shortcuts above actions when a desktop window is narrow', () => {
+    expect(styles).toMatch(/@container desktop-window \(max-width: 1100px\)[\s\S]*?\.desktop-window__body \.file-command-bar\s*\{[^}]*flex-direction:\s*column;[^}]*flex-wrap:\s*nowrap;/)
+    expect(styles).toMatch(/@container desktop-window \(max-width: 1100px\)[\s\S]*?\.desktop-window__body \.file-shortcuts\s*\{[^}]*flex-wrap:\s*nowrap;[^}]*overflow-x:\s*auto;/)
+    expect(styles).toMatch(/@container desktop-window \(max-width: 1100px\)[\s\S]*?\.desktop-window__body \.file-command-bar__actions\s*\{[^}]*width:\s*100%;[^}]*flex-wrap:\s*wrap;/)
+    expect(styles).toMatch(/@container desktop-window \(max-width: 580px\)[\s\S]*?\.desktop-window__body \.file-command-bar \.file-command-bar__actions\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/)
+  })
+
   it('keeps focused, minimized and closing window states keyboard-safe', () => {
     expect(windowSource).toContain('tabindex="-1"')
     expect(windowSource).toContain(':inert="windowState.minimized || closing || undefined"')
