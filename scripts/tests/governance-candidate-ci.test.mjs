@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -8,6 +10,7 @@ import {
 } from '../check-governance-candidate-ci.mjs';
 
 const sha = 'a'.repeat(40);
+const scriptSource = readFileSync(resolve(import.meta.dirname, '..', 'check-governance-candidate-ci.mjs'), 'utf8');
 
 function response(workflowRuns, { ok = true, status = 200 } = {}) {
   return {
@@ -114,4 +117,9 @@ test('local and candidate CI do not perform remote candidate lookup', async () =
   });
   assert.deepEqual(result, { status: 'skipped', reason: 'not-main-ci' });
   assert.equal(called, false);
+});
+
+test('CLI failures defer process termination so network resources can close cleanly', () => {
+  assert.match(scriptSource, /process\.exitCode = 1/);
+  assert.doesNotMatch(scriptSource, /process\.exit\(1\)/);
 });

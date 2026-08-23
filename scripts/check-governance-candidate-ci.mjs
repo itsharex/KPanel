@@ -79,6 +79,6 @@ if (isMainModule) {
     }
   } catch (error) {
     process.stderr.write('governance_candidate_ci=fail ' + error.message + '\n');
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
