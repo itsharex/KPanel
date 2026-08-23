@@ -411,7 +411,7 @@ const previewURL = computed(() =>
 )
 const dialogTitle = computed(() => {
   const titles: Record<DialogAction, string> = {
-    mkdir: '新建文件夹',
+    mkdir: '新建目录',
     rename: '重命名',
     chmod: dialogEntries.value.length > 1 ? `修改 ${dialogEntries.value.length} 项权限` : '修改权限',
     compress: dialogEntries.value.length > 1 ? `压缩 ${dialogEntries.value.length} 项` : '压缩文件',
@@ -2047,8 +2047,8 @@ onBeforeUnmount(() => {
         </button>
       </nav>
       <div class="file-command-bar__actions">
-        <button class="button button--secondary button--small" type="button" :disabled="loading" title="刷新目录" aria-label="刷新目录" @click="loadDirectory()">
-          <RefreshCw :size="15" :class="{ spinning: loading }" /> 刷新
+        <button class="button button--secondary button--small file-command-bar__refresh" type="button" :disabled="loading" title="刷新目录" aria-label="刷新目录" @click="loadDirectory()">
+          <RefreshCw :size="16" :class="{ spinning: loading }" />
         </button>
         <button class="button button--secondary button--small" type="button" title="打开回收站" aria-label="打开回收站" @click="openTrash">
           <Trash2 :size="15" /> 回收站
@@ -2056,8 +2056,8 @@ onBeforeUnmount(() => {
         <button class="button button--secondary button--small" type="button" title="分享管理" aria-label="分享管理" @click="openShareManager">
           <Share2 :size="15" /> 分享管理
         </button>
-        <button class="button button--secondary button--small" type="button" title="新建文件夹" aria-label="新建文件夹" @click="openDialog('mkdir')">
-          <Plus :size="15" /> 新建文件夹
+        <button class="button button--secondary button--small" type="button" title="新建目录" aria-label="新建目录" @click="openDialog('mkdir')">
+          <Plus :size="15" /> 新建目录
         </button>
         <button
           class="button button--secondary button--small"
@@ -2461,7 +2461,7 @@ onBeforeUnmount(() => {
       <div v-if="!loading && !entries.length" class="file-empty">
         <FolderOpen :size="34" />
         <strong>{{ search ? '没有匹配的文件' : '这个文件夹是空的' }}</strong>
-        <span>{{ search ? '换一个关键词试试。' : '可直接拖入文件，或在右上角新建文件夹。' }}</span>
+        <span>{{ search ? '换一个关键词试试。' : '可直接拖入文件，或在右上角新建目录。' }}</span>
       </div>
       <div v-if="loading" class="file-loading"><RefreshCw :size="22" class="spinning" />正在读取目录…</div>
       <footer v-if="directory?.truncated" class="file-limit">
@@ -2599,7 +2599,7 @@ onBeforeUnmount(() => {
         <Pin :size="15" />{{ contextHasMultipleEntries ? `添加 ${contextBatchEntries.filter(canAddToDesktop).length} 项到桌面` : '添加到桌面' }}
       </button>
       <button v-if="!contextMenu.entry" role="menuitem" type="button" @click="openDialog('mkdir')">
-        <Plus :size="15" />新建文件夹
+        <Plus :size="15" />新建目录
       </button>
       <hr v-if="contextMenu.entry" role="separator" />
       <button v-if="contextMenu.entry" class="danger-link" role="menuitem" type="button" @click="openDialog('trash', contextMenu.entry)">
@@ -2998,6 +2998,13 @@ onBeforeUnmount(() => {
 .file-command-bar__actions .button {
   min-height: 40px;
   font-size: 14px;
+}
+
+.file-command-bar__actions .file-command-bar__refresh {
+  width: 40px;
+  min-width: 40px;
+  flex: 0 0 40px;
+  padding: 0;
 }
 
 .file-browser {
@@ -4554,6 +4561,11 @@ onBeforeUnmount(() => {
   .file-command-bar__actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .file-command-bar__actions .file-command-bar__refresh {
+    width: 100%;
+    min-width: 0;
   }
 
   .file-toolbar {

@@ -575,6 +575,20 @@ describe('FilesView remote download', () => {
     expect(source).toContain("files.remoteDownload.note")
   })
 
+  it('keeps the file command bar compact with an accessible icon refresh and directory wording', () => {
+    const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
+    const refreshStart = source.indexOf('file-command-bar__refresh')
+    const refreshButton = source.slice(refreshStart, source.indexOf('</button>', refreshStart))
+
+    expect(refreshButton).toContain('title="刷新目录"')
+    expect(refreshButton).toContain('aria-label="刷新目录"')
+    expect(refreshButton).toContain('<RefreshCw')
+    expect(refreshButton).not.toMatch(/>\s*刷新\s*</)
+    expect(source).toMatch(/\.file-command-bar__actions \.file-command-bar__refresh\s*{[\s\S]*?width:\s*40px;[\s\S]*?padding:\s*0;/)
+    expect(source).toContain('title="新建目录" aria-label="新建目录"')
+    expect(source).not.toContain('新建文件夹')
+  })
+
   it('does not let a completion refresh abort an active directory navigation', async () => {
     const view = setupView()
     const active = testRemoteDownloadJob({ targetDirectory: '/home/releases' })
