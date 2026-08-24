@@ -13,7 +13,10 @@ import (
 
 const (
 	systemLogSummaryTimeout = 8 * time.Second
-	systemLogReadTimeout    = 6 * time.Second
+	// Reading all *.service units can require a bounded journal index scan on
+	// hosts with a large persistent journal. Keep the operation finite while
+	// leaving enough headroom beyond the old single-unit read budget.
+	systemLogReadTimeout = 15 * time.Second
 )
 
 func (s *Server) systemLogsSummary(w http.ResponseWriter, r *http.Request) {
