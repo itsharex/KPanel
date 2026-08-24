@@ -99,6 +99,8 @@ test('remote production entrypoint is strict and never evaluates the plan', () =
   assert.match(content, /docker compose -f "\$compose" stop/);
   assert.match(content, /protected\.sha256/);
   assert.match(content, /sha256sum -c SHA256SUMS/);
+  assert.match(content, /for _ in \$\(seq 1 10\); do/);
+  assert.match(content, /\[ "\$health_ready" = true \]/);
   assert.doesNotMatch(content, /\beval\b/);
   assert.doesNotMatch(content, /(?:^|\n)\s*(?:source|\.)\s+"?\$plan/m);
 });

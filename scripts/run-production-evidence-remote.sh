@@ -110,7 +110,15 @@ container=kejilion-panel
 snapshot() {
   local output_dir=$1
   install -d -m 700 "$output_dir"
-  curl -fsS http://127.0.0.1:8080/api/v1/health > "$output_dir/health.json"
+  local health_ready=false
+  for _ in $(seq 1 10); do
+    if curl -fsS http://127.0.0.1:8080/api/v1/health > "$output_dir/health.json"; then
+      health_ready=true
+      break
+    fi
+    sleep 1
+  done
+  [ "$health_ready" = true ]
   python3 - "$output_dir/health.json" <<'PY'
 import json, pathlib, sys
 p = pathlib.Path(sys.argv[1])
