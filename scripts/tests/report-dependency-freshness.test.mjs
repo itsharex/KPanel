@@ -10,6 +10,7 @@ import {
   immutableDigestCandidate,
   isStableVersion,
   maintenanceStatus,
+  npmCandidatesFromOutdated,
   npmInvocation,
   parseConcatenatedJson,
   requestHeaders,
@@ -48,7 +49,33 @@ test('version comparison and classification separate patch, minor, and major/too
   assert.equal(classifyUpdate('1.2.3', '1.2.4'), 'compatible-patch');
   assert.equal(classifyUpdate('1.2.3', '1.3.0'), 'minor');
   assert.equal(classifyUpdate('1.2.3', '2.0.0'), 'major-toolchain-base');
-  assert.equal(classifyUpdate('1.2.3', '1.2.4', 'toolchain'), 'major-toolchain-base');
+  assert.equal(classifyUpdate('1.2.3', '1.2.4', 'toolchain'), 'compatible-patch');
+});
+
+test('npm candidates separate actionable direct updates from transitive ownership signals', () => {
+  const candidates = npmCandidatesFromOutdated({
+    direct: { current: '1.0.0', wanted: '1.0.1', latest: '2.0.0' },
+    transitive: { current: '3.0.0', wanted: '3.0.1', latest: '4.0.0' },
+  }, new Set(['direct']));
+  assert.deepEqual(candidates.map((item) => [item.component, item.candidate, item.dependencyScope, item.adoptionLane]), [
+    ['direct', '1.0.1', 'direct', 'declared-range'],
+    ['direct', '2.0.0', 'direct', 'outside-declared-range'],
+    ['transitive', '3.0.1', 'transitive', 'parent-compatible-range'],
+    ['transitive', '4.0.0', 'transitive', 'outside-parent-range'],
+  ]);
+});
+
+test('npm candidates use the root dependent instead of promoting peer records to direct actions', () => {
+  const candidates = npmCandidatesFromOutdated({
+    typescript: [
+      { current: '5.9.3', wanted: '7.0.2', latest: '7.0.2', dependent: 'vue-tsc' },
+      { current: '5.9.3', wanted: '5.9.3', latest: '7.0.2', dependent: 'web' },
+    ],
+  }, new Set(['typescript']), 'web');
+  assert.deepEqual(candidates.map((item) => [item.dependencyScope, item.adoptionLane, item.candidate]), [
+    ['transitive', 'parent-compatible-range', '7.0.2'],
+    ['direct', 'outside-declared-range', '7.0.2'],
+  ]);
 });
 
 test('immutable digest drift is visible even when the image tag is unchanged', () => {
@@ -90,6 +117,15 @@ test('policy validation keeps automation, cadence, and workflow triggers enforce
   assert.ok(failures.some((failure) => failure.includes('governed maximum') && failure.includes('eolReviewMaximumDays')));
 });
 
+test('policy validation requires bounded adoption decisions without forcing unsafe adoption', () => {
+  const policy = JSON.parse(readFileSync(resolve(process.cwd(), 'dependency-policy.json'), 'utf8'));
+  policy.adoptionLifecycle.classes['major-toolchain-base'].decisionMaximumDays = 91;
+  policy.adoptionLifecycle.deferralRequiresException = false;
+  const failures = validatePolicy(policy, process.cwd());
+  assert.ok(failures.some((failure) => failure.includes('time-bounded exception')));
+  assert.ok(failures.some((failure) => failure.includes('governed maximum') && failure.includes('major-toolchain-base.decisionMaximumDays')));
+});
+
 test('Go toolchain policy covers immutable Codex workflow images', () => {
   const policy = JSON.parse(readFileSync(resolve(process.cwd(), 'dependency-policy.json'), 'utf8'));
   const goToolchain = policy.groups.find((group) => group.id === 'go-toolchain');
@@ -124,9 +160,32 @@ test('summary does not turn missing sources into an all-current conclusion', () 
   assert.equal(report.failedSources, 1);
   assert.equal(report.candidateCount, 1);
   assert.equal(report.classCounts['compatible-patch'], 1);
+  assert.equal(report.actionableCandidateCount, 1);
+  assert.equal(report.transitiveSignalCount, 0);
   const markdown = renderMarkdown(report);
   assert.match(markdown, /只发现候选/);
   assert.match(markdown, /数据缺口/);
+});
+
+test('summary renders lifecycle deadlines and keeps transitive latest signals visible but non-actionable', () => {
+  const policy = JSON.parse(readFileSync(resolve(process.cwd(), 'dependency-policy.json'), 'utf8'));
+  const report = summarize(policy, [{
+    id: 'npm-packages',
+    status: 'ok',
+    candidates: [
+      { component: 'vue', current: '3.5.40', candidate: '3.5.41', updateClass: 'compatible-patch', dependencyScope: 'direct', source: 'test' },
+      { component: 'nested', current: '1.0.0', candidate: '2.0.0', updateClass: 'major-toolchain-base', dependencyScope: 'transitive', source: 'test' },
+      { component: 'Node.js LTS', current: '24.18.0', candidate: '24.19.0', updateClass: 'minor', dependencyScope: 'foundation', verificationFloor: 'L2-or-L3', source: 'test' },
+    ],
+    error: null,
+  }], new Date('2026-08-24T00:00:00Z'));
+  assert.equal(report.actionableCandidateCount, 2);
+  assert.equal(report.transitiveSignalCount, 1);
+  assert.equal(report.actionableCandidates.find((item) => item.component === 'Node.js LTS').minimumVerification, 'L2-or-L3');
+  const markdown = renderMarkdown(report);
+  assert.match(markdown, /直接依赖与基座行动项/);
+  assert.match(markdown, /传递依赖归属信号/);
+  assert.match(markdown, /compatible-patch \| 7 天 \| 14 天 \| 30 天/);
 });
 
 test('markdown report keeps multiline and pipe errors inside one bounded table cell', () => {

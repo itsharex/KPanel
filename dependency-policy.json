@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "policyVersion": "2026-08-17",
+  "policyVersion": "2026-08-24",
   "purpose": "Continuously detect version-channel-stable dependency candidates without turning freshness into automatic adoption.",
   "stableRelease": {
     "excludePrerelease": true,
@@ -30,6 +30,44 @@
       "behavior-contract-and-resource-impact",
       "rollback-feasibility"
     ]
+  },
+  "adoptionLifecycle": {
+    "actionableScopes": ["direct", "foundation"],
+    "transitiveOwnership": "owning-direct-dependency-or-reachable-security-path",
+    "deferralRequiresException": true,
+    "resolutionDefinition": "adopt, reject with evidence, or create a time-bounded exception",
+    "classes": {
+      "emergency-security": {
+        "evaluationStartMaximumDays": 1,
+        "decisionMaximumDays": 3,
+        "resolutionMaximumDays": 3,
+        "minimumVerification": "L2-or-L3-and-section-11-vulnerability-deadline"
+      },
+      "compatible-patch": {
+        "evaluationStartMaximumDays": 7,
+        "decisionMaximumDays": 14,
+        "resolutionMaximumDays": 30,
+        "minimumVerification": "L1-or-L2-by-impact"
+      },
+      "minor": {
+        "evaluationStartMaximumDays": 14,
+        "decisionMaximumDays": 30,
+        "resolutionMaximumDays": 60,
+        "minimumVerification": "L2"
+      },
+      "major-toolchain-base": {
+        "evaluationStartMaximumDays": 30,
+        "decisionMaximumDays": 90,
+        "resolutionMaximumDays": 90,
+        "minimumVerification": "L2-or-L3"
+      }
+    },
+    "batching": {
+      "compatiblePatch": "same ecosystem and atomic rollback boundary",
+      "minor": "same compatibility domain with explicit contract and resource comparison",
+      "majorToolchainBase": "one compatibility domain per candidate; coupled adapters may travel together",
+      "security": "do not wait for a routine batch when the vulnerability deadline is stricter"
+    }
   },
   "requiredGroups": [
     "go-modules",
@@ -119,19 +157,19 @@
     },
     {
       "id": "compatible-patch",
-      "criteria": "stable patch within the supported compatibility line",
+      "criteria": "stable semantic patch within the supported compatibility line, including foundation components",
       "default": "follow-after-change-aware-verification",
-      "minimumVerification": "L1-or-L2-by-impact"
+      "minimumVerification": "L1-or-L2-by-impact; foundation components keep an L2-or-L3 floor"
     },
     {
       "id": "minor",
-      "criteria": "stable minor without a declared breaking contract",
+      "criteria": "stable semantic minor without a declared breaking contract, including foundation components",
       "default": "batch-and-adopt-after-benefit-and-compatibility-evidence",
-      "minimumVerification": "L2"
+      "minimumVerification": "L2; foundation components keep an L2-or-L3 floor"
     },
     {
       "id": "major-toolchain-base",
-      "criteria": "major version, compiler/runtime, base image, build frontend, scanner, or managed script",
+      "criteria": "major version or non-semver foundation change such as an immutable digest, action pin, or managed script revision",
       "default": "isolated-upgrade-task-with-explicit-decision",
       "minimumVerification": "L2-or-L3"
     },

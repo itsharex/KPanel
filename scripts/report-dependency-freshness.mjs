@@ -2,7 +2,7 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve, win32 as win32Path } from 'node:path';
+import { basename, dirname, resolve, win32 as win32Path } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_POLICY = 'dependency-policy.json';
@@ -17,6 +17,18 @@ const REQUIRED_GROUPS = [
   'security-tools',
   'managed-kejilion-script',
 ];
+const REQUIRED_ADOPTION_CLASSES = [
+  'emergency-security',
+  'compatible-patch',
+  'minor',
+  'major-toolchain-base',
+];
+const ADOPTION_DEADLINE_MAXIMUMS = {
+  'emergency-security': [1, 3, 3],
+  'compatible-patch': [7, 14, 30],
+  minor: [14, 30, 60],
+  'major-toolchain-base': [30, 90, 90],
+};
 const REQUIRED_FRESHNESS_TRIGGERS = [
   'dependency-policy.json',
   'go.mod',
@@ -102,7 +114,6 @@ export function compareVersions(left, right) {
 
 export function classifyUpdate(current, candidate, componentKind = 'package') {
   if (!isStableVersion(candidate)) return 'prerelease';
-  if (componentKind !== 'package') return 'major-toolchain-base';
   const currentParts = normalizeVersion(current).split('.').map(Number);
   const candidateParts = normalizeVersion(candidate).split('.').map(Number);
   if (!currentParts.every(Number.isInteger) || !candidateParts.every(Number.isInteger)) return 'major-toolchain-base';
@@ -201,6 +212,36 @@ export function validatePolicy(policy, repo) {
   const qualification = policy.detectorQualification ?? {};
   if (qualification.candidateLevel !== 'version-channel-stable' || !Array.isArray(qualification.adoptionEvidenceStillRequired) || qualification.adoptionEvidenceStillRequired.length === 0) {
     failures.push('detector qualification must distinguish discovery from adoption evidence');
+  }
+  const lifecycle = policy.adoptionLifecycle ?? {};
+  if (!Array.isArray(lifecycle.actionableScopes) || !['direct', 'foundation'].every((scope) => lifecycle.actionableScopes.includes(scope))) {
+    failures.push('adoption lifecycle must make direct and foundation candidates actionable');
+  }
+  if (lifecycle.transitiveOwnership !== 'owning-direct-dependency-or-reachable-security-path') {
+    failures.push('adoption lifecycle must assign transitive candidates to a direct dependency or reachable security path');
+  }
+  if (lifecycle.deferralRequiresException !== true || !String(lifecycle.resolutionDefinition ?? '').includes('time-bounded exception')) {
+    failures.push('adoption lifecycle must require a time-bounded exception for deferral');
+  }
+  for (const name of REQUIRED_ADOPTION_CLASSES) {
+    const rule = lifecycle.classes?.[name];
+    if (!rule) {
+      failures.push('adoption lifecycle class is missing: ' + name);
+      continue;
+    }
+    const fields = ['evaluationStartMaximumDays', 'decisionMaximumDays', 'resolutionMaximumDays'];
+    const values = fields.map((field) => rule[field]);
+    for (const [index, value] of values.entries()) {
+      if (!Number.isInteger(value) || value <= 0) failures.push('adoption lifecycle field must be a positive integer: ' + name + '.' + fields[index]);
+    }
+    if (values.every((value) => Number.isInteger(value) && value > 0)) {
+      if (values[0] > values[1] || values[1] > values[2]) failures.push('adoption lifecycle deadlines must be monotonic: ' + name);
+      const maximums = ADOPTION_DEADLINE_MAXIMUMS[name];
+      for (const [index, value] of values.entries()) {
+        if (value > maximums[index]) failures.push('adoption lifecycle deadline exceeds governed maximum: ' + name + '.' + fields[index]);
+      }
+    }
+    if (!String(rule.minimumVerification ?? '').trim()) failures.push('adoption lifecycle verification is missing: ' + name);
   }
   const freshnessWorkflow = readFileSync(resolve(repo, '.github/workflows/dependency-freshness.yml'), 'utf8');
   for (const trigger of REQUIRED_FRESHNESS_TRIGGERS) {
@@ -347,6 +388,8 @@ export function immutableDigestCandidate(component, currentDigest, upstreamDiges
     current: currentDigest.slice(0, 19),
     candidate: upstreamDigest.slice(0, 19),
     updateClass: 'major-toolchain-base',
+    componentKind: 'immutable-digest',
+    verificationFloor: 'L2-or-L3',
     source,
   };
 }
@@ -358,15 +401,57 @@ function candidate(component, current, latest, kind, source, extra = {}) {
     current: normalizeVersion(current),
     candidate: normalizeVersion(latest),
     updateClass: classifyUpdate(current, latest, kind),
+    componentKind: kind,
+    verificationFloor: kind === 'package' ? null : 'L2-or-L3',
     source,
     ...extra,
   };
 }
 
+export function npmCandidatesFromOutdated(outdated, directNames = new Set(), rootDependents = []) {
+  const direct = directNames instanceof Set ? directNames : new Set(directNames);
+  const roots = rootDependents instanceof Set
+    ? rootDependents
+    : new Set(Array.isArray(rootDependents) ? rootDependents : [rootDependents].filter(Boolean));
+  const candidates = [];
+  for (const [name, value] of Object.entries(outdated ?? {})) {
+    const entries = Array.isArray(value) ? value : [value];
+    for (const entry of entries.filter((item) => item?.current)) {
+      const belongsToRoot = roots.size === 0 || !entry.dependent || roots.has(entry.dependent);
+      const dependencyScope = direct.has(name) && belongsToRoot ? 'direct' : 'transitive';
+      const actionability = dependencyScope === 'direct' ? 'direct-action' : 'owned-by-direct-dependency';
+      const wanted = normalizeVersion(entry.wanted);
+      const latest = normalizeVersion(entry.latest);
+      const wantedCandidate = candidate(name, entry.current, wanted, 'package', 'npm outdated wanted', {
+        dependencyScope,
+        actionability,
+        adoptionLane: dependencyScope === 'direct' ? 'declared-range' : 'parent-compatible-range',
+      });
+      if (wantedCandidate) candidates.push(wantedCandidate);
+      if (latest && compareVersions(wanted || entry.current, latest) < 0) {
+        const latestCandidate = candidate(name, entry.current, latest, 'package', 'npm outdated latest', {
+          dependencyScope,
+          actionability,
+          adoptionLane: dependencyScope === 'direct' ? 'outside-declared-range' : 'outside-parent-range',
+        });
+        if (latestCandidate) candidates.push(latestCandidate);
+      }
+    }
+  }
+  return [...new Map(candidates.map((item) => [
+    item.component + '\0' + item.current + '\0' + item.candidate + '\0' + item.adoptionLane,
+    item,
+  ])).values()];
+}
+
 async function collectGoModules(repo) {
   const values = parseConcatenatedJson(run(repo, goExecutable(), ['list', '-m', '-u', '-json', 'all']));
   return values.filter((module) => module.Update?.Version && isStableVersion(module.Update.Version))
-    .map((module) => candidate(module.Path, module.Version, module.Update.Version, 'package', 'go list -m -u'))
+    .map((module) => candidate(module.Path, module.Version, module.Update.Version, 'package', 'go list -m -u', {
+      dependencyScope: module.Indirect ? 'transitive' : 'direct',
+      actionability: module.Indirect ? 'owned-by-direct-dependency' : 'direct-action',
+      adoptionLane: module.Indirect ? 'owning-module' : 'direct-module',
+    }))
     .filter(Boolean);
 }
 
@@ -376,14 +461,7 @@ async function collectNpm(repo) {
   if (!raw) return [];
   const packageJson = JSON.parse(readFileSync(resolve(repo, 'web/package.json'), 'utf8'));
   const direct = new Set([...Object.keys(packageJson.dependencies ?? {}), ...Object.keys(packageJson.devDependencies ?? {})]);
-  const candidates = Object.entries(JSON.parse(raw)).flatMap(([name, value]) => {
-    const entries = Array.isArray(value) ? value : [value];
-    return entries.filter((entry) => entry.current).map((entry) => candidate(name, entry.current, entry.latest, 'package', 'npm outdated --all', {
-      dependencyScope: direct.has(name) ? 'direct' : 'transitive',
-      wanted: normalizeVersion(entry.wanted),
-    })).filter(Boolean);
-  });
-  return [...new Map(candidates.map((item) => [item.component + '\0' + item.current + '\0' + item.candidate, item])).values()];
+  return npmCandidatesFromOutdated(JSON.parse(raw), direct, [packageJson.name, basename(resolve(repo, 'web'))]);
 }
 
 function currentToolchains(repo) {
@@ -462,6 +540,8 @@ async function collectActions(repo) {
         current: pin.sha.slice(0, 12),
         candidate: expectedSha.slice(0, 12),
         updateClass: 'major-toolchain-base',
+        componentKind: 'immutable-action-pin',
+        verificationFloor: 'L2-or-L3',
         source: 'GitHub tag object',
       });
     }
@@ -521,6 +601,8 @@ async function collectManagedScript(repo, policy) {
     current: current.slice(0, 12),
     candidate: commit.sha.slice(0, 12),
     updateClass: 'major-toolchain-base',
+    componentKind: 'managed-script-revision',
+    verificationFloor: 'L2-or-L3',
     source: 'GitHub branch head',
   }];
 }
@@ -534,10 +616,27 @@ async function collectSource(id, collector) {
 }
 
 export function summarize(policy, sources, now = new Date()) {
-  const candidates = sources.flatMap((source) => source.candidates.map((item) => ({ ...item, group: source.id })));
+  const candidates = sources.flatMap((source) => source.candidates.map((item) => {
+    const dependencyScope = item.dependencyScope ?? 'foundation';
+    const actionability = item.actionability ?? (dependencyScope === 'transitive' ? 'owned-by-direct-dependency' : dependencyScope + '-action');
+    return {
+      ...item,
+      group: source.id,
+      dependencyScope,
+      actionability,
+      lifecycle: policy.adoptionLifecycle?.classes?.[item.updateClass] ?? null,
+      minimumVerification: item.verificationFloor ?? policy.adoptionLifecycle?.classes?.[item.updateClass]?.minimumVerification ?? 'unreported',
+    };
+  }));
+  const actionableScopes = new Set(policy.adoptionLifecycle?.actionableScopes ?? ['direct', 'foundation']);
+  const actionableCandidates = candidates.filter((item) => actionableScopes.has(item.dependencyScope));
+  const transitiveSignals = candidates.filter((item) => !actionableScopes.has(item.dependencyScope));
   const classCounts = Object.fromEntries(
     ['emergency-security', 'compatible-patch', 'minor', 'major-toolchain-base', 'prerelease']
       .map((name) => [name, candidates.filter((item) => item.updateClass === name).length]),
+  );
+  const actionableClassCounts = Object.fromEntries(
+    Object.keys(classCounts).map((name) => [name, actionableCandidates.filter((item) => item.updateClass === name).length]),
   );
   return {
     generatedAt: now.toISOString(),
@@ -546,11 +645,17 @@ export function summarize(policy, sources, now = new Date()) {
     successfulSources: sources.filter((source) => source.status === 'ok').length,
     failedSources: sources.filter((source) => source.status === 'error').length,
     candidateCount: candidates.length,
+    actionableCandidateCount: actionableCandidates.length,
+    transitiveSignalCount: transitiveSignals.length,
     classCounts,
+    actionableClassCounts,
     candidates,
+    actionableCandidates,
+    transitiveSignals,
     sources,
     maintenance: maintenanceStatus(policy, now),
     detectorQualification: policy.detectorQualification,
+    adoptionLifecycle: policy.adoptionLifecycle,
     decision: 'report-only; every adoption requires risk classification, evidence, and the existing integration authorization',
   };
 }
@@ -562,24 +667,43 @@ export function renderMarkdown(report) {
     '- 生成时间：' + report.generatedAt,
     '- 策略版本：' + report.policyVersion,
     '- 检测源完整性：' + report.successfulSources + '/' + report.sourceCount,
-    '- 版本通道稳定候选数量：' + report.candidateCount,
+    '- 版本通道稳定信号：' + report.candidateCount + '（直接/基座行动项 ' + report.actionableCandidateCount + '，传递依赖归属信号 ' + report.transitiveSignalCount + '）',
     '- 候选资格：仅表示版本通道稳定；EOL、许可证、架构、行为、资源与回滚仍须采用决策证据。',
     '- 需处理依赖例外：' + report.maintenance.exceptionActionRequiredCount,
     '- EOL 复核：' + report.maintenance.eolReviewStatus + '（下次截止 ' + report.maintenance.nextEolReview + '）',
     '- 决策边界：本报告只发现候选，不代表应升级，也不授权提交、合入、发布或部署。',
     '',
-    '## 版本通道稳定候选',
+    '## 采用时限',
+    '',
+    '| 分类 | 启动评估 | 形成决策 | 完成处置 | 最低验收 |',
+    '| --- | ---: | ---: | ---: | --- |',
+  ];
+  for (const name of REQUIRED_ADOPTION_CLASSES) {
+    const rule = report.adoptionLifecycle?.classes?.[name];
+    if (!rule) continue;
+    lines.push('| ' + name + ' | ' + rule.evaluationStartMaximumDays + ' 天 | ' + rule.decisionMaximumDays + ' 天 | ' + rule.resolutionMaximumDays + ' 天 | ' + markdownCell(rule.minimumVerification) + ' |');
+  }
+  lines.push(
+    '',
+    '> “完成处置”是采用、以证据拒绝，或建立有负责人和复核日期的有期限例外；不是强制采用不兼容新版。安全漏洞服从第 11 节更严格时限。',
+    '',
+    '## 直接依赖与基座行动项',
     '',
     '| 分类 | 数量 |',
     '| --- | ---: |',
-    ...Object.entries(report.classCounts).map(([name, count]) => '| ' + name + ' | ' + count + ' |'),
+    ...Object.entries(report.actionableClassCounts).map(([name, count]) => '| ' + name + ' | ' + count + ' |'),
     '',
-    '| 分组 | 范围 | 组件 | 当前 | 候选 | 分类 | 来源 |',
-    '| --- | --- | --- | --- | --- | --- | --- |',
-  ];
-  if (report.candidates.length === 0) lines.push('| - | - | 未发现更高稳定候选 | - | - | - | - |');
-  for (const item of report.candidates) {
-    lines.push('| ' + markdownCell(item.group) + ' | ' + markdownCell(item.dependencyScope ?? 'foundation') + ' | ' + markdownCell(item.component) + ' | ' + markdownCell(item.current) + ' | ' + markdownCell(item.candidate) + ' | ' + markdownCell(item.updateClass) + ' | ' + markdownCell(item.source) + ' |');
+    '| 分组 | 范围 | 组件 | 当前 | 候选 | 通道 | 分类 | 验收下限 | 来源 |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+  );
+  if (report.actionableCandidates.length === 0) lines.push('| - | - | 未发现直接依赖或基座行动项 | - | - | - | - | - | - |');
+  for (const item of report.actionableCandidates) {
+    lines.push('| ' + markdownCell(item.group) + ' | ' + markdownCell(item.dependencyScope) + ' | ' + markdownCell(item.component) + ' | ' + markdownCell(item.current) + ' | ' + markdownCell(item.candidate) + ' | ' + markdownCell(item.adoptionLane ?? 'stable-source') + ' | ' + markdownCell(item.updateClass) + ' | ' + markdownCell(item.minimumVerification) + ' | ' + markdownCell(item.source) + ' |');
+  }
+  lines.push('', '## 传递依赖归属信号', '', '> 这些信号不得被逐项机械升级；应通过拥有它的直接依赖、锁文件刷新或可达安全修复处置。', '', '| 分组 | 组件 | 当前 | 上游信号 | 通道 | 分类 |', '| --- | --- | --- | --- | --- | --- |');
+  if (report.transitiveSignals.length === 0) lines.push('| - | 未发现传递依赖信号 | - | - | - | - |');
+  for (const item of report.transitiveSignals) {
+    lines.push('| ' + markdownCell(item.group) + ' | ' + markdownCell(item.component) + ' | ' + markdownCell(item.current) + ' | ' + markdownCell(item.candidate) + ' | ' + markdownCell(item.adoptionLane ?? 'owning-direct-dependency') + ' | ' + markdownCell(item.updateClass) + ' |');
   }
   lines.push('', '## 例外与 EOL 复核', '', '| 组件 | 当前 | 候选 | 负责人 | 复核日期 | 状态 | 退出条件 |', '| --- | --- | --- | --- | --- | --- | --- |');
   if (report.maintenance.exceptions.length === 0) lines.push('| - | - | - | - | - | 无例外 | - |');

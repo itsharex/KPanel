@@ -159,6 +159,9 @@ requireText('PROJECT_RULES.md', [
   '公共默认',
   'dependency-policy.json',
   '最新稳定版',
+  'dependency-policy.json#adoptionLifecycle',
+  '传递依赖的跨范围 `latest` 是归属信号',
+  '基座 Patch/Minor',
   'environment-policy.json',
   '后台浏览器',
   '本地功能预览',
@@ -187,6 +190,11 @@ requireText('docs/development-quality-standard.md', [
   '目标容器内控制台',
   '有生产完成证据的部署频率',
   '两类同时计入',
+  '7/14/30 天',
+  '14/30/60 天',
+  '30/90/90 天',
+  '传递依赖归属信号',
+  '版本变化幅度决定处理期限',
 ]);
 requireText('docs/product-quality-review-current.md', [
   'KPanel 当前业务事实与规范适配基线',
@@ -214,6 +222,8 @@ requireText('docs/project-management.md', [
   'scripts/check-collaboration-state.mjs',
   '流程异常指纹',
   'scripts/check-governance-candidate-ci.mjs',
+  'Patch 最晚 7 天启动/14 天决策/30 天完成处置',
+  '重复报告不能重置期限',
 ]);
 requireText('docs/multi-agent-collaboration.md', [
   'scripts/check-collaboration-state.mjs',
@@ -354,6 +364,13 @@ requireText('.codex-workflows/evolve-kpanel.workflow.yaml', [
   'scripts/check-governance-candidate-ci.mjs',
   '候选分支保留到主线 CI 成功',
 ]);
+requireText('.codex-workflows/maintain-kpanel-dependencies.workflow.yaml', [
+  '直接依赖',
+  '传递依赖',
+  '7/14/30 天',
+  '30/90/90 天',
+  '完成处置是采用、以证据拒绝，或建立有期限例外',
+]);
 requireText('.github/workflows/ci.yml', [
   'actions: read',
   'GOVERNANCE_CI_TOKEN: ${{ github.token }}',
@@ -365,6 +382,7 @@ requireText('docs/release-acceptance-template.md', [
   '## 自动门禁',
   '## 依赖与技术栈变化',
   '最近每日安全通告审计、EOL 复核状态及证据',
+  '直接/基座行动项、传递依赖归属信号',
   '## 隔离真机与浏览器验收',
   '后台作业 ID、终态、退出码、超时、证据目录、命令规格路径及 SHA-256',
   '## 生产部署安全核对',
