@@ -80,8 +80,8 @@
 <!-- kpanel-release-metrics:end -->
 
 <!-- kpanel-release-process-metrics:start -->
-- 已记录发布流程异常或无效证据拦截次数：12
-- 其中生产写操作开始后异常次数：0
+- 已记录发布流程异常或无效证据拦截次数：13
+- 其中生产写操作开始后异常次数：1
 <!-- kpanel-release-process-metrics:end -->
 
 ### 流程异常明细
@@ -122,6 +122,15 @@
     "impact": "GitHub 公共 API 在 Release 监控期间连续返回 504，只影响状态读取，没有重触发或修改发布。",
     "recoveryEvidence": "使用公开 Actions 运行页核对进行中状态，API 恢复后再次确认 Release 与依赖门禁 completed/success。",
     "permanentAction": "保留 API 与公开运行页双只读核对；上游恢复前禁止重跑发布。",
+    "historicalReleases": []
+  },
+  {
+    "fingerprint": "release-final-check/git-remote/wrong-repository-url",
+    "position": "after-production-write",
+    "count": 1,
+    "impact": "最终远端只读核对首次在无仓库上下文中直接使用 GitHub SSH URL，因本机默认 SSH key 不匹配而失败；没有远端写入，也未影响已健康运行的生产。",
+    "recoveryEvidence": "立即改为 KPanel 与 apps 各自已配置的 origin，确认 KPanel main、Tag peel、apps 线性包含本轮提交及生产版本均正确。",
+    "permanentAction": "所有最终 Git 核对必须在目标仓库上下文内使用该仓库 origin，禁止脱离仓库手写远端 URL。",
     "historicalReleases": []
   }
 ]
