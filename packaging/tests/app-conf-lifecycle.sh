@@ -447,6 +447,19 @@ EOF
 	[ ! -e /home/docker/kpanel ]
 }
 
+run_symlinked_docker_root_lifecycle() {
+	local physical_docker_root="$TEST_DIR/physical-docker-root"
+
+	MOCK_STATE="$TEST_DIR/symlinked-root-state"
+	mkdir -p "$MOCK_STATE"
+	export KPANEL_MOCK_STATE="$MOCK_STATE"
+	rmdir /home/docker
+	mkdir -p "$physical_docker_root"
+	ln -s "$physical_docker_root" /home/docker
+	test "$(readlink -f /home/docker)" = "$physical_docker_root"
+	run_lifecycle
+}
+
 run_failed_install() {
 	local ipv4_address="198.51.100.25"
 
@@ -516,6 +529,7 @@ run_unmanaged_guard() {
 	# shellcheck source=/dev/null
 	. "$PROJECT_DIR/packaging/kejilion-app/kpanel.conf"
 	mkdir -p /home/docker/kpanel
+	: >/home/docker/kpanel/.managed-by-kejilion-app
 	: >/home/docker/kpanel/docker-compose.yml
 	: >"$manual_unit"
 	ln -sf "$manual_unit" /etc/systemd/system/kejilion-agent.service
@@ -591,6 +605,7 @@ export PATH="$FAKE_BIN:$PATH"
 export KPANEL_MOCK_STATE="$MOCK_STATE"
 export KPANEL_MOCK_SYSTEMCTL_LOG="$TEST_DIR/systemctl.log"
 run_lifecycle
+run_symlinked_docker_root_lifecycle
 grep -Fx '1|daemon-reload' "$KPANEL_MOCK_SYSTEMCTL_LOG" >/dev/null
 grep -Fx '3|enable --now kejilion-agent.service' "$KPANEL_MOCK_SYSTEMCTL_LOG" >/dev/null
 grep -Fx '3|disable --now kejilion-agent.service' "$KPANEL_MOCK_SYSTEMCTL_LOG" >/dev/null
