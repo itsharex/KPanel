@@ -100,11 +100,11 @@ const SEARCH_STEPS = 320
 const WHITE = '#ffffff'
 const DARK_ON_COLOR = '#0b111b'
 const DARK_FOUNDATION_LIGHTNESS = Object.freeze({
-  background: 0.075,
-  surface: 0.115,
-  subtle: 0.15,
-  raised: 0.19,
-  neutralSoft: 0.17,
+  background: 0.04,
+  surface: 0.065,
+  subtle: 0.09,
+  raised: 0.125,
+  neutralSoft: 0.105,
 })
 
 const HEX_TOKEN_NAMES = new Set<ThemeTokenName>([

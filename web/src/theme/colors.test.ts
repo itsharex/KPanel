@@ -161,6 +161,15 @@ describe('derived custom theme', () => {
     }
   })
 
+  it('keeps recommended dark presets close to black through the dark foundation branch', () => {
+    for (const preset of THEME_COLOR_PRESETS) {
+      const dark = deriveThemeTokens({ ...preset.colors }, 'dark')
+      expect(contrastRatio(dark['--bg'], '#000000')).toBeLessThan(1.12)
+      expect(contrastRatio(dark['--surface'], '#000000')).toBeLessThan(1.23)
+      expect(contrastRatio(dark['--surface-raised'], '#000000')).toBeLessThan(1.45)
+    }
+  })
+
   it('uses one neutral intent for visibly different light and dark foundations', () => {
     const light = deriveThemeTokens(DEFAULT_THEME_COLORS, 'light')
     const dark = deriveThemeTokens(DEFAULT_THEME_COLORS, 'dark')
@@ -177,7 +186,7 @@ describe('derived custom theme', () => {
     const blue = deriveThemeTokens({ ...DEFAULT_THEME_COLORS, neutral: '#315d7d' }, 'dark')
 
     expect(contrastRatio(black['--bg'], '#000000')).toBeLessThan(1.05)
-    expect(contrastRatio(black['--surface'], '#000000')).toBeLessThan(1.13)
+    expect(contrastRatio(black['--surface'], '#000000')).toBeLessThan(1.1)
     expect(black['--desktop-wallpaper-veil-dark']).toBe('linear-gradient(145deg, rgb(14 14 14 / 26%), rgb(6 6 6 / 48%))')
     expect(defaults['--desktop-wallpaper-veil-dark']).toContain('/ 16%')
     expect(defaults['--desktop-wallpaper-veil-dark']).toContain('/ 32%')
