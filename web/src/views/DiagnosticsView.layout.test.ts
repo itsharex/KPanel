@@ -114,6 +114,29 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toMatch(
       /\.diagnostic-score-hero--simple\s*\{[^}]*grid-template-columns:\s*minmax\(150px, 170px\) minmax\(280px, 360px\);[^}]*justify-content:\s*center;/,
     )
+    expect(diagnosticsSource).toContain('class="diagnostic-report-section__body"')
+    expect(diagnosticsSource).toMatch(/\.diagnostic-report-card\s*\{[^}]*min-height:\s*96px;/)
+  })
+
+  it('keeps three metrics in one scan line until the report becomes phone narrow', () => {
+    expect(diagnosticsSource).toMatch(
+      /\.diagnostic-report-card-grid--performance,[\s\S]*?\.diagnostic-report-card-grid--network\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /@container diagnostic-result \(max-width: 520px\)[\s\S]*?\.diagnostic-report-card-grid--performance,[\s\S]*?\.diagnostic-report-card-grid--network\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /@container diagnostic-result \(max-width: 520px\)[\s\S]*?\.diagnostic-report-card\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[^}]*min-height:\s*72px;/,
+    )
+  })
+
+  it('uses a section rail on wide reports and delays the two-row identity grid until phone width', () => {
+    expect(diagnosticsSource).toMatch(
+      /@container diagnostic-result \(min-width: 1040px\)[\s\S]*?\.diagnostic-report-section\s*\{[^}]*grid-template-columns:\s*minmax\(176px, \.2fr\) minmax\(0, \.8fr\);/,
+    )
+    expect(diagnosticsSource).toMatch(
+      /@container diagnostic-result \(max-width: 520px\)[\s\S]*?\.diagnostic-report-identity\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/,
+    )
   })
 
   it('keeps score and copy side by side on narrow result surfaces', () => {
@@ -159,7 +182,7 @@ describe('diagnostics workspace layout', () => {
     expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-medium')
     expect(diagnosticsSource).toContain('.diagnostic-report-risk__level.is-high')
     expect(diagnosticsSource).toMatch(
-      /@container diagnostic-result \(max-width: 760px\)[\s\S]*?\.diagnostic-report-identity > div:nth-child\(odd\)\s*\{[^}]*padding-left: 0;/,
+      /@container diagnostic-result \(max-width: 520px\)[\s\S]*?\.diagnostic-report-identity > div:nth-child\(odd\)\s*\{[^}]*padding-left: 0;/,
     )
     expect(diagnosticsSource).toMatch(/\.diagnostic-report-pair span\s*\{[^}]*font-size: 12px;/)
     expect(diagnosticsSource).toMatch(/\.diagnostic-report-card__meta\s*\{[^}]*font-size: 13px;/)

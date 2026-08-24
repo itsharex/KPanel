@@ -1106,7 +1106,8 @@ onBeforeUnmount(() => {
                   </div>
                   <div class="diagnostic-report-section__score"><small>性能分</small><div><strong>{{ reportScoreLabel(performanceScore) }}</strong><span>/100</span></div></div>
                 </header>
-                <div class="diagnostic-report-card-grid diagnostic-report-card-grid--performance">
+                <div class="diagnostic-report-section__body">
+                  <div class="diagnostic-report-card-grid diagnostic-report-card-grid--performance">
                   <article class="diagnostic-report-card">
                     <header><div class="diagnostic-report-card__heading"><span class="is-cpu"><Cpu :size="17" /></span><div><strong>CPU</strong><small>运算性能</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('cpu')) }}</strong><span>分</span></div></header>
                     <strong class="diagnostic-report-card__value">{{ summaryValue('performance', 'cpu_score') || '等待检测' }}</strong>
@@ -1122,6 +1123,7 @@ onBeforeUnmount(() => {
                       <div><span>{{ summaryMetricLabel('disk_write') }}</span><strong>{{ summaryValue('performance', 'disk_write') || '等待检测' }}</strong></div>
                     </div>
                   </article>
+                  </div>
                 </div>
               </section>
 
@@ -1133,13 +1135,14 @@ onBeforeUnmount(() => {
                   </div>
                   <div class="diagnostic-report-section__score"><small>网络分</small><div><strong>{{ reportScoreLabel(networkScore) }}</strong><span>/100</span></div></div>
                 </header>
-                <div class="diagnostic-report-identity">
-                  <div><span>出口 IP</span><strong>{{ summaryValue('ip', 'public_ip') || '等待检测' }}</strong></div>
-                  <div><span>出口运营商 / ASN</span><strong :class="{ 'is-isp': hasIPISP() }">{{ reportIPOperator() }}</strong></div>
-                  <div><span>出口地区</span><strong>{{ reportIPLocation() }}</strong></div>
-                  <div><span>出口线路</span><strong>{{ summaryValue('route', 'path') || '等待检测' }}</strong></div>
-                </div>
-                <div class="diagnostic-report-card-grid diagnostic-report-card-grid--network">
+                <div class="diagnostic-report-section__body">
+                  <div class="diagnostic-report-identity">
+                    <div><span>出口 IP</span><strong :title="summaryValue('ip', 'public_ip') || '等待检测'">{{ summaryValue('ip', 'public_ip') || '等待检测' }}</strong></div>
+                    <div><span>出口运营商 / ASN</span><strong :title="reportIPOperator()" :class="{ 'is-isp': hasIPISP() }">{{ reportIPOperator() }}</strong></div>
+                    <div><span>出口地区</span><strong :title="reportIPLocation()">{{ reportIPLocation() }}</strong></div>
+                    <div><span>出口线路</span><strong :title="summaryValue('route', 'path') || '等待检测'">{{ summaryValue('route', 'path') || '等待检测' }}</strong></div>
+                  </div>
+                  <div class="diagnostic-report-card-grid diagnostic-report-card-grid--network">
                   <article class="diagnostic-report-card">
                     <header><div class="diagnostic-report-card__heading"><span class="is-latency"><Activity :size="17" /></span><div><strong>延迟</strong><small>服务器至探测节点</small></div></div><div class="diagnostic-report-card__score"><strong>{{ reportScoreLabel(reportMetricScore('latency')) }}</strong><span>分</span></div></header>
                     <strong class="diagnostic-report-card__value">{{ summaryValue('latency', 'average') || '等待检测' }}</strong>
@@ -1175,6 +1178,7 @@ onBeforeUnmount(() => {
                       <span v-else-if="reportIPQualityDetail()">{{ reportIPQualityDetail() }}</span>
                     </div>
                   </article>
+                  </div>
                 </div>
               </section>
 
@@ -2867,7 +2871,7 @@ onBeforeUnmount(() => {
 .diagnostic-report-section {
   display: grid;
   gap: 0;
-  padding: 18px;
+  overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -2878,7 +2882,12 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-bottom: 16px;
+  padding: 12px 14px 10px;
+}
+
+.diagnostic-report-section__body {
+  min-width: 0;
+  padding: 0 14px 14px;
 }
 
 .diagnostic-report-section__title {
@@ -2999,8 +3008,8 @@ onBeforeUnmount(() => {
 
 .diagnostic-report-card {
   min-width: 0;
-  min-height: 126px;
-  padding: 14px 15px;
+  min-height: 96px;
+  padding: 11px 12px;
   background: color-mix(in srgb, var(--surface-subtle) 32%, var(--surface));
 }
 
@@ -3105,7 +3114,7 @@ onBeforeUnmount(() => {
 
 .diagnostic-report-card__value {
   display: block;
-  margin-top: 18px;
+  margin-top: 12px;
   color: var(--text-soft);
   font-size: 20px;
   font-weight: 760;
@@ -3146,7 +3155,7 @@ onBeforeUnmount(() => {
 .diagnostic-report-pair {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 16px;
+  margin-top: 11px;
 }
 
 .diagnostic-report-pair > div {
@@ -3181,14 +3190,14 @@ onBeforeUnmount(() => {
 .diagnostic-report-identity {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) repeat(3, minmax(0, 1fr));
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
 
 .diagnostic-report-identity > div {
   min-width: 0;
-  padding: 11px 12px;
+  padding: 8px 10px;
 }
 
 .diagnostic-report-identity > div:first-child {
@@ -3222,7 +3231,7 @@ onBeforeUnmount(() => {
   min-height: 34px;
   align-items: center;
   gap: 10px;
-  margin-top: 16px;
+  margin-top: 11px;
   color: var(--muted);
   font-size: 13px;
 }
@@ -3304,30 +3313,44 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-@container diagnostic-result (max-width: 760px) {
-  .diagnostic-report-card-grid--performance,
-  .diagnostic-report-card-grid--network {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+@container diagnostic-result (min-width: 1040px) {
+  .diagnostic-report-section {
+    grid-template-columns: minmax(176px, .2fr) minmax(0, .8fr);
   }
 
-  .diagnostic-report-card-grid > .diagnostic-report-card:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
+  .diagnostic-report-section__header {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    border-right: 1px solid var(--border);
+    padding: 14px;
   }
 
-  .diagnostic-report-identity {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .diagnostic-report-section__title {
+    align-items: flex-start;
   }
 
-  .diagnostic-report-identity > div:nth-child(3) {
-    border-left: 0;
+  .diagnostic-report-section__title p {
+    display: block;
+    overflow: visible;
+    white-space: normal;
   }
 
-  .diagnostic-report-identity > div:nth-child(odd) {
-    padding-left: 0;
+  .diagnostic-report-section__score {
+    grid-template-columns: auto auto;
+    align-items: baseline;
+    justify-items: start;
+    gap: 7px;
   }
 
-  .diagnostic-report-identity > div:nth-child(n + 3) {
-    border-top: 1px solid var(--border);
+  .diagnostic-report-section__body {
+    padding: 12px 14px;
+  }
+}
+
+@container diagnostic-result (max-width: 640px) {
+  .diagnostic-report-card__heading small {
+    display: none;
   }
 }
 
@@ -3382,27 +3405,71 @@ onBeforeUnmount(() => {
   }
 
   .diagnostic-report-section {
-    padding: 14px;
+    border-radius: var(--radius);
+  }
+
+  .diagnostic-report-section__header {
+    padding: 10px 11px 9px;
+  }
+
+  .diagnostic-report-section__body {
+    padding: 0 10px 10px;
   }
 
   .diagnostic-report-card-grid--performance,
-  .diagnostic-report-card-grid--network,
-  .diagnostic-report-identity {
+  .diagnostic-report-card-grid--network {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .diagnostic-report-card-grid > .diagnostic-report-card:last-child:nth-child(odd) {
-    grid-column: auto;
+  .diagnostic-report-card {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-height: 72px;
+    align-items: center;
+    gap: 3px 12px;
+    padding: 9px 10px;
   }
 
-  .diagnostic-report-identity > div,
-  .diagnostic-report-identity > div:first-child {
-    padding: 10px 0;
+  .diagnostic-report-card > header {
+    min-width: 0;
+    grid-row: 1 / span 2;
+    align-items: center;
   }
 
-  .diagnostic-report-identity > div + div {
-    border-top: 1px solid var(--border);
+  .diagnostic-report-card__value,
+  .diagnostic-report-pair,
+  .diagnostic-report-risk,
+  .diagnostic-report-card__meta {
+    margin-top: 0;
+  }
+
+  .diagnostic-report-card__meta {
+    min-height: 0;
+  }
+
+  .diagnostic-report-identity {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .diagnostic-report-identity > div:nth-child(3) {
     border-left: 0;
+  }
+
+  .diagnostic-report-identity > div:nth-child(odd) {
+    padding-left: 0;
+  }
+
+  .diagnostic-report-identity > div:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
+
+  .diagnostic-report-identity > div {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .diagnostic-report-identity > div:nth-child(2n) {
+    padding-right: 0;
   }
 
   .diagnostic-report-note {
