@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { Copy, Globe2, LoaderCircle } from '@lucide/vue'
+import { Copy, LoaderCircle } from '@lucide/vue'
 import type { DesktopEntry } from '@/lib/desktopEntries'
 import DesktopShortcutArtwork from './DesktopShortcutArtwork.vue'
 
 /**
  * One desktop icon tile. A static navigation app prefers its native artwork
  * and falls back to its vector icon; an app-market app renders its market icon
- * image; a site renders its favicon or a globe fallback. Windows-style
+ * image; a site renders its favicon or a monogram fallback. Windows-style
  * interaction is intentional: single-click selects and double-click opens.
  * Touch/pen opens on one tap and exposes the same parent-owned context menu
  * through a cancellable long press.
@@ -280,7 +280,6 @@ onBeforeUnmount(clearLongPress)
       />
       <span v-else-if="entry?.kind === 'site'" class="desktop__site-fallback" aria-hidden="true">
         <span class="desktop__site-fallback-letter">{{ monogram }}</span>
-        <span class="desktop__site-fallback-badge"><Globe2 :size="10" :stroke-width="2.2" /></span>
       </span>
       <span v-else class="desktop__icon-monogram" aria-hidden="true">{{ monogram }}</span>
     </span>

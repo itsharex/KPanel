@@ -211,7 +211,7 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
-  it('renders a branded website fallback when its favicon is unavailable', async () => {
+  it('renders a website monogram without a badge when its favicon is unavailable', async () => {
     const wrapper = mount(DesktopView)
     await nextTick()
     await nextTick()
@@ -220,7 +220,7 @@ describe('DesktopView dynamic entries', () => {
     await siteIcon.find('.desktop__icon-img').trigger('error')
 
     expect(siteIcon.find('.desktop__site-fallback-letter').text()).toBe('B')
-    expect(siteIcon.find('.desktop__site-fallback-badge').exists()).toBe(true)
+    expect(siteIcon.find('.desktop__site-fallback-badge').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -293,7 +293,7 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
-  it('shows a branded fallback in the confirmation when the website icon fails', async () => {
+  it('shows a website monogram without a badge in the confirmation when the icon fails', async () => {
     const wrapper = mount(DesktopView, { attachTo: document.body })
     await nextTick()
     await nextTick()
@@ -307,7 +307,7 @@ describe('DesktopView dynamic entries', () => {
     expect(document.body.querySelector('.desktop__external-confirm .desktop__site-fallback-letter')
       ?.textContent).toBe('B')
     expect(document.body.querySelector('.desktop__external-confirm .desktop__site-fallback-badge'))
-      .not.toBeNull()
+      .toBeNull()
     wrapper.unmount()
   })
 

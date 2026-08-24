@@ -13,7 +13,6 @@ import {
   SquareTerminal,
   AppWindow,
   ExternalLink,
-  Globe2,
   ListTree,
   MonitorCog,
   Plus,
@@ -3773,9 +3772,6 @@ function onViewportResize(): void {
             />
             <span v-else-if="externalOpenEntry.kind === 'site'" class="desktop__site-fallback">
               <span class="desktop__site-fallback-letter">{{ externalOpenMonogram }}</span>
-              <span class="desktop__site-fallback-badge">
-                <Globe2 :size="11" :stroke-width="2.2" />
-              </span>
             </span>
             <span v-else class="desktop__icon-monogram">{{ externalOpenMonogram }}</span>
           </span>
