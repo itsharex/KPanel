@@ -151,6 +151,32 @@ describe('SystemLogsDialog', () => {
     wrapper.unmount()
   })
 
+  it('uses structured priority colors and highlights literal search matches', async () => {
+    mocks.logs.mockResolvedValueOnce({
+      ...systemEntries,
+      entries: [
+        ...systemEntries.entries,
+        { timestamp: '2026-08-24T08:01:00Z', priority: 'error', unit: 'docker.service', message: 'container start failed' },
+      ],
+    })
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    const levels = wrapper.findAll('.system-log-level')
+    expect(levels[0]!.classes()).toContain('is-neutral')
+    expect(levels[1]!.classes()).toContain('is-warning')
+    expect(levels[2]!.classes()).toContain('is-danger')
+    expect(wrapper.find('.system-log-time').text()).toBe('2026-08-24T07:59:00Z')
+    expect(wrapper.findAll('.system-log-identity')[1]!.text()).toBe('nginx.service[42]')
+
+    await wrapper.find('input[type="search"]').setValue('.')
+    const matches = wrapper.findAll('.system-log-highlight')
+    expect(matches).toHaveLength(2)
+    expect(matches.every((match) => match.text() === '.')).toBe(true)
+    expect(wrapper.find('pre.system-log-output').text()).toContain('newer nginx event')
+    wrapper.unmount()
+  })
+
   it('serializes summary and entry reads through the shared Agent gate', async () => {
     let resolveFirst: ((value: typeof systemEntries) => void) | undefined
     mocks.logs

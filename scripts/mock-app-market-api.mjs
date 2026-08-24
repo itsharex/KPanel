@@ -526,6 +526,7 @@ function materializeSystemLogEntries(url) {
     ],
     service: [
       { timestamp: '2026-08-24T01:00:04Z', cursor: 'visual-service-1', priority: 'info', unit: 'nginx.service', identifier: 'nginx', pid: 908, message: 'Service entered the running state.' },
+      { timestamp: '2026-08-24T01:01:30Z', cursor: 'visual-service-2', priority: 'error', unit: 'docker.service', identifier: 'dockerd', pid: 611, message: 'Container start failed after the configured retry limit.' },
       { timestamp: recentTimestamp, cursor: `visual-service-${Date.now()}`, priority: 'warning', unit: 'kejilion-agent.service', identifier: 'kejilion-agent', pid: 1052, message: 'A slow request completed within the configured timeout.' },
     ],
     security: [

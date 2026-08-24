@@ -78,6 +78,19 @@ interface CleanupTaskIdentity {
   taskId: string
   policy: CleanupPolicy
 }
+interface HighlightedLogPart {
+  text: string
+  highlighted: boolean
+}
+interface DisplayLogEntry {
+  key: string
+  timestamp: HighlightedLogPart[]
+  priority: HighlightedLogPart[]
+  priorityTone: 'danger' | 'warning' | 'neutral'
+  identity: HighlightedLogPart[]
+  message: HighlightedLogPart[]
+  hasPrefix: boolean
+}
 
 // These fixed messages arrive through JSON, so keep them visible to the phrase-catalog gate.
 const systemLogBackendPhrases = [
@@ -224,8 +237,19 @@ const filteredEntries = computed(() => {
     entry.message,
   ].some((value) => String(value ?? '').toLocaleLowerCase().includes(query)))
 })
+const displayLogEntries = computed<DisplayLogEntry[]>(() => filteredEntries.value.map((entry, index) => {
+  const identity = logIdentity(entry)
+  return {
+    key: entry.cursor || `${entry.timestamp}-${index}`,
+    timestamp: highlightLogText(entry.timestamp),
+    priority: highlightLogText(entry.priority?.toUpperCase()),
+    priorityTone: priorityTone(entry.priority),
+    identity: highlightLogText(identity),
+    message: highlightLogText(entry.message),
+    hasPrefix: Boolean(entry.timestamp || entry.priority || identity),
+  }
+}))
 
-const logText = computed(() => filteredEntries.value.map(formatLogEntry).join('\n'))
 const footerStatus = computed(() => {
   if (!entries.value) return phrase('尚未读取日志')
   const visible = filteredEntries.value.length
@@ -236,13 +260,39 @@ const footerStatus = computed(() => {
   return `${sourceLabel}${filtered}${truncated}`
 })
 
-function formatLogEntry(entry: SystemLogEntry): string {
+function logIdentity(entry: SystemLogEntry): string {
   const identity = entry.unit || entry.identifier || ''
-  const process = identity && entry.pid ? `${identity}[${entry.pid}]` : identity
-  const prefix = [entry.timestamp, entry.priority ? entry.priority.toUpperCase() : '', process]
-    .filter(Boolean)
-    .join(' ')
-  return prefix ? `${prefix}: ${entry.message}` : entry.message
+  return identity && entry.pid ? `${identity}[${entry.pid}]` : identity
+}
+
+function priorityTone(priority?: string): 'danger' | 'warning' | 'neutral' {
+  if (priority && ['emergency', 'alert', 'critical', 'error'].includes(priority)) return 'danger'
+  if (priority === 'warning') return 'warning'
+  return 'neutral'
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function highlightLogText(value: string | number | undefined): HighlightedLogPart[] {
+  const text = String(value ?? '')
+  if (!text) return []
+  const query = keyword.value.trim()
+  if (!query) return [{ text, highlighted: false }]
+
+  const matcher = new RegExp(escapeRegExp(query), 'gi')
+  const parts: HighlightedLogPart[] = []
+  let offset = 0
+  for (const match of text.matchAll(matcher)) {
+    const index = match.index ?? 0
+    if (index > offset) parts.push({ text: text.slice(offset, index), highlighted: false })
+    parts.push({ text: match[0], highlighted: true })
+    offset = index + match[0].length
+  }
+  if (!parts.length) return [{ text, highlighted: false }]
+  if (offset < text.length) parts.push({ text: text.slice(offset), highlighted: false })
+  return parts
 }
 
 function entrySignature(value?: SystemLogEntries): string {
@@ -827,7 +877,11 @@ onBeforeUnmount(() => {
               data-i18n-ignore
               tabindex="0"
               @scroll="onLogScroll"
-            >{{ logText }}</pre>
+            ><span
+              v-for="entry in displayLogEntries"
+              :key="entry.key"
+              class="system-log-line"
+            ><span class="system-log-time"><span v-for="(part, partIndex) in entry.timestamp" :key="partIndex" :class="{ 'system-log-highlight': part.highlighted }">{{ part.text }}</span></span><template v-if="entry.priority.length"> <span class="system-log-level" :class="`is-${entry.priorityTone}`"><span v-for="(part, partIndex) in entry.priority" :key="partIndex" :class="{ 'system-log-highlight': part.highlighted }">{{ part.text }}</span></span></template><template v-if="entry.identity.length"> <span class="system-log-identity"><span v-for="(part, partIndex) in entry.identity" :key="partIndex" :class="{ 'system-log-highlight': part.highlighted }">{{ part.text }}</span></span></template><template v-if="entry.hasPrefix">: </template><span class="system-log-message"><span v-for="(part, partIndex) in entry.message" :key="partIndex" :class="{ 'system-log-highlight': part.highlighted }">{{ part.text }}</span></span></span></pre>
             <button v-if="unseenEntries" class="button button--secondary system-log-latest" type="button" @click="scrollToLatest">
               {{ phrase('查看最新日志') }}
             </button>
@@ -1137,6 +1191,50 @@ onBeforeUnmount(() => {
   max-height: min(56dvh, 620px);
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.system-log-line {
+  display: block;
+}
+
+.system-log-time {
+  color: var(--terminal-shell-muted, #8a9695);
+}
+
+.system-log-level {
+  font-weight: 750;
+}
+
+.system-log-level.is-danger {
+  color: color-mix(in srgb, var(--danger) 58%, #fff);
+}
+
+.system-log-level.is-warning {
+  color: color-mix(in srgb, var(--warning) 64%, #fff);
+}
+
+.system-log-level.is-neutral {
+  color: var(--terminal-shell-muted, #8a9695);
+}
+
+.system-log-identity {
+  color: color-mix(
+    in srgb,
+    var(--terminal-shell-text, #d8dddc) 72%,
+    var(--terminal-shell-muted, #8a9695)
+  );
+}
+
+.system-log-message {
+  color: var(--terminal-shell-text, #d8dddc);
+}
+
+.system-log-highlight {
+  padding: 0 2px;
+  border-radius: 3px;
+  color: var(--terminal-shell-text, #d8dddc);
+  background: color-mix(in srgb, var(--brand) 38%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 42%, transparent);
 }
 
 .system-log-latest {
