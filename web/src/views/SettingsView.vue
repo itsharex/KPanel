@@ -34,6 +34,7 @@ import { useSession } from '@/stores/session'
 import { useTheme, type ThemePreference } from '@/stores/theme'
 import {
   DEFAULT_THEME_COLORS,
+  THEME_COLOR_PRESETS,
   THEME_COLOR_KEYS,
   deriveThemeTokens,
   normalizeHexColor,
@@ -138,7 +139,7 @@ const themeModes: Array<{ id: ThemePreference; label: string; description: strin
 
 const themeColorFields: Array<{ key: ThemeColorKey; label: string; pickerLabel: string; description: string }> = [
   { key: 'brand', label: '主题色', pickerLabel: '主题色颜色选择器', description: '用于按钮、链接、选中态、焦点和进度' },
-  { key: 'neutral', label: '界面基调', pickerLabel: '界面基调颜色选择器', description: '决定背景、卡片、侧栏和桌面环境的冷暖倾向' },
+  { key: 'neutral', label: '界面基调', pickerLabel: '界面基调颜色选择器', description: '决定背景、卡片、侧栏和桌面环境的明暗与冷暖倾向' },
   { key: 'signature', label: '点缀色', pickerLabel: '点缀色颜色选择器', description: '仅用于当前项细线和活动任务等少量身份标记' },
 ]
 const colorPreviewModes: Array<{ id: ThemeMode; label: string }> = [
@@ -167,6 +168,9 @@ const colorPreviewStyle = computed(() => ({
   ...colorPreviewTokens.value,
   colorScheme: colorPreviewMode.value,
 }) as CSSProperties)
+const activeThemePresetId = computed(() => (
+  THEME_COLOR_PRESETS.find((preset) => sameThemeColors(colorDraft, preset.colors))?.id ?? null
+))
 
 function syncColorDraft(value: ThemeColorIntent): void {
   Object.assign(colorDraft, value)
@@ -176,11 +180,22 @@ function syncColorDraft(value: ThemeColorIntent): void {
   }
 }
 
-function sameThemeColors(left: ThemeColorIntent, right: ThemeColorIntent): boolean {
+function sameThemeColors(left: Readonly<ThemeColorIntent>, right: Readonly<ThemeColorIntent>): boolean {
   return left.brand === right.brand
     && left.neutral === right.neutral
     && left.signatureLinked === right.signatureLinked
     && left.signature === right.signature
+}
+
+function selectThemeColorPreset(colors: Readonly<ThemeColorIntent>): void {
+  syncColorDraft({ ...colors })
+}
+
+function themeColorPresetStyle(colors: Readonly<ThemeColorIntent>): CSSProperties {
+  return {
+    ...deriveThemeTokens({ ...colors }, colorPreviewMode.value),
+    colorScheme: colorPreviewMode.value,
+  } as CSSProperties
 }
 
 watch(() => theme.colors.value, (next, previous) => {
@@ -204,6 +219,12 @@ function updateThemeColor(key: ThemeColorKey, event: Event): void {
 function applyThemeColors(): void {
   if (hasColorErrors.value || !colorDraftDirty.value) return
   const next = normalizeThemeColors(colorDraft)
+  if (sameThemeColors(next, DEFAULT_THEME_COLORS)) {
+    theme.resetColors()
+    syncColorDraft({ ...DEFAULT_THEME_COLORS })
+    toast.success('已恢复默认配色')
+    return
+  }
   theme.setColors(next)
   syncColorDraft(next)
   toast.success('配色已应用', '浅色和深色层级已自动生成。')
@@ -781,6 +802,35 @@ onMounted(async () => {
           <h3>自定义配色</h3>
           <p>选择视觉意图，系统自动生成可读的完整浅色与深色色板</p>
         </div>
+        <div class="theme-color-preset-section">
+          <div class="theme-color-preset-section__header">
+            <strong>推荐方案</strong>
+            <span>选择一套作为起点，下面仍可完全自定义每个颜色值</span>
+          </div>
+          <div class="theme-color-presets" role="radiogroup" aria-label="推荐配色方案">
+            <button
+              v-for="(preset, index) in THEME_COLOR_PRESETS"
+              :key="preset.id"
+              type="button"
+              role="radio"
+              :tabindex="activeThemePresetId === preset.id || (!activeThemePresetId && index === 0) ? 0 : -1"
+              :aria-checked="activeThemePresetId === preset.id"
+              :class="{ 'is-active': activeThemePresetId === preset.id }"
+              @keydown="moveRadioFocus"
+              @click="selectThemeColorPreset(preset.colors)"
+            >
+              <span class="theme-color-preset__sample" :style="themeColorPresetStyle(preset.colors)" aria-hidden="true">
+                <i class="theme-color-preset__sidebar" />
+                <i class="theme-color-preset__canvas"><b /><b /><em /><u /></i>
+              </span>
+              <span class="theme-color-preset__copy">
+                <strong>{{ preset.label }}</strong>
+                <small>{{ preset.description }}</small>
+              </span>
+              <Check v-if="activeThemePresetId === preset.id" class="theme-color-preset__check" :size="16" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
         <div class="theme-color-studio">
           <div class="theme-color-controls">
             <template v-for="field in themeColorFields" :key="field.key">
@@ -853,7 +903,7 @@ onMounted(async () => {
           </div>
         </div>
         <div class="theme-color-actions">
-          <p aria-live="polite">系统会保留所选色相，并为当前预览模式自动校正明度与对比度；状态绿、警告橙和危险红不受影响。</p>
+          <p aria-live="polite">界面基调的明暗与饱和度会分别映射到整体层级，同时自动校正文字对比度；状态绿、警告橙和危险红不受影响。</p>
           <div>
             <button class="button button--ghost" type="button" :disabled="!theme.isCustom.value && !colorDraftDirty" @click="resetThemeColors">恢复默认配色</button>
             <button class="button button--secondary" type="button" :disabled="!colorDraftDirty" @click="cancelThemeColorChanges">取消更改</button>

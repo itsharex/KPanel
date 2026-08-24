@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ThemeColorIntent, ThemeColorKey, ThemeMode } from '@/theme/colors'
+import { THEME_COLOR_PRESETS, type ThemeColorIntent, type ThemeColorKey, type ThemeMode } from '@/theme/colors'
 import SettingsView from './SettingsView.vue'
 
 const settingsSource = readFileSync(new URL('./SettingsView.vue', import.meta.url), 'utf8')
@@ -131,8 +131,10 @@ interface SettingsBindings {
   colorErrors: Record<ThemeColorKey, string>
   colorPreviewMode: Ref<ThemeMode>
   colorPreviewTokens: ComputedRef<Record<string, string>>
+  activeThemePresetId: ComputedRef<string | null>
   hasColorErrors: ComputedRef<boolean>
   colorDraftDirty: ComputedRef<boolean>
+  selectThemeColorPreset: (colors: Readonly<ThemeColorIntent>) => void
   updateThemeColor: (key: ThemeColorKey, event: Event) => void
   applyThemeColors: () => void
   cancelThemeColorChanges: () => void
@@ -300,6 +302,8 @@ describe('SettingsView username change', () => {
 
 describe('SettingsView appearance', () => {
   it('provides accessible color inputs, linked accents, a local preview, and explicit actions', () => {
+    expect(settingsSource).toContain('role="radiogroup" aria-label="推荐配色方案"')
+    expect(settingsSource).toContain('@click="selectThemeColorPreset(preset.colors)"')
     expect(settingsSource).toContain('v-if="field.key !== \'signature\' || !colorDraft.signatureLinked"')
     expect(settingsSource).toContain('class="theme-color-field__picker"')
     expect(settingsSource).toContain('type="color"')
@@ -317,6 +321,34 @@ describe('SettingsView appearance', () => {
     expect(settingsSource).not.toContain('KPanel 经典')
   })
 
+  it('uses a preset as an editable draft and persists only the final color values', () => {
+    const view = setupView()
+    const preset = THEME_COLOR_PRESETS[1]!
+
+    view.selectThemeColorPreset(preset.colors)
+
+    expect(view.activeThemePresetId.value).toBe(preset.id)
+    expect(view.colorDraft).toEqual(preset.colors)
+    expect(view.colorInputs).toEqual({
+      brand: preset.colors.brand,
+      neutral: preset.colors.neutral,
+      signature: preset.colors.signature,
+    })
+    expect(mocks.themeSetColors).not.toHaveBeenCalled()
+
+    view.updateThemeColor('neutral', themeColorInput('#345678'))
+    expect(view.activeThemePresetId.value).toBeNull()
+    view.applyThemeColors()
+
+    expect(mocks.themeSetColors).toHaveBeenCalledWith({
+      ...preset.colors,
+      neutral: '#345678',
+    })
+    expect(Object.keys(mocks.themeSetColors.mock.calls[0]?.[0] ?? {})).toEqual([
+      'brand', 'neutral', 'signatureLinked', 'signature',
+    ])
+  })
+
   it('keeps the preview mode and interface mode as separate accessible radio groups', () => {
     expect(settingsSource).toContain('role="radiogroup" aria-label="配色预览模式"')
     expect(settingsSource).toContain(':tabindex="colorPreviewMode === option.id ? 0 : -1"')
@@ -325,7 +357,7 @@ describe('SettingsView appearance', () => {
     expect(settingsSource).toContain(':tabindex="theme.preference.value === option.id ? 0 : -1"')
     expect(settingsSource).toContain(':aria-checked="theme.preference.value === option.id"')
     expect(settingsSource).toContain('@click="theme.setTheme(option.id)"')
-    expect(settingsSource.match(/@keydown="moveRadioFocus"/g)).toHaveLength(3)
+    expect(settingsSource.match(/@keydown="moveRadioFocus"/g)).toHaveLength(4)
   })
 
   it('validates and normalizes Hex input before applying a complete color intent', () => {
@@ -400,6 +432,30 @@ describe('SettingsView appearance', () => {
       signatureLinked: true,
       signature: '#0c7a60',
     })
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('已恢复默认配色')
+  })
+
+  it('treats applying the default intent as the real stylesheet default', () => {
+    mocks.themeColors.value = {
+      brand: '#315d7d',
+      neutral: '#65717d',
+      signatureLinked: false,
+      signature: '#b28c54',
+    }
+    mocks.themeIsCustom.value = true
+    const view = setupView()
+
+    Object.assign(view.colorDraft, {
+      brand: '#0c7a60',
+      neutral: '#52645f',
+      signatureLinked: true,
+      signature: '#0c7a60',
+    })
+    view.applyThemeColors()
+
+    expect(mocks.themeResetColors).toHaveBeenCalledOnce()
+    expect(mocks.themeSetColors).not.toHaveBeenCalled()
+    expect(view.colorDraft).toEqual(mocks.themeColors.value)
     expect(mocks.toastSuccess).toHaveBeenCalledWith('已恢复默认配色')
   })
 })

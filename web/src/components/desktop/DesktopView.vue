@@ -105,6 +105,7 @@ import { useDesktopMode } from '@/stores/desktopMode'
 import { useDesktopIcons } from '@/stores/desktopIcons'
 import { useDocumentFullscreen } from '@/composables/useDocumentFullscreen'
 import { useTheme } from '@/stores/theme'
+import { THEME_COLOR_PRESETS } from '@/theme/colors'
 import { useToast } from '@/stores/toast'
 import { useI18n } from '@/i18n'
 import type { AgentStatus, DesktopIconPosition, DesktopShortcut, FileEntry } from '@/types/api'
@@ -154,30 +155,35 @@ const DESKTOP_WALLPAPERS = [
     src: '/wallpapers/kpanel-desktop.webp',
     nameKey: 'desktop.wallpaperClassic',
     descriptionKey: 'desktop.wallpaperClassicDescription',
+    themePreset: THEME_COLOR_PRESETS[0]!,
   },
   {
     id: 'orbit',
     src: '/wallpapers/kpanel-desktop-orbit.webp',
     nameKey: 'desktop.wallpaperOrbit',
     descriptionKey: 'desktop.wallpaperOrbitDescription',
+    themePreset: THEME_COLOR_PRESETS[1]!,
   },
   {
     id: 'horizon',
     src: '/wallpapers/kpanel-desktop-horizon.webp',
     nameKey: 'desktop.wallpaperHorizon',
     descriptionKey: 'desktop.wallpaperHorizonDescription',
+    themePreset: THEME_COLOR_PRESETS[2]!,
   },
   {
     id: 'rift',
     src: '/wallpapers/kpanel-desktop-rift.webp',
     nameKey: 'desktop.wallpaperRift',
     descriptionKey: 'desktop.wallpaperRiftDescription',
+    themePreset: THEME_COLOR_PRESETS[3]!,
   },
   {
     id: 'prism',
     src: '/wallpapers/kpanel-desktop-prism.webp',
     nameKey: 'desktop.wallpaperPrism',
     descriptionKey: 'desktop.wallpaperPrismDescription',
+    themePreset: THEME_COLOR_PRESETS[4]!,
   },
 ] as const
 type DesktopWallpaperID = typeof DESKTOP_WALLPAPERS[number]['id']
@@ -2635,7 +2641,10 @@ async function selectDesktopWallpaper(wallpaperID: DesktopWallpaperID): Promise<
   wallpaperDialogOpen.value = false
   await nextTick()
   await waitForWallpaperSwitchDelay()
+  const wallpaper = DESKTOP_WALLPAPERS.find((candidate) => candidate.id === wallpaperID)
+  if (!wallpaper) return
   desktopWallpaperID.value = wallpaperID
+  theme.setColors(wallpaper.themePreset.colors)
   try {
     window.localStorage.setItem(DESKTOP_WALLPAPER_KEY, wallpaperID)
   } catch {

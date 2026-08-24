@@ -17,6 +17,46 @@ export const DEFAULT_THEME_COLORS = Object.freeze({
   signature: '#0c7a60',
 }) satisfies Readonly<ThemeColorIntent>
 
+export interface ThemeColorPreset {
+  readonly id: string
+  readonly label: string
+  readonly description: string
+  readonly colors: Readonly<ThemeColorIntent>
+}
+
+export const THEME_COLOR_PRESETS = Object.freeze([
+  {
+    id: 'flow-star-blue',
+    label: '流光星蓝',
+    description: '深海青蓝与微金流光，呼应经典流体壁纸',
+    colors: { brand: '#1686a0', neutral: '#3d5663', signatureLinked: false, signature: '#c9973d' },
+  },
+  {
+    id: 'quiet-orbit',
+    label: '静海轨迹',
+    description: '轨道蓝与冰青光点，呼应深海系统轨迹',
+    colors: { brand: '#356fc0', neutral: '#34465c', signatureLinked: false, signature: '#23a6bd' },
+  },
+  {
+    id: 'cloud-dawn',
+    label: '云曦霞光',
+    description: '晨曦暖霞与雾蓝云层，呼应轻盈地平线',
+    colors: { brand: '#b9786b', neutral: '#8a8896', signatureLinked: false, signature: '#d8a95d' },
+  },
+  {
+    id: 'obsidian-gold',
+    label: '曜石鎏金',
+    description: '曜石黑与香槟金，克制奢华、层次利落',
+    colors: { brand: '#b07d22', neutral: '#25231f', signatureLinked: false, signature: '#d9b95f' },
+  },
+  {
+    id: 'twilight-prism',
+    label: '暮光棱镜',
+    description: '暮光紫与玫瑰折光，呼应柔和玻璃棱面',
+    colors: { brand: '#7856b6', neutral: '#54475f', signatureLinked: false, signature: '#c76586' },
+  },
+] satisfies readonly ThemeColorPreset[])
+
 export const THEME_TOKEN_NAMES = [
   '--bg', '--surface', '--surface-subtle', '--surface-raised',
   '--text', '--text-soft', '--muted', '--border', '--border-strong', '--control-border',
@@ -59,6 +99,13 @@ const UI_CONTRAST = 3.05
 const SEARCH_STEPS = 320
 const WHITE = '#ffffff'
 const DARK_ON_COLOR = '#0b111b'
+const DARK_FOUNDATION_LIGHTNESS = Object.freeze({
+  background: 0.075,
+  surface: 0.115,
+  subtle: 0.15,
+  raised: 0.19,
+  neutralSoft: 0.17,
+})
 
 const HEX_TOKEN_NAMES = new Set<ThemeTokenName>([
   '--bg', '--surface', '--surface-subtle', '--surface-raised',
@@ -147,13 +194,41 @@ export function contrastRatio(first: string, second: string): number {
  */
 export function deriveThemeTokens(colors: ThemeColorIntent, mode: ThemeMode): ThemeTokenMap {
   const normalized = normalizeThemeColors(colors)
-  const neutralSeed = capSaturation(normalized.neutral, mode === 'light' ? 0.18 : 0.22)
+  const neutralIntentLightness = rgbToHsl(parseRgb(normalized.neutral)).l
+  const defaultNeutralLightness = rgbToHsl(parseRgb(DEFAULT_THEME_COLORS.neutral)).l
+  const tonePosition = neutralIntentLightness < defaultNeutralLightness
+    ? (neutralIntentLightness - defaultNeutralLightness) / defaultNeutralLightness
+    : (neutralIntentLightness - defaultNeutralLightness) / (1 - defaultNeutralLightness)
+  const lightToneOffset = mode === 'light'
+    ? tonePosition * (tonePosition < 0 ? 0.055 : 0.04)
+    : 0
+  const darkToneOffset = mode === 'dark'
+    ? tonePosition * (tonePosition < 0 ? 0.05 : 0.09)
+    : 0
+  const foundationToneOffset = mode === 'light' ? lightToneOffset : darkToneOffset
+  const darkeningStrength = mode === 'dark' ? Math.max(-tonePosition, 0) : 0
+  const lighteningStrength = mode === 'dark' ? Math.max(tonePosition, 0) : 0
+  const neutralSeed = expandSaturation(
+    normalized.neutral,
+    mode === 'light' ? 0.72 : 0.90,
+    mode === 'light' ? 0.45 : 0.70,
+  )
   const direction = mode === 'light' ? 'darker' : 'lighter'
-  const bg = setLightness(neutralSeed, mode === 'light' ? 0.95 : 0.075)
-  const surface = setLightness(neutralSeed, mode === 'light' ? 0.99 : 0.115)
-  const surfaceSubtle = setLightness(neutralSeed, mode === 'light' ? 0.972 : 0.15)
-  const surfaceRaised = setLightness(neutralSeed, mode === 'light' ? 0.998 : 0.19)
-  const neutralSoft = setLightness(neutralSeed, mode === 'light' ? 0.925 : 0.17)
+  const contentContrastAnchor = mode === 'light' ? '#000000' : WHITE
+  const safeBackground = (candidate: string, target = 7) => accessibleColor(
+    candidate,
+    [contentContrastAnchor],
+    target,
+    mode === 'light' ? 'lighter' : 'darker',
+  )
+  const bg = safeBackground(setLightness(neutralSeed, mode === 'light' ? 0.95 + lightToneOffset : DARK_FOUNDATION_LIGHTNESS.background + darkToneOffset))
+  const surface = safeBackground(setLightness(neutralSeed, mode === 'light' ? 0.99 + lightToneOffset : DARK_FOUNDATION_LIGHTNESS.surface + darkToneOffset))
+  const surfaceSubtle = safeBackground(setLightness(neutralSeed, mode === 'light' ? 0.972 + lightToneOffset : DARK_FOUNDATION_LIGHTNESS.subtle + darkToneOffset))
+  const surfaceRaised = safeBackground(setLightness(neutralSeed, mode === 'light' ? 0.998 + lightToneOffset : DARK_FOUNDATION_LIGHTNESS.raised + darkToneOffset))
+  const neutralSoft = safeBackground(
+    setLightness(neutralSeed, mode === 'light' ? 0.925 + lightToneOffset : DARK_FOUNDATION_LIGHTNESS.neutralSoft + darkToneOffset),
+    AA_CONTRAST,
+  )
   const contentBackgrounds = [bg, surface, surfaceSubtle, surfaceRaised]
 
   const text = accessibleColor(
@@ -184,9 +259,9 @@ export function deriveThemeTokens(colors: ThemeColorIntent, mode: ThemeMode): Th
     direction,
   )
 
-  const brandSeed = capSaturation(normalized.brand, 0.82)
+  const brandSeed = capSaturation(normalized.brand, 0.94)
   const brand = deriveActionColor(brandSeed, surface, mode)
-  const brandSoft = mix(surface, brand, mode === 'light' ? 0.10 : 0.18)
+  const brandSoft = mix(surface, brand, mode === 'light' ? 0.13 : 0.23)
   const onBrand = mode === 'light' ? WHITE : DARK_ON_COLOR
   const strongSeed = shiftLightness(brand, mode === 'light' ? -0.10 : 0.10)
   const brandStrong = accessibleColor(
@@ -196,7 +271,7 @@ export function deriveThemeTokens(colors: ThemeColorIntent, mode: ThemeMode): Th
     direction,
     (candidate) => contrastRatio(onBrand, candidate) >= AA_CONTRAST,
   )
-  const brandMuted = mix(surface, brand, mode === 'light' ? 0.25 : 0.31)
+  const brandMuted = mix(surface, brand, mode === 'light' ? 0.30 : 0.38)
 
   const success = deriveAccentPair(STATUS_SEEDS.success, surface, mode)
   const blue = deriveAccentPair(STATUS_SEEDS.blue, surface, mode)
@@ -205,8 +280,8 @@ export function deriveThemeTokens(colors: ThemeColorIntent, mode: ThemeMode): Th
   const danger = deriveAccentPair(STATUS_SEEDS.danger, surface, mode, true)
   const onDanger = mode === 'light' ? WHITE : DARK_ON_COLOR
 
-  const sidebarSeed = capSaturation(normalized.neutral, 0.24)
-  const sidebar = setLightness(sidebarSeed, mode === 'light' ? 0.095 : 0.045)
+  const sidebarSeed = neutralSeed
+  const sidebar = setLightness(sidebarSeed, (mode === 'light' ? 0.095 : 0.045) + foundationToneOffset / 2)
   const sidebarText = accessibleColor(
     setLightness(sidebarSeed, 0.96),
     [sidebar],
@@ -229,8 +304,8 @@ export function deriveThemeTokens(colors: ThemeColorIntent, mode: ThemeMode): Th
     ],
   )
   const sidebarBorder = mix(sidebar, sidebarText, mode === 'light' ? 0.10 : 0.09)
-  const sidebarHover = mix(sidebar, brand, mode === 'light' ? 0.12 : 0.10)
-  const sidebarActive = mix(sidebar, brand, mode === 'light' ? 0.22 : 0.20)
+  const sidebarHover = mix(sidebar, brand, mode === 'light' ? 0.15 : 0.14)
+  const sidebarActive = mix(sidebar, brand, mode === 'light' ? 0.28 : 0.27)
 
   const glassAlpha = safeGlassAlpha(surface, text, mode === 'light' ? 0.90 : 0.82)
   const strongGlassAlpha = safeGlassAlpha(surfaceRaised, text, mode === 'light' ? 0.96 : 0.93)
@@ -239,8 +314,8 @@ export function deriveThemeTokens(colors: ThemeColorIntent, mode: ThemeMode): Th
   const desktopGlassBorder = cssRgb(mode === 'light' ? text : sidebarText, mode === 'light' ? 0.18 : 0.12)
   const desktopShadow = cssRgb(mode === 'light' ? sidebar : '#000000', mode === 'light' ? 0.22 : 0.48)
 
-  const wallpaperStart = setLightness(neutralSeed, mode === 'light' ? 0.72 : 0.055)
-  const wallpaperEnd = setLightness(neutralSeed, mode === 'light' ? 0.92 : 0.16)
+  const wallpaperStart = setLightness(neutralSeed, (mode === 'light' ? 0.72 : 0.055) + foundationToneOffset)
+  const wallpaperEnd = setLightness(neutralSeed, (mode === 'light' ? 0.92 : 0.16) + foundationToneOffset)
   const lightVeilStart = setLightness(neutralSeed, 0.94)
   const lightVeilEnd = setLightness(neutralSeed, 0.72)
   const darkVeilStart = setLightness(neutralSeed, 0.055)
@@ -248,7 +323,7 @@ export function deriveThemeTokens(colors: ThemeColorIntent, mode: ThemeMode): Th
   const vignetteEdge = setLightness(neutralSeed, 0.04)
   const desktopWallpaperBase = `linear-gradient(145deg, ${wallpaperStart}, ${wallpaperEnd})`
   const desktopWallpaperVeilLight = `linear-gradient(145deg, ${cssRgb(lightVeilStart, 0.07)}, ${cssRgb(lightVeilEnd, 0.04)})`
-  const desktopWallpaperVeilDark = `linear-gradient(145deg, ${cssRgb(darkVeilStart, 0.16)}, ${cssRgb(darkVeilEnd, 0.32)})`
+  const desktopWallpaperVeilDark = `linear-gradient(145deg, ${cssRgb(darkVeilStart, 0.16 + darkeningStrength * 0.10 - lighteningStrength * 0.05)}, ${cssRgb(darkVeilEnd, 0.32 + darkeningStrength * 0.16 - lighteningStrength * 0.10)})`
   const desktopWallpaperVignette = [
     `linear-gradient(90deg, ${cssRgb(vignetteEdge, mode === 'light' ? 0.06 : 0.12)}, transparent 30%, transparent 80%, ${cssRgb(vignetteEdge, mode === 'light' ? 0.05 : 0.08)})`,
     `radial-gradient(circle at 50% 40%, transparent ${mode === 'light' ? 42 : 36}%, ${cssRgb(vignetteEdge, mode === 'light' ? 0.08 : 0.12)} 100%)`,
@@ -392,6 +467,12 @@ function capSaturation(color: string, maximum: number): string {
   return toHex(hslToRgb({ ...hsl, s: Math.min(hsl.s, maximum) }))
 }
 
+function expandSaturation(color: string, maximum: number, boost: number): string {
+  const hsl = rgbToHsl(parseRgb(color))
+  const expanded = hsl.s * (1 + boost * (1 - hsl.s))
+  return toHex(hslToRgb({ ...hsl, s: Math.min(expanded, maximum) }))
+}
+
 function setLightness(color: string, lightness: number): string {
   const hsl = rgbToHsl(parseRgb(color))
   return toHex(hslToRgb({ ...hsl, l: clamp(lightness, 0, 1) }))
@@ -466,7 +547,7 @@ function closestAccessibleColor(
 function deriveActionColor(seed: string, surface: string, mode: ThemeMode): string {
   const direction = mode === 'light' ? 'darker' : 'lighter'
   const onColor = mode === 'light' ? WHITE : DARK_ON_COLOR
-  const softAmount = mode === 'light' ? 0.10 : 0.18
+  const softAmount = mode === 'light' ? 0.13 : 0.23
   return accessibleColor(
     seed,
     [surface],

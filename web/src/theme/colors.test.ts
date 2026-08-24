@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_THEME_COLORS,
   THEME_COLOR_KEYS,
+  THEME_COLOR_PRESETS,
   THEME_TOKEN_NAMES,
   contrastRatio,
   deriveThemeTokens,
@@ -56,6 +57,15 @@ function expectAccessible(tokens: ThemeTokenMap): void {
   }
 }
 
+function channelSpread(color: string): number {
+  const channels = [
+    Number.parseInt(color.slice(1, 3), 16),
+    Number.parseInt(color.slice(3, 5), 16),
+    Number.parseInt(color.slice(5, 7), 16),
+  ]
+  return Math.max(...channels) - Math.min(...channels)
+}
+
 describe('theme color input contract', () => {
   it('publishes a fixed three-intent color key list', () => {
     expect(THEME_COLOR_KEYS).toEqual(['brand', 'neutral', 'signature'])
@@ -65,6 +75,21 @@ describe('theme color input contract', () => {
       signatureLinked: true,
       signature: '#0c7a60',
     })
+  })
+
+  it('offers five distinct editable presets backed only by color intents', () => {
+    expect(THEME_COLOR_PRESETS).toHaveLength(5)
+    expect(new Set(THEME_COLOR_PRESETS.map((preset) => preset.id))).toHaveProperty('size', 5)
+    for (const preset of THEME_COLOR_PRESETS) {
+      expect(preset.label).not.toBe('')
+      expect(preset.description).not.toBe('')
+      expect(normalizeThemeColors(preset.colors)).toEqual(preset.colors)
+      expect(preset.colors.signatureLinked).toBe(false)
+      expect(preset.colors.signature).not.toBe(preset.colors.brand)
+    }
+    expect(THEME_COLOR_PRESETS.map((preset) => preset.colors.neutral)).toEqual([
+      '#3d5663', '#34465c', '#8a8896', '#25231f', '#54475f',
+    ])
   })
 
   it('normalizes safe short and long hexadecimal colors only', () => {
@@ -125,6 +150,17 @@ describe('derived custom theme', () => {
     expectAccessible(deriveThemeTokens(DEFAULT_THEME_COLORS, mode))
   })
 
+  it('keeps every recommended preset accessible in light and dark modes', () => {
+    for (const preset of THEME_COLOR_PRESETS) {
+      const light = deriveThemeTokens({ ...preset.colors }, 'light')
+      const dark = deriveThemeTokens({ ...preset.colors }, 'dark')
+      expectAccessible(light)
+      expectAccessible(dark)
+      expect(light['--theme-accent']).not.toBe(light['--brand'])
+      expect(dark['--theme-accent']).not.toBe(dark['--brand'])
+    }
+  })
+
   it('uses one neutral intent for visibly different light and dark foundations', () => {
     const light = deriveThemeTokens(DEFAULT_THEME_COLORS, 'light')
     const dark = deriveThemeTokens(DEFAULT_THEME_COLORS, 'dark')
@@ -133,6 +169,64 @@ describe('derived custom theme', () => {
     expect(light['--sidebar']).not.toBe(dark['--sidebar'])
     expect(light['--on-brand']).toBe('#ffffff')
     expect(dark['--on-brand']).toBe('#0b111b')
+  })
+
+  it('keeps dark foundations close to black without washing out chromatic neutral intent', () => {
+    const defaults = deriveThemeTokens(DEFAULT_THEME_COLORS, 'dark')
+    const black = deriveThemeTokens({ ...DEFAULT_THEME_COLORS, neutral: '#000000' }, 'dark')
+    const blue = deriveThemeTokens({ ...DEFAULT_THEME_COLORS, neutral: '#315d7d' }, 'dark')
+
+    expect(contrastRatio(black['--bg'], '#000000')).toBeLessThan(1.05)
+    expect(contrastRatio(black['--surface'], '#000000')).toBeLessThan(1.13)
+    expect(black['--desktop-wallpaper-veil-dark']).toBe('linear-gradient(145deg, rgb(14 14 14 / 26%), rgb(6 6 6 / 48%))')
+    expect(defaults['--desktop-wallpaper-veil-dark']).toContain('/ 16%')
+    expect(defaults['--desktop-wallpaper-veil-dark']).toContain('/ 32%')
+    expect(contrastRatio(defaults['--bg'], '#000000')).toBeGreaterThan(contrastRatio(black['--bg'], '#000000'))
+    expect(contrastRatio(black['--bg'], '#000000')).toBeLessThan(1.1)
+    expect(channelSpread(blue['--bg'])).toBeGreaterThanOrEqual(6)
+    expectAccessible(black)
+    expectAccessible(blue)
+  })
+
+  it('reflects a broader brand and foundation range while preserving safe contrast', () => {
+    const blue = { ...DEFAULT_THEME_COLORS, brand: '#0055ff', neutral: '#0055ff' }
+    const red = { ...DEFAULT_THEME_COLORS, brand: '#ff2200', neutral: '#ff2200' }
+    const blueLight = deriveThemeTokens(blue, 'light')
+    const redLight = deriveThemeTokens(red, 'light')
+    const blueDark = deriveThemeTokens(blue, 'dark')
+    const redDark = deriveThemeTokens(red, 'dark')
+    const blackLight = deriveThemeTokens({ ...DEFAULT_THEME_COLORS, neutral: '#000000' }, 'light')
+    const whiteLight = deriveThemeTokens({ ...DEFAULT_THEME_COLORS, neutral: '#ffffff' }, 'light')
+
+    expect(channelSpread(blueLight['--sidebar-active'])).toBeGreaterThanOrEqual(60)
+    expect(channelSpread(redLight['--sidebar-active'])).toBeGreaterThanOrEqual(60)
+    expect(channelSpread(blueDark['--bg'])).toBeGreaterThanOrEqual(24)
+    expect(channelSpread(redDark['--bg'])).toBeGreaterThanOrEqual(24)
+    expect(blueLight['--brand-soft']).not.toBe(redLight['--brand-soft'])
+    expect(contrastRatio(whiteLight['--bg'], '#000000')).toBeGreaterThan(contrastRatio(blackLight['--bg'], '#000000'))
+    for (const tokens of [blueLight, redLight, blueDark, redDark, blackLight, whiteLight]) expectAccessible(tokens)
+  })
+
+  it('maps foundation brightness and saturation across visibly broad independent ranges', () => {
+    const darkLow = deriveThemeTokens({ ...DEFAULT_THEME_COLORS, neutral: '#000000' }, 'dark')
+    const darkHigh = deriveThemeTokens({ ...DEFAULT_THEME_COLORS, neutral: '#ffffff' }, 'dark')
+    const lightLow = deriveThemeTokens({ ...DEFAULT_THEME_COLORS, neutral: '#000000' }, 'light')
+    const lightHigh = deriveThemeTokens({ ...DEFAULT_THEME_COLORS, neutral: '#ffffff' }, 'light')
+    const mutedGreen = { ...DEFAULT_THEME_COLORS, neutral: '#50635d' }
+    const vividGreen = { ...DEFAULT_THEME_COLORS, neutral: '#00b377' }
+    const mutedDark = deriveThemeTokens(mutedGreen, 'dark')
+    const vividDark = deriveThemeTokens(vividGreen, 'dark')
+    const mutedLight = deriveThemeTokens(mutedGreen, 'light')
+    const vividLight = deriveThemeTokens(vividGreen, 'light')
+
+    expect(contrastRatio(darkHigh['--bg'], '#000000') - contrastRatio(darkLow['--bg'], '#000000')).toBeGreaterThan(0.3)
+    expect(contrastRatio(lightHigh['--bg'], '#000000') - contrastRatio(lightLow['--bg'], '#000000')).toBeGreaterThan(3)
+    expect(channelSpread(vividDark['--bg']) - channelSpread(mutedDark['--bg'])).toBeGreaterThan(12)
+    expect(channelSpread(vividDark['--surface-raised']) - channelSpread(mutedDark['--surface-raised'])).toBeGreaterThan(20)
+    expect(channelSpread(vividLight['--bg']) - channelSpread(mutedLight['--bg'])).toBeGreaterThan(10)
+    for (const tokens of [darkLow, darkHigh, lightLow, lightHigh, mutedDark, vividDark, mutedLight, vividLight]) {
+      expectAccessible(tokens)
+    }
   })
 
   it('derives sidebar hover feedback from brand intent instead of neutral text', () => {

@@ -5,6 +5,7 @@ import { nextTick } from 'vue'
 import DesktopView from '@/components/desktop/DesktopView.vue'
 import { resetDesktopModeForTest, useDesktopMode } from '@/stores/desktopMode'
 import { useTheme } from '@/stores/theme'
+import { THEME_COLOR_PRESETS } from '@/theme/colors'
 
 function setupViewport(width: number, height: number): void {
   Object.defineProperty(window, 'innerWidth', { value: width, configurable: true })
@@ -363,7 +364,9 @@ describe('DesktopView', () => {
     theme.setTheme('system')
   })
 
-  it('changes the wallpaper from the desktop menu and restores the saved choice', async () => {
+  it('changes the wallpaper and matching theme from the desktop menu and restores the saved choice', async () => {
+    const theme = useTheme()
+    theme.resetColors()
     const wrapper = mount(DesktopView)
 
     expect(wrapper.find('.desktop__wallpaper-image').attributes('data-wallpaper')).toBe('classic')
@@ -371,6 +374,7 @@ describe('DesktopView', () => {
     await nextTick()
     await wrapper.find('[data-context-action="wallpaper"]').trigger('click')
     await nextTick()
+    expect(document.body.textContent).toContain('更换桌面壁纸和主题')
 
     const dialog = document.body.querySelector<HTMLElement>('.desktop-wallpaper-picker')
     const orbit = dialog?.querySelector<HTMLButtonElement>('[data-wallpaper-option="orbit"]')
@@ -383,6 +387,7 @@ describe('DesktopView', () => {
     await nextTick()
     expect(document.body.querySelector('.desktop-wallpaper-picker')).toBeNull()
     expect(wrapper.find('.desktop__wallpaper-image').attributes('data-wallpaper')).toBe('classic')
+    expect(theme.isCustom.value).toBe(false)
 
     await vi.advanceTimersByTimeAsync(499)
     await nextTick()
@@ -395,11 +400,14 @@ describe('DesktopView', () => {
     expect(nextWallpaper.exists()).toBe(true)
     expect(nextWallpaper.attributes('style')).toContain('kpanel-desktop-orbit.webp')
     expect(window.localStorage.getItem('kpanel:desktop-wallpaper:v1')).toBe('orbit')
+    expect(theme.colors.value).toEqual(THEME_COLOR_PRESETS[1]!.colors)
+    expect(theme.isCustom.value).toBe(true)
     wrapper.unmount()
 
     const restored = mount(DesktopView)
     expect(restored.find('.desktop__wallpaper-image').attributes('data-wallpaper')).toBe('orbit')
     restored.unmount()
+    theme.resetColors()
   })
 
   it('opens and closes a context menu on right-click', async () => {
