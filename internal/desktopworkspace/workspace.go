@@ -100,16 +100,16 @@ type Shortcut struct {
 }
 
 type Workspace struct {
-	SchemaVersion   int                 `json:"schemaVersion"`
-	ResourceVersion string              `json:"resourceVersion"`
-	Available       bool                `json:"available"`
-	Warning         string              `json:"warning,omitempty"`
-	HiddenEntryKeys []string            `json:"hiddenEntryKeys"`
-	HiddenWidgetKeys []string           `json:"hiddenWidgetKeys"`
-	Positions       map[string]Position `json:"positions"`
-	WidgetPositions map[string]Position `json:"widgetPositions"`
-	Labels          map[string]string   `json:"labels"`
-	Shortcuts       []Shortcut          `json:"shortcuts"`
+	SchemaVersion    int                 `json:"schemaVersion"`
+	ResourceVersion  string              `json:"resourceVersion"`
+	Available        bool                `json:"available"`
+	Warning          string              `json:"warning,omitempty"`
+	HiddenEntryKeys  []string            `json:"hiddenEntryKeys"`
+	HiddenWidgetKeys []string            `json:"hiddenWidgetKeys"`
+	Positions        map[string]Position `json:"positions"`
+	WidgetPositions  map[string]Position `json:"widgetPositions"`
+	Labels           map[string]string   `json:"labels"`
+	Shortcuts        []Shortcut          `json:"shortcuts"`
 }
 
 type ReplaceInput struct {
@@ -149,13 +149,13 @@ type shortcutRecord struct {
 }
 
 type persistedWorkspace struct {
-	SchemaVersion   int                 `json:"schemaVersion"`
-	HiddenEntryKeys []string            `json:"hiddenEntryKeys"`
-	HiddenWidgetKeys []string           `json:"hiddenWidgetKeys"`
-	Positions       map[string]Position `json:"positions"`
-	WidgetPositions map[string]Position `json:"widgetPositions"`
-	Labels          map[string]string   `json:"labels"`
-	Shortcuts       []shortcutRecord    `json:"shortcuts"`
+	SchemaVersion    int                 `json:"schemaVersion"`
+	HiddenEntryKeys  []string            `json:"hiddenEntryKeys"`
+	HiddenWidgetKeys []string            `json:"hiddenWidgetKeys"`
+	Positions        map[string]Position `json:"positions"`
+	WidgetPositions  map[string]Position `json:"widgetPositions"`
+	Labels           map[string]string   `json:"labels"`
+	Shortcuts        []shortcutRecord    `json:"shortcuts"`
 }
 
 type atomicWriter func(directory, target string, data []byte) error
@@ -345,9 +345,9 @@ func (s *Store) workspaceLocked() Workspace {
 		SchemaVersion: SchemaVersion, ResourceVersion: resourceVersion(state),
 		Available: s.available, HiddenEntryKeys: append([]string{}, state.HiddenEntryKeys...),
 		HiddenWidgetKeys: append([]string{}, state.HiddenWidgetKeys...),
-		Positions: clonePositions(state.Positions), Labels: cloneLabels(state.Labels),
+		Positions:        clonePositions(state.Positions), Labels: cloneLabels(state.Labels),
 		WidgetPositions: clonePositions(state.WidgetPositions),
-		Shortcuts: shortcuts,
+		Shortcuts:       shortcuts,
 	}
 	if !s.available {
 		result.Warning = unavailableWarning
@@ -528,12 +528,12 @@ func buildPersistedWorkspace(input ReplaceInput, current persistedWorkspace, now
 		}
 	}
 	state := persistedWorkspace{
-		SchemaVersion:   SchemaVersion,
-		HiddenEntryKeys: append([]string(nil), input.HiddenEntryKeys...),
+		SchemaVersion:    SchemaVersion,
+		HiddenEntryKeys:  append([]string(nil), input.HiddenEntryKeys...),
 		HiddenWidgetKeys: append([]string(nil), input.HiddenWidgetKeys...),
-		Positions:       clonePositions(input.Positions), Labels: cloneLabels(input.Labels),
+		Positions:        clonePositions(input.Positions), Labels: cloneLabels(input.Labels),
 		WidgetPositions: clonePositions(input.WidgetPositions),
-		Shortcuts: make([]shortcutRecord, 0, len(input.Shortcuts)),
+		Shortcuts:       make([]shortcutRecord, 0, len(input.Shortcuts)),
 	}
 	currentByID := make(map[string]shortcutRecord, len(current.Shortcuts))
 	for _, item := range current.Shortcuts {
@@ -763,11 +763,11 @@ func hasControl(value string) bool {
 
 func canonicalizePersistedWorkspace(state persistedWorkspace) persistedWorkspace {
 	result := persistedWorkspace{
-		SchemaVersion:   SchemaVersion,
-		HiddenEntryKeys: append([]string(nil), state.HiddenEntryKeys...),
+		SchemaVersion:    SchemaVersion,
+		HiddenEntryKeys:  append([]string(nil), state.HiddenEntryKeys...),
 		HiddenWidgetKeys: append([]string(nil), state.HiddenWidgetKeys...),
-		Positions:       clonePositions(state.Positions), WidgetPositions: clonePositions(state.WidgetPositions),
-		Labels:          cloneLabels(state.Labels),
+		Positions:        clonePositions(state.Positions), WidgetPositions: clonePositions(state.WidgetPositions),
+		Labels:    cloneLabels(state.Labels),
 		Shortcuts: append([]shortcutRecord(nil), state.Shortcuts...),
 	}
 	if result.HiddenEntryKeys == nil {

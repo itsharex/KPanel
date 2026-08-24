@@ -368,8 +368,8 @@ func TestReplaceEnforcesEntryAndMetadataLimits(t *testing.T) {
 
 	tooManyWidgetPositions := ReplaceInput{
 		ExpectedResourceVersion: version,
-		Positions: map[string]Position{"nav:/overview": {X: 0, Y: 0}},
-		WidgetPositions: make(map[string]Position),
+		Positions:               map[string]Position{"nav:/overview": {X: 0, Y: 0}},
+		WidgetPositions:         make(map[string]Position),
 	}
 	for index := 0; index < MaxPositions; index++ {
 		tooManyWidgetPositions.WidgetPositions["widget:test-"+fmt.Sprintf("%03x", index)] = Position{X: 0.5, Y: 0.5}
@@ -607,7 +607,7 @@ func validReplaceInput(version string) ReplaceInput {
 			"shortcut:" + testShortcutID:            {X: 0.4, Y: 0.5},
 		},
 		WidgetPositions: map[string]Position{"widget:clock": {X: 0.8, Y: 0}},
-		Labels: map[string]string{"site:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "示例网站"},
+		Labels:          map[string]string{"site:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "示例网站"},
 		Shortcuts: []ShortcutInput{{
 			ID: testShortcutID, Name: "控制台", Description: "本地管理入口",
 			TargetType: ShortcutTargetURL, URL: "https://example.com/admin",
