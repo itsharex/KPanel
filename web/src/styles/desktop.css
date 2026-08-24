@@ -2018,8 +2018,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop__shortcut-artwork--directory .desktop__shortcut-link-badge {
-  right: 3px;
-  bottom: 3px;
+  right: 5px;
+  bottom: 7px;
 }
 
 .desktop__icon-glyph--dynamic {

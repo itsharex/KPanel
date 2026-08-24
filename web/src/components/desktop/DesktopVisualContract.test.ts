@@ -106,6 +106,11 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon--selected \.desktop__icon-label\s*\{[^}]*color:\s*#17312c;[^}]*background:\s*color-mix\(in srgb, var\(--brand\) 38%, #fff\);/)
   })
 
+  it('keeps the directory shortcut badge aligned with the file shortcut safe area', () => {
+    expect(styles).toMatch(/\.desktop__shortcut-artwork--directory \.desktop__shortcut-link-badge\s*\{[^}]*right:\s*5px;[^}]*bottom:\s*7px;/)
+    expect(styles).toMatch(/\.desktop-icon-manager__glyph \.desktop__shortcut-artwork--directory \.desktop__shortcut-link-badge\s*\{[^}]*right:\s*2px;[^}]*bottom:\s*2px;[^}]*width:\s*14px;[^}]*height:\s*14px;/)
+  })
+
   it('preserves wallpaper depth in light mode without changing the dark treatment', () => {
     expect(styles).toContain('linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%))')
     expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__wallpaper::after\s*\{/)
