@@ -4,6 +4,12 @@ import { describe, expect, it } from 'vitest'
 const monitoringSource = readFileSync(new URL('./MonitoringView.vue', import.meta.url), 'utf8')
 
 describe('monitoring container comparison layout', () => {
+  it('keeps loading-state rows compact inside a full-height desktop window', () => {
+    expect(monitoringSource).toMatch(
+      /\.monitoring-page\s*\{[^}]*display:\s*grid;[^}]*align-content:\s*start;/,
+    )
+  })
+
   it('uses the injected router history for zoom navigation in every shell', () => {
     expect(monitoringSource).toContain('router.options.history.state.monitoringZoomDepth')
     expect(monitoringSource).toContain('router.go(-depth)')

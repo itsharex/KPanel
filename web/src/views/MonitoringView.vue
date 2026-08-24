@@ -904,7 +904,7 @@ onBeforeUnmount(() => controller?.abort())
 </template>
 
 <style scoped>
-.monitoring-page { display: grid; gap: 18px; }
+.monitoring-page { display: grid; align-content: start; gap: 18px; }
 .monitoring-page :deep(.trend-chart__line) { transition: opacity .14s ease; }
 .monitoring-page.is-updating :deep(.trend-chart__line) { opacity: .72; }
 .monitoring-toolbar {
