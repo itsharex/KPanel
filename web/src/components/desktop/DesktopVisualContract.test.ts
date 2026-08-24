@@ -101,7 +101,7 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/\.desktop__external-confirm-icon-image\s*\{[^}]*background:\s*#f7f9f8;/)
     expect(styles).toMatch(/\.modal-panel--compact:has\(\.desktop__external-confirm\) \.modal-panel__header\s*\{[^}]*align-items:\s*center;[^}]*padding-block:\s*12px;/)
     expect(styles).toMatch(/\.modal-panel--compact:has\(\.desktop__external-confirm\) \.modal-panel__header h2\s*\{[^}]*margin-bottom:\s*0;/)
-    expect(styles).toMatch(/\.desktop__icon-label\s*\{[^}]*height:\s*18px;[^}]*padding:\s*0 6px;[^}]*font-size:\s*11px;[^}]*line-height:\s*16px;/)
+    expect(styles).toMatch(/\.desktop__icon-label\s*\{[^}]*height:\s*20px;[^}]*padding:\s*0 6px;[^}]*font-size:\s*12px;[^}]*line-height:\s*18px;/)
     expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon-label\s*\{[^}]*text-shadow:\s*none;/)
     expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon--selected \.desktop__icon-label\s*\{[^}]*color:\s*#17312c;[^}]*background:\s*color-mix\(in srgb, var\(--brand\) 38%, #fff\);/)
   })

@@ -103,9 +103,9 @@ describe('DesktopView', () => {
       titleKey: 'route.systemCenter',
     })
     expect(wrapper.get('.desktop-window__app-glyph img').attributes('src'))
-      .toBe('/desktop-icons/system-ios27-kpanel-v4.webp')
+      .toBe('/desktop-icons/system-kpanel-flat-v1.webp')
     expect(wrapper.get('.desktop__taskbar-glyph img').attributes('src'))
-      .toBe('/desktop-icons/system-ios27-kpanel-v4.webp')
+      .toBe('/desktop-icons/system-kpanel-flat-v1.webp')
     wrapper.unmount()
   })
 

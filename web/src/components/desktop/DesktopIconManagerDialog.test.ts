@@ -129,6 +129,8 @@ describe('DesktopIconManagerDialog', () => {
     await nextTick()
 
     expect(document.body.textContent).toContain('/etc/nginx/nginx.conf')
+    expect(document.body.querySelector('.desktop__shortcut-artwork--file')).not.toBeNull()
+    expect(document.body.querySelector('.desktop__shortcut-link-badge')).not.toBeNull()
     expect(document.body.querySelector('[aria-label="编辑快捷方式"]')).toBeNull()
     const remove = document.body.querySelector<HTMLButtonElement>('[aria-label="从桌面移除"]')
     expect(remove).not.toBeNull()

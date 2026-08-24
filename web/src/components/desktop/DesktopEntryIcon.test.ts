@@ -40,7 +40,7 @@ describe('DesktopEntryIcon touch interaction', () => {
       props: {
         label: '概览',
         gradient: 'linear-gradient(#0aa, #066)',
-        navIconURL: '/desktop-icons/overview-ios27-kpanel.webp',
+        navIconURL: '/desktop-icons/overview-kpanel-flat-v1.webp',
         entry: {
           key: 'app:market-app',
           id: 'market-app',
@@ -53,7 +53,7 @@ describe('DesktopEntryIcon touch interaction', () => {
     })
 
     const image = wrapper.get('img')
-    expect(image.attributes('src')).toBe('/desktop-icons/overview-ios27-kpanel.webp')
+    expect(image.attributes('src')).toBe('/desktop-icons/overview-kpanel-flat-v1.webp')
     expect(image.classes()).toContain('desktop__icon-img--native')
 
     await image.trigger('error')
@@ -65,7 +65,7 @@ describe('DesktopEntryIcon touch interaction', () => {
   it.each([
     ['file', FileText],
     ['directory', FolderOpen],
-  ] as const)('renders %s shortcuts with native document artwork', (launch, icon) => {
+  ] as const)('renders %s shortcuts with unified shortcut artwork', (launch, icon) => {
     const wrapper = mount(DesktopEntryIcon, {
       props: {
         label: launch === 'file' ? 'README.md' : '项目',
@@ -83,6 +83,13 @@ describe('DesktopEntryIcon touch interaction', () => {
 
     expect(wrapper.get('.desktop__shortcut-artwork').classes())
       .toContain(`desktop__shortcut-artwork--${launch}`)
+    expect(wrapper.find('.desktop__shortcut-link-badge').exists()).toBe(true)
+    expect(wrapper.find('.desktop__shortcut-artwork > svg').exists()).toBe(launch === 'file')
+    expect(wrapper.find('.desktop__shortcut-directory-image').exists()).toBe(launch === 'directory')
+    if (launch === 'directory') {
+      expect(wrapper.get('.desktop__shortcut-directory-image').attributes('src'))
+        .toBe('/desktop-icons/folder-open-shortcut-kpanel-flat-v1.webp')
+    }
     wrapper.unmount()
   })
 

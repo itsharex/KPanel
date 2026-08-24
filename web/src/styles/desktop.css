@@ -1839,8 +1839,8 @@ body.desktop-mode-open::-webkit-scrollbar {
   min-width: 0;
   align-items: center;
   flex-direction: column;
-  gap: 6px;
-  padding: 7px 5px 6px;
+  gap: 5px;
+  padding: 6px 5px 5px;
   color: var(--desktop-label);
   background: transparent;
   border: 1px solid transparent;
@@ -1944,22 +1944,23 @@ body.desktop-mode-open::-webkit-scrollbar {
   position: relative;
   z-index: 2;
   display: grid;
-  width: 46px;
+  width: 48px;
   height: 46px;
   place-items: center;
   color: #334155;
-  filter: drop-shadow(0 5px 5px rgb(15 23 42 / 24%));
+  filter: drop-shadow(0 4px 4px rgb(15 23 42 / 20%));
 }
 
-.desktop__shortcut-artwork::before,
-.desktop__shortcut-artwork::after {
+.desktop__shortcut-artwork--file::before,
+.desktop__shortcut-artwork--file::after {
   position: absolute;
   content: '';
 }
 
-.desktop__shortcut-artwork svg {
+.desktop__shortcut-artwork > svg {
   position: relative;
   z-index: 2;
+  transform: translate(-2px, -1px);
   filter: drop-shadow(0 1px 0 rgb(255 255 255 / 70%));
 }
 
@@ -1982,24 +1983,43 @@ body.desktop-mode-open::-webkit-scrollbar {
   box-shadow: -1px 1px 2px rgb(51 65 85 / 14%);
 }
 
-.desktop__shortcut-artwork--directory::before {
-  inset: 12px 2px 3px;
-  background: linear-gradient(155deg, #fff 0%, #f6f4ed 65%, #e6dcc1 100%);
-  border: 1px solid rgb(255 255 255 / 84%);
-  border-radius: 9px 10px 11px 11px;
-  box-shadow: inset 0 1px 0 #fff, inset 0 -3px 6px rgb(120 83 26 / 14%);
-  transform: perspective(50px) rotateX(-4deg);
+.desktop__shortcut-artwork--directory {
+  width: 58px;
+  height: 58px;
+  filter: none;
 }
 
-.desktop__shortcut-artwork--directory::after {
-  top: 5px;
-  left: 5px;
-  width: 25px;
-  height: 15px;
-  background: linear-gradient(150deg, #fff, #f1ead7);
-  border: 1px solid rgb(255 255 255 / 82%);
-  border-radius: 8px 8px 3px 3px;
-  box-shadow: inset 0 1px 0 #fff;
+.desktop__shortcut-directory-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 16px;
+}
+
+.desktop__shortcut-link-badge {
+  position: absolute;
+  z-index: 4;
+  right: -1px;
+  bottom: 0;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: #ecfeff;
+  background: linear-gradient(145deg, #2dd4bf, #0f766e);
+  border: 2px solid rgb(255 255 255 / 88%);
+  border-radius: 7px;
+  box-shadow: 0 2px 5px rgb(15 23 42 / 28%);
+}
+
+.desktop__shortcut-link-badge svg {
+  filter: none;
+}
+
+.desktop__shortcut-artwork--directory .desktop__shortcut-link-badge {
+  right: 3px;
+  bottom: 3px;
 }
 
 .desktop__icon-glyph--dynamic {
@@ -2085,7 +2105,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop__icon-label {
   display: block;
-  height: 18px;
+  height: 20px;
   max-width: 86px;
   padding: 0 6px;
   overflow: hidden;
@@ -2094,10 +2114,10 @@ body.desktop-mode-open::-webkit-scrollbar {
   border: 1px solid rgb(255 255 255 / 10%);
   border-radius: 6px;
   box-shadow: 0 1px 3px rgb(0 0 0 / 14%);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 680;
   letter-spacing: -.005em;
-  line-height: 16px;
+  line-height: 18px;
   text-align: center;
   text-overflow: ellipsis;
   text-shadow: none;
@@ -3165,6 +3185,33 @@ body.desktop-mode-open::-webkit-scrollbar {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.desktop-icon-manager__glyph .desktop__shortcut-artwork--file {
+  transform: translate(-7px, -4px) scale(.76);
+}
+
+.desktop-icon-manager__glyph .desktop__shortcut-artwork--directory {
+  width: 38px;
+  height: 38px;
+}
+
+.desktop-icon-manager__glyph .desktop__shortcut-artwork--directory .desktop__shortcut-link-badge {
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  border-width: 1px;
+  border-radius: 5px;
+}
+
+.desktop-icon-manager__glyph .desktop__shortcut-artwork--directory .desktop__shortcut-link-badge svg {
+  width: 9px;
+  height: 9px;
+}
+
+.desktop-icon-manager__glyph:has(.desktop__shortcut-artwork--file) {
+  background: linear-gradient(145deg, #64748b, #334155);
 }
 
 .desktop-shortcut-form__icon-actions {

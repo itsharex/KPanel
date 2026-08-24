@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { Copy, Globe2, LoaderCircle } from '@lucide/vue'
 import type { DesktopEntry } from '@/lib/desktopEntries'
+import DesktopShortcutArtwork from './DesktopShortcutArtwork.vue'
 
 /**
  * One desktop icon tile. A static navigation app prefers its native artwork
@@ -265,14 +266,11 @@ onBeforeUnmount(clearLongPress)
         height="38"
         @error="onImageError"
       />
-      <span
+      <DesktopShortcutArtwork
         v-else-if="fileShortcutKind && (navIcon || entry?.icon)"
-        class="desktop__shortcut-artwork"
-        :class="`desktop__shortcut-artwork--${fileShortcutKind}`"
-        aria-hidden="true"
-      >
-        <component :is="navIcon || entry?.icon" :size="27" :stroke-width="1.8" />
-      </span>
+        :kind="fileShortcutKind"
+        :icon="navIcon || entry?.icon"
+      />
       <component
         v-else-if="navIcon || entry?.icon"
         :is="navIcon || entry?.icon"

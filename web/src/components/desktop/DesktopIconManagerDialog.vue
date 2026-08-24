@@ -3,8 +3,6 @@ import { computed } from 'vue'
 import {
   Eye,
   EyeOff,
-  File,
-  Folder,
   Grid2X2,
   LayoutGrid,
   Link2,
@@ -17,7 +15,9 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useI18n } from '@/i18n'
 import type { DesktopEntry } from '@/lib/desktopEntries'
 import type { DesktopWidgetDefinition } from '@/lib/desktopWidgets'
+import { shortcutFileIcon } from '@/lib/fileEntryPresentation'
 import type { DesktopShortcut } from '@/types/api'
+import DesktopShortcutArtwork from './DesktopShortcutArtwork.vue'
 
 type ManagedWidget = Pick<
   DesktopWidgetDefinition,
@@ -134,8 +134,11 @@ function isWidgetVisible(key: string): boolean {
             <article v-for="shortcut in shortcuts" :key="shortcut.id">
               <span class="desktop-icon-manager__glyph" aria-hidden="true">
                 <img v-if="shortcut.iconURL" :src="shortcut.iconURL" alt="" />
-                <Folder v-else-if="shortcut.targetType === 'directory'" :size="20" />
-                <File v-else-if="shortcut.targetType === 'file'" :size="20" />
+                <DesktopShortcutArtwork
+                  v-else-if="shortcut.targetType === 'directory' || shortcut.targetType === 'file'"
+                  :kind="shortcut.targetType"
+                  :icon="shortcutFileIcon(shortcut.name, shortcut.targetType)"
+                />
                 <Link2 v-else :size="20" />
               </span>
               <div>
