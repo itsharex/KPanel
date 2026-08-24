@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch, type CSSProperties } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePhraseCatalog } from '@/i18n/phrase'
 
@@ -17,6 +17,7 @@ import {
   LoaderCircle,
   Monitor,
   Moon,
+  Palette,
   RefreshCw,
   Scale,
   Server,
@@ -31,6 +32,17 @@ import { formatDateTime, relativeTime } from '@/lib/format'
 import { usePanelState } from '@/stores/panel'
 import { useSession } from '@/stores/session'
 import { useTheme, type ThemePreference } from '@/stores/theme'
+import {
+  DEFAULT_THEME_COLORS,
+  THEME_COLOR_KEYS,
+  deriveThemeTokens,
+  normalizeHexColor,
+  normalizeThemeColors,
+  type ThemeColorIntent,
+  type ThemeColorKey,
+  type ThemeMode,
+} from '@/theme/colors'
+import { moveRadioFocus } from '@/theme/radioGroup'
 import { useToast } from '@/stores/toast'
 import { useI18n, type SupportedLocale } from '@/i18n'
 import type { TOTPEnrollment, TOTPStatus } from '@/types/api'
@@ -118,11 +130,94 @@ const agentState = computed(() => {
   return { status: 'connected', label: '正常' }
 })
 
-const themes: Array<{ id: ThemePreference; label: string; description: string; icon: typeof Sun }> = [
+const themeModes: Array<{ id: ThemePreference; label: string; description: string; icon: typeof Sun }> = [
   { id: 'light', label: '浅色', description: '始终使用明亮界面', icon: Sun },
   { id: 'dark', label: '深色', description: '始终使用低亮度界面', icon: Moon },
   { id: 'system', label: '跟随系统', description: '随设备设置自动切换', icon: Monitor },
 ]
+
+const themeColorFields: Array<{ key: ThemeColorKey; label: string; pickerLabel: string; description: string }> = [
+  { key: 'brand', label: '主题色', pickerLabel: '主题色颜色选择器', description: '用于按钮、链接、选中态、焦点和进度' },
+  { key: 'neutral', label: '界面基调', pickerLabel: '界面基调颜色选择器', description: '决定背景、卡片、侧栏和桌面环境的冷暖倾向' },
+  { key: 'signature', label: '点缀色', pickerLabel: '点缀色颜色选择器', description: '仅用于当前项细线和活动任务等少量身份标记' },
+]
+const colorPreviewModes: Array<{ id: ThemeMode; label: string }> = [
+  { id: 'light', label: '浅色预览' },
+  { id: 'dark', label: '深色预览' },
+]
+const colorDraft = reactive<ThemeColorIntent>({ ...theme.colors.value })
+const colorInputs = reactive<Record<ThemeColorKey, string>>({
+  brand: colorDraft.brand,
+  neutral: colorDraft.neutral,
+  signature: colorDraft.signature,
+})
+const colorErrors = reactive<Record<ThemeColorKey, string>>({ brand: '', neutral: '', signature: '' })
+const colorPreviewMode = ref<ThemeMode>(theme.resolved.value)
+
+const hasColorErrors = computed(() => THEME_COLOR_KEYS.some((key) => Boolean(colorErrors[key])))
+const colorDraftDirty = computed(() => {
+  const applied = theme.colors.value
+  return colorDraft.brand !== applied.brand
+    || colorDraft.neutral !== applied.neutral
+    || colorDraft.signatureLinked !== applied.signatureLinked
+    || colorDraft.signature !== applied.signature
+})
+const colorPreviewTokens = computed(() => deriveThemeTokens(normalizeThemeColors(colorDraft), colorPreviewMode.value))
+const colorPreviewStyle = computed(() => ({
+  ...colorPreviewTokens.value,
+  colorScheme: colorPreviewMode.value,
+}) as CSSProperties)
+
+function syncColorDraft(value: ThemeColorIntent): void {
+  Object.assign(colorDraft, value)
+  for (const key of THEME_COLOR_KEYS) {
+    colorInputs[key] = value[key]
+    colorErrors[key] = ''
+  }
+}
+
+function sameThemeColors(left: ThemeColorIntent, right: ThemeColorIntent): boolean {
+  return left.brand === right.brand
+    && left.neutral === right.neutral
+    && left.signatureLinked === right.signatureLinked
+    && left.signature === right.signature
+}
+
+watch(() => theme.colors.value, (next, previous) => {
+  if (sameThemeColors(colorDraft, previous)) syncColorDraft(next)
+})
+
+function updateThemeColor(key: ThemeColorKey, event: Event): void {
+  const input = event.currentTarget as HTMLInputElement
+  const raw = input.value.trim()
+  colorInputs[key] = raw
+  const normalized = normalizeHexColor(raw)
+  if (!normalized) {
+    colorErrors[key] = '请输入 3 或 6 位 Hex 颜色，例如 #315d7d'
+    return
+  }
+  colorErrors[key] = ''
+  colorDraft[key] = normalized
+  if (input.type === 'color') colorInputs[key] = normalized
+}
+
+function applyThemeColors(): void {
+  if (hasColorErrors.value || !colorDraftDirty.value) return
+  const next = normalizeThemeColors(colorDraft)
+  theme.setColors(next)
+  syncColorDraft(next)
+  toast.success('配色已应用', '浅色和深色层级已自动生成。')
+}
+
+function cancelThemeColorChanges(): void {
+  syncColorDraft(theme.colors.value)
+}
+
+function resetThemeColors(): void {
+  theme.resetColors()
+  syncColorDraft({ ...DEFAULT_THEME_COLORS })
+  toast.success('已恢复默认配色')
+}
 
 async function refreshAgent(): Promise<void> {
   refreshing.value = true
@@ -656,40 +751,139 @@ onMounted(async () => {
         <span><Languages :size="19" /></span>
         <div><h2>{{ i18n.t('common.language') }}</h2><p>{{ i18n.t('common.languageDescription') }}</p></div>
       </header>
-      <div class="theme-options">
+      <div class="theme-options" role="radiogroup" :aria-label="i18n.t('common.language')">
         <button
           v-for="option in i18n.localeOptions"
           :key="option.id"
           type="button"
+          role="radio"
+          :tabindex="i18n.locale.value === option.id ? 0 : -1"
+          :aria-checked="i18n.locale.value === option.id"
           :class="{ 'is-active': i18n.locale.value === option.id }"
+          @keydown="moveRadioFocus"
           @click="i18n.setLocale(option.id)"
         >
           <span><Languages :size="19" /></span>
           <strong>{{ localeLabel(option.id) }}</strong>
           <small>{{ option.id }}</small>
-          <Check v-if="i18n.locale.value === option.id" class="theme-options__check" :size="17" />
+          <Check v-if="i18n.locale.value === option.id" class="theme-options__check" :size="17" aria-hidden="true" />
         </button>
       </div>
     </section>
 
     <section class="settings-section panel-card">
       <header class="settings-section__header">
-        <span><Sun :size="19" /></span>
-        <div><h2>界面主题</h2><p>仅保存在当前浏览器，不上传服务器</p></div>
+        <span><Palette :size="19" /></span>
+        <div><h2>外观与配色</h2><p>自定义颜色和明暗模式仅保存在当前浏览器</p></div>
       </header>
-      <div class="theme-options">
-        <button
-          v-for="option in themes"
-          :key="option.id"
-          type="button"
-          :class="{ 'is-active': theme.preference.value === option.id }"
-          @click="theme.setTheme(option.id)"
-        >
-          <span><component :is="option.icon" :size="19" /></span>
-          <strong>{{ option.label }}</strong>
-          <small>{{ option.description }}</small>
-          <Check v-if="theme.preference.value === option.id" class="theme-options__check" :size="17" />
-        </button>
+      <div class="appearance-group">
+        <div class="appearance-group__header">
+          <h3>自定义配色</h3>
+          <p>选择视觉意图，系统自动生成可读的完整浅色与深色色板</p>
+        </div>
+        <div class="theme-color-studio">
+          <div class="theme-color-controls">
+            <template v-for="field in themeColorFields" :key="field.key">
+              <div v-if="field.key !== 'signature' || !colorDraft.signatureLinked" class="theme-color-field">
+                <div class="theme-color-field__copy">
+                  <label :for="`theme-${field.key}-hex`">{{ field.label }}</label>
+                  <p>{{ field.description }}</p>
+                </div>
+                <div class="theme-color-field__inputs">
+                  <input
+                    class="theme-color-field__picker"
+                    type="color"
+                    :value="colorDraft[field.key]"
+                    :aria-label="field.pickerLabel"
+                    @input="updateThemeColor(field.key, $event)"
+                  >
+                  <input
+                    :id="`theme-${field.key}-hex`"
+                    class="input theme-color-field__hex"
+                    type="text"
+                    inputmode="text"
+                    maxlength="7"
+                    spellcheck="false"
+                    :value="colorInputs[field.key]"
+                    :aria-invalid="Boolean(colorErrors[field.key])"
+                    :aria-describedby="colorErrors[field.key] ? `theme-${field.key}-error` : undefined"
+                    @input="updateThemeColor(field.key, $event)"
+                  >
+                </div>
+                <small v-if="colorErrors[field.key]" :id="`theme-${field.key}-error`" class="field-error">{{ colorErrors[field.key] }}</small>
+              </div>
+            </template>
+
+            <label class="theme-color-link">
+              <input v-model="colorDraft.signatureLinked" type="checkbox">
+              <span><strong>点缀色跟随主题色</strong><small>关闭后可单独设置少量身份标记的颜色</small></span>
+            </label>
+          </div>
+
+          <div class="theme-color-preview" :style="colorPreviewStyle">
+            <header class="theme-color-preview__header">
+              <div><strong>局部预览</strong><small>应用前不会改变整页</small></div>
+              <div class="theme-color-preview__modes" role="radiogroup" aria-label="配色预览模式">
+                <button
+                  v-for="option in colorPreviewModes"
+                  :key="option.id"
+                  type="button"
+                  role="radio"
+                  :tabindex="colorPreviewMode === option.id ? 0 : -1"
+                  :aria-checked="colorPreviewMode === option.id"
+                  :class="{ 'is-active': colorPreviewMode === option.id }"
+                  @keydown="moveRadioFocus"
+                  @click="colorPreviewMode = option.id"
+                >{{ option.label }}</button>
+              </div>
+            </header>
+            <div class="theme-color-preview__shell" aria-hidden="true">
+              <aside>
+                <i class="theme-color-preview__brand">K</i>
+                <span class="is-current"><i />概览</span>
+                <span><i />网站</span>
+                <span><i />文件</span>
+              </aside>
+              <main>
+                <div class="theme-color-preview__title"><span><i /></span><div><strong>运行概览</strong><small>稳定、清晰的内容层级</small></div></div>
+                <div class="theme-color-preview__cards"><i /><i /><i /></div>
+                <div class="theme-color-preview__row"><span class="theme-color-preview__action">主要操作</span><span class="theme-color-preview__status">运行正常</span></div>
+              </main>
+            </div>
+          </div>
+        </div>
+        <div class="theme-color-actions">
+          <p aria-live="polite">系统会保留所选色相，并为当前预览模式自动校正明度与对比度；状态绿、警告橙和危险红不受影响。</p>
+          <div>
+            <button class="button button--ghost" type="button" :disabled="!theme.isCustom.value && !colorDraftDirty" @click="resetThemeColors">恢复默认配色</button>
+            <button class="button button--secondary" type="button" :disabled="!colorDraftDirty" @click="cancelThemeColorChanges">取消更改</button>
+            <button class="button button--primary" type="button" :disabled="hasColorErrors || !colorDraftDirty" @click="applyThemeColors">应用配色</button>
+          </div>
+        </div>
+      </div>
+      <div class="appearance-group">
+        <div class="appearance-group__header">
+          <h3>明暗模式</h3>
+          <p>自定义配色会分别生成浅色、深色，并支持跟随系统</p>
+        </div>
+        <div class="theme-options" role="radiogroup" aria-label="明暗模式">
+          <button
+            v-for="option in themeModes"
+            :key="option.id"
+            type="button"
+            role="radio"
+            :tabindex="theme.preference.value === option.id ? 0 : -1"
+            :aria-checked="theme.preference.value === option.id"
+            :class="{ 'is-active': theme.preference.value === option.id }"
+            @keydown="moveRadioFocus"
+            @click="theme.setTheme(option.id)"
+          >
+            <span><component :is="option.icon" :size="19" /></span>
+            <strong>{{ option.label }}</strong>
+            <small>{{ option.description }}</small>
+            <Check v-if="theme.preference.value === option.id" class="theme-options__check" :size="17" aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </section>
 

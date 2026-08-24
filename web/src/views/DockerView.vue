@@ -39,7 +39,15 @@ import StatusBadge from '@/components/feedback/StatusBadge.vue'
 import DockerDeploymentEditor from '@/components/docker/DockerDeploymentEditor.vue'
 import { localizeError } from '@/i18n/errors'
 import { ApiError, api } from '@/lib/api'
-import { moveContextMenuFocus, placeContextMenu } from '@/lib/contextMenu'
+import {
+  contextMenuFocusOrigin,
+  type ContextMenuFocusOrigin,
+  focusFirstContextMenuItem,
+  moveContextMenuFocus,
+  placeContextMenu,
+  showContextMenuKeyboardFocus,
+  showContextMenuPointerFocus,
+} from '@/lib/contextMenu'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
 import { analyzeDockerDeployment, composeEnvironmentVariables } from '@/lib/dockerDeployment'
 import { dockerComposeGroupAccent, groupDockerContainers, type DockerContainerGroup } from '@/lib/dockerComposeGroups'
@@ -414,7 +422,7 @@ function contextMenuPoint(event: MouseEvent): { x: number; y: number } {
   return { x: bounds?.right || 16, y: bounds?.bottom || 16 }
 }
 
-async function settleContextMenu(): Promise<void> {
+async function settleContextMenu(focusOrigin: ContextMenuFocusOrigin): Promise<void> {
   await nextTick()
   const menu = contextMenuElement.value
   const current = contextMenu.value
@@ -422,7 +430,7 @@ async function settleContextMenu(): Promise<void> {
   const placed = placeContextMenu(menu, { x: current.x, y: current.y }, contextMenuOpener)
   contextMenu.value = { ...current, x: placed.x, y: placed.y }
   await nextTick()
-  menu.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true })
+  focusFirstContextMenuItem(menu, focusOrigin)
 }
 
 function openContextMenu(event: MouseEvent, item: DockerContextMenuItem): void {
@@ -430,7 +438,7 @@ function openContextMenu(event: MouseEvent, item: DockerContextMenuItem): void {
   event.stopPropagation()
   contextMenuOpener = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   contextMenu.value = { ...item, ...contextMenuPoint(event) } as DockerContextMenu
-  void settleContextMenu()
+  void settleContextMenu(contextMenuFocusOrigin(event))
 }
 
 function showContainerContext(event: MouseEvent, item: DockerContainer): void {
@@ -502,7 +510,9 @@ function closeContextMenu(restoreFocus = false): void {
 
 function handleContextMenuKeydown(event: KeyboardEvent): void {
   const menu = contextMenuElement.value
-  if (!menu || moveContextMenuFocus(menu, event)) return
+  if (!menu) return
+  showContextMenuKeyboardFocus(menu)
+  if (moveContextMenuFocus(menu, event)) return
   if (event.key !== 'Escape') return
   event.preventDefault()
   closeContextMenu(true)
@@ -1771,11 +1781,12 @@ onBeforeUnmount(() => {
       <div
         v-if="contextMenu"
         ref="contextMenuElement"
-        class="docker-context-menu"
+        class="docker-context-menu k-context-menu"
         :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         role="menu"
         @click.stop
         @contextmenu.prevent
+        @pointermove="showContextMenuPointerFocus"
         @keydown.stop="handleContextMenuKeydown"
       >
       <template v-if="contextContainer">
@@ -1815,7 +1826,7 @@ onBeforeUnmount(() => {
         <button type="button" role="menuitem" @click="copyResourceValue(contextContainer.image, '镜像名称')">
           <Copy :size="15" />复制镜像名称
         </button>
-        <button v-if="permits(contextContainer, 'remove')" class="danger-link" type="button" role="menuitem" @click="askAction(contextContainer, 'remove')">
+        <button v-if="permits(contextContainer, 'remove')" class="danger-link k-context-menu__item--danger" type="button" role="menuitem" @click="askAction(contextContainer, 'remove')">
           <Trash2 :size="15" />删除容器
         </button>
       </template>
@@ -1832,7 +1843,7 @@ onBeforeUnmount(() => {
           <Copy :size="15" />复制镜像 ID
         </button>
         <hr />
-        <button class="danger-link" type="button" role="menuitem" :disabled="!contextImage.resourceVersion" @click="askImageRemoval(contextImage)">
+        <button class="danger-link k-context-menu__item--danger" type="button" role="menuitem" :disabled="!contextImage.resourceVersion" @click="askImageRemoval(contextImage)">
           <Trash2 :size="15" />删除镜像
         </button>
       </template>
@@ -1849,7 +1860,7 @@ onBeforeUnmount(() => {
           <Copy :size="15" />复制网络 ID
         </button>
         <hr />
-        <button class="danger-link" type="button" role="menuitem" :disabled="!contextNetwork.resourceVersion" @click="askNetworkRemoval(contextNetwork)">
+        <button class="danger-link k-context-menu__item--danger" type="button" role="menuitem" :disabled="!contextNetwork.resourceVersion" @click="askNetworkRemoval(contextNetwork)">
           <Trash2 :size="15" />删除网络
         </button>
       </template>
@@ -1863,7 +1874,7 @@ onBeforeUnmount(() => {
           <Copy :size="15" />复制挂载点
         </button>
         <hr />
-        <button class="danger-link" type="button" role="menuitem" :disabled="!contextVolume.resourceVersion" @click="askVolumeRemoval(contextVolume)">
+        <button class="danger-link k-context-menu__item--danger" type="button" role="menuitem" :disabled="!contextVolume.resourceVersion" @click="askVolumeRemoval(contextVolume)">
           <Trash2 :size="15" />删除存储卷
         </button>
       </template>
@@ -2124,7 +2135,7 @@ onBeforeUnmount(() => {
 .docker-nav { display: flex; min-width: 0; flex: 1 1 auto; gap: 3px; overflow-x: auto; scrollbar-width: none; }
 .docker-nav::-webkit-scrollbar { display: none; }
 .docker-nav button { display: flex; min-width: 0; min-height: 34px; flex: 1 1 0; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid transparent; border-radius: 8px; color: var(--text); background: transparent; text-align: left; cursor: pointer; transition: background-color .16s ease, border-color .16s ease; }
-.docker-nav button:hover { border-color: color-mix(in srgb, var(--brand) 38%, var(--border)); background: var(--surface); }
+.docker-nav button:hover { border-color: color-mix(in srgb, var(--brand) 38%, var(--border)); background: var(--interaction-hover-surface); }
 .docker-nav button.is-active { border-color: color-mix(in srgb, var(--brand) 34%, var(--border)); color: var(--brand); background: var(--surface); box-shadow: var(--shadow-sm); }
 .docker-nav button > svg { color: var(--brand); }
 .docker-nav button strong { overflow: hidden; font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -2187,7 +2198,7 @@ onBeforeUnmount(() => {
 .docker-row-actions { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
 .docker-row-actions__group { display: inline-flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface-raised) 70%, transparent); }
 .docker-row-actions__group .icon-button { width: 32px; height: 32px; border: 0; border-radius: 7px; background: transparent; }
-.docker-row-actions__group .icon-button:hover { background: var(--surface); }
+.docker-row-actions__group .icon-button:hover { background: var(--interaction-hover-surface); }
 .docker-row { transition: background-color .14s ease; }
 .docker-row:hover { background: color-mix(in srgb, var(--brand) 4%, var(--surface)); }
 .docker-row--running > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--docker-group-accent, var(--brand)) 75%, transparent); }
@@ -2218,7 +2229,6 @@ onBeforeUnmount(() => {
   max-height: var(--context-menu-max-height, calc(100dvh - 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -2247,12 +2257,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
   font-size: 14px;
 }
-.docker-context-menu button:hover,
-.docker-context-menu button:focus-visible {
-  outline: 0;
-  background: var(--surface-subtle);
-}
-.docker-context-menu button:disabled { opacity: .42; cursor: not-allowed; }
 .docker-context-menu button.danger-link { color: var(--danger); }
 .docker-context-menu hr {
   width: 100%;

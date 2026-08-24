@@ -1729,7 +1729,7 @@ onBeforeUnmount(() => {
 
 .cluster-view-switch button:hover {
   color: var(--text);
-  background: var(--surface-muted);
+  background: var(--interaction-hover);
 }
 
 .cluster-view-switch button.is-active {

@@ -96,7 +96,7 @@ function clearLongPress(): void {
   removeLongPressListeners()
 }
 
-function dispatchContextMenu(clientX: number, clientY: number): void {
+function dispatchContextMenu(clientX: number, clientY: number, button = 2): void {
   const element = iconElement.value
   if (!element) return
   dispatchingCustomContext = true
@@ -104,7 +104,7 @@ function dispatchContextMenu(clientX: number, clientY: number): void {
     element.dispatchEvent(new MouseEvent('contextmenu', {
       bubbles: true,
       cancelable: true,
-      button: 2,
+      button,
       clientX,
       clientY,
     }))
@@ -211,7 +211,7 @@ function onKeyDown(event: KeyboardEvent): void {
   event.preventDefault()
   event.stopPropagation()
   const rect = iconElement.value?.getBoundingClientRect()
-  dispatchContextMenu(rect?.left ?? 12, rect?.bottom ?? 12)
+  dispatchContextMenu(rect?.left ?? 12, rect?.bottom ?? 12, 0)
 }
 
 function onImageError(): void {

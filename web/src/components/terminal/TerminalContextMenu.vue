@@ -3,7 +3,15 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ClipboardPaste, Copy, TextSelect } from '@lucide/vue'
 import type { Terminal } from '@xterm/xterm'
 import { useI18n } from '@/i18n'
-import { moveContextMenuFocus, placeContextMenu } from '@/lib/contextMenu'
+import {
+  contextMenuFocusOrigin,
+  type ContextMenuFocusOrigin,
+  focusFirstContextMenuItem,
+  moveContextMenuFocus,
+  placeContextMenu,
+  showContextMenuKeyboardFocus,
+  showContextMenuPointerFocus,
+} from '@/lib/contextMenu'
 
 const props = defineProps<{
   getTerminal: () => Terminal | undefined
@@ -27,13 +35,13 @@ function close(focusTerminal = false): void {
   if (focusTerminal) props.getTerminal()?.focus()
 }
 
-async function positionMenu(): Promise<void> {
+async function positionMenu(focusOrigin: ContextMenuFocusOrigin): Promise<void> {
   await nextTick()
   if (!menu.value) return
   const placed = placeContextMenu(menu.value, { x: left.value, y: top.value }, contextMenuAnchor)
   left.value = placed.x
   top.value = placed.y
-  menu.value.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true })
+  focusFirstContextMenuItem(menu.value, focusOrigin)
 }
 
 function open(event: MouseEvent): void {
@@ -45,7 +53,7 @@ function open(event: MouseEvent): void {
   left.value = event.clientX
   top.value = event.clientY
   visible.value = true
-  void positionMenu()
+  void positionMenu(contextMenuFocusOrigin(event))
 }
 
 function fallbackCopy(value: string): boolean {
@@ -156,7 +164,9 @@ function handleEscape(event: KeyboardEvent): void {
 }
 
 function handleMenuKeydown(event: KeyboardEvent): void {
-  if (!menu.value || moveContextMenuFocus(menu.value, event)) return
+  if (!menu.value) return
+  showContextMenuKeyboardFocus(menu.value)
+  if (moveContextMenuFocus(menu.value, event)) return
   if (event.key !== 'Escape') return
   event.preventDefault()
   event.stopPropagation()
@@ -200,11 +210,12 @@ defineExpose({ open, handlePaste, handleKeyEvent })
     <div
       v-if="visible"
       ref="menu"
-      class="terminal-context-menu"
+      class="terminal-context-menu k-context-menu"
       role="menu"
       :aria-label="t('terminal.contextMenu')"
       :style="{ left: `${left}px`, top: `${top}px` }"
       @contextmenu.prevent
+      @pointermove="showContextMenuPointerFocus"
       @keydown.stop="handleMenuKeydown"
     >
       <button type="button" role="menuitem" :disabled="!selection" @click="copySelection">
@@ -240,7 +251,6 @@ defineExpose({ open, handlePaste, handleKeyEvent })
   max-height: var(--context-menu-max-height, calc(100dvh - 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
   padding: 6px;
   border: 1px solid var(--border-strong, #3a4b4e);
   border-radius: 10px;
@@ -264,17 +274,6 @@ defineExpose({ open, handlePaste, handleKeyEvent })
   cursor: pointer;
   font: inherit;
   font-size: 14px;
-}
-
-.terminal-context-menu button:hover:not(:disabled),
-.terminal-context-menu button:focus-visible {
-  outline: none;
-  background: var(--surface-subtle, #203034);
-}
-
-.terminal-context-menu button:disabled {
-  opacity: .42;
-  cursor: not-allowed;
 }
 
 .terminal-context-menu kbd {

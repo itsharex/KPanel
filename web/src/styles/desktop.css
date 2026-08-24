@@ -6,22 +6,6 @@
  * above the desktop root at the end of this file.
  */
 
-:root {
-  --desktop-glass: rgb(246 251 250 / 72%);
-  --desktop-glass-strong: rgb(250 253 252 / 86%);
-  --desktop-glass-border: rgb(255 255 255 / 70%);
-  --desktop-label: #17312c;
-  --desktop-shadow: rgb(12 34 30 / 20%);
-}
-
-:root[data-theme='dark'] {
-  --desktop-glass: rgb(12 24 27 / 64%);
-  --desktop-glass-strong: rgb(14 27 29 / 84%);
-  --desktop-glass-border: rgb(255 255 255 / 13%);
-  --desktop-label: #f5fbfa;
-  --desktop-shadow: rgb(0 0 0 / 42%);
-}
-
 :root.desktop-theme-transitioning .desktop,
 :root.desktop-theme-transitioning .desktop__widgets,
 :root.desktop-theme-transitioning .desktop-widget-slot,
@@ -65,7 +49,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   isolation: isolate;
   overflow: hidden;
   color: var(--text);
-  background: #0a1519;
+  background: var(--desktop-wallpaper-base);
   user-select: none;
   -webkit-user-select: none;
 }
@@ -81,7 +65,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   z-index: 0;
   inset: 0;
   overflow: hidden;
-  background: linear-gradient(145deg, #b9d4d4, #edf5f3);
+  background: var(--desktop-wallpaper-base);
   transform: scale(1.01);
 }
 
@@ -108,17 +92,13 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop__wallpaper-veil::before {
-  background: linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%));
+  background: var(--desktop-wallpaper-veil-light);
   opacity: 1;
 }
 
 .desktop__wallpaper-veil::after {
-  background: linear-gradient(145deg, rgb(0 12 15 / 14%), rgb(1 10 14 / 30%));
+  background: var(--desktop-wallpaper-veil-dark);
   opacity: 0;
-}
-
-:root[data-theme='dark'] .desktop__wallpaper {
-  background: linear-gradient(145deg, #06151a, #0a2026);
 }
 
 :root[data-theme='dark'] .desktop__wallpaper-veil::before {
@@ -159,29 +139,17 @@ body.desktop-mode-open::-webkit-scrollbar {
   position: absolute;
   z-index: 4;
   inset: 0;
-  background:
-    linear-gradient(90deg, rgb(3 14 17 / 6%), transparent 30%, transparent 80%, rgb(3 14 17 / 5%)),
-    radial-gradient(circle at 50% 40%, transparent 42%, rgb(2 9 12 / 8%) 100%);
+  background: var(--desktop-wallpaper-vignette);
   content: '';
   pointer-events: none;
-}
-
-:root[data-theme='dark'] .desktop__wallpaper::after {
-  background:
-    linear-gradient(90deg, rgb(3 14 17 / 12%), transparent 28%, transparent 78%, rgb(3 14 17 / 8%)),
-    radial-gradient(circle at 50% 40%, transparent 36%, rgb(2 9 12 / 12%) 100%);
 }
 
 .desktop__aurora {
   position: absolute;
   z-index: 3;
   border-radius: 50%;
-  opacity: .12;
+  opacity: var(--desktop-aurora-opacity);
   pointer-events: none;
-}
-
-:root[data-theme='dark'] .desktop__aurora {
-  opacity: .2;
 }
 
 .desktop__aurora--one {
@@ -189,7 +157,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   height: 42vw;
   top: -28vw;
   left: -10vw;
-  background: radial-gradient(circle, rgb(75 224 195 / 30%), transparent 67%);
+  background: var(--desktop-aurora-one);
 }
 
 .desktop__aurora--two {
@@ -197,7 +165,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   height: 38vw;
   right: -22vw;
   bottom: -24vw;
-  background: radial-gradient(circle, rgb(67 169 230 / 24%), transparent 68%);
+  background: var(--desktop-aurora-two);
 }
 
 .desktop__aurora--three {
@@ -228,9 +196,9 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--desktop-label);
   background: var(--desktop-glass);
   border: 1px solid var(--desktop-glass-border);
-  border-radius: 15px;
+  border-radius: var(--radius-lg);
   box-shadow:
-    0 12px 34px rgb(0 0 0 / 15%),
+    0 12px 34px var(--desktop-shadow),
     inset 0 1px 0 rgb(255 255 255 / 18%);
   backdrop-filter: blur(18px) saturate(135%);
   -webkit-backdrop-filter: blur(18px) saturate(135%);
@@ -273,8 +241,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop__identity small {
   margin-top: 3px;
   overflow: hidden;
-  color: color-mix(in srgb, var(--desktop-label) 66%, transparent);
-  font-size: 8px;
+  color: var(--muted);
+  font-size: 12px;
   letter-spacing: .07em;
   text-overflow: ellipsis;
   text-transform: uppercase;
@@ -295,13 +263,13 @@ body.desktop-mode-open::-webkit-scrollbar {
   justify-content: center;
   gap: 6px;
   padding: 0 9px;
-  color: color-mix(in srgb, var(--desktop-label) 82%, transparent);
+  color: var(--text-soft);
   background: rgb(255 255 255 / 9%);
   border: 1px solid transparent;
   border-radius: 9px;
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   transition: color .16s ease, background-color .16s ease, border-color .16s ease, transform .16s ease;
 }
 
@@ -313,14 +281,14 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop__tray-button:hover,
 .desktop__classic-button:hover {
   color: var(--desktop-label);
-  background: rgb(255 255 255 / 16%);
-  border-color: var(--desktop-glass-border);
+  background: color-mix(in srgb, var(--brand) 12%, rgb(255 255 255 / 12%));
+  border-color: color-mix(in srgb, var(--brand) 20%, var(--desktop-glass-border));
   transform: translateY(-1px);
 }
 
 .desktop__tray-button:focus-visible,
 .desktop__classic-button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brand) 75%, #fff);
+  outline: 3px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -347,15 +315,15 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-clock__date {
-  color: color-mix(in srgb, var(--desktop-label) 62%, transparent);
-  font-size: 9px;
+  color: var(--muted);
+  font-size: 12px;
   white-space: nowrap;
 }
 
 .desktop-clock__server {
   min-width: 0;
   gap: 5px;
-  color: color-mix(in srgb, var(--desktop-label) 62%, transparent);
+  color: var(--muted);
 }
 
 .desktop-clock__server > svg {
@@ -363,8 +331,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-clock__server-time {
-  color: color-mix(in srgb, var(--desktop-label) 84%, transparent);
-  font-size: 10px;
+  color: var(--text-soft);
+  font-size: 12px;
   font-weight: 680;
   font-variant-numeric: tabular-nums;
 }
@@ -372,7 +340,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-clock__server-label {
   max-width: 12ch;
   overflow: hidden;
-  font-size: 8px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -398,8 +366,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-monitor__loading {
-  color: color-mix(in srgb, var(--desktop-label) 58%, transparent);
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .desktop-monitor__list {
@@ -437,8 +405,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-monitor__row dt {
-  color: color-mix(in srgb, var(--desktop-label) 58%, transparent);
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -452,8 +420,8 @@ body.desktop-mode-open::-webkit-scrollbar {
   max-width: 13ch;
   margin: 0;
   overflow: hidden;
-  color: color-mix(in srgb, var(--desktop-label) 88%, transparent);
-  font-size: 9px;
+  color: var(--text-soft);
+  font-size: 12px;
   font-weight: 680;
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
@@ -474,7 +442,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-monitor__track span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, #2dd4bf, #5eead4);
+  background: linear-gradient(90deg, var(--brand), var(--brand-strong));
   border-radius: inherit;
   transition: width .5s ease;
 }
@@ -501,9 +469,9 @@ body.desktop-mode-open::-webkit-scrollbar {
     linear-gradient(145deg, rgb(255 255 255 / 12%), transparent 62%),
     var(--desktop-glass);
   border: 1px solid var(--desktop-glass-border);
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   box-shadow:
-    0 18px 44px rgb(0 0 0 / 18%),
+    0 18px 44px var(--desktop-shadow),
     inset 0 1px 0 rgb(255 255 255 / 18%);
   backdrop-filter: blur(22px) saturate(145%);
   -webkit-backdrop-filter: blur(22px) saturate(145%);
@@ -522,8 +490,8 @@ body.desktop-mode-open::-webkit-scrollbar {
   min-height: 20px;
   align-items: center;
   justify-content: space-between;
-  color: color-mix(in srgb, var(--desktop-label) 72%, transparent);
-  font-size: 10px;
+  color: var(--text-soft);
+  font-size: 12px;
   font-weight: 720;
   letter-spacing: .06em;
   text-transform: uppercase;
@@ -548,10 +516,10 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-service-status__dot {
   width: 7px;
   height: 7px;
-  background: #34d399;
+  background: var(--success);
   border: 2px solid rgb(255 255 255 / 28%);
   border-radius: 50%;
-  box-shadow: 0 0 12px rgb(52 211 153 / 52%);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--success) 52%, transparent);
 }
 
 .desktop-clock__local {
@@ -576,7 +544,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   min-width: max-content;
   gap: 3px;
   align-content: center;
-  color: color-mix(in srgb, var(--desktop-label) 68%, transparent);
+  color: var(--muted);
   font-size: 13px;
   font-weight: 620;
   line-height: 1.25;
@@ -584,7 +552,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-clock__date-main {
-  color: color-mix(in srgb, var(--desktop-label) 76%, transparent);
+  color: var(--text-soft);
   white-space: nowrap;
 }
 
@@ -636,8 +604,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-clock__server-location {
   gap: 6px;
-  color: color-mix(in srgb, var(--desktop-label) 72%, transparent);
-  font-size: 9px;
+  color: var(--text-soft);
+  font-size: 12px;
   font-weight: 620;
 }
 
@@ -658,8 +626,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-clock__server-timezone {
   flex: 0 0 auto;
-  color: color-mix(in srgb, var(--desktop-label) 48%, transparent);
-  font-size: 9px;
+  color: var(--muted);
+  font-size: 12px;
   font-weight: 560;
   white-space: nowrap;
 }
@@ -679,8 +647,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-clock__server-label {
   overflow: hidden;
-  color: color-mix(in srgb, var(--desktop-label) 72%, transparent);
-  font-size: 10px;
+  color: var(--text-soft);
+  font-size: 12px;
   font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -716,23 +684,23 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-service-status__dot--syncing {
-  background: #fbbf24;
-  box-shadow: 0 0 12px rgb(251 191 36 / 48%);
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-soft);
 }
 
 .desktop-service-status__dot--healthy {
-  background: #34d399;
-  box-shadow: 0 0 12px rgb(52 211 153 / 52%);
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
 }
 
 .desktop-service-status__dot--attention {
-  background: #fbbf24;
-  box-shadow: 0 0 12px rgb(251 191 36 / 48%);
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-soft);
 }
 
 .desktop-service-status__dot--unknown {
-  background: #94a3b8;
-  box-shadow: 0 0 12px rgb(148 163 184 / 38%);
+  background: var(--muted);
+  box-shadow: 0 0 0 3px var(--neutral-soft);
 }
 
 .desktop-service-status__hero {
@@ -742,9 +710,9 @@ body.desktop-mode-open::-webkit-scrollbar {
   align-items: center;
   gap: 9px;
   padding: 9px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 12%, transparent), color-mix(in srgb, var(--desktop-label) 5%, transparent));
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--brand) 18%, transparent);
-  border-radius: 12px;
+  border-radius: var(--radius);
 }
 
 .desktop-service-status__hero-icon {
@@ -753,27 +721,27 @@ body.desktop-mode-open::-webkit-scrollbar {
   height: 32px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
 }
 
 .desktop-service-status__hero-icon--syncing {
-  color: #fbbf24;
-  background: rgb(251 191 36 / 13%);
+  color: var(--amber);
+  background: var(--amber-soft);
 }
 
 .desktop-service-status__hero-icon--healthy {
-  color: #34d399;
-  background: rgb(52 211 153 / 13%);
+  color: var(--success);
+  background: var(--success-soft);
 }
 
 .desktop-service-status__hero-icon--attention {
-  color: #fbbf24;
-  background: rgb(251 191 36 / 13%);
+  color: var(--amber);
+  background: var(--amber-soft);
 }
 
 .desktop-service-status__hero-icon--unknown {
-  color: #94a3b8;
-  background: rgb(148 163 184 / 13%);
+  color: var(--muted);
+  background: var(--neutral-soft);
 }
 
 .desktop-service-status__hero-copy {
@@ -792,13 +760,13 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-service-status__hero-copy strong {
-  color: color-mix(in srgb, var(--desktop-label) 94%, transparent);
+  color: var(--text-soft);
   font-size: 14px;
   font-weight: 760;
 }
 
 .desktop-service-status__hero-copy small {
-  color: color-mix(in srgb, var(--desktop-label) 58%, transparent);
+  color: var(--muted);
   font-size: 13px;
   font-weight: 600;
   line-height: 1.35;
@@ -810,10 +778,10 @@ body.desktop-mode-open::-webkit-scrollbar {
   height: 26px;
   flex: 0 0 auto;
   place-items: center;
-  color: color-mix(in srgb, var(--desktop-label) 62%, transparent);
+  color: var(--muted);
   background: color-mix(in srgb, var(--desktop-label) 6%, transparent);
   border: 1px solid color-mix(in srgb, var(--desktop-label) 10%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
@@ -842,21 +810,20 @@ body.desktop-mode-open::-webkit-scrollbar {
   align-items: flex-start;
   gap: 7px;
   padding: 8px 8px 7px;
-  color: color-mix(in srgb, var(--desktop-label) 88%, transparent);
+  color: var(--text-soft);
   background: color-mix(in srgb, var(--desktop-label) 4%, transparent);
   border: 1px solid color-mix(in srgb, var(--desktop-label) 8%, transparent);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font: inherit;
   text-align: left;
-  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+  transition: background .16s ease, border-color .16s ease;
 }
 
 .desktop-service-status__metric:hover,
 .desktop-service-status__metric:focus-visible {
   background: color-mix(in srgb, var(--brand) 10%, transparent);
   border-color: color-mix(in srgb, var(--brand) 28%, transparent);
-  transform: translateY(-1px);
 }
 
 .desktop-service-status__metric-icon {
@@ -865,34 +832,34 @@ body.desktop-mode-open::-webkit-scrollbar {
   height: 25px;
   flex: 0 0 auto;
   place-items: center;
-  color: #34d399;
-  background: rgb(52 211 153 / 10%);
+  color: var(--success);
+  background: var(--success-soft);
   border-radius: 8px;
 }
 
 .desktop-service-status__metric-icon--brand {
-  color: #34d399;
-  background: rgb(52 211 153 / 10%);
+  color: var(--brand-strong);
+  background: var(--brand-soft);
 }
 
 .desktop-service-status__metric-icon--blue {
-  color: #60a5fa;
-  background: rgb(96 165 250 / 12%);
+  color: var(--blue);
+  background: var(--blue-soft);
 }
 
 .desktop-service-status__metric-icon--amber {
-  color: #fbbf24;
-  background: rgb(251 191 36 / 12%);
+  color: var(--amber);
+  background: var(--amber-soft);
 }
 
 .desktop-service-status__metric-icon--violet {
-  color: #a78bfa;
-  background: rgb(167 139 250 / 12%);
+  color: var(--violet);
+  background: var(--violet-soft);
 }
 
 .desktop-service-status__metric--unknown .desktop-service-status__metric-icon {
-  color: #94a3b8;
-  background: rgb(148 163 184 / 10%);
+  color: var(--muted);
+  background: var(--neutral-soft);
 }
 
 .desktop-service-status__metric-copy {
@@ -913,7 +880,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-service-status__metric-label {
-  color: color-mix(in srgb, var(--desktop-label) 58%, transparent);
+  color: var(--muted);
   font-size: 13px;
   font-weight: 650;
   line-height: 1.35;
@@ -928,7 +895,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-service-status__metric-summary strong {
   flex: 0 0 auto;
-  color: color-mix(in srgb, var(--desktop-label) 94%, transparent);
+  color: var(--text-soft);
   font-size: 15px;
   font-variant-numeric: tabular-nums;
   font-weight: 760;
@@ -938,7 +905,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-service-status__metric-summary small {
   min-width: 0;
   padding-left: 8px;
-  color: color-mix(in srgb, var(--desktop-label) 55%, transparent);
+  color: var(--muted);
   border-left: 1px solid color-mix(in srgb, var(--desktop-label) 16%, transparent);
   font-size: 13px;
   font-weight: 600;
@@ -956,7 +923,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-service-status__metric-track i {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, #2dd4bf, #5eead4);
+  background: linear-gradient(90deg, var(--brand), var(--brand-strong));
   border-radius: inherit;
   transition: width .35s ease;
 }
@@ -971,7 +938,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-service-status__metric-arrow {
   align-self: center;
-  color: color-mix(in srgb, var(--desktop-label) 32%, transparent);
+  color: var(--muted);
   font-size: 17px;
   line-height: 1;
 }
@@ -1011,7 +978,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   padding: 8px;
   background: color-mix(in srgb, var(--desktop-label) 5%, transparent);
   border: 1px solid color-mix(in srgb, var(--desktop-label) 8%, transparent);
-  border-radius: 12px;
+  border-radius: var(--radius);
 }
 
 .desktop-monitor__host-block > span:last-child {
@@ -1030,14 +997,14 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-monitor__host-block strong {
-  color: color-mix(in srgb, var(--desktop-label) 92%, transparent);
-  font-size: 10px;
+  color: var(--text-soft);
+  font-size: 12px;
   font-weight: 740;
 }
 
 .desktop-monitor__host-block small {
-  color: color-mix(in srgb, var(--desktop-label) 56%, transparent);
-  font-size: 9px;
+  color: var(--muted);
+  font-size: 12px;
   font-weight: 560;
 }
 
@@ -1069,8 +1036,8 @@ body.desktop-mode-open::-webkit-scrollbar {
   min-width: 0;
   align-items: center;
   gap: 6px;
-  color: color-mix(in srgb, var(--desktop-label) 68%, transparent);
-  font-size: 9px;
+  color: var(--muted);
+  font-size: 12px;
   font-weight: 630;
 }
 
@@ -1078,25 +1045,25 @@ body.desktop-mode-open::-webkit-scrollbar {
   width: 6px;
   height: 6px;
   flex: 0 0 auto;
-  background: #34d399;
+  background: var(--success);
   border-radius: 50%;
-  box-shadow: 0 0 8px rgb(52 211 153 / 48%);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--success) 48%, transparent);
 }
 
 .desktop__taskbar-agent-status--offline > i,
 .desktop__taskbar-agent-status--incompatible > i {
-  background: #fb7185;
-  box-shadow: 0 0 8px rgb(251 113 133 / 44%);
+  background: var(--danger);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--danger) 44%, transparent);
 }
 
 .desktop__taskbar-agent-status--read-only > i {
-  background: #fbbf24;
-  box-shadow: 0 0 8px rgb(251 191 36 / 40%);
+  background: var(--amber);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--amber) 40%, transparent);
 }
 
 .desktop__taskbar-agent > small {
-  color: color-mix(in srgb, var(--desktop-label) 50%, transparent);
-  font-size: 9px;
+  color: var(--muted);
+  font-size: 12px;
   font-weight: 610;
 }
 
@@ -1112,7 +1079,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   border-radius: 8px;
   cursor: pointer;
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 720;
 }
 
@@ -1140,7 +1107,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   min-height: 120px;
   display: grid;
   place-items: center;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .desktop-monitor__list {
@@ -1167,7 +1134,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-monitor__row dt {
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .desktop-monitor__row dt svg {
@@ -1177,7 +1144,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-monitor__row dd {
   max-width: 100%;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 710;
 }
 
@@ -1202,14 +1169,14 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-monitor__network-total {
   padding-top: 1px;
-  color: color-mix(in srgb, var(--desktop-label) 68%, transparent);
+  color: var(--muted);
   border-top: 1px solid color-mix(in srgb, var(--desktop-label) 9%, transparent);
-  font-size: 8px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
 .desktop-monitor__network-total small {
-  color: color-mix(in srgb, var(--desktop-label) 46%, transparent);
+  color: var(--muted);
   font: inherit;
 }
 
@@ -1230,7 +1197,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--desktop-label);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   border: 1px dashed color-mix(in srgb, var(--accent) 65%, transparent);
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, white 20%, transparent);
   backdrop-filter: blur(5px);
   pointer-events: none;
@@ -1253,9 +1220,9 @@ body.desktop-mode-open::-webkit-scrollbar {
   height: 36px;
   margin-bottom: 3px;
   place-items: center;
-  color: white;
+  color: var(--accent-contrast);
   background: var(--accent);
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
 }
 
 .desktop__file-drop strong {
@@ -1263,8 +1230,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop__file-drop small {
-  color: color-mix(in srgb, var(--desktop-label) 74%, transparent);
-  font-size: 10px;
+  color: var(--text-soft);
+  font-size: 12px;
 }
 
 .desktop__file-drop code {
@@ -1272,10 +1239,10 @@ body.desktop-mode-open::-webkit-scrollbar {
   overflow: hidden;
   margin-top: 3px;
   padding: 3px 8px;
-  color: color-mix(in srgb, var(--desktop-label) 72%, transparent);
+  color: var(--text-soft);
   background: color-mix(in srgb, var(--desktop-label) 7%, transparent);
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1308,8 +1275,8 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--desktop-label);
   background: color-mix(in srgb, var(--surface, #10231f) 92%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border, #36514a));
-  border-radius: 16px;
-  box-shadow: 0 18px 48px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 6%);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 18px 48px var(--desktop-shadow), inset 0 1px rgb(255 255 255 / 6%);
   backdrop-filter: blur(18px) saturate(1.1);
   animation: desktop-transfer-in 240ms cubic-bezier(.2, .9, .2, 1) both;
 }
@@ -1319,9 +1286,9 @@ body.desktop-mode-open::-webkit-scrollbar {
   width: 38px;
   height: 38px;
   place-items: center;
-  color: white;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 88%, white 12%), var(--accent));
-  border-radius: 12px;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-radius: var(--radius);
   box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
@@ -1332,12 +1299,13 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-transfer--partial .desktop-transfer__glyph,
 .desktop-transfer--error .desktop-transfer__glyph {
-  background: linear-gradient(145deg, #fb7185, #be123c);
-  box-shadow: 0 8px 20px rgb(190 18 60 / 22%);
+  color: var(--on-danger);
+  background: var(--danger-action);
+  box-shadow: var(--shadow-button);
 }
 
 .desktop-transfer--cancelled .desktop-transfer__glyph {
-  color: color-mix(in srgb, var(--desktop-label) 72%, transparent);
+  color: var(--text-soft);
   background: color-mix(in srgb, var(--desktop-label) 14%, transparent);
   box-shadow: none;
 }
@@ -1365,8 +1333,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-transfer__content header span {
-  color: color-mix(in srgb, var(--desktop-label) 70%, transparent);
-  font-size: 10px;
+  color: var(--text-soft);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1382,11 +1350,11 @@ body.desktop-mode-open::-webkit-scrollbar {
   width: fit-content;
   max-width: 100%;
   padding: 0;
-  color: color-mix(in srgb, var(--desktop-label) 64%, transparent);
+  color: var(--muted);
   background: transparent;
   border: 0;
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.35;
   text-align: left;
   text-overflow: ellipsis;
@@ -1401,7 +1369,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   background: transparent;
   border: 0;
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -1439,8 +1407,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-transfer__content small {
   overflow: hidden;
-  color: color-mix(in srgb, var(--desktop-label) 68%, transparent);
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1452,18 +1420,17 @@ body.desktop-mode-open::-webkit-scrollbar {
   height: 30px;
   padding: 0;
   place-items: center;
-  color: color-mix(in srgb, var(--desktop-label) 70%, transparent);
+  color: var(--text-soft);
   background: transparent;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .desktop-transfer__action:hover,
 .desktop-transfer__action:focus-visible {
   color: var(--desktop-label);
-  background: color-mix(in srgb, var(--desktop-label) 9%, transparent);
-  outline: none;
+  background: var(--interaction-hover);
 }
 
 .desktop__upload-location-form {
@@ -1475,7 +1442,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   display: grid;
   gap: 6px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -1486,7 +1453,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--text);
   background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
   font: 500 12px/1.4 var(--font-mono);
   transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
 }
@@ -1495,7 +1462,6 @@ body.desktop-mode-open::-webkit-scrollbar {
   background: var(--surface-strong);
   border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
-  outline: none;
 }
 
 .desktop__upload-location-form input[aria-invalid='true'] {
@@ -1506,7 +1472,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop__upload-location-form small {
   margin: 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -1556,7 +1522,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   border: 2px solid color-mix(in srgb, var(--brand) 86%, white 14%);
   border-radius: 6px;
   box-shadow:
-    0 0 0 1px rgb(3 23 20 / 45%),
+    0 0 0 1px var(--desktop-shadow),
     inset 0 0 0 1px rgb(255 255 255 / 20%),
     inset 0 0 22px color-mix(in srgb, var(--brand) 14%, transparent),
     0 4px 16px color-mix(in srgb, var(--brand) 16%, transparent);
@@ -1565,12 +1531,12 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 :root:not([data-theme='dark']) .desktop__selection-box {
   background: color-mix(in srgb, var(--brand) 22%, transparent);
-  border-color: color-mix(in srgb, var(--brand) 84%, #17312c 16%);
+  border-color: color-mix(in srgb, var(--brand) 84%, var(--desktop-label) 16%);
   box-shadow:
     0 0 0 1px rgb(255 255 255 / 70%),
     inset 0 0 0 1px rgb(255 255 255 / 30%),
     inset 0 0 22px color-mix(in srgb, var(--brand) 10%, transparent),
-    0 4px 14px rgb(18 59 51 / 18%);
+    0 4px 14px color-mix(in srgb, var(--desktop-shadow) 78%, transparent);
 }
 
 .desktop-selection-active,
@@ -1594,11 +1560,11 @@ body.desktop-mode-open::-webkit-scrollbar {
   align-items: center;
   justify-content: center;
   padding: 4px 10px;
-  color: color-mix(in srgb, var(--desktop-label) 78%, transparent);
+  color: var(--text-soft);
   background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
   border: 1px solid color-mix(in srgb, var(--desktop-label) 12%, transparent);
-  border-radius: 9px;
-  font-size: 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
   line-height: 1.35;
   pointer-events: none;
   text-align: center;
@@ -1624,7 +1590,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   min-height: 0;
   overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   outline: none;
   touch-action: none;
   transition: left .2s cubic-bezier(.22, 1, .36, 1), top .2s cubic-bezier(.22, 1, .36, 1);
@@ -1640,7 +1606,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-widget-slot:focus-visible {
   border-color: color-mix(in srgb, var(--brand) 72%, white 28%);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 34%, transparent);
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .desktop-widget-slot--dragging {
@@ -1697,7 +1664,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 10px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .desktop-widget-slot .desktop-monitor__network-total > span:first-of-type {
@@ -1739,7 +1706,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   width: 18px;
   height: 18px;
   place-items: center;
-  color: color-mix(in srgb, var(--desktop-label) 72%, transparent);
+  color: var(--text-soft);
   background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
   border: 1px solid color-mix(in srgb, var(--desktop-label) 14%, transparent);
   border-radius: 7px;
@@ -1789,8 +1756,8 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--desktop-label);
   background: var(--desktop-glass-strong);
   border: 1px solid var(--desktop-glass-border);
-  border-radius: 13px;
-  box-shadow: 0 14px 34px rgb(0 0 0 / 24%);
+  border-radius: var(--radius);
+  box-shadow: 0 14px 34px var(--desktop-shadow);
   transform: translateX(-50%);
   backdrop-filter: blur(18px) saturate(145%);
   -webkit-backdrop-filter: blur(18px) saturate(145%);
@@ -1798,7 +1765,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop__selection-actions strong {
   margin-right: 3px;
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -1811,8 +1778,8 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: inherit;
   background: color-mix(in srgb, var(--desktop-label) 7%, transparent);
   border: 1px solid transparent;
-  border-radius: 9px;
-  font-size: 11px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -1824,7 +1791,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop__selection-actions button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 70%, white);
+  outline: 3px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -1844,7 +1811,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--desktop-label);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 15px;
+  border-radius: var(--radius-lg);
   cursor: default;
   opacity: 0;
   transform: translateY(8px);
@@ -1857,8 +1824,8 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop__icon:hover {
-  background: rgb(255 255 255 / 10%);
-  border-color: rgb(255 255 255 / 12%);
+  background: color-mix(in srgb, var(--brand) 12%, rgb(255 255 255 / 8%));
+  border-color: color-mix(in srgb, var(--brand) 18%, rgb(255 255 255 / 10%));
   transform: translateY(-2px);
 }
 
@@ -1869,18 +1836,18 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop__icon--selected .desktop__icon-label {
-  background: color-mix(in srgb, var(--brand) 72%, rgb(6 22 24 / 78%));
-  color: #fff;
+  color: var(--on-brand);
+  background: var(--brand-action);
   text-shadow: none;
 }
 
 :root:not([data-theme='dark']) .desktop__icon:hover {
-  background: rgb(255 255 255 / 35%);
-  border-color: rgb(255 255 255 / 50%);
+  background: color-mix(in srgb, var(--brand) 10%, rgb(255 255 255 / 31%));
+  border-color: color-mix(in srgb, var(--brand) 16%, rgb(255 255 255 / 42%));
 }
 
 .desktop__icon:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brand) 75%, #fff);
+  outline: 3px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -2100,18 +2067,18 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 :root:not([data-theme='dark']) .desktop__icon-label {
-  color: #17312c;
-  background: rgb(255 255 255 / 82%);
-  border: 1px solid rgb(255 255 255 / 68%);
-  box-shadow: 0 1px 4px rgb(16 44 39 / 16%);
+  color: var(--desktop-label);
+  background: var(--desktop-glass-strong);
+  border: 1px solid var(--desktop-glass-border);
+  box-shadow: 0 1px 4px var(--desktop-shadow);
   text-shadow: none;
 }
 
 :root:not([data-theme='dark']) .desktop__icon--selected .desktop__icon-label {
-  color: #17312c;
-  background: color-mix(in srgb, var(--brand) 38%, #fff);
-  border-color: color-mix(in srgb, var(--brand) 56%, #fff);
-  box-shadow: 0 1px 4px color-mix(in srgb, var(--brand) 22%, transparent);
+  color: var(--on-brand);
+  background: var(--brand-action);
+  border-color: var(--brand-action);
+  box-shadow: var(--shadow-button);
 }
 
 .desktop__icon--launching .desktop__icon-glyph {
@@ -2152,10 +2119,10 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--text);
   background: var(--surface);
   border: 1px solid color-mix(in srgb, var(--border-strong) 82%, #fff 8%);
-  border-radius: 17px;
+  border-radius: var(--radius-lg);
   box-shadow:
-    0 30px 76px rgb(0 0 0 / 34%),
-    0 8px 24px rgb(0 0 0 / 18%),
+    0 30px 76px var(--desktop-shadow),
+    0 8px 24px color-mix(in srgb, var(--desktop-shadow) 62%, transparent),
     inset 0 1px 0 rgb(255 255 255 / 6%);
   opacity: 0;
   transform: translateY(12px) scale(.965);
@@ -2180,11 +2147,16 @@ body.desktop-mode-open::-webkit-scrollbar {
   outline: none;
 }
 
+.desktop-window:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
+}
+
 .desktop-window--focused {
   border-color: color-mix(in srgb, var(--brand) 38%, var(--border-strong));
   box-shadow:
-    0 34px 86px rgb(0 0 0 / 40%),
-    0 10px 26px rgb(0 0 0 / 20%),
+    0 34px 86px var(--desktop-shadow),
+    0 10px 26px color-mix(in srgb, var(--desktop-shadow) 62%, transparent),
     0 0 0 1px color-mix(in srgb, var(--brand) 10%, transparent);
 }
 
@@ -2194,11 +2166,11 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-window--maximized {
-  border-radius: 14px;
+  border-radius: var(--radius);
 }
 
 .desktop-window--snapped {
-  border-radius: 14px;
+  border-radius: var(--radius);
 }
 
 .desktop-window-snap-preview {
@@ -2206,7 +2178,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   z-index: 90;
   background: color-mix(in srgb, var(--brand) 18%, var(--desktop-glass));
   border: 1px solid color-mix(in srgb, var(--brand) 58%, rgb(255 255 255 / 42%));
-  border-radius: 14px;
+  border-radius: var(--radius);
   box-shadow:
     0 20px 54px rgb(0 0 0 / 18%),
     inset 0 1px 0 rgb(255 255 255 / 28%);
@@ -2284,7 +2256,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-window__action:hover {
   color: var(--text);
-  background: color-mix(in srgb, var(--text) 9%, transparent);
+  background: var(--interaction-hover);
 }
 
 .desktop-window__action--close:hover {
@@ -2306,7 +2278,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   justify-content: flex-start;
   gap: 7px;
   justify-self: stretch;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 680;
   letter-spacing: -.005em;
 }
@@ -2351,7 +2323,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   overflow: auto;
   overscroll-behavior: contain;
   background: var(--bg);
-  border-radius: 0 0 16px 16px;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   container-name: desktop-window;
   container-type: inline-size;
   scrollbar-gutter: stable;
@@ -2402,7 +2374,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   place-items: center;
   color: var(--danger);
   background: var(--danger-soft);
-  border-radius: 14px;
+  border-radius: var(--radius);
 }
 
 .desktop-window__load-error strong {
@@ -2583,9 +2555,9 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--desktop-label);
   background: var(--desktop-glass-strong);
   border: 1px solid var(--desktop-glass-border);
-  border-radius: 14px;
+  border-radius: var(--radius);
   box-shadow:
-    0 18px 44px rgb(0 0 0 / 24%),
+    0 18px 44px var(--desktop-shadow),
     inset 0 1px 0 rgb(255 255 255 / 16%);
   backdrop-filter: blur(20px) saturate(145%);
   -webkit-backdrop-filter: blur(20px) saturate(145%);
@@ -2603,7 +2575,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   justify-self: start;
   gap: 8px;
   padding: 0 7px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 760;
 }
 
@@ -2647,13 +2619,13 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop__taskbar-item:hover {
-  background: rgb(255 255 255 / 12%);
-  border-color: rgb(255 255 255 / 10%);
+  background: color-mix(in srgb, var(--brand) 12%, rgb(255 255 255 / 8%));
+  border-color: color-mix(in srgb, var(--brand) 18%, rgb(255 255 255 / 8%));
   transform: translateY(-3px);
 }
 
 .desktop__taskbar-item:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brand) 75%, #fff);
+  outline: 3px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -2664,7 +2636,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   place-items: center;
   color: #fff;
   border: 1px solid rgb(255 255 255 / 15%);
-  border-radius: 11px;
+  border-radius: var(--radius);
   box-shadow: 0 6px 15px rgb(0 0 0 / 22%), inset 0 1px 0 rgb(255 255 255 / 24%);
   transition: filter .16s ease, transform .16s ease;
 }
@@ -2697,7 +2669,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop__taskbar-item--active > i {
   width: 13px;
-  background: var(--brand);
+  background: var(--theme-accent);
   border-radius: 999px;
 }
 
@@ -2713,7 +2685,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 7px;
   box-shadow: 0 6px 18px rgb(0 0 0 / 26%);
-  font-size: 9px;
+  font-size: 12px;
   opacity: 0;
   pointer-events: none;
   text-overflow: ellipsis;
@@ -2752,13 +2724,12 @@ body.desktop-mode-open::-webkit-scrollbar {
   flex-direction: column;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
   padding: 6px;
   color: var(--text);
   background: var(--desktop-glass-strong);
   border: 1px solid var(--desktop-glass-border);
-  border-radius: 13px;
-  box-shadow: 0 20px 52px rgb(0 0 0 / 30%);
+  border-radius: var(--radius);
+  box-shadow: 0 20px 52px var(--desktop-shadow);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
 }
@@ -2772,23 +2743,11 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--text-soft);
   background: transparent;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: default;
   font: inherit;
   font-size: 14px;
   text-align: left;
-}
-
-.desktop__context-menu button:hover,
-.desktop__context-menu button:focus-visible {
-  color: var(--text);
-  background: color-mix(in srgb, var(--brand) 14%, transparent);
-  outline: 0;
-}
-
-.desktop__context-menu button:disabled {
-  cursor: not-allowed;
-  opacity: .48;
 }
 
 .desktop__context-menu .desktop__context-danger {
@@ -2828,7 +2787,6 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-wallpaper-picker__option:focus-visible {
   border-color: color-mix(in srgb, var(--brand) 65%, var(--border));
   box-shadow: 0 9px 24px rgb(0 0 0 / 14%);
-  outline: 0;
   transform: translateY(-2px);
 }
 
@@ -2859,7 +2817,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-wallpaper-picker__copy small {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -2944,7 +2902,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   place-items: center;
   color: #fff;
   border: 1px solid rgb(255 255 255 / 28%);
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
 }
 
 .desktop__external-confirm-icon-image {
@@ -2972,7 +2930,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   overflow-wrap: anywhere;
   color: var(--muted);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   word-break: break-word;
 }
@@ -2993,7 +2951,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   display: block;
   margin-top: 8px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .desktop__confirm-copy {
@@ -3037,7 +2995,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-shortcut-form__field-heading small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 550;
   letter-spacing: 0;
 }
@@ -3050,9 +3008,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   gap: 10px;
   padding: 0 13px;
   color: var(--muted);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-raised) 94%, transparent), transparent),
-    var(--surface-subtle);
+  background: var(--surface-subtle);
   border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
@@ -3068,9 +3024,9 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--brand);
   background: var(--surface-raised);
   border-color: color-mix(in srgb, var(--brand) 78%, var(--border));
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--brand) 13%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
 }
 
 .desktop-shortcut-form__control > svg {
@@ -3092,7 +3048,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   border-radius: 0;
   outline: 0;
   box-shadow: none;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .desktop-shortcut-form__control input {
@@ -3111,7 +3067,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-shortcut-form__control :is(input, textarea)::placeholder {
-  color: color-mix(in srgb, var(--muted) 78%, transparent);
+  color: var(--muted);
 }
 
 .desktop-shortcut-form__control--textarea {
@@ -3143,8 +3099,8 @@ body.desktop-mode-open::-webkit-scrollbar {
   display: grid;
   overflow: hidden;
   place-items: center;
-  color: #0f766e;
-  background: #f7f9f8;
+  color: var(--brand-strong);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 17px;
 }
@@ -3172,7 +3128,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-icon-manager__glyph:has(.desktop__shortcut-artwork--file) {
-  background: linear-gradient(145deg, #64748b, #334155);
+  background: var(--neutral-soft);
 }
 
 .desktop-shortcut-form__icon-actions {
@@ -3188,7 +3144,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 }
 
 .desktop-shortcut-form__icon-actions label:focus-within {
-  outline: 3px solid color-mix(in srgb, var(--brand) 28%, transparent);
+  outline: 3px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -3205,7 +3161,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-shortcut-form__icon-actions small {
   flex-basis: 100%;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -3215,7 +3171,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   color: var(--danger, #ef7a7a);
   background: color-mix(in srgb, var(--danger, #ef7a7a) 9%, transparent);
   border-radius: 9px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -3289,7 +3245,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-icon-manager__section-header small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3302,7 +3258,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   background: color-mix(in srgb, var(--brand-soft) 50%, var(--surface-raised));
   border: 1px solid color-mix(in srgb, var(--brand) 16%, var(--border));
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3347,17 +3303,17 @@ body.desktop-mode-open::-webkit-scrollbar {
   place-items: center;
   color: var(--brand-strong);
   background: color-mix(in srgb, var(--brand-soft) 64%, var(--surface-raised));
-  border-radius: 11px;
+  border-radius: var(--radius);
 }
 
 .desktop-icon-manager__widget--blue .desktop-icon-manager__widget-icon {
-  color: #7dd3fc;
-  background: color-mix(in srgb, #0ea5e9 20%, var(--surface-raised));
+  color: var(--blue);
+  background: var(--blue-soft);
 }
 
 .desktop-icon-manager__widget--violet .desktop-icon-manager__widget-icon {
-  color: #c4b5fd;
-  background: color-mix(in srgb, #8b5cf6 20%, var(--surface-raised));
+  color: var(--violet);
+  background: var(--violet-soft);
 }
 
 .desktop-icon-manager__widget-main > div {
@@ -3380,7 +3336,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-icon-manager__widget-main small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -3397,7 +3353,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   align-items: center;
   gap: 12px;
   color: var(--brand-strong);
-  font-size: 10px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -3417,7 +3373,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-icon-manager__widget-toggle {
   min-height: 27px;
   padding: 4px 8px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .desktop-icon-manager__collections {
@@ -3483,7 +3439,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 
 .desktop-icon-manager__list article > div > small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .desktop-icon-manager__actions {
@@ -3498,7 +3454,7 @@ body.desktop-mode-open::-webkit-scrollbar {
   background: var(--surface-subtle);
   border: 1px dashed var(--border);
   border-radius: 11px;
-  font-size: 11px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -3553,7 +3509,7 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-icon-manager__layout-action small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3875,6 +3831,34 @@ body.desktop-mode-open::-webkit-scrollbar {
     flex-direction: column;
   }
 
+  .desktop-window__body .theme-options,
+  .desktop-window__body .theme-color-studio {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .desktop-window__body .theme-color-preview {
+    position: static;
+  }
+
+  .desktop-window__body .theme-color-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .desktop-window__body .theme-color-field__inputs,
+  .desktop-window__body .theme-color-field__hex {
+    width: 100%;
+  }
+
+  .desktop-window__body .theme-color-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .desktop-window__body .theme-color-actions > div {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
   .desktop-window__body .file-command-bar .file-command-bar__actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3910,7 +3894,7 @@ body.desktop-mode-open::-webkit-scrollbar {
     gap: 4px;
     padding-right: 7px;
     padding-left: 7px;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .desktop-window__body .toolbar-card--search-tabs .filter-tabs button span {

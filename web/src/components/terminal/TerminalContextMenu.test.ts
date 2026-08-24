@@ -58,7 +58,7 @@ describe('TerminalContextMenu', () => {
   })
 
   async function openMenu(): Promise<HTMLElement> {
-    const event = new MouseEvent('contextmenu', { clientX: 40, clientY: 50, cancelable: true })
+    const event = new MouseEvent('contextmenu', { button: 2, clientX: 40, clientY: 50, cancelable: true })
     ;(wrapper.vm as unknown as ExposedMenu).open(event)
     await wrapper.vm.$nextTick()
     return document.body.querySelector<HTMLElement>('.terminal-context-menu')!
@@ -172,6 +172,19 @@ describe('TerminalContextMenu', () => {
     menu.querySelectorAll<HTMLButtonElement>('button')[2]!.click()
 
     expect(terminal.selectAll).toHaveBeenCalled()
+  })
+
+  it('keeps pointer-open focus neutral until keyboard navigation begins', async () => {
+    const menu = await openMenu()
+    const items = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]
+
+    expect(document.activeElement).toBe(items[0])
+    expect(menu.dataset.contextMenuFocus).toBe('pointer')
+    expect(items[0]?.hasAttribute('aria-selected')).toBe(false)
+
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    expect(menu.dataset.contextMenuFocus).toBe('keyboard')
+    expect(document.activeElement).toBe(items[1])
   })
 
   it('keeps the teleported menu inside its desktop window and above the taskbar', async () => {

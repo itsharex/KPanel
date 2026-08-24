@@ -43,7 +43,15 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import FileShareDialog from '@/components/files/FileShareDialog.vue'
 import FileShareManagerDialog from '@/components/files/FileShareManagerDialog.vue'
 import { ApiError, api } from '@/lib/api'
-import { moveContextMenuFocus, placeContextMenu } from '@/lib/contextMenu'
+import {
+  contextMenuFocusOrigin,
+  type ContextMenuFocusOrigin,
+  focusFirstContextMenuItem,
+  moveContextMenuFocus,
+  placeContextMenu,
+  showContextMenuKeyboardFocus,
+  showContextMenuPointerFocus,
+} from '@/lib/contextMenu'
 import {
   desktopCloseGuardCoordinator,
   desktopWindowActiveKey,
@@ -1224,7 +1232,7 @@ function onEntryDrop(event: DragEvent, entry: FileEntry): void {
   else void transferCrossPanelFileDrop(event, entry.path)
 }
 
-async function settleContextMenu(): Promise<void> {
+async function settleContextMenu(focusOrigin: ContextMenuFocusOrigin): Promise<void> {
   await nextTick()
   const menu = contextMenuElement.value
   const current = contextMenu.value
@@ -1236,7 +1244,7 @@ async function settleContextMenu(): Promise<void> {
     y: placed.y,
   }
   await nextTick()
-  menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
+  focusFirstContextMenuItem(menu, focusOrigin)
 }
 
 function contextMenuPoint(event: MouseEvent): { x: number; y: number } {
@@ -1259,7 +1267,7 @@ function showContext(event: MouseEvent, entry: FileEntry): void {
     x: point.x,
     y: point.y,
   }
-  void settleContextMenu()
+  void settleContextMenu(contextMenuFocusOrigin(event))
 }
 
 function showDirectoryContext(event: MouseEvent): void {
@@ -1280,12 +1288,13 @@ function showDirectoryContext(event: MouseEvent): void {
     x: point.x,
     y: point.y,
   }
-  void settleContextMenu()
+  void settleContextMenu(contextMenuFocusOrigin(event))
 }
 
 function handleContextMenuKeydown(event: KeyboardEvent): void {
   const menu = contextMenuElement.value
   if (!menu) return
+  showContextMenuKeyboardFocus(menu)
   if (moveContextMenuFocus(menu, event)) return
   if (event.key === 'Escape') {
     event.preventDefault()
@@ -2842,10 +2851,11 @@ onBeforeUnmount(() => {
         v-if="contextMenu"
         id="file-context-menu"
         ref="contextMenuElement"
-        class="file-context-menu"
+        class="file-context-menu k-context-menu"
         :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         role="menu"
         aria-label="文件操作"
+        @pointermove="showContextMenuPointerFocus"
         @keydown.stop="handleContextMenuKeydown"
       >
       <button v-if="contextMenu.entry" role="menuitem" type="button" @click="openEntry(contextMenu.entry)">
@@ -2912,7 +2922,7 @@ onBeforeUnmount(() => {
         <Plus :size="15" />新建目录
       </button>
       <hr v-if="contextMenu.entry" role="separator" />
-      <button v-if="contextMenu.entry" class="danger-link" role="menuitem" type="button" @click="openDialog('trash', contextMenu.entry)">
+      <button v-if="contextMenu.entry" class="danger-link k-context-menu__item--danger" role="menuitem" type="button" @click="openDialog('trash', contextMenu.entry)">
         <Trash2 :size="15" />移入回收站
       </button>
       </div>
@@ -3419,7 +3429,7 @@ onBeforeUnmount(() => {
 .file-search button:hover,
 .row-menu:hover {
   color: var(--text);
-  background: var(--surface-subtle);
+  background: var(--interaction-hover);
 }
 
 .file-toolbar__controls,
@@ -3468,14 +3478,14 @@ onBeforeUnmount(() => {
 }
 
 .file-grid-sort button:hover,
-.file-view-switch button:hover,
-.file-view-switch button.is-active {
+.file-view-switch button:hover {
   color: var(--text);
-  background: var(--surface-subtle);
+  background: var(--interaction-hover);
 }
 
 .file-view-switch button.is-active {
   color: var(--brand);
+  background: var(--brand-soft);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 24%, transparent);
 }
 
@@ -3520,7 +3530,7 @@ onBeforeUnmount(() => {
 
 .batch-bar button:hover {
   color: var(--text);
-  background: var(--surface);
+  background: var(--interaction-hover-surface);
 }
 
 :global(.desktop-window .batch-bar) {
@@ -3600,17 +3610,17 @@ onBeforeUnmount(() => {
 }
 
 .clipboard-bar button:first-of-type {
-  color: #fff;
-  background: var(--brand);
+  color: var(--on-brand);
+  background: var(--brand-action);
 }
 
 .clipboard-bar button:hover:not(:disabled) {
   color: var(--text);
-  background: var(--surface);
+  background: var(--interaction-hover-surface);
 }
 
 .clipboard-bar button:first-of-type:hover:not(:disabled) {
-  color: #fff;
+  color: var(--on-brand);
   background: var(--brand-strong);
 }
 
@@ -3979,8 +3989,8 @@ onBeforeUnmount(() => {
 
 .file-grid-card:hover,
 .file-grid-card:focus-visible {
-  border-color: var(--border);
-  background: var(--surface-subtle);
+  border-color: color-mix(in srgb, var(--brand) 24%, var(--border));
+  background: var(--interaction-hover);
 }
 
 .file-grid-card--selected {
@@ -4340,7 +4350,6 @@ onBeforeUnmount(() => {
   max-height: var(--context-menu-max-height, calc(100dvh - 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 11px;
@@ -4361,16 +4370,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
   font-size: 14px;
   line-height: 1.3;
-}
-
-.file-context-menu button:hover,
-.file-context-menu button:focus-visible {
-  background: var(--surface-subtle);
-}
-
-.file-context-menu button:focus-visible {
-  outline: 2px solid var(--brand-muted);
-  outline-offset: -2px;
 }
 
 .file-context-menu hr {
@@ -4518,7 +4517,7 @@ onBeforeUnmount(() => {
 }
 
 .trash-item:hover {
-  background: var(--surface-subtle);
+  background: var(--interaction-hover);
 }
 
 .trash-item > span:nth-child(3) {

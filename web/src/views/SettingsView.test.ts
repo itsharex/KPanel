@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createSSRApp, ssrContextKey, type ComputedRef, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ThemeColorIntent, ThemeColorKey, ThemeMode } from '@/theme/colors'
 import SettingsView from './SettingsView.vue'
 
 const settingsSource = readFileSync(new URL('./SettingsView.vue', import.meta.url), 'utf8')
@@ -23,6 +24,20 @@ const mocks = vi.hoisted(() => {
     replace: vi.fn(),
     toastSuccess: vi.fn(),
     toastDanger: vi.fn(),
+    themeSetTheme: vi.fn(),
+    themeSetColors: vi.fn(),
+    themeResetColors: vi.fn(),
+    themePreference: { value: 'system' },
+    themeResolved: { value: 'light' },
+    themeColors: {
+      value: {
+        brand: '#0c7a60',
+        neutral: '#52645f',
+        signatureLinked: true,
+        signature: '#0c7a60',
+      },
+    },
+    themeIsCustom: { value: false },
     sessionState: {
       authenticated: true,
       user: { id: 'admin', username: 'admin' } as { id: string; username: string } | undefined,
@@ -77,8 +92,13 @@ vi.mock('@/stores/session', () => ({
 
 vi.mock('@/stores/theme', () => ({
   useTheme: () => ({
-    preference: { value: 'system' },
-    setTheme: vi.fn(),
+    preference: mocks.themePreference,
+    resolved: mocks.themeResolved,
+    colors: mocks.themeColors,
+    isCustom: mocks.themeIsCustom,
+    setTheme: mocks.themeSetTheme,
+    setColors: mocks.themeSetColors,
+    resetColors: mocks.themeResetColors,
   }),
 }))
 
@@ -106,6 +126,17 @@ interface SettingsBindings {
   changingPassword: Ref<boolean>
   passwordSubmitted: Ref<boolean>
   changePassword: () => Promise<void>
+  colorDraft: ThemeColorIntent
+  colorInputs: Record<ThemeColorKey, string>
+  colorErrors: Record<ThemeColorKey, string>
+  colorPreviewMode: Ref<ThemeMode>
+  colorPreviewTokens: ComputedRef<Record<string, string>>
+  hasColorErrors: ComputedRef<boolean>
+  colorDraftDirty: ComputedRef<boolean>
+  updateThemeColor: (key: ThemeColorKey, event: Event) => void
+  applyThemeColors: () => void
+  cancelThemeColorChanges: () => void
+  resetThemeColors: () => void
   securityEntry: Ref<{ enabled: boolean; path?: string; resourceVersion: string } | undefined>
   securityEntryPath: Ref<string>
   saveSecurityEntry: (enabled: boolean, regenerate?: boolean) => Promise<void>
@@ -131,6 +162,10 @@ function setupView(): SettingsBindings {
   }
 }
 
+function themeColorInput(value: string, type = 'text'): Event {
+  return { currentTarget: { value, type } } as unknown as Event
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.replace.mockResolvedValue(undefined)
@@ -151,6 +186,28 @@ beforeEach(() => {
   mocks.sessionState.user = { id: 'admin', username: 'admin' }
   mocks.sessionState.expiresAt = '2026-07-26T00:00:00Z'
   mocks.sessionState.agent = { connected: true }
+  mocks.themePreference.value = 'system'
+  mocks.themeResolved.value = 'light'
+  mocks.themeColors.value = {
+    brand: '#0c7a60',
+    neutral: '#52645f',
+    signatureLinked: true,
+    signature: '#0c7a60',
+  }
+  mocks.themeIsCustom.value = false
+  mocks.themeSetColors.mockImplementation((colors: ThemeColorIntent) => {
+    mocks.themeColors.value = { ...colors }
+    mocks.themeIsCustom.value = true
+  })
+  mocks.themeResetColors.mockImplementation(() => {
+    mocks.themeColors.value = {
+      brand: '#0c7a60',
+      neutral: '#52645f',
+      signatureLinked: true,
+      signature: '#0c7a60',
+    }
+    mocks.themeIsCustom.value = false
+  })
 })
 
 describe('SettingsView password change', () => {
@@ -239,7 +296,115 @@ describe('SettingsView username change', () => {
     expect(passwordIndex).toBeGreaterThan(usernameIndex)
     expect(passwordIndex).toBeLessThan(securityEntryIndex)
   })
+})
 
+describe('SettingsView appearance', () => {
+  it('provides accessible color inputs, linked accents, a local preview, and explicit actions', () => {
+    expect(settingsSource).toContain('v-if="field.key !== \'signature\' || !colorDraft.signatureLinked"')
+    expect(settingsSource).toContain('class="theme-color-field__picker"')
+    expect(settingsSource).toContain('type="color"')
+    expect(settingsSource).toContain(':value="colorInputs[field.key]"')
+    expect(settingsSource).toContain(':aria-invalid="Boolean(colorErrors[field.key])"')
+    expect(settingsSource).toContain('v-model="colorDraft.signatureLinked"')
+    expect(settingsSource).toContain('role="radiogroup" aria-label="配色预览模式"')
+    expect(settingsSource).toContain('@click="colorPreviewMode = option.id"')
+    expect(settingsSource).toContain(':style="colorPreviewStyle"')
+    expect(settingsSource).toContain('@click="resetThemeColors"')
+    expect(settingsSource).toContain('@click="cancelThemeColorChanges"')
+    expect(settingsSource).toContain('@click="applyThemeColors"')
+    expect(settingsSource).not.toContain('theme.setSkin')
+    expect(settingsSource).not.toContain('KPanel VIP')
+    expect(settingsSource).not.toContain('KPanel 经典')
+  })
+
+  it('keeps the preview mode and interface mode as separate accessible radio groups', () => {
+    expect(settingsSource).toContain('role="radiogroup" aria-label="配色预览模式"')
+    expect(settingsSource).toContain(':tabindex="colorPreviewMode === option.id ? 0 : -1"')
+    expect(settingsSource).toContain(':aria-checked="colorPreviewMode === option.id"')
+    expect(settingsSource).toContain('role="radiogroup" aria-label="明暗模式"')
+    expect(settingsSource).toContain(':tabindex="theme.preference.value === option.id ? 0 : -1"')
+    expect(settingsSource).toContain(':aria-checked="theme.preference.value === option.id"')
+    expect(settingsSource).toContain('@click="theme.setTheme(option.id)"')
+    expect(settingsSource.match(/@keydown="moveRadioFocus"/g)).toHaveLength(3)
+  })
+
+  it('validates and normalizes Hex input before applying a complete color intent', () => {
+    const view = setupView()
+
+    view.updateThemeColor('brand', themeColorInput('#not-a-color'))
+    expect(view.colorErrors.brand).toBe('请输入 3 或 6 位 Hex 颜色，例如 #315d7d')
+    expect(view.hasColorErrors.value).toBe(true)
+    view.applyThemeColors()
+    expect(mocks.themeSetColors).not.toHaveBeenCalled()
+
+    view.updateThemeColor('brand', themeColorInput('#357'))
+    view.updateThemeColor('neutral', themeColorInput('#65717D'))
+    view.colorDraft.signatureLinked = false
+    view.updateThemeColor('signature', themeColorInput('#B28C54'))
+    expect(view.colorErrors.brand).toBe('')
+    expect(view.colorInputs).toMatchObject({ brand: '#357', neutral: '#65717D', signature: '#B28C54' })
+
+    view.applyThemeColors()
+
+    expect(mocks.themeSetColors).toHaveBeenCalledWith({
+      brand: '#335577',
+      neutral: '#65717d',
+      signatureLinked: false,
+      signature: '#b28c54',
+    })
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('配色已应用', '浅色和深色层级已自动生成。')
+    expect(view.colorDraft).toEqual(mocks.themeColors.value)
+    expect(view.colorInputs).toEqual({ brand: '#335577', neutral: '#65717d', signature: '#b28c54' })
+  })
+
+  it('links the preview accent to the theme color and previews light and dark without applying', () => {
+    const view = setupView()
+    view.updateThemeColor('brand', themeColorInput('#315d7d'))
+    view.updateThemeColor('signature', themeColorInput('#b28c54'))
+
+    const linkedAccent = view.colorPreviewTokens.value['--theme-accent']
+    const lightSurface = view.colorPreviewTokens.value['--surface']
+    view.colorDraft.signatureLinked = false
+    const independentAccent = view.colorPreviewTokens.value['--theme-accent']
+    view.colorPreviewMode.value = 'dark'
+
+    expect(independentAccent).not.toBe(linkedAccent)
+    expect(view.colorPreviewTokens.value['--surface']).not.toBe(lightSurface)
+    expect(mocks.themeSetColors).not.toHaveBeenCalled()
+    expect(mocks.themeSetTheme).not.toHaveBeenCalled()
+  })
+
+  it('cancels drafts and restores the default color intent explicitly', () => {
+    mocks.themeColors.value = {
+      brand: '#315d7d',
+      neutral: '#65717d',
+      signatureLinked: false,
+      signature: '#b28c54',
+    }
+    mocks.themeIsCustom.value = true
+    const view = setupView()
+
+    view.updateThemeColor('brand', themeColorInput('#a13f49'))
+    view.updateThemeColor('neutral', themeColorInput('invalid'))
+    view.cancelThemeColorChanges()
+    expect(view.colorDraft).toEqual(mocks.themeColors.value)
+    expect(view.colorInputs).toEqual({ brand: '#315d7d', neutral: '#65717d', signature: '#b28c54' })
+    expect(view.colorErrors).toEqual({ brand: '', neutral: '', signature: '' })
+    expect(view.colorDraftDirty.value).toBe(false)
+
+    view.resetThemeColors()
+    expect(mocks.themeResetColors).toHaveBeenCalledOnce()
+    expect(view.colorDraft).toEqual({
+      brand: '#0c7a60',
+      neutral: '#52645f',
+      signatureLinked: true,
+      signature: '#0c7a60',
+    })
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('已恢复默认配色')
+  })
+})
+
+describe('SettingsView username submission', () => {
   it('validates the new username and requires the current password', async () => {
     const view = setupView()
     view.usernameForm.newUsername = 'bad name'

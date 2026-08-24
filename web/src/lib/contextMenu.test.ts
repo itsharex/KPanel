@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { contextMenuBounds, moveContextMenuFocus, placeContextMenu } from './contextMenu'
+import {
+  contextMenuBounds,
+  contextMenuFocusOrigin,
+  focusFirstContextMenuItem,
+  moveContextMenuFocus,
+  placeContextMenu,
+  showContextMenuKeyboardFocus,
+  showContextMenuPointerFocus,
+} from './contextMenu'
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
   return {
@@ -138,5 +146,37 @@ describe('context menu placement', () => {
     expect(document.activeElement).toBe(last)
     expect(last.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
     expect(event.defaultPrevented).toBe(true)
+  })
+
+  it.each([
+    { name: 'right click', button: 2, detail: 0, expected: 'pointer' },
+    { name: 'mouse trigger click', button: 0, detail: 1, expected: 'pointer' },
+    { name: 'keyboard context menu', button: 0, detail: 0, expected: 'keyboard' },
+  ] as const)('identifies $name focus origin', ({ button, detail, expected }) => {
+    expect(contextMenuFocusOrigin({ button, detail })).toBe(expected)
+  })
+
+  it('keeps pointer-open focus semantic but reveals it for keyboard input', () => {
+    const menu = document.createElement('div')
+    const disabled = document.createElement('button')
+    disabled.disabled = true
+    disabled.setAttribute('role', 'menuitem')
+    const firstEnabled = document.createElement('button')
+    firstEnabled.setAttribute('role', 'menuitem')
+    menu.append(disabled, firstEnabled)
+    document.body.append(menu)
+
+    expect(focusFirstContextMenuItem(menu, 'pointer')).toBe(firstEnabled)
+    expect(document.activeElement).toBe(firstEnabled)
+    expect(menu.dataset.contextMenuFocus).toBe('pointer')
+    expect(firstEnabled.hasAttribute('data-context-menu-active')).toBe(true)
+    expect(firstEnabled.hasAttribute('aria-selected')).toBe(false)
+
+    showContextMenuKeyboardFocus(menu)
+    expect(menu.dataset.contextMenuFocus).toBe('keyboard')
+
+    menu.addEventListener('pointermove', showContextMenuPointerFocus)
+    menu.dispatchEvent(new Event('pointermove'))
+    expect(menu.dataset.contextMenuFocus).toBe('pointer')
   })
 })

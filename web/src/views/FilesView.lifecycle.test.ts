@@ -270,16 +270,23 @@ describe('FilesView context menu', () => {
     })
 
     try {
-      await wrapper.get('.file-row--entry').trigger('contextmenu', { clientX: 1200, clientY: 760 })
+      await wrapper.get('.file-row--entry').trigger('contextmenu', { button: 2, clientX: 1200, clientY: 760 })
       await flushPromises()
 
       const menu = document.body.querySelector<HTMLElement>('.file-context-menu')!
+      const items = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]
       expect(menu).not.toBeNull()
       expect(menu.style.left).toBe('976px')
       expect(menu.style.top).toBe('312px')
       expect(Number.parseFloat(menu.style.top) + 408).toBeLessThanOrEqual(720)
       expect(menu.style.getPropertyValue('--context-menu-max-height')).toBe('632px')
-      expect(document.activeElement).toBe(menu.querySelector('[role="menuitem"]:not(:disabled)'))
+      expect(document.activeElement).toBe(items[0])
+      expect(menu.dataset.contextMenuFocus).toBe('pointer')
+      expect(items[0]?.hasAttribute('aria-selected')).toBe(false)
+
+      menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+      expect(menu.dataset.contextMenuFocus).toBe('keyboard')
+      expect(document.activeElement).toBe(items[1])
     } finally {
       wrapper.unmount()
       desktop.remove()

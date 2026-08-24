@@ -46,7 +46,14 @@ import {
   type DesktopEntry,
 } from '@/lib/desktopEntries'
 import { api, ApiError, type SystemResourceSnapshot } from '@/lib/api'
-import { moveContextMenuFocus, placeContextMenu } from '@/lib/contextMenu'
+import {
+  contextMenuFocusOrigin,
+  focusFirstContextMenuItem,
+  moveContextMenuFocus,
+  placeContextMenu,
+  showContextMenuKeyboardFocus,
+  showContextMenuPointerFocus,
+} from '@/lib/contextMenu'
 import { transferCrossPanelFileBatch } from '@/lib/crossPanelFileTransfer'
 import { downloadFileEntries } from '@/lib/fileDownloads'
 import {
@@ -378,7 +385,6 @@ let iconsResizeObserver: ResizeObserver | undefined
 let desktopTransferController: AbortController | undefined
 let desktopTransferClearTimer: number | undefined
 let dropPulseTimer: number | undefined
-let themeTransitionTimer: number | undefined
 let themeTogglePendingAfterContextMenu = false
 let pendingPositionWrites = 0
 let latestPositionWrite = 0
@@ -916,7 +922,7 @@ async function showContextMenu(
     x: placed.x,
     y: placed.y,
   }
-  menu.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true })
+  focusFirstContextMenuItem(menu, contextMenuFocusOrigin(event))
 }
 
 function onContextMenu(event: MouseEvent): void {
@@ -2059,7 +2065,9 @@ function onGlobalKeyDown(event: KeyboardEvent): void {
 
 function onContextMenuKeyDown(event: KeyboardEvent): void {
   const menu = contextMenuElement.value
-  if (menu) moveContextMenuFocus(menu, event)
+  if (!menu) return
+  showContextMenuKeyboardFocus(menu)
+  moveContextMenuFocus(menu, event)
 }
 
 function onDesktopPointerDown(event: PointerEvent): void {
@@ -2615,16 +2623,7 @@ function onContextMenuAfterLeave(): void {
 }
 
 function toggleDesktopTheme(): void {
-  const root = document.documentElement
-  const duration = motionDuration(420)
-  if (themeTransitionTimer !== undefined) window.clearTimeout(themeTransitionTimer)
-  if (duration > 0) root.classList.add('desktop-theme-transitioning')
   theme.setTheme(theme.resolved.value === 'dark' ? 'light' : 'dark')
-  if (duration === 0) return
-  themeTransitionTimer = window.setTimeout(() => {
-    root.classList.remove('desktop-theme-transitioning')
-    themeTransitionTimer = undefined
-  }, duration + 40)
 }
 
 function waitForWallpaperSwitchDelay(): Promise<void> {
@@ -3082,9 +3081,7 @@ onBeforeUnmount(() => {
   if (bounceTimer !== undefined) window.clearTimeout(bounceTimer)
   if (desktopTransferClearTimer !== undefined) window.clearTimeout(desktopTransferClearTimer)
   if (dropPulseTimer !== undefined) window.clearTimeout(dropPulseTimer)
-  if (themeTransitionTimer !== undefined) window.clearTimeout(themeTransitionTimer)
   themeTogglePendingAfterContextMenu = false
-  document.documentElement.classList.remove('desktop-theme-transitioning')
   if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame)
   if (resizePersistTimer !== undefined) {
     window.clearTimeout(resizePersistTimer)
@@ -3391,12 +3388,13 @@ function onViewportResize(): void {
       <div
         v-if="contextMenu.open"
         ref="contextMenuElement"
-        class="desktop__context-menu"
+        class="desktop__context-menu k-context-menu"
         :class="{ 'desktop__context-menu--entry': menuEntry || menuNavPath || menuSelectionKeys.length > 1 }"
         :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         role="menu"
         @contextmenu.prevent.stop
         @pointerdown.stop
+        @pointermove="showContextMenuPointerFocus"
         @keydown="onContextMenuKeyDown"
       >
         <template v-if="menuSelectionKeys.length > 1">
@@ -3412,7 +3410,7 @@ function onViewportResize(): void {
           <button
             type="button"
             role="menuitem"
-            class="desktop__context-danger"
+            class="desktop__context-danger k-context-menu__item--danger"
             :disabled="!menuRemovableCount || !workspace.available || desktopIcons.saving.value"
             @click="requestBatchRemoveSelected(menuSelectionKeys)"
           >
@@ -3475,7 +3473,7 @@ function onViewportResize(): void {
             v-if="menuEntry.kind === 'app' || menuEntry.kind === 'site'"
             type="button"
             role="menuitem"
-            class="desktop__context-danger"
+            class="desktop__context-danger k-context-menu__item--danger"
             :disabled="!workspace.available || desktopIcons.saving.value"
             @click="requestRemoveEntry"
           >
@@ -3486,7 +3484,7 @@ function onViewportResize(): void {
             v-else
             type="button"
             role="menuitem"
-            class="desktop__context-danger"
+            class="desktop__context-danger k-context-menu__item--danger"
             :disabled="!workspace.available || desktopIcons.saving.value"
             @click="requestDeleteShortcut()"
           >

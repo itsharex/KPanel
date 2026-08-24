@@ -227,10 +227,10 @@ onBeforeUnmount(() => {
   width: 36px;
   height: 36px;
   place-items: center;
-  color: #06271f;
-  background: var(--brand);
+  color: var(--on-brand);
+  background: var(--brand-action);
   border-radius: 10px;
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--brand) 20%, transparent);
+  box-shadow: var(--shadow-button);
 }
 
 .file-share-brand strong {
@@ -368,8 +368,8 @@ onBeforeUnmount(() => {
 
 .file-share-download {
   flex: 1;
-  color: #06271f;
-  background: var(--brand);
+  color: var(--on-brand);
+  background: var(--brand-action);
   border: 1px solid var(--brand);
 }
 

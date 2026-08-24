@@ -312,8 +312,8 @@ onBeforeUnmount(() => {
 }
 
 .file-share-manager__stop:hover:not(:disabled) {
-  color: #fff;
-  background: var(--danger);
+  color: var(--on-danger);
+  background: var(--danger-action);
   border-color: var(--danger);
 }
 

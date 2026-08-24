@@ -2,10 +2,25 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync(new URL('../../styles/desktop.css', import.meta.url), 'utf8')
+const mainStyles = readFileSync(new URL('../../styles/main.css', import.meta.url), 'utf8')
+const themeStyles = readFileSync(new URL('../../styles/themes.css', import.meta.url), 'utf8')
+const themeStoreSource = readFileSync(new URL('../../stores/theme.ts', import.meta.url), 'utf8')
 const windowSource = readFileSync(new URL('./DesktopWindow.vue', import.meta.url), 'utf8')
 const desktopViewSource = readFileSync(new URL('./DesktopView.vue', import.meta.url), 'utf8')
+const filesViewSource = readFileSync(new URL('../../views/FilesView.vue', import.meta.url), 'utf8')
+const dockerViewSource = readFileSync(new URL('../../views/DockerView.vue', import.meta.url), 'utf8')
+const terminalMenuSource = readFileSync(new URL('../terminal/TerminalContextMenu.vue', import.meta.url), 'utf8')
+
+function cssRule(source: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return source.match(new RegExp(`${escaped}\\s*\\{[^}]*\\}`))?.[0] ?? ''
+}
 
 describe('desktop visual and interaction contract', () => {
+  it('keeps semantic desktop copy at or above the 12px product floor', () => {
+    expect(styles).not.toMatch(/font-size:\s*(?:[1-9]|1[01])px/)
+  })
+
   it('keeps desktop chrome, windows, fullscreen views and teleports in a stable layer order', () => {
     expect(styles).toMatch(/\.desktop\s*\{[^}]*z-index:\s*1000;/)
     expect(styles).toContain('z-index: 1200;')
@@ -21,6 +36,26 @@ describe('desktop visual and interaction contract', () => {
     expect(desktopViewSource).toContain("document.addEventListener('scroll', closeContextMenuOnScroll, true)")
     expect(desktopViewSource).toContain("window.visualViewport?.addEventListener?.('resize', closeContextMenuOnViewportChange)")
     expect(desktopViewSource).toMatch(/function onViewportResize\(\): void \{\s*closeContextMenu\(false\)/)
+  })
+
+  it('uses one pointer-aware menu state style without a permanent scrollbar gutter', () => {
+    const menus = [
+      { source: styles, selector: '.desktop__context-menu', className: 'desktop__context-menu k-context-menu', template: desktopViewSource },
+      { source: filesViewSource, selector: '.file-context-menu', className: 'file-context-menu k-context-menu', template: filesViewSource },
+      { source: dockerViewSource, selector: '.docker-context-menu', className: 'docker-context-menu k-context-menu', template: dockerViewSource },
+      { source: terminalMenuSource, selector: '.terminal-context-menu', className: 'terminal-context-menu k-context-menu', template: terminalMenuSource },
+    ]
+
+    expect(mainStyles).toMatch(/\.k-context-menu\s*\{[^}]*scrollbar-gutter:\s*auto;/)
+    expect(mainStyles).toMatch(/\.k-context-menu\[data-context-menu-focus='keyboard'\] > \[role='menuitem'\]\[data-context-menu-active\]\s*\{[^}]*box-shadow:\s*inset 0 0 0 2px var\(--brand\);/)
+    expect(mainStyles).toMatch(/\.k-context-menu > \[role='menuitem'\]:hover:not\(:disabled\)\s*\{[^}]*background:\s*var\(--interaction-hover\);/)
+    expect(mainStyles).toMatch(/\.k-context-menu > \.k-context-menu__item--danger:active:not\(:disabled\)\s*\{[^}]*var\(--danger\)/)
+    for (const menu of menus) {
+      expect(menu.template).toContain(`class="${menu.className}"`)
+      expect(menu.template).toContain('@pointermove="showContextMenuPointerFocus"')
+      expect(cssRule(menu.source, menu.selector)).toContain('overflow-y: auto;')
+      expect(cssRule(menu.source, menu.selector)).not.toContain('scrollbar-gutter: stable;')
+    }
   })
 
   it('removes the root scrollbar gutter while desktop mode owns the viewport', () => {
@@ -103,17 +138,24 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/\.modal-panel--compact:has\(\.desktop__external-confirm\) \.modal-panel__header h2\s*\{[^}]*margin-bottom:\s*0;/)
     expect(styles).toMatch(/\.desktop__icon-label\s*\{[^}]*height:\s*20px;[^}]*padding:\s*0 6px;[^}]*font-size:\s*12px;[^}]*line-height:\s*18px;/)
     expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon-label\s*\{[^}]*text-shadow:\s*none;/)
-    expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon--selected \.desktop__icon-label\s*\{[^}]*color:\s*#17312c;[^}]*background:\s*color-mix\(in srgb, var\(--brand\) 38%, #fff\);/)
+    expect(styles).toMatch(/:root:not\(\[data-theme='dark'\]\) \.desktop__icon--selected \.desktop__icon-label\s*\{[^}]*color:\s*var\(--on-brand\);[^}]*background:\s*var\(--brand-action\);/)
   })
 
   it('keeps file and directory shortcuts free of a redundant link badge', () => {
     expect(styles).not.toContain('desktop__shortcut-link-badge')
   })
 
-  it('preserves wallpaper depth in light mode without changing the dark treatment', () => {
-    expect(styles).toContain('linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%))')
-    expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__wallpaper::after\s*\{/)
-    expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__aurora\s*\{[^}]*opacity:\s*\.2;/)
+  it('preserves wallpaper depth through the theme contract without changing the dark treatment', () => {
+    expect(styles).toContain('background: var(--desktop-wallpaper-veil-light)')
+    expect(styles).toContain('background: var(--desktop-wallpaper-veil-dark)')
+    expect(styles).toContain('background: var(--desktop-wallpaper-vignette)')
+    expect(themeStyles).toContain('linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%))')
+    expect(themeStyles).toContain('linear-gradient(145deg, rgb(0 12 15 / 14%), rgb(1 10 14 / 30%))')
+    expect(styles).toMatch(/:root\[data-theme='dark'\] \.desktop__wallpaper-veil::after\s*\{[^}]*opacity:\s*1;/)
+    expect(styles).toMatch(/\.desktop__aurora\s*\{[^}]*opacity:\s*var\(--desktop-aurora-opacity\);/)
+    expect(styles).toContain('background: var(--desktop-aurora-one)')
+    expect(styles).toContain('background: var(--desktop-aurora-two)')
+    expect(themeStyles).toContain('--desktop-aurora-opacity: .2;')
   })
 
   it('crossfades wallpaper layers and respects reduced motion', () => {
@@ -123,8 +165,12 @@ describe('desktop visual and interaction contract', () => {
   })
 
   it('crossfades full desktop theme changes with a motion-safe fallback', () => {
-    expect(desktopViewSource).toContain("root.classList.add('desktop-theme-transitioning')")
-    expect(desktopViewSource).toContain('const duration = motionDuration(420)')
+    expect(themeStoreSource).toContain("root.classList.add('desktop-theme-transitioning')")
+    expect(themeStoreSource).toContain('const THEME_TRANSITION_MS = 460')
+    expect(themeStoreSource).toContain('applyTheme(true)')
+    expect(desktopViewSource).toMatch(/function toggleDesktopTheme\(\): void \{\s*theme\.setTheme\(/)
+    expect(desktopViewSource).not.toContain("classList.add('desktop-theme-transitioning')")
+    expect(desktopViewSource).not.toContain('motionDuration(420)')
     expect(styles).toMatch(/:root\.desktop-theme-transitioning \.desktop[\s\S]*?transition-duration:\s*\.42s;[\s\S]*?cubic-bezier\(\.22, 1, \.36, 1\);/)
     expect(styles).toMatch(/\.desktop__wallpaper-veil\s*\{[^}]*z-index:\s*2;/)
     expect(styles).toMatch(/\.desktop__wallpaper-veil::before,\s*\.desktop__wallpaper-veil::after\s*\{[^}]*transition:\s*opacity \.42s cubic-bezier\(\.22, 1, \.36, 1\);/)
@@ -150,6 +196,10 @@ describe('desktop visual and interaction contract', () => {
     expect(styles).toMatch(/\.desktop-service-status__metric-summary small\s*\{[^}]*font-size:\s*13px;/)
     expect(styles).toMatch(/\.desktop-service-status__metric-summary small\s*\{[^}]*padding-left:\s*8px;[^}]*border-left:\s*1px solid/)
     expect(styles).toMatch(/\.desktop-service-status__metric-track\s*\{[^}]*align-self:\s*end;/)
+    expect(styles).toMatch(/\.desktop-service-status__dot--healthy\s*\{[^}]*background:\s*var\(--success\);/)
+    expect(styles).toMatch(/\.desktop-service-status__hero-icon--attention\s*\{[^}]*color:\s*var\(--amber\);[^}]*background:\s*var\(--amber-soft\);/)
+    expect(styles).toMatch(/\.desktop-service-status__metric-icon--blue\s*\{[^}]*color:\s*var\(--blue\);[^}]*background:\s*var\(--blue-soft\);/)
+    expect(styles).toMatch(/\.desktop-service-status__metric-icon--violet\s*\{[^}]*color:\s*var\(--violet\);[^}]*background:\s*var\(--violet-soft\);/)
   })
 
   it('does not reserve a light outer scrollbar gutter around script terminals', () => {

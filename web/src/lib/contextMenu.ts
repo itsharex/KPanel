@@ -16,7 +16,19 @@ export interface ContextMenuPlacement extends ContextMenuPoint {
   maxHeight: number
 }
 
+export type ContextMenuFocusOrigin = 'pointer' | 'keyboard'
+
 const fullscreenBoundarySelector = '.terminal-stage.is-fullscreen, .interactive-terminal.is-fullscreen'
+const enabledMenuItemSelector = '[role="menuitem"]:not(:disabled)'
+const activeMenuItemAttribute = 'data-context-menu-active'
+
+function focusContextMenuItem(menu: HTMLElement, target: HTMLButtonElement): void {
+  menu.querySelectorAll<HTMLElement>(`[${activeMenuItemAttribute}]`).forEach((item) => {
+    item.removeAttribute(activeMenuItemAttribute)
+  })
+  target.setAttribute(activeMenuItemAttribute, '')
+  target.focus({ preventScroll: true })
+}
 
 function elementBounds(element: Element | null | undefined): ContextMenuBounds | undefined {
   if (!element) return undefined
@@ -103,8 +115,34 @@ export function placeContextMenu(
   }
 }
 
+export function contextMenuFocusOrigin(
+  event: Pick<MouseEvent, 'button' | 'detail'>,
+): ContextMenuFocusOrigin {
+  return event.button === 2 || event.detail > 0 ? 'pointer' : 'keyboard'
+}
+
+export function focusFirstContextMenuItem(
+  menu: HTMLElement,
+  origin: ContextMenuFocusOrigin,
+): HTMLButtonElement | undefined {
+  menu.dataset.contextMenuFocus = origin
+  const target = menu.querySelector<HTMLButtonElement>(enabledMenuItemSelector) || undefined
+  if (target) focusContextMenuItem(menu, target)
+  return target
+}
+
+export function showContextMenuKeyboardFocus(menu: HTMLElement): void {
+  menu.dataset.contextMenuFocus = 'keyboard'
+}
+
+export function showContextMenuPointerFocus(event: Event): void {
+  const menu = event.currentTarget
+  if (!(menu instanceof HTMLElement)) return
+  menu.dataset.contextMenuFocus = 'pointer'
+}
+
 export function moveContextMenuFocus(menu: HTMLElement, event: KeyboardEvent): boolean {
-  const items = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]
+  const items = [...menu.querySelectorAll<HTMLButtonElement>(enabledMenuItemSelector)]
   if (!items.length) return false
   const current = document.activeElement instanceof HTMLButtonElement
     ? items.indexOf(document.activeElement)
@@ -117,7 +155,7 @@ export function moveContextMenuFocus(menu: HTMLElement, event: KeyboardEvent): b
   else return false
 
   event.preventDefault()
-  target?.focus({ preventScroll: true })
+  if (target) focusContextMenuItem(menu, target)
   target?.scrollIntoView?.({ block: 'nearest' })
   return true
 }

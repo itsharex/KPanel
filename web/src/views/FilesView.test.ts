@@ -1251,7 +1251,7 @@ describe('FilesView large icon layout', () => {
   it('keeps the desktop shortcut action behind permissions without wrapping batch labels', () => {
     const source = readFileSync(new URL('./FilesView.vue', import.meta.url), 'utf8')
     const batchToolbar = source.match(/aria-label="批量文件操作"[\s\S]*?<\/Transition>/)?.[0] || ''
-    const contextMenu = source.match(/class="file-context-menu"[\s\S]*?<ModalDialog/)?.[0] || ''
+    const contextMenu = source.match(/class="file-context-menu k-context-menu"[\s\S]*?<ModalDialog/)?.[0] || ''
 
     expect(batchToolbar.indexOf("openDialog('chmod')")).toBeGreaterThan(-1)
     expect(batchToolbar).toContain('v-if="selectedEntriesDownloadable"')
@@ -1276,7 +1276,7 @@ describe('FilesView large icon layout', () => {
     expect(source).toContain("window.visualViewport?.addEventListener?.('resize', closeContextMenuOnViewportChange)")
     expect(source).toContain('aria-haspopup="menu"')
     expect(source).toContain(':aria-expanded="contextMenu?.entry?.path === entry.path"')
-    expect(source).toContain("menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus")
+    expect(source).toContain('focusFirstContextMenuItem(menu, focusOrigin)')
     expect(batchToolbar).not.toContain('openFileShare')
     expect(source).toContain('<FileShareDialog v-if="shareEntry" :entry="shareEntry" @close="closeFileShare" />')
     expect(source).toContain('<FileShareManagerDialog v-if="shareManagerOpen" @close="closeShareManager" />')

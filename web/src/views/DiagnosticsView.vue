@@ -1612,7 +1612,7 @@ onBeforeUnmount(() => {
 }
 
 .diagnostic-command-row:hover {
-  background: var(--surface);
+  background: var(--interaction-hover-surface);
 }
 
 .diagnostic-command-row.is-active {

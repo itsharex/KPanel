@@ -568,7 +568,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--terminal-accent);
   border-radius: 9px;
   padding: 8px 16px;
-  color: #fff;
+  color: var(--on-brand, #05251c);
   background: var(--terminal-accent);
   font-weight: 700;
   cursor: pointer;

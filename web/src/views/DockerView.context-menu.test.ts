@@ -132,16 +132,29 @@ describe('Docker context menu', () => {
     })
 
     const opener = wrapper.get<HTMLButtonElement>('.docker-context-trigger')
-    await opener.trigger('click', { clientX: 1200, clientY: 760 })
+    opener.element.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 1200,
+      clientY: 760,
+      detail: 1,
+    }))
     await flushPromises()
 
     const menu = document.body.querySelector<HTMLElement>('.docker-context-menu')!
+    const items = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]
     expect(menu).not.toBeNull()
     expect(menu.style.left).toBe('954px')
     expect(menu.style.top).toBe('290px')
     expect(Number.parseFloat(menu.style.top) + 430).toBeLessThanOrEqual(720)
     expect(menu.style.getPropertyValue('--context-menu-max-height')).toBe('632px')
-    expect(document.activeElement).toBe(menu.querySelector('[role="menuitem"]:not(:disabled)'))
+    expect(document.activeElement).toBe(items[0])
+    expect(menu.dataset.contextMenuFocus).toBe('pointer')
+    expect(items[0]?.hasAttribute('aria-selected')).toBe(false)
+
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    expect(menu.dataset.contextMenuFocus).toBe('keyboard')
+    expect(document.activeElement).toBe(items[1])
 
     menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     await flushPromises()

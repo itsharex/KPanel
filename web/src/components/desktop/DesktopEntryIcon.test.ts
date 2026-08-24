@@ -131,6 +131,7 @@ describe('DesktopEntryIcon touch interaction', () => {
     await wrapper.trigger('contextmenu')
 
     expect(wrapper.emitted('context')).toHaveLength(1)
+    expect((wrapper.emitted('context')?.[0]?.[0] as MouseEvent).button).toBe(2)
     expect(wrapper.emitted('open')).toBeUndefined()
     wrapper.unmount()
   })
@@ -152,10 +153,14 @@ describe('DesktopEntryIcon touch interaction', () => {
     cancelled.unmount()
   })
 
-  it('supports the keyboard context-menu key', async () => {
+  it.each([
+    { key: 'ContextMenu' },
+    { key: 'F10', shiftKey: true },
+  ])('supports the $key keyboard context-menu shortcut', async (shortcut) => {
     const wrapper = mountIcon()
-    await wrapper.trigger('keydown', { key: 'ContextMenu' })
+    await wrapper.trigger('keydown', shortcut)
     expect(wrapper.emitted('context')).toHaveLength(1)
+    expect((wrapper.emitted('context')?.[0]?.[0] as MouseEvent).button).toBe(0)
     wrapper.unmount()
   })
 })

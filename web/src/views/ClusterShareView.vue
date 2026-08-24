@@ -361,10 +361,10 @@ onBeforeUnmount(() => {
   width: 34px;
   height: 34px;
   place-items: center;
-  color: #06271f;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 74%, white), var(--brand));
+  color: var(--on-brand);
+  background: var(--brand-action);
   border-radius: 10px;
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--brand) 22%, transparent);
+  box-shadow: var(--shadow-button);
 }
 
 .share-refresh,

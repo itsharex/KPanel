@@ -1,0 +1,190 @@
+/*
+ * KPanel theme contract
+ * --------------------
+ * Components consume semantic tokens only. These light and dark blocks are
+ * the safe defaults; user color intent is applied through the same allowlisted
+ * tokens at runtime.
+ */
+
+:root {
+  /* Compatibility aliases keep older feature CSS on the same semantic source. */
+  --primary: var(--brand);
+  --accent: var(--brand);
+  --accent-contrast: var(--on-brand);
+  --brand-action: var(--brand);
+  --danger-action: var(--danger);
+  --surface-muted: var(--surface-subtle);
+  --surface-strong: var(--surface-raised);
+  --text-primary: var(--text);
+  --text-secondary: var(--text-soft);
+  --text-tertiary: var(--muted);
+  --text-muted: var(--muted);
+  --text-subtle: var(--muted);
+  --line: var(--border);
+  --line-soft: var(--border);
+  --border-subtle: var(--border);
+  --warning: var(--amber);
+  --warning-soft: var(--amber-soft);
+  --shadow-xs: var(--shadow-sm);
+  --shadow-soft: var(--shadow-sm);
+  --shadow: var(--shadow-md);
+  --radius-md: var(--radius);
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  /* Shared interaction states keep ordinary hover feedback tied to the user's
+     brand color. Status, danger and terminal colors stay independently owned. */
+  --interaction-hover: color-mix(in srgb, var(--brand) 8%, transparent);
+  --interaction-hover-surface: color-mix(in srgb, var(--brand) 7%, var(--surface));
+  --interaction-hover-subtle: color-mix(in srgb, var(--brand) 7%, var(--surface-subtle));
+  --interaction-pressed: color-mix(in srgb, var(--brand) 13%, transparent);
+  /* Restrained depth layers. These remain composed from runtime semantic
+     colors so custom palettes inherit the same hierarchy without presets. */
+  --page-ambient-background:
+    radial-gradient(circle at 88% -8%, color-mix(in srgb, var(--brand-soft) 52%, transparent), transparent 34rem),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 92%, var(--surface) 8%), var(--bg) 30rem);
+  --surface-gradient:
+    linear-gradient(
+      155deg,
+      color-mix(in srgb, var(--surface-raised) 92%, var(--brand-soft) 8%) 0%,
+      var(--surface) 44%,
+      color-mix(in srgb, var(--surface) 97%, var(--bg) 3%) 100%
+    );
+  --surface-gradient-muted:
+    linear-gradient(110deg, color-mix(in srgb, var(--surface-subtle) 91%, var(--brand-soft) 9%), var(--surface-subtle) 68%);
+  --auth-brand-background:
+    radial-gradient(circle at 84% 15%, color-mix(in srgb, var(--sidebar-accent) 16%, transparent), transparent 29%),
+    radial-gradient(circle at 12% 82%, color-mix(in srgb, var(--brand) 11%, transparent), transparent 34%),
+    linear-gradient(145deg, color-mix(in srgb, var(--sidebar) 86%, var(--theme-accent) 14%), var(--sidebar) 72%);
+  --auth-form-background:
+    radial-gradient(circle at 10% 0%, color-mix(in srgb, var(--brand-soft) 46%, transparent), transparent 31rem),
+    var(--surface);
+}
+
+:root {
+  color: #172320;
+  background: #f4f7f6;
+  --bg: #f4f7f6;
+  --surface: #ffffff;
+  --surface-subtle: #f6f9f8;
+  --surface-raised: #ffffff;
+  --text: #172320;
+  --text-soft: #3e4d49;
+  --muted: #60716b;
+  --border: #dce6e2;
+  --border-strong: #c7d6d1;
+  --control-border: #81958e;
+  --brand: #0c7a60;
+  --brand-strong: #075f49;
+  --brand-soft: #e5f4ef;
+  --brand-muted: #c3e7dc;
+  --theme-accent: #0c7a60;
+  --on-brand: #ffffff;
+  --success: #075f49;
+  --success-soft: #e5f4ef;
+  --blue: #2f66aa;
+  --blue-soft: #e9f1fa;
+  --violet: #6d5bb3;
+  --violet-soft: #f0edf9;
+  --amber: #8d520b;
+  --amber-soft: #fff2dc;
+  --danger: #a93636;
+  --danger-soft: #fbeaea;
+  --on-danger: #ffffff;
+  --neutral-soft: #edf2f0;
+  --sidebar: #13241f;
+  --sidebar-text: #f3faf7;
+  --sidebar-muted: #9ab0a9;
+  --sidebar-border: rgb(255 255 255 / 9%);
+  --sidebar-hover: color-mix(in srgb, var(--sidebar) 88%, var(--brand) 12%);
+  --sidebar-active: rgb(59 188 151 / 14%);
+  --sidebar-accent: #45c7a1;
+  --desktop-glass: rgb(246 251 250 / 72%);
+  --desktop-glass-strong: rgb(250 253 252 / 86%);
+  --desktop-glass-border: rgb(255 255 255 / 70%);
+  --desktop-label: #17312c;
+  --desktop-shadow: rgb(12 34 30 / 20%);
+  --desktop-wallpaper-base: linear-gradient(145deg, #b9d4d4, #edf5f3);
+  --desktop-wallpaper-veil-light: linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%));
+  --desktop-wallpaper-veil-dark: linear-gradient(145deg, rgb(0 12 15 / 14%), rgb(1 10 14 / 30%));
+  --desktop-wallpaper-vignette:
+    linear-gradient(90deg, rgb(3 14 17 / 6%), transparent 30%, transparent 80%, rgb(3 14 17 / 5%)),
+    radial-gradient(circle at 50% 40%, transparent 42%, rgb(2 9 12 / 8%) 100%);
+  --desktop-aurora-one: radial-gradient(circle, rgb(75 224 195 / 30%), transparent 67%);
+  --desktop-aurora-two: radial-gradient(circle, rgb(67 169 230 / 24%), transparent 68%);
+  --desktop-aurora-opacity: .12;
+  --shadow-sm: 0 1px 2px rgb(20 44 38 / 5%), 0 7px 20px rgb(20 44 38 / 4%);
+  --shadow-md: 0 18px 46px rgb(18 39 34 / 14%);
+  --shadow-button: 0 1px 2px rgb(10 70 54 / 16%);
+  --shadow-feature: 0 2px 8px rgb(20 44 38 / 7%);
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --scrollbar-track: #edf3f1;
+  --scrollbar-thumb: #b5c8c2;
+  --scrollbar-thumb-hover: #86a69d;
+  --scrollbar-thumb-active: #0c7a60;
+}
+
+:root[data-theme='dark'] {
+  color: #e7efec;
+  background: #0b1412;
+  --bg: #0b1412;
+  --surface: #111d1a;
+  --surface-subtle: #16231f;
+  --surface-raised: #192925;
+  --text: #e7efec;
+  --text-soft: #b9c8c3;
+  --muted: #91a39d;
+  --border: #253732;
+  --border-strong: #354b44;
+  --control-border: #657a73;
+  --brand: #3bc4a0;
+  --brand-strong: #66d3b5;
+  --brand-soft: #153a31;
+  --brand-muted: #205244;
+  --theme-accent: #3bc4a0;
+  --on-brand: #10231f;
+  --success: #66d3b5;
+  --success-soft: #153a31;
+  --blue: #74a7e5;
+  --blue-soft: #1b3047;
+  --violet: #a897df;
+  --violet-soft: #2a2541;
+  --amber: #e6ae5d;
+  --amber-soft: #3a2b18;
+  --danger: #e77b7b;
+  --danger-soft: #3b2324;
+  --on-danger: #241516;
+  --neutral-soft: #1d2b27;
+  --sidebar: #08110f;
+  --sidebar-text: #f2faf7;
+  --sidebar-muted: #82978f;
+  --sidebar-border: rgb(255 255 255 / 8%);
+  --sidebar-hover: color-mix(in srgb, var(--sidebar) 88%, var(--brand) 12%);
+  --sidebar-active: rgb(59 196 160 / 14%);
+  --sidebar-accent: #4bc9a7;
+  --desktop-glass: rgb(12 24 27 / 64%);
+  --desktop-glass-strong: rgb(14 27 29 / 84%);
+  --desktop-glass-border: rgb(255 255 255 / 13%);
+  --desktop-label: #f5fbfa;
+  --desktop-shadow: rgb(0 0 0 / 42%);
+  --desktop-wallpaper-base: linear-gradient(145deg, #06151a, #0a2026);
+  --desktop-wallpaper-veil-light: linear-gradient(145deg, rgb(226 242 239 / 8%), rgb(190 218 224 / 3%));
+  --desktop-wallpaper-veil-dark: linear-gradient(145deg, rgb(0 12 15 / 14%), rgb(1 10 14 / 30%));
+  --desktop-wallpaper-vignette:
+    linear-gradient(90deg, rgb(3 14 17 / 12%), transparent 28%, transparent 78%, rgb(3 14 17 / 8%)),
+    radial-gradient(circle at 50% 40%, transparent 36%, rgb(2 9 12 / 12%) 100%);
+  --desktop-aurora-one: radial-gradient(circle, rgb(75 224 195 / 30%), transparent 67%);
+  --desktop-aurora-two: radial-gradient(circle, rgb(67 169 230 / 24%), transparent 68%);
+  --desktop-aurora-opacity: .2;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 20%), 0 8px 22px rgb(0 0 0 / 13%);
+  --shadow-md: 0 20px 52px rgb(0 0 0 / 36%);
+  --shadow-button: 0 1px 2px rgb(0 0 0 / 24%);
+  --shadow-feature: 0 3px 10px rgb(0 0 0 / 16%);
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --scrollbar-track: #0c1714;
+  --scrollbar-thumb: #344a43;
+  --scrollbar-thumb-hover: #526c63;
+  --scrollbar-thumb-active: #3bc4a0;
+}
