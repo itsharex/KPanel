@@ -32,6 +32,8 @@ const deploymentEditorSource = readFileSync(new URL('../components/docker/Docker
 
 interface DockerBindings {
   stats: Ref<DockerContainerStats | undefined>
+  isContainerGroupCollapsed: (key: string) => boolean
+  toggleContainerGroup: (key: string) => void
   startJobPolling: (job: DockerMaintenanceJob) => void
   restoreBackgroundJob: () => Promise<void>
   refreshJob: (id: string) => Promise<void>
@@ -208,6 +210,56 @@ describe('Docker resource toolbar layout', () => {
     expect(dockerSource).toMatch(/\.docker-group__summary > \.button\s*\{[^}]*position:\s*sticky;[^}]*right:\s*12px;/)
     expect(dockerSource).toMatch(/@media \(max-width: 720px\)[\s\S]*?\.docker-group__summary\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto;/)
     expect(dockerSource).toMatch(/@media \(max-width: 720px\)[\s\S]*?\.docker-group__summary \.button\s*\{[^}]*grid-column:\s*auto;[^}]*width:\s*auto;/)
+  })
+})
+
+describe('Docker container group collapse preference', () => {
+  const storageKey = 'kpanel:docker:collapsed-container-groups'
+
+  it('restores the collapsed groups when the Docker view is reopened', () => {
+    const firstView = setupView(ref(true))
+
+    firstView.toggleContainerGroup('compose:web')
+
+    expect(window.localStorage.getItem(storageKey)).toBe('["compose:web"]')
+    expect(setupView(ref(true)).isContainerGroupCollapsed('compose:web')).toBe(true)
+  })
+
+  it('persists expanding a previously collapsed group', () => {
+    window.localStorage.setItem(storageKey, '["compose:web","compose:api"]')
+    const view = setupView(ref(true))
+
+    view.toggleContainerGroup('compose:web')
+
+    expect(window.localStorage.getItem(storageKey)).toBe('["compose:api"]')
+  })
+
+  it('ignores damaged or unrelated stored values', () => {
+    window.localStorage.setItem(storageKey, '["compose:web",42,"other:value"]')
+
+    const view = setupView(ref(true))
+
+    expect(view.isContainerGroupCollapsed('compose:web')).toBe(true)
+    expect(view.isContainerGroupCollapsed('other:value')).toBe(false)
+
+    window.localStorage.setItem(storageKey, '{damaged')
+    expect(setupView(ref(true)).isContainerGroupCollapsed('compose:web')).toBe(false)
+  })
+
+  it('keeps collapsing available when browser storage is blocked', () => {
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: () => { throw new Error('blocked') },
+        setItem: () => { throw new Error('blocked') },
+        removeItem: () => { throw new Error('blocked') },
+      },
+      setTimeout: vi.fn(() => 1),
+      clearTimeout: vi.fn(),
+    })
+    const view = setupView(ref(true))
+
+    expect(() => view.toggleContainerGroup('compose:web')).not.toThrow()
+    expect(view.isContainerGroupCollapsed('compose:web')).toBe(true)
   })
 })
 

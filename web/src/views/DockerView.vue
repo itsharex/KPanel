@@ -134,7 +134,36 @@ const pendingAction = ref<ContainerAction>()
 const actionRunning = ref(false)
 const contextMenu = ref<DockerContextMenu>()
 const contextMenuElement = ref<HTMLElement>()
-const collapsedContainerGroups = ref(new Set<string>())
+const collapsedContainerGroupsStorageKey = 'kpanel:docker:collapsed-container-groups'
+const collapsedContainerGroupsStorageLimit = 256
+
+function readCollapsedContainerGroups(): Set<string> {
+  try {
+    const stored: unknown = JSON.parse(window.localStorage.getItem(collapsedContainerGroupsStorageKey) || '[]')
+    if (!Array.isArray(stored)) return new Set()
+    const keys = stored.filter((item): item is string =>
+      typeof item === 'string' &&
+      item.length <= 256 &&
+      (item === 'standalone' || item.startsWith('compose:')),
+    )
+    return new Set(keys.slice(-collapsedContainerGroupsStorageLimit))
+  } catch {
+    return new Set()
+  }
+}
+
+function writeCollapsedContainerGroups(groups: Set<string>): void {
+  try {
+    window.localStorage.setItem(
+      collapsedContainerGroupsStorageKey,
+      JSON.stringify([...groups].slice(-collapsedContainerGroupsStorageLimit)),
+    )
+  } catch {
+    // Storage can be unavailable in hardened browser contexts; in-memory collapsing still works.
+  }
+}
+
+const collapsedContainerGroups = ref(readCollapsedContainerGroups())
 let contextMenuOpener: HTMLElement | null = null
 
 const backups = ref<DockerBackup[]>([])
@@ -350,8 +379,15 @@ function isContainerGroupCollapsed(key: string): boolean {
 function toggleContainerGroup(key: string): void {
   const next = new Set(collapsedContainerGroups.value)
   if (next.has(key)) next.delete(key)
-  else next.add(key)
+  else {
+    next.add(key)
+    if (next.size > collapsedContainerGroupsStorageLimit) {
+      const oldestKey = next.values().next().value
+      if (oldestKey) next.delete(oldestKey)
+    }
+  }
   collapsedContainerGroups.value = next
+  writeCollapsedContainerGroups(next)
 }
 
 function containerGroupStyle(group: DockerContainerGroup): Record<string, string> {
