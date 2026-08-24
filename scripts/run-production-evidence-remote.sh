@@ -156,6 +156,13 @@ for path in sorted(root.rglob("*.db")):
 PY
 }
 
+production_ready() {
+  curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null &&
+    systemctl is-active --quiet kejilion-agent &&
+    [ "$(docker inspect "$container" --format '{{.State.Status}}')" = running ] &&
+    [ "$(docker inspect "$container" --format '{{.State.Health.Status}}')" = healthy ]
+}
+
 case "$PHASE" in
   preflight)
     for path in "$compose" "$env_file" "$data_dir" "$service_unit" /home/docker/kpanel/bin/kejilion.sh; do
@@ -196,7 +203,7 @@ case "$PHASE" in
     restore_services
     trap finish EXIT
     for _ in $(seq 1 30); do
-      if curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null && systemctl is-active --quiet kejilion-agent; then break; fi
+      if production_ready; then break; fi
       sleep 1
     done
     snapshot "$evidence/snapshot"
