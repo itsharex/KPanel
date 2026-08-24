@@ -1997,31 +1997,6 @@ body.desktop-mode-open::-webkit-scrollbar {
   border-radius: 16px;
 }
 
-.desktop__shortcut-link-badge {
-  position: absolute;
-  z-index: 4;
-  right: -1px;
-  bottom: 0;
-  display: grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  color: #ecfeff;
-  background: linear-gradient(145deg, #2dd4bf, #0f766e);
-  border: 2px solid rgb(255 255 255 / 88%);
-  border-radius: 7px;
-  box-shadow: 0 2px 5px rgb(15 23 42 / 28%);
-}
-
-.desktop__shortcut-link-badge svg {
-  filter: none;
-}
-
-.desktop__shortcut-artwork--directory .desktop__shortcut-link-badge {
-  right: 5px;
-  bottom: 7px;
-}
-
 .desktop__icon-glyph--dynamic {
   border-color: rgb(255 255 255 / 28%);
   box-shadow:
@@ -3194,20 +3169,6 @@ body.desktop-mode-open::-webkit-scrollbar {
 .desktop-icon-manager__glyph .desktop__shortcut-artwork--directory {
   width: 38px;
   height: 38px;
-}
-
-.desktop-icon-manager__glyph .desktop__shortcut-artwork--directory .desktop__shortcut-link-badge {
-  right: 2px;
-  bottom: 2px;
-  width: 14px;
-  height: 14px;
-  border-width: 1px;
-  border-radius: 5px;
-}
-
-.desktop-icon-manager__glyph .desktop__shortcut-artwork--directory .desktop__shortcut-link-badge svg {
-  width: 9px;
-  height: 9px;
 }
 
 .desktop-icon-manager__glyph:has(.desktop__shortcut-artwork--file) {

@@ -83,7 +83,7 @@ describe('DesktopEntryIcon touch interaction', () => {
 
     expect(wrapper.get('.desktop__shortcut-artwork').classes())
       .toContain(`desktop__shortcut-artwork--${launch}`)
-    expect(wrapper.find('.desktop__shortcut-link-badge').exists()).toBe(true)
+    expect(wrapper.find('.desktop__shortcut-link-badge').exists()).toBe(false)
     expect(wrapper.find('.desktop__shortcut-artwork > svg').exists()).toBe(launch === 'file')
     expect(wrapper.find('.desktop__shortcut-directory-image').exists()).toBe(launch === 'directory')
     if (launch === 'directory') {

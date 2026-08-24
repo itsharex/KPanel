@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { Link2 } from '@lucide/vue'
 
 const DIRECTORY_ARTWORK_URL = '/desktop-icons/folder-open-shortcut-kpanel-flat-v1.webp'
 
@@ -31,8 +30,5 @@ defineProps<{
       :size="25"
       :stroke-width="1.8"
     />
-    <span class="desktop__shortcut-link-badge">
-      <Link2 :size="11" :stroke-width="2.5" />
-    </span>
   </span>
 </template>

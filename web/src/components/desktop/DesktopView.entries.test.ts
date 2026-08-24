@@ -613,7 +613,7 @@ describe('DesktopView dynamic entries', () => {
     const directoryArtwork = wrapper.get(
       `[data-icon-key="shortcut:${'d'.repeat(32)}"] .desktop__shortcut-artwork--directory`,
     )
-    expect(directoryArtwork.find('.desktop__shortcut-link-badge').exists()).toBe(true)
+    expect(directoryArtwork.find('.desktop__shortcut-link-badge').exists()).toBe(false)
     expect(directoryArtwork.find(':scope > svg').exists()).toBe(false)
     expect(directoryArtwork.get('.desktop__shortcut-directory-image').attributes('src'))
       .toBe('/desktop-icons/folder-open-shortcut-kpanel-flat-v1.webp')
