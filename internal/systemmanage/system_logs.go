@@ -577,5 +577,5 @@ func validSystemLogCleanupRequest(input contract.SystemActionRequest) bool {
 		(input.MaintenancePolicy == "retain-7d" || input.MaintenancePolicy == "retain-3d" || input.MaintenancePolicy == "max-500m") &&
 		input.Hostname == "" && input.Port == 0 && len(input.Servers) == 0 && input.Timezone == "" &&
 		input.SwapSizeMiB == 0 && input.MirrorPreset == "" && input.Preference == "" && input.Profile == "" &&
-		input.Confirmation == "" && input.Enabled == nil && input.PID == 0 && input.StartTimeTicks == 0 && input.Signal == ""
+		len(input.Confirmation) == 0 && input.Enabled == nil && input.PID == 0 && input.StartTimeTicks == 0 && input.Signal == ""
 }

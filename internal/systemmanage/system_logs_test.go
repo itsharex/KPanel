@@ -488,6 +488,11 @@ func TestValidSystemLogCleanupRequestRejectsUnrelatedFields(t *testing.T) {
 		t.Fatal("unrelated system action field was accepted")
 	}
 	if validSystemLogCleanupRequest(contract.SystemActionRequest{
+		Action: "log-cleanup", MaintenancePolicy: "retain-7d", Confirmation: "anything",
+	}) {
+		t.Fatal("confirmation text was accepted as log cleanup input")
+	}
+	if validSystemLogCleanupRequest(contract.SystemActionRequest{
 		Action: "log-cleanup", MaintenancePolicy: "forever",
 	}) {
 		t.Fatal("unknown log cleanup policy was accepted")
