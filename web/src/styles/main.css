@@ -44,6 +44,19 @@
   --terminal-ansi-bright-white: #f0f2f1;
 }
 
+/* Interactive terminals inherit the active dark foundation without changing
+   the fixed palette used by editors and non-interactive log viewers. */
+:root[data-theme='dark'] .terminal-theme-scope {
+  --terminal-shell-background: var(--bg);
+  --terminal-shell-panel: var(--surface);
+  --terminal-shell-panel-raised: var(--surface-subtle);
+  --terminal-shell-text: var(--text);
+  --terminal-shell-muted: var(--muted);
+  --terminal-shell-border: var(--border);
+  --terminal-shell-scrollbar: var(--border-strong);
+  --terminal-shell-scrollbar-hover: var(--control-border);
+}
+
 /* AI workspace */
 .page-content--ai {
   max-width: none;

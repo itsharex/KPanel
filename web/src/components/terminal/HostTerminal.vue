@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
@@ -17,10 +17,13 @@ import {
   terminalLineSubmission,
 } from '@/lib/terminalInput'
 import { createTerminalTouchScroll } from '@/lib/terminalTouchScroll'
+import { readTerminalTheme } from '@/lib/terminalTheme'
 import { useI18n } from '@/i18n'
 import { desktopWindowActiveKey } from '@/lib/desktopRouteKeys'
+import { useTheme } from '@/stores/theme'
 
 const { t } = useI18n()
+const { colors: themeColors, resolved: resolvedTheme } = useTheme()
 const desktopWindowActive = inject(desktopWindowActiveKey, computed(() => true))
 
 const props = defineProps<{
@@ -56,11 +59,6 @@ let lastColumns = 0
 let reconnectAttempts = 0
 
 watch(state, (value) => emit('stateChange', value), { immediate: true })
-
-function themeColor(name: string, fallback: string): string {
-  if (!host.value) return fallback
-  return window.getComputedStyle(host.value).getPropertyValue(name).trim() || fallback
-}
 
 function decodeBase64(value: string): Uint8Array {
   const decoded = window.atob(value)
@@ -199,6 +197,12 @@ watch(desktopWindowActive, (active) => {
   pollTimer = undefined
 })
 
+watch([themeColors, resolvedTheme], () => {
+  void nextTick(() => {
+    if (terminal && host.value) terminal.options.theme = readTerminalTheme(host.value)
+  })
+})
+
 onMounted(() => {
   mounted = true
   terminal = new Terminal({
@@ -209,17 +213,7 @@ onMounted(() => {
     fontSize: 13,
     lineHeight: 1.25,
     scrollback: 5000,
-    theme: {
-      background: themeColor('--terminal-shell-background', '#0b1214'),
-      foreground: themeColor('--terminal-shell-text', '#d8dddc'),
-      cursor: themeColor('--brand', '#35cba6'),
-      cursorAccent: themeColor('--terminal-shell-background', '#0b1214'),
-      selectionBackground: 'rgb(53 203 166 / 20%)',
-      black: '#1d2426', red: '#d86f74', green: '#91b56d', yellow: '#d5ae62',
-      blue: '#76a4c7', magenta: '#ad8bb8', cyan: '#72aaa7', white: '#c9cecd',
-      brightBlack: '#687376', brightRed: '#e68589', brightGreen: '#a7c982', brightYellow: '#e3c27b',
-      brightBlue: '#8bb9dc', brightMagenta: '#c19bcb', brightCyan: '#8cc2be', brightWhite: '#f0f2f1',
-    },
+    theme: host.value ? readTerminalTheme(host.value) : undefined,
   })
   fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
@@ -252,7 +246,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="host-terminal">
+  <section class="host-terminal terminal-theme-scope">
     <div
       ref="host"
       class="host-terminal__screen terminal-screen"

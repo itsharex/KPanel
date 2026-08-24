@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
     <div v-if="errorMessage" class="terminal-alert" role="alert">{{ errorMessage }}</div>
 
     <section
-      class="terminal-workspace"
+      class="terminal-workspace terminal-theme-scope"
       :class="{
         'is-connections-collapsed': connectionsCollapsed,
         'is-connections-drawer-open': mobileConnectionsOpen,

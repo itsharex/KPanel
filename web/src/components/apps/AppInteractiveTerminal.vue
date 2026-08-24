@@ -13,6 +13,8 @@ import { openTerminalURL } from '@/lib/terminalLinks'
 import { containWheelScroll } from '@/lib/scroll'
 import { createTerminalTouchScroll } from '@/lib/terminalTouchScroll'
 import { TerminalOutputNormalizer } from '@/lib/terminalOutput'
+import { readTerminalTheme } from '@/lib/terminalTheme'
+import { useTheme } from '@/stores/theme'
 import {
   drainTerminalInputQueue,
   TerminalInputQueue,
@@ -30,6 +32,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const { colors: themeColors, resolved: resolvedTheme } = useTheme()
 
 const host = ref<HTMLElement>()
 const clipboardMenu = ref<InstanceType<typeof TerminalContextMenu>>()
@@ -50,11 +53,6 @@ let polling = false
 const outputNormalizer = new TerminalOutputNormalizer()
 
 const { fullscreen, toggleFullscreen } = useTerminalFullscreen(fitTerminal)
-
-function terminalThemeColor(name: string, fallback: string): string {
-  if (!host.value) return fallback
-  return window.getComputedStyle(host.value).getPropertyValue(name).trim() || fallback
-}
 
 function decodeBase64(value: string): Uint8Array {
   const decoded = window.atob(value)
@@ -254,6 +252,11 @@ watch(
 watch(terminalInputOpen, (open) => {
   if (open) focusTerminalWhenInputOpens()
 })
+watch([themeColors, resolvedTheme], () => {
+  void nextTick(() => {
+    if (terminal && host.value) terminal.options.theme = readTerminalTheme(host.value)
+  })
+})
 
 onMounted(() => {
   terminal = new Terminal({
@@ -264,29 +267,7 @@ onMounted(() => {
     fontSize: 13,
     lineHeight: 1.25,
     scrollback: 5000,
-    theme: {
-      background: terminalThemeColor('--terminal-background', '#0b1214'),
-      foreground: terminalThemeColor('--terminal-text', '#d8dddc'),
-      cursor: terminalThemeColor('--terminal-accent', '#35cba6'),
-      cursorAccent: terminalThemeColor('--terminal-background', '#0b1214'),
-      selectionBackground: terminalThemeColor('--terminal-selection', 'rgb(53 203 166 / 20%)'),
-      black: terminalThemeColor('--terminal-ansi-black', '#1d2426'),
-      red: terminalThemeColor('--terminal-ansi-red', '#d86f74'),
-      green: terminalThemeColor('--terminal-ansi-green', '#91b56d'),
-      yellow: terminalThemeColor('--terminal-ansi-yellow', '#d5ae62'),
-      blue: terminalThemeColor('--terminal-ansi-blue', '#76a4c7'),
-      magenta: terminalThemeColor('--terminal-ansi-magenta', '#ad8bb8'),
-      cyan: terminalThemeColor('--terminal-ansi-cyan', '#72aaa7'),
-      white: terminalThemeColor('--terminal-ansi-white', '#c9cecd'),
-      brightBlack: terminalThemeColor('--terminal-ansi-bright-black', '#687376'),
-      brightRed: terminalThemeColor('--terminal-ansi-bright-red', '#e68589'),
-      brightGreen: terminalThemeColor('--terminal-ansi-bright-green', '#a7c982'),
-      brightYellow: terminalThemeColor('--terminal-ansi-bright-yellow', '#e3c27b'),
-      brightBlue: terminalThemeColor('--terminal-ansi-bright-blue', '#8bb9dc'),
-      brightMagenta: terminalThemeColor('--terminal-ansi-bright-magenta', '#c19bcb'),
-      brightCyan: terminalThemeColor('--terminal-ansi-bright-cyan', '#8cc2be'),
-      brightWhite: terminalThemeColor('--terminal-ansi-bright-white', '#f0f2f1'),
-    },
+    theme: host.value ? readTerminalTheme(host.value) : undefined,
   })
   fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
@@ -317,7 +298,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section
-    class="interactive-terminal"
+    class="interactive-terminal terminal-theme-scope"
     :class="{
       'is-compact': props.compact,
       'is-fullscreen': fullscreen,
@@ -418,7 +399,7 @@ onBeforeUnmount(() => {
   --terminal-text: var(--terminal-shell-text, #d8dddc);
   --terminal-muted: var(--terminal-shell-muted, #8a9695);
   --terminal-accent: var(--brand, #35cba6);
-  --terminal-selection: rgb(53 203 166 / 20%);
+  --terminal-selection: var(--brand-soft, #153a31);
   --terminal-border: var(--terminal-shell-border, #29383a);
   --scrollbar-track: var(--terminal-shell-background, #0b1214);
   --scrollbar-thumb: var(--terminal-shell-scrollbar, #35474a);

@@ -37,16 +37,25 @@ const globalThemeSource = readFileSync(
   new URL('../styles/main.css', import.meta.url),
   'utf8',
 )
+const terminalThemeSource = readFileSync(
+  new URL('../lib/terminalTheme.ts', import.meta.url),
+  'utf8',
+)
 
 describe('terminal and editor workspace theme', () => {
-  it('keeps terminal surfaces neutral while reserving KPanel brand tokens for interaction', () => {
+  it('themes interactive terminal surfaces while keeping the ANSI palette independent', () => {
     expect(globalThemeSource).toContain('--terminal-shell-background: #0b1214')
     expect(globalThemeSource).toContain('--terminal-shell-radius: 12px')
+    expect(globalThemeSource).toMatch(/:root\[data-theme='dark'\] \.terminal-theme-scope\s*\{[^}]*--terminal-shell-background: var\(--bg\);[^}]*--terminal-shell-panel: var\(--surface\);/)
     expect(terminalSource).toContain('--terminal-background: var(--terminal-shell-background, #0b1214)')
     expect(terminalSource).toContain('--terminal-accent: var(--brand, #35cba6)')
-    expect(terminalSource).toContain("terminalThemeColor('--terminal-accent'")
-    expect(terminalSource).toContain("terminalThemeColor('--terminal-ansi-green', '#91b56d')")
-    expect(terminalSource).toContain("terminalThemeColor('--terminal-ansi-cyan', '#72aaa7')")
+    expect(terminalThemeSource).toContain("terminalColor(style, '--brand'")
+    expect(terminalThemeSource).toContain("terminalColor(style, '--terminal-ansi-green'")
+    expect(terminalThemeSource).toContain("terminalColor(style, '--terminal-ansi-cyan'")
+    for (const source of [terminalSource, hostTerminalSource]) {
+      expect(source).toContain('terminal-theme-scope')
+      expect(source).toContain('terminal.options.theme = readTerminalTheme(host.value)')
+    }
     expect(terminalSource).not.toContain("green: '#35cba6'")
     expect(terminalSource).not.toContain("cyan: '#5adaba'")
     expect(terminalSource).not.toContain('#6d5dfc')
@@ -85,7 +94,10 @@ describe('terminal and editor workspace theme', () => {
     for (const source of [filesSource, dockerSource, appsSource]) {
       expect(source).toContain('var(--terminal-shell-background, #0b1214)')
       expect(source).toContain('var(--terminal-shell-text, #d8dddc)')
+      expect(source).not.toContain('terminal-theme-scope')
     }
+    expect(editorSource).not.toContain('terminal-theme-scope')
+    expect(diagnosticsSource).not.toContain('terminal-theme-scope')
     expect(filesSource).not.toContain('background: #111a2c')
     expect(dockerSource).not.toContain('background: #0b1020')
     expect(appsSource).not.toContain('background: #111827')
