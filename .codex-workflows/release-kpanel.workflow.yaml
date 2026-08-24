@@ -307,8 +307,33 @@ node scripts/check-environment-policy.mjs \
   --purpose production-safety-check
 ```
 
-部署前记录当前版本、Panel/Agent 健康、镜像摘要、数据/配置位置和可恢复备份；使用 KPanel 标准
-应用市场更新入口，不直接改正式数据或绕过安装事务。
+部署前记录当前版本、Panel/Agent 健康、镜像摘要、数据/配置位置和可恢复备份。生产证据与停写备份
+只使用仓库固定入口 `scripts/run-production-evidence.mjs`，由它通过无 Shell 拼接的进程参数上传固定
+远端脚本和哈希计划；禁止另写 PowerShell/SSH/Shell wrapper。每个阶段使用同一 run ID、独立证据目录：
+
+```bash
+node scripts/run-production-evidence.mjs \
+  --repo "${{project_dir}}" --target "${{production_environment}}" \
+  --phase preflight --run-id "v${{version}}-production" \
+  --expected-version "${{previous_version}}" \
+  --artifact-dir "<仓库外绝对路径>/v${{version}}-production-preflight"
+node scripts/run-production-evidence.mjs \
+  --repo "${{project_dir}}" --target "${{production_environment}}" \
+  --phase backup --run-id "v${{version}}-production" \
+  --expected-version "${{version}}" --baseline-run-id "v${{version}}-production" \
+  --artifact-dir "<仓库外绝对路径>/v${{version}}-production-backup"
+```
+
+备份门禁通过后使用 KPanel 标准应用市场更新入口，不直接改正式数据或绕过安装事务：
+
+```bash
+ssh "${{production_environment}}" env KJ_APP_NONINTERACTIVE=1 KJ_APP_ACTION=update \
+  bash /home/docker/kpanel/bin/kejilion.sh app kpanel
+```
+
+部署后以正式 OCI revision 和 manifest digest 再运行 `postdeploy` 阶段；它必须核对版本、OCI、
+Panel/Agent 健康、restart/OOM、受保护配置哈希、SQLite quick_check 与近 10 分钟致命日志。入口、计划或
+解析失败时停止，不得现场回退到内联远端命令。
 
 固定环境边界：`prod-108`（含别名 `108`）已禁用全部 KPanel 操作。不得连接该主机执行测试、只读检查、
 备份、部署、升级、回滚演练、健康采样、日志读取或清理，也不存在临时授权或稳定版本部署例外。
