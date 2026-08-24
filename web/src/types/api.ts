@@ -347,7 +347,7 @@ export interface SystemManagement {
   maintenance: {
     id?: string
     state: 'idle' | 'running' | 'succeeded' | 'failed'
-    action?: 'update' | 'cleanup' | 'ssh-defense' | 'bbrv3' | 'system-tuning'
+    action?: 'update' | 'cleanup' | 'ssh-defense' | 'bbrv3' | 'system-tuning' | 'log-cleanup'
     policy?: string
     stage?: string
     progress: number
@@ -431,6 +431,60 @@ export interface SystemOverview {
   }
 }
 
+export type SystemLogSource = 'system' | 'service' | 'security' | 'login'
+export type SystemLogPriority = 'all' | 'warning' | 'error'
+export type SystemLogLimit = 50 | 100 | 200
+
+export interface SystemLogAvailability {
+  available: boolean
+  reason?: string
+}
+
+export interface SystemLogUnit {
+  name: string
+  description?: string
+  activeState?: string
+}
+
+export interface SystemLogsSummary {
+  observedAt: string
+  varLog: SystemLogAvailability & { bytes?: number }
+  journal: SystemLogAvailability & { bytes?: number }
+  sources: {
+    journal: SystemLogAvailability
+    login: SystemLogAvailability
+    security: SystemLogAvailability
+  }
+  authSource?: string
+  units: SystemLogUnit[]
+  unitsTruncated: boolean
+  maintenance: SystemManagement['maintenance']
+}
+
+export interface SystemLogEntry {
+  timestamp?: string
+  cursor?: string
+  priority?: string
+  unit?: string
+  identifier?: string
+  pid?: number
+  message: string
+}
+
+export type SystemLogQuery =
+  | { source: 'system'; limit: SystemLogLimit; priority: SystemLogPriority; unit?: never }
+  | { source: 'service'; limit: SystemLogLimit; priority: SystemLogPriority; unit: string }
+  | { source: 'security' | 'login'; limit: SystemLogLimit; priority?: never; unit?: never }
+
+export interface SystemLogEntries {
+  source: SystemLogSource
+  unit?: string
+  authSource?: string
+  entries: SystemLogEntry[]
+  truncated: boolean
+  observedAt: string
+}
+
 export type ProcessSort = 'cpu' | 'memory' | 'pid' | 'name' | 'user' | 'state' | 'threads'
 export type ProcessOrder = 'asc' | 'desc'
 
@@ -492,6 +546,7 @@ export interface SystemActionInput {
     | 'bbrv3'
     | 'update'
     | 'cleanup'
+    | 'log-cleanup'
     | 'reboot'
   hostname?: string
   port?: number
@@ -501,7 +556,16 @@ export interface SystemActionInput {
   mirrorPreset?: 'cn-default' | 'cn-edu' | 'abroad' | 'smart'
   preference?: 'ipv4' | 'system_default'
   profile?: 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
-  maintenancePolicy?: 'full' | 'cache' | 'standard' | 'install' | 'update' | 'uninstall'
+  maintenancePolicy?:
+    | 'full'
+    | 'cache'
+    | 'standard'
+    | 'install'
+    | 'update'
+    | 'uninstall'
+    | 'retain-7d'
+    | 'retain-3d'
+    | 'max-500m'
   enabled?: boolean
   pid?: number
   startTimeTicks?: number
@@ -513,6 +577,8 @@ export interface SystemActionResult {
   status: string
   changed: boolean
   message: string
+  taskId?: string
+  maintenancePolicy?: SystemActionInput['maintenancePolicy']
   backupPath?: string
   appliedAt: string
 }

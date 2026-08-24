@@ -31,6 +31,7 @@ import {
   Power,
   RefreshCw,
   RefreshCcw,
+  ScrollText,
   Server,
   Settings2,
   ShieldCheck,
@@ -54,6 +55,7 @@ import AccountManagementDialog from '@/components/overview/AccountManagementDial
 import SSHDefenseDialog from '@/components/overview/SSHDefenseDialog.vue'
 import SystemTuningDialog from '@/components/overview/SystemTuningDialog.vue'
 import DiskPartitionDialog from '@/components/overview/DiskPartitionDialog.vue'
+import SystemLogsDialog from '@/components/overview/SystemLogsDialog.vue'
 import { detectOperatingSystemIdentity } from '@/lib/operatingSystem'
 import CountryFlagIcon from '@/components/overview/CountryFlagIcon.vue'
 import { ApiError, api } from '@/lib/api'
@@ -126,7 +128,7 @@ interface SystemCenterSection {
 
 type KernelProfile = 'high' | 'balanced' | 'web' | 'stream' | 'game' | 'off'
 type BBRv3Policy = 'install' | 'update' | 'uninstall'
-type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall' | 'port-usage' | 'traffic-shutdown' | 'accounts' | 'ssh-defense' | 'system-tuning' | 'disk-partitions'
+type ResourceDialogID = 'hosts' | 'cron' | 'network-interfaces' | 'firewall' | 'port-usage' | 'traffic-shutdown' | 'accounts' | 'ssh-defense' | 'system-tuning' | 'disk-partitions' | 'system-logs'
 
 const mirrorPresets: Array<{
   value: MirrorPreset
@@ -622,6 +624,17 @@ const maintenanceTools = computed<ManagementTool[]>(() => {
       tone: 'violet',
     },
     {
+      id: 'system-logs',
+      title: '系统日志',
+      description: '按需查看 journal、服务、安全与登录日志，并安全清理旧 journal。',
+      value: capabilityState('system.logs.read').enabled ? '打开后读取真实占用' : '适配器未就绪',
+      detail: '系统 · 服务 · 安全 · 登录 · 实时刷新',
+      capability: 'system.logs.read',
+      safety: '只接受固定日志范围、真实 systemd unit、行数与清理策略；输出始终有界，不浏览或删除任意日志文件。',
+      icon: ScrollText,
+      tone: 'blue',
+    },
+    {
       id: 'system-reboot',
       title: '重启服务器',
       description: '安排宿主机重启，面板和当前连接会短暂离线。',
@@ -697,7 +710,7 @@ const systemCenterSections = computed<SystemCenterSection[]>(() => {
     {
       id: 'maintenance',
       title: '日常维护',
-      description: '系统更新、空间清理与可控重启',
+      description: '系统更新、空间清理、日志与可控重启',
       icon: RefreshCw,
       iconTone: 'violet',
       tools: maintenanceTools.value.map((tool) => ({
@@ -750,6 +763,7 @@ const resourceCapabilityNames: Record<ResourceDialogID, string> = {
 		'ssh-defense': 'system.ssh-defense',
 	'system-tuning': 'system.tuning',
 	'disk-partitions': 'system.disk-partitions',
+	'system-logs': 'system.logs',
 }
 
 const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
@@ -763,6 +777,7 @@ const resourceCapabilityUnavailableReasons: Record<ResourceDialogID, string> = {
 		'ssh-defense': '当前 Agent 的 SSH 防御适配器未就绪。',
 	'system-tuning': '当前 Agent 的系统综合调优能力尚未就绪。',
 	'disk-partitions': '当前 Agent 的磁盘管理 worker 尚未就绪。',
+	'system-logs': '当前 Agent 的系统日志适配器尚未就绪。',
 }
 
 function isResourceDialogID(id: string): id is ResourceDialogID {
@@ -818,9 +833,10 @@ function openTool(tool: ManagementTool): void {
   selectedTool.value = tool
 }
 
-function maintenanceActionFor(toolID: string): 'update' | 'cleanup' | 'ssh-defense' | 'bbrv3' | undefined {
+function maintenanceActionFor(toolID: string): 'update' | 'cleanup' | 'ssh-defense' | 'bbrv3' | 'log-cleanup' | undefined {
   if (toolID === 'system-update') return 'update'
   if (toolID === 'system-cleanup') return 'cleanup'
+  if (toolID === 'system-logs') return 'log-cleanup'
   if (toolID === 'ssh-defense') return 'ssh-defense'
   if (toolID === 'bbrv3') return 'bbrv3'
   return undefined
@@ -1042,7 +1058,7 @@ onBeforeUnmount(() => {
     <PageHeader
       :title="props.systemCenterOnly ? '系统中心' : '服务器概览'"
       :description="props.systemCenterOnly
-        ? '集中管理系统维护、基础设置、网络工具与系统重装。'
+        ? '集中管理系统维护、日志、基础设置、网络与性能工具。'
         : '实时查看服务器资源与服务状态，并快速进入常用系统管理工具。'"
     />
 
@@ -1402,6 +1418,8 @@ onBeforeUnmount(() => {
                             ? data.management.maintenance.action === maintenanceActionFor(tool.id)
                               ? `进行中 ${data.management.maintenance.progress}%`
                               : '任务占用'
+                            : isResourceDialogID(tool.id)
+                              ? toolAvailabilityLabel(tool)
                             : capabilityState(tool.capability).enabled
                               ? '可执行'
                               : '依赖未就绪'
@@ -1855,6 +1873,13 @@ onBeforeUnmount(() => {
 		:readable="resourceCapability('disk-partitions', 'read').enabled"
 		:writable="resourceCapability('disk-partitions', 'write').enabled"
 		:unavailable-reason="resourceCapability('disk-partitions', 'read').reason"
+		@close="closeResourceDialog"
+	/>
+	<SystemLogsDialog
+		:open="selectedResourceDialog === 'system-logs'"
+		:readable="resourceCapability('system-logs', 'read').enabled"
+		:writable="resourceCapability('system-logs', 'write').enabled"
+		:unavailable-reason="resourceCapability('system-logs', 'read').reason"
 		@close="closeResourceDialog"
 	/>
   </div>

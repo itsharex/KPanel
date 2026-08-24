@@ -3218,7 +3218,7 @@ textarea:focus-visible,
   color: var(--muted);
   background: var(--neutral-soft);
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 750;
   white-space: nowrap;
 }
@@ -3267,7 +3267,7 @@ textarea:focus-visible,
   color: var(--brand-strong);
   background: var(--brand-soft);
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 750;
   white-space: nowrap;
 }
@@ -3500,7 +3500,7 @@ textarea:focus-visible,
   color: var(--violet);
   background: var(--violet-soft);
   border-radius: 999px;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 780;
   white-space: nowrap;
 }
@@ -3510,17 +3510,25 @@ textarea:focus-visible,
   color: var(--muted);
   background: var(--neutral-soft);
   border-radius: 999px;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 760;
 }
 
 .system-tool > span:not(.system-tool__top) {
   overflow: hidden;
   color: var(--text-soft);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.system-center-grid .system-tool > strong {
+  font-size: 14px;
+}
+
+.system-center-grid .system-tool small {
+  font-size: 13px;
 }
 
 .system-tool > .maintenance-progress {
@@ -5844,7 +5852,7 @@ body.terminal-fullscreen-open .modal-panel {
   }
 
   .system-center-grid .system-tool {
-    min-height: 122px;
+    min-height: 136px;
   }
 
   .system-tool:last-child:nth-child(odd) {

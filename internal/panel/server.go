@@ -962,6 +962,10 @@ func (s *Server) handleAgentProxy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if (r.URL.Path == "/api/v1/system/logs" || r.URL.Path == "/api/v1/system/logs/summary") && r.URL.RawPath != "" {
+		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
+		return
+	}
 	if isSystemResourcePublicPath(r.URL.Path) && (r.URL.RawPath != "" || r.URL.RawQuery != "") {
 		s.writeProblem(w, r, http.StatusNotFound, "route_not_found", "Route not found", "")
 		return
@@ -1025,6 +1029,8 @@ func allowedAgentPath(publicPath string) (string, bool) {
 		"/api/v1/agent/health":              "/v1/health",
 		"/api/v1/capabilities":              "/v1/capabilities",
 		"/api/v1/system/summary":            "/v1/system/summary",
+		"/api/v1/system/logs/summary":       "/v1/system/logs/summary",
+		"/api/v1/system/logs":               "/v1/system/logs",
 		"/api/v1/system/public-network":     "/v1/system/public-network",
 		"/api/v1/system/processes":          "/v1/system/processes",
 		"/api/v1/system/hosts":              "/v1/system/hosts",

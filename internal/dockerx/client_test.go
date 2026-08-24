@@ -171,6 +171,42 @@ func TestRedactJSONAndPrefixedSecretKeys(t *testing.T) {
 	}
 }
 
+func TestDockerLogsUseSharedCredentialRedactionPolicy(t *testing.T) {
+	input := []byte(strings.Join([]string{
+		`window-private-body`,
+		`-----END RSA PRIVATE KEY-----`,
+		`safe-after-orphan`,
+		`refresh_token=refresh-secret`,
+		`AWS_SECRET_ACCESS_KEY=aws-secret`,
+		`pwd=pwd-secret`,
+		`password=p@ss#2026`,
+		`token=abc&def`,
+		`Authorization: Basic YmFzaWMtc2VjcmV0`,
+		`Authorization: ApiKey arbitrary-auth-secret`,
+		`Cookie: session=cookie-secret; csrf=csrf-secret`,
+		`https://url-user:url-pass@example.test/path?access_token=query-secret&safe=visible`,
+		`https://token-only@example.test/path`,
+		`-----BEGIN OPENSSH PRIVATE KEY-----`,
+		`cHJpdmF0ZS1rZXktbWF0ZXJpYWw=`,
+		`-----END OPENSSH PRIVATE KEY-----`,
+	}, "\n"))
+	joined := strings.Join(redactLines(input, 20), "\n")
+	for _, secret := range []string{
+		"refresh-secret", "aws-secret", "pwd-secret", "p@ss", "#2026", "abc", "&def",
+		"YmFzaWMtc2VjcmV0", "ApiKey", "arbitrary-auth-secret",
+		"cookie-secret", "csrf-secret", "url-user", "url-pass", "query-secret", "token-only",
+		"window-private-body", "cHJpdmF0ZS1rZXktbWF0ZXJpYWw",
+	} {
+		if strings.Contains(joined, secret) {
+			t.Fatalf("shared Docker redaction leaked %q: %s", secret, joined)
+		}
+	}
+	if !strings.Contains(joined, "safe=visible") || !strings.Contains(joined, "safe-after-orphan") ||
+		!strings.Contains(joined, "[REDACTED PRIVATE KEY]") {
+		t.Fatalf("shared Docker redaction removed safe data or marker: %s", joined)
+	}
+}
+
 func TestContainerLogsSupportsExternalContainer(t *testing.T) {
 	id := strings.Repeat("a", 64)
 	logRequests := 0

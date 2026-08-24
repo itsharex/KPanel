@@ -77,6 +77,9 @@ import type {
   SiteInstallationProgress,
   SystemActionInput,
   SystemActionResult,
+  SystemLogEntries,
+  SystemLogQuery,
+  SystemLogsSummary,
   SystemResourceActionInput,
   SystemResourceActionResult,
   SystemOverview,
@@ -1550,6 +1553,18 @@ export const api = {
       }),
     action: (body: SystemActionInput): Promise<SystemActionResult> =>
       request<SystemActionResult>('/system/actions', { method: 'POST', body }),
+    logsSummary: (signal?: AbortSignal): Promise<SystemLogsSummary> =>
+      request<SystemLogsSummary>('/system/logs/summary', { signal }),
+    logs: (query: SystemLogQuery, signal?: AbortSignal): Promise<SystemLogEntries> =>
+      request<SystemLogEntries>('/system/logs', {
+        query: {
+          source: query.source,
+          limit: query.limit,
+          priority: query.source === 'system' || query.source === 'service' ? query.priority : undefined,
+          unit: query.source === 'service' ? query.unit : undefined,
+        },
+        signal,
+      }),
     hosts: (signal?: AbortSignal): Promise<HostsSnapshot> =>
       request<HostsSnapshot>('/system/hosts', { signal }),
     cron: (signal?: AbortSignal): Promise<CronSnapshot> =>

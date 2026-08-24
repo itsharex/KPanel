@@ -184,12 +184,14 @@ type SystemActionRequest struct {
 }
 
 type SystemActionResult struct {
-	Action     string    `json:"action"`
-	Status     string    `json:"status"`
-	Changed    bool      `json:"changed"`
-	Message    string    `json:"message"`
-	BackupPath string    `json:"backupPath,omitempty"`
-	AppliedAt  time.Time `json:"appliedAt"`
+	Action            string    `json:"action"`
+	Status            string    `json:"status"`
+	Changed           bool      `json:"changed"`
+	Message           string    `json:"message"`
+	BackupPath        string    `json:"backupPath,omitempty"`
+	TaskID            string    `json:"taskId,omitempty"`
+	MaintenancePolicy string    `json:"maintenancePolicy,omitempty"`
+	AppliedAt         time.Time `json:"appliedAt"`
 }
 
 type LoadSummary struct {

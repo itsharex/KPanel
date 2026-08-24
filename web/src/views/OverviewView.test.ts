@@ -32,6 +32,7 @@ interface OverviewBindings {
   systemCenterSections: ComputedRef<Array<{ id: string; title: string; tools: Array<{ id: string; recommended?: boolean }> }>>
   selectedResourceDialog: Ref<string | undefined>
   toolAvailabilityLabel: (tool: { id: string; capability: string }) => string
+  maintenanceActionFor: (toolID: string) => string | undefined
   actionForm: { timezone: string; timezonePreset: string }
   openTool: (tool: { id: string }) => void
   load: (silent?: boolean) => Promise<void>
@@ -160,13 +161,14 @@ describe('OverviewView refresh stability', () => {
       'BBR 管理',
       '综合调优',
     ])
+    expect(view.maintenanceActionFor('system-logs')).toBe('log-cleanup')
     expect(
       view.systemCenterSections.value.map((section) => ({
         id: section.id,
         tools: section.tools.map((tool) => tool.id),
       })),
     ).toEqual([
-      { id: 'maintenance', tools: ['system-update', 'system-cleanup', 'system-reboot'] },
+      { id: 'maintenance', tools: ['system-update', 'system-cleanup', 'system-logs', 'system-reboot'] },
       { id: 'basic', tools: ['swap', 'disk-partitions', 'hostname', 'timezone', 'mirror', 'cron'] },
       { id: 'security', tools: ['ssh-port', 'ssh-defense', 'accounts', 'firewall'] },
       {
@@ -193,5 +195,7 @@ describe('OverviewView refresh stability', () => {
     expect(view.selectedResourceDialog.value).toBe('hosts')
     view.openTool({ id: 'disk-partitions' })
     expect(view.selectedResourceDialog.value).toBe('disk-partitions')
+    view.openTool({ id: 'system-logs' })
+    expect(view.selectedResourceDialog.value).toBe('system-logs')
   })
 })

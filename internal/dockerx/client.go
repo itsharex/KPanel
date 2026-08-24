@@ -22,9 +22,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
+	"github.com/kejilion/kejilion-panel/internal/redact"
 )
 
 const (
@@ -784,55 +784,12 @@ func demuxDockerStream(data []byte) []byte {
 	return output.Bytes()
 }
 
-var (
-	jsonSecretAssignment = regexp.MustCompile(`(?i)("(?:[^"\\]|\\.)*(?:password|passwd|pwd|token|secret|api[_-]?key|authorization|cookie)(?:[^"\\]|\\.)*"\s*:\s*)("(?:\\.|[^"\\])*"|[^,\s}\]]+)`)
-	secretAssignment     = regexp.MustCompile(`(?i)(\b[A-Za-z0-9_.-]*(?:password|passwd|pwd|token|secret|api[_-]?key|authorization|cookie)[A-Za-z0-9_.-]*\b)(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'[^']*'|[^\s,;]+)`)
-	bearerSecret         = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
-	urlCredentials       = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@`)
-)
-
 func redactLines(data []byte, limit int) []string {
-	rawLines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
-	if len(rawLines) > 0 && rawLines[len(rawLines)-1] == "" {
-		rawLines = rawLines[:len(rawLines)-1]
-	}
-	if len(rawLines) > limit {
-		rawLines = rawLines[len(rawLines)-limit:]
-	}
-	result := make([]string, 0, len(rawLines))
-	inPrivateKey := false
-	for _, line := range rawLines {
-		if strings.Contains(line, "-----BEGIN") && strings.Contains(line, "PRIVATE KEY-----") {
-			inPrivateKey = true
-			result = append(result, "[REDACTED PRIVATE KEY]")
-			continue
-		}
-		if inPrivateKey {
-			if strings.Contains(line, "-----END") && strings.Contains(line, "PRIVATE KEY-----") {
-				inPrivateKey = false
-			}
-			continue
-		}
-		line = redactText(line)
-		if len(line) > 16<<10 {
-			line = line[:16<<10] + "…"
-		}
-		result = append(result, line)
-	}
-	return result
+	return redact.Lines(data, limit, 16<<10)
 }
 
 func redactText(value string) string {
-	value = jsonSecretAssignment.ReplaceAllString(value, `${1}"[REDACTED]"`)
-	value = secretAssignment.ReplaceAllString(value, "${1}${2}[REDACTED]")
-	value = bearerSecret.ReplaceAllString(value, "Bearer [REDACTED]")
-	value = urlCredentials.ReplaceAllString(value, "${1}[REDACTED]@")
-	return strings.Map(func(r rune) rune {
-		if r == '\t' || !unicode.IsControl(r) {
-			return r
-		}
-		return -1
-	}, value)
+	return redact.Text(value)
 }
 
 func cleanLinuxPath(value, fallback string) string {

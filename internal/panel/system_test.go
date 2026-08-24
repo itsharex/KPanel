@@ -3,6 +3,7 @@ package panel
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/kejilion/kejilion-panel/internal/contract"
@@ -47,6 +48,42 @@ func TestSystemActionRequiresProtectedSessionAndForwardsTypedRequest(t *testing.
 	}
 }
 
+func TestSystemLogCleanupResponsePreservesMaintenanceTaskIdentity(t *testing.T) {
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &stubAgent{response: AgentResponse{
+		StatusCode: http.StatusOK, ContentType: "application/json",
+		Body: []byte(`{"action":"log-cleanup","status":"accepted","changed":true,"message":"queued","taskId":"20260824T090000.000000000Z","maintenancePolicy":"retain-3d","appliedAt":"2026-08-24T09:00:00Z"}`),
+	}}
+	server.agent = agent
+	response := authenticatedSiteRequest(
+		server, sessionCookie, csrfCookie, http.MethodPost, "/api/v1/system/actions",
+		[]byte(`{"action":"log-cleanup","maintenancePolicy":"retain-3d"}`), true,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("system action returned %d: %s", response.Code, response.Body.String())
+	}
+	var result contract.SystemActionResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.TaskID != "20260824T090000.000000000Z" || result.Action != "log-cleanup" ||
+		result.MaintenancePolicy != "retain-3d" || result.Status != "accepted" {
+		t.Fatalf("maintenance task identity was not preserved: %#v", result)
+	}
+	calls := agent.snapshotCalls()
+	if len(calls) != 1 {
+		t.Fatalf("unexpected Agent calls: %#v", calls)
+	}
+	var forwarded contract.SystemActionRequest
+	if err := json.Unmarshal(calls[0].body, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	if forwarded.Action != result.Action || forwarded.MaintenancePolicy != result.MaintenancePolicy {
+		t.Fatalf("forwarded=%#v result=%#v", forwarded, result)
+	}
+}
+
 func TestValidateSystemAction(t *testing.T) {
 	enabled := true
 	tests := []struct {
@@ -87,6 +124,11 @@ func TestValidateSystemAction(t *testing.T) {
 		{"cache cleanup", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "cache"}, true},
 		{"standard cleanup", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "standard"}, true},
 		{"unknown cleanup policy", contract.SystemActionRequest{Action: "cleanup", MaintenancePolicy: "deep"}, false},
+		{"retain seven day logs", contract.SystemActionRequest{Action: "log-cleanup", MaintenancePolicy: "retain-7d"}, true},
+		{"retain three day logs", contract.SystemActionRequest{Action: "log-cleanup", MaintenancePolicy: "retain-3d"}, true},
+		{"cap logs at 500 MiB", contract.SystemActionRequest{Action: "log-cleanup", MaintenancePolicy: "max-500m"}, true},
+		{"unknown log cleanup policy", contract.SystemActionRequest{Action: "log-cleanup", MaintenancePolicy: "forever"}, false},
+		{"log cleanup with unrelated field", contract.SystemActionRequest{Action: "log-cleanup", MaintenancePolicy: "retain-7d", Hostname: "ignored"}, false},
 		{"reboot", contract.SystemActionRequest{Action: "reboot"}, true},
 		{"reboot with legacy confirmation", contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT"}, true},
 		{"reboot with unrelated field", contract.SystemActionRequest{Action: "reboot", Confirmation: "REBOOT", Hostname: "ignored"}, false},
@@ -102,6 +144,67 @@ func TestValidateSystemAction(t *testing.T) {
 				t.Fatalf("valid=%v, field=%q", test.valid, field)
 			}
 		})
+	}
+}
+
+func TestSystemLogReadPathsAreExactAndPreserveStrictQuery(t *testing.T) {
+	for publicPath, expected := range map[string]string{
+		"/api/v1/system/logs/summary": "/v1/system/logs/summary",
+		"/api/v1/system/logs":         "/v1/system/logs",
+	} {
+		path, ok := allowedAgentPath(publicPath)
+		if !ok || path != expected {
+			t.Fatalf("allowedAgentPath(%q) = %q, %v; want %q", publicPath, path, ok, expected)
+		}
+	}
+	for _, path := range []string{
+		"/api/v1/system/logs/summary/extra",
+		"/api/v1/system/logs/../summary",
+		"/api/v1/system/logs/entries",
+	} {
+		if mapped, ok := allowedAgentPath(path); ok {
+			t.Fatalf("unsafe system log path %q mapped to %q", path, mapped)
+		}
+	}
+
+	server, tokenPath := newTestServer(t)
+	sessionCookie, csrfCookie := bootstrapCookies(t, server, tokenPath)
+	agent := &stubAgent{response: AgentResponse{
+		StatusCode: http.StatusOK, ContentType: "application/json",
+		Body: []byte(`{"source":"service","entries":[],"truncated":false,"observedAt":"2026-08-24T09:00:00Z"}`),
+	}}
+	server.agent = agent
+	query := "source=service&unit=ssh.service&limit=50&priority=warning"
+	response := authenticatedSiteRequest(
+		server, sessionCookie, csrfCookie, http.MethodGet, "/api/v1/system/logs?"+query, nil, true,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("logs proxy status=%d body=%s", response.Code, response.Body.String())
+	}
+	calls := agent.snapshotCalls()
+	if len(calls) != 1 || calls[0].method != http.MethodGet || calls[0].path != "/v1/system/logs" || calls[0].rawQuery != query {
+		t.Fatalf("unexpected Agent calls: %#v", calls)
+	}
+	if strings.Contains(calls[0].rawQuery, "path=") {
+		t.Fatal("unexpected arbitrary path reached Agent")
+	}
+	encoded := authenticatedSiteRequest(
+		server, sessionCookie, csrfCookie, http.MethodGet, "/api/v1/system%2flogs?source=system&limit=50&priority=all", nil, true,
+	)
+	if encoded.Code != http.StatusNotFound || len(agent.snapshotCalls()) != 1 {
+		t.Fatalf("encoded system log path status=%d calls=%#v", encoded.Code, agent.snapshotCalls())
+	}
+}
+
+func TestSystemLogCleanupAuditContainsOnlyPolicy(t *testing.T) {
+	change := systemActionAuditChange(contract.SystemActionRequest{
+		Action: "log-cleanup", MaintenancePolicy: "retain-3d", Hostname: "ignored",
+	})
+	if len(change) != 2 || change["action"] != "log-cleanup" || change["maintenancePolicy"] != "retain-3d" {
+		t.Fatalf("unexpected log cleanup audit change: %#v", change)
+	}
+	if _, leaked := change["hostname"]; leaked {
+		t.Fatal("log cleanup audit leaked unrelated field")
 	}
 }
 

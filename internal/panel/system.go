@@ -151,6 +151,18 @@ func validateSystemAction(input *contract.SystemActionRequest) (string, string) 
 		if input.MaintenancePolicy != "cache" && input.MaintenancePolicy != "standard" {
 			return "maintenancePolicy", "maintenancePolicy must be cache or standard"
 		}
+	case "log-cleanup":
+		if input.MaintenancePolicy != "retain-7d" && input.MaintenancePolicy != "retain-3d" &&
+			input.MaintenancePolicy != "max-500m" {
+			return "maintenancePolicy", "maintenancePolicy must be retain-7d, retain-3d, or max-500m"
+		}
+		allowed := contract.SystemActionRequest{
+			Action:            input.Action,
+			MaintenancePolicy: input.MaintenancePolicy,
+		}
+		if !reflect.DeepEqual(*input, allowed) {
+			return "request", "only action and maintenancePolicy are allowed for log-cleanup"
+		}
 	case "reboot":
 		if input.Hostname != "" || input.Port != 0 || len(input.Servers) != 0 ||
 			input.Timezone != "" || input.SwapSizeMiB != 0 || input.MirrorPreset != "" ||
@@ -191,7 +203,7 @@ func systemActionAuditChange(input contract.SystemActionRequest) map[string]any 
 		change["profile"] = input.Profile
 	case "bbr":
 		change["enabled"] = input.Enabled != nil && *input.Enabled
-	case "update", "cleanup", "bbrv3":
+	case "update", "cleanup", "bbrv3", "log-cleanup":
 		change["maintenancePolicy"] = input.MaintenancePolicy
 	case "reboot":
 		change["requested"] = true

@@ -441,6 +441,128 @@ const systemSummary = {
   collectedAt: new Date().toISOString(),
 }
 
+let systemLogCleanupJob
+const systemLogUnits = [
+  { name: 'docker.service', description: 'Docker Application Container Engine', activeState: 'active' },
+  { name: 'kejilion-agent.service', description: 'KPanel host Agent', activeState: 'active' },
+  { name: 'nginx.service', description: 'A high performance web server', activeState: 'active' },
+  { name: 'ssh.service', description: 'OpenBSD Secure Shell server', activeState: 'active' },
+]
+
+function materializeSystemLogMaintenance() {
+  if (!systemLogCleanupJob) return systemSummary.management.maintenance
+  const elapsed = Date.now() - systemLogCleanupJob.created
+  if (elapsed < 900) {
+    return {
+      id: systemLogCleanupJob.id,
+      state: 'running',
+      action: 'log-cleanup',
+      policy: systemLogCleanupJob.policy,
+      stage: 'log_journal_rotate',
+      progress: 35,
+      message: '正在轮转 systemd journal',
+      startedAt: systemLogCleanupJob.startedAt,
+      rebootRequired: false,
+    }
+  }
+  if (elapsed < 2_500) {
+    return {
+      id: systemLogCleanupJob.id,
+      state: 'running',
+      action: 'log-cleanup',
+      policy: systemLogCleanupJob.policy,
+      stage: `log_journal_${systemLogCleanupJob.policy.replaceAll('-', '_')}`,
+      progress: 75,
+      message: systemLogCleanupJob.policy === 'retain-3d'
+        ? '正在保留最近 3 天 journal'
+        : systemLogCleanupJob.policy === 'max-500m'
+          ? '正在限制 journal 最大 500 MiB'
+          : '正在保留最近 7 天 journal',
+      startedAt: systemLogCleanupJob.startedAt,
+      rebootRequired: false,
+    }
+  }
+  const messages = {
+    'retain-7d': 'journal 已轮转并仅保留最近 7 天归档',
+    'retain-3d': 'journal 已轮转并仅保留最近 3 天归档',
+    'max-500m': 'journal 已轮转并限制归档最大 500 MiB',
+  }
+  return {
+    id: systemLogCleanupJob.id,
+    state: 'succeeded',
+    action: 'log-cleanup',
+    policy: systemLogCleanupJob.policy,
+    stage: 'completed',
+    progress: 100,
+    message: messages[systemLogCleanupJob.policy],
+    startedAt: systemLogCleanupJob.startedAt,
+    finishedAt: new Date(systemLogCleanupJob.created + 2_500).toISOString(),
+    rebootRequired: false,
+  }
+}
+
+function materializeSystemLogSummary() {
+  const maintenance = materializeSystemLogMaintenance()
+  const cleaned = maintenance.action === 'log-cleanup' && maintenance.state === 'succeeded'
+  return {
+    observedAt: new Date().toISOString(),
+    varLog: { available: true, bytes: cleaned ? 928 * 1024 ** 2 : 1.34 * 1024 ** 3 },
+    journal: { available: true, bytes: cleaned ? 86 * 1024 ** 2 : 384 * 1024 ** 2 },
+    sources: {
+      journal: { available: true },
+      security: { available: true },
+      login: { available: true },
+    },
+    authSource: 'journal',
+    units: systemLogUnits,
+    unitsTruncated: false,
+    maintenance,
+  }
+}
+
+function materializeSystemLogEntries(url) {
+  const source = url.searchParams.get('source')
+  const unit = url.searchParams.get('unit') || ''
+  const limit = Number.parseInt(url.searchParams.get('limit') || '100', 10)
+  const priority = url.searchParams.get('priority') || 'all'
+  const observedAt = new Date().toISOString()
+  const recentTimestamp = new Date(Date.now() - 2_000).toISOString()
+  const sourceEntries = {
+    system: [
+      { timestamp: '2026-08-24T01:00:00Z', cursor: 'visual-system-1', priority: 'info', identifier: 'systemd', pid: 1, message: 'Started KPanel host services.' },
+      { timestamp: '2026-08-24T01:02:10Z', cursor: 'visual-system-2', priority: 'warning', unit: 'ssh.service', identifier: 'sshd', pid: 742, message: 'Connection closed before authentication.' },
+      { timestamp: recentTimestamp, cursor: `visual-system-${Date.now()}`, priority: 'info', unit: 'kejilion-agent.service', identifier: 'kejilion-agent', pid: 1052, message: 'System summary refreshed successfully.' },
+    ],
+    service: [
+      { timestamp: '2026-08-24T01:00:04Z', cursor: 'visual-service-1', priority: 'info', unit: unit || 'nginx.service', identifier: unit?.split('.')[0] || 'nginx', pid: 908, message: 'Service entered the running state.' },
+      { timestamp: recentTimestamp, cursor: `visual-service-${Date.now()}`, priority: 'warning', unit: unit || 'nginx.service', identifier: unit?.split('.')[0] || 'nginx', pid: 908, message: 'A slow request completed within the configured timeout.' },
+    ],
+    security: [
+      { timestamp: '2026-08-24T00:58:21Z', cursor: 'visual-security-1', priority: 'warning', unit: 'ssh.service', identifier: 'sshd', pid: 742, message: 'Failed publickey for invalid user demo from 203.0.113.28 port 52114 ssh2' },
+      { timestamp: '2026-08-24T01:01:32Z', cursor: 'visual-security-2', priority: 'info', unit: 'ssh.service', identifier: 'sshd', pid: 742, message: 'Accepted publickey for deploy from 198.51.100.18 port 49312 ssh2' },
+    ],
+    login: [
+      { identifier: 'last', message: 'deploy   pts/0        198.51.100.18   Mon Aug 24 09:01   still logged in' },
+      { identifier: 'last', message: 'root     pts/1        203.0.113.28    Mon Aug 24 09:04 - 09:08  (00:04)' },
+    ],
+  }
+  let entries = Object.hasOwn(sourceEntries, source) ? sourceEntries[source] : []
+  if (source === 'system' || source === 'service') {
+    const maximumPriority = priority === 'error' ? 3 : priority === 'warning' ? 4 : 7
+    const values = { emergency: 0, alert: 1, critical: 2, error: 3, warning: 4, notice: 5, info: 6, debug: 7 }
+    entries = entries.filter((entry) => (values[entry.priority] ?? 7) <= maximumPriority)
+  }
+  entries = entries.slice(-Math.max(0, Number.isInteger(limit) ? limit : 100))
+  return {
+    source,
+    ...(source === 'service' ? { unit } : {}),
+    ...(source === 'security' ? { authSource: 'journal' } : {}),
+    entries,
+    truncated: false,
+    observedAt,
+  }
+}
+
 let diskRevision = 1
 let diskVisualJob
 let diskVisualJobInput
@@ -599,19 +721,23 @@ function commitDesktopWorkspace(input) {
 }
 
 const systemCapabilities = [
-  'hostname',
-  'ssh-port',
-  'dns',
-  'timezone',
-  'swap',
-  'mirror',
-  'ip-preference',
-  'kernel-tuning',
-  'bbr',
-  'update',
-  'cleanup',
-  'reboot',
-].map((action) => ({ id: `system.${action}.write`, enabled: true, methods: ['POST'] }))
+  ...[
+    'hostname',
+    'ssh-port',
+    'dns',
+    'timezone',
+    'swap',
+    'mirror',
+    'ip-preference',
+    'kernel-tuning',
+    'bbr',
+    'update',
+    'cleanup',
+    'reboot',
+  ].map((action) => ({ id: `system.${action}.write`, enabled: true, methods: ['POST'] })),
+  { id: 'system.logs.read', enabled: true, methods: ['GET'] },
+  { id: 'system.logs.write', enabled: true, methods: ['POST'] },
+]
 
 const environmentResourceVersion = `sha256:${'f'.repeat(64)}`
 const environmentSummary = {
@@ -1191,7 +1317,43 @@ createServer(async (request, response) => {
     return
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/system/summary') {
-    send(response, 200, systemSummary)
+    send(response, 200, {
+      ...systemSummary,
+      management: {
+        ...systemSummary.management,
+        maintenance: materializeSystemLogMaintenance(),
+      },
+      collectedAt: new Date().toISOString(),
+    })
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/system/logs/summary') {
+    if (url.search) {
+      send(response, 422, { title: '系统日志查询参数无效', code: 'invalid_system_log_query' })
+      return
+    }
+    send(response, 200, materializeSystemLogSummary())
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/system/logs') {
+    const source = url.searchParams.get('source')
+    const limit = url.searchParams.get('limit') || '100'
+    const priority = url.searchParams.get('priority')
+    const unit = url.searchParams.get('unit')
+    const allowedKeys = new Set(['source', 'unit', 'limit', 'priority'])
+    const keysValid = [...url.searchParams.keys()].every((key) => allowedKeys.has(key))
+    const sourceValid = ['system', 'service', 'security', 'login'].includes(source)
+    const unitValid = source === 'service'
+      ? /^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,246}\.service$/.test(unit || '')
+      : !unit
+    const priorityValid = source === 'system' || source === 'service'
+      ? !priority || ['all', 'warning', 'error'].includes(priority)
+      : !priority
+    if (!keysValid || !sourceValid || !['50', '100', '200'].includes(limit) || !unitValid || !priorityValid) {
+      send(response, 422, { title: '系统日志查询参数无效', code: 'invalid_system_log_query' })
+      return
+    }
+    send(response, 200, materializeSystemLogEntries(url))
     return
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/sites') {
@@ -1450,6 +1612,28 @@ createServer(async (request, response) => {
   }
   if (request.method === 'POST' && url.pathname === '/api/v1/system/actions') {
     const input = await readJSON(request)
+    if (input.action === 'log-cleanup') {
+      if (!['retain-7d', 'retain-3d', 'max-500m'].includes(input.maintenancePolicy)) {
+        send(response, 422, { title: '系统操作参数无效', code: 'invalid_system_action' })
+        return
+      }
+      systemLogCleanupJob = {
+        id: Date.now().toString(16).padStart(32, '0').slice(-32),
+        policy: input.maintenancePolicy,
+        created: Date.now(),
+        startedAt: new Date().toISOString(),
+      }
+      send(response, 200, {
+        action: input.action,
+        status: 'accepted',
+        changed: true,
+        taskId: systemLogCleanupJob.id,
+        maintenancePolicy: systemLogCleanupJob.policy,
+        message: '系统日志清理任务已提交，页面将自动刷新进度',
+        appliedAt: new Date().toISOString(),
+      })
+      return
+    }
     const isProcessSignal = input.action === 'process-signal'
     send(response, 200, {
       action: input.action || 'reboot',

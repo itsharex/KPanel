@@ -86,6 +86,7 @@ type Server struct {
 	thumbnailGate    chan struct{}
 	storageUsageGate chan struct{}
 	processesGate    chan struct{}
+	systemLogsGate   chan struct{}
 	now              func() time.Time
 }
 
@@ -188,6 +189,7 @@ func NewServer(config Config) (*Server, error) {
 		thumbnailGate:    make(chan struct{}, 2),
 		storageUsageGate: make(chan struct{}, 1),
 		processesGate:    make(chan struct{}, 1),
+		systemLogsGate:   make(chan struct{}, 1),
 		now:              config.Now,
 	}, nil
 }
@@ -263,6 +265,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireMethod(w, r, requestID, http.MethodGet, s.systemTuning)
 	case r.URL.Path == "/v1/system/disk-partitions":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.diskPartitions)
+	case r.URL.Path == "/v1/system/logs/summary":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemLogsSummary)
+	case r.URL.Path == "/v1/system/logs":
+		s.requireMethod(w, r, requestID, http.MethodGet, s.systemLogs)
 	case r.URL.Path == "/v1/monitoring/history":
 		s.requireMethod(w, r, requestID, http.MethodGet, s.monitoringHistory)
 	case r.URL.Path == "/v1/system/actions":

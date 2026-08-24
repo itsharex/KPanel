@@ -152,47 +152,61 @@ func (m *Manager) startMaintenance(
 	action string,
 	policy string,
 ) (bool, string, error) {
+	changed, message, _, err := m.startMaintenanceTask(ctx, action, policy)
+	return changed, message, err
+}
+
+func (m *Manager) startMaintenanceTask(
+	ctx context.Context,
+	action string,
+	policy string,
+) (bool, string, string, error) {
 	mode := ""
 	switch action {
 	case "update":
 		if policy != "full" {
-			return false, "", fmt.Errorf("%w: update policy must be full", ErrInvalidInput)
+			return false, "", "", fmt.Errorf("%w: update policy must be full", ErrInvalidInput)
 		}
 		mode = "update"
 	case "cleanup":
 		if policy != "cache" && policy != "standard" {
-			return false, "", fmt.Errorf("%w: cleanup policy must be cache or standard", ErrInvalidInput)
+			return false, "", "", fmt.Errorf("%w: cleanup policy must be cache or standard", ErrInvalidInput)
 		}
 		mode = "cleanup-" + policy
+	case "log-cleanup":
+		if policy != "retain-7d" && policy != "retain-3d" && policy != "max-500m" {
+			return false, "", "", fmt.Errorf("%w: log cleanup policy must be retain-7d, retain-3d, or max-500m", ErrInvalidInput)
+		}
+		mode = "log-cleanup-" + policy
 	case "ssh-defense":
 		if policy != "enable" && policy != "disable" && policy != "uninstall" {
-			return false, "", fmt.Errorf("%w: SSH defense policy must be enable, disable, or uninstall", ErrInvalidInput)
+			return false, "", "", fmt.Errorf("%w: SSH defense policy must be enable, disable, or uninstall", ErrInvalidInput)
 		}
 		mode = "ssh-defense-" + policy
 	case "bbrv3":
 		if policy != "install" && policy != "update" && policy != "uninstall" {
-			return false, "", fmt.Errorf("%w: BBRv3 policy must be install, update, or uninstall", ErrInvalidInput)
+			return false, "", "", fmt.Errorf("%w: BBRv3 policy must be install, update, or uninstall", ErrInvalidInput)
 		}
 		mode = "bbrv3-" + policy
 	case "system-tuning":
 		if _, _, ok := parseSystemTuningMaintenancePolicy(policy); !ok {
-			return false, "", fmt.Errorf("%w: system tuning policy is invalid", ErrInvalidInput)
+			return false, "", "", fmt.Errorf("%w: system tuning policy is invalid", ErrInvalidInput)
 		}
 		mode = "system-tuning-" + policy
 	default:
-		return false, "", fmt.Errorf("%w: unknown maintenance action", ErrInvalidInput)
+		return false, "", "", fmt.Errorf("%w: unknown maintenance action", ErrInvalidInput)
 	}
 
 	current := m.readMaintenance()
 	if current.State == "running" {
-		return false, "", fmt.Errorf("%w: another maintenance task is already running", ErrConflict)
+		return false, "", "", fmt.Errorf("%w: another maintenance task is already running", ErrConflict)
 	}
 	if _, _, _, err := m.maintenanceSteps(mode); err != nil {
-		return false, "", err
+		return false, "", "", err
 	}
 	executable, err := m.backgroundExecutable()
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
 	}
 
 	startedAt := m.now().UTC()
@@ -203,12 +217,14 @@ func (m *Manager) startMaintenance(
 		StartedAt: &startedAt,
 	}
 	if err := m.writeMaintenance(status); err != nil {
-		return false, "", fmt.Errorf("%w: persist maintenance state: %v", ErrUnsupported, err)
+		return false, "", "", fmt.Errorf("%w: persist maintenance state: %v", ErrUnsupported, err)
 	}
 
 	timeoutStart := "45min"
 	if action == "system-tuning" {
 		timeoutStart = "90min"
+	} else if action == "log-cleanup" {
+		timeoutStart = "10min"
 	}
 	arguments := []string{
 		"--unit=" + maintenanceUnitPrefix + status.ID,
@@ -220,10 +236,36 @@ func (m *Manager) startMaintenance(
 		"--property=User=root",
 		"--property=UMask=0027",
 		"--property=PrivateTmp=yes",
-		"--property=ProtectHome=read-only",
-		"--property=ReadWritePaths=" + m.stateDir,
-		"--property=NoNewPrivileges=no",
-		"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+	}
+	if action == "log-cleanup" {
+		arguments = append(arguments,
+			"--property=ProtectSystem=strict",
+			"--property=ProtectHome=yes",
+			"--property=PrivateDevices=yes",
+			"--property=PrivateNetwork=yes",
+			"--property=ProtectKernelLogs=yes",
+			"--property=ProtectKernelModules=yes",
+			"--property=ProtectKernelTunables=yes",
+			"--property=ProtectControlGroups=yes",
+			"--property=ReadWritePaths="+m.stateDir+" -/var/log/journal -/run/log/journal",
+			"--property=NoNewPrivileges=yes",
+			"--property=CapabilityBoundingSet=",
+			"--property=AmbientCapabilities=",
+			"--property=RestrictNamespaces=yes",
+			"--property=RestrictSUIDSGID=yes",
+			"--property=LockPersonality=yes",
+			"--property=MemoryDenyWriteExecute=yes",
+			"--property=RestrictAddressFamilies=AF_UNIX",
+		)
+	} else {
+		arguments = append(arguments,
+			"--property=ProtectHome=read-only",
+			"--property=ReadWritePaths="+m.stateDir,
+			"--property=NoNewPrivileges=no",
+			"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+		)
+	}
+	arguments = append(arguments,
 		"--property=Nice=10",
 		"--property=CPUWeight=20",
 		"--property=IOWeight=20",
@@ -234,7 +276,7 @@ func (m *Manager) startMaintenance(
 		"--state-dir",
 		m.stateDir,
 		mode,
-	}
+	)
 	if _, err := m.runner.Run(ctx, "systemd-run", arguments...); err != nil {
 		finishedAt := m.now().UTC()
 		status.State = "failed"
@@ -243,9 +285,9 @@ func (m *Manager) startMaintenance(
 		status.Message = maintenanceErrorMessage(err)
 		status.FinishedAt = &finishedAt
 		_ = m.writeMaintenance(status)
-		return false, "", fmt.Errorf("%w: start maintenance task: %v", ErrUnsupported, err)
+		return false, "", status.ID, fmt.Errorf("%w: start maintenance task: %v", ErrUnsupported, err)
 	}
-	return true, "系统维护任务已提交，页面将自动刷新进度", nil
+	return true, "系统维护任务已提交，页面将自动刷新进度", status.ID, nil
 }
 
 // RunMaintenance is only called by the Agent's root-only maintenance-run
@@ -354,6 +396,28 @@ func (m *Manager) RunMaintenance(ctx context.Context, mode string) error {
 func (m *Manager) maintenanceSteps(
 	mode string,
 ) (string, string, []maintenanceStep, error) {
+	if strings.HasPrefix(mode, "log-cleanup-") {
+		policy := strings.TrimPrefix(mode, "log-cleanup-")
+		vacuumArgument := ""
+		stage := ""
+		switch policy {
+		case "retain-7d":
+			vacuumArgument, stage = "--vacuum-time=7d", "log_journal_retain_7d"
+		case "retain-3d":
+			vacuumArgument, stage = "--vacuum-time=3d", "log_journal_retain_3d"
+		case "max-500m":
+			vacuumArgument, stage = "--vacuum-size=500M", "log_journal_max_500m"
+		default:
+			return "", "", nil, fmt.Errorf("%w: unknown log cleanup policy", ErrInvalidInput)
+		}
+		if _, err := m.runner.LookPath("journalctl"); err != nil {
+			return "", "", nil, fmt.Errorf("%w: journalctl is unavailable", ErrUnsupported)
+		}
+		return "log-cleanup", policy, []maintenanceStep{
+			{stage: "log_journal_rotate", progress: 35, command: "journalctl", arguments: []string{"--rotate"}},
+			{stage: stage, progress: 75, command: "journalctl", arguments: []string{vacuumArgument}},
+		}, nil
+	}
 	if strings.HasPrefix(mode, "system-tuning-") {
 		policy := strings.TrimPrefix(mode, "system-tuning-")
 		items, _, ok := parseSystemTuningMaintenancePolicy(policy)
@@ -721,6 +785,14 @@ func maintenanceStageMessage(stage string) string {
 		return "正在保留最近 7 天 journal"
 	case "journal_size":
 		return "正在限制 journal 最大 500 MiB"
+	case "log_journal_rotate":
+		return "正在轮转 systemd journal"
+	case "log_journal_retain_7d":
+		return "正在保留最近 7 天 journal"
+	case "log_journal_retain_3d":
+		return "正在保留最近 3 天 journal"
+	case "log_journal_max_500m":
+		return "正在限制 journal 最大 500 MiB"
 	case "ssh_defense_enable":
 		return "正在安装并启用 Fail2Ban SSH 防御"
 	case "ssh_defense_disable":
@@ -763,6 +835,16 @@ func maintenanceSuccessMessage(action, policy string, rebootRequired bool) strin
 	}
 	if action == "system-tuning" {
 		return "所选一条龙系统调优项目已全部完成"
+	}
+	if action == "log-cleanup" {
+		switch policy {
+		case "retain-7d":
+			return "journal 已轮转并仅保留最近 7 天归档"
+		case "retain-3d":
+			return "journal 已轮转并仅保留最近 3 天归档"
+		default:
+			return "journal 已轮转并限制归档最大 500 MiB"
+		}
 	}
 	if action == "update" {
 		return "系统更新已完成；如内核或核心组件变化，请按提示安排重启"

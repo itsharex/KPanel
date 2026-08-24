@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(new URL('./OverviewView.vue', import.meta.url), 'utf8')
 const systemCenterSource = readFileSync(new URL('./SystemCenterView.vue', import.meta.url), 'utf8')
+const systemLogsSource = readFileSync(new URL('../components/overview/SystemLogsDialog.vue', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('../styles/main.css', import.meta.url), 'utf8')
 const desktopStyles = readFileSync(new URL('../styles/desktop.css', import.meta.url), 'utf8')
 
@@ -66,11 +67,29 @@ describe('OverviewView service status layout', () => {
     expect(source).not.toContain('<h2>网络工具</h2>')
     expect(source).toContain('<SystemTuningDialog')
     expect(source).toContain('<DiskPartitionDialog')
+    expect(source).toContain('<SystemLogsDialog')
+    expect(source).toContain("id: 'system-logs'")
+    expect(source).toContain("capability: 'system.logs.read'")
     expect(systemCenterSource).toContain('<OverviewView system-center-only />')
     expect(styles).toMatch(/\.overview-system-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,/)
     expect(styles).toMatch(/\.system-center-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,/)
     expect(desktopStyles).toMatch(
       /@container desktop-window \(max-width: 980px\)[\s\S]*?\.desktop-window__body \.system-center-grid\s*\{[^}]*repeat\(3,/,
     )
+  })
+
+  it('keeps system logs readable and responsive at tablet and narrow mobile widths', () => {
+    const fontSizes = [...systemLogsSource.matchAll(/font-size:\s*(\d+)px/g)].map((match) => Number(match[1]))
+    expect(Math.min(...fontSizes)).toBeGreaterThanOrEqual(12)
+    expect(systemLogsSource).toMatch(/@media \(max-width: 768px\)/)
+    expect(systemLogsSource).toMatch(/@media \(max-width: 520px\)/)
+    expect(systemLogsSource).toMatch(/\.system-log-source-switch\s*\{[\s\S]*?grid-template-columns:\s*repeat\(4,/)
+    expect(systemLogsSource).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.system-log-source-switch\s*\{[^}]*repeat\(2,/)
+    expect(systemLogsSource).toContain('tabindex="0"')
+    expect(systemLogsSource).toContain('var(--surface-subtle)')
+    expect(systemLogsSource).toContain('var(--text-soft)')
+    expect(styles).toMatch(/\.system-center-grid \.system-tool > strong\s*\{[^}]*font-size:\s*14px/)
+    expect(styles).toMatch(/\.system-center-grid \.system-tool small\s*\{[^}]*font-size:\s*13px/)
+    expect(styles).toMatch(/\.system-tool__state\s*\{[^}]*font-size:\s*12px/)
   })
 })

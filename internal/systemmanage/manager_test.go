@@ -20,6 +20,7 @@ type fakeRunner struct {
 	missing        map[string]bool
 	commands       []string
 	resourceInputs [][]byte
+	resourceLimits []int
 }
 
 func (runner *fakeRunner) Run(ctx context.Context, name string, arguments ...string) ([]byte, error) {
@@ -32,13 +33,14 @@ func (runner *fakeRunner) Run(ctx context.Context, name string, arguments ...str
 
 func (runner *fakeRunner) RunResource(
 	ctx context.Context,
-	_ int,
+	limit int,
 	input []byte,
 	name string,
 	arguments ...string,
 ) ([]byte, []byte, error) {
 	runner.commands = append(runner.commands, strings.Join(append([]string{name}, arguments...), " "))
 	runner.resourceInputs = append(runner.resourceInputs, append([]byte(nil), input...))
+	runner.resourceLimits = append(runner.resourceLimits, limit)
 	if runner.run != nil {
 		output, err := runner.run(ctx, name, arguments...)
 		return output, nil, err

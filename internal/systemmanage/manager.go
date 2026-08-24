@@ -86,6 +86,7 @@ type Config struct {
 	ProcRoot        string
 	SysRoot         string
 	RunRoot         string
+	LogRoot         string
 	StateDir        string
 	SwapPath        string
 	Executable      string
@@ -107,6 +108,7 @@ type Manager struct {
 	procRoot               string
 	sysRoot                string
 	runRoot                string
+	logRoot                string
 	stateDir               string
 	swapPath               string
 	executable             string
@@ -137,6 +139,9 @@ func NewManager(config Config) *Manager {
 	}
 	if config.RunRoot == "" {
 		config.RunRoot = "/var/run"
+	}
+	if config.LogRoot == "" {
+		config.LogRoot = "/var/log"
 	}
 	if config.StateDir == "" {
 		config.StateDir = "/var/lib/kejilion-panel/system"
@@ -181,6 +186,7 @@ func NewManager(config Config) *Manager {
 		enabled: config.Enabled, etcRoot: filepath.Clean(config.EtcRoot),
 		procRoot: filepath.Clean(config.ProcRoot), sysRoot: filepath.Clean(config.SysRoot),
 		runRoot:  filepath.Clean(config.RunRoot),
+		logRoot:  filepath.Clean(config.LogRoot),
 		stateDir: filepath.Clean(config.StateDir), swapPath: filepath.Clean(config.SwapPath),
 		executable: filepath.Clean(config.Executable),
 		now:        config.Now, runner: config.Runner, country: config.Country,
@@ -337,7 +343,8 @@ func (m *Manager) Capabilities() []contract.Capability {
 	capabilities = append(capabilities, m.AccountManagementCapabilities()...)
 	capabilities = append(capabilities, m.SSHDefenseManagementCapabilities()...)
 	capabilities = append(capabilities, m.SystemTuningCapabilities()...)
-	return append(capabilities, m.DiskPartitionCapabilities()...)
+	capabilities = append(capabilities, m.DiskPartitionCapabilities()...)
+	return append(capabilities, m.SystemLogCapabilities()...)
 }
 
 func (m *Manager) Execute(ctx context.Context, input contract.SystemActionRequest) (contract.SystemActionResult, error) {
@@ -368,9 +375,10 @@ func (m *Manager) Execute(ctx context.Context, input contract.SystemActionReques
 		if *input.Enabled {
 			policy = "enable"
 		}
-		result.Changed, result.Message, err = m.startMaintenance(ctx, input.Action, policy)
+		result.Changed, result.Message, result.TaskID, err = m.startMaintenanceTask(ctx, input.Action, policy)
 		if err == nil {
 			result.Status = "accepted"
+			result.MaintenancePolicy = policy
 		}
 	case "dns":
 		result.Changed, result.BackupPath, result.Message, err = m.setDNS(ctx, input.Servers)
@@ -393,23 +401,36 @@ func (m *Manager) Execute(ctx context.Context, input contract.SystemActionReques
 		}
 		result.Changed, result.BackupPath, result.Message, err = m.setBBR(ctx, *input.Enabled)
 	case "bbrv3":
-		result.Changed, result.Message, err = m.startMaintenance(
+		result.Changed, result.Message, result.TaskID, err = m.startMaintenanceTask(
 			ctx,
 			input.Action,
 			input.MaintenancePolicy,
 		)
 		if err == nil {
 			result.Status = "accepted"
+			result.MaintenancePolicy = input.MaintenancePolicy
 		}
 	case "update":
-		result.Changed, result.Message, err = m.startMaintenance(ctx, input.Action, input.MaintenancePolicy)
+		result.Changed, result.Message, result.TaskID, err = m.startMaintenanceTask(ctx, input.Action, input.MaintenancePolicy)
 		if err == nil {
 			result.Status = "accepted"
+			result.MaintenancePolicy = input.MaintenancePolicy
 		}
 	case "cleanup":
-		result.Changed, result.Message, err = m.startMaintenance(ctx, input.Action, input.MaintenancePolicy)
+		result.Changed, result.Message, result.TaskID, err = m.startMaintenanceTask(ctx, input.Action, input.MaintenancePolicy)
 		if err == nil {
 			result.Status = "accepted"
+			result.MaintenancePolicy = input.MaintenancePolicy
+		}
+	case "log-cleanup":
+		if !validSystemLogCleanupRequest(input) {
+			err = fmt.Errorf("%w: only action and maintenancePolicy are allowed for log cleanup", ErrInvalidInput)
+			break
+		}
+		result.Changed, result.Message, result.TaskID, err = m.startMaintenanceTask(ctx, input.Action, input.MaintenancePolicy)
+		if err == nil {
+			result.Status = "accepted"
+			result.MaintenancePolicy = input.MaintenancePolicy
 		}
 	case "reboot":
 		result.Changed, result.Message, err = m.scheduleReboot(ctx, input)
