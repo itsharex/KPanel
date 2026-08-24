@@ -334,7 +334,7 @@ export default [
 	['按需查看 journal、服务、安全与登录日志，并安全清理旧 journal。', 'View journal, service, security, and login logs on demand, and safely clean old journal data.'],
 	['打开后读取真实占用', 'Open to load real usage'],
 	['系统 · 服务 · 安全 · 登录 · 实时刷新', 'System · Service · Security · Login · Live refresh'],
-	['只接受固定日志范围、真实 systemd unit、行数与清理策略；输出始终有界，不浏览或删除任意日志文件。', 'Only fixed log sources, real systemd units, line limits, and cleanup policies are accepted. Output stays bounded, and arbitrary log files cannot be browsed or deleted.'],
+	['只接受固定日志范围、行数与清理策略；服务日志无需选择 unit，输出始终有界，不浏览或删除任意日志文件。', 'Only fixed log sources, line limits, and cleanup policies are accepted. Service logs require no unit selection, output stays bounded, and arbitrary log files cannot be browsed or deleted.'],
 	['当前 Agent 的系统日志适配器尚未就绪。', 'System logs are unavailable with the current Agent.'],
 	['基础配置', 'Basic configuration'],
 	['主机身份、资源与常用系统参数', 'Host identity, resources, and common system settings'],

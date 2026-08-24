@@ -1561,7 +1561,6 @@ export const api = {
           source: query.source,
           limit: query.limit,
           priority: query.source === 'system' || query.source === 'service' ? query.priority : undefined,
-          unit: query.source === 'service' ? query.unit : undefined,
         },
         signal,
       }),

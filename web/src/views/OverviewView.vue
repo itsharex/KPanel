@@ -630,7 +630,7 @@ const maintenanceTools = computed<ManagementTool[]>(() => {
       value: capabilityState('system.logs.read').enabled ? '打开后读取真实占用' : '适配器未就绪',
       detail: '系统 · 服务 · 安全 · 登录 · 实时刷新',
       capability: 'system.logs.read',
-      safety: '只接受固定日志范围、真实 systemd unit、行数与清理策略；输出始终有界，不浏览或删除任意日志文件。',
+      safety: '只接受固定日志范围、行数与清理策略；服务日志无需选择 unit，输出始终有界，不浏览或删除任意日志文件。',
       icon: ScrollText,
       tone: 'blue',
     },

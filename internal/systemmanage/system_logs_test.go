@@ -105,12 +105,12 @@ func TestReadJournalLogsUsesFixedArgumentsAndStructuresEntries(t *testing.T) {
 		}
 		return []byte(
 			`{"__CURSOR":"cursor-2","PRIORITY":"3","MESSAGE":` + strconv.Quote(longMessage) + `}` + "\n" +
-				`{"__CURSOR":"cursor-1","__REALTIME_TIMESTAMP":"1785034800000000","PRIORITY":"4","_SYSTEMD_UNIT":"ssh.service","SYSLOG_IDENTIFIER":"sshd","_PID":"42","MESSAGE":"password=hunter2 Bearer abc.def"}` + "\n",
+				`{"__CURSOR":"cursor-1","__REALTIME_TIMESTAMP":"1785034800000000","PRIORITY":"4","UNIT":"ssh.service","SYSLOG_IDENTIFIER":"sshd","_PID":"42","MESSAGE":"password=hunter2 Bearer abc.def"}` + "\n",
 		), nil
 	}}
 	manager, _, _, _ := testManager(t, runner)
 	entries, truncated, err := manager.readJournalLogs(context.Background(), contract.SystemLogQuery{
-		Source: "service", Unit: "ssh.service", Limit: 50, Priority: "warning",
+		Source: "service", Limit: 50, Priority: "warning",
 	}, false)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestReadJournalLogsUsesFixedArgumentsAndStructuresEntries(t *testing.T) {
 	for _, required := range []string{
 		"journalctl --no-pager --quiet --reverse --lines=51 --output=json",
 		"__CURSOR,__REALTIME_TIMESTAMP",
-		"--unit=ssh.service",
+		"--unit=*.service",
 		"--priority=0..4",
 	} {
 		if !strings.Contains(command, required) {
@@ -332,32 +332,6 @@ func TestReadSecurityJournalUsesAuthAndAuthprivAsOneORQuery(t *testing.T) {
 	command := runner.commands[0]
 	if !strings.Contains(command, "SYSLOG_FACILITY=4") || !strings.Contains(command, "SYSLOG_FACILITY=10") {
 		t.Fatalf("auth OR matches missing: %s", command)
-	}
-}
-
-func TestSystemLogUnitsReturnsSortedBoundedRealServices(t *testing.T) {
-	var output strings.Builder
-	for index := 520; index >= 0; index-- {
-		fmt.Fprintf(&output, "worker-%03d.service loaded active running Worker %03d\n", index, index)
-	}
-	output.WriteString("● failed-demo.service loaded failed failed Failed service\n")
-	output.WriteString("unsafe.service;id loaded active running rejected\n")
-	runner := &fakeRunner{run: func(_ context.Context, name string, _ ...string) ([]byte, error) {
-		if name == "systemctl" {
-			return []byte(output.String()), nil
-		}
-		return nil, nil
-	}}
-	manager, _, _, _ := testManager(t, runner)
-	units, truncated := manager.systemLogUnits(context.Background())
-	if !truncated || len(units) != contract.SystemLogMaxUnits {
-		t.Fatalf("units=%d truncated=%v", len(units), truncated)
-	}
-	if units[0].Name != "failed-demo.service" || units[0].ActiveState != "failed" || units[len(units)-1].Name != "worker-510.service" {
-		t.Fatalf("unexpected sorted unit bounds: %q ... %q", units[0].Name, units[len(units)-1].Name)
-	}
-	if !strings.Contains(runner.commands[0], "systemctl list-units --type=service --all --no-legend --no-pager --plain") {
-		t.Fatalf("unexpected systemctl command: %s", runner.commands[0])
 	}
 }
 

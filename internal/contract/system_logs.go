@@ -2,17 +2,13 @@ package contract
 
 import (
 	"net/url"
-	"regexp"
 	"time"
 )
 
 const (
-	SystemLogMaxUnits        = 512
 	SystemLogMaxMessageBytes = 16 << 10
 	SystemLogMaxOutputBytes  = 4 << 20
 )
-
-var systemLogServiceUnitPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,246}\.service$`)
 
 type SystemLogUsage struct {
 	Available bool   `json:"available"`
@@ -31,26 +27,17 @@ type SystemLogSources struct {
 	Security SystemLogSourceStatus `json:"security"`
 }
 
-type SystemLogUnit struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	ActiveState string `json:"activeState,omitempty"`
-}
-
 type SystemLogSummary struct {
-	ObservedAt     time.Time                `json:"observedAt"`
-	VarLog         SystemLogUsage           `json:"varLog"`
-	Journal        SystemLogUsage           `json:"journal"`
-	Sources        SystemLogSources         `json:"sources"`
-	AuthSource     string                   `json:"authSource,omitempty"`
-	Units          []SystemLogUnit          `json:"units"`
-	UnitsTruncated bool                     `json:"unitsTruncated"`
-	Maintenance    SystemMaintenanceSummary `json:"maintenance"`
+	ObservedAt  time.Time                `json:"observedAt"`
+	VarLog      SystemLogUsage           `json:"varLog"`
+	Journal     SystemLogUsage           `json:"journal"`
+	Sources     SystemLogSources         `json:"sources"`
+	AuthSource  string                   `json:"authSource,omitempty"`
+	Maintenance SystemMaintenanceSummary `json:"maintenance"`
 }
 
 type SystemLogQuery struct {
 	Source   string
-	Unit     string
 	Limit    int
 	Priority string
 }
@@ -67,15 +54,10 @@ type SystemLogEntry struct {
 
 type SystemLogSnapshot struct {
 	Source     string           `json:"source"`
-	Unit       string           `json:"unit,omitempty"`
 	AuthSource string           `json:"authSource,omitempty"`
 	Entries    []SystemLogEntry `json:"entries"`
 	Truncated  bool             `json:"truncated"`
 	ObservedAt time.Time        `json:"observedAt"`
-}
-
-func ValidSystemLogServiceUnit(value string) bool {
-	return systemLogServiceUnitPattern.MatchString(value)
 }
 
 func ValidSystemLogQuery(query SystemLogQuery) bool {
@@ -88,12 +70,10 @@ func ValidSystemLogQuery(query SystemLogQuery) bool {
 		return false
 	}
 	switch query.Source {
-	case "system":
-		return query.Unit == ""
-	case "service":
-		return ValidSystemLogServiceUnit(query.Unit)
+	case "system", "service":
+		return true
 	case "security", "login":
-		return query.Unit == "" && query.Priority == "all"
+		return query.Priority == "all"
 	default:
 		return false
 	}
@@ -108,7 +88,7 @@ func ParseSystemLogQuery(values url.Values) (SystemLogQuery, string, string) {
 			return SystemLogQuery{}, key, "query parameters must not be repeated"
 		}
 		switch key {
-		case "source", "unit", "limit", "priority":
+		case "source", "limit", "priority":
 		default:
 			return SystemLogQuery{}, key, "query parameter is not supported"
 		}
@@ -134,15 +114,6 @@ func ParseSystemLogQuery(values url.Values) (SystemLogQuery, string, string) {
 		default:
 			return SystemLogQuery{}, "limit", "limit must be 50, 100, or 200"
 		}
-	}
-
-	query.Unit = values.Get("unit")
-	if query.Source == "service" {
-		if !ValidSystemLogServiceUnit(query.Unit) {
-			return SystemLogQuery{}, "unit", "unit must be a valid service unit name"
-		}
-	} else if query.Unit != "" {
-		return SystemLogQuery{}, "unit", "unit is only allowed for service logs"
 	}
 
 	if raw, present := values["priority"]; present {

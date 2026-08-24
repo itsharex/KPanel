@@ -21,17 +21,16 @@ func TestParseSystemLogQueryAcceptsOnlyDocumentedFilters(t *testing.T) {
 		},
 		{
 			name: "service filters", values: url.Values{
-				"source": {"service"}, "unit": {"ssh.service"}, "limit": {"200"}, "priority": {"warning"},
+				"source": {"service"}, "limit": {"200"}, "priority": {"warning"},
 			},
-			want: SystemLogQuery{Source: "service", Unit: "ssh.service", Limit: 200, Priority: "warning"},
+			want: SystemLogQuery{Source: "service", Limit: 200, Priority: "warning"},
 		},
 		{
 			name: "security without journal priority", values: url.Values{"source": {"security"}, "limit": {"50"}},
 			want: SystemLogQuery{Source: "security", Limit: 50, Priority: "all"},
 		},
 		{name: "unknown source", values: url.Values{"source": {"kernel"}}, field: "source"},
-		{name: "missing service unit", values: url.Values{"source": {"service"}}, field: "unit"},
-		{name: "unit on system", values: url.Values{"source": {"system"}, "unit": {"ssh.service"}}, field: "unit"},
+		{name: "unit is no longer accepted", values: url.Values{"source": {"service"}, "unit": {"ssh.service"}}, field: "unit"},
 		{name: "invalid limit", values: url.Values{"source": {"system"}, "limit": {"51"}}, field: "limit"},
 		{name: "zero-padded limit", values: url.Values{"source": {"system"}, "limit": {"050"}}, field: "limit"},
 		{name: "signed limit", values: url.Values{"source": {"system"}, "limit": {"+50"}}, field: "limit"},
@@ -50,24 +49,6 @@ func TestParseSystemLogQueryAcceptsOnlyDocumentedFilters(t *testing.T) {
 				t.Fatalf("query = %#v, want %#v", got, test.want)
 			}
 		})
-	}
-}
-
-func TestValidSystemLogServiceUnitRejectsArgumentInjection(t *testing.T) {
-	for _, value := range []string{
-		"ssh.service", "docker.service", "user-runtime-dir@1000.service", "dbus-org.freedesktop.resolve1.service",
-	} {
-		if !ValidSystemLogServiceUnit(value) {
-			t.Fatalf("valid unit %q was rejected", value)
-		}
-	}
-	for _, value := range []string{
-		"", ".service", "ssh", "ssh.socket", "../ssh.service", "ssh.service;id",
-		"ssh.service --since=yesterday", "ssh.service\n--follow", "-ssh.service",
-	} {
-		if ValidSystemLogServiceUnit(value) {
-			t.Fatalf("unsafe unit %q was accepted", value)
-		}
 	}
 }
 

@@ -174,7 +174,7 @@ func TestSystemLogReadPathsAreExactAndPreserveStrictQuery(t *testing.T) {
 		Body: []byte(`{"source":"service","entries":[],"truncated":false,"observedAt":"2026-08-24T09:00:00Z"}`),
 	}}
 	server.agent = agent
-	query := "source=service&unit=ssh.service&limit=50&priority=warning"
+	query := "source=service&limit=50&priority=warning"
 	response := authenticatedSiteRequest(
 		server, sessionCookie, csrfCookie, http.MethodGet, "/api/v1/system/logs?"+query, nil, true,
 	)

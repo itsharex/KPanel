@@ -442,12 +442,6 @@ const systemSummary = {
 }
 
 let systemLogCleanupJob
-const systemLogUnits = [
-  { name: 'docker.service', description: 'Docker Application Container Engine', activeState: 'active' },
-  { name: 'kejilion-agent.service', description: 'KPanel host Agent', activeState: 'active' },
-  { name: 'nginx.service', description: 'A high performance web server', activeState: 'active' },
-  { name: 'ssh.service', description: 'OpenBSD Secure Shell server', activeState: 'active' },
-]
 
 function materializeSystemLogMaintenance() {
   if (!systemLogCleanupJob) return systemSummary.management.maintenance
@@ -514,15 +508,12 @@ function materializeSystemLogSummary() {
       login: { available: true },
     },
     authSource: 'journal',
-    units: systemLogUnits,
-    unitsTruncated: false,
     maintenance,
   }
 }
 
 function materializeSystemLogEntries(url) {
   const source = url.searchParams.get('source')
-  const unit = url.searchParams.get('unit') || ''
   const limit = Number.parseInt(url.searchParams.get('limit') || '100', 10)
   const priority = url.searchParams.get('priority') || 'all'
   const observedAt = new Date().toISOString()
@@ -534,8 +525,8 @@ function materializeSystemLogEntries(url) {
       { timestamp: recentTimestamp, cursor: `visual-system-${Date.now()}`, priority: 'info', unit: 'kejilion-agent.service', identifier: 'kejilion-agent', pid: 1052, message: 'System summary refreshed successfully.' },
     ],
     service: [
-      { timestamp: '2026-08-24T01:00:04Z', cursor: 'visual-service-1', priority: 'info', unit: unit || 'nginx.service', identifier: unit?.split('.')[0] || 'nginx', pid: 908, message: 'Service entered the running state.' },
-      { timestamp: recentTimestamp, cursor: `visual-service-${Date.now()}`, priority: 'warning', unit: unit || 'nginx.service', identifier: unit?.split('.')[0] || 'nginx', pid: 908, message: 'A slow request completed within the configured timeout.' },
+      { timestamp: '2026-08-24T01:00:04Z', cursor: 'visual-service-1', priority: 'info', unit: 'nginx.service', identifier: 'nginx', pid: 908, message: 'Service entered the running state.' },
+      { timestamp: recentTimestamp, cursor: `visual-service-${Date.now()}`, priority: 'warning', unit: 'kejilion-agent.service', identifier: 'kejilion-agent', pid: 1052, message: 'A slow request completed within the configured timeout.' },
     ],
     security: [
       { timestamp: '2026-08-24T00:58:21Z', cursor: 'visual-security-1', priority: 'warning', unit: 'ssh.service', identifier: 'sshd', pid: 742, message: 'Failed publickey for invalid user demo from 203.0.113.28 port 52114 ssh2' },
@@ -555,7 +546,6 @@ function materializeSystemLogEntries(url) {
   entries = entries.slice(-Math.max(0, Number.isInteger(limit) ? limit : 100))
   return {
     source,
-    ...(source === 'service' ? { unit } : {}),
     ...(source === 'security' ? { authSource: 'journal' } : {}),
     entries,
     truncated: false,
@@ -1339,17 +1329,13 @@ createServer(async (request, response) => {
     const source = url.searchParams.get('source')
     const limit = url.searchParams.get('limit') || '100'
     const priority = url.searchParams.get('priority')
-    const unit = url.searchParams.get('unit')
-    const allowedKeys = new Set(['source', 'unit', 'limit', 'priority'])
+    const allowedKeys = new Set(['source', 'limit', 'priority'])
     const keysValid = [...url.searchParams.keys()].every((key) => allowedKeys.has(key))
     const sourceValid = ['system', 'service', 'security', 'login'].includes(source)
-    const unitValid = source === 'service'
-      ? /^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,246}\.service$/.test(unit || '')
-      : !unit
     const priorityValid = source === 'system' || source === 'service'
       ? !priority || ['all', 'warning', 'error'].includes(priority)
       : !priority
-    if (!keysValid || !sourceValid || !['50', '100', '200'].includes(limit) || !unitValid || !priorityValid) {
+    if (!keysValid || !sourceValid || !['50', '100', '200'].includes(limit) || !priorityValid) {
       send(response, 422, { title: '系统日志查询参数无效', code: 'invalid_system_log_query' })
       return
     }

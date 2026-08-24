@@ -777,13 +777,10 @@ describe('API client', () => {
           login: { available: true },
           security: { available: true },
         },
-        units: [],
-        unitsTruncated: false,
         maintenance: { state: 'idle', progress: 0, rebootRequired: false },
       }))
       .mockResolvedValueOnce(jsonResponse({
         source: 'service',
-        unit: 'nginx.service',
         entries: [],
         truncated: false,
         observedAt: '2026-08-24T08:00:00Z',
@@ -801,7 +798,6 @@ describe('API client', () => {
       source: 'service',
       limit: 100,
       priority: 'warning',
-      unit: 'nginx.service',
     })
     await api.system.logs({
       source: 'security',
@@ -810,7 +806,7 @@ describe('API client', () => {
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       '/api/v1/system/logs/summary',
-      '/api/v1/system/logs?source=service&limit=100&priority=warning&unit=nginx.service',
+      '/api/v1/system/logs?source=service&limit=100&priority=warning',
       '/api/v1/system/logs?source=security&limit=50',
     ])
     expect(fetchMock.mock.calls.every((call) => (call[1] as RequestInit | undefined)?.method === 'GET')).toBe(true)

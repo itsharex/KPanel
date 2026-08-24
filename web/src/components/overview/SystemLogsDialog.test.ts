@@ -49,11 +49,6 @@ const summary = {
     login: { available: true },
   },
   authSource: '/var/log/auth.log',
-  units: [
-    { name: 'nginx.service', description: 'Nginx', activeState: 'active' },
-    { name: 'sshd.service', description: 'OpenSSH', activeState: 'active' },
-  ],
-  unitsTruncated: false,
   maintenance: idleMaintenance,
 }
 
@@ -113,7 +108,6 @@ describe('SystemLogsDialog', () => {
       source: 'system',
       limit: 100,
       priority: 'all',
-      unit: undefined,
     }, expect.any(AbortSignal))
     const output = wrapper.find('pre.system-log-output').text()
     expect(output.indexOf('older boot event')).toBeLessThan(output.indexOf('newer nginx event'))
@@ -122,7 +116,7 @@ describe('SystemLogsDialog', () => {
     wrapper.unmount()
   })
 
-  it('uses discovered units and fixed filters while keeping keyword search local', async () => {
+  it('reads all service logs and lets users search them directly without choosing a unit', async () => {
     const wrapper = mountDialog()
     await flushPromises()
 
@@ -132,17 +126,11 @@ describe('SystemLogsDialog', () => {
       source: 'service',
       limit: 100,
       priority: 'all',
-      unit: 'nginx.service',
     }, expect.any(AbortSignal))
 
-    const serviceSelect = wrapper.findAll('.system-log-control')
-      .find((control) => control.text().includes('系统服务'))!
-      .find('select')
-    expect(serviceSelect.findAll('option').map((option) => option.attributes('value'))).toEqual([
-      'nginx.service',
-      'sshd.service',
-    ])
-    await serviceSelect.setValue('sshd.service')
+    expect(wrapper.find('.system-log-query-bar').text()).toContain('搜索服务日志')
+    expect(wrapper.find('.system-log-query-bar').text()).not.toContain('系统服务')
+    expect(wrapper.find('input[type="search"]').attributes('placeholder')).toBe('输入服务名或日志关键字')
     await wrapper.findAll('.system-log-priority button')[1]!.trigger('click')
     const limitSelect = wrapper.findAll('.system-log-control')
       .find((control) => control.text().includes('读取行数'))!
@@ -153,7 +141,6 @@ describe('SystemLogsDialog', () => {
       source: 'service',
       limit: 50,
       priority: 'warning',
-      unit: 'sshd.service',
     }, expect.any(AbortSignal))
 
     const callsBeforeSearch = mocks.logs.mock.calls.length
@@ -187,7 +174,6 @@ describe('SystemLogsDialog', () => {
       source: 'service',
       limit: 100,
       priority: 'all',
-      unit: 'nginx.service',
     }, expect.any(AbortSignal))
     wrapper.unmount()
   })
@@ -557,7 +543,7 @@ describe('SystemLogsDialog', () => {
     expect(bodyText).toContain('System log management')
     expect(bodyText).toContain('All journal entries')
     expect(bodyText).toContain('Lines')
-    expect(bodyText).toContain('Local filter')
+    expect(bodyText).toContain('Search logs')
     expect(bodyText).toContain('Cleanup policy')
     expect(bodyText).toContain('Clean old journal data')
     expect(document.querySelector('[aria-label="Log source"]')).not.toBeNull()

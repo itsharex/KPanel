@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,9 +21,8 @@ import (
 )
 
 const (
-	systemLogFileTailBytes   int64 = 1 << 20
-	systemLogUsageTimeout          = 2 * time.Second
-	systemLogUnitListTimeout       = 3 * time.Second
+	systemLogFileTailBytes int64 = 1 << 20
+	systemLogUsageTimeout        = 2 * time.Second
 )
 
 var (
@@ -82,7 +80,6 @@ func (m *Manager) SystemLogCapabilities() []contract.Capability {
 func (m *Manager) SystemLogSummary(ctx context.Context) (contract.SystemLogSummary, error) {
 	result := contract.SystemLogSummary{
 		ObservedAt: m.now().UTC(),
-		Units:      make([]contract.SystemLogUnit, 0),
 	}
 	if runtime.GOOS != "linux" {
 		return result, fmt.Errorf("%w: system logs are only available on Linux", ErrUnsupported)
@@ -121,9 +118,6 @@ func (m *Manager) SystemLogSummary(ctx context.Context) (contract.SystemLogSumma
 		result.Sources.Security.Reason = "journal 与固定认证日志文件均不可用"
 	}
 
-	unitContext, cancelUnits := context.WithTimeout(ctx, systemLogUnitListTimeout)
-	result.Units, result.UnitsTruncated = m.systemLogUnits(unitContext)
-	cancelUnits()
 	return result, nil
 }
 
@@ -199,58 +193,9 @@ func parseJournalDiskUsage(value string) (uint64, bool) {
 	return uint64(math.Round(bytes)), true
 }
 
-func (m *Manager) systemLogUnits(ctx context.Context) ([]contract.SystemLogUnit, bool) {
-	if _, err := m.runner.LookPath("systemctl"); err != nil {
-		return []contract.SystemLogUnit{}, false
-	}
-	output, _, err := m.runResourceCommand(
-		ctx,
-		contract.SystemLogMaxOutputBytes,
-		"systemctl",
-		"list-units",
-		"--type=service",
-		"--all",
-		"--no-legend",
-		"--no-pager",
-		"--plain",
-	)
-	outputTruncated := errors.Is(err, errResourceOutputTooLarge)
-	if err != nil && !outputTruncated {
-		return []contract.SystemLogUnit{}, false
-	}
-	units := make([]contract.SystemLogUnit, 0)
-	seen := make(map[string]bool)
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "●") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "●"))
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 4 || !contract.ValidSystemLogServiceUnit(fields[0]) || seen[fields[0]] {
-			continue
-		}
-		seen[fields[0]] = true
-		description := ""
-		if len(fields) > 4 {
-			description = sanitizeLogText(strings.Join(fields[4:], " "), 1024)
-		}
-		units = append(units, contract.SystemLogUnit{
-			Name:        fields[0],
-			Description: description,
-			ActiveState: truncateUTF8(strings.ToLower(fields[2]), 32),
-		})
-	}
-	sort.Slice(units, func(left, right int) bool { return units[left].Name < units[right].Name })
-	truncated := outputTruncated || len(units) > contract.SystemLogMaxUnits
-	if len(units) > contract.SystemLogMaxUnits {
-		units = units[:contract.SystemLogMaxUnits]
-	}
-	return units, truncated
-}
-
 func (m *Manager) SystemLogs(ctx context.Context, query contract.SystemLogQuery) (contract.SystemLogSnapshot, error) {
 	result := contract.SystemLogSnapshot{
-		Source: query.Source, Unit: query.Unit,
+		Source:  query.Source,
 		Entries: make([]contract.SystemLogEntry, 0), ObservedAt: m.now().UTC(),
 	}
 	if !contract.ValidSystemLogQuery(query) {
@@ -306,13 +251,10 @@ func (m *Manager) readJournalLogs(
 		"--reverse",
 		"--lines=" + strconv.Itoa(query.Limit+1),
 		"--output=json",
-		"--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,PRIORITY,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_COMM,_PID,SYSLOG_PID",
+		"--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,PRIORITY,_SYSTEMD_UNIT,UNIT,OBJECT_SYSTEMD_UNIT,COREDUMP_UNIT,SYSLOG_IDENTIFIER,_COMM,_PID,SYSLOG_PID",
 	}
 	if query.Source == "service" {
-		if !contract.ValidSystemLogServiceUnit(query.Unit) {
-			return nil, false, fmt.Errorf("%w: invalid service unit", ErrInvalidInput)
-		}
-		arguments = append(arguments, "--unit="+query.Unit)
+		arguments = append(arguments, "--unit=*.service")
 	}
 	switch query.Priority {
 	case "warning":
@@ -367,6 +309,13 @@ func parseJournalEntries(output []byte) ([]contract.SystemLogEntry, bool) {
 			Unit:       sanitizeLogText(journalString(fields["_SYSTEMD_UNIT"]), 255),
 			Identifier: sanitizeLogText(journalString(fields["SYSLOG_IDENTIFIER"]), 256),
 			Message:    normalizeLogText(journalString(fields["MESSAGE"]), contract.SystemLogMaxMessageBytes),
+		}
+		if entry.Unit == "" {
+			for _, field := range []string{"UNIT", "OBJECT_SYSTEMD_UNIT", "COREDUMP_UNIT"} {
+				if entry.Unit = sanitizeLogText(journalString(fields[field]), 255); entry.Unit != "" {
+					break
+				}
+			}
 		}
 		if entry.Identifier == "" {
 			entry.Identifier = sanitizeLogText(journalString(fields["_COMM"]), 256)

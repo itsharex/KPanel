@@ -52,7 +52,7 @@ const windowActive = inject(desktopWindowActiveKey, computed(() => true))
 
 const sourceOptions: ReadonlyArray<{ id: SystemLogSource; label: string; detail: string }> = [
   { id: 'system', label: '系统', detail: '全部 journal' },
-  { id: 'service', label: '服务', detail: '指定 systemd unit' },
+  { id: 'service', label: '服务', detail: '全部服务日志' },
   { id: 'security', label: '安全', detail: '认证事件' },
   { id: 'login', label: '登录', detail: '最近登录记录' },
 ]
@@ -116,7 +116,6 @@ const entries = ref<SystemLogEntries>()
 const selectedSource = ref<SystemLogSource>('system')
 const selectedPriority = ref<SystemLogPriority>('all')
 const selectedLimit = ref<SystemLogLimit>(100)
-const selectedUnit = ref('')
 const keyword = ref('')
 const realtime = ref(false)
 const pageVisible = ref(typeof document === 'undefined' || document.visibilityState !== 'hidden')
@@ -163,7 +162,6 @@ const entriesQueryKey = computed(() => JSON.stringify({
   source: selectedSource.value,
   limit: selectedLimit.value,
   priority: effectivePriority.value,
-  unit: selectedSource.value === 'service' ? selectedUnit.value : undefined,
 }))
 
 function currentEntriesQuery(): SystemLogQuery {
@@ -175,7 +173,6 @@ function currentEntriesQuery(): SystemLogQuery {
       source: 'service',
       limit: selectedLimit.value,
       priority: selectedPriority.value,
-      unit: selectedUnit.value,
     }
   }
   return { source: selectedSource.value, limit: selectedLimit.value }
@@ -200,9 +197,6 @@ function sourceAvailability(source: SystemLogSource): { available: boolean; reas
       reason: summary.value.sources.security.reason || '当前主机没有可用的安全日志。',
     }
   }
-  if (source === 'service' && !summary.value.units.length) {
-    return { available: false, reason: '当前主机没有可选择的 systemd 服务。' }
-  }
   return {
     available: summary.value.sources.journal.available,
     reason: summary.value.sources.journal.reason || '当前主机没有可用的 systemd journal。',
@@ -211,8 +205,7 @@ function sourceAvailability(source: SystemLogSource): { available: boolean; reas
 
 const selectedAvailability = computed(() => sourceAvailability(selectedSource.value))
 const canReadEntries = computed(() =>
-  props.open && props.readable && selectedAvailability.value.available &&
-  (selectedSource.value !== 'service' || Boolean(selectedUnit.value)),
+  props.open && props.readable && selectedAvailability.value.available,
 )
 const canRealtime = computed(() =>
   realtime.value && canReadEntries.value && pageVisible.value && windowActive.value,
@@ -267,7 +260,6 @@ function reasonMessage(reason: unknown, fallback: string): string {
 
 function setSource(source: SystemLogSource): void {
   if (source === selectedSource.value) return
-  if (source === 'service' && !selectedUnit.value) selectedUnit.value = summary.value?.units[0]?.name || ''
   if (source !== 'system' && source !== 'service') selectedPriority.value = 'all'
   selectedSource.value = source
   keyword.value = ''
@@ -313,9 +305,6 @@ async function loadSummary(silent = false): Promise<boolean> {
     if (!result) return false
     if (summaryController !== controller || !props.open) return false
     summary.value = result
-    if (!result.units.some((unit) => unit.name === selectedUnit.value)) {
-      selectedUnit.value = result.units[0]?.name || ''
-    }
     syncCleanupMaintenance(result.maintenance)
     return true
   } catch (reason) {
@@ -712,7 +701,6 @@ onBeforeUnmount(() => {
 
         <div class="system-logs-observed">
           <span>{{ phrase(`采样时间 ${formatDateTime(summary.observedAt)}`) }}</span>
-          <span v-if="summary.unitsTruncated">{{ phrase('服务列表已按上限截断') }}</span>
           <button
             class="icon-button"
             type="button"
@@ -759,15 +747,6 @@ onBeforeUnmount(() => {
 
         <template v-else>
           <div class="system-log-query-bar">
-            <label v-if="selectedSource === 'service'" class="system-log-control system-log-control--service">
-              <span>{{ phrase('系统服务') }}</span>
-              <select v-model="selectedUnit">
-                <option v-for="unit in summary.units" :key="unit.name" :value="unit.name">
-                  {{ unit.name }}{{ unit.description ? ` · ${unit.description}` : '' }}
-                </option>
-              </select>
-            </label>
-
             <label class="system-log-control">
               <span>{{ phrase('读取行数') }}</span>
               <select v-model.number="selectedLimit">
@@ -776,10 +755,15 @@ onBeforeUnmount(() => {
             </label>
 
             <label class="system-log-control system-log-control--search">
-              <span>{{ phrase('本地筛选') }}</span>
+              <span>{{ phrase(selectedSource === 'service' ? '搜索服务日志' : '搜索日志') }}</span>
               <span class="system-log-search-input">
                 <Search :size="17" />
-                <input v-model="keyword" type="search" autocomplete="off" :placeholder="phrase('关键词、服务、PID 或消息')" />
+                <input
+                  v-model="keyword"
+                  type="search"
+                  autocomplete="off"
+                  :placeholder="phrase(selectedSource === 'service' ? '输入服务名或日志关键字' : '关键词、服务、PID 或消息')"
+                />
               </span>
             </label>
 
@@ -820,7 +804,7 @@ onBeforeUnmount(() => {
           <EmptyState
             v-else-if="entries && !filteredEntries.length"
             :title="phrase(keyword.trim() ? '没有匹配的日志' : '当前范围暂无日志')"
-            :description="phrase(keyword.trim() ? '调整本地筛选关键词或刷新后重试。' : '当前主机在所选范围内没有返回日志记录。')"
+            :description="phrase(keyword.trim() ? '调整搜索关键字或增加读取行数后重试。' : '当前主机在所选范围内没有返回日志记录。')"
           />
           <section v-else-if="entries" class="system-log-output-shell" :aria-label="phrase('日志输出')">
             <header>
@@ -1032,7 +1016,6 @@ onBeforeUnmount(() => {
   font-weight: 650;
 }
 
-.system-log-control--service,
 .system-log-control--search {
   min-width: 220px;
   flex: 1 1 260px;

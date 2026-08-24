@@ -46,8 +46,6 @@ func (runner *systemLogTestRunner) output(name string, arguments ...string) ([]b
 	switch name {
 	case "du":
 		return []byte("4\t/var/log\n"), nil
-	case "systemctl":
-		return []byte("ssh.service loaded active running OpenSSH server\n"), nil
 	case "journalctl":
 		if len(arguments) > 0 && arguments[0] == "--disk-usage" {
 			return []byte("Archived and active journals take up 1.0M in the file system.\n"), nil
@@ -66,7 +64,7 @@ func TestSystemLogRoutesRejectUnsafeQueriesBeforeHostAccess(t *testing.T) {
 		status int
 	}{
 		{http.MethodGet, "/v1/system/logs/summary?source=system", http.StatusUnprocessableEntity},
-		{http.MethodGet, "/v1/system/logs?source=service&unit=ssh.service;id&limit=50&priority=warning", http.StatusUnprocessableEntity},
+		{http.MethodGet, "/v1/system/logs?source=service&unit=ssh.service&limit=50&priority=warning", http.StatusUnprocessableEntity},
 		{http.MethodGet, "/v1/system/logs?source=system&source=login", http.StatusUnprocessableEntity},
 		{http.MethodGet, "/v1/system/logs?source=security&priority=all", http.StatusUnprocessableEntity},
 		{http.MethodPost, "/v1/system/logs/summary", http.StatusMethodNotAllowed},
@@ -125,11 +123,11 @@ func TestSystemLogRoutesReturnStructuredBoundedData(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !summary.VarLog.Available || summary.VarLog.Bytes != 4096 || !summary.Journal.Available ||
-		len(summary.Units) != 1 || summary.Units[0].Name != "ssh.service" || summary.Maintenance.State != "idle" {
+		summary.Maintenance.State != "idle" {
 		t.Fatalf("unexpected summary: %#v", summary)
 	}
 
-	request = httptest.NewRequest(http.MethodGet, "/v1/system/logs?source=service&unit=ssh.service&limit=50&priority=all", nil)
+	request = httptest.NewRequest(http.MethodGet, "/v1/system/logs?source=service&limit=50&priority=all", nil)
 	request.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 32))
 	response = httptest.NewRecorder()
 	server.ServeHTTP(response, request)
@@ -140,7 +138,7 @@ func TestSystemLogRoutesReturnStructuredBoundedData(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Source != "service" || snapshot.Unit != "ssh.service" || len(snapshot.Entries) != 1 ||
+	if snapshot.Source != "service" || len(snapshot.Entries) != 1 ||
 		snapshot.Entries[0].Cursor != "cursor" || snapshot.Entries[0].Message != "ready" {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}

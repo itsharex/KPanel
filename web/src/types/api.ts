@@ -440,12 +440,6 @@ export interface SystemLogAvailability {
   reason?: string
 }
 
-export interface SystemLogUnit {
-  name: string
-  description?: string
-  activeState?: string
-}
-
 export interface SystemLogsSummary {
   observedAt: string
   varLog: SystemLogAvailability & { bytes?: number }
@@ -456,8 +450,6 @@ export interface SystemLogsSummary {
     security: SystemLogAvailability
   }
   authSource?: string
-  units: SystemLogUnit[]
-  unitsTruncated: boolean
   maintenance: SystemManagement['maintenance']
 }
 
@@ -473,7 +465,7 @@ export interface SystemLogEntry {
 
 export type SystemLogQuery =
   | { source: 'system'; limit: SystemLogLimit; priority: SystemLogPriority; unit?: never }
-  | { source: 'service'; limit: SystemLogLimit; priority: SystemLogPriority; unit: string }
+  | { source: 'service'; limit: SystemLogLimit; priority: SystemLogPriority; unit?: never }
   | { source: 'security' | 'login'; limit: SystemLogLimit; priority?: never; unit?: never }
 
 export interface SystemLogEntries {
