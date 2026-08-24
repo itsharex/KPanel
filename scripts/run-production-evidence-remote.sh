@@ -58,7 +58,7 @@ fi
 
 [ "$(uname -s)" = Linux ] || { echo "production evidence entrypoint requires Linux" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || { echo "production evidence entrypoint requires root" >&2; exit 1; }
-for command in awk bash curl date diff docker findmnt grep journalctl python3 realpath sha256sum sort systemctl tar xargs zstd; do
+for command in awk bash curl date df diff docker findmnt grep journalctl python3 realpath seq sha256sum sort systemctl tar xargs zstd; do
   command -v "$command" >/dev/null || { echo "required command is missing: $command" >&2; exit 1; }
 done
 [ -S /var/run/docker.sock ] || { echo "Docker socket is required" >&2; exit 1; }
@@ -131,7 +131,7 @@ PY
   findmnt -T "$app_root" > "$output_dir/findmnt.txt"
   df -h "$app_root" > "$output_dir/df.txt"
   docker stats --no-stream --format '{{json .}}' "$container" > "$output_dir/resources.json"
-  sha256sum "$compose" "$env_file" "$service_unit" > "$output_dir/protected.sha256"
+  sha256sum "$compose" "$env_file" /home/docker/kpanel/agent.env > "$output_dir/protected.sha256"
   find "$data_dir" -xdev -type f -printf '%P\t%s\n' | LC_ALL=C sort > "$output_dir/data-inventory.tsv"
   python3 - "$data_dir" > "$output_dir/sqlite-check.txt" <<'PY'
 import pathlib, sqlite3, sys
@@ -159,6 +159,8 @@ case "$PHASE" in
   backup)
     baseline="/root/kpanel-release-evidence/$BASELINE_RUN_ID/production-preflight/snapshot"
     [ -f "$baseline/protected.sha256" ] || { echo "baseline preflight evidence is missing" >&2; exit 1; }
+    available_kib=$(df -Pk /root/kpanel-backups | awk 'NR == 2 {print $4}')
+    [ "$available_kib" -ge 1048576 ] || { echo "less than 1 GiB is available for the production backup" >&2; exit 1; }
     backup="/root/kpanel-backups/pre-v${EXPECTED_VERSION}-$(date -u +%Y%m%dT%H%M%SZ)"
     [ "$(realpath -m "$backup")" = "/root/kpanel-backups/$(basename "$backup")" ] || exit 2
     [ ! -e "$backup" ] || { echo "backup path already exists" >&2; exit 1; }
