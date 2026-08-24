@@ -1,12 +1,12 @@
 ---
 name: local-feature-preview
 description: "为 KPanel 功能会话建立可复现、可并行、可停止且证据分层明确的本地交互预览"
-version: "1.1"
+version: "1.2"
 author: "Codex"
 tags: [kpanel, preview, frontend, browser, multi-agent, quality]
-params: [project_dir, scope, preview_mode, preview_grade, api_target, evidence_dir, affected_journeys]
+params: [project_dir, scope, preview_mode, preview_grade, acceptance_profile, api_target, evidence_dir, affected_journeys]
 created: "2026-08-17T12:25:44Z"
-updated: "2026-08-18T10:00:00+08:00"
+updated: "2026-08-24T08:00:00Z"
 ---
 
 # KPanel Local Feature Preview
@@ -21,7 +21,8 @@ updated: "2026-08-18T10:00:00+08:00"
 
 - 已阅读 `docs/local-feature-preview-standard.md`、`docs/ui-visual-language.md`、`PROJECT_RULES.md` 和本任务相关业务文档。
 - `${{project_dir}}` 是当前任务独占的 KPanel worktree；主线管理工作树不得承载功能预览。
-- `${{scope}}` 是稳定的小写连字符标识，`${{affected_journeys}}` 已列出本轮可操作路径。
+- `${{scope}}` 是稳定的小写连字符标识；`${{affected_journeys}}` 使用 3–7 个
+  `操作步骤 => 预期结果` 并以 `|` 分隔；`${{acceptance_profile}}` 已按受影响风险选择。
 - `web/node_modules` 来自当前 `web/package-lock.json`；缺失时先在该 worktree 执行 `npm ci`。
 - 未经授权不连接远程环境；本地集成 API 只能是回环地址。真实主机验收另走登记环境和既有工作流。
 
@@ -42,8 +43,12 @@ git diff --check
 - `integration`：前端连接本机回环 Panel/API，验证真实接口契约和本地状态。
 - 需要宿主机、Docker、脚本或跨重启闭环时，不提升本地预览结论，改用登记的隔离真机工作流。
 
-`${{preview_grade}}=draft` 允许 dirty worktree，只用于阶段体验；`acceptance` 必须是 clean checkpoint，
+本次等级为 `${{preview_grade}}`；`draft` 允许 dirty worktree，只用于阶段体验，`acceptance` 必须是 clean checkpoint，
 可作为当前精确提交的浏览器证据。
+
+选择且只选择一种验收画像：`interaction` 用于普通确定性交互，`visual` 用于字号/主题/布局，
+`visual-composition` 用于实体、状态和徽章/浮层会同时出现或已有视觉逃逸的旅程。只覆盖实际受影响且
+可共存的组合，不生成全量笛卡尔积。
 
 **Expected output:** 模式、等级、精确提交、dirty 状态和受影响旅程明确；证据能力没有被夸大。
 
@@ -57,6 +62,8 @@ node scripts/local-feature-preview.mjs start `
   --scope "${{scope}}" `
   --mode mock `
   --grade "${{preview_grade}}" `
+  --profile "${{acceptance_profile}}" `
+  --journeys "${{affected_journeys}}" `
   --evidence-dir "${{evidence_dir}}"
 ```
 
@@ -68,6 +75,8 @@ node scripts/local-feature-preview.mjs start `
   --scope "${{scope}}" `
   --mode integration `
   --grade "${{preview_grade}}" `
+  --profile "${{acceptance_profile}}" `
+  --journeys "${{affected_journeys}}" `
   --api-target "${{api_target}}" `
   --evidence-dir "${{evidence_dir}}"
 ```
@@ -84,6 +93,7 @@ node scripts/local-feature-preview.mjs start `
 预览状态：ready / failed / stopped
 预览等级：draft / acceptance
 数据模式：mock / local-integration / isolated-real-host
+验收画像：interaction / visual / visual-composition
 功能范围与入口：<scope、菜单路径、起始 URL>
 候选身份：<branch、commit、clean/dirty、workingTreeFingerprint>
 访问地址：<loopback URL>
@@ -101,9 +111,10 @@ Mock 预览首句必须写“模拟数据预览”；dirty 预览首句必须写
 
 ### 4. 完成受影响旅程验收
 
-普通确定性交互由当前功能会话使用真实浏览器完成，至少覆盖受影响的桌面与窄视口、关键成功路径、
-一个真实失败/空状态、焦点、100%/125%/200% 缩放下的可读性和控制台错误；按
-`docs/ui-visual-language.md` 记录最小计算字号。没有影响的维度写明不适用依据。
+普通确定性交互由当前功能会话使用真实浏览器完成。`interaction` 覆盖受影响视口、关键成功路径、
+一个真实失败/空状态、焦点和控制台错误；`visual` 增加窄/宽视口、100%/200% 缩放、受影响主题和
+最小计算字号；`visual-composition` 再增加实体、状态、徽章/浮层的真实共存场景及对应自动回归。
+只有紧凑布局、固定高度、像素取整、断点或历史缩放缺陷受影响时增加 125%，没有影响的维度写明不适用依据。
 
 预计跨会话、涉及生命周期、重连、并发、流式或资源趋势的浏览器验收：
 
@@ -129,9 +140,10 @@ node scripts/local-feature-preview.mjs stop --evidence-dir "${{evidence_dir}}"
 - `${{scope}}`：小写连字符功能标识。
 - `${{preview_mode}}`：`mock` 或 `integration`。
 - `${{preview_grade}}`：`draft` 或 `acceptance`。
+- `${{acceptance_profile}}`：`interaction`、`visual` 或 `visual-composition`。
 - `${{api_target}}`：integration 模式的本机回环 API origin；mock 模式不使用。
 - `${{evidence_dir}}`：唯一、非 Git 跟踪的预览证据目录。
-- `${{affected_journeys}}`：本轮让用户实际操作的旅程和预期结果。
+- `${{affected_journeys}}`：3–7 个 `操作步骤 => 预期结果`，使用 `|` 分隔并写入 manifest。
 
 ## Verification
 

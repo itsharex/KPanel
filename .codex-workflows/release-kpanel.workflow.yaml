@@ -1,12 +1,12 @@
 ---
 name: release-kpanel
 description: "按发布画像完成 KPanel 多维质量验收、CI、Release、公开镜像、生产部署安全核对和回滚记录"
-version: "2.9"
+version: "2.10"
 author: "Codex"
 tags: [release, deploy, docker, github, appmarket, verification]
 params: [project_dir, version, previous_version, image, runner_image, apps_repo, validation_environment, production_environment]
 created: "2026-07-27T13:00:00Z"
-updated: "2026-08-23T08:00:00Z"
+updated: "2026-08-24T08:00:00Z"
 ---
 
 # Release KPanel
@@ -83,6 +83,12 @@ node scripts/check-environment-policy.mjs \
 JSON 或仓库脚本传值，不在生产命令中嵌套临时 PowerShell/SSH/Shell 转义。未被固定入口声明和预检的
 可选本机工具不得成为生产验收依赖。
 
+预检按实际阶段一次列全必需能力并整体报告缺失项，避免执行到一半才逐个发现 `gofmt`、`jq`、
+`sqlite3`、Shell 或解析器不存在。Go/Node/扫描器证据由固定 Linux Runner 产生，不要求 Windows 本机
+临时补齐；最小容器不假设存在 Shell 或 `jq`；SQLite 校验必须在生产写前确认 `sqlite3` 或 Python
+`sqlite3` 至少一条固定实现可用。读取 JSON/JSONL/审计证据前先保存一个真实脱敏样本并确认顶层类型、
+字段和权威文件路径，再由仓库脚本或 Runner 解析，禁止在远端命令中猜字段名、文件名或拼接临时查询。
+
 ### 2. 准备一致的版本变更
 
 将 `${{version}}` 同步到以下位置，并补充 `CHANGELOG.md`：
@@ -152,6 +158,10 @@ node scripts/run-release-l3.mjs \
 按发布画像补充自动门禁不能代替的证据：受影响性能基准、桌面/窄视口、浅/深色、键盘/焦点、
 多语言、失败状态、`kejilion.sh` 双向互通，以及 L2/L3 写路径的失败注入、重启恢复和回滚。
 危险或破坏性写操作优先使用隔离真机，不为了生产形式完整主动改变无关业务数据。
+
+界面变化同时按本地预览标准选择 `interaction`、`visual` 或 `visual-composition`。当多种实体、选中/加载
+状态、徽章/浮层/固定栏会共存，或上一版本曾发生视觉逃逸时必须使用 `visual-composition`，在同一浏览器
+场景验证受影响组合并保留自动回归；不接受把各元素分开截图后推断组合正确，也不要求无关页面跑全矩阵。
 
 隔离容器网络默认让 Docker 自动分配，并读取实际 subnet/IP 生成受信边界；只有完成现有网络清单冲突
 检查后才允许固定子网。不得因硬编码测试网段与并发任务冲突而把候选误判为失败。

@@ -80,8 +80,9 @@ node() { return 0; }
 npm() { printf 'npm %s\n' "$*" >>"$VERIFY_STUB_LOG"; }
 make() { printf 'make %s\n' "$*" >>"$VERIFY_STUB_LOG"; }
 go() { printf 'go %s\n' "$*" >>"$VERIFY_STUB_LOG"; }
+gofmt() { return 0; }
 docker() { printf 'docker %s\n' "$*" >>"$VERIFY_STUB_LOG"; }
-export -f git node npm make go docker
+export -f git node npm make go gofmt docker
 `, 'utf8');
     const bashEnvPath = bashEnv
       .replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`)
@@ -103,6 +104,7 @@ export -f git node npm make go docker
 
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, /L3 release verification completed\./);
+    assert.match(result.stdout, /verification_preflight=pass/);
     assert.doesNotMatch(result.stdout, /No changes require verification\./);
     const commands = readFileSync(log, 'utf8');
     assert.match(commands, /make test/);

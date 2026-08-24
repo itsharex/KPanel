@@ -20,6 +20,7 @@ const defaultRepoRoot = resolve(dirname(scriptPath), '..');
 const validScope = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const validModes = new Set(['mock', 'integration']);
 const validGrades = new Set(['draft', 'acceptance']);
+const validProfiles = new Set(['interaction', 'visual', 'visual-composition']);
 
 export function parseArgs(argv) {
   const [command, ...tokens] = argv;
@@ -35,6 +36,22 @@ export function parseArgs(argv) {
     index += 1;
   }
   return { command, options };
+}
+
+export function parseAffectedJourneys(rawJourneys) {
+  if (!rawJourneys) throw new Error('--journeys is required and must contain 3-7 "step => expected result" entries separated by |');
+  const journeys = rawJourneys.split('|').map((journey) => journey.trim()).filter(Boolean);
+  if (journeys.length < 3 || journeys.length > 7) {
+    throw new Error('--journeys must contain 3-7 entries separated by |');
+  }
+  for (const journey of journeys) {
+    if (journey.length > 240) throw new Error('each --journeys entry must be at most 240 characters');
+    const [step, expected, ...extra] = journey.split('=>').map((part) => part.trim());
+    if (!step || !expected || extra.length > 0) {
+      throw new Error('each --journeys entry must use "step => expected result" syntax');
+    }
+  }
+  return journeys;
 }
 
 function git(repoRoot, args, { allowFailure = false, trim = true } = {}) {
@@ -222,9 +239,11 @@ export function validateStartOptions(options, identity) {
   const scope = options.scope;
   const mode = options.mode || 'mock';
   const grade = options.grade || 'draft';
+  const profile = options.profile || 'interaction';
   if (!scope || !validScope.test(scope)) throw new Error('--scope must be a lowercase hyphenated identifier');
   if (!validModes.has(mode)) throw new Error('--mode must be mock or integration');
   if (!validGrades.has(grade)) throw new Error('--grade must be draft or acceptance');
+  if (!validProfiles.has(profile)) throw new Error('--profile must be interaction, visual, or visual-composition');
   if (grade === 'acceptance' && !identity.clean) {
     throw new Error('acceptance preview requires a clean checkpoint; use --grade draft for an uncommitted worktree');
   }
@@ -233,12 +252,16 @@ export function validateStartOptions(options, identity) {
   if (options['change-origin'] && !['true', 'false'].includes(options['change-origin'])) {
     throw new Error('--change-origin must be true or false');
   }
-  return { scope, mode, grade };
+  if (grade === 'acceptance' && !options.journeys) {
+    throw new Error('acceptance preview requires --journeys with 3-7 explicit step/result entries');
+  }
+  const affectedJourneys = options.journeys ? parseAffectedJourneys(options.journeys) : [];
+  return { scope, mode, grade, profile, affectedJourneys };
 }
 
 export function validateKnownOptions(command, options) {
   const allowed = command === 'start'
-    ? new Set(['project-dir', 'scope', 'mode', 'grade', 'web-port', 'api-port', 'api-target', 'evidence-dir', 'change-origin'])
+    ? new Set(['project-dir', 'scope', 'mode', 'grade', 'profile', 'journeys', 'web-port', 'api-port', 'api-target', 'evidence-dir', 'change-origin'])
     : new Set(['evidence-dir']);
   for (const key of Object.keys(options)) {
     if (!allowed.has(key)) throw new Error(`unknown option for ${command}: --${key}`);
@@ -249,7 +272,7 @@ async function startPreview(options) {
   const repoRoot = resolve(options['project-dir'] || defaultRepoRoot);
   const actualRoot = git(repoRoot, ['rev-parse', '--show-toplevel']);
   const identity = sourceIdentity(actualRoot);
-  const { scope, mode, grade } = validateStartOptions(options, identity);
+  const { scope, mode, grade, profile, affectedJourneys } = validateStartOptions(options, identity);
   const evidenceDir = resolveEvidenceDir(actualRoot, options['evidence-dir'], scope);
   const evidenceRelativePath = relative(actualRoot, evidenceDir).replaceAll('\\', '/');
   if (!evidenceRelativePath.startsWith('../') && evidenceRelativePath !== '.codex-tmp' && !evidenceRelativePath.startsWith('.codex-tmp/')) {
@@ -289,15 +312,22 @@ async function startPreview(options) {
     scope,
     mode,
     grade,
+    acceptanceProfile: profile,
+    affectedJourneys,
     evidenceLevel: mode === 'mock' ? 'mock-ui' : 'local-integration',
     source: { repository: actualRoot, ...identity },
     urls: { preview: `http://127.0.0.1:${webPort}`, apiTarget },
     processes: {},
     evidenceDir,
     startedAt: new Date().toISOString(),
-    limitations: mode === 'mock'
-      ? ['模拟数据：仅证明界面、交互和错误反馈，不证明真实 Panel/Agent、宿主机或 Docker 行为。']
-      : ['本地集成：只证明所连接的本地候选 API；不替代隔离真机、公开产物或生产部署安全核对。'],
+    limitations: [
+      mode === 'mock'
+        ? '模拟数据：仅证明界面、交互和错误反馈，不证明真实 Panel/Agent、宿主机或 Docker 行为。'
+        : '本地集成：只证明所连接的本地候选 API；不替代隔离真机、公开产物或生产部署安全核对。',
+      ...(affectedJourneys.length === 0
+        ? ['兼容草稿：未提供受影响旅程，只允许阶段调试；验收预览必须重新启动并提供 3–7 个步骤与预期结果。']
+        : []),
+    ],
   };
   writeManifest(manifestPath, manifest);
 
@@ -347,6 +377,8 @@ async function startPreview(options) {
       id: previewId,
       mode,
       grade,
+      acceptanceProfile: profile,
+      affectedJourneys,
       source: manifest.source,
       previewUrl: manifest.urls.preview,
       evidenceDir,
@@ -383,6 +415,8 @@ async function previewStatus(options) {
     source: manifest.source,
     mode: manifest.mode,
     grade: manifest.grade,
+    acceptanceProfile: manifest.acceptanceProfile,
+    affectedJourneys: manifest.affectedJourneys,
     manifestPath,
   }, null, 2) + '\n');
 }
@@ -403,7 +437,9 @@ function stopPreview(options) {
 
 function usage() {
   return `usage:
-  local-feature-preview.mjs start --scope <slug> [--mode mock|integration] [--grade draft|acceptance]
+  local-feature-preview.mjs start --scope <slug> --journeys "step => expected | step => expected | step => expected"
+    [--mode mock|integration] [--grade draft|acceptance]
+    [--profile interaction|visual|visual-composition]
     [--project-dir <path>] [--web-port auto|port] [--api-port auto|port]
     [--api-target http://127.0.0.1:port] [--evidence-dir <path>] [--change-origin true|false]
   local-feature-preview.mjs status --evidence-dir <path>

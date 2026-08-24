@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   choosePort,
+  parseAffectedJourneys,
   parseArgs,
   validateLoopbackTarget,
   validateKnownOptions,
@@ -32,27 +33,74 @@ test('integration preview only accepts secret-free loopback targets', () => {
 });
 
 test('acceptance preview requires a clean checkpoint', () => {
+  const journeys = '打开页面 => 页面可用 | 执行操作 => 结果可回读 | 制造失败 => 提示可恢复';
   assert.throws(
-    () => validateStartOptions({ scope: 'docker-compose', mode: 'mock', grade: 'acceptance' }, { clean: false }),
+    () => validateStartOptions({ scope: 'docker-compose', mode: 'mock', grade: 'acceptance', journeys }, { clean: false }),
     /requires a clean checkpoint/,
   );
   assert.deepEqual(
-    validateStartOptions({ scope: 'docker-compose', mode: 'mock', grade: 'draft' }, { clean: false }),
-    { scope: 'docker-compose', mode: 'mock', grade: 'draft' },
+    validateStartOptions({ scope: 'docker-compose', mode: 'mock', grade: 'draft', profile: 'visual', journeys }, { clean: false }),
+    {
+      scope: 'docker-compose',
+      mode: 'mock',
+      grade: 'draft',
+      profile: 'visual',
+      affectedJourneys: [
+        '打开页面 => 页面可用',
+        '执行操作 => 结果可回读',
+        '制造失败 => 提示可恢复',
+      ],
+    },
+  );
+});
+
+test('preview journeys and acceptance profile are explicit and bounded', () => {
+  assert.deepEqual(
+    parseAffectedJourneys('打开页面 => 页面可用 | 执行操作 => 结果可回读 | 制造失败 => 提示可恢复'),
+    ['打开页面 => 页面可用', '执行操作 => 结果可回读', '制造失败 => 提示可恢复'],
+  );
+  assert.throws(() => parseAffectedJourneys('打开页面 => 页面可用'), /3-7 entries/);
+  assert.throws(
+    () => parseAffectedJourneys('打开页面 | 执行操作 => 结果 | 制造失败 => 提示'),
+    /step => expected result/,
+  );
+  assert.throws(
+    () => validateStartOptions({
+      scope: 'docker-compose',
+      mode: 'mock',
+      profile: 'full-matrix',
+      journeys: '打开页面 => 页面可用 | 执行操作 => 结果 | 制造失败 => 提示',
+    }, { clean: true }),
+    /--profile must be/,
+  );
+  assert.deepEqual(
+    validateStartOptions({ scope: 'legacy-draft', mode: 'mock', grade: 'draft' }, { clean: false }),
+    {
+      scope: 'legacy-draft',
+      mode: 'mock',
+      grade: 'draft',
+      profile: 'interaction',
+      affectedJourneys: [],
+    },
+  );
+  assert.throws(
+    () => validateStartOptions({ scope: 'legacy-acceptance', mode: 'mock', grade: 'acceptance' }, { clean: true }),
+    /acceptance preview requires --journeys/,
   );
 });
 
 test('mock and integration options cannot be silently mixed', () => {
+  const journeys = '打开页面 => 页面可用 | 执行操作 => 结果可回读 | 制造失败 => 提示可恢复';
   assert.throws(
-    () => validateStartOptions({ scope: 'docker-compose', mode: 'mock', 'api-target': 'http://127.0.0.1:8080' }, { clean: true }),
+    () => validateStartOptions({ scope: 'docker-compose', mode: 'mock', 'api-target': 'http://127.0.0.1:8080', journeys }, { clean: true }),
     /only valid in integration mode/,
   );
   assert.throws(
-    () => validateStartOptions({ scope: 'docker-compose', mode: 'integration' }, { clean: true }),
+    () => validateStartOptions({ scope: 'docker-compose', mode: 'integration', journeys }, { clean: true }),
     /requires --api-target/,
   );
   assert.throws(
-    () => validateStartOptions({ scope: 'docker-compose', mode: 'mock', 'change-origin': 'yes' }, { clean: true }),
+    () => validateStartOptions({ scope: 'docker-compose', mode: 'mock', 'change-origin': 'yes', journeys }, { clean: true }),
     /must be true or false/,
   );
 });

@@ -240,6 +240,8 @@ requireText('docs/local-feature-preview-standard.md', [
   '`draft`',
   '`acceptance`',
   'scripts/local-feature-preview.mjs',
+  '`visual-composition`',
+  '全量笛卡尔积',
   '停止方式',
 ]);
 requireText('scripts/local-feature-preview.mjs', [
@@ -247,6 +249,8 @@ requireText('scripts/local-feature-preview.mjs', [
   'acceptance preview requires a clean checkpoint',
   'ownership marker is missing',
   'workingTreeFingerprint',
+  'acceptanceProfile',
+  'affectedJourneys',
 ]);
 requireText('Makefile', [
   'governance-check:',
@@ -283,6 +287,8 @@ requireText('scripts/verify-change.sh', [
   '--validate-acceptance',
   '--diff-filter=ACMRTD',
   '.github/workflows/*.yml|.github/workflows/*.yaml',
+  'verification_preflight=pass',
+  'gofmt -l',
 ]);
 requireText('.codex-workflows/release-kpanel.workflow.yaml', [
   'scripts/check-collaboration-state.mjs',
@@ -300,6 +306,8 @@ requireText('.codex-workflows/release-kpanel.workflow.yaml', [
   '有生产完成证据的部署频率',
   '流程异常指纹',
   '冻结执行方案',
+  '一次列全必需能力',
+  '`visual-composition`',
 ]);
 if (read('.codex-workflows/release-kpanel.workflow.yaml').includes('git fetch origin --tags')) {
   failures.push('.codex-workflows/release-kpanel.workflow.yaml: unbounded tag fetch is forbidden');
@@ -333,7 +341,9 @@ requireText('.codex-workflows/session-collaboration.workflow.yaml', [
 requireText('.codex-workflows/local-feature-preview.workflow.yaml', [
   'docs/local-feature-preview-standard.md',
   'docs/ui-visual-language.md',
-  '100%/125%/200%',
+  '--profile "${{acceptance_profile}}"',
+  '--journeys "${{affected_journeys}}"',
+  '全量笛卡尔积',
 ]);
 requireText('.codex-workflows/evolve-kpanel.workflow.yaml', [
   'PROJECT_RULES.md` 5.3',

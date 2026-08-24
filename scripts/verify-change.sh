@@ -247,6 +247,66 @@ verify_deploy() {
 }
 
 if [[ "$requested_level" == "3" || "$requested_level" == "l3" || "$requested_level" == "release" ]]; then
+  needs_go=true
+  needs_full_go=true
+  needs_web=true
+  needs_deploy=true
+  needs_image=true
+  needs_linux_build=true
+elif [[ "$requested_level" == "2" || "$requested_level" == "l2" ]]; then
+  needs_go=true
+  needs_full_go=true
+  needs_web=true
+  needs_deploy=true
+  needs_linux_build=true
+else
+  needs_linux_build=false
+fi
+
+required_commands=()
+[[ "$needs_go" == true ]] && required_commands+=(go)
+[[ "$needs_web" == true ]] && required_commands+=(npm)
+[[ "$needs_linux_build" == true ]] && required_commands+=(make)
+if [[ "$requested_level" == "3" || "$requested_level" == "l3" || "$requested_level" == "release" ]]; then
+  required_commands+=(go gofmt npm make docker)
+fi
+
+go_format_files=()
+if [[ "$needs_go" == true ]]; then
+  if [[ "$needs_full_go" == true || "$forced_verification" == true ]]; then
+    mapfile -t go_format_files < <(git ls-files '*.go')
+  else
+    for path in "${changed_files[@]}"; do
+      [[ "$path" == *.go && -f "$path" ]] && go_format_files+=("$path")
+    done
+  fi
+  [[ ${#go_format_files[@]} -gt 0 ]] && required_commands+=(gofmt)
+fi
+
+if [[ ${#required_commands[@]} -gt 0 ]]; then
+  mapfile -t required_commands < <(printf '%s\n' "${required_commands[@]}" | sort -u)
+fi
+missing_commands=()
+for command_name in "${required_commands[@]}"; do
+  command -v "$command_name" >/dev/null 2>&1 || missing_commands+=("$command_name")
+done
+if [[ ${#missing_commands[@]} -gt 0 ]]; then
+  echo "verification_preflight=fail platform=$(uname -s) level=$requested_level missing=$(IFS=,; echo "${missing_commands[*]}")" >&2
+  echo "Install the missing tools or run the unchanged candidate through the repository Linux runner; no partial result is accepted." >&2
+  exit 1
+fi
+echo "verification_preflight=pass platform=$(uname -s) level=$requested_level tools=$(IFS=,; echo "${required_commands[*]:-none}")"
+
+if [[ ${#go_format_files[@]} -gt 0 ]]; then
+  mapfile -t unformatted_go_files < <(gofmt -l "${go_format_files[@]}")
+  if [[ ${#unformatted_go_files[@]} -gt 0 ]]; then
+    echo "Go formatting check failed:" >&2
+    printf '  %s\n' "${unformatted_go_files[@]}" >&2
+    exit 1
+  fi
+fi
+
+if [[ "$requested_level" == "3" || "$requested_level" == "l3" || "$requested_level" == "release" ]]; then
   install_web_dependencies
   make test
   go test -race ./internal/panel ./internal/auth ./internal/dockerx
@@ -259,16 +319,6 @@ if [[ "$requested_level" == "3" || "$requested_level" == "l3" || "$requested_lev
   bash scripts/security-scan.sh image kejilion-panel:verify
   echo "L3 release verification completed."
   exit 0
-fi
-
-if [[ "$requested_level" == "2" || "$requested_level" == "l2" ]]; then
-  needs_go=true
-  needs_full_go=true
-  needs_web=true
-  needs_deploy=true
-  needs_linux_build=true
-else
-  needs_linux_build=false
 fi
 
 if [[ "$needs_shell_syntax" == true ]]; then

@@ -1047,6 +1047,51 @@ describe('DesktopView dynamic entries', () => {
     wrapper.unmount()
   })
 
+  it('keeps file, directory, selected state, and transfer feedback visible in one composition', async () => {
+    mockedWorkspace.mockResolvedValueOnce(makeWorkspace({
+      shortcuts: [{
+        id: 'd'.repeat(32),
+        name: '网站目录',
+        description: '',
+        targetType: 'directory',
+        path: '/home/web',
+        createdAt: '2026-08-14T00:00:00Z',
+        updatedAt: '2026-08-14T00:00:00Z',
+      }],
+    }))
+    const wrapper = mount(DesktopView, { attachTo: document.body })
+    await flushPromises()
+    const file = new File(['hello'], 'notes.txt', { type: 'text/plain' })
+    const dataTransfer = {
+      types: ['Files'],
+      items: [],
+      files: [file],
+      dropEffect: 'none',
+    }
+
+    wrapper.element.dispatchEvent(internalFileDragEvent('drop', dataTransfer, 190, 160))
+    await flushPromises()
+
+    const directory = wrapper.get(`[data-icon-key="shortcut:${'d'.repeat(32)}"] button`)
+    const uploadedFile = wrapper.findAll('[data-icon-key^="shortcut:"] button')
+      .find((button) => button.attributes('title')?.startsWith('notes.txt'))
+    expect(uploadedFile).toBeDefined()
+    if (!uploadedFile) throw new Error('uploaded file shortcut was not rendered')
+    await directory.trigger('click')
+    await uploadedFile.trigger('click', { ctrlKey: true })
+
+    expect(directory.get('.desktop__shortcut-artwork--directory').classes())
+      .toContain('desktop__shortcut-artwork--directory')
+    expect(uploadedFile.get('.desktop__shortcut-artwork--file').classes())
+      .toContain('desktop__shortcut-artwork--file')
+    expect(directory.classes()).toContain('desktop__icon--selected')
+    expect(uploadedFile.classes()).toContain('desktop__icon--selected')
+    expect(uploadedFile.get('.desktop__icon-transfer-badge').classes())
+      .toContain('desktop__icon-transfer-badge')
+    expect(wrapper.get('.desktop-transfer').text()).toContain('已传到桌面')
+    wrapper.unmount()
+  })
+
   it('copies a cross-panel directory and creates its desktop entry after commit', async () => {
     const copied = {
       name: 'app', path: '/home/KPanel Desktop/app', kind: 'directory' as const,
