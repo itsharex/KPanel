@@ -104,6 +104,8 @@ describe('desktop visual and interaction contract', () => {
 
   it('uses Windows-style desktop selection, controls and bottom taskbar', () => {
     expect(styles).toContain('.desktop__icon--selected')
+    expect(styles).toMatch(/\n\.desktop__icon:not\(\.desktop__icon--selected\):hover\s*\{/)
+    expect(styles).toContain(":root:not([data-theme='dark']) .desktop__icon:not(.desktop__icon--selected):hover")
     expect(styles).toMatch(/\.desktop__selection-box\s*\{[^}]*z-index:\s*11;[^}]*background:\s*color-mix\(in srgb, var\(--brand\) 28%, transparent\);[^}]*border:\s*2px solid/)
     expect(styles).toContain(":root:not([data-theme='dark']) .desktop__selection-box")
     expect(styles).toContain('.desktop-window__action--close:hover')
