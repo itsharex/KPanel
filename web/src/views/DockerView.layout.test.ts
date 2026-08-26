@@ -28,6 +28,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 const dockerSource = readFileSync(new URL('./DockerView.vue', import.meta.url), 'utf8')
+const desktopSource = readFileSync(new URL('../styles/desktop.css', import.meta.url), 'utf8')
 const deploymentEditorSource = readFileSync(new URL('../components/docker/DockerDeploymentEditor.vue', import.meta.url), 'utf8')
 
 interface DockerBindings {
@@ -158,6 +159,10 @@ describe('Docker resource toolbar layout', () => {
     expect(dockerSource).toMatch(/\.docker-command-center__header\s*\{[^}]*padding:\s*10px 14px;/)
     expect(dockerSource).toMatch(/\.docker-nav\s*\{[^}]*display:\s*flex;/)
     expect(dockerSource).toMatch(/<header class="resource-section__header">[\s\S]*?class="resource-section__controls"/)
+  })
+
+  it('keeps desktop Docker grid rows anchored when a container group collapses', () => {
+    expect(desktopSource).toMatch(/\.desktop-window__body > \.docker-page\s*\{[^}]*align-content:\s*start;/)
   })
 
   it('exposes both container creation-time sort directions', () => {

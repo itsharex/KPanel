@@ -2382,6 +2382,12 @@ body.desktop-mode-open::-webkit-scrollbar {
   padding: clamp(14px, 2.3cqw, 22px);
 }
 
+/* Docker has collapsible table groups. Keep extra window height below the
+   page instead of stretching its grid rows when a group is collapsed. */
+.desktop-window__body > .docker-page {
+  align-content: start;
+}
+
 .desktop-window__body > .page > .page {
   min-height: 0;
   padding: 0;
