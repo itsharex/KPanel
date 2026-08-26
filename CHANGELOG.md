@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.98.1] - 2026-08-26
+
+### Fixed
+
+- Docker 容器编组收起后，桌面窗口内容保持从顶部紧凑排列，避免空白区域被网格行拉伸。
+
+### Upgrade Notes
+
+- 本补丁仅调整 Docker 页面桌面窗口布局，不修改 API、数据库、Agent、端口、Compose、容器状态、受管 `kejilion.sh` 或应用市场契约，无需迁移。
+- 回滚到 `v0.98.0` 须成套恢复旧 OCI、Compose、`.env`、数据和 Agent 文件。
+
 ## [0.98.0] - 2026-08-25
 
 ### Added
